@@ -16,22 +16,26 @@ func ECS(c *clients.Clients) ServiceGroup {
 	g := &ecsGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateCluster":            g.CreateCluster,
-			"DescribeClusters":         g.DescribeClusters,
-			"ListClusters":             g.ListClusters,
-			"RegisterTaskDefinition":   g.RegisterTaskDefinition,
-			"ListTaskDefinitions":      g.ListTaskDefinitions,
-			"DeregisterTaskDefinition": g.DeregisterTaskDefinition,
-			"DeleteCluster":            g.DeleteCluster,
-			"RunTask":                  g.RunTask,
-			"DescribeTasks":            g.DescribeTasks,
-			"ListTasks":                g.ListTasks,
-			"StopTask":                 g.StopTask,
-			"CreateService":            g.CreateService,
-			"DescribeServices":         g.DescribeServices,
-			"ListServices":             g.ListServices,
-			"UpdateService":            g.UpdateService,
-			"DeleteService":            g.DeleteService,
+			// CreateCluster, ListClusters and DeleteCluster are group-qualified
+			// because MSK models the same three operation names. A bare key is
+			// ambiguous once two registry groups declare a test name, and every
+			// loader refuses it rather than binding the wrong implementation.
+			"ecs-clusters:CreateCluster": g.CreateCluster,
+			"DescribeClusters":           g.DescribeClusters,
+			"ecs-clusters:ListClusters":  g.ListClusters,
+			"RegisterTaskDefinition":     g.RegisterTaskDefinition,
+			"ListTaskDefinitions":        g.ListTaskDefinitions,
+			"DeregisterTaskDefinition":   g.DeregisterTaskDefinition,
+			"ecs-clusters:DeleteCluster": g.DeleteCluster,
+			"RunTask":                    g.RunTask,
+			"DescribeTasks":              g.DescribeTasks,
+			"ListTasks":                  g.ListTasks,
+			"StopTask":                   g.StopTask,
+			"CreateService":              g.CreateService,
+			"DescribeServices":           g.DescribeServices,
+			"ListServices":               g.ListServices,
+			"UpdateService":              g.UpdateService,
+			"DeleteService":              g.DeleteService,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"ecs-clusters": g.setupClusters,

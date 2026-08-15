@@ -45,6 +45,18 @@ func decodeJSON(t *testing.T, resp *http.Response, dst any) {
 	require.NoError(t, json.Unmarshal(b, dst), "body: %s", b)
 }
 
+// drain reads and closes a response whose body the test does not inspect.
+// Leaving one unread abandons the connection instead of returning it to the
+// pool, and a package's worth of abandoned connections exhausts the Windows
+// ephemeral port range mid-run — which surfaces as connectex "only one usage of
+// each socket address", not as anything about this test.
+func drain(t *testing.T, resp *http.Response) {
+	t.Helper()
+	_, err := io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+}
+
 func assertJSONError(t *testing.T, resp *http.Response, expectedCode string) {
 	t.Helper()
 	b, err := io.ReadAll(resp.Body)
@@ -96,6 +108,41 @@ func TestCreateCluster_missingName(t *testing.T) {
 	assertJSONError(t, resp, "BadRequestException")
 }
 
+func TestCreateCluster_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a cluster already holds the name
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "taken-name",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	drain(t, first)
+
+	// When: a second cluster is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "taken-name",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+
+	// Then: 409 ConflictException. The kafka model puts ConflictException at
+	// HTTP 409 and CreateCluster declares it; the API reference spells the
+	// condition out on POST /v1/clusters — "This cluster name already exists.
+	// Retry your request using another name."
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+
+	// And: the refusal left nothing behind. A second record under the same name
+	// is the damage the guard exists to prevent — a caller that looks a cluster
+	// up by name then gets one of two arbitrarily.
+	listResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters", nil)
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listed map[string]any
+	decodeJSON(t, listResp, &listed)
+	assert.Len(t, listed["clusterInfoList"], 1)
+}
+
 // ── TestDescribeCluster ───────────────────────────────────────────────────────
 
 func TestDescribeCluster_success(t *testing.T) {
@@ -119,6 +166,93 @@ func TestDescribeCluster_success(t *testing.T) {
 	info := result["clusterInfo"].(map[string]any)
 	assert.Equal(t, "describe-test", info["clusterName"])
 	assert.Equal(t, arn, info["clusterArn"])
+}
+
+// kafkaVersionOf reads the one member of the v1 ClusterInfo shape that carries
+// the cluster's Kafka version. AWS binds no top-level kafkaVersion on
+// ClusterInfo, so currentBrokerSoftwareInfo.kafkaVersion is the only place an
+// SDK client can read back what it provisioned.
+func kafkaVersionOf(t *testing.T, info map[string]any) string {
+	t.Helper()
+	software, ok := info["currentBrokerSoftwareInfo"].(map[string]any)
+	require.True(t, ok, "currentBrokerSoftwareInfo missing from clusterInfo: %v", info)
+	version, _ := software["kafkaVersion"].(string)
+	return version
+}
+
+func TestDescribeCluster_reportsTheKafkaVersionItWasCreatedWith(t *testing.T) {
+	// Given: a cluster created with an explicit Kafka version
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "version-readback",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the version comes back where the model puts it. A create the caller
+	// cannot verify through the matching describe is the #980 shape — accepted,
+	// stored, and unreadable.
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.Equal(t, "3.5.1", kafkaVersionOf(t, info))
+	assert.Equal(t, float64(1), info["numberOfBrokerNodes"])
+}
+
+func TestDescribeCluster_reportsTheDefaultedKafkaVersion(t *testing.T) {
+	// Given: a cluster created without naming a version, which Overcast defaults
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "version-defaulted",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the defaulted version is reported rather than left blank — a caller
+	// that omitted the member still has to be able to see what it got
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.NotEmpty(t, kafkaVersionOf(t, info))
+}
+
+func TestDescribeCluster_doesNotLeakInternalRecordFields(t *testing.T) {
+	// Given: a cluster
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "no-internals",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the response carries the modeled members only. Marshalling the
+	// stored record straight onto the wire put the emulator's own Docker
+	// bookkeeping in `clusterInfo`.
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.NotContains(t, info, "_dockerContainerID")
+	assert.NotContains(t, info, "_hostPort")
 }
 
 func TestDescribeCluster_notFound(t *testing.T) {
@@ -194,6 +328,30 @@ func TestListClusters_filter(t *testing.T) {
 	assert.Len(t, list, 1)
 	cluster := list[0].(map[string]any)
 	assert.Equal(t, "filter-alpha", cluster["clusterName"])
+}
+
+func TestListClusters_reportsTheKafkaVersion(t *testing.T) {
+	// Given: a cluster created with an explicit Kafka version
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":  "list-version",
+		"kafkaVersion": "3.4.0",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	createResp.Body.Close()
+
+	// When: clusters are listed
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters", nil)
+
+	// Then: every element of clusterInfoList is the same modeled ClusterInfo as
+	// DescribeCluster's, version included — the web console's cluster table
+	// reads its "Kafka version" column from exactly this member
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	list, _ := result["clusterInfoList"].([]any)
+	require.Len(t, list, 1)
+	assert.Equal(t, "3.4.0", kafkaVersionOf(t, list[0].(map[string]any)))
 }
 
 // ── TestDeleteCluster ─────────────────────────────────────────────────────────
@@ -288,6 +446,38 @@ func TestCreateConfiguration_success(t *testing.T) {
 	assert.Equal(t, "ACTIVE", result["state"])
 	assert.Equal(t, "my-config", result["name"])
 	assert.NotNil(t, result["latestRevision"])
+}
+
+func TestCreateConfiguration_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a configuration already holds the name
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
+		"name":          "taken-config",
+		"kafkaVersions": []string{"3.5.1"},
+	})
+	require.Equal(t, http.StatusCreated, first.StatusCode)
+	drain(t, first)
+
+	// When: a second configuration is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
+		"name":          "taken-config",
+		"kafkaVersions": []string{"3.5.1"},
+	})
+
+	// Then: 409 ConflictException — CreateConfiguration declares the same shape
+	// CreateCluster does, and the API reference gives POST /v1/configurations
+	// the same 409 row.
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+
+	// And: only the first configuration exists. Two configurations sharing a
+	// name is what a caller resolving one by name would then have to guess
+	// between.
+	listResp := mskRequest(t, srv, http.MethodGet, "/v1/configurations", nil)
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listed map[string]any
+	decodeJSON(t, listResp, &listed)
+	assert.Len(t, listed["configurations"], 1)
 }
 
 // ── TestListConfigurations ────────────────────────────────────────────────────
@@ -409,6 +599,143 @@ func TestTagResource_success(t *testing.T) {
 	tags, _ := tagResult["tags"].(map[string]any)
 	assert.Equal(t, "test", tags["Environment"])
 	assert.Equal(t, "platform", tags["Team"])
+}
+
+// listTags reads a resource's tags back through ListTagsForResource — the one
+// operation an SDK client has for the question "what is tagged on this ARN".
+func listTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]any {
+	t.Helper()
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/tags/"+arn, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	tags, _ := result["tags"].(map[string]any)
+	return tags
+}
+
+func TestCreateCluster_creationTimeTagsReachListTagsForResource(t *testing.T) {
+	// Given: a v1 cluster created with tags in the create request
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "v1-create-tags",
+		"tags":        map[string]string{"owner": "compat", "env": "test"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// Then: they are visible to the tag API, which is where a client looks for
+	// them. Accepting them onto the cluster record alone left every tag
+	// operation reporting the cluster as untagged.
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "compat", tags["owner"])
+	assert.Equal(t, "test", tags["env"])
+}
+
+func TestCreateClusterV2_creationTimeTagsReachListTagsForResource(t *testing.T) {
+	// Given: a v2 cluster created with tags in the create request
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-create-tags",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"owner": "compat"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// Then: ListTagsForResource returns them
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "compat", tags["owner"])
+}
+
+func TestUntagResource_removesACreationTimeTag(t *testing.T) {
+	// Given: a cluster created with two tags
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-untag-creation-tag",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"Keep": "yes", "Drop": "me"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: one of them is untagged
+	untagResp := mskRequest(t, srv, http.MethodDelete, fmt.Sprintf("/v1/tags/%s?tagKeys=Drop", arn), nil)
+	require.Equal(t, http.StatusOK, untagResp.StatusCode)
+	untagResp.Body.Close()
+
+	// Then: creation-time tags and TagResource tags live in one place, so
+	// untagging reaches them both
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "yes", tags["Keep"])
+	assert.NotContains(t, tags, "Drop")
+}
+
+func TestDescribeCluster_reportsCreationTimeAndLaterTags(t *testing.T) {
+	// Given: a cluster created with one tag
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "describe-tags",
+		"tags":        map[string]string{"atCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: a second tag is added afterwards
+	tagResp := mskRequest(t, srv, http.MethodPost, "/v1/tags/"+arn, map[string]any{
+		"tags": map[string]string{"afterCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, tagResp.StatusCode)
+	tagResp.Body.Close()
+
+	// Then: ClusterInfo.tags shows both — the tag API and the describe response
+	// read the same store rather than each keeping half the answer
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	tags, _ := info["tags"].(map[string]any)
+	assert.Equal(t, "yes", tags["atCreate"])
+	assert.Equal(t, "yes", tags["afterCreate"])
+}
+
+func TestDescribeClusterV2_reportsCreationTimeAndLaterTags(t *testing.T) {
+	// Given: a v2 cluster created with one tag
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-describe-tags",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"atCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: a second tag is added afterwards
+	tagResp := mskRequest(t, srv, http.MethodPost, "/v1/tags/"+arn, map[string]any{
+		"tags": map[string]string{"afterCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, tagResp.StatusCode)
+	tagResp.Body.Close()
+
+	// Then: the v2 shape shows both
+	resp := mskRequest(t, srv, http.MethodGet, v2ClusterPath(arn), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	tags, _ := info["tags"].(map[string]any)
+	assert.Equal(t, "yes", tags["atCreate"])
+	assert.Equal(t, "yes", tags["afterCreate"])
 }
 
 // ── TestUntagResource ─────────────────────────────────────────────────────────
@@ -594,6 +921,28 @@ func TestCreateClusterV2_bothProvisionedAndServerless(t *testing.T) {
 	assertJSONError(t, resp, "BadRequestException")
 }
 
+func TestCreateClusterV2_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a v1 cluster already holds the name. v1 and v2 are two bindings
+	// onto one cluster namespace on AWS, so the name a v1 create took is not
+	// available to a v2 create either.
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "shared-namespace",
+	})
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	drain(t, first)
+
+	// When: a v2 serverless cluster is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "shared-namespace",
+		"serverless":  map[string]any{},
+	})
+
+	// Then: 409 ConflictException
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+}
+
 // ── TestDescribeClusterV2 ─────────────────────────────────────────────────────
 
 func TestDescribeClusterV2_provisioned(t *testing.T) {
@@ -625,6 +974,9 @@ func TestDescribeClusterV2_provisioned(t *testing.T) {
 	provisioned, ok := info["provisioned"].(map[string]any)
 	require.True(t, ok, "provisioned field should be present")
 	assert.Equal(t, float64(2), provisioned["numberOfBrokerNodes"])
+	// The v2 shape nests the version one level deeper than v1 does, under
+	// `provisioned`. It is still the only member carrying it.
+	assert.Equal(t, "3.5.1", kafkaVersionOf(t, provisioned))
 }
 
 func TestDescribeClusterV2_describesAClusterCreatedThroughV1(t *testing.T) {
@@ -798,6 +1150,13 @@ func TestListClustersV2_rejectsAnInvalidNextToken(t *testing.T) {
 }
 
 // ── TestUpdateClusterConfiguration ───────────────────────────────────────────
+//
+// Every request below carries the configuration reference the way the model
+// binds it: a `configurationInfo` object of `{arn, revision}`, which is what
+// the AWS CLI and every SDK put on the wire. These tests used to send a flat
+// `configurationArn`, a member the kafka model does not declare — so they
+// agreed with a handler that read a member no client sends, and neither noticed
+// that the ARN was never resolved.
 
 func TestUpdateClusterConfiguration_success(t *testing.T) {
 	// Given: a cluster and a configuration both exist
@@ -831,9 +1190,8 @@ func TestUpdateClusterConfiguration_success(t *testing.T) {
 
 	// When: UpdateClusterConfiguration is called
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
-		"configurationArn":      configArn,
-		"configurationRevision": 1,
-		"currentVersion":        currentVersion,
+		"configurationInfo": map[string]any{"arn": configArn, "revision": 1},
+		"currentVersion":    currentVersion,
 	})
 
 	// Then: 200 with clusterArn and a clusterOperationArn
@@ -851,9 +1209,11 @@ func TestUpdateClusterConfiguration_clusterNotFound(t *testing.T) {
 
 	// When: update configuration on a non-existent cluster
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc/configuration", map[string]any{
-		"configurationArn":      "arn:aws:kafka:us-east-1:000000000000:configuration/x/y",
-		"configurationRevision": 1,
-		"currentVersion":        "any",
+		"configurationInfo": map[string]any{
+			"arn":      "arn:aws:kafka:us-east-1:000000000000:configuration/x/y",
+			"revision": 1,
+		},
+		"currentVersion": "any",
 	})
 
 	// Then: 404 NotFoundException
@@ -882,12 +1242,53 @@ func TestUpdateClusterConfiguration_staleVersion(t *testing.T) {
 
 	// When: update with a stale currentVersion
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
-		"configurationArn":      configArn,
-		"configurationRevision": 1,
-		"currentVersion":        "stale-version",
+		"configurationInfo": map[string]any{"arn": configArn, "revision": 1},
+		"currentVersion":    "stale-version",
 	})
 
 	// Then: 400 BadRequestException
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assertJSONError(t, resp, "BadRequestException")
+}
+
+func TestUpdateClusterConfiguration_unknownConfiguration(t *testing.T) {
+	// Given: a cluster exists, and the caller holds its current version, so the
+	// only thing wrong with the request is the configuration it names
+	srv := helpers.NewTestServer(t)
+	createCluster := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "unknown-config-target",
+	})
+	require.Equal(t, http.StatusOK, createCluster.StatusCode)
+	var clusterResult map[string]any
+	decodeJSON(t, createCluster, &clusterResult)
+	clusterArn := clusterResult["clusterArn"].(string)
+
+	descResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+clusterArn, nil)
+	require.Equal(t, http.StatusOK, descResp.StatusCode)
+	var descResult map[string]any
+	decodeJSON(t, descResp, &descResult)
+	currentVersion := descResult["clusterInfo"].(map[string]any)["currentVersion"].(string)
+
+	// When: the update names a configuration that does not exist
+	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
+		"configurationInfo": map[string]any{
+			"arn":      "arn:aws:kafka:us-east-1:000000000000:configuration/no-such-config/0000",
+			"revision": 1,
+		},
+		"currentVersion": currentVersion,
+	})
+
+	// Then: 404 NotFoundException — the configuration is a resource the request
+	// refers to, and referring to a missing one cannot succeed
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assertJSONError(t, resp, "NotFoundException")
+
+	// And: the cluster's version did not move. A rejected update that still
+	// spent the optimistic-concurrency token would invalidate the caller's next
+	// request for a mutation that never happened.
+	afterResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+clusterArn, nil)
+	require.Equal(t, http.StatusOK, afterResp.StatusCode)
+	var afterResult map[string]any
+	decodeJSON(t, afterResp, &afterResult)
+	assert.Equal(t, currentVersion, afterResult["clusterInfo"].(map[string]any)["currentVersion"])
 }

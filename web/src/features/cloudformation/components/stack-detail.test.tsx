@@ -1,6 +1,10 @@
 import type { ReactNode } from "react"
 import { renderWithData, screen, within } from "@/test/render"
-import { cfnResourcesQueryOptions, cfnStackQueryOptions } from "@/features/cloudformation/data"
+import {
+  cfnEventsInfiniteQueryOptions,
+  cfnResourcesQueryOptions,
+  cfnStackQueryOptions,
+} from "@/features/cloudformation/data"
 import { StackDetail } from "./stack-detail"
 
 vi.mock("@tanstack/react-router", () => ({
@@ -113,5 +117,36 @@ describe("StackDetail — failure banner", () => {
     renderWithData(<StackDetail stackName={STACK_NAME} />, seed({ StackStatus: "CREATE_COMPLETE" }))
 
     expect(screen.queryByRole("button", { name: "View events" })).not.toBeInTheDocument()
+  })
+})
+
+describe("StackDetail — event history", () => {
+  it("makes older paginated events explicitly accessible", async () => {
+    const events = Array.from({ length: 20 }, (_, i) => ({
+      EventId: `event-${i}`,
+      LogicalResourceId: `Resource${i}`,
+      ResourceType: "AWS::S3::Bucket",
+      ResourceStatus: "DELETE_COMPLETE",
+    }))
+    const seeds = seed({ StackStatus: "ROLLBACK_COMPLETE" })
+    seeds.push([
+      cfnEventsInfiniteQueryOptions(STACK_NAME).queryKey,
+      {
+        pages: [{ events, nextToken: "older-events-token" }],
+        pageParams: [undefined],
+      },
+    ])
+
+    const { user } = renderWithData(<StackDetail stackName={STACK_NAME} />, seeds)
+    await user.click(screen.getByRole("tab", { name: "Events" }))
+
+    expect(screen.getByRole("region", { name: "CloudFormation stack events" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    )
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Showing 20 events. Scroll for older events.",
+    )
+    expect(screen.queryByRole("button", { name: /older events/i })).not.toBeInTheDocument()
   })
 })

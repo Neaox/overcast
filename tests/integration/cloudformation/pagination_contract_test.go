@@ -22,9 +22,83 @@ import (
 // stackEventXML/describeStackEventsResult in
 // internal/services/cloudformation/handler.go for the full response shape.
 type stackEventItem struct {
+	EventID           string `xml:"EventId"`
 	LogicalResourceID string `xml:"LogicalResourceId"`
 	ResourceStatus    string `xml:"ResourceStatus"`
 	Timestamp         string `xml:"Timestamp"` // RFC3339-ish, lexicographically sortable
+}
+
+func TestDescribeStackEvents_rollbackHistorySurvivesPagination(t *testing.T) {
+	// Given: enough successfully-created resources before a failure that the
+	// subsequent rollback pushes the CREATE events off the newest 20-row page
+	const template = `{
+	  "Resources": {
+	    "B01":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-01"}},
+	    "B02":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-02"}},
+	    "B03":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-03"}},
+	    "B04":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-04"}},
+	    "B05":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-05"}},
+	    "B06":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"rollback-history-06"}},
+	    "SubZ":{
+	      "Type":"AWS::SNS::Subscription",
+	      "DependsOn":["B01","B02","B03","B04","B05","B06"],
+	      "Properties":{
+	        "TopicArn":"arn:aws:sns:us-east-1:000000000000:missing-topic",
+	        "Protocol":"sqs",
+	        "Endpoint":"arn:aws:sqs:us-east-1:000000000000:missing-queue"
+	      }
+	    }
+	  }
+	}`
+	srv := helpers.NewTestServer(t)
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"rollback-history-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "rollback-history-stack", "ROLLBACK_COMPLETE")
+
+	// When: every DescribeStackEvents page is followed to termination
+	fetch := func(t *testing.T, token string) ([]stackEventItem, string) {
+		t.Helper()
+		params := url.Values{"StackName": []string{"rollback-history-stack"}}
+		if token != "" {
+			params.Set("NextToken", token)
+		}
+		pageResp := cfnQuery(t, srv, "DescribeStackEvents", params)
+		defer pageResp.Body.Close()
+		helpers.AssertStatus(t, pageResp, http.StatusOK)
+		body := readBody(t, pageResp)
+		var page struct {
+			Events    []stackEventItem `xml:"DescribeStackEventsResult>StackEvents>member"`
+			NextToken string           `xml:"DescribeStackEventsResult>NextToken"`
+		}
+		if err := xml.Unmarshal(body, &page); err != nil {
+			t.Fatalf("unmarshal DescribeStackEventsResponse: %v\nbody: %s", err, body)
+		}
+		return page.Events, page.NextToken
+	}
+	all := helpers.PaginationContractTest(t, nil,
+		func(event stackEventItem) string { return event.EventID }, fetch, nil,
+		helpers.PaginationContractOptions{})
+
+	// Then: create, failure, rollback, and deletion history all remain present
+	seenTransitions := make(map[string]bool, len(all))
+	for _, event := range all {
+		seenTransitions[event.LogicalResourceID+"#"+event.ResourceStatus] = true
+	}
+	for _, want := range []string{
+		"B01#CREATE_IN_PROGRESS", "B01#CREATE_COMPLETE",
+		"B01#DELETE_IN_PROGRESS", "B01#DELETE_COMPLETE",
+		"SubZ#CREATE_FAILED",
+		"rollback-history-stack#ROLLBACK_IN_PROGRESS",
+		"rollback-history-stack#ROLLBACK_COMPLETE",
+	} {
+		if !seenTransitions[want] {
+			t.Errorf("missing %s from complete event history", want)
+		}
+	}
 }
 
 func TestDescribeStackEvents_paginationContract(t *testing.T) {

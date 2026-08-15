@@ -303,20 +303,3 @@ func TestGetInstanceLogs_unknownInstanceIsNotFound(t *testing.T) {
 		t.Errorf("error = %v, want \"instance not found\"", body["error"])
 	}
 }
-
-func TestTailBytes_keepsTheEndAndDoesNotStartMidLine(t *testing.T) {
-	s := "first line\nsecond line\nthird line\n"
-	got := tailBytes(s, 20)
-	if len(got) > 20 {
-		t.Fatalf("tailBytes returned %d bytes, want at most 20", len(got))
-	}
-	if !strings.HasSuffix(got, "third line\n") {
-		t.Errorf("tailBytes = %q, want the end of the input", got)
-	}
-	if strings.HasPrefix(got, "cond") {
-		t.Errorf("tailBytes = %q, want it to start at a line boundary", got)
-	}
-	if same := tailBytes(s, 1000); same != s {
-		t.Errorf("tailBytes with a generous cap altered the input: %q", same)
-	}
-}

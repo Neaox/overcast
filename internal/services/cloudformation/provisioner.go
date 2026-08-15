@@ -262,12 +262,16 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			// resource, and set for one that failed to stabilize — which leaves
 			// a real resource behind for rollback to delete.
 			stack.Resources = append(stack.Resources, StackResource{
-				LogicalID:    logicalID,
-				PhysicalID:   physID,
-				Type:         res.Type,
-				Status:       ResourceCreateFailed,
-				StatusReason: provErr.Error(),
-				Timestamp:    now,
+				LogicalID:           logicalID,
+				PhysicalID:          physID,
+				Type:                res.Type,
+				Status:              ResourceCreateFailed,
+				StatusReason:        provErr.Error(),
+				Timestamp:           now,
+				PropertiesHash:      propsHash,
+				Properties:          recordedProps,
+				DeletionPolicy:      res.DeletionPolicy,
+				UpdateReplacePolicy: res.UpdateReplacePolicy,
 			})
 			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
 
@@ -280,7 +284,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			// Default behaviour: roll back already-created resources, then set
 			// status to ROLLBACK_COMPLETE (matching real AWS CloudFormation).
 			p.rollbackCreate(ctx, stack, rCtx,
-				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
+				fmt.Sprintf("resource %s failed: %v", logicalID, provErr), createRollbackOptions{})
 			return
 		}
 
@@ -1342,11 +1346,20 @@ func (p *provisioner) flushCriticalState(ctx context.Context) error {
 	return p.store.flush(flushCtx)
 }
 
+type createRollbackOptions struct {
+	retainExceptOnCreate bool
+}
+
 // rollbackCreate is the default failure handler for CreateStack.
-// It mirrors real AWS CloudFormation behaviour: delete every successfully
-// created resource in reverse order, then mark the stack ROLLBACK_COMPLETE.
-// If a delete fails the stack is marked ROLLBACK_FAILED instead.
-func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
+// It deletes created resources in reverse order while honouring their deletion
+// policies, then completes or fails the rollback according to deletion results.
+func (p *provisioner) rollbackCreate(
+	ctx context.Context,
+	stack *Stack,
+	rCtx *resolveContext,
+	reason string,
+	opts createRollbackOptions,
+) {
 	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusRollbackInProgress
 	stack.StatusReason = reason
@@ -1361,6 +1374,15 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 		}
 		r := stack.Resources[i]
 		if !r.existsServiceSide() {
+			continue
+		}
+		if r.shouldRetainOnCreateRollback(opts.retainExceptOnCreate) {
+			log.Info("cfn: retaining resource on create rollback (DeletionPolicy=Retain)",
+				zap.String("type", r.Type),
+				zap.String("logicalId", r.LogicalID),
+				zap.String("physicalId", r.PhysicalID))
+			stack.Resources[i].Status = ResourceDeleteSkipped
+			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteSkipped, "DeletionPolicy=Retain")
 			continue
 		}
 		stack.Resources[i].Status = ResourceDeleteInProgress
@@ -1659,6 +1681,11 @@ func (p *provisioner) failRollbackInPlaceUpdate(ctx context.Context, stack *Stac
 
 // ── Rollback stack (async) ─────────────────────────────────────────────────
 
+type rollbackStackOptions struct {
+	createPath           bool
+	retainExceptOnCreate bool
+}
+
 // rollbackStack services an operator-requested RollbackStack, mirroring the
 // async shape of createStack/updateStack so that a fast rollback is already
 // terminal by the time the caller's next DescribeStacks lands.
@@ -1666,14 +1693,18 @@ func (p *provisioner) failRollbackInPlaceUpdate(ctx context.Context, stack *Stac
 // createPath selects the CREATE_FAILED → ROLLBACK_COMPLETE flow (unwind
 // everything the failed create built) over the UPDATE_FAILED →
 // UPDATE_ROLLBACK_COMPLETE flow.
-func (p *provisioner) rollbackStack(stack *Stack, createPath bool, rec *trace.Recorder) {
+func (p *provisioner) rollbackStack(stack *Stack, opts rollbackStackOptions, rec *trace.Recorder) {
 	p.provisionAsync(stack, rec, func(ctx context.Context) {
-		p.rollbackStackResourcesCtx(ctx, stack, createPath)
+		p.rollbackStackResourcesCtx(ctx, stack, opts)
 	})
 }
 
 // rollbackStackResourcesCtx is the synchronous core of an explicit rollback.
-func (p *provisioner) rollbackStackResourcesCtx(ctx context.Context, stack *Stack, createPath bool) {
+func (p *provisioner) rollbackStackResourcesCtx(
+	ctx context.Context,
+	stack *Stack,
+	opts rollbackStackOptions,
+) {
 	// The stored template drives Ref/GetAtt resolution for any deletes. A
 	// stack that failed early may have no usable template; an empty one still
 	// yields a valid resolve context, and the resource list is the real source
@@ -1689,9 +1720,11 @@ func (p *provisioner) rollbackStackResourcesCtx(ctx context.Context, stack *Stac
 		}
 	}
 
-	if createPath {
+	if opts.createPath {
 		// A failed create unwinds exactly like an automatic create rollback.
-		p.rollbackCreate(ctx, stack, rCtx, "User Initiated")
+		p.rollbackCreate(ctx, stack, rCtx, "User Initiated", createRollbackOptions{
+			retainExceptOnCreate: opts.retainExceptOnCreate,
+		})
 		return
 	}
 	p.rollbackToStable(ctx, stack, rCtx, "User Initiated")

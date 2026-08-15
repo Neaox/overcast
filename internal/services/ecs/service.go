@@ -56,6 +56,10 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc).WithResolver(s.handler.images)
 	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ECSKeepContainers, s.handler.instances.Resolve)
+	// Every removal this GC performs takes the container's final output first,
+	// whichever path scheduled it. The alternative is each teardown remembering
+	// to capture, which is how the scheduler path came to lose them.
+	s.handler.gc.SetBeforeRemove(s.handler.captureContainerLogsByID)
 	s.handler.gc.StartRemoveLoop(context.Background())
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)

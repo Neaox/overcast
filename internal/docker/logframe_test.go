@@ -97,6 +97,21 @@ func TestDemux_truncatedFinalFrameKeepsWhatArrived(t *testing.T) {
 	}
 }
 
+// A frame boundary that stops validating part-way through is a stream that
+// desynchronised, and the bytes after it are still the container's own. They
+// are appended as they are rather than walked as though they were framed —
+// re-parsing them reads a payload length out of the output itself and chops
+// the rest of the log at whatever offset that happens to spell.
+func TestDemuxStream_desyncedRemainderIsKeptVerbatim(t *testing.T) {
+	const tail = "no header in front of this\n"
+	raw := append(stdout("framed and fine\n"), tail...)
+	want := "framed and fine\n" + tail
+
+	if got := string(DemuxStream(raw)); got != want {
+		t.Errorf("DemuxStream = %q, want %q", got, want)
+	}
+}
+
 // A remainder too short to hold a header is a header the read limit cut in
 // half: binary junk rather than output, so it is dropped and not printed.
 func TestDemuxStream_partialTrailingHeaderIsDropped(t *testing.T) {

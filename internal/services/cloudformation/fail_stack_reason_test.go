@@ -166,7 +166,7 @@ func TestProvisioner_terminalRollbackCarriesNoStackReason(t *testing.T) {
 		}
 
 		// When: RollbackStack drives it back to a stable state.
-		p.rollbackStackResourcesCtx(context.Background(), stack, false)
+		p.rollbackStackResourcesCtx(context.Background(), stack, rollbackStackOptions{})
 
 		// Then: the terminal stack carries no stack-level reason.
 		if stack.Status != StatusUpdateRollbackComplete {

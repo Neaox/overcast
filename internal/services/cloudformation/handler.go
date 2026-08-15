@@ -387,9 +387,11 @@ func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
 		stack.RoleARN = roleARN
 	}
 
-	// RetainExceptOnCreate is accepted and ignored: it controls whether
-	// resources marked DeletionPolicy: Retain are still deleted when a create
-	// rolls back — which is already what rollbackCreate does.
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(r.FormValue("RetainExceptOnCreate"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 
 	status := StatusUpdateRollbackInProgress
 	if createPath {
@@ -404,7 +406,10 @@ func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.rollbackStack(stack, createPath, trace.RecorderFromContext(r.Context()))
+	h.prov.rollbackStack(stack, rollbackStackOptions{
+		createPath:           createPath,
+		retainExceptOnCreate: retainExceptOnCreate,
+	}, trace.RecorderFromContext(r.Context()))
 
 	writeCFNResponse(w, r, "RollbackStackResponse", "RollbackStackResult", stackIdResult{StackId: stack.StackID})
 }
@@ -1206,16 +1211,24 @@ func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
 // sends `false` overrides the value CreateStack was given.
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html
 func parseDisableRollback(raw string) (bool, *protocol.AWSError) {
+	return parseOptionalBoolean(raw, "disableRollback")
+}
+
+func parseRetainExceptOnCreate(raw string) (bool, *protocol.AWSError) {
+	return parseOptionalBoolean(raw, "retainExceptOnCreate")
+}
+
+func parseOptionalBoolean(raw, member string) (bool, *protocol.AWSError) {
 	if raw == "" {
 		return false, nil
 	}
-	disabled, err := strconv.ParseBool(raw)
+	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return false, cfnerr("ValidationError",
-			fmt.Sprintf("Value '%s' at 'disableRollback' failed to satisfy constraint: Member must be a boolean", raw),
+			fmt.Sprintf("Value '%s' at '%s' failed to satisfy constraint: Member must be a boolean", raw, member),
 			http.StatusBadRequest)
 	}
-	return disabled, nil
+	return value, nil
 }
 
 func collectCapabilities(r *http.Request) []string {

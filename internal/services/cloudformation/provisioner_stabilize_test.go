@@ -203,6 +203,94 @@ func TestCreateStack_rollbackDeletesAResourceThatFailedToStabilize(t *testing.T)
 	}
 }
 
+// AWS applies DeletionPolicy during a failed create rollback too. Retain is
+// the opt-out; RetainExceptOnCreate is the separate policy for deleting only
+// the resource created by the operation that is rolling back.
+func TestCreateStack_rollbackRetainsAResourceWithDeletionPolicyRetain(t *testing.T) {
+	// Given: a resource which exists but cannot stabilize and is marked Retain
+	handler, resType := registerUnstable(t)
+	p := newProvisionerTestFixture(t)
+	stack := &Stack{
+		StackName: "retained-unstable-stack",
+		StackID:   "arn:aws:cloudformation:us-east-1:000000000000:stack/retained-unstable-stack/1111",
+		Region:    "us-east-1",
+	}
+	tmpl := &Template{Resources: map[string]TemplateResource{
+		"R": {
+			Type:           resType,
+			Properties:     map[string]any{"Name": "kept-for-diagnosis"},
+			DeletionPolicy: "Retain",
+		},
+	}}
+
+	// When: creation fails and CloudFormation rolls the stack back
+	p.provisionStackResources(stack, tmpl)
+
+	// Then: the physical resource remains and the event history says why it
+	// was skipped instead of claiming that rollback deleted it.
+	if stack.Status != StatusRollbackComplete {
+		t.Errorf("stack status = %q, want %q", stack.Status, StatusRollbackComplete)
+	}
+	if deleted := handler.deletedIDs(); len(deleted) != 0 {
+		t.Errorf("rollback deleted %v, want the retained resource left in place", deleted)
+	}
+	if len(stack.Resources) != 1 {
+		t.Fatalf("stack resources = %+v, want the failed retained resource", stack.Resources)
+	}
+	resource := stack.Resources[0]
+	if resource.Status != ResourceDeleteSkipped {
+		t.Errorf("resource status = %q, want %q", resource.Status, ResourceDeleteSkipped)
+	}
+	if resource.DeletionPolicy != "Retain" {
+		t.Errorf("DeletionPolicy = %q, want Retain", resource.DeletionPolicy)
+	}
+	if resource.Properties["Name"] != "kept-for-diagnosis" {
+		t.Errorf("resource properties = %#v, want the create properties retained", resource.Properties)
+	}
+
+	events, err := p.store.getStackEvents(context.Background(), stack.StackName)
+	if err != nil {
+		t.Fatalf("getStackEvents: %v", err)
+	}
+	foundSkipped := false
+	for _, event := range events {
+		if event.LogicalResourceID == "R" && event.ResourceStatus == ResourceDeleteSkipped {
+			foundSkipped = true
+		}
+	}
+	if !foundSkipped {
+		t.Errorf("events = %+v, want DELETE_SKIPPED for retained resource R", events)
+	}
+}
+
+func TestStackResource_retentionPolicyDependsOnOperation(t *testing.T) {
+	cases := []struct {
+		name                   string
+		policy                 string
+		operationOverride      bool
+		wantOrdinaryDelete     bool
+		wantCreateRollbackKeep bool
+	}{
+		{name: "no policy", wantOrdinaryDelete: false, wantCreateRollbackKeep: false},
+		{name: "retain", policy: "Retain", wantOrdinaryDelete: true, wantCreateRollbackKeep: true},
+		{name: "retain overridden by rollback operation", policy: "Retain", operationOverride: true, wantOrdinaryDelete: true, wantCreateRollbackKeep: false},
+		{name: "retain except on create", policy: "RetainExceptOnCreate", wantOrdinaryDelete: true, wantCreateRollbackKeep: false},
+		{name: "snapshot emulation", policy: "Snapshot", wantOrdinaryDelete: true, wantCreateRollbackKeep: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := StackResource{DeletionPolicy: tc.policy}
+			if got := resource.shouldRetainOnDelete(); got != tc.wantOrdinaryDelete {
+				t.Errorf("shouldRetainOnDelete() = %v, want %v", got, tc.wantOrdinaryDelete)
+			}
+			if got := resource.shouldRetainOnCreateRollback(tc.operationOverride); got != tc.wantCreateRollbackKeep {
+				t.Errorf("shouldRetainOnCreateRollback() = %v, want %v", got, tc.wantCreateRollbackKeep)
+			}
+		})
+	}
+}
+
 // A resource that never got as far as being created has no physical ID, and
 // rollback must not try to delete one.
 func TestStackResourceExistsServiceSide_onlyWhenItWasNamed(t *testing.T) {
