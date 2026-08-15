@@ -13,6 +13,7 @@ import (
 	"time"
 
 	intmcp "github.com/Neaox/overcast/internal/mcp"
+	"github.com/Neaox/overcast/internal/mcp/providers"
 )
 
 func main() {
@@ -22,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	server := intmcp.NewServer(nil, logger, intmcp.NewRepoProvider(*workspace))
+	server := intmcp.NewServer(nil, logger, providers.NewRepoProvider(*workspace))
 
 	if *stdioFlag {
 		logger.Info("starting workspace MCP server", "transport", "stdio", "workspace", *workspace)

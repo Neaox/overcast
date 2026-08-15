@@ -1,6 +1,6 @@
 //go:build !dev
 
-package mcp
+package providers
 
 // runtimeCapabilitiesDetail returns only the enabled-service list in prod
 // builds where the capability snapshot is not embedded.
