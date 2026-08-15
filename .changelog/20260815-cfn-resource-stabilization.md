@@ -1,0 +1,1 @@
+* [cloudformation] stacks no longer complete around resources that are still being created: ElastiCache caches, MSK and EKS clusters, EFS file systems, mount targets and access points, and Lambda functions are now held open until the service reports them ready, and a resource that reaches a failure status fails the stack with that status rather than a timeout

@@ -6,15 +6,97 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 )
 
 // EFS resource handlers translate AWS::EFS::* CloudFormation properties to the
 // EFS API and dispatch through the emulator router (X-Amz-Target "EFS.<Op>"),
 // so all validation, defaulting, and lifecycle behaviour stays in the service.
+
+// ── EFS stabilization ──────────────────────────────────────────────────────
+//
+// Every EFS create is asynchronous and answers with the resource in "creating".
+// A mount target is the one that matters most: with the NFS data plane on
+// (OVERCAST_EFS_NFS) an export container has to come up behind it, and one that
+// cannot settles in "error". Neither state stopped the stack, so it reported
+// CREATE_COMPLETE around a mount target nothing could mount and the task that
+// mounted it started against it and failed.
+//
+// All three resources report the same field and AWS documents the same values
+// for each: LifeCycleState is "creating | available | updating | deleting |
+// deleted | error".
+
+// efsStabilizeTimeout bounds the wait for an EFS resource to come up. A file
+// system and an access point are near-instant; a mount target has to start an
+// NFS-Ganesha container behind an image pull, which is what this budget is
+// sized for. A mount target that cannot be exported reaches "error" on its own,
+// so the budget only bites on one that never answers either way.
+const efsStabilizeTimeout = 10 * time.Minute
+
+// efsLifecycleStatuses is the vocabulary all three EFS resources are read
+// against.
+//
+// "deleting" and "deleted" are terminal rather than progress: a resource being
+// torn down while a stack waits for it is never going to be available.
+var efsLifecycleStatuses = statusVocabulary{
+	ready:  []string{"available"},
+	failed: []string{"error", "deleting", "deleted"},
+}
+
+// describedEFSResources is the projection an EFS status poll reads. All three
+// describes decode through it: a response carries exactly one of the arrays,
+// and encoding/json leaves the others nil.
+type describedEFSResources struct {
+	FileSystems []struct {
+		LifeCycleState string `json:"LifeCycleState"`
+	} `json:"FileSystems"`
+	MountTargets []struct {
+		LifeCycleState string `json:"LifeCycleState"`
+	} `json:"MountTargets"`
+	AccessPoints []struct {
+		LifeCycleState string `json:"LifeCycleState"`
+	} `json:"AccessPoints"`
+}
+
+// efsWait builds the wait for one EFS resource. stateOf pulls the lifecycle
+// state out of whichever array was asked for and reports false when the
+// resource is not in the answer at all — deleted from under the stack, which
+// ends the wait rather than being polled over.
+//
+// EFS records no reason of its own: LifeCycleState is the whole of what the API
+// says about a mount target whose export failed, so the state is what a failure
+// here has to report.
+func efsWait(router http.Handler, region, subject, target, idParam, id string,
+	stateOf func(describedEFSResources) (string, bool),
+) stabilizeWait {
+	operation := strings.TrimPrefix(target, "EFS.")
+	return stabilizeWait{
+		subject:  subject,
+		goal:     `reach lifecycle state "available"`,
+		timeout:  efsStabilizeTimeout,
+		statuses: efsLifecycleStatuses,
+		describe: func(ctx context.Context) (string, string, error) {
+			rec, err := internalJSON(ctx, router, region, target, map[string]any{idParam: id})
+			if err != nil {
+				return "", "", fmt.Errorf("%s: %s: %w", operation, subject, err)
+			}
+			var decoded describedEFSResources
+			if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+				return "", "", fmt.Errorf("%s: parse response: %w", operation, err)
+			}
+			state, found := stateOf(decoded)
+			if !found {
+				return "", "", fmt.Errorf("%s no longer exists", subject)
+			}
+			return state, "", nil
+		},
+	}
+}
 
 // ── AWS::EFS::FileSystem ───────────────────────────────────────────────────
 
@@ -72,6 +154,21 @@ func (h *efsFileSystemHandler) Create(ctx context.Context, router http.Handler, 
 		arn = fmt.Sprintf("arn:aws:elasticfilesystem:%s:%s:file-system/%s", rCtx.Region, rCtx.AccountID, resp.FileSystemId)
 	}
 	return resp.FileSystemId, map[string]string{"Arn": arn, "FileSystemId": resp.FileSystemId}, nil
+}
+
+// Stabilize holds the resource open until the file system is available, which
+// is what every mount target and access point in the same stack is waiting on.
+// See resourceStabilizer.
+func (h *efsFileSystemHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
+		fmt.Sprintf("file system %s", physicalID),
+		"EFS.DescribeFileSystems", "FileSystemId", physicalID,
+		func(d describedEFSResources) (string, bool) {
+			if len(d.FileSystems) == 0 {
+				return "", false
+			}
+			return d.FileSystems[0].LifeCycleState, true
+		}))
 }
 
 func (h *efsFileSystemHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -206,6 +303,24 @@ func (h *efsMountTargetHandler) Create(ctx context.Context, router http.Handler,
 	return resp.MountTargetId, map[string]string{"Id": resp.MountTargetId, "IpAddress": resp.IpAddress}, nil
 }
 
+// Stabilize holds the resource open until the mount target is available. This
+// is the one that costs the most to get wrong: the NFS export behind a mount
+// target is what a task actually mounts, and a stack that completed while the
+// export was still starting handed a container a target it could not mount. A
+// target whose export cannot be brought up settles in "error", which ends the
+// wait rather than running it out. See resourceStabilizer.
+func (h *efsMountTargetHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
+		fmt.Sprintf("mount target %s", physicalID),
+		"EFS.DescribeMountTargets", "MountTargetId", physicalID,
+		func(d describedEFSResources) (string, bool) {
+			if len(d.MountTargets) == 0 {
+				return "", false
+			}
+			return d.MountTargets[0].LifeCycleState, true
+		}))
+}
+
 func (h *efsMountTargetHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteMountTarget", map[string]any{"MountTargetId": physicalID}); err != nil {
 		return fmt.Errorf("DeleteMountTarget: %w", err)
@@ -271,6 +386,20 @@ func (h *efsAccessPointHandler) Create(ctx context.Context, router http.Handler,
 		arn = fmt.Sprintf("arn:aws:elasticfilesystem:%s:%s:access-point/%s", rCtx.Region, rCtx.AccountID, resp.AccessPointId)
 	}
 	return resp.AccessPointId, map[string]string{"AccessPointId": resp.AccessPointId, "Arn": arn}, nil
+}
+
+// Stabilize holds the resource open until the access point is available: a task
+// that mounts through one cannot do so before then. See resourceStabilizer.
+func (h *efsAccessPointHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
+		fmt.Sprintf("access point %s", physicalID),
+		"EFS.DescribeAccessPoints", "AccessPointId", physicalID,
+		func(d describedEFSResources) (string, bool) {
+			if len(d.AccessPoints) == 0 {
+				return "", false
+			}
+			return d.AccessPoints[0].LifeCycleState, true
+		}))
 }
 
 func (h *efsAccessPointHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {

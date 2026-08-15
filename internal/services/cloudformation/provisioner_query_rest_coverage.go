@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 )
 
@@ -939,6 +941,74 @@ func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 	return arn, map[string]string{"Arn": arn}, nil
 }
 
+// eksStabilizeTimeout bounds the wait for an EKS control plane to come up. It
+// is AWS's own budget for the same wait: botocore's ClusterActive waiter allows
+// 30s × 40 attempts. Overcast's live mode starts a k3s container behind an
+// image pull, which fits inside that; the cluster's own FAILED status ends the
+// wait early, so this is the budget for one that never answers either way.
+const eksStabilizeTimeout = 20 * time.Minute
+
+// eksClusterStatuses is botocore's ClusterActive waiter, whose acceptors are
+// success on ACTIVE and failure on DELETING and FAILED. The cluster status
+// enum has three more — CREATING, UPDATING, PENDING — and the waiter treats
+// each as work in progress, which is what an unlisted status does here.
+var eksClusterStatuses = statusVocabulary{
+	ready:  []string{"ACTIVE"},
+	failed: []string{"FAILED", "DELETING"},
+}
+
+// Stabilize holds the resource open until the control plane answers. Nothing
+// downstream of an EKS cluster works before that: in live mode the endpoint is
+// empty until the cluster is ACTIVE, and a kubeconfig fetched against a cluster
+// that is still CREATING is refused outright. See resourceStabilizer.
+func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	// The physical ID is the cluster ARN, "arn:…:cluster/{name}"; every call
+	// after create takes the name, the same way Update reads it back.
+	name := physicalID
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	subject := fmt.Sprintf("EKS cluster %s", name)
+	return awaitResourceReady(ctx, clk, stabilizeWait{
+		subject:  subject,
+		goal:     "become ACTIVE",
+		timeout:  eksStabilizeTimeout,
+		statuses: eksClusterStatuses,
+		describe: func(ctx context.Context) (string, string, error) {
+			rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DescribeCluster",
+				map[string]any{"name": name})
+			if err != nil {
+				return "", "", fmt.Errorf("DescribeCluster: %s: %w", subject, err)
+			}
+			var resp struct {
+				Cluster struct {
+					Status string `json:"status"`
+					Health struct {
+						Issues []struct {
+							Code    string `json:"code"`
+							Message string `json:"message"`
+						} `json:"issues"`
+					} `json:"health"`
+				} `json:"cluster"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				return "", "", fmt.Errorf("DescribeCluster: parse response: %w", err)
+			}
+			// health.issues is where DescribeCluster carries what went wrong
+			// with a cluster, as a code and a message. Prefer the message; a
+			// code alone still beats reporting nothing.
+			var reason string
+			if issues := resp.Cluster.Health.Issues; len(issues) > 0 {
+				reason = issues[0].Message
+				if reason == "" {
+					reason = issues[0].Code
+				}
+			}
+			return resp.Cluster.Status, reason, nil
+		},
+	})
+}
+
 func (h *eksClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"name": physicalID}
 	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteCluster", body)
@@ -1382,6 +1452,91 @@ func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 	}
 
 	return arn, map[string]string{"Arn": arn}, nil
+}
+
+// mskStabilizeTimeout bounds the wait for an MSK cluster to come up. Real MSK
+// is the slowest resource here by a wide margin — a provisioned cluster takes
+// fifteen to thirty minutes to report ACTIVE — and a budget shorter than the
+// service's own working case would fail deploys that were going to succeed.
+// Overcast's is a broker container behind an image pull, minutes on a cold one.
+// Either way the cluster's own FAILED state is the fast way out, so this only
+// bites on a cluster that is genuinely wedged.
+const mskStabilizeTimeout = 45 * time.Minute
+
+// mskClusterStatuses is the vocabulary an MSK cluster is read against. botocore
+// ships no waiters for kafka, so this is the documented ClusterState enum:
+// ACTIVE, CREATING, UPDATING, DELETING, FAILED, MAINTENANCE, REBOOTING_BROKER,
+// HEALING.
+//
+// FAILED is what Overcast now reports for a cluster whose brokers never answer,
+// and it is terminal: waiting one out would spend the whole budget and then
+// report a timeout over a failure the cluster had already named. DELETING is
+// terminal for the same reason it is for a cache — a cluster being torn down
+// while a stack waits for it will never be ACTIVE. MAINTENANCE,
+// REBOOTING_BROKER and HEALING are states a working cluster passes through and
+// comes back from, so they keep the wait going.
+var mskClusterStatuses = statusVocabulary{
+	ready:  []string{"ACTIVE"},
+	failed: []string{"FAILED", "DELETING"},
+}
+
+// Stabilize holds the resource open until the cluster's brokers are up, so a
+// stack cannot complete around a cluster nothing can produce to. See
+// resourceStabilizer.
+func (h *mskClusterHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	// MSK leaves a cluster in CREATING when there is no broker container to
+	// start, so a deployment without Docker has nothing that can answer this
+	// wait — see noContainerRuntime.
+	if cfg == nil || noContainerRuntime(cfg.MSKDockerSocket) {
+		return nil
+	}
+	subject := fmt.Sprintf("MSK cluster %s", mskClusterNameFromARN(physicalID))
+	return awaitResourceReady(ctx, clk, stabilizeWait{
+		subject:  subject,
+		goal:     "become ACTIVE",
+		timeout:  mskStabilizeTimeout,
+		statuses: mskClusterStatuses,
+		describe: func(ctx context.Context) (string, string, error) {
+			// The ARN is a non-greedy httpLabel, so it goes into one escaped
+			// path segment exactly as an SDK would send it — the same shape
+			// Delete uses.
+			rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodGet,
+				"/v1/clusters/"+url.PathEscape(physicalID), "", nil)
+			if err != nil {
+				return "", "", fmt.Errorf("DescribeCluster: %s: %w", subject, err)
+			}
+			var resp struct {
+				ClusterInfo struct {
+					State     string `json:"state"`
+					StateInfo struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					} `json:"stateInfo"`
+				} `json:"clusterInfo"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				return "", "", fmt.Errorf("DescribeCluster: parse response: %w", err)
+			}
+			// stateInfo is what AWS documents as the code and message for a
+			// cluster "in an unusable state", which is where a broker's own
+			// failure ends up. Prefer the message; fall back to the code.
+			reason := resp.ClusterInfo.StateInfo.Message
+			if reason == "" {
+				reason = resp.ClusterInfo.StateInfo.Code
+			}
+			return resp.ClusterInfo.State, reason, nil
+		},
+	})
+}
+
+// mskClusterNameFromARN reads the cluster name out of a cluster ARN
+// (arn:aws:kafka:region:account:cluster/name/uuid), so a failure names the
+// cluster the template asked for rather than reciting an ARN back.
+func mskClusterNameFromARN(clusterARN string) string {
+	if parts := strings.Split(clusterARN, "/"); len(parts) >= 2 {
+		return parts[1]
+	}
+	return clusterARN
 }
 
 func (h *mskClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {

@@ -2244,7 +2244,133 @@ func (h *sesTemplateHandler) Delete(ctx context.Context, router http.Handler, cf
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-// fmtPropString converts a numeric or string property to a string suitable
+// ── ElastiCache stabilization ──────────────────────────────────────────────
+//
+// CreateCacheCluster, CreateReplicationGroup and CreateServerlessCache are all
+// asynchronous: each answers with the cache in "creating" and the engine comes
+// up behind it, which against a real Redis container is an image pull plus a
+// TCP health check. CloudFormation does not pass that on — an
+// AWS::ElastiCache::CacheCluster is not CREATE_COMPLETE until the cluster is
+// "available" — and the handlers below export ConfigurationEndpoint.Address out
+// of the create response, so the endpoint a dependent resource reads with a
+// GetAtt was known long before anything was listening on it.
+//
+// The statuses are AWS's, from the API reference: CacheCluster's
+// CacheClusterStatus is "available, creating, deleted, deleting,
+// incompatible-network, modifying, rebooting cluster nodes, restore-failed,
+// snapshotting"; a ReplicationGroup's Status is "creating, available,
+// modifying, deleting, create-failed, snapshotting"; a ServerlessCache's is
+// "CREATING, AVAILABLE, DELETING, CREATE-FAILED and MODIFYING".
+//
+// The three do not share a vocabulary, and assuming they did was a real mistake
+// here: a cache cluster has no "create-failed" status at all, so classifying
+// one would have been inventing a status AWS does not define. Each resource is
+// therefore read against its own set, taken from AWS's own machine-readable
+// answer to "what does a client wait for" — botocore's
+// elasticache/2015-02-02/waiters-2.json — with the API reference filling the
+// gaps a waiter leaves.
+//
+// None of the three carries a reason on the wire: ElastiCache models no
+// equivalent of an RDS instance event. A failure here therefore reports the
+// status the cache reached and what it was being waited for, and nothing more.
+
+// elastiCacheStabilizeTimeout bounds the wait for a cache to come up. AWS's own
+// waiters allow ten minutes (15s × 40 attempts) for both a cache cluster and a
+// replication group; this is half as much again, because Overcast's cache has
+// to pull an image before the engine being waited on exists at all. A cache
+// that has given up says so in its status, so this only bites on one that is
+// genuinely wedged.
+const elastiCacheStabilizeTimeout = 15 * time.Minute
+
+// elastiCacheClusterStatuses is the CacheClusterAvailable waiter's acceptors,
+// verbatim: success on "available", failure on the four below.
+var elastiCacheClusterStatuses = statusVocabulary{
+	ready:  []string{"available"},
+	failed: []string{"deleted", "deleting", "incompatible-network", "restore-failed"},
+}
+
+// elastiCacheReplicationGroupStatuses is the ReplicationGroupAvailable waiter's
+// acceptors — success on "available", failure on "deleted" — plus the
+// "create-failed" that API_ReplicationGroup documents and the waiter predates.
+// A group that has already given up is what Overcast reports when an engine
+// never answers, and following the waiter alone would leave it looking like one
+// still working: the stack would spend its whole budget and then blame a
+// timeout for a failure the group had already named.
+var elastiCacheReplicationGroupStatuses = statusVocabulary{
+	ready:  []string{"available"},
+	failed: []string{"deleted", "create-failed"},
+}
+
+// elastiCacheServerlessStatuses is API_ServerlessCache's documented set; there
+// is no waiter for a serverless cache. AWS documents these in upper case and
+// Overcast writes them lower — which is one of the reasons the match folds case.
+var elastiCacheServerlessStatuses = statusVocabulary{
+	ready:  []string{"available"},
+	failed: []string{"create-failed", "deleting"},
+}
+
+// describedElastiCaches is the projection a cache status poll reads. All three
+// describes decode through it: a response carries exactly one of the element
+// paths, and encoding/xml leaves the others empty.
+type describedElastiCaches struct {
+	Clusters []struct {
+		Status string `xml:"CacheClusterStatus"`
+	} `xml:"DescribeCacheClustersResult>CacheClusters>CacheCluster"`
+	ReplicationGroups []struct {
+		Status string `xml:"Status"`
+	} `xml:"DescribeReplicationGroupsResult>ReplicationGroups>ReplicationGroup"`
+	ServerlessCaches []struct {
+		Status string `xml:"Status"`
+	} `xml:"DescribeServerlessCachesResult>ServerlessCaches>ServerlessCache"`
+}
+
+// describeElastiCaches runs one ElastiCache describe and decodes it. The three
+// calls differ in nothing but the action and the name of the identifier.
+func describeElastiCaches(ctx context.Context, router http.Handler, region, action, idParam, id string) (describedElastiCaches, error) {
+	var decoded describedElastiCaches
+	rec, err := internalQuery(ctx, router, region, map[string]string{
+		"Action":  action,
+		"Version": "2015-02-02",
+		idParam:   id,
+	})
+	if err != nil {
+		return decoded, fmt.Errorf("%s: %w", action, err)
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		return decoded, fmt.Errorf("%s: parse response: %w", action, err)
+	}
+	return decoded, nil
+}
+
+// elastiCacheWait builds the wait for one cache resource. statusOf pulls the
+// status out of whichever of the three describe shapes was asked for, and
+// reports false when the cache is not in the answer at all — deleted from under
+// the stack, which ends the wait rather than being polled over.
+func elastiCacheWait(router http.Handler, region, subject, action, idParam, id string,
+	statuses statusVocabulary, statusOf func(describedElastiCaches) (string, bool),
+) stabilizeWait {
+	return stabilizeWait{
+		subject:  subject,
+		goal:     "become available",
+		timeout:  elastiCacheStabilizeTimeout,
+		statuses: statuses,
+		describe: func(ctx context.Context) (string, string, error) {
+			decoded, err := describeElastiCaches(ctx, router, region, action, idParam, id)
+			if err != nil {
+				return "", "", err
+			}
+			status, found := statusOf(decoded)
+			if !found {
+				return "", "", fmt.Errorf("%s no longer exists", subject)
+			}
+			// ElastiCache models no per-cache failure reason — there is no
+			// DescribeEvents equivalent here — so the status the cache reached
+			// is the whole of what can be reported.
+			return status, "", nil
+		},
+	}
+}
+
 // ── AWS::ElastiCache::CacheCluster ───────────────────────────────────────────
 
 type elastiCacheCacheClusterHandler struct{}
@@ -2294,6 +2420,26 @@ func (h *elastiCacheCacheClusterHandler) Create(ctx context.Context, router http
 		"ConfigurationEndpoint.Address": endpointAddr,
 		"ConfigurationEndpoint.Port":    endpointPort,
 	}, nil
+}
+
+// Stabilize holds the resource open until the cache answers. The endpoint
+// attributes above are minted at create time, so they are known before the
+// engine is — and a GetAtt on ConfigurationEndpoint.Address is exactly the
+// dependency that must not run early. See resourceStabilizer.
+func (h *elastiCacheCacheClusterHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
+		return nil
+	}
+	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
+		fmt.Sprintf("cache cluster %s", physicalID),
+		"DescribeCacheClusters", "CacheClusterId", physicalID,
+		elastiCacheClusterStatuses,
+		func(d describedElastiCaches) (string, bool) {
+			if len(d.Clusters) == 0 {
+				return "", false
+			}
+			return d.Clusters[0].Status, true
+		}))
 }
 
 func (h *elastiCacheCacheClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -2352,6 +2498,25 @@ func (h *elastiCacheServerlessCacheHandler) Create(ctx context.Context, router h
 		"Status":                 extractXMLValue(body, "Status"),
 		"CreateTime":             extractXMLValue(body, "CreateTime"),
 	}, nil
+}
+
+// Stabilize holds the resource open until the serverless cache answers, on the
+// same rule and for the same reason as a cache cluster — the endpoint it
+// exports is minted before there is anything behind it. See resourceStabilizer.
+func (h *elastiCacheServerlessCacheHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
+		return nil
+	}
+	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
+		fmt.Sprintf("serverless cache %s", physicalID),
+		"DescribeServerlessCaches", "ServerlessCacheName", physicalID,
+		elastiCacheServerlessStatuses,
+		func(d describedElastiCaches) (string, bool) {
+			if len(d.ServerlessCaches) == 0 {
+				return "", false
+			}
+			return d.ServerlessCaches[0].Status, true
+		}))
 }
 
 func (h *elastiCacheServerlessCacheHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -2506,6 +2671,26 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 	}, nil
 }
 
+// Stabilize holds the resource open until the replication group answers. Its
+// ConfigurationEndpoint and PrimaryEndPoint attributes are minted at create
+// time, so the wait is what stands between a GetAtt on one of them and an
+// endpoint with no engine behind it. See resourceStabilizer.
+func (h *elastiCacheReplicationGroupHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
+		return nil
+	}
+	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
+		fmt.Sprintf("replication group %s", physicalID),
+		"DescribeReplicationGroups", "ReplicationGroupId", physicalID,
+		elastiCacheReplicationGroupStatuses,
+		func(d describedElastiCaches) (string, bool) {
+			if len(d.ReplicationGroups) == 0 {
+				return "", false
+			}
+			return d.ReplicationGroups[0].Status, true
+		}))
+}
+
 func (h *elastiCacheReplicationGroupHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	params := map[string]string{
 		"Action":             "DeleteReplicationGroup",
@@ -2636,6 +2821,7 @@ func (h *elastiCacheSubnetGroupHandler) Update(ctx context.Context, router http.
 
 // ── fmtPropString ──────────────────────────────────────────────────────────────
 
+// fmtPropString converts a numeric or string property to a string suitable
 // for Query-protocol form params (e.g. AllocatedStorage might be float64
 // from JSON unmarshalling).
 func fmtPropString(props map[string]any, key string) string {
