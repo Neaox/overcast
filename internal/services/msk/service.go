@@ -380,12 +380,21 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get(kafkaVersionsPath, s.handler.listKafkaVersions)
 
 	// The v1 cluster subtree is served by three dispatch handlers that pick the
-	// operation out of the path themselves, because the ARN is followed by a
-	// sub-resource on some bindings (…/bootstrap-brokers, …/configuration) and
-	// a caller may send it with literal slashes. internal/router's
-	// weaklyServedBindings records what that costs.
+	// operation out of the path themselves, because the ARN reaches Overcast in
+	// two spellings: percent-encoded into one segment, as every AWS client sends
+	// it, and with literal slashes, as CloudFormation's provisioner and this
+	// repo's own callers send it. Only the first has the shape the modeled
+	// `{ClusterArn}` label binds, so a label alone would not serve the second.
+	// internal/router's weaklyServedBindings records what the wildcard costs.
+	//
+	// What the dispatchers must not do is treat the whole tail as the ARN.
+	// Fourteen kafka operations hang a sub-resource off the cluster ARN and MSK
+	// emulates two of them, so absorbing "…/nodes" into the ARN answered
+	// ListNodes with "Cluster arn:…:cluster/probe/<uuid>/nodes not found" — a
+	// plausible reply to a question nobody asked. modeledOperation asks the
+	// pinned model where the ARN ends instead; see dispatch.go.
 	r.Get(clustersPath+"/*", s.handler.clusterGetDispatch)
-	r.Delete(clustersPath+"/*", s.handler.deleteCluster)
+	r.Delete(clustersPath+"/*", s.handler.clusterDeleteDispatch)
 	r.Put(clustersPath+"/*", s.handler.clusterPutDispatch)
 
 	// V2 cluster API (provisioned + serverless). {clusterArn} is a non-greedy
@@ -393,15 +402,31 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// segment — see arnFromPath. A label rather than a subtree wildcard is what
 	// stops the v2 operations Overcast does not implement — ListClusterOperationsV2
 	// at …/{ClusterArn}/operations — reaching describeClusterV2, which strips
-	// nothing and would answer them "cluster not found": a plausible reply to a
-	// question nobody asked.
+	// nothing and would answer them "cluster not found".
+	//
+	// The label does stop that, but on its own it did not produce the 501 it was
+	// assumed to leave behind. PathPrefixes cannot supply one — see its own
+	// comment — so the request went to the router's REST fallback, which
+	// classified the *decoded* path: the ARN's %2F-encoded slashes reappeared as
+	// path segments, no binding matched, and S3's wildcard answered a signed MSK
+	// call with <Error><Code>NoSuchKey</Code>…</Error>. claimModeledPath fixes
+	// the classification; clusterV2GetDispatch below is what makes the answer
+	// MSK's for an unsigned caller too, since the fallback is by design only
+	// reached by traffic that positively addresses a non-S3 service.
+	//
+	// The label route stays, and the wildcard sits beside it rather than
+	// replacing it: chi tries a parameter node before a catch-all, so
+	// DescribeClusterV2 is still proven served at the binding AWS models.
 	r.Post(clustersV2Path, s.handler.createClusterV2)
 	r.Get(clustersV2Path, s.handler.listClustersV2)
 	r.Get(clustersV2Path+"/{clusterArn}", s.handler.describeClusterV2)
+	r.Get(clustersV2Path+"/*", s.handler.clusterV2GetDispatch)
 
-	// Configuration routes with ARN-in-path
-	r.Get(configurationsPath+"/*", s.handler.describeConfiguration)
-	r.Delete(configurationsPath+"/*", s.handler.deleteConfiguration)
+	// Configuration routes with ARN-in-path, on the same two-spelling wildcard
+	// as the clusters, and with the same sub-resources beneath the ARN:
+	// ListConfigurationRevisions and DescribeConfigurationRevision.
+	r.Get(configurationsPath+"/*", s.handler.configurationGetDispatch)
+	r.Delete(configurationsPath+"/*", s.handler.configurationDeleteDispatch)
 
 	// NOTE: /v1/tags routes are NOT registered here — see TagsRouter.
 }
@@ -411,6 +436,14 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 // /api/v2/clusters reads as the object v2/clusters in a bucket named api.
 // /v1/tags is deliberately absent — it is shared with the other taggable
 // services and mounted by the router, not by RegisterRoutes.
+//
+// "In a subset-registered router" is the whole of it, and it is worth stating
+// plainly because the opposite was assumed here: the router consults this list
+// only for a service config.TestOnlyServiceSubset has *excluded*, to keep an
+// absent service's paths out of S3's wildcard. When MSK is enabled — every real
+// run — these prefixes register nothing at all, so an MSK path RegisterRoutes
+// does not claim is not protected by anything in this file. Its 501 comes from
+// the router's REST fallback recognising the modeled binding, and nowhere else.
 func (s *Service) PathPrefixes() []string {
 	return []string{clustersPath, configurationsPath, kafkaVersionsPath, clustersV2Path}
 }

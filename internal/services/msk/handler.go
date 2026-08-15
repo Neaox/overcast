@@ -124,8 +124,13 @@ func (h *Handler) claimConfigurationName(ctx context.Context, name string) (func
 // for a non-greedy label, and botocore's percent_encode and the JS SDK's
 // extendedEncodeURIComponent do the same. chi matches against URL.RawPath when
 // the request carries one, so the parameter holds the encoded form and this
-// decodes it. A caller that sends literal slashes instead reaches the v1
-// subtree wildcards, where the decode is a no-op.
+// decodes it; for a caller that sends literal slashes instead the decode is a
+// no-op.
+//
+// It serves the routes whose whole tail is the ARN: the tag router's, and the
+// v2 cluster label. The subtrees that hang a sub-resource off the ARN cannot
+// use it, because there the tail is not an ARN — see modeledOperation in
+// dispatch.go.
 func arnFromPath(r *http.Request, param string) (string, error) {
 	raw := chi.URLParam(r, param)
 	if raw == "" {
@@ -238,19 +243,6 @@ func matchesNameFilter(c *Cluster, filter string) bool {
 	return filter == "" || strings.HasPrefix(c.ClusterName, filter)
 }
 
-// ── clusterGetDispatch ────────────────────────────────────────────────────────
-
-// clusterGetDispatch dispatches GET /v1/clusters/* to either getBootstrapBrokers
-// (when the path ends in /bootstrap-brokers) or describeCluster.
-func (h *Handler) clusterGetDispatch(w http.ResponseWriter, r *http.Request) {
-	wild := chi.URLParam(r, "*")
-	if strings.HasSuffix(wild, "/bootstrap-brokers") {
-		h.getBootstrapBrokers(w, r)
-		return
-	}
-	h.describeCluster(w, r)
-}
-
 // ── createCluster ─────────────────────────────────────────────────────────────
 
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
@@ -323,9 +315,8 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 
 // ── describeCluster ───────────────────────────────────────────────────────────
 
-func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request, clusterArn string) {
+	if clusterArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
@@ -376,9 +367,8 @@ func clusterV1View(c *Cluster, tags map[string]string) map[string]any {
 
 // ── deleteCluster ─────────────────────────────────────────────────────────────
 
-func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, clusterArn string) {
+	if clusterArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
@@ -422,15 +412,11 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 
 // ── getBootstrapBrokers ───────────────────────────────────────────────────────
 
-func (h *Handler) getBootstrapBrokers(w http.ResponseWriter, r *http.Request) {
-	// clusterGetDispatch routed this off the /v1/clusters/* wildcard, so the
-	// parameter still holds the whole tail — the ARN and the sub-resource.
-	clusterArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) getBootstrapBrokers(w http.ResponseWriter, r *http.Request, clusterArn string) {
+	if clusterArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
-	clusterArn = strings.TrimSuffix(clusterArn, "/bootstrap-brokers")
 	cluster, aerr := h.store.getCluster(r.Context(), clusterArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -557,9 +543,8 @@ func (h *Handler) listConfigurations(w http.ResponseWriter, r *http.Request) {
 
 // ── describeConfiguration ─────────────────────────────────────────────────────
 
-func (h *Handler) describeConfiguration(w http.ResponseWriter, r *http.Request) {
-	configArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) describeConfiguration(w http.ResponseWriter, r *http.Request, configArn string) {
+	if configArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid configArn"))
 		return
 	}
@@ -573,9 +558,8 @@ func (h *Handler) describeConfiguration(w http.ResponseWriter, r *http.Request) 
 
 // ── deleteConfiguration ───────────────────────────────────────────────────────
 
-func (h *Handler) deleteConfiguration(w http.ResponseWriter, r *http.Request) {
-	configArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) deleteConfiguration(w http.ResponseWriter, r *http.Request, configArn string) {
+	if configArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid configArn"))
 		return
 	}
@@ -798,9 +782,19 @@ func (h *Handler) listClustersV2(w http.ResponseWriter, r *http.Request) {
 
 // ── describeClusterV2 ─────────────────────────────────────────────────────────
 
+// describeClusterV2 serves the modeled label route. The wildcard beside it
+// resolves the ARN itself and calls describeClusterV2Arn directly.
 func (h *Handler) describeClusterV2(w http.ResponseWriter, r *http.Request) {
 	clusterArn, err := arnFromPath(r, "clusterArn")
 	if err != nil {
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
+		return
+	}
+	h.describeClusterV2Arn(w, r, clusterArn)
+}
+
+func (h *Handler) describeClusterV2Arn(w http.ResponseWriter, r *http.Request, clusterArn string) {
+	if clusterArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
@@ -852,27 +846,13 @@ func clusterV2View(c *Cluster, tags map[string]string) map[string]any {
 	return view
 }
 
-// ── clusterPutDispatch ────────────────────────────────────────────────────────
-
-// clusterPutDispatch dispatches PUT /v1/clusters/* based on the path suffix.
-func (h *Handler) clusterPutDispatch(w http.ResponseWriter, r *http.Request) {
-	wild := chi.URLParam(r, "*")
-	if strings.HasSuffix(wild, "/configuration") {
-		h.updateClusterConfiguration(w, r)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
-}
-
 // ── updateClusterConfiguration ────────────────────────────────────────────────
 
-func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromPath(r, "*")
-	if err != nil {
+func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Request, clusterArn string) {
+	if clusterArn == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
-	clusterArn = strings.TrimSuffix(clusterArn, "/configuration")
 
 	// The configuration reference is a modeled `configurationInfo` object of
 	// {arn, revision}, and AWS marks it required. This read a flat
