@@ -23,6 +23,7 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
 const cacheXMLNS = "http://elasticache.amazonaws.com/doc/2015-02-02/"
@@ -766,33 +767,41 @@ func (h *Handler) cleanupCacheContainer(ctx context.Context, clusterID, containe
 	}
 }
 
-// scheduleHealthCheck polls TCP connectivity and transitions the cluster to
-// "available" once Redis responds. After maxRetries the cluster stays in its
-// current state — it is never falsely marked "available" when the engine is
-// not answering. A Docker container-died event arriving after exhaustion will
-// still transition to "stopped".
-// region is the region the cluster is stored under — the callbacks run outside
-// any request context.
+// scheduleHealthCheck waits for the cache engine to answer its own protocol and
+// transitions the cluster to "available", or to a terminal failure carrying why
+// when it never does. region is the region the cluster is stored under — the
+// callbacks run outside any request context.
 func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) {
-	const maxRetries = 30
-	var attempt int
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		attempt++
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
-		if err == nil {
-			conn.Close()
-			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting", "modifying")
-			return
-		}
-		if attempt < maxRetries {
-			h.scheduler.AfterScoped(region, clusterID, "health", 2*time.Second, check)
-		} else {
-			h.log.Warn("ElastiCache health check timed out — cluster stays in current state",
-				zap.String("cluster", clusterID), zap.Int("attempts", attempt))
-		}
-	}
-	h.scheduler.AfterScoped(region, clusterID, "health", 1*time.Second, check)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	readiness.Watch{
+		Scheduler:  h.scheduler,
+		Clock:      h.clk,
+		Region:     region,
+		ResourceID: clusterID,
+		Transition: "health",
+		Subject:    "the cache engine at " + addr,
+		Policy:     cacheReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			got, aerr := h.store.getCacheCluster(ctx, clusterID)
+			if aerr != nil || got == nil {
+				return readiness.Abandoned()
+			}
+			if !statusIn(got.CacheClusterStatus, cacheClusterAwaiting) {
+				// Stopped, deleted or modified while starting — not ours.
+				return readiness.Abandoned()
+			}
+			if err := probeEngine(ctx, got.Engine, addr); err != nil {
+				return readiness.Retry(err)
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
+			h.transitionCacheCluster(ctx, clusterID, "available", cacheClusterAwaiting...)
+		},
+		OnFailed: func(ctx context.Context, reason string) {
+			h.failCacheCluster(ctx, clusterID, reason)
+		},
+	}.Start()
 }
 
 // teardownOrphanedContainer removes a container whose resource record was
@@ -1029,29 +1038,48 @@ func (h *Handler) cleanupReplicationGroupContainer(ctx context.Context, rgID, co
 	}
 }
 
-// scheduleReplicationGroupHealthCheck polls TCP connectivity and transitions the
-// replication group to "available" once the container responds. region is the
-// region the replication group is stored under.
+// scheduleReplicationGroupHealthCheck waits for the group's primary node to
+// answer and transitions the group to "available", or to "create-failed"
+// carrying why when it never does.
+//
+// The exhaustion branch used to transition to "available" (#881). Thirty failed
+// dials in a row were treated as grounds for reporting a working replication
+// group, so DescribeReplicationGroups answered "available" for a group with
+// nothing behind its configuration endpoint — and unlike every other instance
+// of this bug, it did not even need a container to have existed: a group whose
+// start never got as far as Docker took the same path.
+//
+// region is the region the replication group is stored under.
 func (h *Handler) scheduleReplicationGroupHealthCheck(region, rgID, host string, port int) {
-	const maxRetries = 30
-	var attempt int
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		attempt++
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
-		if err == nil {
-			conn.Close()
-			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting", "modifying")
-			return
-		}
-		if attempt < maxRetries {
-			h.scheduler.AfterScoped(region, rgID, "rg-health", 2*time.Second, check)
-		} else {
-			h.log.Warn("ElastiCache RG health check timed out", zap.String("rg", rgID), zap.Int("attempts", attempt))
-			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
-		}
-	}
-	h.scheduler.AfterScoped(region, rgID, "rg-health", 1*time.Second, check)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	readiness.Watch{
+		Scheduler:  h.scheduler,
+		Clock:      h.clk,
+		Region:     region,
+		ResourceID: rgID,
+		Transition: "rg-health",
+		Subject:    "the primary node at " + addr,
+		Policy:     cacheReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			got, aerr := h.store.getReplicationGroup(ctx, rgID)
+			if aerr != nil || got == nil {
+				return readiness.Abandoned()
+			}
+			if !statusIn(got.Status, replicationGroupAwaiting) {
+				return readiness.Abandoned()
+			}
+			if err := probeEngine(ctx, got.Engine, addr); err != nil {
+				return readiness.Retry(err)
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
+			h.transitionReplicationGroup(ctx, rgID, "available", replicationGroupAwaiting...)
+		},
+		OnFailed: func(ctx context.Context, reason string) {
+			h.failReplicationGroup(ctx, rgID, reason)
+		},
+	}.Start()
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

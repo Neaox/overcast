@@ -33,6 +33,7 @@ package rds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -43,6 +44,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
 const (
@@ -217,9 +219,24 @@ func (h *Handler) credentialBootstrapComplete(ctx context.Context, inst *DBInsta
 	return err == nil && result.ExitCode == 0
 }
 
+// engineReadiness is the timing the instance health check runs on. Its budget
+// is healthCheckBudget for the reason set out there: a first boot initialises
+// the data directory, which on a cold image is minutes.
+var engineReadiness = readiness.Policy{
+	FirstDelay: 1 * time.Second,
+	Interval:   healthCheckInterval,
+	Budget:     healthCheckBudget,
+}
+
 // scheduleHealthCheck polls the engine until it answers, its container dies, or
 // the budget runs out, and moves the instance to available or failed
 // accordingly. It never leaves an instance in creating/starting.
+//
+// The retry policy and the exhaustion decision live in readiness.Watch, which
+// every container-starting service now shares; what stays here is the evidence,
+// and it is the most careful probe in the repo: the container's own state, a
+// connection, and an exec of the engine's client proving initialization
+// finished. None of that is generic and none of it moved.
 func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int) {
 	if host == "" || port == 0 {
 		// Nothing to dial. Without this the poll dials ":0" for the whole
@@ -232,40 +249,52 @@ func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int)
 	}
 
 	target := net.JoinHostPort(host, strconv.Itoa(port))
-	deadline := h.clk.Now().Add(healthCheckBudget)
+	readiness.Watch{
+		Scheduler:  h.scheduler,
+		Clock:      h.clk,
+		Region:     region,
+		ResourceID: instanceID,
+		Transition: "health",
+		Subject:    "the database at " + target,
+		Policy:     engineReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			got, aerr := h.store.getDBInstance(ctx, instanceID)
+			if aerr != nil {
+				return readiness.Abandoned()
+			}
+			if !awaitingStartup(got.DBInstanceStatus) {
+				// Stopped, deleted or modified while starting — not ours.
+				return readiness.Abandoned()
+			}
 
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instanceID)
-		if aerr != nil {
-			return
-		}
-		if !awaitingStartup(got.DBInstanceStatus) {
-			return // Stopped, deleted or modified while starting — not ours.
-		}
+			// A container that has exited has already decided the outcome;
+			// waiting out the rest of the budget only delays saying so.
+			if reason := h.containerFailureReason(ctx, got); reason != "" {
+				return readiness.Doomed(reason)
+			}
 
-		if reason := h.containerFailureReason(ctx, got); reason != "" {
-			h.failInstance(ctx, instanceID, reason)
-			return
-		}
-
-		conn, err := net.DialTimeout("tcp", target, dialTimeout)
-		if err == nil {
-			conn.Close()
-			if h.credentialBootstrapComplete(ctx, got) {
-				h.markAvailable(ctx, got)
+			conn, err := net.DialTimeout("tcp", target, dialTimeout)
+			if err != nil {
+				return readiness.Retry(err)
+			}
+			conn.Close() //nolint:errcheck // liveness probe connection
+			if !h.credentialBootstrapComplete(ctx, got) {
+				return readiness.Retry(errors.New(
+					"the engine is accepting connections but has not finished initializing"))
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
+			got, aerr := h.store.getDBInstance(ctx, instanceID)
+			if aerr != nil || got == nil {
 				return
 			}
-		}
-
-		if h.clk.Now().Before(deadline) {
-			h.scheduler.AfterScoped(region, instanceID, "health", healthCheckInterval, check)
-			return
-		}
-		h.failInstance(ctx, instanceID, fmt.Sprintf(
-			"the database did not accept connections on %s within %s", target, healthCheckBudget))
-	}
-	h.scheduler.AfterScoped(region, instanceID, "health", 1*time.Second, check)
+			h.markAvailable(ctx, got)
+		},
+		OnFailed: func(ctx context.Context, reason string) {
+			h.failInstance(ctx, instanceID, reason)
+		},
+	}.Start()
 }
 
 // startInstanceContainer brings an instance's container back up, rebuilding it

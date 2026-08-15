@@ -18,6 +18,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
 type xmlCreateServerlessCacheResponse struct {
@@ -509,29 +510,40 @@ func (h *Handler) setServerlessEndpoint(ctx context.Context, c *ServerlessCache)
 	c.ReaderEndpoint = endpoint
 }
 
-// scheduleServerlessHealthCheck polls TCP connectivity and transitions the
-// serverless cache to "available" once the container responds. region is the
-// region the cache is stored under.
+// scheduleServerlessHealthCheck waits for the cache engine to answer and
+// transitions the serverless cache to "available", or to "create-failed"
+// carrying why when it never does. region is the region the cache is stored
+// under.
 func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port int) {
-	const maxRetries = 30
-	var attempt int
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		attempt++
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
-		if err == nil {
-			conn.Close()
-			h.transitionServerlessCache(ctx, name, "available", "creating", "starting", "modifying")
-			return
-		}
-		if attempt < maxRetries {
-			h.scheduler.AfterScoped(region, name, "serverless-health", 2*time.Second, check)
-			return
-		}
-		h.log.Warn("ElastiCache serverless health check timed out — cache stays in current state",
-			zap.String("cache", name), zap.Int("attempts", attempt))
-	}
-	h.scheduler.AfterScoped(region, name, "serverless-health", 1*time.Second, check)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	readiness.Watch{
+		Scheduler:  h.scheduler,
+		Clock:      h.clk,
+		Region:     region,
+		ResourceID: name,
+		Transition: "serverless-health",
+		Subject:    "the cache engine at " + addr,
+		Policy:     cacheReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			got, aerr := h.store.getServerlessCache(ctx, name)
+			if aerr != nil || got == nil {
+				return readiness.Abandoned()
+			}
+			if !statusIn(got.Status, serverlessAwaiting) {
+				return readiness.Abandoned()
+			}
+			if err := probeEngine(ctx, got.Engine, addr); err != nil {
+				return readiness.Retry(err)
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
+			h.transitionServerlessCache(ctx, name, "available", serverlessAwaiting...)
+		},
+		OnFailed: func(ctx context.Context, reason string) {
+			h.failServerlessCache(ctx, name, reason)
+		},
+	}.Start()
 }
 
 func toXMLServerlessCache(c *ServerlessCache) xmlServerlessCache {

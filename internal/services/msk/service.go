@@ -61,9 +61,20 @@ type Cluster struct {
 	BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
 	NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
 	KafkaVersion        string              `json:"kafkaVersion"`
+	// StateInfo carries why a cluster is in an unusable state, which is the job
+	// AWS models it for. Set alongside State = FAILED; cleared on the way back
+	// to ACTIVE.
+	StateInfo *StateInfo `json:"stateInfo,omitempty"`
 	// Internal — not in API responses.
 	DockerContainerID string `json:"_dockerContainerID,omitempty"`
 	HostPort          int    `json:"_hostPort,omitempty"`
+}
+
+// StateInfo is AWS's carrier for why a cluster is in the state it is in.
+// DescribeCluster and DescribeClusterV2 both return it.
+type StateInfo struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // BrokerNodeGroupInfo describes broker node configuration.

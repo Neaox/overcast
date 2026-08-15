@@ -52,7 +52,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 			return
 		}
 		switch rg.Status {
-		case "available", "starting", "creating", "modifying":
+		case "available", "starting", "creating", "modifying", statusCreateFailed:
 			h.transitionReplicationGroup(ctx, rgID, "modifying", "available")
 			h.recoverReplicationGroup(region, rgID)
 			log.Info("replication group container stopped; replacement scheduled",
@@ -71,7 +71,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 			return
 		}
 		switch cache.Status {
-		case "available", "starting", "creating", "modifying":
+		case "available", "starting", "creating", "modifying", statusCreateFailed:
 			h.transitionServerlessCache(ctx, name, "modifying", "available")
 			h.recoverServerlessCache(region, name)
 			log.Info("serverless cache container stopped; replacement scheduled",
@@ -90,7 +90,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.CacheClusterStatus {
-	case "available", "starting", "creating", "modifying":
+	case "available", "starting", "creating", "modifying", statusClusterUnreachable:
 		h.transitionCacheCluster(ctx, p.ResourceID, "modifying", "available")
 		h.recoverCacheCluster(region, p.ResourceID)
 		log.Info("cache cluster container stopped; replacement scheduled",
@@ -116,8 +116,12 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 			// group available on an endpoint it does not own.
 			return
 		}
+		// The terminal failure status is in the set so a container that comes
+		// back recovers the record: the fresh watch is entitled to promote a
+		// create-failed group to available again. A failure nothing could ever
+		// undo would trade one wrong answer for another.
 		switch rg.Status {
-		case "stopped", "starting", "creating":
+		case "stopped", "starting", "creating", statusCreateFailed:
 			h.scheduleReplicationGroupHealthCheck(region, rgID, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
 		}
 		return
@@ -131,7 +135,7 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 			return
 		}
 		switch cache.Status {
-		case "stopped", "starting", "creating":
+		case "stopped", "starting", "creating", statusCreateFailed:
 			h.scheduleServerlessHealthCheck(region, name, cache.Endpoint.Address, cache.Endpoint.Port)
 		}
 		return
@@ -145,7 +149,7 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.CacheClusterStatus {
-	case "stopped", "starting", "creating":
+	case "stopped", "starting", "creating", statusClusterUnreachable:
 		h.scheduleHealthCheck(region, cluster.CacheClusterId, cluster.ConfigurationEndpoint.Address, cluster.ConfigurationEndpoint.Port)
 	}
 }
@@ -324,7 +328,12 @@ func (h *Handler) runDockerRecovery(key string, recover func()) {
 
 func cacheRuntimeExpected(status string) bool {
 	switch status {
-	case "available", "creating", "starting", "modifying", "stopped":
+	case "available", "creating", "starting", "modifying", "stopped",
+		// A record settled in its terminal readiness failure still expects a
+		// runtime — the runtime that never came up is the whole reason it is
+		// there — so reconciliation keeps replacing and re-checking it, and a
+		// container that does come up promotes it out again.
+		statusClusterUnreachable, statusCreateFailed:
 		return true
 	default:
 		return false
