@@ -52,6 +52,30 @@ Running Overcast in Docker instead? See [Docker](#docker) below — the daemon
 serves its own CA certificate, so trusting it is one command with no shared
 volume.
 
+## From the web console
+
+The same setup is available UI-first: **Settings → HTTPS & certificates**
+(the gear in the console header) walks through the identical flow.
+
+- **Native daemon** — one click runs everything `overcast https enable` does
+  (create the CA, mint the server certificate, install the CA into the system
+  trust store — approve the OS prompt when it appears). The page then shows
+  the one step no UI can do for you, restarting with `OVERCAST_TLS=auto`,
+  and offers a **Switch to HTTPS** button once the https listener answers.
+- **Docker** — the daemon cannot reach the host's trust store, so the page
+  prepares the certificates inside the container, then hands you the
+  host-side one-liner (`overcast https enable --endpoint ...`) — or a CA
+  certificate download plus the [manual install commands](#doing-it-manually)
+  if the CLI isn't installed on the host — followed by the same
+  restart-and-switch steps.
+
+Under the hood this uses `GET /_overcast/tls/status` and
+`POST /_overcast/tls/setup` on the API port (proxied by the console's own
+backend). The setup endpoint refuses cross-origin browser requests: only
+pages served from the daemon's own names (loopback, `localhost.overcast.sh`,
+…) may trigger a trust-store install, so a hostile web page cannot make your
+OS pop certificate prompts.
+
 ## Docker
 
 The container mints its CA inside the container, where the host cannot read

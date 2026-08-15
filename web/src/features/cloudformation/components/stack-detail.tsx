@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { useNavigate, Link } from "@tanstack/react-router"
@@ -55,6 +55,7 @@ export function StackDetail({ stackName }: Props) {
   const [tab, setTab] = useState<TabKey>("overview")
   const [showUpdate, setShowUpdate] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
+  const eventsScrollRef = useRef<HTMLDivElement>(null)
 
   // ─── Queries ────────────────────────────────────────────────────────────────
 
@@ -87,10 +88,17 @@ export function StackDetail({ stackName }: Props) {
   })
 
   const events = eventsData?.pages.flatMap((p) => p.events) ?? []
+  let eventHistoryStatus = "All events loaded."
+  if (isFetchingMoreEvents) {
+    eventHistoryStatus = "Loading older events…"
+  } else if (hasMoreEvents) {
+    eventHistoryStatus = "Scroll for older events."
+  }
 
   const eventsSentinelRef = useScrollTrigger({
     onTrigger: () => void fetchNextEventsPage(),
     enabled: hasMoreEvents && !isFetchingMoreEvents,
+    rootRef: eventsScrollRef,
   })
 
   const {
@@ -475,7 +483,13 @@ export function StackDetail({ stackName }: Props) {
             />
           ) : (
             <div className="rounded-md border border-border">
-              <div className="max-h-150 overflow-y-auto">
+              <div
+                ref={eventsScrollRef}
+                role="region"
+                aria-label="CloudFormation stack events"
+                tabIndex={0}
+                className="max-h-150 overflow-y-auto"
+              >
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -523,7 +537,14 @@ export function StackDetail({ stackName }: Props) {
                     <Spinner className="h-4 w-4" />
                   </div>
                 )}
-                <div ref={eventsSentinelRef} />
+                <div ref={eventsSentinelRef} className="h-px" />
+              </div>
+              <div
+                role="status"
+                aria-live="polite"
+                className="border-t border-border px-3 py-2 text-xs text-fg-muted"
+              >
+                Showing {events.length} events. {eventHistoryStatus}
               </div>
             </div>
           )}

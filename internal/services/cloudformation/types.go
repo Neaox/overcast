@@ -122,11 +122,25 @@ type StackResource struct {
 	UpdateReplacePolicy string `json:"UpdateReplacePolicy,omitempty"`
 }
 
-// shouldRetainOnDelete reports whether DeleteStack should leave this resource
-// in place. Snapshot is treated as Retain because Overcast does not snapshot.
+// shouldRetainOnDelete reports whether an ordinary stack delete or resource
+// removal should leave this resource in place. Snapshot is treated as Retain
+// because Overcast does not snapshot.
 func (r *StackResource) shouldRetainOnDelete() bool {
 	switch r.DeletionPolicy {
-	case "Retain", "Snapshot":
+	case "Retain", "RetainExceptOnCreate", "Snapshot":
+		return true
+	}
+	return false
+}
+
+// shouldRetainOnCreateRollback applies the initial-create exception that
+// ordinary deletion does not: template RetainExceptOnCreate is deleted, and
+// RollbackStack's operation flag can opt a Retain resource into deletion too.
+func (r *StackResource) shouldRetainOnCreateRollback(retainExceptOnCreate bool) bool {
+	switch r.DeletionPolicy {
+	case "Retain":
+		return !retainExceptOnCreate
+	case "Snapshot":
 		return true
 	}
 	return false

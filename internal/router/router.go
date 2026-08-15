@@ -221,6 +221,13 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// daemon without a shared volume. 404 until a CA exists (OVERCAST_TLS=auto).
 	r.Get(trust.CAPemPath, caCertHandler(cfg))
 
+	// ---- TLS settings (always available) ------------------------------------
+	// The web console's Settings → HTTPS page: status of the CA / trust store /
+	// serving mode, and the in-daemon `overcast https enable` equivalent.
+	// See tls_settings.go for the cross-origin guard on the mutating route.
+	r.Get("/_overcast/tls/status", tlsStatusHandler(cfg, logger))
+	r.Post("/_overcast/tls/setup", tlsSetupHandler(cfg, logger))
+
 	// ---- Debug dependencies ---------------------------------------------------
 	// ec2Svc is constructed before the rest of the services because the debug
 	// namespace exposes EC2 internals (/_overcast/debug/ec2/vpcs). Its constructor has no
@@ -1522,11 +1529,46 @@ func restClaimFor(operationRegistry *awsapi.Registry, r *http.Request) (awsapi.C
 	if !addressesNonS3(r, credentialService) {
 		return awsapi.Claim{}, false
 	}
-	claim, ok := operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery)
+	claim, ok := claimModeledPath(operationRegistry, r)
 	if !ok {
 		return awsapi.Claim{}, false
 	}
 	return claim, claimAnswersCaller(claim, credentialService)
+}
+
+// claimModeledPath walks the generated trie for a request, trying the escaped
+// path before the decoded one.
+//
+// The escaped form is the one the model describes. A Smithy non-greedy
+// httpLabel binds a single URI segment, so an SDK percent-encodes a value that
+// contains a slash — every service that puts an ARN in the path does this, and
+// smithy-go, botocore and the JS SDK all agree. url.URL.Path is that value
+// *decoded*, so an MSK cluster ARN's "cluster/name/uuid" reappears as three
+// path segments and the request no longer has the shape of any binding.
+// Matching on the decoded path alone therefore made every ARN-labelled binding
+// unclaimable, and the request fell past the 501 into S3's bucket/object
+// wildcard: "aws kafka list-cluster-operations-v2", correctly signed, came back
+// <Error><Code>NoSuchKey</Code><Message>The specified key does not exist:
+// v2/clusters/arn:aws:kafka:…/operations</Message></Error>. That is #963's
+// mechanism reached by a second route, and it is not MSK-specific — it holds
+// for any modeled binding whose label carries an ARN.
+//
+// The decoded form is still tried, second, and not merely for safety: a
+// hand-written caller may put the raw ARN in the path with its slashes intact,
+// and chi matches the routes that serve those callers the same two ways. Trying
+// escaped-then-decoded can only add claims, never lose one, so no path S3
+// answers today stops being S3's on this account.
+//
+// EscapedPath returns Path re-encoded when the request carried no RawPath, so
+// the comparison — not a nil check — is what keeps an ordinary path to a single
+// trie walk.
+func claimModeledPath(operationRegistry *awsapi.Registry, r *http.Request) (awsapi.Claim, bool) {
+	if escaped := r.URL.EscapedPath(); escaped != r.URL.Path {
+		if claim, ok := operationRegistry.ClaimRESTQuery(r.Method, escaped, r.URL.RawQuery); ok {
+			return claim, true
+		}
+	}
+	return operationRegistry.ClaimRESTQuery(r.Method, r.URL.Path, r.URL.RawQuery)
 }
 
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {

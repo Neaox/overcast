@@ -188,6 +188,14 @@ app.route(
   "/api/debug",
   lazyRoute(async () => (await import("./routes/debug.js")).debugRoutes),
 )
+app.route(
+  "/api/settings",
+  lazyRoute(async () => (await import("./routes/settings.js")).settingsRoutes),
+)
+app.route(
+  "/api/ca.pem",
+  lazyRoute(async () => (await import("./routes/settings.js")).caPemRoutes),
+)
 // future: additional services
 
 export { app }

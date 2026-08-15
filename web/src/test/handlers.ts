@@ -88,6 +88,30 @@ export const preflightHandlers = [
   ),
 ]
 
+// ─── Settings ─────────────────────────────────────────────────────────────
+
+export const settingsHandlers = [
+  http.get("/api/settings/https", () =>
+    HttpResponse.json({
+      mode: "off",
+      caExists: false,
+      trustStore: "not_installed",
+      inContainer: false,
+      restartCommand: "OVERCAST_TLS=auto overcast serve",
+    }),
+  ),
+  http.post("/api/settings/https/enable", () =>
+    HttpResponse.json({
+      ok: true,
+      caReady: true,
+      trustInstalled: true,
+      alreadyInstalled: false,
+      restartRequired: true,
+      restartCommand: "OVERCAST_TLS=auto overcast serve",
+    }),
+  ),
+]
+
 // ─── Default handler set (all services, empty state) ─────────────────────
 
 export const handlers = [
@@ -100,4 +124,5 @@ export const handlers = [
   ...inboxHandlers,
   ...debugHandlers,
   ...preflightHandlers,
+  ...settingsHandlers,
 ]

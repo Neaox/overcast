@@ -46,6 +46,7 @@ func All() []ServiceGroup {
 		CloudFormation().named("cloudformation"),
 		EC2().named("ec2"),
 		ECS().named("ecs"),
+		ECR().named("ecr"),
 		Cognito().named("cognito"),
 		AppSync().named("appsync"),
 		APIGateway().named("apigateway"),
@@ -61,5 +62,6 @@ func All() []ServiceGroup {
 		OpenSearch().named("opensearch"),
 		AppConfig().named("appconfig"),
 		Backup().named("backup"),
+		MSK().named("msk"),
 	}
 }

@@ -8397,7 +8397,7 @@
           "operation": "CreateCluster",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE"
+          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE; a cluster name already in use in the region is a `ConflictException`"
         },
         {
           "operation": "DescribeCluster",
@@ -8427,7 +8427,7 @@
           "operation": "CreateClusterV2",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither"
+          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither; shares one cluster-name namespace with `CreateCluster`, so a name already in use is a `ConflictException`"
         },
         {
           "operation": "DescribeClusterV2",
@@ -8523,7 +8523,7 @@
           "operation": "CreateConfiguration",
           "category": "Configurations",
           "status": "✅ Supported",
-          "notes": "Stores name, description, kafka versions"
+          "notes": "Stores name, description, kafka versions; a configuration name already in use in the region is a `ConflictException`"
         },
         {
           "operation": "DescribeConfiguration",
@@ -8547,7 +8547,7 @@
           "operation": "UpdateClusterConfiguration",
           "category": "Configurations",
           "status": "✅ Supported",
-          "notes": "Validates `currentVersion`; verifies configuration ARN exists; returns `clusterOperationArn`"
+          "notes": "Reads the modeled `configurationInfo` object; validates `currentVersion`; a configuration ARN that does not exist is a `NotFoundException`; returns `clusterOperationArn`"
         },
         {
           "operation": "ListKafkaVersions",

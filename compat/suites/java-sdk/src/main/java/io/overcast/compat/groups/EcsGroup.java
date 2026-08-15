@@ -27,13 +27,18 @@ public final class EcsGroup implements ServiceGroup {
     @Override
     public Map<String, TestFn> impls() {
         return Map.ofEntries(
-                Map.entry("CreateCluster",      this::createCluster),
+                // CreateCluster, ListClusters and DeleteCluster are
+                // group-qualified because MSK models the same three operation
+                // names. A bare key is ambiguous once two registry groups
+                // declare a test name, and every loader refuses it rather than
+                // binding the wrong implementation.
+                Map.entry("ecs-clusters:CreateCluster", this::createCluster),
                 Map.entry("DescribeClusters",   this::describeClusters),
-                Map.entry("ListClusters",       this::listClusters),
+                Map.entry("ecs-clusters:ListClusters",  this::listClusters),
                 Map.entry("RegisterTaskDefinition",  this::registerTaskDef),
                 Map.entry("ListTaskDefinitions",      this::listTaskDefinitions),
                 Map.entry("DeregisterTaskDefinition", this::deregisterTaskDef),
-                Map.entry("DeleteCluster",      this::deleteCluster),
+                Map.entry("ecs-clusters:DeleteCluster", this::deleteCluster),
                 Map.entry("RunTask",            this::runTask),
                 Map.entry("DescribeTasks",      this::describeTasks),
                 Map.entry("ListTasks",          this::listTasks),
