@@ -43,7 +43,14 @@ const serviceName = "msk"
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
-// Cluster represents an MSK cluster.
+// Cluster is the stored record for an MSK cluster. It is the emulator's own
+// shape, not a modeled one — clusterV1View and clusterV2View render it into the
+// two API shapes. Notably KafkaVersion has no top-level home in either: AWS
+// carries it in currentBrokerSoftwareInfo.
+//
+// A cluster's tags are deliberately not here. They live in the nsTags namespace
+// the tag operations read and write, so that a tag set at create time and one
+// set by TagResource are the same tag.
 type Cluster struct {
 	ClusterArn          string              `json:"clusterArn"`
 	ClusterName         string              `json:"clusterName"`
@@ -54,7 +61,6 @@ type Cluster struct {
 	BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
 	NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
 	KafkaVersion        string              `json:"kafkaVersion"`
-	Tags                map[string]string   `json:"tags,omitempty"`
 	// Internal — not in API responses.
 	DockerContainerID string `json:"_dockerContainerID,omitempty"`
 	HostPort          int    `json:"_hostPort,omitempty"`
@@ -153,6 +159,24 @@ func (s *mskStore) listClusters(ctx context.Context) ([]*Cluster, *protocol.AWSE
 
 func (s *mskStore) deleteCluster(ctx context.Context, clusterArn string) *protocol.AWSError {
 	if err := s.store.Delete(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), clusterArn)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// tags returns the tag store every MSK tag operation goes through. Tags are
+// keyed by the bare resource ARN, which already names its region, and the
+// namespace is shared by CreateCluster, CreateClusterV2, TagResource,
+// UntagResource and ListTagsForResource — one place, so a tag written by any of
+// them is read by all of them.
+func (s *mskStore) tags() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
+}
+
+// deleteTags drops a resource's whole tag blob, which is what a resource's
+// deletion does to its tags on AWS.
+func (s *mskStore) deleteTags(ctx context.Context, resourceArn string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsTags, resourceArn); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

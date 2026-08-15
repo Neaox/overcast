@@ -121,6 +121,93 @@ func TestDescribeCluster_success(t *testing.T) {
 	assert.Equal(t, arn, info["clusterArn"])
 }
 
+// kafkaVersionOf reads the one member of the v1 ClusterInfo shape that carries
+// the cluster's Kafka version. AWS binds no top-level kafkaVersion on
+// ClusterInfo, so currentBrokerSoftwareInfo.kafkaVersion is the only place an
+// SDK client can read back what it provisioned.
+func kafkaVersionOf(t *testing.T, info map[string]any) string {
+	t.Helper()
+	software, ok := info["currentBrokerSoftwareInfo"].(map[string]any)
+	require.True(t, ok, "currentBrokerSoftwareInfo missing from clusterInfo: %v", info)
+	version, _ := software["kafkaVersion"].(string)
+	return version
+}
+
+func TestDescribeCluster_reportsTheKafkaVersionItWasCreatedWith(t *testing.T) {
+	// Given: a cluster created with an explicit Kafka version
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "version-readback",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the version comes back where the model puts it. A create the caller
+	// cannot verify through the matching describe is the #980 shape — accepted,
+	// stored, and unreadable.
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.Equal(t, "3.5.1", kafkaVersionOf(t, info))
+	assert.Equal(t, float64(1), info["numberOfBrokerNodes"])
+}
+
+func TestDescribeCluster_reportsTheDefaultedKafkaVersion(t *testing.T) {
+	// Given: a cluster created without naming a version, which Overcast defaults
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "version-defaulted",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the defaulted version is reported rather than left blank — a caller
+	// that omitted the member still has to be able to see what it got
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.NotEmpty(t, kafkaVersionOf(t, info))
+}
+
+func TestDescribeCluster_doesNotLeakInternalRecordFields(t *testing.T) {
+	// Given: a cluster
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "no-internals",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: the cluster is described
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+
+	// Then: the response carries the modeled members only. Marshalling the
+	// stored record straight onto the wire put the emulator's own Docker
+	// bookkeeping in `clusterInfo`.
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.NotContains(t, info, "_dockerContainerID")
+	assert.NotContains(t, info, "_hostPort")
+}
+
 func TestDescribeCluster_notFound(t *testing.T) {
 	// Given: a fresh MSK service
 	srv := helpers.NewTestServer(t)
@@ -194,6 +281,30 @@ func TestListClusters_filter(t *testing.T) {
 	assert.Len(t, list, 1)
 	cluster := list[0].(map[string]any)
 	assert.Equal(t, "filter-alpha", cluster["clusterName"])
+}
+
+func TestListClusters_reportsTheKafkaVersion(t *testing.T) {
+	// Given: a cluster created with an explicit Kafka version
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":  "list-version",
+		"kafkaVersion": "3.4.0",
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	createResp.Body.Close()
+
+	// When: clusters are listed
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters", nil)
+
+	// Then: every element of clusterInfoList is the same modeled ClusterInfo as
+	// DescribeCluster's, version included — the web console's cluster table
+	// reads its "Kafka version" column from exactly this member
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	list, _ := result["clusterInfoList"].([]any)
+	require.Len(t, list, 1)
+	assert.Equal(t, "3.4.0", kafkaVersionOf(t, list[0].(map[string]any)))
 }
 
 // ── TestDeleteCluster ─────────────────────────────────────────────────────────
@@ -411,6 +522,143 @@ func TestTagResource_success(t *testing.T) {
 	assert.Equal(t, "platform", tags["Team"])
 }
 
+// listTags reads a resource's tags back through ListTagsForResource — the one
+// operation an SDK client has for the question "what is tagged on this ARN".
+func listTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]any {
+	t.Helper()
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/tags/"+arn, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	tags, _ := result["tags"].(map[string]any)
+	return tags
+}
+
+func TestCreateCluster_creationTimeTagsReachListTagsForResource(t *testing.T) {
+	// Given: a v1 cluster created with tags in the create request
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "v1-create-tags",
+		"tags":        map[string]string{"owner": "compat", "env": "test"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// Then: they are visible to the tag API, which is where a client looks for
+	// them. Accepting them onto the cluster record alone left every tag
+	// operation reporting the cluster as untagged.
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "compat", tags["owner"])
+	assert.Equal(t, "test", tags["env"])
+}
+
+func TestCreateClusterV2_creationTimeTagsReachListTagsForResource(t *testing.T) {
+	// Given: a v2 cluster created with tags in the create request
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-create-tags",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"owner": "compat"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// Then: ListTagsForResource returns them
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "compat", tags["owner"])
+}
+
+func TestUntagResource_removesACreationTimeTag(t *testing.T) {
+	// Given: a cluster created with two tags
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-untag-creation-tag",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"Keep": "yes", "Drop": "me"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: one of them is untagged
+	untagResp := mskRequest(t, srv, http.MethodDelete, fmt.Sprintf("/v1/tags/%s?tagKeys=Drop", arn), nil)
+	require.Equal(t, http.StatusOK, untagResp.StatusCode)
+	untagResp.Body.Close()
+
+	// Then: creation-time tags and TagResource tags live in one place, so
+	// untagging reaches them both
+	tags := listTags(t, srv, arn)
+	assert.Equal(t, "yes", tags["Keep"])
+	assert.NotContains(t, tags, "Drop")
+}
+
+func TestDescribeCluster_reportsCreationTimeAndLaterTags(t *testing.T) {
+	// Given: a cluster created with one tag
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "describe-tags",
+		"tags":        map[string]string{"atCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: a second tag is added afterwards
+	tagResp := mskRequest(t, srv, http.MethodPost, "/v1/tags/"+arn, map[string]any{
+		"tags": map[string]string{"afterCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, tagResp.StatusCode)
+	tagResp.Body.Close()
+
+	// Then: ClusterInfo.tags shows both — the tag API and the describe response
+	// read the same store rather than each keeping half the answer
+	resp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+arn, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	tags, _ := info["tags"].(map[string]any)
+	assert.Equal(t, "yes", tags["atCreate"])
+	assert.Equal(t, "yes", tags["afterCreate"])
+}
+
+func TestDescribeClusterV2_reportsCreationTimeAndLaterTags(t *testing.T) {
+	// Given: a v2 cluster created with one tag
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-describe-tags",
+		"serverless":  map[string]any{},
+		"tags":        map[string]string{"atCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: a second tag is added afterwards
+	tagResp := mskRequest(t, srv, http.MethodPost, "/v1/tags/"+arn, map[string]any{
+		"tags": map[string]string{"afterCreate": "yes"},
+	})
+	require.Equal(t, http.StatusOK, tagResp.StatusCode)
+	tagResp.Body.Close()
+
+	// Then: the v2 shape shows both
+	resp := mskRequest(t, srv, http.MethodGet, v2ClusterPath(arn), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	tags, _ := info["tags"].(map[string]any)
+	assert.Equal(t, "yes", tags["atCreate"])
+	assert.Equal(t, "yes", tags["afterCreate"])
+}
+
 // ── TestUntagResource ─────────────────────────────────────────────────────────
 
 func TestUntagResource_success(t *testing.T) {
@@ -625,6 +873,9 @@ func TestDescribeClusterV2_provisioned(t *testing.T) {
 	provisioned, ok := info["provisioned"].(map[string]any)
 	require.True(t, ok, "provisioned field should be present")
 	assert.Equal(t, float64(2), provisioned["numberOfBrokerNodes"])
+	// The v2 shape nests the version one level deeper than v1 does, under
+	// `provisioned`. It is still the only member carrying it.
+	assert.Equal(t, "3.5.1", kafkaVersionOf(t, provisioned))
 }
 
 func TestDescribeClusterV2_describesAClusterCreatedThroughV1(t *testing.T) {
