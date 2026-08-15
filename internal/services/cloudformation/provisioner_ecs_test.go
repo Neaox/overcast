@@ -193,6 +193,25 @@ func TestECSServiceRolloutFailure_primaryDeploymentOnly(t *testing.T) {
 			wantReason: "CannotPullContainerError",
 		},
 		{
+			// Service events are newest first. A replacement may start after
+			// the failure and prepend a progress event which must not hide the
+			// actionable scheduler reason from CloudFormation.
+			name: "newer progress and generic failure events follow placement failure",
+			svc: describedECSService{
+				Deployments: []describedECSDeployment{
+					{Status: "PRIMARY", RolloutState: "IN_PROGRESS", FailedTasks: 1},
+				},
+				Events: []describedECSEvent{
+					{Message: "(service s) has started 1 tasks."},
+					{Message: "(service s) (deployment ecs-svc/1) deployment failed: tasks failed to start."},
+					{Message: "(service s) is unable to consistently start tasks successfully."},
+					{Message: "(service s) was unable to place a task. Reason: CannotStartContainerError: executable file not found"},
+				},
+			},
+			wantFailed: true,
+			wantReason: "CannotStartContainerError",
+		},
+		{
 			name: "circuit breaker failed the primary deployment",
 			svc: describedECSService{
 				Deployments: []describedECSDeployment{
