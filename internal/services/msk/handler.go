@@ -94,7 +94,7 @@ func (h *Handler) mskARN(ctx context.Context, resource string) string {
 
 // newCluster builds the record both create paths store — everything that does
 // not depend on whether the caller used the v1 or the v2 request shape.
-func (h *Handler) newCluster(ctx context.Context, name string, tags map[string]string) *Cluster {
+func (h *Handler) newCluster(ctx context.Context, name string) *Cluster {
 	id := uuid.NewString()
 	return &Cluster{
 		ClusterArn:     h.mskARN(ctx, "cluster/"+name+"/"+id),
@@ -102,8 +102,28 @@ func (h *Handler) newCluster(ctx context.Context, name string, tags map[string]s
 		State:          "CREATING",
 		CreationTime:   h.clk.Now(),
 		CurrentVersion: id,
-		Tags:           tags,
 	}
+}
+
+// saveCreationTags persists the tags a create request carried into the shared
+// tag namespace — the one TagResource writes and ListTagsForResource reads.
+//
+// Both create paths used to hang them off the cluster record instead, where no
+// tag operation could see them: the call was accepted, the tags were stored,
+// and ListTagsForResource reported the cluster as untagged. The same "answered
+// 200, kept nothing a caller can read" shape as #980.
+func (h *Handler) saveCreationTags(ctx context.Context, resourceArn string, tags map[string]string) *protocol.AWSError {
+	if len(tags) == 0 {
+		return nil
+	}
+	return h.store.tags().Save(ctx, resourceArn, tags)
+}
+
+// clusterTags reads a cluster's tags for a response body. Both cluster views
+// carry a `tags` member, and it has to answer the same question
+// ListTagsForResource does.
+func (h *Handler) clusterTags(ctx context.Context, resourceArn string) (map[string]string, *protocol.AWSError) {
+	return h.store.tags().Load(ctx, resourceArn)
 }
 
 // startClusterAsync starts a cluster's Redpanda container in the background.
@@ -178,10 +198,14 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster := h.newCluster(r.Context(), req.ClusterName, req.Tags)
+	cluster := h.newCluster(r.Context(), req.ClusterName)
 	req.provisionedInput.applyTo(cluster)
 
 	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := h.saveCreationTags(r.Context(), cluster.ClusterArn, req.Tags); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -203,12 +227,17 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	result := make([]*Cluster, 0, len(all))
+	result := make([]map[string]any, 0, len(all))
 	for _, c := range all {
 		if !matchesNameFilter(c, nameFilter) {
 			continue
 		}
-		result = append(result, c)
+		tags, aerr := h.clusterTags(r.Context(), c.ClusterArn)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		result = append(result, clusterV1View(c, tags))
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterInfoList": result,
@@ -229,9 +258,44 @@ func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	tags, aerr := h.clusterTags(r.Context(), cluster.ClusterArn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"clusterInfo": cluster,
+		"clusterInfo": clusterV1View(cluster, tags),
 	})
+}
+
+// clusterV1View renders a stored cluster as the v1 API's ClusterInfo — the
+// shape DescribeCluster returns as `clusterInfo` and ListClusters as each
+// element of `clusterInfoList`.
+//
+// AWS binds no top-level kafkaVersion member on ClusterInfo, so
+// currentBrokerSoftwareInfo.kafkaVersion is the only member an SDK client can
+// read the version back from. Both operations used to marshal the stored record
+// straight onto the wire, which put the version under a name no generated
+// client reads — a cluster created at 3.5.1 described itself as running
+// nothing — and put the emulator's own Docker bookkeeping in the response
+// alongside it.
+func clusterV1View(c *Cluster, tags map[string]string) map[string]any {
+	view := map[string]any{
+		"clusterArn":          c.ClusterArn,
+		"clusterName":         c.ClusterName,
+		"state":               c.State,
+		"creationTime":        c.CreationTime,
+		"currentVersion":      c.CurrentVersion,
+		"numberOfBrokerNodes": c.NumberOfBrokerNodes,
+		"brokerNodeGroupInfo": c.BrokerNodeGroupInfo,
+		"currentBrokerSoftwareInfo": map[string]any{
+			"kafkaVersion": c.KafkaVersion,
+		},
+	}
+	if len(tags) > 0 {
+		view["tags"] = tags
+	}
+	return view
 }
 
 // ── deleteCluster ─────────────────────────────────────────────────────────────
@@ -266,6 +330,11 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterArn), clusterArn, "delete", 50*time.Millisecond, func(ctx context.Context) {
 		if aerr := h.store.deleteCluster(ctx, clusterARNCopy); aerr != nil {
 			h.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
+		}
+		// The tags outlive the record otherwise, and ListTagsForResource would
+		// keep answering for an ARN that no longer names anything.
+		if aerr := h.store.deleteTags(ctx, clusterARNCopy); aerr != nil {
+			h.log.Warn("failed to delete MSK cluster tags", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
 	})
 
@@ -471,7 +540,7 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tagStore := h.store.tags()
 	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -493,7 +562,7 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("invalid resourceArn"))
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tagStore := h.store.tags()
 	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -515,7 +584,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 	if tagKeysParam != "" {
 		tagKeys = strings.Split(tagKeysParam, ",")
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tagStore := h.store.tags()
 	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -556,7 +625,7 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster := h.newCluster(r.Context(), req.ClusterName, req.Tags)
+	cluster := h.newCluster(r.Context(), req.ClusterName)
 	if req.Provisioned != nil {
 		cluster.ClusterType = clusterTypeProvisioned
 		req.Provisioned.applyTo(cluster)
@@ -568,6 +637,10 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := h.saveCreationTags(r.Context(), cluster.ClusterArn, req.Tags); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -608,7 +681,12 @@ func (h *Handler) listClustersV2(w http.ResponseWriter, r *http.Request) {
 		if typeFilter != "" && typeFilter != "ALL" && clusterTypeOf(c) != typeFilter {
 			continue
 		}
-		matched = append(matched, clusterV2View(c))
+		tags, aerr := h.clusterTags(r.Context(), c.ClusterArn)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		matched = append(matched, clusterV2View(c, tags))
 	}
 
 	page, err := serviceutil.Paginate(matched, serviceutil.QueryInt(r, "maxResults", 0), query.Get("nextToken"),
@@ -639,16 +717,22 @@ func (h *Handler) describeClusterV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags, aerr := h.clusterTags(r.Context(), cluster.ClusterArn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"clusterInfo": clusterV2View(cluster),
+		"clusterInfo": clusterV2View(cluster, tags),
 	})
 }
 
 // clusterV2View renders a stored cluster in the v2 API's shape. DescribeClusterV2's
 // `clusterInfo` and every element of ListClustersV2's `clusterInfoList` are the
 // same modeled Cluster structure, so both are shaped here.
-func clusterV2View(c *Cluster) map[string]any {
+func clusterV2View(c *Cluster, tags map[string]string) map[string]any {
 	clusterType := clusterTypeOf(c)
 	view := map[string]any{
 		"clusterArn":     c.ClusterArn,
@@ -658,8 +742,8 @@ func clusterV2View(c *Cluster) map[string]any {
 		"creationTime":   c.CreationTime,
 		"currentVersion": c.CurrentVersion,
 	}
-	if len(c.Tags) > 0 {
-		view["tags"] = c.Tags
+	if len(tags) > 0 {
+		view["tags"] = tags
 	}
 	if clusterType == clusterTypeProvisioned {
 		view["provisioned"] = map[string]any{
