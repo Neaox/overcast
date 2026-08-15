@@ -11,5 +11,5 @@ import (
 )
 
 // registerMCPRoutes is intentionally a no-op for slim builds.
-func registerMCPRoutes(_ chi.Router, _ *config.Config, _ state.Store, _ *events.Bus, _ *zap.Logger) {
+func registerMCPRoutes(_ chi.Router, _ *config.Config, _ state.Store, _ *events.Bus, _ *zap.Logger, _ <-chan struct{}) {
 }

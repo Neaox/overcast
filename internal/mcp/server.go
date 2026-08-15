@@ -112,6 +112,13 @@ type Server struct {
 	promptProviders         []PromptProvider
 	requestTimeout          time.Duration
 	authBearerToken         string
+	// shutdown is closed by the host when the process is going down, and is
+	// what releases the SSE stream. The request context cannot do that job on
+	// its own: it ends when the client goes away, and an attached MCP client
+	// that has simply gone quiet never does. Nil when no host wired one, which
+	// a select reads as "never fires" — the previous behaviour, and the right
+	// one for a Server nobody is shutting down.
+	shutdown <-chan struct{}
 }
 
 type notificationEvent struct {
@@ -1325,8 +1332,18 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if len(replay) > 0 {
 		flusher.Flush()
 	}
+	// Read once, before the loop: the value cannot change under a running
+	// stream, and reading it per-iteration would take the lock on every event.
+	shutdown := s.shutdownSignal()
 	for {
 		select {
+		case <-shutdown:
+			// The emulator is going down. Ending the response is what lets a
+			// shutdown waiting on in-flight handlers finish; a client that
+			// wants the stream back reconnects, and Last-Event-ID resumes it.
+			return
+		case <-r.Context().Done():
+			return
 		case ev, ok := <-ch:
 			if !ok {
 				return
@@ -1340,8 +1357,6 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", ev)
 			flusher.Flush()
-		case <-r.Context().Done():
-			return
 		}
 	}
 }
@@ -1732,6 +1747,32 @@ func (s *Server) SetBearerAuthToken(token string) {
 	s.mu.Lock()
 	s.authBearerToken = strings.TrimSpace(token)
 	s.mu.Unlock()
+}
+
+// SetShutdownSignal hands the server the channel its host closes when the
+// process is going down. Closing it releases every SSE stream this server is
+// serving.
+//
+// Without one, the only thing that ends a stream is the client disconnecting,
+// which a graceful shutdown cannot wait for: http.Server.Shutdown and
+// httptest.Server.Close both block on in-flight handlers, so one attached
+// client is enough to hold either open indefinitely. The router hands over the
+// same channel it gives its own long-lived handlers — see eventsHandler and
+// domainsWatchHandler.
+func (s *Server) SetShutdownSignal(ch <-chan struct{}) {
+	s.mu.Lock()
+	s.shutdown = ch
+	s.mu.Unlock()
+}
+
+// shutdownSignal reads the shutdown channel under the lock, so a stream that is
+// starting while the host is still wiring up cannot race the setter. A nil
+// channel blocks forever in a select, which is what a server with no host
+// shutdown wants.
+func (s *Server) shutdownSignal() <-chan struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.shutdown
 }
 
 func (s *Server) validateAuthorizationHeader(header string) error {

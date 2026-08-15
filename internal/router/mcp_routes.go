@@ -36,12 +36,17 @@ import (
 //
 // The slim build tag excludes this file entirely so overcast-slim never
 // exposes /_overcast/mcp.
-func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger) {
+func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger, shutdownCh <-chan struct{}) {
 	provider := mcp.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
 	root := sync.OnceValue(func() http.Handler {
 		runtimeMCP := mcp.NewServer(nil, slog.Default(), provider)
 		runtimeMCP.SetNotificationReplayLimit(cfg.MCPReplayLimit)
+		// The MCP SSE stream is a long-lived handler, so it needs the same
+		// pre-shutdown channel eventsHandler and domainsWatchHandler get.
+		// Without it the stream ends only when the client disconnects, and a
+		// shutdown that waits for in-flight handlers waits for that forever.
+		runtimeMCP.SetShutdownSignal(shutdownCh)
 		if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
 			runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)
 		}
