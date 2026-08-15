@@ -274,6 +274,36 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "ecs",
       "group": "ecs-clusters",
       "tests": 7
@@ -379,6 +409,30 @@
       "service": "cloudwatch-logs",
       "group": "logs-groups",
       "tests": 8
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
     },
     {
       "suite": "dotnet-sdk",
@@ -550,6 +604,60 @@
     },
     {
       "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "go-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "go-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "go-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "go-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
+    },
+    {
+      "suite": "go-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -652,6 +760,60 @@
     },
     {
       "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "java-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "java-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "java-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "java-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
+    },
+    {
+      "suite": "java-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -754,6 +916,60 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -853,6 +1069,60 @@
       "service": "backup",
       "group": "backup-vaults",
       "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
     },
     {
       "suite": "python-sdk",
@@ -1138,6 +1408,36 @@
     },
     {
       "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "rust-sdk",
       "service": "ecs",
       "group": "ecs-clusters",
       "tests": 7
@@ -1273,6 +1573,30 @@
       "service": "cloudwatch-logs",
       "group": "logs-groups",
       "tests": 8
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "tests": 16
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "tests": 10
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "tests": 8
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "tests": 4
     },
     {
       "suite": "rust-sdk",

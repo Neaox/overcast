@@ -137,11 +137,44 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	h.scheduleServiceReplacement(ctx, region, clusterName, serviceName)
 }
 
-// retainContainerLogs snapshots the last 200 lines before the exited Docker
-// container is removed. The snapshot is deliberately bounded by ContainerLogs
-// and stored outside the AWS task model for emulator-only diagnostics.
-func (h *Handler) retainContainerLogs(ctx context.Context, task *Task, dockerID string) {
-	if !h.dockerReady.Load() || dockerID == "" {
+// maxRetainedLogBytes bounds one container's retained tail. The upstream
+// ContainerLogs read is already capped, but only per call: the number of
+// entries is bounded by task lifetime (see deleteTaskContainerLogs) and their
+// size is bounded here. 16 KiB matches RDS — enough for a stack trace and the
+// lines around it, small enough that the record stays a record.
+const maxRetainedLogBytes = 16 * 1024
+
+// containerLogCaptureTimeout bounds a capture so that a Docker daemon which has
+// stopped answering cannot hold up a task stop behind it.
+const containerLogCaptureTimeout = 5 * time.Second
+
+// captureContainerLogs copies the final bounded tail of one container's output
+// into the retention namespace, so it survives the container.
+//
+// This is the only place ECS captures container logs, and it is called from two
+// orderings. On the natural-death path — a crash-looping container that exits
+// on its own — the Docker die event brings it here asynchronously, which is
+// fine because nothing is racing to remove the container. On a teardown the
+// scheduler or a caller drives, the container is removed the moment it stops,
+// so retireTaskContainers calls this synchronously in between; see there.
+//
+// Both can therefore run for one container, and the first success wins: a
+// capture that has already landed is not read over. The copy taken while the
+// container was certainly still there is the better one, and a later read of a
+// container mid-removal can succeed and return less than all of it.
+//
+// That check is a read followed by a write rather than a locked one, so two
+// captures interleaving inside the window between them can both proceed, and
+// the later write lands. Left alone deliberately: both copies are genuine
+// captures of the same container differing at worst in how much they caught,
+// ECS keeps no record locks anywhere else to borrow, and new locking machinery
+// to guard a rare case with a harmless outcome is the worse trade.
+//
+// Best-effort by design. A container whose logs cannot be read must still
+// complete its stop, so every failure here is logged and swallowed, and the
+// read is given its own short deadline rather than the caller's.
+func (h *Handler) captureContainerLogs(ctx context.Context, task *Task, dockerID string) {
+	if !h.dockerReady.Load() || h.docker == nil || dockerID == "" {
 		return
 	}
 
@@ -156,18 +189,77 @@ func (h *Handler) retainContainerLogs(ctx context.Context, task *Task, dockerID 
 		return
 	}
 
-	logCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	cluster, taskID := extractClusterName(task.ClusterArn), extractTaskID(task.TaskArn)
+	if have, found, aerr := h.store.getTaskContainerLogs(ctx, cluster, taskID, containerName); aerr == nil && found && have.Logs != "" {
+		return
+	}
+
+	logCtx, cancel := context.WithTimeout(ctx, containerLogCaptureTimeout)
 	raw, err := h.docker.ContainerLogs(logCtx, dockerID, "200")
 	cancel()
 	if err != nil {
 		h.log.Debug("ecs: capture stopped container logs",
 			zap.String("container", dockerID), zap.Error(err))
-	} else if aerr := h.store.putTaskContainerLogs(ctx,
-		extractClusterName(task.ClusterArn), extractTaskID(task.TaskArn), containerName,
-		string(stripDockerLogHeaders(raw))); aerr != nil {
+		return
+	}
+	logs := serviceutil.TailBytes(string(docker.DemuxStream(raw)), maxRetainedLogBytes)
+	if logs == "" {
+		return
+	}
+	if aerr := h.store.putTaskContainerLogs(ctx, cluster, taskID, containerName, taskContainerLogs{
+		Logs:       logs,
+		CapturedAt: h.clk.Now().UTC().Format(time.RFC3339),
+	}); aerr != nil {
 		h.log.Warn("ecs: persist stopped container logs",
 			zap.String("container", dockerID), zap.String("error", aerr.Message))
 	}
+}
+
+// captureContainerLogsByID is captureContainerLogs for a caller that has only a
+// container ID — the container GC's before-remove hook, which is handed one
+// container at a time and knows nothing of tasks.
+//
+// The task is found by scanning for the record that claims the container, the
+// same way reconcileContainers matches Docker's containers back to tasks. That
+// is a scan per removal, which is affordable here and not elsewhere: removals
+// are driven by task teardown rather than by request traffic, they run on the
+// GC's own loop where nothing is waiting on them, and the alternative — asking
+// Docker for the container's resource-id label — is a second round trip to a
+// daemon that is about to be told to delete it.
+//
+// A container with no task record left is not an error: the record expires an
+// hour after the task stops, and a removal that arrives after that has nothing
+// left to attach output to.
+func (h *Handler) captureContainerLogsByID(containerID string) {
+	if containerID == "" || !h.dockerReady.Load() {
+		return
+	}
+	ctx := context.Background()
+	tasks, err := serviceutil.ScanRegions[Task](ctx, h.store.store, nsTasks, h.store.defaultRegion)
+	if err != nil {
+		h.log.Debug("ecs: capture container logs before removal: list tasks",
+			zap.String("container", containerID), zap.Error(err))
+		return
+	}
+	for _, regioned := range tasks {
+		for _, c := range regioned.Value.Containers {
+			if c.DockerID != containerID {
+				continue
+			}
+			h.captureContainerLogs(middleware.ContextWithRegion(ctx, regioned.Region), regioned.Value, containerID)
+			return
+		}
+	}
+}
+
+// retainContainerLogs captures a dead container's final output and then lets it
+// go. Called off the die event, where the container has exited on its own and
+// nothing else is removing it.
+func (h *Handler) retainContainerLogs(ctx context.Context, task *Task, dockerID string) {
+	if !h.dockerReady.Load() || dockerID == "" {
+		return
+	}
+	h.captureContainerLogs(ctx, task, dockerID)
 
 	if h.gc != nil {
 		h.gc.ScheduleRemove(dockerID)

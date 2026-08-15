@@ -220,9 +220,11 @@ applies to every task whichever way it was started (`RunTask` or a service) and
 under either launch type, because the driver is a property of the container
 definition rather than of Fargate or EC2.
 
-Without it a crash-looping task explains itself nowhere: the container is gone
-before `docker logs` can reach it. `GET /_overcast/ecs/tasks/{taskArn}/logs/{container}`
-remains available as an emulator-only tail of a *running* container.
+Without it, Overcast captures the final 200 lines when a container exits.
+`GET /_overcast/ecs/tasks/{taskArn}/logs/{container}` returns that captured
+output for a stopped task, or a live tail for a running container. This is an
+emulator-only diagnostic, not an ECS or CloudWatch Logs API, and remains
+addressable only while ECS retains the stopped task record.
 
 ## Volumes
 

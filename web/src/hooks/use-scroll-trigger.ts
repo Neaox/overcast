@@ -1,16 +1,18 @@
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef, useCallback, type RefObject } from "react"
 
 type ScrollDirection = "down" | "up"
 
 interface UseScrollTriggerOptions {
-  /** Called when the sentinel element becomes visible in the viewport. */
+  /** Called when the sentinel element becomes visible in the observed scroll root. */
   onTrigger: () => void
   /** Whether the trigger is currently active. Set to false to pause (e.g. while loading or when there's nothing left to load). */
   enabled?: boolean
   /** Scroll direction this trigger responds to. "down" (default) places the sentinel at the bottom; "up" at the top (e.g. older messages). */
   direction?: ScrollDirection
-  /** IntersectionObserver rootMargin — how far outside the viewport to trigger. Default "200px" gives a head-start before the user reaches the edge. */
+  /** IntersectionObserver rootMargin — how far beyond the observed edge to trigger. Default "200px" gives a head-start before the user reaches the edge. */
   rootMargin?: string
+  /** Scrollable element containing the sentinel. Omit to observe against the browser viewport. */
+  rootRef?: RefObject<Element | null>
 }
 
 /**
@@ -41,6 +43,7 @@ export function useScrollTrigger({
   enabled = true,
   direction = "down",
   rootMargin = "200px",
+  rootRef,
 }: UseScrollTriggerOptions) {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const callbackRef = useRef(onTrigger)
@@ -66,13 +69,14 @@ export function useScrollTrigger({
     const margin = direction === "down" ? `0px 0px ${rootMargin} 0px` : `${rootMargin} 0px 0px 0px`
 
     const observer = new IntersectionObserver(handleIntersect, {
+      root: rootRef?.current ?? null,
       rootMargin: margin,
       threshold: 0,
     })
 
     observer.observe(el)
     return () => observer.disconnect()
-  }, [enabled, direction, rootMargin, handleIntersect])
+  }, [enabled, direction, rootMargin, rootRef, handleIntersect])
 
   return sentinelRef
 }

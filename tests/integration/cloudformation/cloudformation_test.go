@@ -736,6 +736,43 @@ func TestCreateStack_rollsBackOnResourceFailure(t *testing.T) {
 	}
 }
 
+func TestCreateStack_rollbackRetainsResourceWithDeletionPolicyRetain(t *testing.T) {
+	// Given: a retained bucket is created before a later resource fails
+	srv := helpers.NewTestServer(t)
+	template := strings.Replace(rollbackTestTemplate,
+		`"Type": "AWS::S3::Bucket",`,
+		`"Type": "AWS::S3::Bucket", "DeletionPolicy": "Retain",`, 1)
+	template = strings.Replace(template, "rollback-test-bucket-a", "rollback-retained-bucket-a", 1)
+
+	// When: CreateStack automatically rolls back the failed deployment
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"rollback-retain-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, "rollback-retain-stack", "ROLLBACK_COMPLETE")
+
+	// Then: the bucket remains and the stack event history records the skip
+	bucketResp, err := http.Get(srv.URL + "/rollback-retained-bucket-a")
+	if err != nil {
+		t.Fatalf("bucket probe: %v", err)
+	}
+	defer bucketResp.Body.Close()
+	if bucketResp.StatusCode == http.StatusNotFound {
+		t.Error("expected retained bucket to remain after create rollback")
+	}
+
+	eventsResp := cfnQuery(t, srv, "DescribeStackEvents", url.Values{
+		"StackName": []string{"rollback-retain-stack"},
+	})
+	defer eventsResp.Body.Close()
+	eventsBody := string(readBody(t, eventsResp))
+	if !strings.Contains(eventsBody, "BucketA") || !strings.Contains(eventsBody, "DELETE_SKIPPED") {
+		t.Fatalf("expected BucketA DELETE_SKIPPED event, got: %s", eventsBody)
+	}
+}
+
 func TestCreateStack_disableRollback_leavesPartialStack(t *testing.T) {
 	// Given: a CloudFormation service and a template where one resource will fail
 	srv := helpers.NewTestServer(t)

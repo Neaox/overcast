@@ -727,24 +727,74 @@ func (s *ecsStore) listAllTasks(ctx context.Context) ([]Task, *protocol.AWSError
 	return tasks, nil
 }
 
+// taskContainerLogs is the bounded final log tail captured when a container
+// exits, with the time it was taken. The capture time is the difference between
+// "here is what the container said" and "here is what the container said, four
+// hours ago, before the deployment you are looking at" — RDS carries one on its
+// retained copy for the same reason.
+type taskContainerLogs struct {
+	Logs string `json:"logs"`
+	// CapturedAt is RFC3339 UTC, formatted at capture. A string rather than a
+	// time.Time so the record round-trips through the state store byte for byte.
+	CapturedAt string `json:"capturedAt,omitempty"`
+}
+
 // putTaskContainerLogs retains the bounded final log tail captured when a
-// container exits. It lives outside Task so the emulator-only diagnostic data
-// can never leak into DescribeTasks' AWS response shape.
-func (s *ecsStore) putTaskContainerLogs(ctx context.Context, cluster, taskID, container, logs string) *protocol.AWSError {
-	key := serviceutil.RegionKey(s.region(ctx), cluster+"/"+taskID+"/"+container)
-	if err := s.store.Set(ctx, nsTaskContainerLogs, key, logs); err != nil {
+// container exits. It lives in its own namespace rather than on Task so the
+// emulator-only diagnostic data can never leak into DescribeTasks' AWS response
+// shape — and so it can be dropped with the task record; see
+// deleteTaskContainerLogs.
+func (s *ecsStore) putTaskContainerLogs(ctx context.Context, cluster, taskID, container string, rec taskContainerLogs) *protocol.AWSError {
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	key := taskContainerLogsKey(s.region(ctx), cluster, taskID, container)
+	if err := s.store.Set(ctx, nsTaskContainerLogs, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
-func (s *ecsStore) getTaskContainerLogs(ctx context.Context, cluster, taskID, container string) (string, bool, *protocol.AWSError) {
-	key := serviceutil.RegionKey(s.region(ctx), cluster+"/"+taskID+"/"+container)
-	logs, found, err := s.store.Get(ctx, nsTaskContainerLogs, key)
+// getTaskContainerLogs reads back a retained tail.
+//
+// A stored value that does not decode as a record is one written before the
+// record had a shape — the namespace held the bare log text — and is returned
+// as the logs it is. The emptiness test is the other half of that: a container
+// whose own output happens to be a JSON object decodes into a record with
+// nothing in it, and would otherwise come back as no logs at all.
+func (s *ecsStore) getTaskContainerLogs(ctx context.Context, cluster, taskID, container string) (taskContainerLogs, bool, *protocol.AWSError) {
+	key := taskContainerLogsKey(s.region(ctx), cluster, taskID, container)
+	raw, found, err := s.store.Get(ctx, nsTaskContainerLogs, key)
 	if err != nil {
-		return "", false, protocol.Wrap(protocol.ErrInternalError, err)
+		return taskContainerLogs{}, false, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return logs, found, nil
+	if !found {
+		return taskContainerLogs{}, false, nil
+	}
+	var rec taskContainerLogs
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil || (rec.Logs == "" && rec.CapturedAt == "") {
+		return taskContainerLogs{Logs: raw}, true, nil
+	}
+	return rec, true, nil
+}
+
+// deleteTaskContainerLogs drops every container's retained tail for one task.
+// Called where the task record itself is reaped, which is what bounds the
+// namespace — see reapTaskCompanions for why nothing else can.
+func (s *ecsStore) deleteTaskContainerLogs(ctx context.Context, task *Task) *protocol.AWSError {
+	region := s.region(ctx)
+	cluster, taskID := extractClusterName(task.ClusterArn), extractTaskID(task.TaskArn)
+	for _, c := range task.Containers {
+		if err := s.store.Delete(ctx, nsTaskContainerLogs, taskContainerLogsKey(region, cluster, taskID, c.Name)); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	return nil
+}
+
+func taskContainerLogsKey(region, cluster, taskID, container string) string {
+	return serviceutil.RegionKey(region, cluster+"/"+taskID+"/"+container)
 }
 
 // ---- Service operations -------------------------------------------------------

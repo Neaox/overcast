@@ -83,13 +83,17 @@ def DeleteCluster(ctx: TestContext) -> None:
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
-    "CreateCluster": CreateCluster,
+    # CreateCluster, ListClusters and DeleteCluster are group-qualified because
+    # MSK models the same three operation names. A bare key is ambiguous once
+    # two registry groups declare a test name, and every loader refuses it
+    # rather than binding the wrong implementation.
+    "ecs-clusters:CreateCluster": CreateCluster,
     "DescribeClusters": DescribeClusters,
-    "ListClusters": ListClusters,
+    "ecs-clusters:ListClusters": ListClusters,
     "RegisterTaskDefinition": RegisterTaskDefinition,
     "ListTaskDefinitions": ListTaskDefinitions,
     "DeregisterTaskDefinition": DeregisterTaskDefinition,
-    "DeleteCluster": DeleteCluster,
+    "ecs-clusters:DeleteCluster": DeleteCluster,
     "RunTask": lambda ctx: RunTask(ctx),
     "DescribeTasks": lambda ctx: DescribeTasks(ctx),
     "ListTasks": lambda ctx: ListTasks(ctx),

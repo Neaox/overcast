@@ -682,9 +682,21 @@
       "service": "lambda",
       "name": "lambda-policy",
       "tests": [
-        {"name": "AddPermission"},
-        {"name": "GetPolicy", "depends": ["AddPermission"]},
-        {"name": "RemovePermission", "depends": ["GetPolicy"]}
+        {
+          "name": "AddPermission"
+        },
+        {
+          "name": "GetPolicy",
+          "depends": [
+            "AddPermission"
+          ]
+        },
+        {
+          "name": "RemovePermission",
+          "depends": [
+            "GetPolicy"
+          ]
+        }
       ]
     },
     {
@@ -2263,6 +2275,178 @@
             "DescribeServices",
             "ListServices",
             "UpdateService"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "ecr",
+      "name": "ecr-repositories",
+      "tests": [
+        {
+          "name": "CreateRepository"
+        },
+        {
+          "name": "DescribeRepositories",
+          "depends": [
+            "CreateRepository"
+          ]
+        },
+        {
+          "name": "DescribeRepositoriesAll",
+          "op": "DescribeRepositories",
+          "depends": [
+            "CreateRepository"
+          ]
+        },
+        {
+          "name": "DescribeRepositoriesPaginated",
+          "op": "DescribeRepositories",
+          "depends": [
+            "CreateRepository"
+          ]
+        },
+        {
+          "name": "DescribeRepositoriesSigned",
+          "op": "DescribeRepositories",
+          "depends": [
+            "CreateRepository"
+          ]
+        },
+        {
+          "name": "DescribeRepositoriesNotFound",
+          "op": "DescribeRepositories"
+        },
+        {
+          "name": "CreateRepositoryAlreadyExists",
+          "op": "CreateRepository",
+          "depends": [
+            "CreateRepository"
+          ]
+        },
+        {
+          "name": "DeleteRepository"
+        },
+        {
+          "name": "DeleteRepositoryNotEmpty",
+          "op": "DeleteRepository"
+        },
+        {
+          "name": "DeleteRepositoryForce",
+          "op": "DeleteRepository"
+        }
+      ]
+    },
+    {
+      "service": "ecr",
+      "name": "ecr-registry",
+      "tests": [
+        {
+          "name": "GetAuthorizationToken"
+        },
+        {
+          "name": "DescribeRegistry"
+        }
+      ]
+    },
+    {
+      "service": "ecr",
+      "name": "ecr-images",
+      "tests": [
+        {
+          "name": "PutImage"
+        },
+        {
+          "name": "ListImages",
+          "depends": [
+            "PutImage"
+          ]
+        },
+        {
+          "name": "ListImagesPaginated",
+          "op": "ListImages"
+        },
+        {
+          "name": "DescribeImages",
+          "depends": [
+            "PutImage"
+          ]
+        },
+        {
+          "name": "BatchGetImage",
+          "depends": [
+            "PutImage"
+          ]
+        },
+        {
+          "name": "BatchDeleteImage",
+          "depends": [
+            "PutImage"
+          ]
+        },
+        {
+          "name": "DescribeImagesNotFound",
+          "op": "DescribeImages"
+        }
+      ]
+    },
+    {
+      "service": "ecr",
+      "name": "ecr-policies",
+      "tests": [
+        {
+          "name": "PutLifecyclePolicy"
+        },
+        {
+          "name": "GetLifecyclePolicy",
+          "depends": [
+            "PutLifecyclePolicy"
+          ]
+        },
+        {
+          "name": "DeleteLifecyclePolicy",
+          "depends": [
+            "GetLifecyclePolicy"
+          ]
+        },
+        {
+          "name": "GetLifecyclePolicyNotFound",
+          "op": "GetLifecyclePolicy"
+        },
+        {
+          "name": "SetRepositoryPolicy"
+        },
+        {
+          "name": "GetRepositoryPolicy",
+          "depends": [
+            "SetRepositoryPolicy"
+          ]
+        },
+        {
+          "name": "DeleteRepositoryPolicy",
+          "depends": [
+            "GetRepositoryPolicy"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "ecr",
+      "name": "ecr-tags",
+      "tests": [
+        {
+          "name": "TagResource"
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "TagResource"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "ListTagsForResource"
           ]
         }
       ]
@@ -4250,6 +4434,231 @@
         },
         {
           "name": "ListExperimentRunEvents"
+        }
+      ]
+    },
+    {
+      "service": "msk",
+      "name": "msk-clusters",
+      "tests": [
+        {
+          "name": "ListKafkaVersions"
+        },
+        {
+          "name": "CreateCluster"
+        },
+        {
+          "name": "DescribeCluster",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListClusters",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListClustersByNameFilter",
+          "op": "ListClusters",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "GetBootstrapBrokers",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListNodes",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListClusterOperations",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "UpdateClusterConfiguration",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "UpdateClusterConfigurationStaleVersion",
+          "op": "UpdateClusterConfiguration",
+          "depends": [
+            "UpdateClusterConfiguration"
+          ]
+        },
+        {
+          "name": "UpdateClusterConfigurationUnknownConfiguration",
+          "op": "UpdateClusterConfiguration",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "DescribeClusterNotFound",
+          "op": "DescribeCluster"
+        },
+        {
+          "name": "GetBootstrapBrokersNotFound",
+          "op": "GetBootstrapBrokers"
+        },
+        {
+          "name": "CreateClusterConflict",
+          "op": "CreateCluster",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "DeleteCluster"
+        },
+        {
+          "name": "DeleteClusterNotFound",
+          "op": "DeleteCluster"
+        }
+      ]
+    },
+    {
+      "service": "msk",
+      "name": "msk-clusters-v2",
+      "tests": [
+        {
+          "name": "CreateClusterV2Serverless",
+          "op": "CreateClusterV2"
+        },
+        {
+          "name": "CreateClusterV2Provisioned",
+          "op": "CreateClusterV2"
+        },
+        {
+          "name": "CreateClusterV2NeitherType",
+          "op": "CreateClusterV2"
+        },
+        {
+          "name": "DescribeClusterV2",
+          "depends": [
+            "CreateClusterV2Serverless"
+          ]
+        },
+        {
+          "name": "DescribeClusterV2Provisioned",
+          "op": "DescribeClusterV2",
+          "depends": [
+            "CreateClusterV2Provisioned"
+          ]
+        },
+        {
+          "name": "ListClustersV2",
+          "depends": [
+            "CreateClusterV2Serverless",
+            "CreateClusterV2Provisioned"
+          ]
+        },
+        {
+          "name": "ListClustersV2ByClusterType",
+          "op": "ListClustersV2",
+          "depends": [
+            "CreateClusterV2Serverless",
+            "CreateClusterV2Provisioned"
+          ]
+        },
+        {
+          "name": "ListClustersV2Paginated",
+          "op": "ListClustersV2",
+          "depends": [
+            "CreateClusterV2Serverless",
+            "CreateClusterV2Provisioned"
+          ]
+        },
+        {
+          "name": "ListClusterOperationsV2",
+          "depends": [
+            "CreateClusterV2Provisioned"
+          ]
+        },
+        {
+          "name": "DescribeClusterV2NotFound",
+          "op": "DescribeClusterV2"
+        }
+      ]
+    },
+    {
+      "service": "msk",
+      "name": "msk-configurations",
+      "tests": [
+        {
+          "name": "CreateConfiguration"
+        },
+        {
+          "name": "DescribeConfiguration",
+          "depends": [
+            "CreateConfiguration"
+          ]
+        },
+        {
+          "name": "ListConfigurations",
+          "depends": [
+            "CreateConfiguration"
+          ]
+        },
+        {
+          "name": "ListConfigurationRevisions",
+          "depends": [
+            "CreateConfiguration"
+          ]
+        },
+        {
+          "name": "CreateConfigurationConflict",
+          "op": "CreateConfiguration",
+          "depends": [
+            "CreateConfiguration"
+          ]
+        },
+        {
+          "name": "DescribeConfigurationNotFound",
+          "op": "DescribeConfiguration"
+        },
+        {
+          "name": "DeleteConfiguration"
+        },
+        {
+          "name": "DeleteConfigurationNotFound",
+          "op": "DeleteConfiguration"
+        }
+      ]
+    },
+    {
+      "service": "msk",
+      "name": "msk-tags",
+      "tests": [
+        {
+          "name": "TagResource"
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "TagResource"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "ListTagsForResource"
+          ]
+        },
+        {
+          "name": "CreateClusterV2WithTags",
+          "op": "CreateClusterV2"
         }
       ]
     }

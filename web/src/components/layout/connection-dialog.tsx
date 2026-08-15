@@ -3,6 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 import { AlertTriangle, Check, CircleX, Loader2, Server } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { endpointStore } from "@/services/endpoint-store"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -86,7 +87,34 @@ function useEndpointValidation(baseUrl: string): ValidationState {
   return { kind: "idle" }
 }
 
-export function ConnectionDialogContent() {
+interface ConnectionFormProps {
+  /** Submit button label at rest. */
+  submitLabel?: string
+  /** Submit button label while submitting. */
+  submittingLabel?: string
+  /** Stretch the submit button across the form (dialog style). */
+  fullWidthSubmit?: boolean
+  /** Small print under the submit button. */
+  footnote?: string
+  onSubmitted?: () => void
+}
+
+/**
+ * The endpoint configuration form — the single place a host is ever typed.
+ *
+ * Shared by the first-run dialog (ConnectionDialogContent, which wraps this in
+ * its own card chrome) and the settings page's Connection section, which edits
+ * the active endpoint in place. Everything that makes the field trustworthy —
+ * the live reachability probe, the endpoint suggestions, the Docker
+ * socket warning — belongs here so both entry points get it.
+ */
+export function ConnectionForm({
+  submitLabel = "Connect",
+  submittingLabel = "Connecting…",
+  fullWidthSubmit = false,
+  footnote,
+  onSubmitted,
+}: ConnectionFormProps) {
   const inDocker = typeof window !== "undefined" && window.__OVERCAST__?.inDocker === true
   const endpointUnknown = typeof window !== "undefined" && window.__OVERCAST__?.endpointKnown === false
   // Seed from the active endpoint, not DEFAULT_ENDPOINT: a user reopening the
@@ -105,14 +133,11 @@ export function ConnectionDialogContent() {
         { baseUrl: url.origin, region: value.region.trim() || "us-east-1", label: value.label.trim() || undefined },
         { explicit: true },
       )
+      onSubmitted?.()
     },
   })
   return (
-    <div className="w-full max-w-md rounded-xl border border-border bg-bg-elevated p-8 shadow-2xl">
-      <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10"><Server className="h-5 w-5 text-accent" /></div>
-        <div><h1 className="font-mono text-base font-semibold text-fg">Connect to Overcast</h1><p className="text-sm text-fg-muted">Configure your emulator endpoint</p></div>
-      </div>
+    <>
       {inDocker && endpointUnknown && (
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
@@ -144,10 +169,22 @@ export function ConnectionDialogContent() {
         <form.Field name="region">{(field) => (<FormField label="Default Region" htmlFor="region"><RegionSelect id="region" value={field.state.value} onChange={(v) => field.handleChange(v)} /></FormField>)}</form.Field>
         <form.Field name="label">{(field) => (<FormField label="Label (optional)" htmlFor="label" hint="A friendly name shown in the header."><Input id="label" value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} onBlur={field.handleBlur} placeholder={labelPlaceholder} /></FormField>)}</form.Field>
         <div className="mt-2 flex flex-col gap-2">
-          <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>{([canSubmit, isSubmitting]) => (<Button type="submit" className="w-full" disabled={!canSubmit}>{isSubmitting ? "Connecting…" : "Connect"}</Button>)}</form.Subscribe>
-          <p className="text-center text-xs text-fg-subtle">Settings are stored locally in this browser.</p>
+          <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>{([canSubmit, isSubmitting]) => (<Button type="submit" className={cn(fullWidthSubmit ? "w-full" : "self-start")} disabled={!canSubmit}>{isSubmitting ? submittingLabel : submitLabel}</Button>)}</form.Subscribe>
+          {footnote && <p className="text-center text-xs text-fg-subtle">{footnote}</p>}
         </div>
       </form>
+    </>
+  )
+}
+
+export function ConnectionDialogContent({ onSubmitted }: { onSubmitted?: () => void } = {}) {
+  return (
+    <div className="w-full max-w-md rounded-xl border border-border bg-bg-elevated p-8 shadow-2xl">
+      <div className="mb-6 flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10"><Server className="h-5 w-5 text-accent" /></div>
+        <div><h1 className="font-mono text-base font-semibold text-fg">Connect to Overcast</h1><p className="text-sm text-fg-muted">Configure your emulator endpoint</p></div>
+      </div>
+      <ConnectionForm fullWidthSubmit footnote="Settings are stored locally in this browser." onSubmitted={onSubmitted} />
     </div>
   )
 }
@@ -156,6 +193,11 @@ export function ConnectionDialog() {
   return (<div className="fixed inset-0 z-50 flex items-center justify-center bg-bg p-4"><ConnectionDialogContent /></div>)
 }
 
+/**
+ * The header's quick connection edit — the same form as the settings page's
+ * Connection section, reachable from any page without navigating away.
+ * Dismisses itself once the endpoint is saved.
+ */
 export function ConnectionDialogModal({ onClose }: { onClose: () => void }) {
-  return (<div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/60 backdrop-blur-sm p-4" onClick={onClose}><div onClick={(e) => e.stopPropagation()}><ConnectionDialogContent /></div></div>)
+  return (<div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/60 backdrop-blur-sm p-4" onClick={onClose}><div onClick={(e) => e.stopPropagation()}><ConnectionDialogContent onSubmitted={onClose} /></div></div>)
 }

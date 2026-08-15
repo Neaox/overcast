@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -62,6 +63,11 @@ const (
 	// buys the difference between one accurate line at startup and five
 	// Lambda suites failing later for a reason none of them can name.
 	dockerReadyTimeout = 30 * time.Second
+
+	// imagePullTimeout bounds refreshing a moving tag. Generous because it is
+	// paid once on a cold machine pulling ~90MB, and skipped entirely when the
+	// registry already agrees with what is cached.
+	imagePullTimeout = 5 * time.Minute
 
 	// loopbackHost is where a managed instance listens — published there for a
 	// container, bound there for a native binary — and the address every port
@@ -858,6 +864,151 @@ func dockerBridgeGateway(ctx context.Context, ports ...int) string {
 	return gateway
 }
 
+// imageRefIsPullable reports whether refreshing ref against its registry is a
+// meaningful thing to do before running it, and when it is not, why not in
+// caller-facing words.
+//
+// `docker run` fetches an image only when it is absent, so a moving tag like
+// :alpha resolves to whatever copy the machine cached, for as long as that copy
+// survives. That is issue #801's silent substitution one layer down: the log
+// names the tag the caller asked for while the bits under it are arbitrarily
+// old. It cost a run against a cached :alpha old enough that the health path
+// had been renamed underneath it (`/_health` → `/_overcast/health`), which
+// surfaced only as "did not become healthy within 1m0s" — the emulator was up
+// and answering the whole time (PR #979).
+//
+// Two kinds of reference are deliberately left alone. A digest names one image
+// for all time, so a cached copy of it cannot be stale. An unqualified name —
+// no registry host in the first path segment — is how this repo names its own
+// local builds (`docker build -t overcast:dev .`, `compat-overcast`), and those
+// exist in no registry, so a pull could only ever fail.
+func imageRefIsPullable(ref string) (bool, string) {
+	if strings.Contains(ref, "@") {
+		return false, "the reference is digest-pinned, so the cached copy cannot be stale"
+	}
+	host, _, hasSlash := strings.Cut(ref, "/")
+	if !hasSlash || (!strings.ContainsAny(host, ".:") && host != "localhost") {
+		return false, "the name carries no registry host, so it is a local build rather than a registry tag"
+	}
+	return true, ""
+}
+
+// pullFallback decides what happens when `docker pull` failed: carry on with
+// the cached copy, or stop.
+//
+// A failed pull is not on its own a reason to abandon the run — compat on a
+// train, or through a registry outage, should still work off what the machine
+// already has. But it has to say so, and name the digest it fell back to:
+// falling back silently is the same trap the pull exists to close.
+func pullFallback(localDigest string, pullErr error, image string) (string, error) {
+	if localDigest == "" {
+		return "", fmt.Errorf(
+			"could not pull %s, and there is no copy cached on this machine to run instead: %w",
+			image, pullErr)
+	}
+	return fmt.Sprintf(
+		"could not refresh %s (%v) — running the cached copy %s instead, which may be older than the tag",
+		image, pullErr, localDigest), nil
+}
+
+// dockerImageInfo reports what a locally present image actually is: the repo
+// digest — or the image ID, for a local build that was never pushed anywhere —
+// and the commit it was built from. Both are empty when the machine does not
+// have the image, which is the same answer as "nothing to fall back to".
+func dockerImageInfo(ctx context.Context, image string) (digest, revision string) {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	const format = `{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}` +
+		"\x1f" + `{{index .Config.Labels "org.opencontainers.image.revision"}}`
+	cmd := exec.CommandContext(probeCtx, "docker", "image", "inspect", image, "--format", format) //nolint:gosec
+	out, err := cmd.Output()
+	if err != nil {
+		return "", ""
+	}
+	digest, revision, _ = strings.Cut(strings.TrimSpace(string(out)), "\x1f")
+	if revision == "<no value>" {
+		revision = ""
+	}
+	return digest, revision
+}
+
+// commitsAheadOf counts commits from rev to HEAD in this checkout, and returns
+// 0 whenever git cannot answer — outside a checkout, or when rev has not been
+// fetched. Zero means "say nothing", which is the right default for a note
+// whose only job is to explain a surprising result.
+func commitsAheadOf(ctx context.Context, rev string) int {
+	if rev == "" {
+		return 0
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, "git", "-C", repoRoot(), //nolint:gosec
+		"rev-list", "--count", rev+"..HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// imageSkewNote explains, in one line, that the image is older than the suites
+// about to be run against it.
+//
+// The default image is the last published release; the suites are whatever is
+// in the working tree. Every commit that merges a new compat test between one
+// release and the next widens that gap, and the failure it produces is
+// indistinguishable from a regression — same suite, same group, same red. The
+// note exists so the reader does not go looking for a bug in the emulator that
+// is really a bug in what they are testing it with.
+func imageSkewNote(image, imageRevision string, commitsAhead int) string {
+	if imageRevision == "" || commitsAhead <= 0 {
+		return ""
+	}
+	short := imageRevision
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return fmt.Sprintf(
+		"%s was built from %s, %d commit(s) behind this checkout — compat suites come from the working tree, "+
+			"so any test merged since then fails against it and looks like a regression; "+
+			"build this tree and pass --overcast-image to test your own changes",
+		image, short, commitsAhead)
+}
+
+// refreshImage brings a moving tag up to date so the run tests the image the
+// caller named rather than a cached ancestor of it. See imageRefIsPullable for
+// why this is not left to `docker run`.
+func refreshImage(ctx context.Context, image string, logf func(string, ...any)) error {
+	pullable, why := imageRefIsPullable(image)
+	if !pullable {
+		logf("not refreshing %s: %s", image, why)
+		return nil
+	}
+	pullCtx, cancel := context.WithTimeout(ctx, imagePullTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(pullCtx, "docker", "pull", "--quiet", image) //nolint:gosec
+	cmd.Env = append(os.Environ(), "MSYS_NO_PATHCONV=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	cached, _ := dockerImageInfo(ctx, image)
+	warning, fatal := pullFallback(cached, errors.New(detail), image)
+	if fatal != nil {
+		return fatal
+	}
+	logf("%s", warning)
+	return nil
+}
+
 func startOvercastContainer(
 	ctx context.Context,
 	artifact overcastArtifact,
@@ -868,6 +1019,22 @@ func startOvercastContainer(
 ) (*managedOvercast, error) {
 	image := artifact.Ref
 	endpoint := fmt.Sprintf("http://%s:%d", opts.Host, apiPort)
+
+	if err := refreshImage(ctx, image, logf); err != nil {
+		return nil, err
+	}
+	// Say what is about to run, not just what it is called. A tag is a label
+	// the caller chose; the digest is the only thing that identifies the bits,
+	// and it is what makes a "this passed locally" claim checkable against the
+	// digest in a release PR's RC comment.
+	digest, revision := dockerImageInfo(ctx, image)
+	if digest != "" {
+		logf("resolved %s to %s", image, digest)
+	}
+	if note := imageSkewNote(image, revision, commitsAheadOf(ctx, revision)); note != "" {
+		logf("%s", note)
+	}
+
 	logf("starting Overcast (%s) on %s", image, endpoint)
 
 	gateway := dockerBridgeGateway(ctx, apiPort, uiPort)

@@ -4,11 +4,12 @@ package ecs
 // These are NOT part of the AWS API surface.
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/Neaox/overcast/internal/docker"
 )
 
 // GetTaskContainerLogs returns the last 200 lines of logs for a specific
@@ -52,7 +53,9 @@ func (h *Handler) GetTaskContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found {
-		writeTaskContainerLogs(w, resolvedTaskArn, container, logs)
+		writeTaskContainerLogs(w, resolvedTaskArn, container, taskLogsResponse{
+			Logs: logs.Logs, LogSource: "retained", CapturedAt: logs.CapturedAt,
+		})
 		return
 	}
 
@@ -67,16 +70,40 @@ func (h *Handler) GetTaskContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeTaskContainerLogs(w, resolvedTaskArn, container, string(stripDockerLogHeaders(raw)))
+	// docker.DemuxStream and not a local stripper: a container started with a
+	// TTY writes no frame headers at all, and only DemuxStream tells the two
+	// shapes apart. ECS used to carry its own copy that did not, so every TTY
+	// task's logs came back with the first eight bytes eaten and the rest cut
+	// at whatever offset the ninth through twelfth bytes of its own output
+	// happened to spell.
+	writeTaskContainerLogs(w, resolvedTaskArn, container, taskLogsResponse{
+		Logs: string(docker.DemuxStream(raw)), LogSource: "container",
+	})
 }
 
-func writeTaskContainerLogs(w http.ResponseWriter, taskArn, container, logs string) {
+// taskLogsResponse is the emulator-only log payload. It is deliberately not an
+// AWS shape: the retained copy and the time it was taken have no place in
+// DescribeTasks, which is the whole reason the retention lives in its own
+// namespace rather than on the Task record.
+type taskLogsResponse struct {
+	ContainerName string `json:"containerName"`
+	TaskArn       string `json:"taskArn"`
+	Logs          string `json:"logs"`
+	// LogSource is "container" for a live read and "retained" for the copy kept
+	// from a container that has since been removed, so a caller can say which
+	// it is showing rather than implying the task is still running.
+	LogSource string `json:"logSource,omitempty"`
+	// CapturedAt dates a retained copy. Empty on a live read, which is now.
+	CapturedAt string `json:"capturedAt,omitempty"`
+}
+
+// writeTaskContainerLogs stamps the identity fields onto out and writes it, so
+// each caller only has to say where the logs came from.
+func writeTaskContainerLogs(w http.ResponseWriter, taskArn, container string, out taskLogsResponse) {
+	out.TaskArn = taskArn
+	out.ContainerName = container
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"containerName": container,
-		"taskArn":       taskArn,
-		"logs":          logs,
-	})
+	_ = json.NewEncoder(w).Encode(&out)
 }
 
 // ListClusterTasks returns all tasks for a given cluster.
@@ -127,22 +154,4 @@ func writeEmulatorError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-}
-
-// stripDockerLogHeaders removes the 8-byte Docker multiplex frame headers
-// from raw container log output, returning only the payload bytes.
-func stripDockerLogHeaders(raw []byte) []byte {
-	out := make([]byte, 0, len(raw))
-	for len(raw) >= 8 {
-		size := binary.BigEndian.Uint32(raw[4:8])
-		raw = raw[8:]
-		if uint32(len(raw)) < size {
-			// Truncated frame — take what's left.
-			out = append(out, raw...)
-			break
-		}
-		out = append(out, raw[:size]...)
-		raw = raw[size:]
-	}
-	return out
 }

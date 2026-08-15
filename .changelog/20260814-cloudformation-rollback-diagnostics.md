@@ -1,0 +1,1 @@
+* [cloudformation/ecs/web] failed ECS service deployments preserve the reason-bearing scheduler failure, create rollback honours `Retain` and `RetainExceptOnCreate` deletion policies, and the stack Events tab automatically loads older paginated history from its nested scroll region
