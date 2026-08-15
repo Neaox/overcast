@@ -1,4 +1,4 @@
-package mcp
+package providers
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/mcp"
 	"github.com/Neaox/overcast/internal/services/acm"
 	"github.com/Neaox/overcast/internal/services/dynamodb"
 	"github.com/Neaox/overcast/internal/services/ecr"
@@ -141,7 +142,7 @@ var runtimeMutationToolNames = []string{
 
 func TestRuntimeProvider_RuntimeMutationToolsAdvertiseExplicitOutputSchemas(t *testing.T) {
 	provider := NewRuntimeProvider(nil, nil)
-	toolsByName := map[string]Tool{}
+	toolsByName := map[string]mcp.Tool{}
 	for _, tool := range provider.Tools() {
 		toolsByName[tool.Name] = tool
 	}
@@ -161,7 +162,7 @@ func TestRuntimeProvider_RuntimeMutationToolsAdvertiseExplicitOutputSchemas(t *t
 
 func TestRuntimeProvider_RuntimeMutationToolsAdvertiseExecutionHints(t *testing.T) {
 	provider := NewRuntimeProvider(nil, nil)
-	toolsByName := map[string]Tool{}
+	toolsByName := map[string]mcp.Tool{}
 	for _, tool := range provider.Tools() {
 		toolsByName[tool.Name] = tool
 	}

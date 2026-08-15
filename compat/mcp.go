@@ -8,6 +8,7 @@ import (
 	"os"
 
 	intmcp "github.com/Neaox/overcast/internal/mcp"
+	mcpproviders "github.com/Neaox/overcast/internal/mcp/providers"
 )
 
 type registryData struct {
@@ -30,7 +31,7 @@ type registryTest struct {
 // compat-specific orchestration tools.
 func NewMCPServer(orch *Orchestrator, registryPath, workspaceRoot string, logger *slog.Logger) *intmcp.Server {
 	providers := []intmcp.ToolProvider{
-		intmcp.NewRepoProvider(workspaceRoot),
+		mcpproviders.NewRepoProvider(workspaceRoot),
 		newCompatMCPProvider(orch, registryPath),
 	}
 	return intmcp.NewServer(orch, logger, providers...)

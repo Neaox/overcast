@@ -1,4 +1,4 @@
-package mcp
+package providers
 
 import (
 	"context"
@@ -11,12 +11,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Neaox/overcast/internal/mcp"
 )
 
 func TestRepoProviderRegistersExpectedTools(t *testing.T) {
 	provider := NewRepoProvider(t.TempDir())
 	have := make(map[string]bool)
-	toolsByName := make(map[string]Tool)
+	toolsByName := make(map[string]mcp.Tool)
 	for _, tool := range provider.Tools() {
 		have[tool.Name] = true
 		toolsByName[tool.Name] = tool
@@ -151,9 +153,9 @@ func TestRepoBuildCommandsParsesMakefile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toolBuildCommands() error = %v", err)
 	}
-	toolResult, ok := out.(ToolResult)
+	toolResult, ok := out.(mcp.ToolResult)
 	if !ok {
-		t.Fatalf("toolBuildCommands() type = %T, want ToolResult", out)
+		t.Fatalf("toolBuildCommands() type = %T, want mcp.ToolResult", out)
 	}
 	got := toolResult.StructuredContent.(map[string]any)
 	commands := got["commands"].([]commandEntry)
@@ -1039,7 +1041,7 @@ func TestRuntimeProbeInstanceCompletesLifecycleHandshake(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	// Use a real MCP server to enforce lifecycle ordering.
-	mcpSrv := NewServer(nil, nil)
+	mcpSrv := mcp.NewServer(nil, nil)
 	srv := httptest.NewServer(mcpSrv.RootHandler())
 	defer srv.Close()
 
@@ -1057,10 +1059,7 @@ func TestRuntimeProbeInstanceCompletesLifecycleHandshake(t *testing.T) {
 	// The probe must have completed the full handshake (initialize +
 	// notifications/initialized). Check the server's ready state directly so
 	// we don't add extra HTTP connections that could perturb test scheduling.
-	mcpSrv.mu.RLock()
-	ready := mcpSrv.ready
-	mcpSrv.mu.RUnlock()
-	if !ready {
+	if !mcpSrv.Ready() {
 		t.Fatal("expected server to be in ready state after probe (notifications/initialized was not sent)")
 	}
 }

@@ -1,4 +1,4 @@
-package mcp
+package providers
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/mcp"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/services/acm"
 	"github.com/Neaox/overcast/internal/services/dynamodb"
@@ -339,8 +340,8 @@ func uniqueRuntimeURIs(uris []string) []string {
 	return out
 }
 
-func (p *RuntimeProvider) Tools() []Tool {
-	return []Tool{
+func (p *RuntimeProvider) Tools() []mcp.Tool {
+	return []mcp.Tool{
 		{
 			Name:        "runtime_instance_info",
 			Description: "Return configuration and capability metadata for this running Overcast instance, including region, account ID, port, and enabled services.",
@@ -1775,8 +1776,8 @@ func (p *RuntimeProvider) Tools() []Tool {
 	}
 }
 
-func (p *RuntimeProvider) Handler(name string) (HandlerFunc, bool) {
-	handlers := map[string]HandlerFunc{
+func (p *RuntimeProvider) Handler(name string) (mcp.HandlerFunc, bool) {
+	handlers := map[string]mcp.HandlerFunc{
 		"runtime_instance_info":                      p.toolInstanceInfo,
 		"runtime_list_services":                      p.toolListServices,
 		"runtime_inventory":                          p.toolRuntimeInventory,
@@ -3337,8 +3338,8 @@ func (p *RuntimeProvider) toolInstanceInfo(_ context.Context, _ json.RawMessage)
 			"log_level":        "info",
 			"enabled_services": []string{},
 		}
-		return ToolResult{
-			Content:           TextContent("Running Overcast instance metadata is available, but no runtime config was injected into the MCP provider."),
+		return mcp.ToolResult{
+			Content:           mcp.TextContent("Running Overcast instance metadata is available, but no runtime config was injected into the MCP provider."),
 			StructuredContent: result,
 		}, nil
 	}
@@ -3354,8 +3355,8 @@ func (p *RuntimeProvider) toolInstanceInfo(_ context.Context, _ json.RawMessage)
 		"log_level":        p.cfg.LogLevel,
 		"enabled_services": services,
 	}
-	return ToolResult{
-		Content:           TextContent(fmt.Sprintf("Overcast runtime on %s:%d with %d enabled services.", p.cfg.Host, p.cfg.Port, len(services))),
+	return mcp.ToolResult{
+		Content:           mcp.TextContent(fmt.Sprintf("Overcast runtime on %s:%d with %d enabled services.", p.cfg.Host, p.cfg.Port, len(services))),
 		StructuredContent: result,
 	}, nil
 }

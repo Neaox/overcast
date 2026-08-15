@@ -1,6 +1,6 @@
 //go:build dev
 
-package mcp
+package providers
 
 // readServiceCoverage returns nil in dev builds. The capabilities.AllCapabilities
 // static snapshot is the authoritative source of coverage data; STATUS.md parsing

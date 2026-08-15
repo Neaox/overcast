@@ -1807,6 +1807,23 @@ func (s *Server) SetBearerAuthToken(token string) {
 	s.mu.Unlock()
 }
 
+// Ready reports whether the lifecycle handshake has completed — initialize
+// followed by notifications/initialized.
+//
+// Exported for callers outside this package that drive a server and need to
+// assert the handshake happened, which the providers package does when it
+// checks that its own MCP client probe completes the exchange rather than
+// stopping halfway. Reading the field directly is not available to them, and
+// re-probing over HTTP to find out would perturb the thing being measured.
+//
+// Note this is a 2025-11-25 concept: revision 2026-07-28 removes the handshake
+// altogether, and this accessor goes with it.
+func (s *Server) Ready() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ready
+}
+
 // SetShutdownSignal hands the server the channel its host closes when the
 // process is going down. Closing it releases every SSE stream this server is
 // serving.

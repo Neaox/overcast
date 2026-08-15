@@ -1,4 +1,4 @@
-package mcp
+package providers
 
 import (
 	"bufio"
@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Neaox/overcast/internal/mcp"
 )
 
 type RepoProvider struct {
@@ -133,8 +135,8 @@ func newRepoProvider(workspaceRoot string, symbolFinder SymbolFinder) *RepoProvi
 	}
 }
 
-func (p *RepoProvider) Tools() []Tool {
-	return []Tool{
+func (p *RepoProvider) Tools() []mcp.Tool {
+	return []mcp.Tool{
 		{Name: "workspace_server_info", Description: "Identify this as the Workspace MCP Server and explain its role in Overcast development and debugging.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"serverRole":{"type":"string"},"serverName":{"type":"string"},"serverVersion":{"type":"string"},"purpose":{"type":"string"},"description":{"type":"string"},"toolCategories":{"type":"object"},"gettingStarted":{"type":"object"},"commonWorkflows":{"type":"object"},"prerequisites":{"type":"object"},"capabilities":{"type":"object"},"overcastProject":{"type":"object"},"documentation":{"type":"object"},"mcp_version":{"type":"string"}},"required":["serverRole","serverName","serverVersion","description","mcp_version"]}`)},
 		{Name: "repo_workspace_info", Description: "Return workspace-level metadata useful for generic repo navigation, including workspace root and service count.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"workspace_root":{"type":"string"},"mcp_version":{"type":"string"},"service_count":{"type":"integer"},"route_count":{"type":"integer"},"service_docs":{"type":"integer"},"key_paths":{"type":"object"}},"required":["workspace_root","mcp_version","service_count"]}`)},
 		{Name: "repo_build_commands", Description: "Return the main Makefile build, test, lint, compat, and container commands with short descriptions.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer"},"commands":{"type":"array","items":{"type":"object","properties":{"target":{"type":"string"},"description":{"type":"string"},"command":{"type":"string"}},"required":["target","description","command"]}},"windows_note":{"type":"string"}},"required":["count","commands"]}`)},
@@ -169,8 +171,8 @@ func (p *RepoProvider) Tools() []Tool {
 	}
 }
 
-func (p *RepoProvider) Handler(name string) (HandlerFunc, bool) {
-	handlers := map[string]HandlerFunc{
+func (p *RepoProvider) Handler(name string) (mcp.HandlerFunc, bool) {
+	handlers := map[string]mcp.HandlerFunc{
 		"workspace_server_info":       p.toolWorkspaceServerInfo,
 		"repo_workspace_info":         p.toolWorkspaceInfo,
 		"repo_build_commands":         p.toolBuildCommands,
@@ -560,10 +562,10 @@ func (p *RepoProvider) toolWorkspaceServerInfo(_ context.Context, _ json.RawMess
 			"status":       "STATUS.md - Implementation status by service",
 			"agents":       "AGENTS.md - Guidelines for AI agents working on Overcast",
 		},
-		"mcp_version": ProtocolVersion,
+		"mcp_version": mcp.ProtocolVersion,
 	}
-	return ToolResult{
-		Content:           TextContent("Workspace MCP server for Overcast. Use repo_* tools for local workspace analysis and runtime_* tools to discover or delegate to running Overcast instances."),
+	return mcp.ToolResult{
+		Content:           mcp.TextContent("Workspace MCP server for Overcast. Use repo_* tools for local workspace analysis and runtime_* tools to discover or delegate to running Overcast instances."),
 		StructuredContent: result,
 	}, nil
 }
@@ -573,7 +575,7 @@ func (p *RepoProvider) toolWorkspaceInfo(_ context.Context, _ json.RawMessage) (
 	routesCount := countFiles(filepath.Join(p.workspaceRoot, "web", "src", "routes"), ".tsx")
 	serviceDocsCount := countFiles(filepath.Join(p.workspaceRoot, "docs", "services"), ".md")
 	if err != nil {
-		return map[string]any{"workspace_root": p.workspaceRoot, "mcp_version": ProtocolVersion, "service_count": 0, "route_count": routesCount, "service_docs": serviceDocsCount}, nil
+		return map[string]any{"workspace_root": p.workspaceRoot, "mcp_version": mcp.ProtocolVersion, "service_count": 0, "route_count": routesCount, "service_docs": serviceDocsCount}, nil
 	}
 	count := 0
 	for _, e := range entries {
@@ -583,7 +585,7 @@ func (p *RepoProvider) toolWorkspaceInfo(_ context.Context, _ json.RawMessage) (
 	}
 	return map[string]any{
 		"workspace_root": p.workspaceRoot,
-		"mcp_version":    ProtocolVersion,
+		"mcp_version":    mcp.ProtocolVersion,
 		"service_count":  count,
 		"route_count":    routesCount,
 		"service_docs":   serviceDocsCount,
@@ -610,8 +612,8 @@ func (p *RepoProvider) toolBuildCommands(_ context.Context, _ json.RawMessage) (
 		commands = append(commands, commandEntry{Target: target, Description: strings.TrimSpace(parts[1]), Command: "make " + target})
 	}
 	result := map[string]any{"count": len(commands), "commands": commands, "windows_note": "Use task <target> on Windows; Taskfile targets mirror Makefile targets."}
-	return ToolResult{
-		Content:           TextContent(fmt.Sprintf("Found %d documented Makefile commands for building, testing, linting, and container workflows.", len(commands))),
+	return mcp.ToolResult{
+		Content:           mcp.TextContent(fmt.Sprintf("Found %d documented Makefile commands for building, testing, linting, and container workflows.", len(commands))),
 		StructuredContent: result,
 	}, nil
 }
@@ -1748,7 +1750,7 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 		"id":      "probe-init",
 		"method":  "initialize",
 		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
+			"protocolVersion": mcp.ProtocolVersion,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "overcast-workspace-mcp", "version": "1.0.0"},
 		},
@@ -2988,7 +2990,7 @@ func doMCPEnsureReady(ctx context.Context, client *http.Client, endpoint string)
 		"id":      "lifecycle-init",
 		"method":  "initialize",
 		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
+			"protocolVersion": mcp.ProtocolVersion,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "overcast-workspace-mcp", "version": "1.0.0"},
 		},

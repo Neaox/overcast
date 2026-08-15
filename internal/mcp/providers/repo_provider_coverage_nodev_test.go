@@ -1,6 +1,6 @@
 //go:build !dev
 
-package mcp
+package providers
 
 import (
 	"context"

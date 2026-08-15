@@ -10,6 +10,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/mcp"
+	mcpproviders "github.com/Neaox/overcast/internal/mcp/providers"
 	"github.com/Neaox/overcast/internal/state"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -37,7 +38,7 @@ import (
 // The slim build tag excludes this file entirely so overcast-slim never
 // exposes /_overcast/mcp.
 func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger, shutdownCh <-chan struct{}) {
-	provider := mcp.NewRuntimeProvider(cfg, store)
+	provider := mcpproviders.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
 	root := sync.OnceValue(func() http.Handler {
 		runtimeMCP := mcp.NewServer(nil, slog.Default(), provider)
