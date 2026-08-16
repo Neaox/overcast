@@ -2732,14 +2732,17 @@ func TestServer_ServeStdio_CancellationEmitsCancelledNotification(t *testing.T) 
 		errCh <- srv.ServeStdio(context.Background(), inReader, out)
 	}()
 
-	_, _ = inWriter.Write(stdioListenLine(t))
-	callMsg, _ := json.Marshal(map[string]any{
+	// No `subscriptions/listen` here, deliberately. `notifications/cancelled` is
+	// request scoped: it flows on the response stream of the request it cancels,
+	// which `ServeStdio` gives every stdio request, and `subscriptionFilter.wants`
+	// keeps it off listen streams by kind. Opening one would only obscure which
+	// transport carried it.
+	_, _ = inWriter.Write(stdioLine(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      12,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "block", "arguments": map[string]any{}},
-	})
-	_, _ = inWriter.Write(append(callMsg, '\n'))
+	}))
 
 	select {
 	case <-started:
@@ -3267,15 +3270,52 @@ func TestServer_ServeStdio_RuntimeMutationTool_EmitsResourcesListChangedNotifica
 	srv := newStdioServer(t, &mutableRuntimeResourceProvider{})
 
 	inReader, inWriter := io.Pipe()
-	defer inWriter.Close()
-	out := &strings.Builder{}
+	defer inWriter.Close() //nolint:errcheck
+	outReader, outWriter := io.Pipe()
+	defer outReader.Close() //nolint:errcheck
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- srv.ServeStdio(context.Background(), inReader, out)
+		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
 	_, _ = inWriter.Write(stdioListenLine(t))
-	callMsg := stdioLine(t, map[string]any{
+
+	lineCh := make(chan string, 16)
+	errReadCh := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(outReader)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			errReadCh <- scanErr
+		}
+	}()
+
+	// The listen request is dispatched on a worker, so the subscription is not
+	// registered the moment the line is written. Wait for its acknowledgement
+	// before triggering the mutation, or the emit can beat the subscription onto
+	// the stream and the notification is dropped with nobody listening.
+	initSeen := false
+	initDeadline := time.After(2 * time.Second)
+	for !initSeen {
+		select {
+		case line := <-lineCh:
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				continue
+			}
+			if msg["method"] == notificationsAcknowledged {
+				initSeen = true
+			}
+		case readErr := <-errReadCh:
+			t.Fatalf("reading stdio output: %v", readErr)
+		case <-initDeadline:
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
+		}
+	}
+
+	_, _ = inWriter.Write(stdioLine(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      62,
 		"method":  "tools/call",
@@ -3283,10 +3323,35 @@ func TestServer_ServeStdio_RuntimeMutationTool_EmitsResourcesListChangedNotifica
 			"name":      "runtime_mutate_demo",
 			"arguments": map[string]any{},
 		},
-	})
-	_, _ = inWriter.Write(append(callMsg, '\n'))
-	_ = inWriter.Close()
+	}))
 
+	// Read both out before closing stdin. EOF cancels the loop context, which
+	// ends the listen stream, and a notification already in flight loses the race
+	// against that cancellation in `serveSubscription`'s select.
+	var sawCallResponse, sawNotification bool
+	deadline := time.After(2 * time.Second)
+	for !sawCallResponse || !sawNotification {
+		select {
+		case line := <-lineCh:
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				continue
+			}
+			if msg["id"] == float64(62) {
+				sawCallResponse = true
+			}
+			if msg["method"] == "notifications/resources/list_changed" {
+				sawNotification = true
+			}
+		case readErr := <-errReadCh:
+			t.Fatalf("reading stdio output: %v", readErr)
+		case <-deadline:
+			t.Fatalf("timed out on stdio; saw tools/call response = %t, saw notifications/resources/list_changed = %t", sawCallResponse, sawNotification)
+		}
+	}
+
+	_ = inWriter.Close()
+	defer outWriter.Close() //nolint:errcheck
 	select {
 	case err := <-errCh:
 		if err != nil {
@@ -3294,28 +3359,6 @@ func TestServer_ServeStdio_RuntimeMutationTool_EmitsResourcesListChangedNotifica
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	var sawCallResponse bool
-	var sawNotification bool
-	for _, line := range lines {
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			continue
-		}
-		if msg["id"] == float64(62) {
-			sawCallResponse = true
-		}
-		if msg["method"] == "notifications/resources/list_changed" {
-			sawNotification = true
-		}
-	}
-	if !sawCallResponse {
-		t.Fatalf("did not find tools/call response in:\n%s", out.String())
-	}
-	if !sawNotification {
-		t.Fatalf("did not find notifications/resources/list_changed output in:\n%s", out.String())
 	}
 }
 
