@@ -234,7 +234,9 @@ func paginatedListResult[T any](params json.RawMessage, itemKey string, items []
 	if nextCursor != "" {
 		result["nextCursor"] = nextCursor
 	}
-	return result, nil
+	// Every list this builds — tools, prompts, resources, resource templates —
+	// is one 2026-07-28 requires a cache directive on.
+	return markCacheable(result), nil
 }
 
 func normalizeToolResult(result any, execErr error) ToolResult {

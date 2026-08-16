@@ -596,6 +596,10 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		writeJSONRPCError(w, req.ID, versionErr)
 		return
 	}
+	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
+		writeJSONRPCError(w, req.ID, headerErr)
+		return
+	}
 
 	// server/discover answers ahead of the lifecycle gate, and deliberately.
 	// It is the probe a client sends when it does not yet know what this server
@@ -1226,7 +1230,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, w http.ResponseWriter,
 	}
 	providers := s.snapshotResourceProviders()
 	if len(providers) == 0 {
-		writeRPCResult(w, req.ID, map[string]any{"contents": []any{}})
+		writeRPCResult(w, req.ID, markCacheable(map[string]any{"contents": []any{}}))
 		return
 	}
 	contents, readErr := s.readResourceFromProviders(ctx, uri, true)
@@ -1238,7 +1242,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, w http.ResponseWriter,
 		s.writeRPCError(w, req.ID, RPCInvalidParams, "resource not found")
 		return
 	}
-	writeRPCResult(w, req.ID, map[string]any{"contents": contents})
+	writeRPCResult(w, req.ID, markCacheable(map[string]any{"contents": contents}))
 }
 
 func (s *Server) handlePromptsGet(ctx context.Context, w http.ResponseWriter, req jsonRPCRequest) {
@@ -1500,7 +1504,10 @@ func writeRPCResult(w http.ResponseWriter, id any, payload any) {
 	case jsonRPCResponse:
 		_ = json.NewEncoder(w).Encode(value)
 	default:
-		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: id, Result: payload})
+		// stampResult adds the resultType and identity 2026-07-28 requires. Done
+		// here so a handler cannot forget it; see its comment for why only
+		// map-shaped results are touched.
+		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: id, Result: stampResult(payload)})
 	}
 }
 
@@ -1755,7 +1762,12 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 	}()
 
 	dispatch := func(msg []byte) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", bytes.NewReader(msg))
+		// Marked as stdio so the rules that belong to the HTTP binding do not
+		// apply. This loop has no dispatcher of its own — it pushes a
+		// synthesised request through the same handler — so without the marker
+		// a header requirement written for HTTP would reject every stdio
+		// request. See standard_headers.go.
+		req, err := http.NewRequestWithContext(withStdioTransport(ctx), http.MethodPost, "/", bytes.NewReader(msg))
 		if err != nil {
 			return
 		}
