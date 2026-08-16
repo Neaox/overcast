@@ -29,6 +29,7 @@ package router
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -73,21 +74,42 @@ func TestRuntimeMCPRoutes_SSEStreamLetsGoOnPreShutdown(t *testing.T) {
 	defer cancelCleanup()
 	cleanup(cleanupCtx)
 
-	// Close waits for outstanding requests, so it returns only once the stream
-	// handler has returned. Ten seconds is far longer than a released handler
-	// needs and far shorter than the 20-minute binary timeout a stuck one costs.
-	closed := make(chan struct{})
+	// Assert on the stream, not on the server.
+	//
+	// The first version of this waited for httptest.Server.Close() to return.
+	// That passed locally and flaked on CI, and raising the deadline would only
+	// have hidden why: Close() waits for connections to leave the active state,
+	// which is a different and later event than the handler returning. Between
+	// them sit the client's unread response, keep-alive reuse and the scheduler
+	// — none of which this test has any opinion about.
+	//
+	// The property that actually matters is narrower and directly observable:
+	// pre-shutdown ends the stream. A released handler returns, the response
+	// body completes, and the read below sees EOF. A stream that ignores
+	// shutdown blocks in that read until the deadline, which is the failure.
+	//
+	// So the deadline no longer stands between two unrelated events; it bounds
+	// exactly the one being tested. Closing the body ourselves afterwards means
+	// Close() has nothing left to wait for either.
+	streamEnded := make(chan error, 1)
 	go func() {
-		srv.Close()
-		close(closed)
+		_, err := io.ReadAll(resp.Body)
+		streamEnded <- err
 	}()
 
 	select {
-	case <-closed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the server did not shut down: an MCP SSE stream is still running after " +
-			"pre-shutdown, so nothing short of the client disconnecting will end it — " +
-			"in production this holds the process open, and in CI it hangs the package " +
-			"until the test binary times out")
+	case err := <-streamEnded:
+		// Either a clean end or a closed connection proves the handler let go.
+		// What must not happen is the read blocking indefinitely.
+		_ = err
+	case <-time.After(20 * time.Second):
+		t.Fatal("the MCP SSE stream is still open after pre-shutdown, so nothing short " +
+			"of the client disconnecting will end it — in production this holds the " +
+			"process open, and in CI it hangs the package until the binary times out")
 	}
+
+	// And the server itself then shuts down, with the stream no longer holding
+	// it. This is the consequence rather than the subject, so it is asserted
+	// after the fact and not raced against.
+	srv.Close()
 }
