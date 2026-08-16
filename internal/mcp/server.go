@@ -597,6 +597,18 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// server/discover answers ahead of the lifecycle gate, and deliberately.
+	// It is the probe a client sends when it does not yet know what this server
+	// is — that is how the spec has clients tell a modern server from a legacy
+	// one — so requiring a completed handshake would answer the question only
+	// for clients that already knew it. The version validation above still
+	// applies: a client that declares a version it cannot speak is refused, and
+	// the refusal carries the supported list this method would have returned.
+	if req.Method == "server/discover" {
+		s.handleDiscover(w, req, r)
+		return
+	}
+
 	if !meta.modern {
 		s.mu.RLock()
 		lifecycleErr := validateLifecycle(s.initDone, s.ready)
