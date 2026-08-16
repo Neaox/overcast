@@ -1,7 +1,11 @@
 /**
- * DockerHealthPanel — Docker connectivity overview for the Metrics & Health
- * page. Shows per-service connection status, last event, and a warning when
- * any service is disconnected.
+ * DockerHealthPanel — Docker connectivity table for the Metrics & Health
+ * page. Shows per-service connection status and the socket each service is
+ * wired to, plus a warning when any service is disconnected.
+ *
+ * It sits at the foot of the page: it is per-service diagnostics, read when
+ * something is already suspected, and the amber banner above the table is
+ * what makes it worth scrolling to.
  */
 import { useQuery } from "@tanstack/react-query"
 import { healthQueryOptions } from "@/hooks/use-health"
@@ -23,9 +27,19 @@ export function DockerHealthPanel() {
 
   const disconnected = docker.services.filter((s) => !s.connected)
 
+  const connected = docker.services.length - disconnected.length
+
   return (
     <div className="flex flex-col gap-3">
-      <h2 className={cn(sectionLabel, "text-fg-muted")}>Docker</h2>
+      {/* The count answers the whole section for a reader who is only
+          checking, so it sits on the heading's row — the table below is for
+          the reader who needs to know *which* service. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className={cn(sectionLabel, "shrink-0 text-fg-muted")}>Docker</h2>
+        <p className="text-xs text-fg-muted">
+          {connected} of {docker.services.length} services connected
+        </p>
+      </div>
 
       {disconnected.length > 0 && (
         <div
@@ -40,8 +54,8 @@ export function DockerHealthPanel() {
                 : "Docker is not available"}
             </p>
             <p className="text-xs text-amber-300/70">
-              Disconnected services operate in metadata-only mode — resources have no
-              running containers.
+              Disconnected services operate in metadata-only mode — resources have no running
+              containers.
             </p>
           </div>
         </div>
@@ -54,7 +68,7 @@ export function DockerHealthPanel() {
               <th className="px-3 py-2 text-left font-medium text-fg-muted">Service</th>
               <th className="px-3 py-2 text-left font-medium text-fg-muted">Status</th>
               <th className="hidden px-3 py-2 text-left font-medium text-fg-muted sm:table-cell">
-                Last Event
+                Socket
               </th>
             </tr>
           </thead>
@@ -63,9 +77,13 @@ export function DockerHealthPanel() {
               <tr key={svc.service} className="border-b border-border last:border-0">
                 <td className="px-3 py-2 font-mono uppercase">{svc.service}</td>
                 <td className="px-3 py-2">{healthBadge(svc)}</td>
+                {/* The socket is the one column that actually differs per row.
+                    A "Last Event" column used to sit here, repeating the same
+                    daemon-wide value on every line; it is reported once, in the
+                    footer below. */}
                 <td className="hidden px-3 py-2 text-fg-muted sm:table-cell">
-                  {docker.lastEvent ? (
-                    <span className="font-mono text-[10px]">{docker.lastEvent}</span>
+                  {svc.socket ? (
+                    <span className="font-mono text-[10px]">{svc.socket}</span>
                   ) : (
                     <span className="text-fg-subtle">—</span>
                   )}
@@ -78,7 +96,11 @@ export function DockerHealthPanel() {
 
       {docker.lastEventAt && (
         <p className="text-xs text-fg-subtle">
-          Last Docker event at{" "}
+          Last Docker event
+          {docker.lastEvent && (
+            <span className="font-mono text-fg-muted"> {docker.lastEvent}</span>
+          )}{" "}
+          at{" "}
           {new Date(docker.lastEventAt).toLocaleTimeString(undefined, {
             hour: "2-digit",
             minute: "2-digit",

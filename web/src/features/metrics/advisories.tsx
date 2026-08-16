@@ -5,10 +5,11 @@
  * link. A future advisory rule added server-side needs zero changes here —
  * this component never branches on `code`.
  */
+import type { ReactNode } from "react"
 import { AlertTriangle, CheckCircle2, Info, ShieldAlert, ExternalLink } from "lucide-react"
 import { Link } from "@tanstack/react-router"
 import type { Advisory, AdvisorySeverity } from "@/types"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
+import { Skeleton } from "@/components/ui/skeleton"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -82,6 +83,33 @@ function AdvisoryCard({ advisory }: { advisory: Advisory }) {
   )
 }
 
+/**
+ * The heading, plus a one-line note on the same row. Nothing-to-report is the
+ * normal state of this section — an emulator with no advisories, or the far
+ * more common one where OVERCAST_DEBUG is off so there are none to fetch — and
+ * a full-height empty state for it pushed the sections around it down a
+ * screenful to say nothing. The note stays on the heading's row instead.
+ */
+function AdvisoriesNote({
+  icon: Icon,
+  iconClass,
+  children,
+}: {
+  icon: typeof Info
+  iconClass: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <h2 className={cn(sectionLabel, "shrink-0 text-fg-muted")}>Advisories</h2>
+      <p className="flex items-start gap-1.5 text-xs text-fg-muted">
+        <Icon className={cn("mt-px h-3.5 w-3.5 shrink-0", iconClass)} />
+        <span>{children}</span>
+      </p>
+    </div>
+  )
+}
+
 export function AdvisoriesList({
   advisories,
   isLoading,
@@ -89,34 +117,44 @@ export function AdvisoriesList({
 }: {
   advisories: Advisory[] | undefined
   isLoading: boolean
-  error?: unknown
+  /** Why there are no advisories to show — already human-readable (see DebugMetricsResult). */
+  error?: string
 }) {
   const list = advisories ?? []
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className={cn(sectionLabel, "shrink-0 text-fg-muted")}>Advisories</h2>
+        <Skeleton className="h-3 w-56" depth="1" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <AdvisoriesNote icon={Info} iconClass="text-fg-subtle">
+        {error}
+      </AdvisoriesNote>
+    )
+  }
+
+  if (list.length === 0) {
+    return (
+      <AdvisoriesNote icon={CheckCircle2} iconClass="text-success">
+        No recommendations — no storage or configuration issues detected.
+      </AdvisoriesNote>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <h2 className={cn(sectionLabel, "text-fg-muted")}>Advisories</h2>
-      <QueryListState
-        isLoading={isLoading}
-        isEmpty={list.length === 0}
-        error={error}
-        loadingClassName="py-10"
-        errorTitle="Storage advisories unavailable"
-        empty={
-          <EmptyState
-            icon={<CheckCircle2 className="h-8 w-8" />}
-            title="No recommendations"
-            description="No storage or configuration issues detected."
-            className="py-10"
-          />
-        }
-      />
-      {!isLoading && list.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {list.map((advisory) => (
-            <AdvisoryCard key={advisory.code} advisory={advisory} />
-          ))}
-        </div>
-      )}
+      <div className="flex flex-col gap-2">
+        {list.map((advisory) => (
+          <AdvisoryCard key={advisory.code} advisory={advisory} />
+        ))}
+      </div>
     </div>
   )
 }

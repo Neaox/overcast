@@ -1,20 +1,26 @@
 /**
  * MetricsPage — Metrics & Health, at /metrics.
  *
- * Top: a health strip (storage mode, healthy/degraded status, live journal
- * mode, last flush) and a server-computed advisories list (see
- * internal/router/advisories.go) — both sourced from GET /_overcast/health (always
- * available) and GET /_overcast/debug/metrics (debug-gated; degrades gracefully when
- * OVERCAST_DEBUG is off — see HealthStrip and AdvisoriesList).
+ * Laid out most-answered question first, since almost every visit is a healthy
+ * emulator and the page should say so in the first screenful:
  *
- * Below: the original live Go runtime metrics. Polls /_overcast/metrics every 3
- * seconds and renders rolling sparklines for:
- * - Heap allocated memory
- * - Total system memory
- * - Goroutine count
- * - GC pause time
+ * 1. Summary band — one wrapping row of pills: storage mode and
+ *    healthy/degraded status, live journal mode, last flush, uptime, then the
+ *    static runtime facts (startup, Go version, CPUs, GC runs, start time).
+ *    Every one is a single scalar, so they share a row rather than each
+ *    claiming a section.
+ * 2. Runtime — the live sparkline cards, the only thing on the page that
+ *    moves, in one uniform grid.
+ * 3. Advisories — what to *do*, when there is anything (see
+ *    internal/router/advisories.go). Collapses to a single line when there
+ *    isn't, which is the usual case.
+ * 4. Storage activity, then Docker connectivity — per-subsystem diagnostics,
+ *    read when something is already suspected.
  *
- * Static info cards show: uptime, Go version, CPU count, GC count, start time.
+ * Data comes from GET /_overcast/metrics (polled every 3 seconds, drives the
+ * sparklines), GET /_overcast/health (always available), and GET
+ * /_overcast/debug/metrics (debug-gated; degrades gracefully when
+ * OVERCAST_DEBUG is off — see HealthPills and AdvisoriesList).
  */
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
@@ -28,7 +34,7 @@ import { PageHeader } from "@/components/ui/primitives"
 import { Spinner } from "@/components/ui/primitives"
 import { StartupCard } from "./startup-timeline"
 import { StatPill } from "./stat-pill"
-import { HealthStrip } from "./health-strip"
+import { HealthPills } from "./health-pills"
 import { AdvisoriesList } from "./advisories"
 import { StorageActivity } from "./storage-activity"
 import { DockerHealthPanel } from "./docker-health"
@@ -135,11 +141,104 @@ export function MetricsPage() {
         </div>
       )}
 
-      {/* ── Health strip ──────────────────────────────────────────────── */}
-      <HealthStrip uptime={latest?.uptime} />
+      {/* ── Summary band ──────────────────────────────────────────────── */}
+      {/* Storage health and the static runtime facts share one wrapping row:
+          each is a single scalar, and a wide window fits the lot on one or two
+          lines. Uptime lives here, goroutines have a sparkline card below —
+          neither is repeated. */}
+      <div className="flex flex-wrap items-stretch gap-2">
+        <HealthPills uptime={latest?.uptime} />
+        {latest && (
+          <>
+            <StartupCard
+              totalMs={latest.startup_duration_ms}
+              preInitMs={latest.pre_init_ms}
+              phases={latest.startup_phases}
+            />
+            <StatPill label="Go Version" value={latest.go_version} />
+            <StatPill label="CPUs" value={String(latest.num_cpu)} />
+            <StatPill label="GC Runs" value={String(latest.num_gc)} />
+            <StatPill label="Started" value={new Date(latest.start_time).toLocaleTimeString()} />
+          </>
+        )}
+      </div>
 
-      {/* ── Docker connectivity ────────────────────────────────────────── */}
-      <DockerHealthPanel />
+      {/* ── Sparkline metric cards ───────────────────────────────────── */}
+      {!latest && !error && (
+        <div className="flex items-center justify-center py-20">
+          <Spinner className="h-6 w-6" />
+        </div>
+      )}
+
+      {latest && (
+        <div className="flex flex-col gap-2">
+          <h2 className={cn(sectionLabel, "text-fg-muted")}>Runtime</h2>
+          {/* One grid for all six, not four-up then a two-up remainder: the
+              second row's cards were twice the width of the first row's for no
+              reason but their count. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <MetricCard
+              title="Heap Allocated"
+              value={formatBytes(latest.heap_alloc_bytes)}
+              sub={`of ${formatBytes(latest.heap_sys_bytes)} heap sys`}
+              info="The heap is a region of memory used for data that needs to live beyond a single function call — like request objects, cached items, and queued messages. This shows how much heap memory is currently in use by live data. 'Heap sys' is the total amount the runtime has reserved from the operating system for heap use (some of it may be free, waiting to be reused)."
+              sparkData={extract((s) => s.heap_alloc_bytes)}
+              color="text-sky-400"
+            />
+            <MetricCard
+              title="System Memory"
+              value={formatBytes(latest.sys_bytes)}
+              sub={`${formatBytes(latest.heap_inuse_bytes)} heap in-use`}
+              info="Total memory the emulator process has obtained from the operating system. This includes everything: the heap (long-lived data), the stack (short-lived function call data), and internal bookkeeping. 'Heap in-use' is the portion of the heap that currently holds live data, as opposed to free space waiting to be reused."
+              sparkData={extract((s) => s.sys_bytes)}
+              color="text-violet-400"
+            />
+            <MetricCard
+              title="Goroutines"
+              value={String(latest.goroutines)}
+              sub="concurrent goroutines"
+              info="Goroutines are lightweight threads managed by the Go runtime. Each handles a concurrent task like serving a request or running a background job."
+              sparkData={extract((s) => s.goroutines)}
+              color="text-emerald-400"
+            />
+            <MetricCard
+              title="Last GC Pause"
+              value={formatMs(latest.gc_pause_last_ms)}
+              sub={`${formatMs(latest.gc_pause_total_ms)} total`}
+              info="Garbage collection (GC) is the process that automatically finds and frees memory that is no longer being used. During a GC pause, the program is briefly stopped while the runtime cleans up. This shows how long the most recent pause lasted. Lower is better — pauses above 1 ms may cause noticeable latency spikes in request handling."
+              sparkData={extract((s) => s.gc_pause_last_ms)}
+              color="text-amber-400"
+            />
+            <MetricCard
+              title="Stack In-use"
+              value={formatBytes(latest.stack_inuse_bytes)}
+              sub="goroutine stacks"
+              info="The stack is a region of memory where each goroutine stores its local variables and tracks which functions it is currently executing. Every goroutine gets its own small stack that grows automatically as needed. This shows the total memory used by all goroutine stacks combined. High values usually mean there are many active goroutines or deeply nested function calls."
+              sparkData={extract((s) => s.stack_inuse_bytes)}
+              color="text-pink-400"
+            />
+            <MetricCard
+              title="Next GC Target"
+              value={formatBytes(latest.next_gc_bytes)}
+              sub="heap threshold for next GC"
+              info="Garbage collection (GC) runs automatically when the heap grows large enough. This value is the heap size threshold that will trigger the next GC cycle. The Go runtime adjusts this target dynamically — by default, it allows the heap to roughly double in size before collecting again. A rising target means the program is holding more live data over time."
+              sparkData={extract((s) => s.next_gc_bytes)}
+              color="text-orange-400"
+            />
+          </div>
+          {/* The sampling footnote belongs to the cards it describes, not to
+              the foot of the page. */}
+          <p className="text-xs text-fg-subtle">
+            Last sample:{" "}
+            {new Date(latest.timestamp).toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}{" "}
+            &middot; {snapshots.length} samples collected
+          </p>
+        </div>
+      )}
 
       {/* ── Advisories ────────────────────────────────────────────────── */}
       <AdvisoriesList
@@ -151,103 +250,8 @@ export function MetricsPage() {
       {/* ── Storage activity (reads/writes, memory vs SQL for hybrid) ───── */}
       <StorageActivity stores={diagnostics?.stores} isLoading={debugMetricsQuery.isLoading} />
 
-      {/* ── Runtime section ───────────────────────────────────────────── */}
-      {/* Uptime lives in the HealthStrip above; goroutines have their own
-          sparkline card below — neither is repeated here as a pill. */}
-      {latest && (
-        <div className="flex flex-col gap-2">
-          <h2 className={cn(sectionLabel, "text-fg-muted")}>Runtime</h2>
-          <div className="flex flex-wrap gap-2">
-            <StartupCard
-              totalMs={latest.startup_duration_ms}
-              preInitMs={latest.pre_init_ms}
-              phases={latest.startup_phases}
-            />
-            <StatPill label="Go Version" value={latest.go_version} />
-            <StatPill label="CPUs" value={String(latest.num_cpu)} />
-            <StatPill label="GC Runs" value={String(latest.num_gc)} />
-            <StatPill label="Started" value={new Date(latest.start_time).toLocaleTimeString()} />
-          </div>
-        </div>
-      )}
-
-      {/* ── Sparkline metric cards ───────────────────────────────────── */}
-      {!latest && !error && (
-        <div className="flex items-center justify-center py-20">
-          <Spinner className="h-6 w-6" />
-        </div>
-      )}
-
-      {latest && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            title="Heap Allocated"
-            value={formatBytes(latest.heap_alloc_bytes)}
-            sub={`of ${formatBytes(latest.heap_sys_bytes)} heap sys`}
-            info="The heap is a region of memory used for data that needs to live beyond a single function call — like request objects, cached items, and queued messages. This shows how much heap memory is currently in use by live data. 'Heap sys' is the total amount the runtime has reserved from the operating system for heap use (some of it may be free, waiting to be reused)."
-            sparkData={extract((s) => s.heap_alloc_bytes)}
-            color="text-sky-400"
-          />
-          <MetricCard
-            title="System Memory"
-            value={formatBytes(latest.sys_bytes)}
-            sub={`${formatBytes(latest.heap_inuse_bytes)} heap in-use`}
-            info="Total memory the emulator process has obtained from the operating system. This includes everything: the heap (long-lived data), the stack (short-lived function call data), and internal bookkeeping. 'Heap in-use' is the portion of the heap that currently holds live data, as opposed to free space waiting to be reused."
-            sparkData={extract((s) => s.sys_bytes)}
-            color="text-violet-400"
-          />
-          <MetricCard
-            title="Goroutines"
-            value={String(latest.goroutines)}
-            sub="concurrent goroutines"
-            info="Goroutines are lightweight threads managed by the Go runtime. Each handles a concurrent task like serving a request or running a background job."
-            sparkData={extract((s) => s.goroutines)}
-            color="text-emerald-400"
-          />
-          <MetricCard
-            title="Last GC Pause"
-            value={formatMs(latest.gc_pause_last_ms)}
-            sub={`${formatMs(latest.gc_pause_total_ms)} total`}
-            info="Garbage collection (GC) is the process that automatically finds and frees memory that is no longer being used. During a GC pause, the program is briefly stopped while the runtime cleans up. This shows how long the most recent pause lasted. Lower is better — pauses above 1 ms may cause noticeable latency spikes in request handling."
-            sparkData={extract((s) => s.gc_pause_last_ms)}
-            color="text-amber-400"
-          />
-        </div>
-      )}
-
-      {/* ── Secondary row ───────────────────────────────────────────── */}
-      {latest && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <MetricCard
-            title="Stack In-use"
-            value={formatBytes(latest.stack_inuse_bytes)}
-            sub="goroutine stacks"
-            info="The stack is a region of memory where each goroutine stores its local variables and tracks which functions it is currently executing. Every goroutine gets its own small stack that grows automatically as needed. This shows the total memory used by all goroutine stacks combined. High values usually mean there are many active goroutines or deeply nested function calls."
-            sparkData={extract((s) => s.stack_inuse_bytes)}
-            color="text-pink-400"
-          />
-          <MetricCard
-            title="Next GC Target"
-            value={formatBytes(latest.next_gc_bytes)}
-            sub="heap threshold for next GC"
-            info="Garbage collection (GC) runs automatically when the heap grows large enough. This value is the heap size threshold that will trigger the next GC cycle. The Go runtime adjusts this target dynamically — by default, it allows the heap to roughly double in size before collecting again. A rising target means the program is holding more live data over time."
-            sparkData={extract((s) => s.next_gc_bytes)}
-            color="text-orange-400"
-          />
-        </div>
-      )}
-
-      {latest && (
-        <p className="text-xs text-fg-subtle">
-          Last sample:{" "}
-          {new Date(latest.timestamp).toLocaleTimeString(undefined, {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}{" "}
-          &middot; {snapshots.length} samples collected
-        </p>
-      )}
+      {/* ── Docker connectivity ────────────────────────────────────────── */}
+      <DockerHealthPanel />
     </div>
   )
 }

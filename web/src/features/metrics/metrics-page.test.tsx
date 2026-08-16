@@ -37,6 +37,20 @@ const healthyPersistentHealth = {
   },
 }
 
+/** The same health payload, plus a Docker daemon with one service down. */
+const healthWithDocker = {
+  ...healthyPersistentHealth,
+  docker: {
+    available: true,
+    services: [
+      { service: "ecs", socket: "unix:///var/run/docker.sock", connected: true },
+      { service: "lambda", socket: "unix:///var/run/docker.sock", connected: false },
+    ],
+    lastEvent: "container:start",
+    lastEventAt: new Date().toISOString(),
+  },
+}
+
 function mockCoreEndpoints() {
   server.use(http.get("/api/metrics", () => HttpResponse.json(metricsSnapshot)))
 }
@@ -122,7 +136,7 @@ describe("MetricsPage", () => {
     expect(screen.queryByText("Debug mode required")).not.toBeInTheDocument()
   })
 
-  it("shows a quiet empty state when there are no advisories", async () => {
+  it("collapses the advisories section to one line when there are none", async () => {
     // Given: a healthy backend with an empty advisories array.
     mockCoreEndpoints()
     server.use(
@@ -138,8 +152,13 @@ describe("MetricsPage", () => {
     // When: the page renders.
     render(<MetricsPage />)
 
-    // Then: the advisories section shows the quiet "no recommendations" state.
-    expect(await screen.findByText("No recommendations")).toBeInTheDocument()
+    // Then: nothing-to-report is a note beside the heading, on its row — not a
+    // full-height empty state pushing the sections below it off the screen.
+    const note = await screen.findByText(/No recommendations/)
+    expect(note).toBeInTheDocument()
+    expect(note.closest("div")).toContainElement(
+      screen.getByRole("heading", { name: "Advisories" }),
+    )
   })
 
   it("renders a server-computed advisory generically, including its docs link", async () => {
@@ -255,6 +274,67 @@ describe("MetricsPage", () => {
 
     // Then: the advisories section explains why, instead of a bare error.
     await waitFor(() => expect(screen.getByText(DEBUG_DISABLED_MESSAGE)).toBeInTheDocument())
+
+    // And: it says so in one line beside the heading. Debug mode being off is
+    // the common case, so the section it explains should cost a line, not the
+    // screenful an error empty state used to take.
+    expect(screen.queryByText("Storage advisories unavailable")).not.toBeInTheDocument()
+    expect(screen.getByText(DEBUG_DISABLED_MESSAGE).closest("div")).toContainElement(
+      screen.getByRole("heading", { name: "Advisories" }),
+    )
+  })
+
+  it("puts the runtime metrics above the advisories and the Docker table last", async () => {
+    // Given: an emulator reporting everything this page can show.
+    mockCoreEndpoints()
+    server.use(
+      http.get("/api/health", () => HttpResponse.json(healthWithDocker)),
+      http.get("/api/debug/metrics", () =>
+        HttpResponse.json({
+          stores: [{ mode: "hybrid", journalMode: "wal", counters: { reads: 1, writes: 1 } }],
+          advisories: [],
+        }),
+      ),
+    )
+
+    // When: the page renders.
+    render(<MetricsPage />)
+
+    // Then: the sections run live-first, diagnostics-last — the runtime cards,
+    // then advisories, then the per-subsystem tables.
+    const order = ["Runtime", "Advisories", "Storage Activity", "Docker"]
+    // Both ends of the page arrive on their own query: the runtime cards with
+    // the first /_overcast/metrics sample, the Docker table with /_overcast/health.
+    await screen.findByRole("heading", { name: "Runtime" })
+    await screen.findByRole("heading", { name: "Docker" })
+    const rendered = screen
+      .getAllByRole("heading")
+      .map((h) => h.textContent.trim())
+      .filter((text) => order.includes(text))
+    expect(rendered).toEqual(order)
+  })
+
+  it("gives each Docker row its own socket and reports the last event once", async () => {
+    // Given: two services on the same daemon, one of them disconnected.
+    mockCoreEndpoints()
+    server.use(
+      http.get("/api/health", () => HttpResponse.json(healthWithDocker)),
+      http.get("/api/debug/metrics", () => debugDisabled()),
+    )
+
+    // When: the page renders.
+    render(<MetricsPage />)
+
+    // Then: the heading row answers "is Docker up?" without reading the table...
+    expect(await screen.findByText("1 of 2 services connected")).toBeInTheDocument()
+
+    // ...every row carries the socket that service is wired to...
+    expect(screen.getByText("ecs")).toBeInTheDocument()
+    expect(screen.getAllByText("unix:///var/run/docker.sock")).toHaveLength(2)
+
+    // ...and the daemon-wide last event is reported once, in the footer,
+    // rather than repeated in a column on every row.
+    expect(screen.getAllByText(/container:start/)).toHaveLength(1)
   })
 
   it("keeps the advisories section still while a background poll is in flight", async () => {
