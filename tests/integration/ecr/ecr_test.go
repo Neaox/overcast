@@ -123,57 +123,31 @@ func findManagedRegistries(t *testing.T, dc *docker.Client) []docker.ContainerSu
 	return registries
 }
 
-// registryIDSet snapshots the IDs of the managed registries currently running,
-// so a test can later tell its own server's registry from a sibling's.
-func registryIDSet(t *testing.T, dc *docker.Client) map[string]bool {
+// managedRegistryIDs snapshots the IDs of every Overcast-managed registry on
+// this daemon, so a test can later ask whether a container it has since
+// identified as its own was already there.
+//
+// State is deliberately not filtered. A snapshot taken to prove a container did
+// not exist yet has to count one that has been created and not yet started, or
+// an eager start caught mid-birth reads as no start at all.
+//
+// The set says nothing about ownership, and no caller should ask it to: it
+// holds parallel test packages' registries as readily as ours. Ownership comes
+// from ownRegistryContainer, and the two are combined by asking whether *that*
+// container's ID is in *this* set.
+func managedRegistryIDs(t *testing.T, dc *docker.Client) map[string]bool {
 	t.Helper()
+	summaries, err := dc.ListContainers(t.Context(), "ecr")
+	if err != nil {
+		t.Fatalf("list ecr containers: %v", err)
+	}
 	ids := map[string]bool{}
-	for _, c := range findManagedRegistries(t, dc) {
-		ids[c.ID] = true
+	for _, c := range summaries {
+		if c.Labels[docker.LabelResourceID] == "registry" {
+			ids[c.ID] = true
+		}
 	}
 	return ids
-}
-
-// newRegistriesSince returns the managed registries not in before.
-func newRegistriesSince(t *testing.T, dc *docker.Client, before map[string]bool) []docker.ContainerSummary {
-	t.Helper()
-	var fresh []docker.ContainerSummary
-	for _, c := range findManagedRegistries(t, dc) {
-		if !before[c.ID] {
-			fresh = append(fresh, c)
-		}
-	}
-	return fresh
-}
-
-// waitForNewManagedRegistry polls until a managed registry not in before is
-// running, and returns its inspect result.
-//
-// What it establishes is that a registry appeared, and nothing more. "New since
-// a snapshot" is a statement about timing, not about ownership: parallel test
-// packages share this daemon and start registries of their own, so the
-// container it returns may well be a sibling's. A test that needs *its own*
-// server's registry — to assert its address, its lifetime, or its removal —
-// must ask ownRegistryContainer instead.
-func waitForNewManagedRegistry(t *testing.T, dc *docker.Client, before map[string]bool) *docker.ContainerInspect {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, c := range newRegistriesSince(t, dc, before) {
-			info, err := dc.InspectContainer(t.Context(), c.ID)
-			if err == nil && info != nil {
-				return info
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("expected a new managed ECR registry container to be created")
-	return nil
-}
-
-func waitForManagedRegistry(t *testing.T, dc *docker.Client) *docker.ContainerInspect {
-	t.Helper()
-	return waitForNewManagedRegistry(t, dc, nil)
 }
 
 // ownRegistryContainer returns the registry container srv started, identified
@@ -1003,18 +977,19 @@ func TestDescribeImageScanFindings_imageNotFound(t *testing.T) {
 func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T) {
 	dc := skipWithoutDocker(t)
 
-	// Registries existing before the server are other processes' — parallel
-	// test packages share this daemon — so "lazy" is proven by a NEW registry
-	// appearing only after the first auth call, not by global absence.
-	before := registryIDSet(t, dc)
-
 	srv := helpers.NewTestServer(t,
 		helpers.WithHostname("overcast"),
 		helpers.WithLambdaDocker(),
 	)
-	if fresh := newRegistriesSince(t, dc, before); len(fresh) != 0 {
-		t.Fatalf("expected no managed ECR registry before the first auth call, found %d", len(fresh))
-	}
+
+	// Every managed registry on the daemon at the moment the server is up and
+	// no ECR call has reached it. Parallel test packages share this daemon and
+	// have registries of their own in here, which costs nothing: the only
+	// question put to this set is whether the container the server turns out to
+	// own is in it, and that container does not exist yet to be confused with a
+	// sibling's. Asking instead for the absence of *any* new registry would
+	// make a sibling starting one in this window fail the test.
+	beforeFirstCall := managedRegistryIDs(t, dc)
 
 	resp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
 	defer resp.Body.Close()
@@ -1043,7 +1018,12 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 		t.Fatalf("proxyEndpoint names the emulator's API port rather than the registry: %q", proxy)
 	}
 
-	waitForNewManagedRegistry(t, dc, before)
+	// Lazily, then: the container the server now advertises is one that did not
+	// exist on the daemon in any state until the call above asked for a token.
+	own := ownRegistryContainer(t, dc, srv)
+	if beforeFirstCall[own.ID] {
+		t.Fatalf("the server's registry container was already on the daemon before the first auth call: id=%s", own.ID)
+	}
 }
 
 func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.T) {
@@ -1080,7 +1060,9 @@ func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.
 		t.Fatalf("expected token username AWS, got %q", user)
 	}
 
-	waitForManagedRegistry(t, dc)
+	// The endpoint the token came with is a registry container of this
+	// server's, not merely some registry on a shared daemon.
+	ownRegistryContainer(t, dc, srv)
 
 	// The registry itself is the judge: it holds the credentials, and how they
 	// were installed is its business. Asking it directly also catches the
