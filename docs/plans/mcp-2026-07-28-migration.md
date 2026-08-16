@@ -10,7 +10,8 @@ Status: in progress. Phases 1, 2 and 3 are merged; phase 4 is next.
 | 2b — `resultType`, cacheable results | done | #1019 |
 | 2c — `Mcp-Method` / `Mcp-Name` headers | done | #1020 |
 | 3a — `subscriptions/listen` | done | #1021 |
-| 3b — observation harness, ported tests | done | this branch |
+| 3b-i — observation harness, broadcast tests ported | done | #1022 |
+| 3b-ii — per-request response stream, request-scoped tests ported | done | this branch |
 | 4 — sessions, replay, GET stream, handshake | next | — |
 | 5 — MRTR | not started | — |
 
@@ -259,6 +260,25 @@ So phase 3b is two pieces of work, and the second is a real transport rather
 than a test change. Until it exists, deleting the GET stream drops `emitProgress`,
 `emitCancelled` and `emitLogMessage` coverage entirely — which is the trap above,
 one level down.
+
+That transport now exists (`internal/mcp/request_stream.go`). Three notes for
+phase 4:
+
+- **The stream's headers are written late, on the first thing sent.** A stream
+  commits to 200 the moment its headers go out, and `-32020`/`-32022` must stay
+  HTTP errors — they are precisely the failures an intermediary is meant to see.
+  Nothing is written when those are decided, so the response is still free to be
+  a 400.
+- **`emitProgress`, `emitCancelled` and `emitLogMessage` currently emit twice** —
+  once to the request's stream, once to the legacy broadcast. The second call is
+  scaffolding for the GET stream and should be deleted with it, which is what
+  finally removes `emitNotification`.
+- **Per-request log level is still unfinished.** `parseRequestMeta` reads
+  `io.modelcontextprotocol/logLevel` into `requestMeta.logLevel` (phase 1) and
+  nothing reads it; `shouldEmitLog` still consults the connection-scoped
+  `s.logLevel` that `logging/setLevel` sets. Phase 4 removes that method, so it
+  must move the threshold onto the request at the same time or log filtering
+  silently becomes "always info".
 
 A related hazard: `ServeStdio` has no dispatcher of its own — it synthesises an
 `http.Request` and pushes it through `RootHandler()`. Every removal in phases 1
