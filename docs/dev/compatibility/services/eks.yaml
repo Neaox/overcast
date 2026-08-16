@@ -1,6 +1,6 @@
 service: eks
 status: in_progress
-priority: p1
+priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-08-14
 protocols: [rest_json]

@@ -1,6 +1,6 @@
 service: organizations
 status: not_started
-priority: p2
+priority: p3
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-05-17
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
