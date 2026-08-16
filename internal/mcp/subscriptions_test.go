@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -177,6 +178,54 @@ func TestSubscriptions_resourceUpdatedCostsNothingWithNoAudience(t *testing.T) {
 	if allocs > 0 {
 		t.Errorf("emitting a resource update nobody subscribed to allocated %.0f times per call — "+
 			"the emulator pays this on every resource change whether or not MCP is in use", allocs)
+	}
+}
+
+// Shutdown ends the stream, and says so before it goes.
+//
+// The spec asks for the empty result that marks a graceful end, so a client can
+// tell an orderly close from a dropped connection and decide whether to
+// reconnect. serveSubscription has done this since the listen stream landed and
+// nothing has ever checked it — the equivalent property was only ever asserted
+// on the GET stream, by TestRuntimeMCPRoutes_SSEStreamLetsGoOnPreShutdown, which
+// goes with that stream.
+//
+// This is deliberately a *positive* assertion. The GET-stream version asserts an
+// absence — that a read does not block — which can only fail by waiting, and a
+// test that fails by waiting is one whose failures are slow, load-sensitive and
+// uninformative. The closing result is an observable the server either sends or
+// does not, so this fails immediately and says which.
+func TestSubscriptions_shutdownEndsTheStreamWithAClosingResult(t *testing.T) {
+	shutdown := make(chan struct{})
+	s := NewServer(nil, nil)
+	s.SetShutdownSignal(shutdown)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	l := listen(t, srv, map[string]any{"toolsListChanged": true})
+
+	close(shutdown)
+
+	// The closing message is a JSON-RPC *result*, not a notification: it answers
+	// the listen request itself, which is what makes it an orderly end.
+	closing := l.next()
+	result, ok := closing["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("closing message carries no result: %v", closing)
+	}
+	if result["resultType"] != resultTypeComplete {
+		t.Errorf("resultType = %v, want %q", result["resultType"], resultTypeComplete)
+	}
+	meta, _ := result["_meta"].(map[string]any)
+	if meta[metaSubscriptionID] != l.id {
+		t.Errorf("closing result carries subscription id %v, want %q", meta[metaSubscriptionID], l.id)
+	}
+
+	// And then the stream really is over. The handler returning completes the
+	// response, so the reader sees the body end rather than waiting on a
+	// connection nobody is going to write to again.
+	if _, stillOpen := <-l.msgs; stillOpen {
+		t.Error("the stream carried something after its closing result")
 	}
 }
 
