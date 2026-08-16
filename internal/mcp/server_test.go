@@ -5267,30 +5267,6 @@ func TestServer_RegisterProvider_EmitsPromptsListChanged_OnSSE(t *testing.T) {
 	}
 }
 
-func TestServer_RegisterProvider_DoesNotEmitListChangedBeforeLifecycleReady(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
-	notifications := make(chan []byte, 4)
-	mcpSrv.subscribeNotifications(notifications)
-	defer mcpSrv.unsubscribeNotifications(notifications)
-
-	mcpSrv.registerProvider(&staticProvider{
-		tools: []Tool{{
-			Name:        "dynamic_test_tool",
-			Description: "dynamic tool",
-			InputSchema: json.RawMessage(`{"type":"object"}`),
-		}},
-	})
-	mcpSrv.registerProvider(&staticResourceProvider{})
-	mcpSrv.registerProvider(&staticPromptProvider{})
-
-	select {
-	case payload := <-notifications:
-		t.Fatalf("unexpected notification before lifecycle ready: %s", string(payload))
-	case <-time.After(100 * time.Millisecond):
-		return
-	}
-}
-
 func TestServer_RegisterProvider_WiresResourceListChangedEmitter(t *testing.T) {
 	mcpSrv := NewServer(nil, nil)
 	notifications := make(chan []byte, 2)

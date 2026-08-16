@@ -1,7 +1,23 @@
 # Migrating MCP to revision 2026-07-28
 
-Status: proposal. Nothing here is implemented. The package split it depends on
-is separate work; see "Groundwork already done" below.
+Status: in progress. Phases 1, 2 and 3 are merged; phase 4 is next.
+
+| Phase | State | Landed in |
+|---|---|---|
+| Package split (groundwork) | done | #1015 |
+| 1 — per-request `_meta` | done | #1017 |
+| 2a — `server/discover` | done | #1018 |
+| 2b — `resultType`, cacheable results | done | #1019 |
+| 2c — `Mcp-Method` / `Mcp-Name` headers | done | #1020 |
+| 3a — `subscriptions/listen` | done | #1021 |
+| 3b — observation harness, ported tests | done | this branch |
+| 4 — sessions, replay, GET stream, handshake | next | — |
+| 5 — MRTR | not started | — |
+
+Everything so far is additive: the 2025-11-25 handshake, sessions, replay and
+the GET stream all still work. A request carrying `_meta` with a protocol
+version is served statelessly; one without it takes the legacy path. Phase 4 is
+where the legacy half is deleted.
 
 Overcast's MCP servers speak revision `2025-11-25`
 (`internal/mcp/server.go`, `ProtocolVersion`). The current published revision is
@@ -132,6 +148,10 @@ providers essentially untouched.
 
 Each phase should land green on its own.
 
+Phase 3 is split into 3a (build the listen stream) and 3b (move the observed
+behaviour onto it). Phase 4 deletes the GET stream, once 3b has left nothing
+observing it.
+
 ### 1 — Per-request context (largest, do first)
 
 Replace the connection-scoped `negotiatedVersion`, `clientCapabilities` and
@@ -148,6 +168,14 @@ The real dependency is that `ready` gates notification emission
 (`registerProvider` suppresses `list_changed` before the handshake completes).
 Removing the handshake removes the thing that decides when emission may start,
 so this phase must choose a replacement policy.
+
+**Settled in 3b: there is no replacement, and emission is unconditional.** A
+stateless protocol has no readiness moment to gate on, and needs none — a client
+hears about a change because it opened a `subscriptions/listen` stream and named
+the type, which is a stronger statement of readiness than the handshake was. The
+gate and `TestServer_RegisterProvider_DoesNotEmitListChangedBeforeLifecycleReady`
+are gone; the three `TestNotifications_Registering*` tests, none of which
+performs an `initialize`, are its successor.
 
 ### 2 — `server/discover`, `resultType`, cacheable results, headers
 
@@ -205,6 +233,32 @@ This dominates the estimate and is the thing most likely to be underestimated.
 
 **A new observation harness has to exist before a single one can be ported.**
 Plan this as "build a harness, then port 24 tests", not "delete 24 tests".
+
+### What porting them found: there are two destinations, not one
+
+The 33 tests that touch the GET stream do not split two ways (GET-stream
+machinery vs. behaviour) but three, and the third is the one that costs work:
+
+1. **12 test the GET stream, sessions or replay themselves.** Their subject
+   genuinely disappears; they are deleted in phase 4.
+2. **15 observe a *broadcast* notification** — `tools/list_changed`,
+   `prompts/list_changed`, `resources/list_changed`, `resources/updated`. These
+   port straight onto `subscriptions/listen`, which already carries all four.
+   Done in phase 3b, in `internal/mcp/notification_delivery_test.go`.
+3. **6 observe a *request-scoped* notification** — `notifications/progress`,
+   `notifications/cancelled`, `notifications/message`. **These cannot go on a
+   listen stream**, and not by omission: such notifications "flow only on the
+   response stream of the request they relate to", which
+   `subscriptionFilter.wants` enforces by kind. Their destination is a per-request
+   response stream, and **that transport does not exist yet.** The POST path that
+   answers `Accept: text/event-stream` today buffers the whole response through
+   `captureResponseWriter` — which is not a `http.Flusher` — and writes it as a
+   single `data:` event, so nothing can be interleaved ahead of the result.
+
+So phase 3b is two pieces of work, and the second is a real transport rather
+than a test change. Until it exists, deleting the GET stream drops `emitProgress`,
+`emitCancelled` and `emitLogMessage` coverage entirely — which is the trap above,
+one level down.
 
 A related hazard: `ServeStdio` has no dispatcher of its own — it synthesises an
 `http.Request` and pushes it through `RootHandler()`. Every removal in phases 1

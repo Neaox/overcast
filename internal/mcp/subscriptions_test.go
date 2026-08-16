@@ -157,6 +157,29 @@ func TestSubscriptions_emitCostsNothingWhenNoFilterMatches(t *testing.T) {
 	}
 }
 
+// The same promise one level up, at the emitter the emulator actually holds.
+//
+// Providers are handed emitResourceUpdated through SetResourceUpdatedEmitter and
+// call it whenever a resource changes, so this runs on emulator paths rather
+// than MCP ones. matchingSubscriptions being free is not enough on its own: if
+// the params map is built before the audience is checked, the emulator pays for
+// a notification body on every update that nobody asked for.
+func TestSubscriptions_resourceUpdatedCostsNothingWithNoAudience(t *testing.T) {
+	s := NewServer(nil, nil)
+	// Someone is listening, but for a different resource — the case that would
+	// otherwise look like an audience to a check that only counted streams.
+	_, remove := s.addSubscription("1", subscriptionFilter{ResourceSubscriptions: []string{"file:///other"}})
+	defer remove()
+
+	allocs := testing.AllocsPerRun(100, func() {
+		s.emitResourceUpdated("file:///workspace/README.md")
+	})
+	if allocs > 0 {
+		t.Errorf("emitting a resource update nobody subscribed to allocated %.0f times per call — "+
+			"the emulator pays this on every resource change whether or not MCP is in use", allocs)
+	}
+}
+
 // A client that has stopped reading loses notifications rather than blocking
 // the emulator goroutine that produced them.
 func TestSubscriptions_slowClientIsDroppedNotWaitedFor(t *testing.T) {
