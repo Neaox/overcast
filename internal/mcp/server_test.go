@@ -115,7 +115,7 @@ func headersWith(headers map[string]string, method string, params map[string]any
 		hdrs["Mcp-Method"] = method
 	}
 	if _, present := hdrs["MCP-Protocol-Version"]; !present {
-		hdrs["MCP-Protocol-Version"] = ModernProtocolVersion
+		hdrs["MCP-Protocol-Version"] = ProtocolVersion
 	}
 	if name, needed := mirroredName(method, params); needed {
 		if _, present := hdrs["Mcp-Name"]; !present {
@@ -2239,7 +2239,7 @@ func TestServer_StreamableHTTP_PostSSEResponseMode(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", ModernProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
 	req.Header.Set("Mcp-Method", "tools/list")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

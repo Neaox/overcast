@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -84,7 +83,6 @@ type Server struct {
 	handlers map[string]HandlerFunc
 	// Capability advertisement - what the server supports
 	capabilities   ServerCapabilities
-	logLevel       string
 	inFlight       map[string]*inFlightRequest
 	activeProgress map[string]string
 	// subscriptions are the open `subscriptions/listen` streams. Each carries
@@ -107,7 +105,6 @@ type Server struct {
 
 type inFlightRequest struct {
 	rawRequestID  any
-	method        string
 	cancel        context.CancelFunc
 	progressToken string
 	cancelled     bool
@@ -155,14 +152,6 @@ type promptDefinition struct {
 	Title       string
 	Description string
 	Messages    []map[string]any
-}
-
-// InitializeResult represents the server's response to initialize.
-type InitializeResult struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	Capabilities    ServerCapabilities `json:"capabilities"`
-	ServerInfo      map[string]string  `json:"serverInfo"`
-	Instructions    string             `json:"instructions,omitempty"`
 }
 
 // ServerCapabilities represents what the server supports.
@@ -226,16 +215,15 @@ const (
 	RPCMissingRequiredClientCapability = -32021
 	RPCUnsupportedProtocolVersion      = -32022
 
-	// ProtocolVersion is the revision the handshake negotiates and reports.
-	// Unchanged: a client that opens with `initialize` is a 2025-11-25 client
-	// and is answered as one.
-	ProtocolVersion = "2025-11-25"
-
-	// ModernProtocolVersion is the revision a request may declare for itself in
-	// `_meta`, skipping the handshake entirely. "Modern" and "legacy" are the
-	// spec's own terms for the two eras, and the distinction is exactly whether
-	// version and capabilities arrive per request or are negotiated once.
-	ModernProtocolVersion = "2026-07-28"
+	// ProtocolVersion is the revision this server speaks, and the one every
+	// request must declare for itself in `_meta`.
+	//
+	// There is exactly one. During the migration there were two names here,
+	// because there were two eras to tell apart — the spec's own "legacy" and
+	// "modern", the distinction being whether version and capabilities arrive
+	// per request or are negotiated once. Phase 4 removed the legacy half, and a
+	// qualifier that no longer distinguishes anything is worse than none.
+	ProtocolVersion = "2026-07-28"
 
 	// The reserved `_meta` keys this server reads. The `io.modelcontextprotocol`
 	// prefix is reserved for MCP's own use, so these names cannot collide with
@@ -245,12 +233,6 @@ const (
 	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 	metaLogLevel           = "io.modelcontextprotocol/logLevel"
 	DefaultRequestTimeout  = 30 * time.Second
-	// DefaultReplayLimit bounds in-memory SSE notification replay history per
-	// process. Replay state is intentionally ephemeral and not shared across
-	// restarts.
-	// TODO(mcp): make replay retention configurable (and optionally durable)
-	// once runtime auth and multi-process reconnect expectations are finalized.
-	DefaultReplayLimit = 256
 )
 
 // sseHeartbeatInterval is how often an idle SSE stream emits a keep-alive, and
@@ -275,36 +257,25 @@ const (
 // conforming client. The cadence is left entirely undefined, which is why the
 // interval below is chosen to match this repo rather than the spec.
 //
-// That revision is not the one this server speaks — ProtocolVersion is
-// 2025-11-25, and 2026-07-28 removes the GET stream, sessions and
-// Last-Event-ID resumability wholesale — but the guidance is about SSE framing
-// rather than about any of those, and the stream it names is the same long-lived
-// shape the GET stream is here. 2025-11-25 permits it for the same underlying
-// reason: it defers to the SSE standard for stream syntax, where a comment is
-// discarded by the client's event parser before anything is dispatched, so it
-// reaches no JSON-RPC reader at all. Note the contrast with stdio, where the
-// spec does impose a "MUST NOT write anything that is not a valid MCP message"
-// rule; no such rule constrains this stream.
+// The stream it is written for is the one that survives. A
+// `subscriptions/listen` response stays open for as long as its client wants
+// notifications, and with `ping` removed the keep-alive is the only liveness
+// mechanism left on it: nothing else obliges either end to say anything during
+// a quiet period.
 //
 // Two shapes were rejected. A `data:` event carrying a heartbeat payload — what
 // eventsHandler sends on the emulator's own event stream — would put a frame on
-// this stream that clients parse as JSON-RPC, and there it would be a protocol
-// violation rather than a keep-alive. The `ping` utility method is a JSON-RPC
-// request that obliges the receiver to answer, so using it would change what
-// the client has to do, which is the opposite of additive.
+// this stream that clients parse as JSON-RPC, so it would be a protocol
+// violation rather than a keep-alive. `ping` was the other, and it is gone with
+// the rest of the utility methods; it was a JSON-RPC request that obliged the
+// receiver to answer, which is more than a liveness probe needs to be.
 //
-// The comment also carries no `id:`, deliberately: under 2025-11-25 event IDs
-// are the resumability cursor a client sends back as Last-Event-ID, and a
-// heartbeat that consumed one would make a resuming client ask to replay from a
-// point no message was ever delivered at.
+// The comment carries no `id:`, which now costs nothing to keep: event IDs were
+// the resumability cursor, and 2026-07-28 removes resumability along with the
+// GET stream it belonged to.
 //
 // A var rather than a const so tests can wind it down; nothing else writes it.
 var sseHeartbeatInterval = 15 * time.Second
-
-var (
-	errInvalidLastEventID = errors.New("invalid Last-Event-ID")
-	errUnknownLastEventID = errors.New("Last-Event-ID is no longer available")
-)
 
 func NewServer(logger *slog.Logger, providers ...ToolProvider) *Server {
 	if logger == nil {
@@ -314,7 +285,6 @@ func NewServer(logger *slog.Logger, providers ...ToolProvider) *Server {
 		logger:         logger,
 		handlers:       make(map[string]HandlerFunc),
 		capabilities:   defaultServerCapabilities(),
-		logLevel:       "info",
 		inFlight:       make(map[string]*inFlightRequest),
 		activeProgress: make(map[string]string),
 		requestTimeout: DefaultRequestTimeout,
@@ -520,6 +490,34 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// What the request says about itself: its version, the client's identity and
+	// that client's capabilities, on every request. There is no handshake to
+	// have completed and no session to belong to — "Every request carries its
+	// protocol version, and the server accepts or rejects each request
+	// independently". See request_meta.go.
+	//
+	// This comes before any of the per-request state below because a request
+	// this server will not serve should not be registered as one it is serving.
+	// It also settles the ordering the log threshold needs: the stream is
+	// configured here, before registerInFlight publishes it to the goroutine
+	// that may cancel this request, so nothing can be reading it as it is
+	// written.
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr != nil {
+		writeJSONRPCError(w, req.ID, metaErr)
+		return
+	}
+	if versionErr := meta.validate(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
+		writeJSONRPCError(w, req.ID, versionErr)
+		return
+	}
+	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
+		writeJSONRPCError(w, req.ID, headerErr)
+		return
+	}
+	stream := requestStreamFrom(r.Context())
+	stream.setLogLevel(meta.logLevel)
+
 	progressToken, rawProgressToken, hasProgressToken, progressTokenErr := extractProgressToken(req.Params)
 	if progressTokenErr != nil {
 		s.writeRPCError(w, req.ID, RPCInvalidParams, progressTokenErr.Error())
@@ -542,27 +540,8 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		requestCtx, cancel = context.WithCancel(r.Context())
 	}
 	defer cancel()
-	s.registerInFlight(reqIDKey, req.ID, req.Method, progressToken, cancel, requestStreamFrom(r.Context()))
+	s.registerInFlight(reqIDKey, req.ID, progressToken, cancel, stream)
 	defer s.unregisterInFlight(reqIDKey)
-
-	// What the request says about itself: its version, the client's identity and
-	// that client's capabilities, on every request. There is no handshake to
-	// have completed and no session to belong to — "Every request carries its
-	// protocol version, and the server accepts or rejects each request
-	// independently". See request_meta.go.
-	meta, metaErr := parseRequestMeta(req.Params)
-	if metaErr != nil {
-		writeJSONRPCError(w, req.ID, metaErr)
-		return
-	}
-	if versionErr := meta.validate(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
-		writeJSONRPCError(w, req.ID, versionErr)
-		return
-	}
-	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
-		writeJSONRPCError(w, req.ID, headerErr)
-		return
-	}
 
 	switch req.Method {
 	case "server/discover":
@@ -1256,9 +1235,16 @@ func TextContent(text string) []map[string]any {
 }
 
 // emitLogMessage reports something worth logging, on the response stream of the
-// request that produced it.
+// request that produced it, if that request asked to hear about it.
+//
+// The threshold belongs to the request rather than to the server, which is what
+// `logging/setLevel` used to set and 2026-07-28 replaces: a level is named in
+// `_meta` per request, so two clients cannot change what each other hears. The
+// check comes before the params are built so that the overwhelmingly common
+// case — a request that named no level — costs nothing. See
+// requestStream.wantsLog.
 func (s *Server) emitLogMessage(stream *requestStream, level string, data any) {
-	if !s.shouldEmitLog(level) {
+	if !stream.wantsLog(level) {
 		return
 	}
 	stream.notify("notifications/message", logMessageParams{Level: level, Logger: "overcast", Data: data})
@@ -1269,21 +1255,15 @@ func (s *Server) emitLogMessage(stream *requestStream, level string, data any) {
 //
 // The spec requires the notification — "the server MUST send
 // notifications/cancelled" — and it is about one request, so it travels with
-// that request rather than being broadcast. The legacy emit stays until phase 4
-// removes the GET stream that is its only remaining audience.
+// that request rather than being broadcast. Unlike a log message this is not
+// filtered: the client asked for the cancellation, and the notification is the
+// answer to that request rather than something reported in passing.
 func (s *Server) emitCancelled(stream *requestStream, requestID any, reason string) {
 	params := map[string]any{"requestId": requestID}
 	if reason != "" {
 		params["reason"] = reason
 	}
 	stream.notify("notifications/cancelled", params)
-}
-
-func (s *Server) shouldEmitLog(level string) bool {
-	s.mu.RLock()
-	threshold := s.logLevel
-	s.mu.RUnlock()
-	return loggingLevelRank(level) <= loggingLevelRank(threshold)
 }
 
 // emitProgress reports how far a request has got, on that request's own
@@ -1773,10 +1753,10 @@ func (s *Server) unregisterProgressToken(requestIDKey string) {
 	}
 }
 
-func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, method, progressToken string, cancel context.CancelFunc, stream *requestStream) {
+func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, progressToken string, cancel context.CancelFunc, stream *requestStream) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, method: method, cancel: cancel, progressToken: progressToken, stream: stream}
+	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, cancel: cancel, progressToken: progressToken, stream: stream}
 }
 
 func (s *Server) unregisterInFlight(requestIDKey string) {
@@ -1790,10 +1770,6 @@ func (s *Server) cancelInFlight(requestIDKey, reason string) {
 	s.mu.Lock()
 	request, ok := s.inFlight[requestIDKey]
 	if !ok {
-		s.mu.Unlock()
-		return
-	}
-	if request.method == "initialize" {
 		s.mu.Unlock()
 		return
 	}

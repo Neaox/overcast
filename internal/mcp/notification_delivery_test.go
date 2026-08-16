@@ -123,7 +123,7 @@ func listen(t *testing.T, srv *httptest.Server, filter map[string]any) *listener
 			"notifications": wanted,
 		},
 	}, map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           subscriptionsListenMethod,
 		"Accept":               "text/event-stream",
 	})
@@ -512,7 +512,7 @@ func callToolModern(t *testing.T, srv *httptest.Server, name string) {
 			"arguments": map[string]any{},
 		},
 	}, map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           "tools/call",
 		"Mcp-Name":             name,
 	})

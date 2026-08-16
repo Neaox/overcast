@@ -3045,7 +3045,7 @@ func doJSONRPC(ctx context.Context, client *http.Client, endpoint string, payloa
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if isRequest {
-		req.Header.Set("MCP-Protocol-Version", mcp.ModernProtocolVersion)
+		req.Header.Set("MCP-Protocol-Version", mcp.ProtocolVersion)
 		req.Header.Set("Mcp-Method", method)
 		if name, ok := mirroredNameFor(method, payload["params"]); ok {
 			req.Header.Set("Mcp-Name", name)

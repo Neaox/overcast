@@ -39,7 +39,7 @@ import (
 // modernMeta is the `_meta` block a 2026-07-28 client puts on every request.
 func modernMeta() map[string]any {
 	return map[string]any{
-		metaProtocolVersion:    ModernProtocolVersion,
+		metaProtocolVersion:    ProtocolVersion,
 		metaClientInfo:         map[string]any{"name": "router-test", "version": "1.0"},
 		metaClientCapabilities: map[string]any{},
 	}
@@ -209,7 +209,7 @@ func TestPerRequestMeta_matchingHeaderIsAccepted(t *testing.T) {
 	defer srv.Close()
 
 	resp := postModern(t, srv, "tools/list", nil, map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 	})
 	defer resp.Body.Close() //nolint:errcheck
 

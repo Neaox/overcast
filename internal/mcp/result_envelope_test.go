@@ -119,17 +119,24 @@ func TestResultEnvelope_doesNotOverwriteADeclaredType(t *testing.T) {
 	}
 }
 
-// Non-map results pass through untouched. These are the legacy handshake
-// results, which belong to a revision that has no resultType.
+// Non-map results pass through untouched.
+//
+// `ToolResult` is the one that reaches here — every `tools/call` answer is one,
+// built by normalizeToolResult — and it is a struct with a fixed set of JSON
+// fields, so there is nowhere to stamp a resultType onto without changing the
+// type itself. That is legal: the revision defines an absent resultType as
+// `complete`. It is also the reason phase 5 cannot land as-is, because MRTR
+// needs a `tools/call` to be able to answer `input_required`. See
+// docs/plans/mcp-2026-07-28-migration.md.
 func TestResultEnvelope_leavesTypedResultsAlone(t *testing.T) {
-	// Compared by type rather than by value: InitializeResult carries maps, so
-	// == on it panics at runtime rather than reporting inequality.
-	original := InitializeResult{ProtocolVersion: ProtocolVersion}
+	// Compared by type rather than by value: ToolResult carries maps and slices,
+	// so == on it panics at runtime rather than reporting inequality.
+	original := ToolResult{IsError: true, StructuredContent: map[string]any{"error": "boom"}}
 	got := stampResult(original)
 	if _, becameAMap := got.(map[string]any); becameAMap {
 		t.Errorf("a typed result was rewritten into a stamped map: %v", got)
 	}
-	if typed, ok := got.(InitializeResult); !ok || typed.ProtocolVersion != ProtocolVersion {
+	if typed, ok := got.(ToolResult); !ok || !typed.IsError {
 		t.Errorf("a typed result did not pass through unchanged: %#v", got)
 	}
 }

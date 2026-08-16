@@ -59,6 +59,12 @@ type requestStream struct {
 	// stdio, where a message is a line and there is nothing to write first.
 	http    http.ResponseWriter
 	started bool
+
+	// logLevel is the threshold this request named in `_meta`, empty when it
+	// named none. Written once by the dispatcher before the request is
+	// registered in flight, so no other goroutine can be holding this stream
+	// yet; read from there on, under no lock, because nothing writes it again.
+	logLevel string
 }
 
 // requestStreamKey carries the stream from the HTTP layer to the dispatcher.
@@ -114,6 +120,34 @@ func (rs *requestStream) notify(method string, params any) {
 	defer rs.mu.Unlock()
 	rs.begin()
 	rs.out.writeMessage(payload)
+}
+
+// setLogLevel records the threshold this request named. A nil receiver is a
+// request that asked for no stream, which has nothing to record it on.
+func (rs *requestStream) setLogLevel(level string) {
+	if rs == nil {
+		return
+	}
+	rs.logLevel = level
+}
+
+// wantsLog reports whether this request asked to be told about something at
+// this level.
+//
+// Silence is the default and the request is what breaks it: "servers MUST NOT
+// emit notifications/message for requests that did not include this field". So
+// an absent level is not "the usual threshold" — it is none, and a request that
+// asked for nothing hears nothing.
+//
+// A nil receiver — a request that asked for no stream at all — answers the same
+// way, because it has nowhere to put a notification either. Both answers are
+// given here rather than inside notify so that a caller assembling a message
+// body can be told not to bother first. See emitLogMessage.
+func (rs *requestStream) wantsLog(level string) bool {
+	if rs == nil || rs.logLevel == "" {
+		return false
+	}
+	return loggingLevelRank(level) <= loggingLevelRank(rs.logLevel)
 }
 
 // hasStarted reports whether anything has gone out yet, which is what decides

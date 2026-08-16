@@ -48,24 +48,15 @@ func TestDiscover_answersWithNoHandshakeAndNoMeta(t *testing.T) {
 			"require a handshake or a declared version", envelope.Error)
 	}
 
+	// One entry, and it is the modern one. A server that lists a revision it
+	// cannot serve invites a client to send a request it will then refuse:
+	// 2025-11-25 means `initialize`, a session and a GET stream, and phase 4
+	// removed all three. The list is the only thing a client has to choose from,
+	// so it has to be the truth about what this server answers.
 	versions, _ := envelope.Result["supportedVersions"].([]any)
-	if len(versions) == 0 {
-		t.Fatal("supportedVersions is empty — a client has nothing to negotiate with")
-	}
-	var sawModern, sawLegacy bool
-	for _, v := range versions {
-		switch v {
-		case ModernProtocolVersion:
-			sawModern = true
-		case ProtocolVersion:
-			sawLegacy = true
-		}
-	}
-	if !sawModern {
-		t.Errorf("supportedVersions %v omits %q — the revision that defines this method", versions, ModernProtocolVersion)
-	}
-	if !sawLegacy {
-		t.Errorf("supportedVersions %v omits %q, which this server still answers", versions, ProtocolVersion)
+	if len(versions) != 1 || versions[0] != ProtocolVersion {
+		t.Errorf("supportedVersions = %v, want exactly [%q] — anything else offers a "+
+			"client an era this server no longer implements", versions, ProtocolVersion)
 	}
 
 	if _, ok := envelope.Result["capabilities"]; !ok {

@@ -22,7 +22,7 @@ import (
 
 func modernHeaders(method, name string) map[string]string {
 	headers := map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           method,
 	}
 	if name != "" {
@@ -68,7 +68,7 @@ func TestStandardHeaders_missingMethodHeaderIsRefused(t *testing.T) {
 		// Explicitly empty rather than absent: mcpPost fills in the mirrored
 		// headers a conforming request needs, and this test's subject is what
 		// happens without one.
-	}, map[string]string{"MCP-Protocol-Version": ModernProtocolVersion, "Mcp-Method": ""})
+	}, map[string]string{"MCP-Protocol-Version": ProtocolVersion, "Mcp-Method": ""})
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -169,7 +169,7 @@ func TestStandardHeaders_stdioIsExempt(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	rpcReq := jsonRPCRequest{JSONRPC: "2.0", Method: "tools/list"}
-	meta := requestMeta{modern: true, protocolVersion: ModernProtocolVersion}
+	meta := requestMeta{versioned: true, protocolVersion: ProtocolVersion}
 
 	if got := validateStandardHeaders(req, rpcReq, meta); got != nil {
 		t.Fatalf("a stdio request was held to the HTTP binding's header rule: %v", got)

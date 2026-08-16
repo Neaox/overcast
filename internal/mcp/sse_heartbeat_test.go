@@ -75,7 +75,7 @@ func openListenStream(t *testing.T, srv *httptest.Server, within time.Duration) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", ModernProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
 	req.Header.Set("Mcp-Method", subscriptionsListenMethod)
 
 	resp, err := http.DefaultClient.Do(req)

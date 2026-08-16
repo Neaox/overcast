@@ -1064,7 +1064,7 @@ func TestRuntimeProbeInstanceProbesRealServer(t *testing.T) {
 	// nothing, which is why it replaced initialize as the probe. What is being
 	// asserted is that the `_meta` and the Mcp-Method header doJSONRPC attaches
 	// satisfy the server's own validation — a stub would accept them regardless.
-	if got["mcp_protocol_version"] != mcp.ModernProtocolVersion {
+	if got["mcp_protocol_version"] != mcp.ProtocolVersion {
 		t.Fatalf("expected the server's advertised version, got %#v", got["mcp_protocol_version"])
 	}
 }

@@ -28,7 +28,7 @@ import (
 // that it is *valid* — a request the server would answer if nothing stopped it.
 // That is what makes 401 and 403 attributable to the thing being tested.
 const mcpDiscoverBody = `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
-	`"io.modelcontextprotocol/protocolVersion":"` + mcp.ModernProtocolVersion + `",` +
+	`"io.modelcontextprotocol/protocolVersion":"` + mcp.ProtocolVersion + `",` +
 	`"io.modelcontextprotocol/clientCapabilities":{},` +
 	`"io.modelcontextprotocol/clientInfo":{"name":"router-test","version":"1.0"}}}}`
 

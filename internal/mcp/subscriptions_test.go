@@ -33,7 +33,7 @@ func TestSubscriptions_acknowledgesFirstWithItsID(t *testing.T) {
 			"notifications": map[string]any{"toolsListChanged": true},
 		},
 	}, map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           subscriptionsListenMethod,
 		"Accept":               "text/event-stream",
 	})
