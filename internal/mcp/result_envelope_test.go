@@ -29,7 +29,6 @@ func newEnvelopeServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := newTestHTTPServer(t)
 	t.Cleanup(srv.Close)
-	requireLifecycleReady(t, srv)
 	return srv
 }
 
@@ -40,7 +39,7 @@ func resultOf(t *testing.T, srv *httptest.Server, method string, params map[stri
 	if params != nil {
 		body["params"] = params
 	}
-	resp := mcpPost(t, srv, body, operationHeaders())
+	resp := mcpPost(t, srv, body, nil)
 	defer resp.Body.Close() //nolint:errcheck
 
 	decoded := decodeBodyMap(t, resp)

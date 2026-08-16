@@ -78,7 +78,7 @@ const sentinelMethod = "notifications/prompts/list_changed"
 // this runs before any listen() the server is torn down last.
 func newNotificationServer(t *testing.T, providers ...ToolProvider) (*Server, *httptest.Server) {
 	t.Helper()
-	s := NewServer(nil, nil, providers...)
+	s := NewServer(nil, providers...)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	return s, srv
@@ -548,4 +548,66 @@ func waitForSubscriptions(t *testing.T, s *Server, n int) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+// --- the emitter callbacks handed to providers -------------------------------
+//
+// registerProvider hands a provider three closures so it can announce its own
+// changes. These ported from tests that watched the server-wide broadcast, which
+// 2026-07-28 removes; what they assert is unchanged, and is two things at once —
+// that the callback was wired at all, and that calling it reaches a client.
+
+// Ports TestServer_RegisterProvider_WiresResourceListChangedEmitter.
+func TestNotifications_ProviderCanAnnounceAResourceListChange(t *testing.T) {
+	s, srv := newNotificationServer(t)
+	l := listen(t, srv, map[string]any{"resourcesListChanged": true})
+
+	provider := &emitterAwareProvider{}
+	s.registerProvider(provider)
+	if provider.emitter == nil {
+		t.Fatal("resource list changed emitter was not wired")
+	}
+
+	provider.emitter()
+
+	l.await("notifications/resources/list_changed")
+}
+
+// Ports TestServer_RegisterProvider_WiresResourceUpdatedEmitter.
+//
+// The subscription moves from a server-side set to the listen stream's filter,
+// which is the only place a resource subscription lives now.
+func TestNotifications_ProviderCanAnnounceAResourceUpdate(t *testing.T) {
+	const uri = "oc://demo/item"
+	s, srv := newNotificationServer(t)
+	l := listen(t, srv, map[string]any{"resourceSubscriptions": []string{uri}})
+
+	provider := &emitterAwareProvider{}
+	s.registerProvider(provider)
+	if provider.updatedEmitter == nil {
+		t.Fatal("resource updated emitter was not wired")
+	}
+
+	provider.updatedEmitter(uri)
+
+	params := l.await("notifications/resources/updated")
+	if params["uri"] != uri {
+		t.Errorf("uri = %v, want %s", params["uri"], uri)
+	}
+}
+
+// Ports TestServer_RegisterProvider_WiresPromptListChangedEmitter.
+func TestNotifications_ProviderCanAnnounceAPromptListChange(t *testing.T) {
+	s, srv := newNotificationServer(t)
+	l := listen(t, srv, map[string]any{"promptsListChanged": true})
+
+	provider := &emitterAwareProvider{}
+	s.registerProvider(provider)
+	if provider.promptEmitter == nil {
+		t.Fatal("prompt list changed emitter was not wired")
+	}
+
+	provider.promptEmitter()
+
+	l.await("notifications/prompts/list_changed")
 }

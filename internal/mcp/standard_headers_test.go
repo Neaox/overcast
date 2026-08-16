@@ -65,7 +65,10 @@ func TestStandardHeaders_missingMethodHeaderIsRefused(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 		"params": modernParams(nil),
-	}, map[string]string{"MCP-Protocol-Version": ModernProtocolVersion})
+		// Explicitly empty rather than absent: mcpPost fills in the mirrored
+		// headers a conforming request needs, and this test's subject is what
+		// happens without one.
+	}, map[string]string{"MCP-Protocol-Version": ModernProtocolVersion, "Mcp-Method": ""})
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -144,11 +147,10 @@ func TestStandardHeaders_base64EncodedNameIsDecodedBeforeComparing(t *testing.T)
 func TestStandardHeaders_legacyRequestIsExempt(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-	}, operationHeaders())
+	}, nil)
 	defer resp.Body.Close() //nolint:errcheck
 
 	if _, rpcErr := decodeRPC(t, resp); rpcErr != nil {

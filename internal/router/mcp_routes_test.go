@@ -70,7 +70,6 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 	srv := newMCPRouterTestServer(t, func(cfg *config.Config) {
 		cfg.MCPRemoteExposure = true
 		cfg.MCPAuthToken = "test-token"
-		cfg.MCPReplayLimit = 32
 	})
 
 	initBody, _ := json.Marshal(map[string]any{

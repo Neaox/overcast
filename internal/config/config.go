@@ -717,11 +717,6 @@ type Config struct {
 	// Not loaded from environment — set by the caller after Load().
 	DNSListening bool
 
-	// MCPReplayLimit bounds in-memory MCP notification replay history for
-	// Last-Event-ID reconnect support. A value of 0 disables replay retention.
-	// Default: 256.
-	MCPReplayLimit int
-
 	// MCPRemoteExposure explicitly enables remote/runtime MCP exposure mode.
 	// When true, MCPAuthToken must be configured.
 	MCPRemoteExposure bool
@@ -1151,7 +1146,6 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_INIT_ENABLED              true  (set false to disable init hooks)
 //	OVERCAST_INIT_DIRS                 /etc/localstack/init,/etc/overcast/init
 //	OVERCAST_INIT_TIMEOUT              30s   (per-script timeout)
-//	OVERCAST_MCP_REPLAY_LIMIT          256
 //	OVERCAST_MCP_REMOTE_EXPOSURE       false
 //	OVERCAST_MCP_AUTH_TOKEN            "" (required when OVERCAST_MCP_REMOTE_EXPOSURE=true)
 func Load() (*Config, error) {
@@ -1564,12 +1558,6 @@ func Load() (*Config, error) {
 	cfg.InitTimeout, err = time.ParseDuration(initTimeoutStr)
 	if err != nil {
 		return nil, fmt.Errorf("config: OVERCAST_INIT_TIMEOUT %q is not a valid duration", initTimeoutStr)
-	}
-
-	mcpReplayStr := envOr("OVERCAST_MCP_REPLAY_LIMIT", "256")
-	cfg.MCPReplayLimit, err = strconv.Atoi(mcpReplayStr)
-	if err != nil || cfg.MCPReplayLimit < 0 {
-		return nil, fmt.Errorf("config: OVERCAST_MCP_REPLAY_LIMIT %q must be a non-negative integer", mcpReplayStr)
 	}
 
 	cfg.MCPRemoteExposure = envBool("OVERCAST_MCP_REMOTE_EXPOSURE", false)

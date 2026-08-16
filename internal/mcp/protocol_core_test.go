@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestDefaultServerCapabilities_AdvertisesImplementedSet(t *testing.T) {
@@ -13,58 +12,14 @@ func TestDefaultServerCapabilities_AdvertisesImplementedSet(t *testing.T) {
 	if caps.Tools == nil || caps.Resources == nil || caps.Prompts == nil || caps.Completions == nil || caps.Logging == nil {
 		t.Fatalf("expected implemented capability set, got %#v", caps)
 	}
-	if caps.Resources.Subscribe != true {
-		t.Fatalf("resources.subscribe = %v, want true", caps.Resources.Subscribe)
+	// resources/subscribe is not a method this revision has: a client subscribes
+	// by naming URIs on its own `subscriptions/listen` stream instead, so there
+	// is no server-side capability to advertise.
+	if caps.Resources.Subscribe {
+		t.Fatal("resources.subscribe must not be advertised: the method is gone")
 	}
 	if caps.Tasks != nil {
 		t.Fatalf("tasks capability must remain unadvertised, got %#v", caps.Tasks)
-	}
-}
-
-func TestValidateOptionalSessionHeader(t *testing.T) {
-	srv := NewServer(nil, nil)
-	srv.sessions["known"] = time.Now()
-
-	if err := srv.validateOptionalSessionHeader(""); err != nil {
-		t.Fatalf("empty session header error = %v, want nil", err)
-	}
-	if err := srv.validateOptionalSessionHeader(" known "); err != nil {
-		t.Fatalf("known session header error = %v, want nil", err)
-	}
-	if err := srv.validateOptionalSessionHeader("missing"); err != errUnknownSessionHeader {
-		t.Fatalf("missing session error = %v, want %v", err, errUnknownSessionHeader)
-	}
-}
-
-func TestValidateProtocolVersionHeader(t *testing.T) {
-	if err := validateProtocolVersionHeader(""); err != nil {
-		t.Fatalf("empty header error = %#v, want nil", err)
-	}
-	if err := validateProtocolVersionHeader(ProtocolVersion); err != nil {
-		t.Fatalf("supported header error = %#v, want nil", err)
-	}
-	err := validateProtocolVersionHeader("2023-01-01")
-	if err == nil {
-		t.Fatal("expected unsupported version error")
-	}
-	if err.Code != RPCInvalidParams {
-		t.Fatalf("error code = %d, want %d", err.Code, RPCInvalidParams)
-	}
-	data, _ := err.Data.(map[string]any)
-	if data["requested"] != "2023-01-01" {
-		t.Fatalf("requested = %v, want 2023-01-01", data["requested"])
-	}
-}
-
-func TestValidateLifecycle(t *testing.T) {
-	if err := validateLifecycle(false, false); err == nil || err.Code != RPCInvalidRequest {
-		t.Fatalf("expected invalid-request error before initialize, got %#v", err)
-	}
-	if err := validateLifecycle(true, false); err == nil || err.Code != RPCInvalidRequest {
-		t.Fatalf("expected invalid-request error before initialized notification, got %#v", err)
-	}
-	if err := validateLifecycle(true, true); err != nil {
-		t.Fatalf("ready lifecycle error = %#v, want nil", err)
 	}
 }
 

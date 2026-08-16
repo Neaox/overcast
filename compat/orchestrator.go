@@ -120,11 +120,6 @@ type Orchestrator struct {
 	wg        sync.WaitGroup
 	logger    *slog.Logger
 
-	// sseClients are additional channels that receive raw NDJSON event copies
-	// (used by the MCP SSE endpoint).
-	sseMu      sync.Mutex
-	sseClients map[chan []byte]bool
-
 	// Endpoint and Region are injected into suite subprocess environments.
 	Endpoint string
 	Region   string
@@ -154,13 +149,12 @@ func NewOrchestrator(ctx context.Context, configs []SuiteConfig, onEvent func([]
 		}
 	}
 	return &Orchestrator{
-		processes:  procs,
-		results:    make(map[string]TestResultEvent),
-		sseClients: make(map[chan []byte]bool),
-		onEvent:    onEvent,
-		ctx:        ctx,
-		cancel:     cancel,
-		logger:     logger,
+		processes: procs,
+		results:   make(map[string]TestResultEvent),
+		onEvent:   onEvent,
+		ctx:       ctx,
+		cancel:    cancel,
+		logger:    logger,
 	}
 }
 
@@ -630,25 +624,38 @@ func (o *Orchestrator) CancelTests(batchID, suite, group, test string, all bool)
 	// Broadcast cancelled events for entries that were queued (not running).
 	// Running entries will emit their own cancelled events via stdout once the
 	// suite process acknowledges the cancel command.
+	//
+	// These now go to onEvent, which is where every other event this
+	// orchestrator produces goes and where the dashboard reads them. They used
+	// to go only to the MCP event bridge — the one place in this file that did
+	// not also call onEvent — so cancelling a queued test has never shown up in
+	// the dashboard, only to an MCP client holding the GET stream open. That
+	// stream is gone with revision 2026-07-28, so the choice was to route these
+	// where the comment above always meant them to go or to delete the emission
+	// outright. The events are real and the dashboard is their audience.
 	for _, e := range cancelled {
-		if e.State == "queued" {
-			data, _ := json.Marshal(struct {
-				Event   string `json:"event"`
-				Suite   string `json:"suite"`
-				BatchID string `json:"batch_id"`
-				Group   string `json:"group"`
-				Test    string `json:"test,omitempty"`
-				Reason  string `json:"reason"`
-			}{
-				Event:   "cancelled",
-				Suite:   e.Suite,
-				BatchID: e.BatchID,
-				Group:   e.Group,
-				Test:    e.Test,
-				Reason:  "user",
-			})
-			o.broadcastSSE(data)
+		if e.State != "queued" || o.onEvent == nil {
+			continue
 		}
+		data, err := json.Marshal(struct {
+			Event   string `json:"event"`
+			Suite   string `json:"suite"`
+			BatchID string `json:"batch_id"`
+			Group   string `json:"group"`
+			Test    string `json:"test,omitempty"`
+			Reason  string `json:"reason"`
+		}{
+			Event:   "cancelled",
+			Suite:   e.Suite,
+			BatchID: e.BatchID,
+			Group:   e.Group,
+			Test:    e.Test,
+			Reason:  "user",
+		})
+		if err != nil {
+			continue
+		}
+		o.onEvent(data)
 	}
 
 	return cancelled
@@ -685,34 +692,6 @@ func (o *Orchestrator) QueueState() []QueueEntry {
 		sp.mu.Unlock()
 	}
 	return entries
-}
-
-// RegisterSSEClient adds a channel that will receive copies of raw NDJSON
-// event lines. Used by the MCP SSE endpoint.
-func (o *Orchestrator) RegisterSSEClient(ch chan []byte) {
-	o.sseMu.Lock()
-	o.sseClients[ch] = true
-	o.sseMu.Unlock()
-}
-
-// UnregisterSSEClient removes a previously registered SSE channel.
-func (o *Orchestrator) UnregisterSSEClient(ch chan []byte) {
-	o.sseMu.Lock()
-	delete(o.sseClients, ch)
-	o.sseMu.Unlock()
-}
-
-// broadcastSSE sends a copy of the event to all registered SSE clients.
-func (o *Orchestrator) broadcastSSE(data []byte) {
-	o.sseMu.Lock()
-	defer o.sseMu.Unlock()
-	for ch := range o.sseClients {
-		select {
-		case ch <- data:
-		default:
-			// Slow client — drop rather than block.
-		}
-	}
 }
 
 // Results returns the latest test results, optionally filtered.
@@ -985,7 +964,6 @@ func (o *Orchestrator) readStdout(sp *SuiteProcess) {
 		if o.onEvent != nil {
 			o.onEvent(cp)
 		}
-		o.broadcastSSE(cp)
 
 		// Peek at the event type and key fields.
 		var peek struct {

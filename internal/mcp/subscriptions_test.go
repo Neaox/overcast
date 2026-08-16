@@ -133,7 +133,7 @@ func TestSubscriptions_tagsEachStreamWithItsOwnID(t *testing.T) {
 // emitter because that is what the emulator calls, and measured in allocations
 // because that is the cost that would otherwise be invisible.
 func TestSubscriptions_emitCostsNothingWithNoListeners(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 
 	allocs := testing.AllocsPerRun(100, func() {
 		s.emitToSubscriptions("notifications/resources/list_changed", map[string]any{}, "")
@@ -146,7 +146,7 @@ func TestSubscriptions_emitCostsNothingWithNoListeners(t *testing.T) {
 
 // And with a listener that wants something else, it still does not serialise.
 func TestSubscriptions_emitCostsNothingWhenNoFilterMatches(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	_, remove := s.addSubscription("1", subscriptionFilter{ToolsListChanged: true})
 	defer remove()
 
@@ -166,7 +166,7 @@ func TestSubscriptions_emitCostsNothingWhenNoFilterMatches(t *testing.T) {
 // the params map is built before the audience is checked, the emulator pays for
 // a notification body on every update that nobody asked for.
 func TestSubscriptions_resourceUpdatedCostsNothingWithNoAudience(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	// Someone is listening, but for a different resource — the case that would
 	// otherwise look like an audience to a check that only counted streams.
 	_, remove := s.addSubscription("1", subscriptionFilter{ResourceSubscriptions: []string{"file:///other"}})
@@ -197,7 +197,7 @@ func TestSubscriptions_resourceUpdatedCostsNothingWithNoAudience(t *testing.T) {
 // does not, so this fails immediately and says which.
 func TestSubscriptions_shutdownEndsTheStreamWithAClosingResult(t *testing.T) {
 	shutdown := make(chan struct{})
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	s.SetShutdownSignal(shutdown)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
@@ -232,7 +232,7 @@ func TestSubscriptions_shutdownEndsTheStreamWithAClosingResult(t *testing.T) {
 // A client that has stopped reading loses notifications rather than blocking
 // the emulator goroutine that produced them.
 func TestSubscriptions_slowClientIsDroppedNotWaitedFor(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	sub, remove := s.addSubscription("1", subscriptionFilter{ToolsListChanged: true})
 	defer remove()
 

@@ -132,9 +132,6 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.ExternalBaseURL() != "http://localhost:4566" {
 		t.Errorf("ExternalBaseURL(): expected http://localhost:4566, got %q", cfg.ExternalBaseURL())
 	}
-	if cfg.MCPReplayLimit != 256 {
-		t.Errorf("MCPReplayLimit: expected 256, got %d", cfg.MCPReplayLimit)
-	}
 	if cfg.MCPRemoteExposure {
 		t.Error("MCPRemoteExposure: expected false by default")
 	}
@@ -1491,31 +1488,6 @@ func TestLoad_ec2VPCStrategyNetnsRejected(t *testing.T) {
 	}
 }
 
-func TestLoad_mcpReplayLimitOverride(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("OVERCAST_MCP_REPLAY_LIMIT", "64")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.MCPReplayLimit != 64 {
-		t.Fatalf("MCPReplayLimit = %d, want 64", cfg.MCPReplayLimit)
-	}
-}
-
-func TestLoad_mcpReplayLimitRejectsInvalidValues(t *testing.T) {
-	for _, value := range []string{"abc", "-1"} {
-		t.Run(value, func(t *testing.T) {
-			clearEnv(t)
-			t.Setenv("OVERCAST_MCP_REPLAY_LIMIT", value)
-			if _, err := config.Load(); err == nil {
-				t.Fatalf("expected error for OVERCAST_MCP_REPLAY_LIMIT=%q", value)
-			}
-		})
-	}
-}
-
 func TestLoad_mcpRemoteExposureRequiresAuthToken(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_MCP_REMOTE_EXPOSURE", "true")
@@ -1613,7 +1585,7 @@ func clearEnv(t *testing.T) {
 		// The mode defaults these assert are only defaults if the developer
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE",
-		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
+		"OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK",
 	}
 	for _, v := range awsEmuVars {

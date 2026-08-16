@@ -1056,12 +1056,10 @@ func TestRuntimeProbeInstanceCompletesLifecycleHandshake(t *testing.T) {
 		t.Fatalf("expected mcp_available=true after probe, got %#v", got)
 	}
 
-	// The probe must have completed the full handshake (initialize +
-	// notifications/initialized). Check the server's ready state directly so
-	// we don't add extra HTTP connections that could perturb test scheduling.
-	if !mcpSrv.Ready() {
-		t.Fatal("expected server to be in ready state after probe (notifications/initialized was not sent)")
-	}
+	// There is no handshake left to have completed: server/discover establishes
+	// nothing, which is why it replaced initialize as the probe. mcp_available
+	// above is now the whole of what the probe can tell us, and is asserted
+	// against a server that never saw an initialize.
 }
 
 func TestRuntimeProbeInstanceUsesCacheAndForceRefresh(t *testing.T) {

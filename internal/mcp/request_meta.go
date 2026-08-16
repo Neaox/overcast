@@ -162,8 +162,22 @@ func supportedProtocolVersions() []string {
 // body would disagree about what they are handling, which is the security
 // problem the header/body validation rule exists to prevent.
 func (m requestMeta) validate(header string) *rpcError {
+	// Every request carries its own version now, so one that does not is not a
+	// request this server can serve. This also settles a case the revision
+	// leaves open: a missing MCP-Protocol-Version header is -32020 and a missing
+	// `_meta` protocol version is -32602, and it does not say which applies when
+	// both are absent. The body wins, because the body is where protocol
+	// metadata lives — "All protocol metadata travels in the message body … A
+	// binding MAY additionally mirror selected body fields into envelope
+	// metadata." A missing mirror is a lesser fault than a missing original, and
+	// stdio has no mirror at all.
 	if !m.modern {
-		return nil
+		return &rpcError{
+			Code: RPCInvalidParams,
+			Message: "request must carry its protocol version in _meta." +
+				metaProtocolVersion,
+			Data: map[string]any{"supported": supportedProtocolVersions()},
+		}
 	}
 	supported := supportedProtocolVersions()
 	if !containsString(supported, m.protocolVersion) {
@@ -202,4 +216,24 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// NewRequestMeta builds the `_meta` block a 2026-07-28 client puts on every
+// request.
+//
+// Exported because overcast is a client of its own MCP surface as well as its
+// server: `runtime_mcp_call` and the workspace probe in internal/mcp/providers
+// talk to /_overcast/mcp over HTTP, and since the handshake was removed a
+// request that does not carry this is refused like any other legacy one. The
+// alternative was for the client side to hardcode the spec's `_meta` key names,
+// which would put the same two strings in two packages and let them drift.
+func NewRequestMeta(clientName, clientVersion string) map[string]any {
+	return map[string]any{
+		metaProtocolVersion: ModernProtocolVersion,
+		metaClientInfo: map[string]any{
+			"name":    clientName,
+			"version": clientVersion,
+		},
+		metaClientCapabilities: map[string]any{},
+	}
 }

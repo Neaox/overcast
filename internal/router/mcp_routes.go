@@ -18,18 +18,16 @@ import (
 
 // registerMCPRoutes mounts the runtime MCP surface at /_overcast/mcp for non-slim builds.
 //
-// Transport: Streamable HTTP (MCP 2025-11-25 §6.1).
-//   - POST /_overcast/mcp        — JSON-RPC request/response; SSE response mode when client
-//     sends Accept: text/event-stream.
-//   - GET /_overcast/mcp         — SSE stream for server-initiated messages (requires
-//     Accept: text/event-stream).
-//   - DELETE /_overcast/mcp      — explicit session termination.
-//   - GET /_overcast/mcp/sse     — legacy SSE compatibility endpoint for older clients.
+// Transport: Streamable HTTP (MCP 2026-07-28).
+//   - POST /_overcast/mcp — the only endpoint. JSON-RPC request/response, or a
+//     streamed response when the client sends Accept: text/event-stream, on
+//     which that request's own notifications arrive ahead of its result.
+//     `subscriptions/listen` is a POST like any other and keeps its response
+//     stream open for as long as the client wants notifications.
 //
-// Session strategy (initial phase): stateless by default.
-// The server issues MCP-Session-Id tokens and tracks them in memory for the
-// lifetime of the process. Sessions are not persisted across restarts.
-// This is intentional for the local-only initial phase.
+// There is no GET stream, no DELETE, and no session. The revision is stateless:
+// "There is no negotiation handshake. Every request carries its protocol
+// version, and the server accepts or rejects each request independently."
 //
 // Auth posture: Origin validation is always enforced. When
 // OVERCAST_MCP_REMOTE_EXPOSURE=true, runtime MCP additionally requires a
@@ -41,12 +39,11 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 	provider := mcpproviders.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
 	root := sync.OnceValue(func() http.Handler {
-		runtimeMCP := mcp.NewServer(nil, slog.Default(), provider)
-		runtimeMCP.SetNotificationReplayLimit(cfg.MCPReplayLimit)
-		// The MCP SSE stream is a long-lived handler, so it needs the same
-		// pre-shutdown channel eventsHandler and domainsWatchHandler get.
-		// Without it the stream ends only when the client disconnects, and a
-		// shutdown that waits for in-flight handlers waits for that forever.
+		runtimeMCP := mcp.NewServer(slog.Default(), provider)
+		// A `subscriptions/listen` stream is a long-lived handler, so it needs
+		// the same pre-shutdown channel eventsHandler and domainsWatchHandler
+		// get. Without it the stream ends only when the client disconnects, and
+		// a shutdown that waits for in-flight handlers waits for that forever.
 		runtimeMCP.SetShutdownSignal(shutdownCh)
 		if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
 			runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)

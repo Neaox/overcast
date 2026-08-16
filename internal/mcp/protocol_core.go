@@ -24,7 +24,7 @@ var capabilityDescriptors = []capabilityDescriptor{
 	{
 		name: "resources",
 		apply: func(c *ServerCapabilities) {
-			c.Resources = &ResourceCapability{Subscribe: true, ListChanged: true}
+			c.Resources = &ResourceCapability{ListChanged: true}
 		},
 	},
 	{
@@ -68,49 +68,6 @@ func defaultServerCapabilities() ServerCapabilities {
 		descriptor.apply(&capabilities)
 	}
 	return capabilities
-}
-
-func (s *Server) validateOptionalSessionHeader(sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return nil
-	}
-	if !s.hasSession(sessionID) {
-		return errUnknownSessionHeader
-	}
-	return nil
-}
-
-func (s *Server) hasSession(sessionID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	_, ok := s.sessions[sessionID]
-	return ok
-}
-
-func validateProtocolVersionHeader(requested string) *rpcError {
-	requested = strings.TrimSpace(requested)
-	if requested == "" || requested == ProtocolVersion {
-		return nil
-	}
-	return &rpcError{
-		Code:    RPCInvalidParams,
-		Message: "unsupported MCP protocol version: requested " + strconv.Quote(requested) + ", server supports " + strconv.Quote(ProtocolVersion),
-		Data: map[string]any{
-			"supported": []string{ProtocolVersion},
-			"requested": requested,
-		},
-	}
-}
-
-func validateLifecycle(initDone, ready bool) *rpcError {
-	if !initDone {
-		return &rpcError{Code: RPCInvalidRequest, Message: "initialize must be sent before operation requests"}
-	}
-	if !ready {
-		return &rpcError{Code: RPCInvalidRequest, Message: "notifications/initialized must be sent before operation requests"}
-	}
-	return nil
 }
 
 func paginateRange(total int, cursor string, limit int) (start int, end int, nextCursor string, err *rpcError) {

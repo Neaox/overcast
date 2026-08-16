@@ -29,12 +29,22 @@ type registryTest struct {
 
 // NewMCPServer creates an MCP server that combines generic repo tools with
 // compat-specific orchestration tools.
+//
+// The orchestrator is no longer handed to the MCP server as an event source.
+// That bridge existed to copy the orchestrator's raw NDJSON test events onto
+// MCP's GET stream, which 2026-07-28 removes — and the revision has no
+// conforming home for it, because a `subscriptions/listen` filter names the
+// notification types it wants and "the server MUST NOT send notification types
+// the client has not explicitly requested". Nothing is lost: the dashboard's own
+// `GET /events` carries the identical feed from the same source
+// (Orchestrator.onEvent → Server.Broadcast), and always did — the MCP copy was
+// the second of two independent paths, not the only one.
 func NewMCPServer(orch *Orchestrator, registryPath, workspaceRoot string, logger *slog.Logger) *intmcp.Server {
 	providers := []intmcp.ToolProvider{
 		mcpproviders.NewRepoProvider(workspaceRoot),
 		newCompatMCPProvider(orch, registryPath),
 	}
-	return intmcp.NewServer(orch, logger, providers...)
+	return intmcp.NewServer(logger, providers...)
 }
 
 type compatMCPProvider struct {

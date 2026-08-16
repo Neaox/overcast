@@ -19,7 +19,7 @@ import (
 
 func newTestHTTPServer(t *testing.T, providers ...ToolProvider) *httptest.Server {
 	t.Helper()
-	srv := NewServer(nil, nil, providers...)
+	srv := NewServer(nil, providers...)
 	return httptest.NewServer(srv.Handler())
 }
 
@@ -27,12 +27,26 @@ func newTestHTTPServer(t *testing.T, providers ...ToolProvider) *httptest.Server
 // can call server methods (e.g. emitResourceUpdated) while driving it over HTTP.
 func newTestHTTPServerPair(t *testing.T, providers ...ToolProvider) (*Server, *httptest.Server) {
 	t.Helper()
-	srv := NewServer(nil, nil, providers...)
+	srv := NewServer(nil, providers...)
 	return srv, httptest.NewServer(srv.Handler())
 }
 
+// mcpPost sends one JSON-RPC message, making it a conforming 2026-07-28 request
+// on the way out.
+//
+// Every request now has to carry its own protocol version in `_meta` and mirror
+// its method into Mcp-Method — there is no handshake to establish either once,
+// which is exactly what removing the handshake means. Doing it here rather than
+// at each of the hundred-odd call sites keeps those tests about their own
+// subject: a test of prompts/list pagination should not have to restate the
+// protocol to ask a question about pagination.
+//
+// Anything the caller set is kept. That matters for the tests whose subject *is*
+// this metadata — a deliberately mismatched header or an unsupported version has
+// to survive being sent.
 func mcpPost(t *testing.T, srv *httptest.Server, body any, headers map[string]string) *http.Response {
 	t.Helper()
+	body, headers = asModernRequest(body, headers)
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -52,6 +66,84 @@ func mcpPost(t *testing.T, srv *httptest.Server, body any, headers map[string]st
 	return resp
 }
 
+// asModernRequest fills in the protocol metadata a request needs, without
+// overwriting anything already there.
+func asModernRequest(body any, headers map[string]string) (any, map[string]string) {
+	msg, ok := body.(map[string]any)
+	if !ok || msg["id"] == nil {
+		return body, headers // notifications and hand-built bodies are left alone
+	}
+	method, _ := msg["method"].(string)
+
+	out := make(map[string]any, len(msg))
+	for k, v := range msg {
+		out[k] = v
+	}
+	// Only where params is a map, or absent. A test that deliberately sends
+	// params of the wrong shape is testing what the server does with it, and
+	// replacing them with a well-formed map would quietly delete its subject.
+	params, isMap := out["params"].(map[string]any)
+	if params == nil && out["params"] != nil && !isMap {
+		return out, headersWith(headers, method, nil)
+	}
+	merged := make(map[string]any, len(params)+1)
+	for k, v := range params {
+		merged[k] = v
+	}
+	// Merged key by key, not wholesale. A test that sets `_meta` for a
+	// progressToken still needs the protocol version alongside it, and a test
+	// whose subject *is* the protocol version must keep the one it chose.
+	meta, _ := merged["_meta"].(map[string]any)
+	withMeta := modernMeta()
+	for k, v := range meta {
+		withMeta[k] = v
+	}
+	merged["_meta"] = withMeta
+	out["params"] = merged
+
+	return out, headersWith(headers, method, merged)
+}
+
+// headersWith adds the headers a modern request mirrors, leaving alone anything
+// the caller set deliberately.
+func headersWith(headers map[string]string, method string, params map[string]any) map[string]string {
+	hdrs := make(map[string]string, len(headers)+3)
+	for k, v := range headers {
+		hdrs[k] = v
+	}
+	if _, present := hdrs["Mcp-Method"]; !present {
+		hdrs["Mcp-Method"] = method
+	}
+	if _, present := hdrs["MCP-Protocol-Version"]; !present {
+		hdrs["MCP-Protocol-Version"] = ModernProtocolVersion
+	}
+	if name, needed := mirroredName(method, params); needed {
+		if _, present := hdrs["Mcp-Name"]; !present {
+			hdrs["Mcp-Name"] = name
+		}
+	}
+	return hdrs
+}
+
+// mirroredName returns the value Mcp-Name must carry for the three methods that
+// name what they act on.
+func mirroredName(method string, params map[string]any) (string, bool) {
+	if params == nil {
+		return "", false
+	}
+	field := ""
+	switch method {
+	case "tools/call", "prompts/get":
+		field = "name"
+	case "resources/read":
+		field = "uri"
+	default:
+		return "", false
+	}
+	value, ok := params[field].(string)
+	return value, ok && value != ""
+}
+
 func decodeBodyMap(t *testing.T, resp *http.Response) map[string]any {
 	t.Helper()
 	defer resp.Body.Close()
@@ -60,163 +152,6 @@ func decodeBodyMap(t *testing.T, resp *http.Response) map[string]any {
 		t.Fatalf("decode response: %v", err)
 	}
 	return out
-}
-
-func mcpDelete(t *testing.T, srv *httptest.Server, headers map[string]string) *http.Response {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new delete request: %v", err)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE /mcp/: %v", err)
-	}
-	return resp
-}
-
-func requireLifecycleReady(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-
-	initResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-	if initResp.StatusCode != http.StatusOK {
-		t.Fatalf("initialize status = %d, want 200", initResp.StatusCode)
-	}
-	_ = decodeBodyMap(t, initResp)
-
-	notifyResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	}, nil)
-	defer notifyResp.Body.Close()
-	if notifyResp.StatusCode != http.StatusNoContent {
-		t.Fatalf("initialized notification status = %d, want 204", notifyResp.StatusCode)
-	}
-}
-
-func operationHeaders() map[string]string {
-	return map[string]string{"MCP-Protocol-Version": ProtocolVersion}
-}
-
-func TestServer_Initialize_ReturnsRequiredFields(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body := decodeBodyMap(t, resp)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result map, got %T", body["result"])
-	}
-	if result["protocolVersion"] != ProtocolVersion {
-		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], ProtocolVersion)
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-	if _, ok := caps["tools"]; !ok {
-		t.Fatal("capabilities.tools must be present")
-	}
-	for _, key := range []string{"resources", "prompts", "completions", "logging"} {
-		if _, ok := caps[key]; !ok {
-			t.Fatalf("capabilities.%s must be present", key)
-		}
-	}
-	if _, ok := caps["tasks"]; ok {
-		t.Fatal("capabilities.tasks must remain unadvertised")
-	}
-	info, ok := result["serverInfo"].(map[string]any)
-	if !ok {
-		t.Fatalf("serverInfo type = %T", result["serverInfo"])
-	}
-	if info["name"] == "" || info["version"] == "" {
-		t.Fatal("serverInfo.name and serverInfo.version must be non-empty")
-	}
-}
-
-func TestServer_Initialize_AdvertisesListChangedCapabilities(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body := decodeBodyMap(t, resp)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result map, got %T", body["result"])
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-
-	// Verify tools.listChanged is advertised
-	toolsCap, ok := caps["tools"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities.tools type = %T", caps["tools"])
-	}
-	if toolsCap["listChanged"] != true {
-		t.Fatalf("tools.listChanged = %v, want true", toolsCap["listChanged"])
-	}
-
-	// Verify resources.listChanged is advertised
-	resourcesCap, ok := caps["resources"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities.resources type = %T", caps["resources"])
-	}
-	if resourcesCap["listChanged"] != true {
-		t.Fatalf("resources.listChanged = %v, want true", resourcesCap["listChanged"])
-	}
-	if resourcesCap["subscribe"] != true {
-		t.Fatalf("resources.subscribe = %v, want true", resourcesCap["subscribe"])
-	}
-
-	// Verify prompts.listChanged is advertised
-	promptsCap, ok := caps["prompts"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities.prompts type = %T", caps["prompts"])
-	}
-	if promptsCap["listChanged"] != true {
-		t.Fatalf("prompts.listChanged = %v, want true", promptsCap["listChanged"])
-	}
 }
 
 func TestUniquePrefixMatches_SortsDedupesAndMatchesCaseInsensitively(t *testing.T) {
@@ -234,71 +169,8 @@ func TestUniquePrefixMatches_SortsDedupesAndMatchesCaseInsensitively(t *testing.
 	}
 }
 
-func TestServer_Initialize_UnsupportedVersion_ReturnsServerVersion(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "9999-12-31",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	if body["error"] != nil {
-		t.Fatalf("unexpected error: %v", body["error"])
-	}
-	result := body["result"].(map[string]any)
-	if result["protocolVersion"] != ProtocolVersion {
-		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], ProtocolVersion)
-	}
-}
-
-func TestServer_Initialize_RequiresProtocolVersionParam(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params":  map[string]any{"capabilities": map[string]any{}},
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected error object, got %v", body)
-	}
-	if errObj["code"] != float64(RPCInvalidParams) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidParams)
-	}
-}
-
-func TestServer_Operation_RejectsBeforeInitialize(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      7,
-		"method":  "tools/list",
-	}, operationHeaders())
-
-	body := decodeBodyMap(t, resp)
-	errObj := body["error"].(map[string]any)
-	if errObj["code"] != float64(RPCInvalidRequest) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidRequest)
-	}
-}
-
 func TestServer_HTTPAuthToken_RejectsMissingOrInvalidBearerToken(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
+	mcpSrv := NewServer(nil)
 	mcpSrv.SetBearerAuthToken("secret-token")
 	srv := httptest.NewServer(mcpSrv.Handler())
 	defer srv.Close()
@@ -324,150 +196,6 @@ func TestServer_HTTPAuthToken_RejectsMissingOrInvalidBearerToken(t *testing.T) {
 	defer okResp.Body.Close()
 	if okResp.StatusCode != http.StatusOK {
 		t.Fatalf("valid auth status = %d, want 200", okResp.StatusCode)
-	}
-}
-
-func TestServer_SetNotificationReplayLimit_TrimsAndClearsReplayBuffer(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
-	mcpSrv.SetNotificationReplayLimit(2)
-
-	mcpSrv.emitNotification("notifications/tools/list_changed", map[string]any{})
-	mcpSrv.emitNotification("notifications/resources/list_changed", map[string]any{})
-	mcpSrv.emitNotification("notifications/prompts/list_changed", map[string]any{})
-
-	mcpSrv.mu.RLock()
-	if len(mcpSrv.notificationReplay) != 2 {
-		mcpSrv.mu.RUnlock()
-		t.Fatalf("replay len = %d, want 2", len(mcpSrv.notificationReplay))
-	}
-	firstID := mcpSrv.notificationReplay[0].id
-	lastID := mcpSrv.notificationReplay[1].id
-	mcpSrv.mu.RUnlock()
-
-	if firstID != "2" || lastID != "3" {
-		t.Fatalf("replay ids = [%s, %s], want [2, 3]", firstID, lastID)
-	}
-
-	mcpSrv.SetNotificationReplayLimit(0)
-	mcpSrv.mu.RLock()
-	defer mcpSrv.mu.RUnlock()
-	if len(mcpSrv.notificationReplay) != 0 {
-		t.Fatalf("replay len after disable = %d, want 0", len(mcpSrv.notificationReplay))
-	}
-}
-
-func TestServer_Operation_RejectsBeforeInitializedNotification(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	initResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-	_ = decodeBodyMap(t, initResp)
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-	}, operationHeaders())
-
-	body := decodeBodyMap(t, resp)
-	errObj := body["error"].(map[string]any)
-	if errObj["code"] != float64(RPCInvalidRequest) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidRequest)
-	}
-}
-
-func TestServer_Operation_AllowsMissingProtocolVersionHeader(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	if body["error"] != nil {
-		t.Fatalf("unexpected error: %v", body["error"])
-	}
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result object, got %T", body["result"])
-	}
-	if _, ok := result["tools"].([]any); !ok {
-		t.Fatalf("result.tools type = %T, want []any", result["tools"])
-	}
-}
-
-func TestServer_Operation_RejectsUnsupportedProtocolVersionHeader(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-	}, map[string]string{"MCP-Protocol-Version": "2023-01-01"})
-
-	body := decodeBodyMap(t, resp)
-	errObj := body["error"].(map[string]any)
-	if errObj["code"] != float64(RPCInvalidParams) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidParams)
-	}
-	data, ok := errObj["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected error.data map, got %T", errObj["data"])
-	}
-	if data["requested"] != "2023-01-01" {
-		t.Fatalf("error.data.requested = %v, want 2023-01-01", data["requested"])
-	}
-}
-
-func TestServer_Ping_ReturnsEmptyResult(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      42,
-		"method":  "ping",
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	if body["error"] != nil {
-		t.Fatalf("unexpected ping error: %v", body["error"])
-	}
-	if body["result"] == nil {
-		t.Fatal("ping result must be present")
-	}
-}
-
-func TestServer_Notification_Initialized_NoBody(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	}, nil)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if len(bytes.TrimSpace(body)) > 0 {
-		t.Fatalf("notification response body must be empty, got %q", string(body))
 	}
 }
 
@@ -575,7 +303,6 @@ func TestServer_Cancellation_CancelsInFlightRequestAndSuppressesResponse(t *test
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	callRespCh := make(chan *http.Response, 1)
 	go func() {
@@ -584,7 +311,7 @@ func TestServer_Cancellation_CancelsInFlightRequestAndSuppressesResponse(t *test
 			"id":      10,
 			"method":  "tools/call",
 			"params":  map[string]any{"name": "block", "arguments": map[string]any{}},
-		}, operationHeaders())
+		}, nil)
 	}()
 
 	select {
@@ -618,94 +345,16 @@ func TestServer_Cancellation_CancelsInFlightRequestAndSuppressesResponse(t *test
 	}
 }
 
-func TestServer_Cancellation_EmitsCancelledNotificationOnSSE(t *testing.T) {
-	started := make(chan struct{}, 1)
-	provider := &staticProvider{
-		tools: []Tool{{Name: "block", Description: "block", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-		handler: func(ctx context.Context, _ json.RawMessage) (any, error) {
-			started <- struct{}{}
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
-	}
-	srv := newTestHTTPServer(t, provider)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseResp.Body.Close()
-
-	callRespCh := make(chan *http.Response, 1)
-	go func() {
-		callRespCh <- mcpPost(t, srv, map[string]any{
-			"jsonrpc": "2.0",
-			"id":      11,
-			"method":  "tools/call",
-			"params":  map[string]any{"name": "block", "arguments": map[string]any{}},
-		}, operationHeaders())
-	}()
-
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for handler to start")
-	}
-
-	cancelResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/cancelled",
-		"params":  map[string]any{"requestId": 11, "reason": "user requested cancel"},
-	}, nil)
-	_ = cancelResp.Body.Close()
-
-	select {
-	case callResp := <-callRespCh:
-		_ = callResp.Body.Close()
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for cancelled call response")
-	}
-
-	scanner := bufio.NewScanner(sseResp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] != "notifications/cancelled" {
-			continue
-		}
-		params, _ := msg["params"].(map[string]any)
-		if params["requestId"] != float64(11) {
-			t.Fatalf("requestId = %v, want 11", params["requestId"])
-		}
-		if params["reason"] != "user requested cancel" {
-			t.Fatalf("reason = %v, want user requested cancel", params["reason"])
-		}
-		return
-	}
-	t.Fatal("did not receive notifications/cancelled on SSE")
-}
-
 func TestServer_ProgressToken_InvalidTypeRejected(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      20,
 		"method":  "tools/list",
 		"params":  map[string]any{"_meta": map[string]any{"progressToken": true}},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj := body["error"].(map[string]any)
 	if errObj["code"] != float64(RPCInvalidParams) {
@@ -725,7 +374,6 @@ func TestServer_ProgressToken_DuplicateActiveTokenRejected(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	firstRespCh := make(chan *http.Response, 1)
 	go func() {
@@ -738,7 +386,7 @@ func TestServer_ProgressToken_DuplicateActiveTokenRejected(t *testing.T) {
 				"arguments": map[string]any{},
 				"_meta":     map[string]any{"progressToken": "dup-token"},
 			},
-		}, operationHeaders())
+		}, nil)
 	}()
 
 	select {
@@ -752,7 +400,7 @@ func TestServer_ProgressToken_DuplicateActiveTokenRejected(t *testing.T) {
 		"id":      31,
 		"method":  "tools/list",
 		"params":  map[string]any{"_meta": map[string]any{"progressToken": "dup-token"}},
-	}, operationHeaders())
+	}, nil)
 	dupBody := decodeBodyMap(t, dupResp)
 	dupErr := dupBody["error"].(map[string]any)
 	if dupErr["code"] != float64(RPCInvalidParams) {
@@ -777,13 +425,12 @@ func TestServer_ProgressToken_DuplicateActiveTokenRejected(t *testing.T) {
 func TestServer_ToolsList_ReturnsArrayAfterLifecycleHandshake(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
@@ -808,14 +455,13 @@ func TestServer_ToolsList_PaginatesWithCursor(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	first := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
 		"params":  map[string]any{"limit": 1},
-	}, operationHeaders())
+	}, nil)
 	firstBody := decodeBodyMap(t, first)
 	if firstBody["error"] != nil {
 		t.Fatalf("unexpected first-page error: %v", firstBody["error"])
@@ -834,7 +480,7 @@ func TestServer_ToolsList_PaginatesWithCursor(t *testing.T) {
 		"id":      2,
 		"method":  "tools/list",
 		"params":  map[string]any{"cursor": "1", "limit": 1},
-	}, operationHeaders())
+	}, nil)
 	secondBody := decodeBodyMap(t, second)
 	if secondBody["error"] != nil {
 		t.Fatalf("unexpected second-page error: %v", secondBody["error"])
@@ -855,13 +501,12 @@ func TestServer_ToolsList_AutoPopulatesToolTitle(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -877,13 +522,12 @@ func TestServer_ToolsList_AutoPopulatesReadOnlyAnnotations(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -903,13 +547,12 @@ func TestServer_ToolsList_AutoPopulatesExecutionMetadata(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -947,13 +590,12 @@ func TestServer_ToolsList_AutoPopulatesOutputSchemaForRepoRuntimeTools(t *testin
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -969,13 +611,12 @@ func TestServer_ToolsList_AutoPopulatesIconsForRepoRuntimeTools(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -1007,13 +648,12 @@ func TestServer_ToolsList_PreservesExplicitIcons(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -1041,13 +681,12 @@ func TestServer_ToolsList_PreservesExplicitExecutionMetadata(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	result := body["result"].(map[string]any)
 	tools := result["tools"].([]any)
@@ -1085,14 +724,13 @@ func TestServer_ToolsCall_DispatchesToHandlerAfterLifecycleHandshake(t *testing.
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "echo", "arguments": map[string]any{}},
-	}, operationHeaders())
+	}, nil)
 
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
@@ -1117,14 +755,13 @@ func TestServer_ToolsCall_StringResultUsesPlainTextContent(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "echo", "arguments": map[string]any{}},
-	}, operationHeaders())
+	}, nil)
 
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
@@ -1153,14 +790,13 @@ func TestServer_ToolsCall_ExplicitToolResultPassesThrough(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "echo", "arguments": map[string]any{}},
-	}, operationHeaders())
+	}, nil)
 
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
@@ -1187,14 +823,13 @@ func TestServer_ToolsCall_HandlerErrorReturnsToolErrorResult(t *testing.T) {
 	}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "boom", "arguments": map[string]any{}},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("expected tools/call handler failure as tool result, got rpc error: %v", body["error"])
@@ -1208,13 +843,12 @@ func TestServer_ToolsCall_HandlerErrorReturnsToolErrorResult(t *testing.T) {
 func TestServer_UnknownMethod_ReturnsMethodNotFoundAfterLifecycleHandshake(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "completions/complete",
-	}, operationHeaders())
+	}, nil)
 
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
@@ -1229,7 +863,6 @@ func TestServer_UnknownMethod_ReturnsMethodNotFoundAfterLifecycleHandshake(t *te
 func TestServer_UnsupportedOptionalMethods_ReturnMethodNotFound(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	methods := []string{
 		"tasks/list",
@@ -1243,7 +876,7 @@ func TestServer_UnsupportedOptionalMethods_ReturnMethodNotFound(t *testing.T) {
 				"jsonrpc": "2.0",
 				"id":      1,
 				"method":  method,
-			}, operationHeaders())
+			}, nil)
 
 			body := decodeBodyMap(t, resp)
 			errObj, ok := body["error"].(map[string]any)
@@ -1257,81 +890,9 @@ func TestServer_UnsupportedOptionalMethods_ReturnMethodNotFound(t *testing.T) {
 	}
 }
 
-func TestServer_Initialize_CapabilitySet_ExcludesOnlyTasks(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result map, got %T", body["result"])
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-	var keys []string
-	for k := range caps {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, required := range []string{"tools", "resources", "prompts", "completions", "logging"} {
-		if !slices.Contains(keys, required) {
-			t.Fatalf("capability keys = %v, missing %s", keys, required)
-		}
-	}
-	if slices.Contains(keys, "tasks") {
-		t.Fatalf("capability keys = %v, tasks must not be advertised", keys)
-	}
-}
-
-func TestServer_Initialize_CapabilitySet_DoesNotAdvertiseDeferredClientFeatures(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	result, ok := body["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected result map, got %T", body["result"])
-	}
-	caps, ok := result["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities type = %T", result["capabilities"])
-	}
-
-	for _, denied := range []string{"tasks", "roots", "sampling", "elicitation"} {
-		if _, exists := caps[denied]; exists {
-			t.Fatalf("capabilities must not advertise %q before it is implemented", denied)
-		}
-	}
-}
-
 func TestServer_UnsupportedDeferredOptionalMethods_ReturnMethodNotFound(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	methods := []string{
 		"tasks/list",
@@ -1348,7 +909,7 @@ func TestServer_UnsupportedDeferredOptionalMethods_ReturnMethodNotFound(t *testi
 				"jsonrpc": "2.0",
 				"id":      1,
 				"method":  method,
-			}, operationHeaders())
+			}, nil)
 
 			body := decodeBodyMap(t, resp)
 			errObj, ok := body["error"].(map[string]any)
@@ -1362,41 +923,16 @@ func TestServer_UnsupportedDeferredOptionalMethods_ReturnMethodNotFound(t *testi
 	}
 }
 
-func TestServer_ImplementedOptionalMethods_SucceedAfterLifecycleHandshake(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	requests := []map[string]any{
-		{"jsonrpc": "2.0", "id": 1, "method": "resources/list"},
-		{"jsonrpc": "2.0", "id": 2, "method": "resources/templates/list"},
-		{"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": map[string]any{"uri": "memory://example"}},
-		{"jsonrpc": "2.0", "id": 4, "method": "prompts/list"},
-		{"jsonrpc": "2.0", "id": 5, "method": "prompts/get", "params": map[string]any{"name": "example"}},
-		{"jsonrpc": "2.0", "id": 6, "method": "completion/complete"},
-		{"jsonrpc": "2.0", "id": 7, "method": "logging/setLevel", "params": map[string]any{"level": "info"}},
-	}
-
-	for _, req := range requests {
-		resp := mcpPost(t, srv, req, operationHeaders())
-		body := decodeBodyMap(t, resp)
-		if body["error"] != nil {
-			t.Fatalf("method %v returned unexpected error: %v", req["method"], body["error"])
-		}
-	}
-}
-
 func TestServer_ResourcesMethods_DelegateToResourceProvider(t *testing.T) {
 	provider := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	listResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      101,
 		"method":  "resources/list",
-	}, operationHeaders())
+	}, nil)
 	listBody := decodeBodyMap(t, listResp)
 	if listBody["error"] != nil {
 		t.Fatalf("resources/list returned error: %v", listBody["error"])
@@ -1411,7 +947,7 @@ func TestServer_ResourcesMethods_DelegateToResourceProvider(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      102,
 		"method":  "resources/templates/list",
-	}, operationHeaders())
+	}, nil)
 	templatesBody := decodeBodyMap(t, templatesResp)
 	if templatesBody["error"] != nil {
 		t.Fatalf("resources/templates/list returned error: %v", templatesBody["error"])
@@ -1427,7 +963,7 @@ func TestServer_ResourcesMethods_DelegateToResourceProvider(t *testing.T) {
 		"id":      103,
 		"method":  "resources/read",
 		"params":  map[string]any{"uri": "oc://demo/item"},
-	}, operationHeaders())
+	}, nil)
 	readBody := decodeBodyMap(t, readResp)
 	if readBody["error"] != nil {
 		t.Fatalf("resources/read returned error: %v", readBody["error"])
@@ -1443,14 +979,13 @@ func TestServer_ResourcesList_PaginatesWithCursor(t *testing.T) {
 	provider := &pagedResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	first := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      120,
 		"method":  "resources/list",
 		"params":  map[string]any{"limit": 1},
-	}, operationHeaders())
+	}, nil)
 	firstBody := decodeBodyMap(t, first)
 	if firstBody["error"] != nil {
 		t.Fatalf("unexpected first-page error: %v", firstBody["error"])
@@ -1469,7 +1004,7 @@ func TestServer_ResourcesList_PaginatesWithCursor(t *testing.T) {
 		"id":      121,
 		"method":  "resources/list",
 		"params":  map[string]any{"cursor": "1", "limit": 1},
-	}, operationHeaders())
+	}, nil)
 	secondBody := decodeBodyMap(t, second)
 	if secondBody["error"] != nil {
 		t.Fatalf("unexpected second-page error: %v", secondBody["error"])
@@ -1489,13 +1024,12 @@ func TestServer_ResourcesList_ReturnsInternalErrorWhenProviderFails(t *testing.T
 	good := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, failing, good)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      124,
 		"method":  "resources/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -1509,13 +1043,12 @@ func TestServer_ResourcesList_ReturnsInternalErrorWhenProviderFails(t *testing.T
 func TestServer_ResourcesList_WithNoProvidersReturnsEmptyResources(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      127,
 		"method":  "resources/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("resources/list returned error: %v", body["error"])
@@ -1534,14 +1067,13 @@ func TestServer_ResourceTemplatesList_PaginatesWithCursor(t *testing.T) {
 	provider := &pagedResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	first := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      122,
 		"method":  "resources/templates/list",
 		"params":  map[string]any{"limit": 1},
-	}, operationHeaders())
+	}, nil)
 	firstBody := decodeBodyMap(t, first)
 	if firstBody["error"] != nil {
 		t.Fatalf("unexpected first-page error: %v", firstBody["error"])
@@ -1560,7 +1092,7 @@ func TestServer_ResourceTemplatesList_PaginatesWithCursor(t *testing.T) {
 		"id":      123,
 		"method":  "resources/templates/list",
 		"params":  map[string]any{"cursor": "1", "limit": 1},
-	}, operationHeaders())
+	}, nil)
 	secondBody := decodeBodyMap(t, second)
 	if secondBody["error"] != nil {
 		t.Fatalf("unexpected second-page error: %v", secondBody["error"])
@@ -1578,13 +1110,12 @@ func TestServer_ResourceTemplatesList_PaginatesWithCursor(t *testing.T) {
 func TestServer_ResourceTemplatesList_WithNoProvidersReturnsEmptyTemplates(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      125,
 		"method":  "resources/templates/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("resources/templates/list returned error: %v", body["error"])
@@ -1604,13 +1135,12 @@ func TestServer_ResourceTemplatesList_ReturnsInternalErrorWhenProviderFails(t *t
 	good := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, failing, good)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      126,
 		"method":  "resources/templates/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -1624,13 +1154,12 @@ func TestServer_ResourceTemplatesList_ReturnsInternalErrorWhenProviderFails(t *t
 func TestServer_PromptsList_ReturnsExamplePrompt(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      200,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/list returned error: %v", body["error"])
@@ -1655,14 +1184,13 @@ func TestServer_PromptsList_ReturnsExamplePrompt(t *testing.T) {
 func TestServer_PromptsList_PaginatesWithCursor(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	first := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      204,
 		"method":  "prompts/list",
 		"params":  map[string]any{"limit": 1},
-	}, operationHeaders())
+	}, nil)
 	firstBody := decodeBodyMap(t, first)
 	if firstBody["error"] != nil {
 		t.Fatalf("unexpected first-page error: %v", firstBody["error"])
@@ -1681,7 +1209,7 @@ func TestServer_PromptsList_PaginatesWithCursor(t *testing.T) {
 		"id":      205,
 		"method":  "prompts/list",
 		"params":  map[string]any{"cursor": "1", "limit": 1},
-	}, operationHeaders())
+	}, nil)
 	secondBody := decodeBodyMap(t, second)
 	if secondBody["error"] != nil {
 		t.Fatalf("unexpected second-page error: %v", secondBody["error"])
@@ -1699,14 +1227,13 @@ func TestServer_PromptsList_PaginatesWithCursor(t *testing.T) {
 func TestServer_PromptsGet_ReturnsExamplePromptMessages(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      201,
 		"method":  "prompts/get",
 		"params":  map[string]any{"name": "example"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/get returned error: %v", body["error"])
@@ -1727,14 +1254,13 @@ func TestServer_PromptsGet_ReturnsExamplePromptMessages(t *testing.T) {
 func TestServer_PromptsGet_ReturnsValidateNextStepPromptMessages(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      206,
 		"method":  "prompts/get",
 		"params":  map[string]any{"name": "validate_next_step"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/get returned error: %v", body["error"])
@@ -1755,13 +1281,12 @@ func TestServer_PromptsGet_ReturnsValidateNextStepPromptMessages(t *testing.T) {
 func TestServer_PromptsListEntriesAreResolvableViaPromptsGet(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	listResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      214,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	listBody := decodeBodyMap(t, listResp)
 	if listBody["error"] != nil {
 		t.Fatalf("prompts/list returned error: %v", listBody["error"])
@@ -1780,7 +1305,7 @@ func TestServer_PromptsListEntriesAreResolvableViaPromptsGet(t *testing.T) {
 			"id":      215 + i,
 			"method":  "prompts/get",
 			"params":  map[string]any{"name": name},
-		}, operationHeaders())
+		}, nil)
 		getBody := decodeBodyMap(t, getResp)
 		if getBody["error"] != nil {
 			t.Fatalf("prompts/get for %q returned error: %v", name, getBody["error"])
@@ -1796,14 +1321,13 @@ func TestServer_PromptsListEntriesAreResolvableViaPromptsGet(t *testing.T) {
 func TestServer_CompletionComplete_PromptSuggestionsMatchPromptsListPrefix(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	const prefix = "val"
 	listResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      216,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	listBody := decodeBodyMap(t, listResp)
 	if listBody["error"] != nil {
 		t.Fatalf("prompts/list returned error: %v", listBody["error"])
@@ -1826,7 +1350,7 @@ func TestServer_CompletionComplete_PromptSuggestionsMatchPromptsListPrefix(t *te
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": prefix},
 		},
-	}, operationHeaders())
+	}, nil)
 	completionBody := decodeBodyMap(t, completionResp)
 	if completionBody["error"] != nil {
 		t.Fatalf("completion/complete returned error: %v", completionBody["error"])
@@ -1844,13 +1368,12 @@ func TestServer_PromptsList_IncludesPromptProviderEntries(t *testing.T) {
 	provider := &staticPromptProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      220,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/list returned error: %v", body["error"])
@@ -1870,13 +1393,12 @@ func TestServer_PromptsList_DedupesPromptNamesAcrossDefaultAndProviders(t *testi
 	provider := &duplicatePromptProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      226,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/list returned error: %v", body["error"])
@@ -1898,14 +1420,13 @@ func TestServer_PromptsGet_ResolvesPromptProviderEntry(t *testing.T) {
 	provider := &staticPromptProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      221,
 		"method":  "prompts/get",
 		"params":  map[string]any{"name": "dynamic_prompt"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("prompts/get returned error: %v", body["error"])
@@ -1927,13 +1448,12 @@ func TestServer_PromptsList_ReturnsInternalErrorWhenPromptProviderFails(t *testi
 	failing := &failingPromptProvider{}
 	srv := newTestHTTPServer(t, failing)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      223,
 		"method":  "prompts/list",
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -1948,14 +1468,13 @@ func TestServer_PromptsGet_ReturnsInternalErrorWhenPromptProviderFails(t *testin
 	failing := &failingPromptProvider{}
 	srv := newTestHTTPServer(t, failing)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      224,
 		"method":  "prompts/get",
 		"params":  map[string]any{"name": "dynamic_prompt"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -1970,7 +1489,6 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 	provider := &staticPromptProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -1980,7 +1498,7 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": "dynamic"},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete returned error: %v", body["error"])
@@ -2000,7 +1518,7 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "title", "value": "Dynamic"},
 		},
-	}, operationHeaders())
+	}, nil)
 	titleBody := decodeBodyMap(t, titleResp)
 	if titleBody["error"] != nil {
 		t.Fatalf("completion/complete title returned error: %v", titleBody["error"])
@@ -2020,7 +1538,7 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "title", "value": "dynamic"},
 		},
-	}, operationHeaders())
+	}, nil)
 	titleLowerBody := decodeBodyMap(t, titleLowerResp)
 	if titleLowerBody["error"] != nil {
 		t.Fatalf("completion/complete title lowercase returned error: %v", titleLowerBody["error"])
@@ -2040,7 +1558,7 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "description", "value": "Prompt provided dynamically"},
 		},
-	}, operationHeaders())
+	}, nil)
 	descriptionBody := decodeBodyMap(t, descriptionResp)
 	if descriptionBody["error"] != nil {
 		t.Fatalf("completion/complete description returned error: %v", descriptionBody["error"])
@@ -2060,7 +1578,7 @@ func TestServer_CompletionComplete_PromptSuggestionsIncludePromptProviderEntries
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "group", "value": "dynamic"},
 		},
-	}, operationHeaders())
+	}, nil)
 	fieldBody := decodeBodyMap(t, fieldResp)
 	if fieldBody["error"] != nil {
 		t.Fatalf("completion/complete custom prompt field returned error: %v", fieldBody["error"])
@@ -2075,7 +1593,6 @@ func TestServer_CompletionComplete_ToleratesPromptProviderErrors(t *testing.T) {
 	failing := &failingPromptProvider{}
 	srv := newTestHTTPServer(t, failing)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2085,7 +1602,7 @@ func TestServer_CompletionComplete_ToleratesPromptProviderErrors(t *testing.T) {
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": "ex"},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete returned error: %v", body["error"])
@@ -2102,7 +1619,6 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 	provider := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	promptResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2112,7 +1628,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": "ex"},
 		},
-	}, operationHeaders())
+	}, nil)
 	promptBody := decodeBodyMap(t, promptResp)
 	if promptBody["error"] != nil {
 		t.Fatalf("completion/complete prompt returned error: %v", promptBody["error"])
@@ -2135,7 +1651,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "description", "value": "Example baseline prompt"},
 		},
-	}, operationHeaders())
+	}, nil)
 	promptDescriptionBody := decodeBodyMap(t, promptDescriptionResp)
 	if promptDescriptionBody["error"] != nil {
 		t.Fatalf("completion/complete prompt description returned error: %v", promptDescriptionBody["error"])
@@ -2155,7 +1671,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "uri", "value": "oc://demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateBody := decodeBodyMap(t, templateResp)
 	if templateBody["error"] != nil {
 		t.Fatalf("completion/complete template returned error: %v", templateBody["error"])
@@ -2175,7 +1691,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "name", "value": "Demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateNameBody := decodeBodyMap(t, templateNameResp)
 	if templateNameBody["error"] != nil {
 		t.Fatalf("completion/complete template name returned error: %v", templateNameBody["error"])
@@ -2195,7 +1711,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "description", "value": "Demo resource template"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateDescriptionBody := decodeBodyMap(t, templateDescriptionResp)
 	if templateDescriptionBody["error"] != nil {
 		t.Fatalf("completion/complete template description returned error: %v", templateDescriptionBody["error"])
@@ -2215,7 +1731,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "mimeType", "value": "application/"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateMimeTypeBody := decodeBodyMap(t, templateMimeTypeResp)
 	if templateMimeTypeBody["error"] != nil {
 		t.Fatalf("completion/complete template mimeType returned error: %v", templateMimeTypeBody["error"])
@@ -2235,7 +1751,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "category", "value": "demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceFieldBody := decodeBodyMap(t, resourceFieldResp)
 	if resourceFieldBody["error"] != nil {
 		t.Fatalf("completion/complete resource field returned error: %v", resourceFieldBody["error"])
@@ -2253,7 +1769,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "category", "value": "demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateFieldBody := decodeBodyMap(t, templateFieldResp)
 	if templateFieldBody["error"] != nil {
 		t.Fatalf("completion/complete template field returned error: %v", templateFieldBody["error"])
@@ -2271,7 +1787,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "mimeType", "value": "APPLICATION/"},
 		},
-	}, operationHeaders())
+	}, nil)
 	templateMimeTypeUpperBody := decodeBodyMap(t, templateMimeTypeUpperResp)
 	if templateMimeTypeUpperBody["error"] != nil {
 		t.Fatalf("completion/complete template mimeType uppercase returned error: %v", templateMimeTypeUpperBody["error"])
@@ -2291,7 +1807,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "uri", "value": "oc://demo/"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceBody := decodeBodyMap(t, resourceResp)
 	if resourceBody["error"] != nil {
 		t.Fatalf("completion/complete resource returned error: %v", resourceBody["error"])
@@ -2311,7 +1827,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "name", "value": "Demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceNameBody := decodeBodyMap(t, resourceNameResp)
 	if resourceNameBody["error"] != nil {
 		t.Fatalf("completion/complete resource name returned error: %v", resourceNameBody["error"])
@@ -2331,7 +1847,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "name", "value": "demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceNameLowerBody := decodeBodyMap(t, resourceNameLowerResp)
 	if resourceNameLowerBody["error"] != nil {
 		t.Fatalf("completion/complete resource name lowercase returned error: %v", resourceNameLowerBody["error"])
@@ -2351,7 +1867,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "description", "value": "Demo resource exposed"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceDescriptionBody := decodeBodyMap(t, resourceDescriptionResp)
 	if resourceDescriptionBody["error"] != nil {
 		t.Fatalf("completion/complete resource description returned error: %v", resourceDescriptionBody["error"])
@@ -2371,7 +1887,7 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 			"ref":      map[string]any{"type": "ref/resource"},
 			"argument": map[string]any{"name": "mimeType", "value": "application/"},
 		},
-	}, operationHeaders())
+	}, nil)
 	resourceMimeTypeBody := decodeBodyMap(t, resourceMimeTypeResp)
 	if resourceMimeTypeBody["error"] != nil {
 		t.Fatalf("completion/complete resource mimeType returned error: %v", resourceMimeTypeBody["error"])
@@ -2387,14 +1903,13 @@ func TestServer_CompletionComplete_SuggestsPromptNamesAndResourceTemplates(t *te
 func TestServer_CompletionComplete_InvalidParamsRejected(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      207,
 		"method":  "completion/complete",
 		"params":  []any{"not-an-object"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -2408,7 +1923,6 @@ func TestServer_CompletionComplete_InvalidParamsRejected(t *testing.T) {
 func TestServer_CompletionComplete_DefaultFallbackSuggestsAllPromptNames(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2417,7 +1931,7 @@ func TestServer_CompletionComplete_DefaultFallbackSuggestsAllPromptNames(t *test
 		"params": map[string]any{
 			"argument": map[string]any{"name": "name", "value": ""},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete fallback returned error: %v", body["error"])
@@ -2441,7 +1955,6 @@ func TestServer_CompletionComplete_DefaultFallbackSuggestsAllPromptNames(t *test
 func TestServer_CompletionComplete_DefaultAndPromptRefAreConsistent(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	defaultResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2450,7 +1963,7 @@ func TestServer_CompletionComplete_DefaultAndPromptRefAreConsistent(t *testing.T
 		"params": map[string]any{
 			"argument": map[string]any{"name": "name", "value": "val"},
 		},
-	}, operationHeaders())
+	}, nil)
 	defaultBody := decodeBodyMap(t, defaultResp)
 	if defaultBody["error"] != nil {
 		t.Fatalf("completion/complete default returned error: %v", defaultBody["error"])
@@ -2467,7 +1980,7 @@ func TestServer_CompletionComplete_DefaultAndPromptRefAreConsistent(t *testing.T
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": "val"},
 		},
-	}, operationHeaders())
+	}, nil)
 	promptBody := decodeBodyMap(t, promptResp)
 	if promptBody["error"] != nil {
 		t.Fatalf("completion/complete prompt returned error: %v", promptBody["error"])
@@ -2486,7 +1999,6 @@ func TestServer_CompletionComplete_DedupesResourceTemplateSuggestions(t *testing
 	providerB := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, providerA, providerB)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2496,7 +2008,7 @@ func TestServer_CompletionComplete_DedupesResourceTemplateSuggestions(t *testing
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "uri", "value": "oc://demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete template returned error: %v", body["error"])
@@ -2514,14 +2026,13 @@ func TestServer_CompletionComplete_TemplateSuggestionsMatchResourcesTemplatesLis
 	providerB := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, providerA, providerB)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	const prefix = "oc://demo"
 	listResp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      218,
 		"method":  "resources/templates/list",
-	}, operationHeaders())
+	}, nil)
 	listBody := decodeBodyMap(t, listResp)
 	if listBody["error"] != nil {
 		t.Fatalf("resources/templates/list returned error: %v", listBody["error"])
@@ -2552,7 +2063,7 @@ func TestServer_CompletionComplete_TemplateSuggestionsMatchResourcesTemplatesLis
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "uri", "value": prefix},
 		},
-	}, operationHeaders())
+	}, nil)
 	completionBody := decodeBodyMap(t, completionResp)
 	if completionBody["error"] != nil {
 		t.Fatalf("completion/complete returned error: %v", completionBody["error"])
@@ -2571,7 +2082,6 @@ func TestServer_CompletionComplete_ToleratesTemplateProviderErrors(t *testing.T)
 	good := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, failing, good)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2581,7 +2091,7 @@ func TestServer_CompletionComplete_ToleratesTemplateProviderErrors(t *testing.T)
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "uri", "value": "oc://demo"},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete returned error: %v", body["error"])
@@ -2597,7 +2107,6 @@ func TestServer_CompletionComplete_ToleratesTemplateProviderErrors(t *testing.T)
 func TestServer_CompletionComplete_TrimmedPrefixMatchesPromptNames(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2607,7 +2116,7 @@ func TestServer_CompletionComplete_TrimmedPrefixMatchesPromptNames(t *testing.T)
 			"ref":      map[string]any{"type": "ref/prompt"},
 			"argument": map[string]any{"name": "name", "value": "  ex  "},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete prompt returned error: %v", body["error"])
@@ -2624,7 +2133,6 @@ func TestServer_CompletionComplete_TrimmedPrefixMatchesResourceTemplates(t *test
 	provider := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
@@ -2634,7 +2142,7 @@ func TestServer_CompletionComplete_TrimmedPrefixMatchesResourceTemplates(t *test
 			"ref":      map[string]any{"type": "ref/resourceTemplate"},
 			"argument": map[string]any{"name": "uri", "value": "  oc://demo  "},
 		},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("completion/complete template returned error: %v", body["error"])
@@ -2651,14 +2159,13 @@ func TestServer_ResourcesRead_ReturnsInvalidParamsWhenResourceMissing(t *testing
 	provider := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, provider)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      104,
 		"method":  "resources/read",
 		"params":  map[string]any{"uri": "oc://missing"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	errObj, ok := body["error"].(map[string]any)
 	if !ok {
@@ -2672,14 +2179,13 @@ func TestServer_ResourcesRead_ReturnsInvalidParamsWhenResourceMissing(t *testing
 func TestServer_ResourcesRead_WithNoProvidersReturnsEmptyContents(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      106,
 		"method":  "resources/read",
 		"params":  map[string]any{"uri": "oc://anything"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("resources/read returned error: %v", body["error"])
@@ -2699,14 +2205,13 @@ func TestServer_ResourcesRead_ToleratesProviderReadErrorsWhenAnotherProviderMatc
 	good := &staticResourceProvider{}
 	srv := newTestHTTPServer(t, failing, good)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      105,
 		"method":  "resources/read",
 		"params":  map[string]any{"uri": "oc://demo/item"},
-	}, operationHeaders())
+	}, nil)
 	body := decodeBodyMap(t, resp)
 	if body["error"] != nil {
 		t.Fatalf("resources/read returned error: %v", body["error"])
@@ -2718,267 +2223,6 @@ func TestServer_ResourcesRead_ToleratesProviderReadErrorsWhenAnotherProviderMatc
 	}
 }
 
-func TestServer_LoggingSetLevel_EmitsMessageNotificationOnSSE(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ SSE: %v", err)
-	}
-	defer resp.Body.Close()
-
-	reader := bufio.NewReader(resp.Body)
-	lineCh := make(chan string, 8)
-	errCh := make(chan error, 1)
-	go func() {
-		for {
-			line, readErr := reader.ReadString('\n')
-			if readErr != nil {
-				errCh <- readErr
-				return
-			}
-			lineCh <- line
-		}
-	}()
-
-	select {
-	case line := <-lineCh:
-		if !strings.HasPrefix(line, ": connected") {
-			t.Fatalf("unexpected SSE prelude: %q", line)
-		}
-	case err := <-errCh:
-		t.Fatalf("reading SSE prelude: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE prelude")
-	}
-
-	resp2 := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      99,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "debug"},
-	}, operationHeaders())
-	body := decodeBodyMap(t, resp2)
-	if body["error"] != nil {
-		t.Fatalf("logging/setLevel error: %v", body["error"])
-	}
-
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case line := <-lineCh:
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(payload), &msg); err != nil {
-				t.Fatalf("invalid SSE notification payload: %v; raw=%q", err, payload)
-			}
-			if msg["method"] != "notifications/message" {
-				continue
-			}
-			params := msg["params"].(map[string]any)
-			if params["level"] != "debug" {
-				t.Fatalf("notification level = %v, want debug", params["level"])
-			}
-			if !strings.Contains(params["data"].(string), "logging level set to debug") {
-				t.Fatalf("notification data = %v, want logging level message", params["data"])
-			}
-			if params["logger"] != "overcast" {
-				t.Fatalf("notification logger = %v, want overcast", params["logger"])
-			}
-			return
-		case err := <-errCh:
-			t.Fatalf("reading SSE notification: %v", err)
-		case <-deadline:
-			t.Fatal("timed out waiting for notifications/message on SSE stream")
-		}
-	}
-}
-
-// TestServer_LoggingNotification_IncludesLoggerField verifies that every
-// notifications/message payload includes the "logger" field identifying the
-// emitting component, as required for full RFC 5424 / MCP-spec conformance.
-func TestServer_LoggingNotification_IncludesLoggerField(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ SSE: %v", err)
-	}
-	defer resp.Body.Close()
-
-	reader := bufio.NewReader(resp.Body)
-	lineCh := make(chan string, 8)
-	errCh := make(chan error, 1)
-	go func() {
-		for {
-			line, readErr := reader.ReadString('\n')
-			if readErr != nil {
-				errCh <- readErr
-				return
-			}
-			lineCh <- line
-		}
-	}()
-
-	// drain the prelude
-	select {
-	case <-lineCh:
-	case err := <-errCh:
-		t.Fatalf("SSE prelude: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE prelude")
-	}
-
-	resp2 := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      301,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "notice"},
-	}, operationHeaders())
-	if body := decodeBodyMap(t, resp2); body["error"] != nil {
-		t.Fatalf("logging/setLevel error: %v", body["error"])
-	}
-
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case line := <-lineCh:
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(payload), &msg); err != nil {
-				t.Fatalf("invalid SSE payload: %v", err)
-			}
-			if msg["method"] != "notifications/message" {
-				continue
-			}
-			params, ok := msg["params"].(map[string]any)
-			if !ok {
-				t.Fatalf("params is not an object: %T", msg["params"])
-			}
-			// level must be one of the 8 RFC 5424 names (normalized, no aliases)
-			level, _ := params["level"].(string)
-			if _, validErr := normalizeLoggingLevel(level); validErr != nil {
-				t.Fatalf("notifications/message level %q is not a valid RFC 5424 level name", level)
-			}
-			// logger must identify the emitting component
-			logger, _ := params["logger"].(string)
-			if logger == "" {
-				t.Fatal("notifications/message missing logger field")
-			}
-			// data must be present
-			if params["data"] == nil {
-				t.Fatal("notifications/message missing data field")
-			}
-			return
-		case err := <-errCh:
-			t.Fatalf("reading SSE notification: %v", err)
-		case <-deadline:
-			t.Fatal("timed out waiting for notifications/message")
-		}
-	}
-}
-
-func TestServer_LoggingSetLevel_InvalidLevelRejected(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      207,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "verbose"},
-	}, operationHeaders())
-	body := decodeBodyMap(t, resp)
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected error object, got %v", body)
-	}
-	if errObj["code"] != float64(RPCInvalidParams) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidParams)
-	}
-	if errObj["message"] != "invalid logging level" {
-		t.Fatalf("error.message = %v, want invalid logging level", errObj["message"])
-	}
-}
-
-func TestServer_LoggingSetLevel_WarnAliasNormalizesToWarning(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseResp.Body.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      208,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "warn"},
-	}, operationHeaders())
-	body := decodeBodyMap(t, resp)
-	if body["error"] != nil {
-		t.Fatalf("logging/setLevel error: %v", body["error"])
-	}
-
-	scanner := bufio.NewScanner(sseResp.Body)
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for notifications/message on SSE stream")
-		default:
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				t.Fatalf("reading SSE notification: %v", err)
-			}
-			continue
-		}
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
-			continue
-		}
-		if msg["method"] != "notifications/message" {
-			continue
-		}
-		params := msg["params"].(map[string]any)
-		if params["level"] != "warning" {
-			t.Fatalf("notification level = %v, want warning", params["level"])
-		}
-		return
-	}
-}
-
 func TestServer_StreamableHTTP_PostSSEResponseMode(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
@@ -2986,7 +2230,8 @@ func TestServer_StreamableHTTP_PostSSEResponseMode(t *testing.T) {
 	b, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      99,
-		"method":  "ping",
+		"method":  "tools/list",
+		"params":  map[string]any{"_meta": modernMeta()},
 	})
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/mcp/", bytes.NewReader(b))
 	if err != nil {
@@ -2994,6 +2239,8 @@ func TestServer_StreamableHTTP_PostSSEResponseMode(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", ModernProtocolVersion)
+	req.Header.Set("Mcp-Method", "tools/list")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /mcp/ in SSE mode: %v", err)
@@ -3031,430 +2278,6 @@ func TestServer_StreamableHTTP_InvalidOriginRejected(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestServer_StreamableHTTP_GetRequiresSSEAccept(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotAcceptable {
-		t.Fatalf("status = %d, want 406", resp.StatusCode)
-	}
-}
-
-func TestServer_StreamableHTTP_GetRejectsUnknownSession(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("MCP-Session-Id", "missing-session")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ with unknown session: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestServer_SSECompatibility_InvalidOriginRejected(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Origin", "https://evil.example")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/sse with origin: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestServer_SSECompatibility_RejectsUnknownSession(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("MCP-Session-Id", "missing-session")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/sse with unknown session: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestServer_SSECompatibility_DeprecationHeadersPresent(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/sse: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Deprecation"); got != "true" {
-		t.Fatalf("Deprecation = %q, want true", got)
-	}
-	if got := resp.Header.Get("Link"); !strings.Contains(got, "/mcp/") || !strings.Contains(got, `rel="successor-version"`) {
-		t.Fatalf("Link = %q, want successor-version /mcp/ link", got)
-	}
-	if got := resp.Header.Get("Warning"); !strings.Contains(strings.ToLower(got), "deprecated endpoint") {
-		t.Fatalf("Warning = %q, want deprecation warning", got)
-	}
-}
-
-func TestServer_StreamableHTTP_Get_NoDeprecationHeaders(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if got := strings.TrimSpace(resp.Header.Get("Deprecation")); got != "" {
-		t.Fatalf("Deprecation = %q, want empty", got)
-	}
-}
-
-func TestServer_StreamableHTTP_GetInvalidOriginRejected(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Origin", "https://evil.example")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ with origin: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestServer_SessionDelete_RequiresSessionID(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	delResp := mcpDelete(t, srv, nil)
-	defer delResp.Body.Close()
-	if delResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("delete status = %d, want 400", delResp.StatusCode)
-	}
-}
-
-func TestServer_SessionDelete_UnknownSessionIsIdempotent(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	delResp := mcpDelete(t, srv, map[string]string{"MCP-Session-Id": "missing-session"})
-	delResp.Body.Close()
-	if delResp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want 204", delResp.StatusCode)
-	}
-}
-
-func TestServer_StreamableHTTP_LastEventIDReplaysMissedNotifications(t *testing.T) {
-	_, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// First SSE connection to capture an initial event ID.
-	req1, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req1.Header.Set("Accept", "text/event-stream")
-	resp1, err := http.DefaultClient.Do(req1)
-	if err != nil {
-		t.Fatalf("GET /mcp/: %v", err)
-	}
-	scanner1 := bufio.NewScanner(resp1.Body)
-
-	setDebug := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      700,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "debug"},
-	}, operationHeaders())
-	_ = decodeBodyMap(t, setDebug)
-
-	firstEventID := ""
-	deadline := time.After(2 * time.Second)
-outer1:
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for first SSE event id")
-		default:
-			if !scanner1.Scan() {
-				continue
-			}
-			line := scanner1.Text()
-			if strings.HasPrefix(line, "id:") {
-				firstEventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-			}
-			if strings.HasPrefix(line, "data:") && firstEventID != "" {
-				break outer1
-			}
-		}
-	}
-	if firstEventID == "" {
-		t.Fatal("expected first SSE event id")
-	}
-	_ = resp1.Body.Close()
-
-	setInfo := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      701,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "info"},
-	}, operationHeaders())
-	_ = decodeBodyMap(t, setInfo)
-
-	// Reconnect and ask for replay after firstEventID.
-	req2, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req2.Header.Set("Accept", "text/event-stream")
-	req2.Header.Set("Last-Event-ID", firstEventID)
-	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatalf("GET /mcp/ replay: %v", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp2.StatusCode)
-	}
-
-	scanner2 := bufio.NewScanner(resp2.Body)
-	replayedID := ""
-	replayedData := ""
-	deadline = time.After(2 * time.Second)
-outer2:
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for replayed SSE event")
-		default:
-			if !scanner2.Scan() {
-				continue
-			}
-			line := scanner2.Text()
-			if strings.HasPrefix(line, "id:") {
-				replayedID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-			}
-			if strings.HasPrefix(line, "data:") {
-				replayedData = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				if replayedID != "" {
-					break outer2
-				}
-			}
-		}
-	}
-	if replayedID == "" || replayedID == firstEventID {
-		t.Fatalf("expected replayed event id newer than %q, got %q", firstEventID, replayedID)
-	}
-	var msg map[string]any
-	if err := json.Unmarshal([]byte(replayedData), &msg); err != nil {
-		t.Fatalf("invalid replayed payload: %v (%q)", err, replayedData)
-	}
-	if msg["method"] != "notifications/message" {
-		t.Fatalf("replayed method = %v, want notifications/message", msg["method"])
-	}
-}
-
-func TestServer_StreamableHTTP_LastEventIDInvalidRejected(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Last-Event-ID", "not-a-number")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ with invalid Last-Event-ID: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestServer_StreamableHTTP_LastEventIDStaleRejected(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	mcpSrv.notificationReplayLimit = 1
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req1, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req1.Header.Set("Accept", "text/event-stream")
-	resp1, err := http.DefaultClient.Do(req1)
-	if err != nil {
-		t.Fatalf("GET /mcp/: %v", err)
-	}
-	scanner1 := bufio.NewScanner(resp1.Body)
-
-	setDebug := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      710,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "debug"},
-	}, operationHeaders())
-	_ = decodeBodyMap(t, setDebug)
-
-	staleID := ""
-	deadline := time.After(2 * time.Second)
-	for staleID == "" {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for stale replay id")
-		default:
-			if !scanner1.Scan() {
-				continue
-			}
-			line := scanner1.Text()
-			if strings.HasPrefix(line, "id:") {
-				staleID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-			}
-		}
-	}
-	_ = resp1.Body.Close()
-
-	setInfo := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      711,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "info"},
-	}, operationHeaders())
-	_ = decodeBodyMap(t, setInfo)
-
-	req2, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req2.Header.Set("Accept", "text/event-stream")
-	req2.Header.Set("Last-Event-ID", staleID)
-	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatalf("GET /mcp/ stale replay: %v", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", resp2.StatusCode)
-	}
-}
-
-func TestServer_SessionDelete_InvalidatesSession(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	initResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-	sid := initResp.Header.Get("MCP-Session-Id")
-	if strings.TrimSpace(sid) == "" {
-		t.Fatal("initialize must return MCP-Session-Id header")
-	}
-	_ = decodeBodyMap(t, initResp)
-
-	notifyResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	}, map[string]string{"MCP-Session-Id": sid})
-	notifyResp.Body.Close()
-
-	delResp := mcpDelete(t, srv, map[string]string{"MCP-Session-Id": sid})
-	delResp.Body.Close()
-	if delResp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want 204", delResp.StatusCode)
-	}
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-	}, map[string]string{"MCP-Session-Id": sid, "MCP-Protocol-Version": ProtocolVersion})
-	body := decodeBodyMap(t, resp)
-	errObj := body["error"].(map[string]any)
-	if errObj["code"] != float64(RPCInvalidParams) {
-		t.Fatalf("error.code = %v, want %d", errObj["code"], RPCInvalidParams)
-	}
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("MCP-Session-Id", sid)
-	getResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /mcp/ with deleted session: %v", err)
-	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("streamable get status = %d, want 400", getResp.StatusCode)
 	}
 }
 
@@ -3772,31 +2595,58 @@ func (p *staticProvider) Handler(name string) (HandlerFunc, bool) {
 
 func newStdioServer(t *testing.T, providers ...ToolProvider) *Server {
 	t.Helper()
-	return NewServer(nil, nil, providers...)
+	return NewServer(nil, providers...)
 }
 
-func stdioLifecycleLine(t *testing.T, version string) []byte {
+// stdioLine renders one message as a stdio client would send it: newline
+// delimited, and carrying the protocol metadata every 2026-07-28 request needs.
+// Notifications are left alone — they have no id, and the rules are written for
+// requests.
+func stdioLine(t *testing.T, msg map[string]any) []byte {
 	t.Helper()
-	b, _ := json.Marshal(map[string]any{
+	if msg["id"] != nil {
+		params, _ := msg["params"].(map[string]any)
+		merged := make(map[string]any, len(params)+1)
+		for k, v := range params {
+			merged[k] = v
+		}
+		meta, _ := merged["_meta"].(map[string]any)
+		withMeta := modernMeta()
+		for k, v := range meta {
+			withMeta[k] = v
+		}
+		merged["_meta"] = withMeta
+		msg["params"] = merged
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal stdio message: %v", err)
+	}
+	return append(b, '\n')
+}
+
+// stdioListenLine opens a `subscriptions/listen` stream over stdio, asking for
+// every broadcast type.
+//
+// This is how a stdio client receives notifications now, and it is what these
+// tests used to get for free. The loop used to copy a server-wide broadcast onto
+// stdout; that broadcast is gone with the GET stream, and a client says what it
+// wants instead. The stream shares the one descriptor with every response, which
+// is why each notification on it carries the subscription id.
+func stdioListenLine(t *testing.T) []byte {
+	t.Helper()
+	return stdioLine(t, map[string]any{
 		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
+		"id":      "stdio-listen",
+		"method":  subscriptionsListenMethod,
 		"params": map[string]any{
-			"protocolVersion": version,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
+			"notifications": map[string]any{
+				"toolsListChanged":     true,
+				"promptsListChanged":   true,
+				"resourcesListChanged": true,
+			},
 		},
 	})
-	return append(b, '\n')
-}
-
-func stdioInitializedLine(t *testing.T) []byte {
-	t.Helper()
-	b, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	})
-	return append(b, '\n')
 }
 
 func TestServer_ServeStdio_ExitsGracefullyOnEOF(t *testing.T) {
@@ -3824,31 +2674,6 @@ func TestServer_ServeStdio_ExitsGracefullyOnUnexpectedEOF(t *testing.T) {
 	}
 	if out.Len() > 0 {
 		t.Fatalf("expected no output on mid-frame stdin close, got: %q", out.String())
-	}
-}
-
-func TestServer_ServeStdio_InitializeResponseIsNewlineDelimitedJSON(t *testing.T) {
-	srv := newStdioServer(t)
-	in := bytes.NewReader(stdioLifecycleLine(t, ProtocolVersion))
-	out := &strings.Builder{}
-
-	if err := srv.ServeStdio(context.Background(), in, out); err != nil {
-		t.Fatalf("ServeStdio returned error: %v", err)
-	}
-	line := strings.TrimSpace(out.String())
-	if line == "" {
-		t.Fatal("expected a JSON response line")
-	}
-	var resp map[string]any
-	if err := json.Unmarshal([]byte(line), &resp); err != nil {
-		t.Fatalf("response is not valid JSON: %v; raw=%q", err, line)
-	}
-	result, ok := resp["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("result type = %T; body=%q", resp["result"], line)
-	}
-	if result["protocolVersion"] != ProtocolVersion {
-		t.Fatalf("protocolVersion = %v, want %q", result["protocolVersion"], ProtocolVersion)
 	}
 }
 
@@ -3887,105 +2712,6 @@ func TestServer_ServeStdio_NotificationProducesNoOutput(t *testing.T) {
 	}
 }
 
-func TestServer_ServeStdio_FullLifecycleThenToolsList(t *testing.T) {
-	provider := &staticProvider{
-		tools: []Tool{{Name: "probe", Description: "probe", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-	}
-	srv := newStdioServer(t, provider)
-
-	var input bytes.Buffer
-	input.Write(stdioLifecycleLine(t, ProtocolVersion))
-	input.Write(stdioInitializedLine(t))
-	toolsListMsg, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-	input.Write(append(toolsListMsg, '\n'))
-
-	out := &strings.Builder{}
-	if err := srv.ServeStdio(context.Background(), &input, out); err != nil {
-		t.Fatalf("ServeStdio returned error: %v", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 response lines (initialize + tools/list), got %d:\n%s", len(lines), out.String())
-	}
-
-	// Find the tools/list response by id (response order is not guaranteed).
-	var toolsResp map[string]any
-	for _, line := range lines {
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			t.Fatalf("response line is not valid JSON: %v; raw=%q", err, line)
-		}
-		if m["id"] == float64(2) {
-			toolsResp = m
-		}
-	}
-	if toolsResp == nil {
-		t.Fatalf("did not find tools/list response (id=2) in output:\n%s", out.String())
-	}
-	result, ok := toolsResp["result"].(map[string]any)
-	if !ok {
-		t.Fatalf("tools/list result type = %T", toolsResp["result"])
-	}
-	tools, ok := result["tools"].([]any)
-	if !ok {
-		t.Fatalf("tools type = %T", result["tools"])
-	}
-	if len(tools) != 1 {
-		t.Fatalf("tools count = %d, want 1", len(tools))
-	}
-}
-
-func TestServer_ServeStdio_LoggingSetLevelEmitsMessageNotification(t *testing.T) {
-	srv := newStdioServer(t)
-
-	var input bytes.Buffer
-	input.Write(stdioLifecycleLine(t, ProtocolVersion))
-	input.Write(stdioInitializedLine(t))
-	setLevelMsg, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "logging/setLevel",
-		"params":  map[string]any{"level": "debug"},
-	})
-	input.Write(append(setLevelMsg, '\n'))
-
-	out := &strings.Builder{}
-	if err := srv.ServeStdio(context.Background(), &input, out); err != nil {
-		t.Fatalf("ServeStdio returned error: %v", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 output lines (initialize + logging/setLevel + notification), got %d:\n%s", len(lines), out.String())
-	}
-
-	var sawResponse bool
-	var sawNotification bool
-	for _, line := range lines {
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			t.Fatalf("output line is not valid JSON: %v; raw=%q", err, line)
-		}
-		if msg["id"] == float64(2) {
-			sawResponse = true
-		}
-		if msg["method"] == "notifications/message" {
-			params := msg["params"].(map[string]any)
-			if params["level"] != "debug" {
-				t.Fatalf("notification level = %v, want debug", params["level"])
-			}
-			sawNotification = true
-		}
-	}
-	if !sawResponse {
-		t.Fatal("did not find logging/setLevel response")
-	}
-	if !sawNotification {
-		t.Fatal("did not find notifications/message output")
-	}
-}
-
 func TestServer_ServeStdio_CancellationEmitsCancelledNotification(t *testing.T) {
 	started := make(chan struct{}, 1)
 	provider := &staticProvider{
@@ -4006,8 +2732,7 @@ func TestServer_ServeStdio_CancellationEmitsCancelledNotification(t *testing.T) 
 		errCh <- srv.ServeStdio(context.Background(), inReader, out)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
-	_, _ = inWriter.Write(stdioInitializedLine(t))
+	_, _ = inWriter.Write(stdioListenLine(t))
 	callMsg, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      12,
@@ -4075,7 +2800,7 @@ func TestServer_ServeStdio_EmitToolsListChangedNotification(t *testing.T) {
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -4098,28 +2823,19 @@ func TestServer_ServeStdio_EmitToolsListChangedNotification(t *testing.T) {
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
 	srv.emitToolsListChanged()
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -4152,7 +2868,7 @@ func TestServer_ServeStdio_RegisterProvider_EmitsToolsListChangedNotification(t 
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -4175,17 +2891,16 @@ func TestServer_ServeStdio_RegisterProvider_EmitsToolsListChangedNotification(t 
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
-	_, _ = inWriter.Write(stdioInitializedLine(t))
 	ping, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -4219,17 +2934,8 @@ func TestServer_ServeStdio_RegisterProvider_EmitsToolsListChangedNotification(t 
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		}},
 	})
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -4262,7 +2968,7 @@ func TestServer_ServeStdio_RegisterProvider_EmitsResourcesListChangedNotificatio
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -4285,17 +2991,16 @@ func TestServer_ServeStdio_RegisterProvider_EmitsResourcesListChangedNotificatio
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
-	_, _ = inWriter.Write(stdioInitializedLine(t))
 	ping, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -4323,17 +3028,8 @@ func TestServer_ServeStdio_RegisterProvider_EmitsResourcesListChangedNotificatio
 	}
 
 	srv.registerProvider(&staticResourceProvider{})
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -4366,7 +3062,7 @@ func TestServer_ServeStdio_RegisterProvider_EmitsPromptsListChangedNotification(
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -4389,17 +3085,16 @@ func TestServer_ServeStdio_RegisterProvider_EmitsPromptsListChangedNotification(
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
-	_, _ = inWriter.Write(stdioInitializedLine(t))
 	ping, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -4427,17 +3122,8 @@ func TestServer_ServeStdio_RegisterProvider_EmitsPromptsListChangedNotification(
 	}
 
 	srv.registerProvider(&staticPromptProvider{})
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -4458,1092 +3144,6 @@ func TestServer_ServeStdio_RegisterProvider_EmitsPromptsListChangedNotification(
 	}
 }
 
-func TestServer_ResourcesSubscribe_ReturnsEmpty(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	for _, method := range []string{"resources/subscribe", "resources/unsubscribe"} {
-		t.Run(method, func(t *testing.T) {
-			resp := mcpPost(t, srv, map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"method":  method,
-				"params":  map[string]any{"uri": "file:///workspace/README.md"},
-			}, operationHeaders())
-
-			body := decodeBodyMap(t, resp)
-			if body["error"] != nil {
-				t.Fatalf("%s returned error: %v", method, body["error"])
-			}
-			result, ok := body["result"].(map[string]any)
-			if !ok {
-				t.Fatalf("%s result type = %T", method, body["result"])
-			}
-			// No payload is the point — subscribe acknowledges and returns
-			// nothing of its own. It is not literally an empty object any
-			// more: 2026-07-28 requires a resultType and the server's
-			// identity on every result, and those are stamped centrally.
-			// Assert the absence of payload rather than counting keys, so
-			// this keeps testing the behaviour and not the envelope.
-			for key := range result {
-				switch key {
-				case "resultType", "_meta":
-				default:
-					t.Fatalf("%s result carries %q = %v, want no payload", method, key, result[key])
-				}
-			}
-		})
-	}
-}
-
-func TestServer_ResourcesSubscribe_EmitsResourceUpdatedOnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE connection
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	// Subscribe to a resource URI
-	const testURI = "file:///workspace/README.md"
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "resources/subscribe",
-		"params":  map[string]any{"uri": testURI},
-	}, operationHeaders())
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("subscribe status = %d", resp.StatusCode)
-	}
-
-	// Trigger a resource update
-	mcpSrv.emitResourceUpdated(testURI)
-
-	// Read SSE stream and find the notification
-	scanner := bufio.NewScanner(sseresp.Body)
-	var sawNotification bool
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data:")
-		data = strings.TrimSpace(data)
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] == "notifications/resources/updated" {
-			params, _ := msg["params"].(map[string]any)
-			if params["uri"] == testURI {
-				sawNotification = true
-				break
-			}
-		}
-	}
-	if !sawNotification {
-		t.Fatal("did not receive notifications/resources/updated on SSE")
-	}
-}
-
-func TestServer_ResourcesSubscribe_TrimsURIForSubscriptionKeys(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE connection
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	// Subscribe with surrounding whitespace. Updates should still match the trimmed URI.
-	const canonicalURI = "file:///workspace/README.md"
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "resources/subscribe",
-		"params":  map[string]any{"uri": "  " + canonicalURI + "  "},
-	}, operationHeaders())
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("subscribe status = %d", resp.StatusCode)
-	}
-
-	mcpSrv.emitResourceUpdated(canonicalURI)
-
-	lineCh := make(chan string, 8)
-	errCh := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(sseresp.Body)
-		for scanner.Scan() {
-			lineCh <- scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			errCh <- err
-		}
-	}()
-
-	deadline := time.After(500 * time.Millisecond)
-	var sawNotification bool
-	timedOut := false
-	for !sawNotification && !timedOut {
-		select {
-		case err := <-errCh:
-			t.Fatalf("reading SSE notification: %v", err)
-		case line := <-lineCh:
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] == "notifications/resources/updated" {
-				params, _ := msg["params"].(map[string]any)
-				if params["uri"] == canonicalURI {
-					sawNotification = true
-					break
-				}
-			}
-		case <-deadline:
-			timedOut = true
-		}
-	}
-	if !sawNotification {
-		t.Fatal("did not receive notifications/resources/updated for trimmed URI")
-	}
-}
-
-func TestServer_ResourcesSubscribe_NoEmitWhenNotSubscribed(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE connection (no subscription made)
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	// Emit for a URI nobody subscribed to — should produce no notification
-	mcpSrv.emitResourceUpdated("file:///workspace/README.md")
-
-	// Verify no notifications/resources/updated arrives (short timeout)
-	ch := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(sseresp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "data:") {
-				ch <- line
-				return
-			}
-		}
-	}()
-	select {
-	case line := <-ch:
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err == nil {
-			if msg["method"] == "notifications/resources/updated" {
-				t.Fatal("received unexpected notifications/resources/updated")
-			}
-		}
-	case <-time.After(100 * time.Millisecond):
-		// expected: no notification
-	}
-}
-
-func TestServer_ResourcesSubscribe_UnsubscribeStopsResourceUpdatedOnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	const canonicalURI = "file:///workspace/README.md"
-	subscribeResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      4,
-		"method":  "resources/subscribe",
-		"params":  map[string]any{"uri": "  " + canonicalURI + "  "},
-	}, operationHeaders())
-	if subscribeResp.StatusCode != http.StatusOK {
-		t.Fatalf("subscribe status = %d", subscribeResp.StatusCode)
-	}
-
-	unsubscribeResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      5,
-		"method":  "resources/unsubscribe",
-		"params":  map[string]any{"uri": canonicalURI},
-	}, operationHeaders())
-	if unsubscribeResp.StatusCode != http.StatusOK {
-		t.Fatalf("unsubscribe status = %d", unsubscribeResp.StatusCode)
-	}
-
-	mcpSrv.emitResourceUpdated(canonicalURI)
-
-	ch := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(sseresp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "data:") {
-				ch <- line
-				return
-			}
-		}
-	}()
-
-	select {
-	case line := <-ch:
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err == nil {
-			if msg["method"] == "notifications/resources/updated" {
-				t.Fatal("received notifications/resources/updated after unsubscribe")
-			}
-		}
-	case <-time.After(100 * time.Millisecond):
-		// expected: no resource updated notification
-	}
-}
-
-func TestServer_ResourcesSubscribe_ReferenceCountRequiresMatchingUnsubscribes(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	const testURI = "file:///workspace/README.md"
-	for _, id := range []int{7, 8} {
-		resp := mcpPost(t, srv, map[string]any{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"method":  "resources/subscribe",
-			"params":  map[string]any{"uri": testURI},
-		}, operationHeaders())
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("subscribe status = %d", resp.StatusCode)
-		}
-	}
-
-	firstUnsub := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      9,
-		"method":  "resources/unsubscribe",
-		"params":  map[string]any{"uri": testURI},
-	}, operationHeaders())
-	if firstUnsub.StatusCode != http.StatusOK {
-		t.Fatalf("first unsubscribe status = %d", firstUnsub.StatusCode)
-	}
-
-	mcpSrv.emitResourceUpdated(testURI)
-
-	lineCh := make(chan string, 8)
-	errCh := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(sseresp.Body)
-		for scanner.Scan() {
-			lineCh <- scanner.Text()
-		}
-		if scanErr := scanner.Err(); scanErr != nil {
-			errCh <- scanErr
-		}
-	}()
-
-	deadline := time.After(500 * time.Millisecond)
-	sawFirstNotification := false
-	for !sawFirstNotification {
-		select {
-		case scanErr := <-errCh:
-			t.Fatalf("reading SSE after first unsubscribe: %v", scanErr)
-		case line := <-lineCh:
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/resources/updated" {
-				continue
-			}
-			params, _ := msg["params"].(map[string]any)
-			if params["uri"] == testURI {
-				sawFirstNotification = true
-			}
-		case <-deadline:
-			t.Fatal("did not receive notifications/resources/updated after first unsubscribe")
-		}
-	}
-
-	secondUnsub := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      10,
-		"method":  "resources/unsubscribe",
-		"params":  map[string]any{"uri": testURI},
-	}, operationHeaders())
-	if secondUnsub.StatusCode != http.StatusOK {
-		t.Fatalf("second unsubscribe status = %d", secondUnsub.StatusCode)
-	}
-
-	mcpSrv.emitResourceUpdated(testURI)
-
-	select {
-	case scanErr := <-errCh:
-		t.Fatalf("reading SSE after second unsubscribe: %v", scanErr)
-	case line := <-lineCh:
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err == nil && msg["method"] == "notifications/resources/updated" {
-				t.Fatal("received notifications/resources/updated after second unsubscribe")
-			}
-		}
-	case <-time.After(100 * time.Millisecond):
-		// expected: no notification after refcount reaches zero
-	}
-
-	extraUnsub := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      11,
-		"method":  "resources/unsubscribe",
-		"params":  map[string]any{"uri": testURI},
-	}, operationHeaders())
-	extraBody := decodeBodyMap(t, extraUnsub)
-	if extraBody["error"] != nil {
-		t.Fatalf("unexpected error on extra unsubscribe: %v", extraBody["error"])
-	}
-}
-
-func TestServer_RuntimeMutationTool_EmitsResourcesListChangedOnSSE(t *testing.T) {
-	provider := &mutableRuntimeResourceProvider{}
-	_, srv := newTestHTTPServerPair(t, provider)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseResp.Body.Close()
-
-	callResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      61,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      "runtime_mutate_demo",
-			"arguments": map[string]any{},
-		},
-	}, operationHeaders())
-	if callResp.StatusCode != http.StatusOK {
-		t.Fatalf("tools/call status = %d", callResp.StatusCode)
-	}
-	callBody := decodeBodyMap(t, callResp)
-	if callBody["error"] != nil {
-		t.Fatalf("tools/call error = %v", callBody["error"])
-	}
-
-	scanner := bufio.NewScanner(sseResp.Body)
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for notifications/resources/list_changed")
-		default:
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				t.Fatalf("reading SSE stream: %v", err)
-			}
-			continue
-		}
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] == "notifications/resources/list_changed" {
-			return
-		}
-	}
-}
-
-func TestServer_RuntimeNonDestructiveMutationTool_EmitsResourcesListChangedOnSSE(t *testing.T) {
-	provider := &nonDestructiveRuntimeResourceProvider{}
-	_, srv := newTestHTTPServerPair(t, provider)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseResp.Body.Close()
-
-	callResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      62,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      "runtime_update_demo",
-			"arguments": map[string]any{},
-		},
-	}, operationHeaders())
-	if callResp.StatusCode != http.StatusOK {
-		t.Fatalf("tools/call status = %d", callResp.StatusCode)
-	}
-	callBody := decodeBodyMap(t, callResp)
-	if callBody["error"] != nil {
-		t.Fatalf("tools/call error = %v", callBody["error"])
-	}
-
-	scanner := bufio.NewScanner(sseResp.Body)
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for notifications/resources/list_changed")
-		default:
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				t.Fatalf("reading SSE stream: %v", err)
-			}
-			continue
-		}
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] == "notifications/resources/list_changed" {
-			return
-		}
-	}
-}
-
-func TestServer_ResourcesSubscribe_EmitResourceUpdatedTrimsURI(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	const canonicalURI = "file:///workspace/README.md"
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      6,
-		"method":  "resources/subscribe",
-		"params":  map[string]any{"uri": canonicalURI},
-	}, operationHeaders())
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("subscribe status = %d", resp.StatusCode)
-	}
-
-	mcpSrv.emitResourceUpdated("  " + canonicalURI + "  ")
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/resources/updated for trimmed emit URI")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/resources/updated" {
-				continue
-			}
-			params, _ := msg["params"].(map[string]any)
-			if params["uri"] != canonicalURI {
-				t.Fatalf("notification uri = %v, want %s", params["uri"], canonicalURI)
-			}
-			return
-		}
-	}
-}
-
-func TestServer_EmitResourceListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.emitResourceListChanged()
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/resources/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/resources/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_EmitPromptsListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.emitPromptsListChanged()
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/prompts/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/prompts/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_EmitToolsListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.emitToolsListChanged()
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/tools/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/tools/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_RegisterProvider_EmitsToolsListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.registerProvider(&staticProvider{
-		tools: []Tool{{
-			Name:        "dynamic_test_tool",
-			Description: "dynamic tool",
-			InputSchema: json.RawMessage(`{"type":"object"}`),
-		}},
-	})
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/tools/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/tools/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_RegisterProvider_EmitsResourcesListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.registerProvider(&staticResourceProvider{})
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/resources/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/resources/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_RegisterProvider_EmitsPromptsListChanged_OnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	mcpSrv.registerProvider(&staticPromptProvider{})
-
-	scanner := bufio.NewScanner(sseresp.Body)
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("did not receive notifications/prompts/list_changed")
-		default:
-			if !scanner.Scan() {
-				continue
-			}
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg["method"] != "notifications/prompts/list_changed" {
-				continue
-			}
-			return
-		}
-	}
-}
-
-func TestServer_RegisterProvider_WiresResourceListChangedEmitter(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
-	notifications := make(chan []byte, 2)
-	mcpSrv.subscribeNotifications(notifications)
-	defer mcpSrv.unsubscribeNotifications(notifications)
-
-	provider := &emitterAwareProvider{}
-	mcpSrv.registerProvider(provider)
-
-	if provider.emitter == nil {
-		t.Fatal("expected resource list changed emitter callback to be wired")
-	}
-
-	provider.emitter()
-	select {
-	case payload := <-notifications:
-		if !bytes.Contains(payload, []byte("notifications/resources/list_changed")) {
-			t.Fatalf("unexpected notification payload: %s", string(payload))
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for resources/list_changed notification")
-	}
-}
-
-func TestServer_RegisterProvider_WiresResourceUpdatedEmitter(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
-	notifications := make(chan []byte, 2)
-	mcpSrv.subscribeNotifications(notifications)
-	defer mcpSrv.unsubscribeNotifications(notifications)
-
-	provider := &emitterAwareProvider{}
-	mcpSrv.registerProvider(provider)
-
-	if provider.updatedEmitter == nil {
-		t.Fatal("expected resource updated emitter callback to be wired")
-	}
-
-	const testURI = "oc://demo/item"
-	mcpSrv.mu.Lock()
-	mcpSrv.resourceSubscriptions[testURI] = 1
-	mcpSrv.mu.Unlock()
-	provider.updatedEmitter(testURI)
-	select {
-	case payload := <-notifications:
-		if !bytes.Contains(payload, []byte("notifications/resources/updated")) {
-			t.Fatalf("unexpected notification payload: %s", string(payload))
-		}
-		if !bytes.Contains(payload, []byte(testURI)) {
-			t.Fatalf("expected updated uri in payload: %s", string(payload))
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for resources/updated notification")
-	}
-}
-
-func TestServer_RegisterProvider_WiresPromptListChangedEmitter(t *testing.T) {
-	mcpSrv := NewServer(nil, nil)
-	notifications := make(chan []byte, 2)
-	mcpSrv.subscribeNotifications(notifications)
-	defer mcpSrv.unsubscribeNotifications(notifications)
-
-	provider := &emitterAwareProvider{}
-	mcpSrv.registerProvider(provider)
-
-	if provider.promptEmitter == nil {
-		t.Fatal("expected prompt list changed emitter callback to be wired")
-	}
-
-	provider.promptEmitter()
-	select {
-	case payload := <-notifications:
-		if !bytes.Contains(payload, []byte("notifications/prompts/list_changed")) {
-			t.Fatalf("unexpected notification payload: %s", string(payload))
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for prompts/list_changed notification")
-	}
-}
-
-func TestServer_ResourceCapability_AdvertisesSubscribe(t *testing.T) {
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
-
-	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-client", "version": "1.0"},
-		},
-	}, nil)
-
-	body := decodeBodyMap(t, resp)
-	result := body["result"].(map[string]any)
-	caps := result["capabilities"].(map[string]any)
-	resourcesCap, ok := caps["resources"].(map[string]any)
-	if !ok {
-		t.Fatalf("resources capability missing or wrong type: %T", caps["resources"])
-	}
-	if resourcesCap["subscribe"] != true {
-		t.Fatalf("resources.subscribe = %v, want true", resourcesCap["subscribe"])
-	}
-}
-
-func TestServer_EmitPromptsListChanged_SendsNotificationOnSSE(t *testing.T) {
-	mcpSrv, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE connection
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	// Emit prompts list changed
-	mcpSrv.emitPromptsListChanged()
-
-	// Read SSE stream
-	scanner := bufio.NewScanner(sseresp.Body)
-	var sawNotification bool
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] == "notifications/prompts/list_changed" {
-			sawNotification = true
-			break
-		}
-	}
-	if !sawNotification {
-		t.Fatal("did not receive notifications/prompts/list_changed on SSE")
-	}
-}
-
-func TestServer_ToolsCall_EmitsProgressNotification(t *testing.T) {
-	provider := &staticProvider{
-		tools: []Tool{{Name: "slow-tool", Description: "slow", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-		handler: func(_ context.Context, _ json.RawMessage) (any, error) {
-			return "done", nil
-		},
-	}
-	mcpSrv, srv := newTestHTTPServerPair(t, provider)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE to catch progress notifications
-	sseReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(sseReq)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-	_ = mcpSrv // ensure mcpSrv is in scope (server is wired to the httptest.Server)
-
-	// Call the tool with a progress token
-	callResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      50,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      "slow-tool",
-			"arguments": map[string]any{},
-			"_meta":     map[string]any{"progressToken": "prog-1"},
-		},
-	}, operationHeaders())
-	if callResp.StatusCode != http.StatusOK {
-		t.Fatalf("tools/call status = %d", callResp.StatusCode)
-	}
-	callBody := decodeBodyMap(t, callResp)
-	if callBody["error"] != nil {
-		t.Fatalf("tools/call returned error: %v", callBody["error"])
-	}
-
-	// Read SSE stream looking for two progress notifications (0 and 1)
-	scanner := bufio.NewScanner(sseresp.Body)
-	var progressValues []float64
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			continue
-		}
-		if msg["method"] != "notifications/progress" {
-			continue
-		}
-		params, _ := msg["params"].(map[string]any)
-		if params["progressToken"] != "prog-1" {
-			continue
-		}
-		progressValues = append(progressValues, params["progress"].(float64))
-		if len(progressValues) >= 2 {
-			break
-		}
-	}
-	if len(progressValues) < 2 {
-		t.Fatalf("expected 2 progress notifications, got %d: %v", len(progressValues), progressValues)
-	}
-	if progressValues[0] != 0 || progressValues[1] != 1 {
-		t.Fatalf("progress values = %v, want [0, 1]", progressValues)
-	}
-}
-
-func TestServer_ToolsCall_NoProgressWhenNoToken(t *testing.T) {
-	provider := &staticProvider{
-		tools: []Tool{{Name: "noop", Description: "noop", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-		handler: func(_ context.Context, _ json.RawMessage) (any, error) {
-			return "ok", nil
-		},
-	}
-	_, srv := newTestHTTPServerPair(t, provider)
-	defer srv.Close()
-	requireLifecycleReady(t, srv)
-
-	// Open SSE
-	sseReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
-	sseresp, err := http.DefaultClient.Do(sseReq)
-	if err != nil {
-		t.Fatalf("SSE connect: %v", err)
-	}
-	defer sseresp.Body.Close()
-
-	// Call without progress token
-	callResp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      51,
-		"method":  "tools/call",
-		"params":  map[string]any{"name": "noop", "arguments": map[string]any{}},
-	}, operationHeaders())
-	if callResp.StatusCode != http.StatusOK {
-		t.Fatalf("tools/call status = %d", callResp.StatusCode)
-	}
-	_ = decodeBodyMap(t, callResp)
-
-	// Ensure no notifications/progress arrives within a short window
-	notifCh := make(chan map[string]any, 4)
-	go func() {
-		scanner := bufio.NewScanner(sseresp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(data), &msg); err == nil {
-				notifCh <- msg
-			}
-		}
-	}()
-	timeout := time.After(100 * time.Millisecond)
-	for {
-		select {
-		case msg := <-notifCh:
-			if msg["method"] == "notifications/progress" {
-				t.Fatalf("unexpected notifications/progress received: %v", msg)
-			}
-		case <-timeout:
-			return // no spurious progress
-		}
-	}
-}
-
 func TestServer_ToolsCall_RequestTimeoutReturnsToolError(t *testing.T) {
 	provider := &staticProvider{
 		tools: []Tool{{Name: "slow-timeout", Description: "slow", InputSchema: json.RawMessage(`{"type":"object"}`)}},
@@ -5555,7 +3155,6 @@ func TestServer_ToolsCall_RequestTimeoutReturnsToolError(t *testing.T) {
 	mcpSrv, srv := newTestHTTPServerPair(t, provider)
 	mcpSrv.requestTimeout = 20 * time.Millisecond
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	start := time.Now()
 	resp := mcpPost(t, srv, map[string]any{
@@ -5566,7 +3165,7 @@ func TestServer_ToolsCall_RequestTimeoutReturnsToolError(t *testing.T) {
 			"name":      "slow-timeout",
 			"arguments": map[string]any{},
 		},
-	}, operationHeaders())
+	}, nil)
 	elapsed := time.Since(start)
 
 	if resp.StatusCode != http.StatusOK {
@@ -5608,7 +3207,7 @@ func TestServer_ServeStdio_EmitResourcesListChangedNotification(t *testing.T) {
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -5631,28 +3230,19 @@ func TestServer_ServeStdio_EmitResourcesListChangedNotification(t *testing.T) {
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
 	srv.emitResourceListChanged()
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -5684,9 +3274,8 @@ func TestServer_ServeStdio_RuntimeMutationTool_EmitsResourcesListChangedNotifica
 		errCh <- srv.ServeStdio(context.Background(), inReader, out)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
-	_, _ = inWriter.Write(stdioInitializedLine(t))
-	callMsg, _ := json.Marshal(map[string]any{
+	_, _ = inWriter.Write(stdioListenLine(t))
+	callMsg := stdioLine(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      62,
 		"method":  "tools/call",
@@ -5742,7 +3331,7 @@ func TestServer_ServeStdio_EmitPromptsListChangedNotification(t *testing.T) {
 		errCh <- srv.ServeStdio(context.Background(), inReader, outWriter)
 	}()
 
-	_, _ = inWriter.Write(stdioLifecycleLine(t, ProtocolVersion))
+	inWriter.Write(stdioListenLine(t))
 
 	lineCh := make(chan string, 16)
 	errReadCh := make(chan error, 1)
@@ -5765,28 +3354,19 @@ func TestServer_ServeStdio_EmitPromptsListChangedNotification(t *testing.T) {
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			if msg["id"] == float64(1) {
+			if msg["method"] == notificationsAcknowledged {
 				initSeen = true
 			}
 		case readErr := <-errReadCh:
 			t.Fatalf("reading stdio output: %v", readErr)
 		case <-initDeadline:
-			t.Fatal("timed out waiting for initialize response on stdio")
+			t.Fatal("timed out waiting for the listen stream's acknowledgement on stdio")
 		}
 	}
 
 	srv.emitPromptsListChanged()
-	_ = inWriter.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ServeStdio returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ServeStdio to finish")
-	}
-	_ = outWriter.Close()
+	defer inWriter.Close()  //nolint:errcheck
+	defer outWriter.Close() //nolint:errcheck
 
 	deadline := time.After(2 * time.Second)
 	for {
