@@ -66,6 +66,11 @@ func postModern(t *testing.T, srv *httptest.Server, method string, params map[st
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// A conforming modern client mirrors its method into a header, and the
+	// server requires it — see standard_headers.go. Set by default so these
+	// tests model a compliant client; a caller that wants to test the header
+	// rules themselves overrides it.
+	req.Header.Set("Mcp-Method", method)
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

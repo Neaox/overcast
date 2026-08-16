@@ -596,6 +596,10 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		writeJSONRPCError(w, req.ID, versionErr)
 		return
 	}
+	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
+		writeJSONRPCError(w, req.ID, headerErr)
+		return
+	}
 
 	// server/discover answers ahead of the lifecycle gate, and deliberately.
 	// It is the probe a client sends when it does not yet know what this server
@@ -1758,7 +1762,12 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 	}()
 
 	dispatch := func(msg []byte) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", bytes.NewReader(msg))
+		// Marked as stdio so the rules that belong to the HTTP binding do not
+		// apply. This loop has no dispatcher of its own — it pushes a
+		// synthesised request through the same handler — so without the marker
+		// a header requirement written for HTTP would reject every stdio
+		// request. See standard_headers.go.
+		req, err := http.NewRequestWithContext(withStdioTransport(ctx), http.MethodPost, "/", bytes.NewReader(msg))
 		if err != nil {
 			return
 		}
