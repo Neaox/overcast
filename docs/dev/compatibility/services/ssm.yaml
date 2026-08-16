@@ -1,6 +1,6 @@
 service: ssm
 status: docs_reviewed
-priority: p0
+priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-07-13
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]

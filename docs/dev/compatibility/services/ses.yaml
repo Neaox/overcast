@@ -1,6 +1,6 @@
 service: ses
 status: not_started
-priority: p0
+priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-05-17
 protocols: [query, rest_json]

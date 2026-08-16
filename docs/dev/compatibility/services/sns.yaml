@@ -1,6 +1,6 @@
 service: sns
 status: implementation_mismatch
-priority: p1
+priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-08-05
 protocols: [query, aws_json_typed]

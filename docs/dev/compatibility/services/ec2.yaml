@@ -1,6 +1,6 @@
 service: ec2
 status: in_progress
-priority: p0
+priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-07-16
 protocols: [query]
