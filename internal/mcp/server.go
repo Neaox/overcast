@@ -104,6 +104,11 @@ type Server struct {
 	activeProgress          map[string]string
 	notificationSubscribers map[chan []byte]struct{}
 	sseSubscribers          map[chan notificationEvent]struct{}
+	// subscriptions are the open `subscriptions/listen` streams. Kept separate
+	// from sseSubscribers because each carries its own filter, which is what
+	// lets a notification be discarded before it is ever serialised — see
+	// subscriptions.go on why that matters to the emulator and not just to MCP.
+	subscriptions           map[*subscription]struct{}
 	notificationReplay      []notificationEvent
 	nextNotificationID      uint64
 	notificationReplayLimit int
@@ -492,6 +497,21 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
+		// The capture path below buffers the whole response and writes it as
+		// one SSE event, which is right for a request that has an answer and
+		// wrong for one that is a stream. `subscriptions/listen` stays open
+		// indefinitely and must write as it goes, so it needs the real
+		// ResponseWriter — captureResponseWriter is not a Flusher, and a stream
+		// that cannot flush is a stream nothing arrives on.
+		// Peeking consumes the body, so the replacement is put back whatever
+		// the answer is — the path not taken still has to be able to read it.
+		if body, method, ok := peekMethod(r); body != nil {
+			r.Body = body
+			if ok && method == subscriptionsListenMethod {
+				s.handleRPCInternal(w, r)
+				return
+			}
+		}
 		capture := &captureResponseWriter{headers: make(http.Header), statusCode: http.StatusOK}
 		s.handleRPCInternal(capture, r)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -610,6 +630,14 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 	// the refusal carries the supported list this method would have returned.
 	if req.Method == "server/discover" {
 		s.handleDiscover(w, req, r)
+		return
+	}
+
+	// The listen stream answers before the lifecycle gate too, for the same
+	// reason: it is a 2026-07-28 method, and a client using it is not one that
+	// has completed a handshake this revision does not have.
+	if req.Method == subscriptionsListenMethod {
+		s.handleSubscriptionsListen(w, req, r)
 		return
 	}
 
@@ -1657,28 +1685,38 @@ func (s *Server) emitResourceUpdated(uri string) {
 	if uri == "" {
 		return
 	}
+	params := map[string]any{"uri": uri}
+
+	// Two independent ways to be subscribed to a resource, and a client uses
+	// exactly one of them. `resources/subscribe` put the URI in a set on the
+	// server; `subscriptions/listen` carries it in the stream's own filter, so
+	// such a client is deliberately absent from that set. Gating the second on
+	// the first would mean a modern client never heard anything.
 	s.mu.RLock()
 	_, subscribed := s.resourceSubscriptions[uri]
 	s.mu.RUnlock()
-	if !subscribed {
-		return
+	if subscribed {
+		s.emitNotification("notifications/resources/updated", params)
 	}
-	s.emitNotification("notifications/resources/updated", map[string]any{"uri": uri})
+	s.emitToSubscriptions("notifications/resources/updated", params, uri)
 }
 
 // emitResourceListChanged notifies clients that the resource list has changed.
 func (s *Server) emitResourceListChanged() {
 	s.emitNotification("notifications/resources/list_changed", map[string]any{})
+	s.emitToSubscriptions("notifications/resources/list_changed", map[string]any{}, "")
 }
 
 // emitPromptsListChanged notifies clients that the prompts list has changed.
 func (s *Server) emitPromptsListChanged() {
 	s.emitNotification("notifications/prompts/list_changed", map[string]any{})
+	s.emitToSubscriptions("notifications/prompts/list_changed", map[string]any{}, "")
 }
 
 // emitToolsListChanged notifies clients that the tools list has changed.
 func (s *Server) emitToolsListChanged() {
 	s.emitNotification("notifications/tools/list_changed", map[string]any{})
+	s.emitToSubscriptions("notifications/tools/list_changed", map[string]any{}, "")
 }
 
 func toolResultText(v any) string {
