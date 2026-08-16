@@ -25,9 +25,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -55,10 +57,10 @@ func openRequestStream(t *testing.T, srv *httptest.Server, id any, method string
 		params = map[string]any{}
 	}
 	existing, _ := params["_meta"].(map[string]any)
-	params["_meta"] = mergeMeta(modernMeta(), existing)
+	params["_meta"] = mergeMeta(metaBlock(), existing)
 
 	headers := map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           method,
 		"Accept":               "text/event-stream",
 	}
@@ -279,6 +281,19 @@ func TestRequestStream_CancellationIsReportedOnTheCancelledRequestsStream(t *tes
 
 // --- log messages -----------------------------------------------------------
 
+// failingToolServer is a server whose one tool always fails, which is what
+// produces a notifications/message now that `logging/setLevel` is gone.
+func failingToolServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	_, srv := newNotificationServer(t, &staticProvider{
+		tools: []Tool{{Name: "boom", Description: "boom", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		handler: func(_ context.Context, _ json.RawMessage) (any, error) {
+			return nil, errDeliberateToolFailure
+		},
+	})
+	return srv
+}
+
 // Ports TestServer_LoggingSetLevel_EmitsMessageNotificationOnSSE and
 // TestServer_LoggingNotification_IncludesLoggerField.
 //
@@ -288,15 +303,14 @@ func TestRequestStream_CancellationIsReportedOnTheCancelledRequestsStream(t *tes
 // because a failing tool still reports one, and it belongs to the call that
 // failed. Asserting it there rather than through setLevel is what makes it a
 // test of emitLogMessage instead of a test of a method that is going away.
+//
+// The threshold that used to be set by `logging/setLevel` is now stated by the
+// request, in `_meta`, which is why this one says so.
 func TestRequestStream_AFailingToolReportsAMessageOnItsOwnStream(t *testing.T) {
-	_, srv := newNotificationServer(t, &staticProvider{
-		tools: []Tool{{Name: "boom", Description: "boom", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-		handler: func(_ context.Context, _ json.RawMessage) (any, error) {
-			return nil, errDeliberateToolFailure
-		},
-	})
+	srv := failingToolServer(t)
 
 	stream := openRequestStream(t, srv, 60, "tools/call", map[string]any{
+		"_meta":     map[string]any{metaLogLevel: "debug"},
 		"name":      "boom",
 		"arguments": map[string]any{},
 	}, map[string]string{"Mcp-Name": "boom"})
@@ -310,6 +324,84 @@ func TestRequestStream_AFailingToolReportsAMessageOnItsOwnStream(t *testing.T) {
 	}
 	if data, _ := params["data"].(string); !strings.Contains(data, errDeliberateToolFailure.Error()) {
 		t.Errorf("data = %v, want it to carry the tool's error", params["data"])
+	}
+}
+
+// Silence is the default, and it is the request that breaks it.
+//
+// This closes the thread phase 1 opened. `parseRequestMeta` has read
+// `io.modelcontextprotocol/logLevel` since then and nothing consumed it, while
+// the filter still asked the connection-scoped level that `logging/setLevel`
+// used to set — and phase 4 deletes that method, which would have left the
+// threshold pinned at its "info" default forever. The revision does not want a
+// default at all: a server "MUST NOT emit notifications/message for requests
+// that did not include this field", so a request that asked for nothing is told
+// nothing, however the call goes.
+//
+// Asserted with collect() rather than a timed absence: the stream ends when the
+// request is answered, so "no message arrived" is a fact about the entire
+// response and not about a window someone picked.
+func TestRequestStream_ARequestThatNamedNoLogLevelIsToldNothing(t *testing.T) {
+	srv := failingToolServer(t)
+
+	stream := openRequestStream(t, srv, 61, "tools/call", map[string]any{
+		"name":      "boom",
+		"arguments": map[string]any{},
+	}, map[string]string{"Mcp-Name": "boom"})
+
+	msgs := stream.collect()
+	for _, msg := range msgs {
+		if msg["method"] == "notifications/message" {
+			t.Fatalf("a request that named no %s was sent one anyway: %v", metaLogLevel, methodsOf(msgs))
+		}
+	}
+}
+
+// And a request that named a level hears only what reaches it.
+//
+// "emergency" is the most severe level there is, so the "error" a failing tool
+// reports sits below it. Same failure, same stream, different request — which
+// is the whole point of moving the threshold onto the request: two clients
+// talking to one server no longer share a setting, and neither can change what
+// the other hears.
+func TestRequestStream_ALevelBelowWhatTheRequestAskedForIsNotEmitted(t *testing.T) {
+	srv := failingToolServer(t)
+
+	stream := openRequestStream(t, srv, 62, "tools/call", map[string]any{
+		"_meta":     map[string]any{metaLogLevel: "emergency"},
+		"name":      "boom",
+		"arguments": map[string]any{},
+	}, map[string]string{"Mcp-Name": "boom"})
+
+	for _, msg := range stream.collect() {
+		if msg["method"] == "notifications/message" {
+			params, _ := msg["params"].(map[string]any)
+			t.Fatalf("a request that asked for emergency was sent a %v", params["level"])
+		}
+	}
+}
+
+// The threshold is checked before the message is built, and that ordering is
+// what this measures.
+//
+// Every streamed request carries a stream, and almost none of them name a log
+// level — so the common case is an emit with no audience. Deciding that after
+// assembling logMessageParams would put a notification body on the heap for a
+// message nobody asked for, which is the same cost subscriptions.go refuses to
+// pay on the broadcast side. See TestSubscriptions_emitCostsNothingWithNoListeners.
+func TestRequestStream_LogEmitCostsNothingWhenTheRequestAskedForNoLogs(t *testing.T) {
+	s := NewServer(nil)
+	// A real stream, asked for by the request, that named no level — not a nil
+	// one. The nil case is free for a different reason and would not catch a
+	// gate that ran after the params were built.
+	stream := &requestStream{out: ndjsonWriter{out: io.Discard, mu: &sync.Mutex{}}, started: true}
+	var data any = errDeliberateToolFailure.Error()
+
+	allocs := testing.AllocsPerRun(100, func() {
+		s.emitLogMessage(stream, "error", data)
+	})
+	if allocs > 0 {
+		t.Errorf("emitting a log message to a request that asked for none allocated %.0f times per call", allocs)
 	}
 }
 
@@ -329,12 +421,12 @@ func TestRequestStream_APlainRequestStillGetsAPlainAnswer(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 70, "method": "tools/call",
 		"params": map[string]any{
-			"_meta":     mergeMeta(modernMeta(), map[string]any{"progressToken": "prog-2"}),
+			"_meta":     mergeMeta(metaBlock(), map[string]any{"progressToken": "prog-2"}),
 			"name":      "slow",
 			"arguments": map[string]any{},
 		},
 	}, map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           "tools/call",
 		"Mcp-Name":             "slow",
 	})
@@ -365,7 +457,7 @@ func TestRequestStream_ARejectedRequestIsStillAnHTTPError(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 80, "method": "tools/list",
 		"params": map[string]any{
-			"_meta": mergeMeta(modernMeta(), map[string]any{
+			"_meta": mergeMeta(metaBlock(), map[string]any{
 				metaProtocolVersion: "1999-01-01",
 			}),
 		},

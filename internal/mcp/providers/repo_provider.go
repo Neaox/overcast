@@ -41,6 +41,10 @@ type cachedProbeResult struct {
 const runtimeProbeCacheTTL = 15 * time.Second
 const compatSubsetMaxSuites = 3
 
+// maxJSONRPCResponseSize bounds anything read back from a remote MCP endpoint,
+// success or failure alike.
+const maxJSONRPCResponseSize = 10 * 1024 * 1024 // 10 MiB
+
 var compatSuiteNamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 type discoveredRuntimeEndpoint struct {
@@ -1745,31 +1749,28 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 		_ = healthResp.Body.Close()
 	}
 
-	initBody := map[string]any{
+	// server/discover is what a 2026-07-28 client sends when it does not yet know
+	// what a server is — it replaces `initialize` as the probe, and unlike
+	// `initialize` it establishes nothing, which is the point. There is no
+	// handshake to complete afterwards.
+	discoverBody := map[string]any{
 		"jsonrpc": "2.0",
-		"id":      "probe-init",
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "overcast-workspace-mcp", "version": "1.0.0"},
-		},
+		"id":      "probe-discover",
+		"method":  "server/discover",
 	}
-	initResp, initErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), initBody)
+	initResp, initErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), discoverBody)
 	if initErr != nil {
-		errors = append(errors, "mcp initialize failed: "+initErr.Error())
+		errors = append(errors, "mcp server/discover failed: "+initErr.Error())
 	} else {
 		out["mcp_available"] = true
 		if res, ok := initResp["result"].(map[string]any); ok {
-			if pv, ok := res["protocolVersion"]; ok {
-				out["mcp_protocol_version"] = pv
+			// `supportedVersions` is a list, newest first, because a modern
+			// server negotiates nothing and so has no single version to name.
+			// The newest is what a client that just asked would go on to use.
+			if versions, ok := res["supportedVersions"].([]any); ok && len(versions) > 0 {
+				out["mcp_protocol_version"] = versions[0]
 			}
 		}
-		// Complete the MCP lifecycle handshake before sending operation requests.
-		// Per spec, the client must send notifications/initialized after initialize.
-		// Without this the server stays in initDone=true, ready=false state, which
-		// blocks all subsequent callers with a lifecycle error.
-		_, _ = doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
 		toolsBody := map[string]any{"jsonrpc": "2.0", "id": "probe-tools", "method": "tools/list"}
 		toolsResp, toolsErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), toolsBody)
 		if toolsErr != nil {
@@ -1923,7 +1924,7 @@ func generateProbeSummary(result map[string]any) string {
 		return fmt.Sprintf("Instance unhealthy: /_overcast/health returned %d", int(status))
 	}
 	if !mcpAvailable {
-		return "MCP not available: initialize request failed"
+		return "MCP not available: server/discover request failed"
 	}
 	if toolCount > 0 {
 		return fmt.Sprintf("Instance healthy: MCP available with %d tools", int(toolCount))
@@ -1971,12 +1972,8 @@ func (p *RepoProvider) toolRuntimeMCPCall(ctx context.Context, params json.RawMe
 	}
 	mcpClient := &http.Client{Timeout: 5 * time.Second}
 	mcpEndpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	// Do the MCP lifecycle handshake before operation requests. Skip for lifecycle
-	// and notification methods — callers may be managing those explicitly.
-	method := strings.TrimSpace(args.Method)
-	if method != "initialize" && method != "ping" && !strings.HasPrefix(method, "notifications/") {
-		doMCPEnsureReady(ctx, mcpClient, mcpEndpointURL)
-	}
+	// No handshake to do first: doJSONRPC makes each request self-describing,
+	// which is the whole of what 2026-07-28 requires before an operation.
 	resp, err := doJSONRPC(ctx, mcpClient, mcpEndpointURL, body)
 	if err != nil {
 		return nil, err
@@ -2010,7 +2007,6 @@ func (p *RepoProvider) toolRuntimeGetHealth(ctx context.Context, params json.Raw
 	}
 	client := &http.Client{Timeout: timeout}
 	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "runtime-get-health",
@@ -2075,7 +2071,6 @@ func (p *RepoProvider) toolRuntimeListServices(ctx context.Context, params json.
 	}
 	client := &http.Client{Timeout: timeout}
 	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "runtime-list-services",
@@ -2143,7 +2138,6 @@ func (p *RepoProvider) toolRuntimeGetConfig(ctx context.Context, params json.Raw
 	}
 	client := &http.Client{Timeout: timeout}
 	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "runtime-get-config",
@@ -2217,7 +2211,6 @@ func (p *RepoProvider) toolRuntimeGetServiceState(ctx context.Context, params js
 	}
 	client := &http.Client{Timeout: timeout}
 	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, endpointURL)
 	callArgs := map[string]any{}
 	if ns := strings.TrimSpace(args.Namespace); ns != "" {
 		callArgs["namespace"] = ns
@@ -2320,7 +2313,6 @@ func (p *RepoProvider) toolRuntimeGetRecentEvents(ctx context.Context, params js
 
 	client := &http.Client{Timeout: timeout}
 	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "runtime-get-recent-events",
@@ -2426,7 +2418,6 @@ func (p *RepoProvider) toolRuntimeProbeKVStore(ctx context.Context, params json.
 	}
 	client := &http.Client{Timeout: timeout}
 	kvEndpointURL := buildEndpointPath(base, "/_overcast/mcp")
-	doMCPEnsureReady(ctx, client, kvEndpointURL)
 	resp, err := doJSONRPC(ctx, client, kvEndpointURL, body)
 	if err != nil {
 		return map[string]any{
@@ -2978,30 +2969,72 @@ func buildEndpointPath(base, suffix string) string {
 	return strings.TrimRight(base, "/") + suffix
 }
 
-// doMCPEnsureReady performs the MCP initialization handshake (initialize +
-// notifications/initialized) on a best-effort basis before operation requests.
-// Errors are intentionally ignored: some callers (e.g. test mocks) may not
-// enforce the lifecycle, and a failed handshake must not prevent the caller
-// from proceeding. Against a real Overcast server this ensures the server is in
-// ready state before the first tools/call request is sent.
-func doMCPEnsureReady(ctx context.Context, client *http.Client, endpoint string) {
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "lifecycle-init",
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "overcast-workspace-mcp", "version": "1.0.0"},
-		},
+// withModernRequestMeta returns the payload with `_meta` on its params,
+// preserving anything the caller already put there.
+//
+// runtime_mcp_call passes params straight through from whoever invoked the
+// tool, so this must add to them rather than replace them — a caller supplying
+// a progressToken keeps it.
+func withModernRequestMeta(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload))
+	for k, v := range payload {
+		out[k] = v
 	}
-	_, _ = doJSONRPC(ctx, client, endpoint, initBody)
-	// notifications/initialized has no id — server returns 204 No Content with empty
-	// body, which causes doJSONRPC to return an EOF decode error that we ignore.
-	_, _ = doJSONRPC(ctx, client, endpoint, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	params, _ := out["params"].(map[string]any)
+	merged := make(map[string]any, len(params)+1)
+	for k, v := range params {
+		merged[k] = v
+	}
+	meta, _ := merged["_meta"].(map[string]any)
+	withMeta := mcp.NewRequestMeta("overcast-workspace-mcp", "1.0.0")
+	for k, v := range meta {
+		withMeta[k] = v
+	}
+	merged["_meta"] = withMeta
+	out["params"] = merged
+	return out
 }
 
+// mirroredNameFor returns the value the Mcp-Name header must carry, for the
+// three methods that name the thing they act on. The server checks the header
+// against the body and rejects a disagreement with -32020, so this reads the
+// value out of the body rather than being told it.
+func mirroredNameFor(method string, rawParams any) (string, bool) {
+	field := ""
+	switch method {
+	case "tools/call", "prompts/get":
+		field = "name"
+	case "resources/read":
+		field = "uri"
+	default:
+		return "", false
+	}
+	params, ok := rawParams.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	value, ok := params[field].(string)
+	if !ok || value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+// doJSONRPC sends one JSON-RPC message to an Overcast MCP endpoint.
+//
+// It makes the message a conforming 2026-07-28 request on the way out, because
+// every caller here wants one and none of them should have to remember how.
+// Since the handshake was removed there is no connection-level state to carry
+// this: a request states its own protocol version in `_meta` and mirrors its
+// method into the Mcp-Method header, or it is refused. Notifications are left
+// alone — they have no id, take no response, and the rules are written for
+// requests.
 func doJSONRPC(ctx context.Context, client *http.Client, endpoint string, payload map[string]any) (map[string]any, error) {
+	method, _ := payload["method"].(string)
+	isRequest := payload["id"] != nil
+	if isRequest {
+		payload = withModernRequestMeta(payload)
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -3011,20 +3044,50 @@ func doJSONRPC(ctx context.Context, client *http.Client, endpoint string, payloa
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if isRequest {
+		req.Header.Set("MCP-Protocol-Version", mcp.ProtocolVersion)
+		req.Header.Set("Mcp-Method", method)
+		if name, ok := mirroredNameFor(method, payload["params"]); ok {
+			req.Header.Set("Mcp-Name", name)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status %d%s", resp.StatusCode, describeRPCFailure(resp.Body))
 	}
-	const maxResponseSize = 10 * 1024 * 1024 // 10 MiB
 	var out map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONRPCResponseSize)).Decode(&out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// describeRPCFailure returns the server's own account of a failed request, as a
+// suffix to hang off the status, or "" when it did not give one.
+//
+// 2026-07-28 rejects a request on its metadata — -32020, -32021, -32022 — with
+// a 400 whose body names the reason. Those are exactly the failures the status
+// cannot describe, because they are about what the request said about itself
+// rather than about what it asked for. Reporting the status alone discards a
+// diagnosis the server had already made.
+func describeRPCFailure(body io.Reader) string {
+	var payload struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, maxJSONRPCResponseSize)).Decode(&payload); err != nil {
+		return ""
+	}
+	if payload.Error == nil || strings.TrimSpace(payload.Error.Message) == "" {
+		return ""
+	}
+	return fmt.Sprintf(": %s (%d)", payload.Error.Message, payload.Error.Code)
 }
 
 func minInt(a, b int) int {

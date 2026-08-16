@@ -20,13 +20,19 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// newMCPRouterTestParts builds the router and its server without registering
-// any cleanup, and hands back the two shutdown hooks with it.
+// mcpDiscoverBody is a well-formed modern request, and the cheapest one there
+// is: `server/discover` takes no parameters of its own and is not a named
+// method, so `Mcp-Method` is the only header it obliges the caller to mirror.
 //
-// Split out of newMCPRouterTestServer for the one test whose subject *is* the
-// shutdown — it has to call these itself and time what happens, which it cannot
-// do if a t.Cleanup owns them. See mcp_shutdown_test.go.
-func newMCPRouterTestParts(t *testing.T, mutateCfg ...func(*config.Config)) (srv *httptest.Server, preShutdown func(), cleanup func(context.Context)) {
+// It is spelled out rather than built, because what these tests need from it is
+// that it is *valid* — a request the server would answer if nothing stopped it.
+// That is what makes 401 and 403 attributable to the thing being tested.
+const mcpDiscoverBody = `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
+	`"io.modelcontextprotocol/protocolVersion":"` + mcp.ProtocolVersion + `",` +
+	`"io.modelcontextprotocol/clientCapabilities":{},` +
+	`"io.modelcontextprotocol/clientInfo":{"name":"router-test","version":"1.0"}}}}`
+
+func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *httptest.Server {
 	t.Helper()
 
 	cfg := &config.Config{
@@ -49,13 +55,7 @@ func newMCPRouterTestParts(t *testing.T, mutateCfg ...func(*config.Config)) (srv
 
 	store := state.NewMemoryStore()
 	handler, preShutdown, cleanup, _ := New(cfg, store, zap.NewNop(), clock.New())
-	return httptest.NewServer(handler), preShutdown, cleanup
-}
-
-func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *httptest.Server {
-	t.Helper()
-
-	srv, preShutdown, cleanup := newMCPRouterTestParts(t, mutateCfg...)
+	srv := httptest.NewServer(handler)
 	t.Cleanup(func() {
 		preShutdown()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -70,25 +70,14 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 	srv := newMCPRouterTestServer(t, func(cfg *config.Config) {
 		cfg.MCPRemoteExposure = true
 		cfg.MCPAuthToken = "test-token"
-		cfg.MCPReplayLimit = 32
 	})
 
-	initBody, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
-		},
-	})
-
-	unauthReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
+	unauthReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(mcpDiscoverBody))
 	if err != nil {
 		t.Fatalf("new unauth request: %v", err)
 	}
 	unauthReq.Header.Set("Content-Type", "application/json")
+	unauthReq.Header.Set("Mcp-Method", "server/discover")
 	unauthResp, err := http.DefaultClient.Do(unauthReq)
 	if err != nil {
 		t.Fatalf("POST /_overcast/mcp unauthenticated: %v", err)
@@ -101,11 +90,12 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 		t.Fatalf("WWW-Authenticate = %q, want bearer challenge", got)
 	}
 
-	authReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
+	authReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(mcpDiscoverBody))
 	if err != nil {
 		t.Fatalf("new auth request: %v", err)
 	}
 	authReq.Header.Set("Content-Type", "application/json")
+	authReq.Header.Set("Mcp-Method", "server/discover")
 	authReq.Header.Set("Authorization", "Bearer test-token")
 	authResp, err := http.DefaultClient.Do(authReq)
 	if err != nil {
@@ -115,171 +105,134 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 	if authResp.StatusCode != http.StatusOK {
 		t.Fatalf("auth status = %d, want 200", authResp.StatusCode)
 	}
+
+	// A 200 alone would also be what a JSON-RPC error looks like, so read far
+	// enough to see the request was served rather than merely admitted.
+	var answer struct {
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if err := json.NewDecoder(authResp.Body).Decode(&answer); err != nil {
+		t.Fatalf("decode authenticated response: %v", err)
+	}
+	if len(answer.Error) > 0 {
+		t.Fatalf("authenticated server/discover returned an error: %s", answer.Error)
+	}
+	if len(answer.Result) == 0 {
+		t.Fatal("authenticated server/discover returned no result")
+	}
 }
 
-func TestRuntimeMCPRoutes_InitializeAndSessionLifecycle(t *testing.T) {
+// TestRuntimeMCPRoutes_ServerWatchesTheShutdownChannel covers the wiring, and
+// only the wiring: the channel this package owns is the channel the server it
+// builds will watch.
+//
+// That a stream then ends when the channel closes is a separate property, and
+// it belongs to internal/mcp — TestSubscriptions_shutdownEndsTheStreamWithA
+// ClosingResult asserts it there, on a server it wires by hand. Which is
+// exactly why that test cannot see this: it supplies its own channel, so it
+// would pass just as happily against a router that forgot to supply one.
+//
+// Asserting the identity rather than the effect is what keeps the two apart. A
+// router-level test that opened a listen stream and waited for it to end would
+// re-run the whole mechanism to observe one assignment, and would have to bound
+// the wait with a deadline — the formulation the deleted
+// TestRuntimeMCPRoutes_SSEStreamLetsGoOnPreShutdown had, which flaked on CI at
+// its 20-second bound. There is nothing to wait for here.
+func TestRuntimeMCPRoutes_ServerWatchesTheShutdownChannel(t *testing.T) {
+	shutdownCh := make(chan struct{})
+
+	srv := newRuntimeMCPServer(&config.Config{}, shutdownCh)
+
+	got := srv.ShutdownSignal()
+	if got == nil {
+		t.Fatal("the server was built with no shutdown signal, so nothing but a client " +
+			"disconnecting will end its streams and shutdown will wait for that forever")
+	}
+	// Compared by identity: a server watching *some* channel is not the point,
+	// and comparing anything else would pass on a channel the router cannot
+	// close.
+	if got != (<-chan struct{})(shutdownCh) {
+		t.Fatal("the server is watching a channel other than the one it was handed")
+	}
+}
+
+// TestRuntimeMCPRoutes_PostIsTheOnlyEndpoint pins the shape of the surface the
+// router exposes: one endpoint, one method.
+//
+// This is what is left of the three tests that drove GET and DELETE at this
+// path — the streamable GET stream, the session lifecycle and the Accept
+// negotiation on GET. Their subjects went with the legacy era in phase 4, but
+// what a client that still tries them gets back is worth stating, because the
+// answer comes from the MCP handler rather than from chi and nothing else says
+// so. 405 with an Allow header tells such a client the path is right and the
+// method is not; a 404 would send it looking for a different URL.
+func TestRuntimeMCPRoutes_PostIsTheOnlyEndpoint(t *testing.T) {
 	srv := newMCPRouterTestServer(t)
 
-	initBody, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": mcp.ProtocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
-		},
-	})
-	initReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
-	if err != nil {
-		t.Fatalf("new initialize request: %v", err)
-	}
-	initReq.Header.Set("Content-Type", "application/json")
-	initResp, err := http.DefaultClient.Do(initReq)
-	if err != nil {
-		t.Fatalf("POST /_overcast/mcp initialize: %v", err)
-	}
-	defer initResp.Body.Close()
-	if initResp.StatusCode != http.StatusOK {
-		t.Fatalf("initialize status = %d, want 200", initResp.StatusCode)
-	}
-	sid := strings.TrimSpace(initResp.Header.Get("MCP-Session-Id"))
-	if sid == "" {
-		t.Fatal("initialize response missing MCP-Session-Id")
-	}
-
-	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/mcp", nil)
-	if err != nil {
-		t.Fatalf("new delete request: %v", err)
-	}
-	delReq.Header.Set("MCP-Session-Id", sid)
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		t.Fatalf("DELETE /_overcast/mcp: %v", err)
-	}
-	defer delResp.Body.Close()
-	if delResp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want 204", delResp.StatusCode)
-	}
-
-	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
-	if err != nil {
-		t.Fatalf("new streamable GET request: %v", err)
-	}
-	getReq.Header.Set("Accept", "text/event-stream")
-	getReq.Header.Set("MCP-Session-Id", sid)
-	getResp, err := http.DefaultClient.Do(getReq)
-	if err != nil {
-		t.Fatalf("GET /_overcast/mcp with deleted session: %v", err)
-	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("streamable GET status = %d, want 400", getResp.StatusCode)
+	// Both spellings of the base path, since the router routes them separately.
+	for _, path := range []string{"/_overcast/mcp", "/_overcast/mcp/"} {
+		for _, method := range []string{http.MethodGet, http.MethodDelete} {
+			t.Run(method+" "+path, func(t *testing.T) {
+				req, err := http.NewRequest(method, srv.URL+path, nil)
+				if err != nil {
+					t.Fatalf("new request: %v", err)
+				}
+				// The header the deleted GET stream answered to. It buys
+				// nothing now, and that is the point of sending it.
+				req.Header.Set("Accept", "text/event-stream")
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("%s %s: %v", method, path, err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusMethodNotAllowed {
+					t.Fatalf("status = %d, want 405", resp.StatusCode)
+				}
+				if got := resp.Header.Get("Allow"); got != http.MethodPost {
+					t.Fatalf("Allow = %q, want POST", got)
+				}
+			})
+		}
 	}
 }
 
-func TestRuntimeMCPRoutes_StreamableGetRequiresAcceptHeader(t *testing.T) {
-	srv := newMCPRouterTestServer(t)
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /_overcast/mcp: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotAcceptable {
-		t.Fatalf("status = %d, want 406", resp.StatusCode)
-	}
-}
-
-func TestRuntimeMCPRoutes_StreamableGetAndLegacySSE_Connect(t *testing.T) {
-	srv := newMCPRouterTestServer(t)
-
-	tests := []struct {
-		name string
-		path string
-	}{
-		{name: "streamable-get", path: "/_overcast/mcp"},
-		{name: "legacy-sse", path: "/_overcast/mcp/sse"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, srv.URL+tt.path, nil)
-			if err != nil {
-				t.Fatalf("new request: %v", err)
-			}
-			req.Header.Set("Accept", "text/event-stream")
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatalf("GET %s: %v", tt.path, err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-			if got := resp.Header.Get("Content-Type"); !strings.Contains(strings.ToLower(got), "text/event-stream") {
-				t.Fatalf("Content-Type = %q, want text/event-stream", got)
-			}
-			buf := make([]byte, 64)
-			n, readErr := resp.Body.Read(buf)
-			if readErr != nil && readErr != io.EOF {
-				t.Fatalf("read SSE prelude: %v", readErr)
-			}
-			if !strings.Contains(string(buf[:n]), ": connected") {
-				t.Fatalf("SSE prelude = %q, want : connected", string(buf[:n]))
-			}
-		})
-	}
-}
-
+// TestRuntimeMCPRoutes_RejectForbiddenOrigin covers the browser-facing
+// protection on the surface, which POST now carries alone.
+//
+// Origin validation survived the removal of the GET stream and the DELETE
+// endpoint and did not narrow with them: it is checked in handleRPC before the
+// body is read, so a page on another origin cannot reach the emulator through a
+// user's browser whatever it asks for. That check having exactly one entry
+// point to guard is a simplification, not a reduction in what is guarded.
 func TestRuntimeMCPRoutes_RejectForbiddenOrigin(t *testing.T) {
 	srv := newMCPRouterTestServer(t)
 
-	postReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(mcpDiscoverBody))
 	if err != nil {
 		t.Fatalf("new POST request: %v", err)
 	}
-	postReq.Header.Set("Content-Type", "application/json")
-	postReq.Header.Set("Origin", "https://evil.example")
-	postResp, err := http.DefaultClient.Do(postReq)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mcp-Method", "server/discover")
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /_overcast/mcp with forbidden origin: %v", err)
 	}
-	defer postResp.Body.Close()
-	if postResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("POST status = %d, want 403", postResp.StatusCode)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 
-	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
+	// Rejected before dispatch, so a request the server would otherwise have
+	// answered gets nothing back. Sending a well-formed one above is what makes
+	// that assertable: a body the server would have refused anyway could not
+	// tell a rejected origin from a rejected request.
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("new GET request: %v", err)
+		t.Fatalf("read body: %v", err)
 	}
-	getReq.Header.Set("Accept", "text/event-stream")
-	getReq.Header.Set("Origin", "https://evil.example")
-	getResp, err := http.DefaultClient.Do(getReq)
-	if err != nil {
-		t.Fatalf("GET /_overcast/mcp with forbidden origin: %v", err)
-	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("GET status = %d, want 403", getResp.StatusCode)
-	}
-
-	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/mcp", nil)
-	if err != nil {
-		t.Fatalf("new DELETE request: %v", err)
-	}
-	delReq.Header.Set("Origin", "https://evil.example")
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		t.Fatalf("DELETE /_overcast/mcp with forbidden origin: %v", err)
-	}
-	defer delResp.Body.Close()
-	if delResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("DELETE status = %d, want 403", delResp.StatusCode)
+	if strings.Contains(string(body), `"result"`) {
+		t.Fatalf("forbidden origin was answered with a result: %q", body)
 	}
 }

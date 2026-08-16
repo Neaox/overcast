@@ -1,6 +1,7 @@
 # Migrating MCP to revision 2026-07-28
 
-Status: in progress. Phases 1, 2 and 3 are merged; phase 4 is next.
+Status: in progress. Phases 1 through 4 are merged. Phase 5 is not started and
+may never be — see below.
 
 | Phase | State | Landed in |
 |---|---|---|
@@ -11,19 +12,18 @@ Status: in progress. Phases 1, 2 and 3 are merged; phase 4 is next.
 | 2c — `Mcp-Method` / `Mcp-Name` headers | done | #1020 |
 | 3a — `subscriptions/listen` | done | #1021 |
 | 3b-i — observation harness, broadcast tests ported | done | #1022 |
-| 3b-ii — per-request response stream, request-scoped tests ported | done | this branch |
-| 4 — sessions, replay, GET stream, handshake | next | — |
-| 5 — MRTR | not started | — |
+| 3b-ii — per-request response stream, request-scoped tests ported | done | #1023, #1024 |
+| 4 — sessions, replay, GET stream, handshake | done | this branch |
+| 5 — MRTR | not started, and not yet warranted | — |
 
-Everything so far is additive: the 2025-11-25 handshake, sessions, replay and
-the GET stream all still work. A request carrying `_meta` with a protocol
-version is served statelessly; one without it takes the legacy path. Phase 4 is
-where the legacy half is deleted.
+Phases 1 to 3 were additive: both eras worked, and a request carrying `_meta`
+with a protocol version was served statelessly while one without it took the
+legacy path. Phase 4 deleted the legacy half, so Overcast's MCP servers now
+speak revision `2026-07-28` and nothing else (`internal/mcp/server.go`,
+`ProtocolVersion` — there is one such constant now, not two).
 
-Overcast's MCP servers speak revision `2025-11-25`
-(`internal/mcp/server.go`, `ProtocolVersion`). The current published revision is
-`2026-07-28`. This document says what that move costs, what it removes, what it
-adds, and in what order it is worth doing.
+This document says what that move cost, what it removed, what it added, and in
+what order it was worth doing.
 
 Read `docs/plans/mcp.md` first — it describes the two servers this changes.
 
@@ -40,10 +40,15 @@ The spec's own terms for the two eras are worth adopting, because the
 compatibility rules are written in them:
 
 - **Legacy** — versions that establish a session with an `initialize`
-  handshake: `2025-11-25` and earlier. This is what Overcast speaks.
+  handshake: `2025-11-25` and earlier. This is what Overcast spoke.
 - **Modern** — versions that carry version, identity and capabilities as
-  per-request metadata: `2026-07-28` and later.
-- **Dual-era** — an implementation that serves both.
+  per-request metadata: `2026-07-28` and later. This is what Overcast speaks.
+- **Dual-era** — an implementation that serves both. Overcast is not one.
+
+The terms were load-bearing while both eras were live and are now historical.
+The code has dropped them: there is one `ProtocolVersion`, and the field that
+records whether a request declared one is `requestMeta.versioned` rather than
+`.modern`, because "modern" no longer distinguishes it from anything.
 
 ### Removed
 
@@ -209,13 +214,66 @@ Deletion, once nothing depends on them. Includes `MCPReplayLimit` and
 `OVERCAST_MCP_REPLAY_LIMIT`, and `SetNotificationReplayLimit` (an API break for
 `internal/router`). `Server.Ready()` goes too.
 
+**Done.** Five things the deletion turned up that the proposal did not predict:
+
+- **Three names were still describing the deleted world in code, not comments.**
+  `supportedProtocolVersions` listed `2025-11-25` alongside the modern
+  revision, so `server/discover` and every `-32022` were inviting clients into
+  an era with no handshake, no session and no GET stream left to serve them.
+  The workspace-info tool reported the same value as `mcp_version`. Both were
+  fixed by collapsing `ModernProtocolVersion` and `ProtocolVersion` into the
+  one constant there is now.
+- **Log filtering had silently become a constant**, exactly as the phase-3b
+  note below warned. Closed here rather than deferred to phase 5: the threshold
+  lives on `requestStream`, an absent one means silence rather than a default
+  (the revision forbids emitting to a request that named no level), and the
+  check runs before the params are built so an emit with no audience allocates
+  nothing.
+- **The deletion left dead structure behind, not just dead prose.**
+  `InitializeResult`, `DefaultReplayLimit`, the `Last-Event-ID` error values,
+  `inFlightRequest.method` and `cancelInFlight`'s refusal to cancel an
+  `initialize` all compiled fine and meant nothing. `streamFor` was the first of
+  these and was caught the same way; a compile error was never going to find any
+  of them.
+- **Validation moved ahead of registration** in `handleRPCInternal`. A request
+  the server will refuse should not first be registered as one it is serving,
+  and doing it in that order also means the stream is fully configured before
+  `registerInFlight` publishes it to the goroutine that may cancel the request.
+- **Deleting the GET stream left the router's shutdown wiring untested**, and
+  the one line it hangs on is the one that twice hung a CI package until the
+  binary timed out. `TestRuntimeMCPRoutes_SSEStreamLetsGoOnPreShutdown` was the
+  only thing checking that `internal/router` hands the server its shutdown
+  channel, and `internal/mcp`'s own test wires one by hand so it cannot see the
+  omission. Building the server became a function taking the channel — the shape
+  `eventsHandler` and `domainsWatchHandler` already have, where leaving it out
+  does not compile — and `Server.ShutdownSignal` is exported so the host can
+  assert by identity that its channel arrived. Deliberately an identity check:
+  opening a listen stream to watch it end would re-run the whole mechanism to
+  observe one assignment, and would need the deadline that made the deleted
+  test flake.
+
 ### 5 — MRTR
 
-Only worth doing when a tool actually needs elicitation. Handlers should return
-an intent and let the layer above shape the `InputRequiredResult`, so
-`requestState` signing and replay protection live in one place — the spec
-requires servers to treat `requestState` as attacker-controlled and to protect
-its integrity.
+**Only worth doing when a tool actually needs elicitation, and none does.** As of
+phase 4 no Overcast tool asks the user anything: every handler either answers
+from repo or runtime state or fails. MRTR would be a whole feature — signed
+`requestState`, replay protection, an `input_required` result shape — with no
+caller, which is the same argument that kept `requireCapability` out of phase 1.
+So this stays unbuilt until a tool needs it, and the plan is complete without it.
+
+Two things to know when that day comes:
+
+- **`tools/call` cannot express a non-complete result today.** It answers with a
+  typed `ToolResult`, and `stampResult` only stamps map-shaped results, so there
+  is nowhere for `resultType: "input_required"` to go. That is legal now — an
+  absent `resultType` means `complete` — but it is the first thing MRTR has to
+  change.
+- **Handlers should return an intent** and let the layer above shape the
+  `InputRequiredResult`, so `requestState` signing and replay protection live in
+  one place; the spec requires servers to treat `requestState` as
+  attacker-controlled and to protect its integrity. A `requireCapability` helper
+  returning `-32021` belongs there too — `requestMeta.capabilities` is parsed and
+  carried ready for it.
 
 ## The real cost is the tests
 
@@ -272,27 +330,37 @@ phase 4:
 - **`emitProgress`, `emitCancelled` and `emitLogMessage` currently emit twice** —
   once to the request's stream, once to the legacy broadcast. The second call is
   scaffolding for the GET stream and should be deleted with it, which is what
-  finally removes `emitNotification`.
+  finally removes `emitNotification`. *Done in phase 4.*
 - **Per-request log level is still unfinished.** `parseRequestMeta` reads
   `io.modelcontextprotocol/logLevel` into `requestMeta.logLevel` (phase 1) and
   nothing reads it; `shouldEmitLog` still consults the connection-scoped
   `s.logLevel` that `logging/setLevel` sets. Phase 4 removes that method, so it
   must move the threshold onto the request at the same time or log filtering
-  silently becomes "always info".
+  silently becomes "always info". *Done in phase 4, and it settled a question
+  this note did not ask: an absent level is not a default threshold but no
+  threshold at all, because the revision says a server "MUST NOT emit
+  notifications/message for requests that did not include this field".*
 
 A related hazard: `ServeStdio` has no dispatcher of its own — it synthesises an
 `http.Request` and pushes it through `RootHandler()`. Every removal in phases 1
 and 4 changes the stdio path too, and its synchronous-dispatch carve-out for
 `initialize` loses its reason to exist, which changes the loop's concurrency
-model.
+model. *This landed as predicted: notifications still run inline because they
+produce no response, and everything else is dispatched concurrently.* One
+consequence it did not predict is that stdio tests must build their messages
+through a helper that adds `_meta`, since a hand-marshalled request is now
+refused — two stdio tests failed on exactly that, one of them reporting it four
+steps downstream as "timed out waiting for handler to start".
 
 ## Docs to update
 
-`docs/plans/mcp.md` (states "Both servers target MCP `2025-11-25`"; its
-transport, capability and "known gaps" sections all go stale — it lists
-configurable notification replay as a future improvement, which this cancels),
-`internal/router/mcp_routes.go`'s header comment (documents the GET stream, the
-DELETE endpoint and the session strategy), and `docs/dev/architecture.md`.
+*Done.* `docs/plans/mcp.md` — its protocol, transport, logging and known-gaps
+sections; the future improvement it listed for configurable notification replay
+is deleted rather than rewritten, since this cancels it.
+`internal/router/mcp_routes.go`'s header comment, which documented the GET
+stream, the DELETE endpoint and the session strategy. `docs/dev/architecture.md`
+needed nothing: its one MCP sentence names the endpoint and what it exposes, and
+neither changed.
 
 ## Open questions the spec does not settle
 
@@ -303,7 +371,11 @@ DELETE endpoint and the session strategy), and `docs/dev/architecture.md`.
    for stdio at all.
 3. A missing `MCP-Protocol-Version` header yields `-32020`; a missing
    `_meta` protocol version yields `-32602`. Which applies when both are absent
-   is not stated.
+   is not stated. *Settled in code, in `requestMeta.validate`: the body wins, so
+   both-absent is `-32602`. Protocol metadata lives in the body — "All protocol
+   metadata travels in the message body … A binding MAY additionally mirror
+   selected body fields into envelope metadata" — so a missing mirror is a lesser
+   fault than a missing original, and stdio has no mirror at all.*
 4. `inputResponses` / `requestState` placement is exemplified only for
    `tools/call`; `prompts/get` and `resources/read` are inferred.
 5. No defined way for a client to say "the user declined" to an

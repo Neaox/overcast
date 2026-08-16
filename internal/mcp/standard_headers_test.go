@@ -22,7 +22,7 @@ import (
 
 func modernHeaders(method, name string) map[string]string {
 	headers := map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": ProtocolVersion,
 		"Mcp-Method":           method,
 	}
 	if name != "" {
@@ -32,7 +32,7 @@ func modernHeaders(method, name string) map[string]string {
 }
 
 func modernParams(extra map[string]any) map[string]any {
-	params := map[string]any{"_meta": modernMeta()}
+	params := map[string]any{"_meta": metaBlock()}
 	for k, v := range extra {
 		params[k] = v
 	}
@@ -65,7 +65,10 @@ func TestStandardHeaders_missingMethodHeaderIsRefused(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 		"params": modernParams(nil),
-	}, map[string]string{"MCP-Protocol-Version": ModernProtocolVersion})
+		// Explicitly empty rather than absent: mcpPost fills in the mirrored
+		// headers a conforming request needs, and this test's subject is what
+		// happens without one.
+	}, map[string]string{"MCP-Protocol-Version": ProtocolVersion, "Mcp-Method": ""})
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -144,11 +147,10 @@ func TestStandardHeaders_base64EncodedNameIsDecodedBeforeComparing(t *testing.T)
 func TestStandardHeaders_legacyRequestIsExempt(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
-	requireLifecycleReady(t, srv)
 
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-	}, operationHeaders())
+	}, nil)
 	defer resp.Body.Close() //nolint:errcheck
 
 	if _, rpcErr := decodeRPC(t, resp); rpcErr != nil {
@@ -167,7 +169,7 @@ func TestStandardHeaders_stdioIsExempt(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	rpcReq := jsonRPCRequest{JSONRPC: "2.0", Method: "tools/list"}
-	meta := requestMeta{modern: true, protocolVersion: ModernProtocolVersion}
+	meta := requestMeta{versioned: true, protocolVersion: ProtocolVersion}
 
 	if got := validateStandardHeaders(req, rpcReq, meta); got != nil {
 		t.Fatalf("a stdio request was held to the HTTP binding's header rule: %v", got)

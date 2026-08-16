@@ -213,10 +213,18 @@ func withSubscriptionID(params map[string]any, id string) map[string]any {
 // handleSubscriptionsListen opens the stream and serves it until the client
 // goes away or the emulator shuts down.
 func (s *Server) handleSubscriptionsListen(w http.ResponseWriter, req jsonRPCRequest, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeJSONRPCError(w, req.ID, &rpcError{Code: RPCInternalError, Message: "streaming unsupported"})
-		return
+	// Where this stream's messages go. Over stdio the loop supplies its own
+	// writer, because a synthesised request has no real ResponseWriter to
+	// stream through; over HTTP the response itself is the stream. See
+	// message_writer.go.
+	out := stdioWriterFrom(r.Context())
+	if out == nil {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeJSONRPCError(w, req.ID, &rpcError{Code: RPCInternalError, Message: "streaming unsupported"})
+			return
+		}
+		out = sseWriter{w: w, flusher: flusher}
 	}
 
 	var params struct {
@@ -233,10 +241,12 @@ func (s *Server) handleSubscriptionsListen(w http.ResponseWriter, req jsonRPCReq
 	sub, remove := s.addSubscription(id, params.Notifications)
 	defer remove()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
+	if _, overHTTP := out.(sseWriter); overHTTP {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+	}
 
 	// The acknowledgement comes first and carries the subscription id. The
 	// filter echoed back is what the server agreed to honour — identical here,
@@ -252,14 +262,14 @@ func (s *Server) handleSubscriptionsListen(w http.ResponseWriter, req jsonRPCReq
 	if err != nil {
 		return
 	}
-	writeSSEData(w, flusher, ack)
+	out.writeMessage(ack)
 
-	s.serveSubscription(w, flusher, sub, req, r.Context())
+	s.serveSubscription(out, sub, req, r.Context())
 }
 
 // serveSubscription is the stream's lifetime.
-func (s *Server) serveSubscription(w http.ResponseWriter, flusher http.Flusher, sub *subscription, req jsonRPCRequest, ctx context.Context) {
-	shutdown := s.shutdownSignal()
+func (s *Server) serveSubscription(out messageWriter, sub *subscription, req jsonRPCRequest, ctx context.Context) {
+	shutdown := s.ShutdownSignal()
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
 
@@ -269,24 +279,31 @@ func (s *Server) serveSubscription(w http.ResponseWriter, flusher http.Flusher, 
 			// Going down. The spec asks for the empty result that marks a
 			// graceful end, so a client can tell this from a dropped
 			// connection and decide whether to reconnect.
-			s.endSubscription(w, flusher, sub, req)
+			s.endSubscription(out, sub, req)
 			return
 		case <-ctx.Done():
 			return
 		case payload := <-sub.ch:
-			writeSSEData(w, flusher, payload)
+			out.writeMessage(payload)
 		case <-heartbeat.C:
-			// An SSE comment. See sseHeartbeatInterval: a long-lived stream
-			// that says nothing is indistinguishable from a dead one, and this
-			// is the stream the spec names when it recommends a keep-alive.
-			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
-			flusher.Flush()
+			// Keep-alive, and only where a keep-alive means anything. An SSE
+			// comment tells an idle HTTP connection apart from a dead one — see
+			// sseHeartbeatInterval, and note that with `ping` removed this is
+			// the only liveness mechanism left. Stdio has neither the problem
+			// nor the syntax: a pipe is alive until it closes, and anything
+			// written there has to be a JSON-RPC message rather than a comment.
+			// The revision gives no keep-alive story for stdio because it needs
+			// none.
+			if sse, overHTTP := out.(sseWriter); overHTTP {
+				_, _ = fmt.Fprint(sse.w, ": heartbeat\n\n")
+				sse.flusher.Flush()
+			}
 		}
 	}
 }
 
 // endSubscription sends the empty result that marks a graceful close.
-func (s *Server) endSubscription(w http.ResponseWriter, flusher http.Flusher, sub *subscription, req jsonRPCRequest) {
+func (s *Server) endSubscription(out messageWriter, sub *subscription, req jsonRPCRequest) {
 	final, err := json.Marshal(jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
@@ -298,12 +315,7 @@ func (s *Server) endSubscription(w http.ResponseWriter, flusher http.Flusher, su
 	if err != nil {
 		return
 	}
-	writeSSEData(w, flusher, final)
-}
-
-func writeSSEData(w http.ResponseWriter, flusher http.Flusher, payload []byte) {
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
-	flusher.Flush()
+	out.writeMessage(final)
 }
 
 // subscriptionIDOf renders a JSON-RPC id as the string used to correlate

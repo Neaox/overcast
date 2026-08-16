@@ -50,10 +50,21 @@ import (
 // cancellation is asked for by a *different* request, so the goroutine emitting
 // the notification has nothing but the cancelled request's id to find it by.
 type requestStream struct {
-	mu      sync.Mutex
-	w       http.ResponseWriter
-	flusher http.Flusher
+	mu  sync.Mutex
+	out messageWriter
+
+	// http is set only when this stream is an HTTP response, and carries the
+	// bits that only exist there: headers that have to be written before the
+	// first message, and a status that can still change until they are. Nil over
+	// stdio, where a message is a line and there is nothing to write first.
+	http    http.ResponseWriter
 	started bool
+
+	// logLevel is the threshold this request named in `_meta`, empty when it
+	// named none. Written once by the dispatcher before the request is
+	// registered in flight, so no other goroutine can be holding this stream
+	// yet; read from there on, under no lock, because nothing writes it again.
+	logLevel string
 }
 
 // requestStreamKey carries the stream from the HTTP layer to the dispatcher.
@@ -78,11 +89,14 @@ func (rs *requestStream) begin() {
 		return
 	}
 	rs.started = true
-	rs.w.Header().Set("Content-Type", "text/event-stream")
-	rs.w.Header().Set("Cache-Control", "no-cache")
-	rs.w.Header().Set("Connection", "keep-alive")
-	rs.w.Header().Set("X-Accel-Buffering", "no")
-	rs.w.WriteHeader(http.StatusOK)
+	if rs.http == nil {
+		return // stdio: a message is a line, and there is no header to write
+	}
+	rs.http.Header().Set("Content-Type", "text/event-stream")
+	rs.http.Header().Set("Cache-Control", "no-cache")
+	rs.http.Header().Set("Connection", "keep-alive")
+	rs.http.Header().Set("X-Accel-Buffering", "no")
+	rs.http.WriteHeader(http.StatusOK)
 }
 
 // notify writes one notification to the stream.
@@ -105,8 +119,35 @@ func (rs *requestStream) notify(method string, params any) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	rs.begin()
-	_, _ = fmt.Fprintf(rs.w, "data: %s\n\n", payload)
-	rs.flusher.Flush()
+	rs.out.writeMessage(payload)
+}
+
+// setLogLevel records the threshold this request named. A nil receiver is a
+// request that asked for no stream, which has nothing to record it on.
+func (rs *requestStream) setLogLevel(level string) {
+	if rs == nil {
+		return
+	}
+	rs.logLevel = level
+}
+
+// wantsLog reports whether this request asked to be told about something at
+// this level.
+//
+// Silence is the default and the request is what breaks it: "servers MUST NOT
+// emit notifications/message for requests that did not include this field". So
+// an absent level is not "the usual threshold" — it is none, and a request that
+// asked for nothing hears nothing.
+//
+// A nil receiver — a request that asked for no stream at all — answers the same
+// way, because it has nowhere to put a notification either. Both answers are
+// given here rather than inside notify so that a caller assembling a message
+// body can be told not to bother first. See emitLogMessage.
+func (rs *requestStream) wantsLog(level string) bool {
+	if rs == nil || rs.logLevel == "" {
+		return false
+	}
+	return loggingLevelRank(level) <= loggingLevelRank(rs.logLevel)
 }
 
 // hasStarted reports whether anything has gone out yet, which is what decides
@@ -126,9 +167,14 @@ func (rs *requestStream) finish(body string) {
 	defer rs.mu.Unlock()
 	rs.begin()
 	if body == "" {
-		_, _ = fmt.Fprint(rs.w, ": no response\n\n")
-	} else {
-		_, _ = fmt.Fprintf(rs.w, "data: %s\n\n", body)
+		// A request with no answer — a cancelled call. Over HTTP the stream ends
+		// with a comment so the client sees a well-formed close; over stdio
+		// there is simply nothing more to say about this id.
+		if sse, overHTTP := rs.out.(sseWriter); overHTTP {
+			_, _ = fmt.Fprint(sse.w, ": no response\n\n")
+			sse.flusher.Flush()
+		}
+		return
 	}
-	rs.flusher.Flush()
+	rs.out.writeMessage([]byte(body))
 }

@@ -109,7 +109,7 @@ var namedMethods = map[string]string{
 // Applies only to a modern request over HTTP. A legacy request predates the
 // requirement, and stdio has no headers to mirror — see the file comment.
 func validateStandardHeaders(r *http.Request, req jsonRPCRequest, meta requestMeta) *rpcError {
-	if !meta.modern || isStdioTransport(r.Context()) {
+	if !meta.versioned || isStdioTransport(r.Context()) {
 		return nil
 	}
 

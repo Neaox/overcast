@@ -996,8 +996,8 @@ func TestRuntimeProbeInstanceReportsHealthAndMCP(t *testing.T) {
 			method, _ := req["method"].(string)
 			w.Header().Set("Content-Type", "application/json")
 			switch method {
-			case "initialize":
-				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-init","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}}`))
+			case "server/discover":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-discover","result":{"supportedVersions":["2026-07-28","2025-11-25"],"capabilities":{"tools":{}}}}`))
 			case "tools/list":
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-tools","result":{"tools":[{"name":"repo_workspace_info"},{"name":"runtime_probe_instance"}]}}`))
 			default:
@@ -1027,25 +1027,29 @@ func TestRuntimeProbeInstanceReportsHealthAndMCP(t *testing.T) {
 	if got["tool_count"].(int) != 2 {
 		t.Fatalf("expected tool_count=2, got %#v", got["tool_count"])
 	}
+	// A modern server advertises every version it accepts, newest first, rather
+	// than one it negotiated — there is no negotiation — so the probe reports
+	// the newest of the list as the version a client would go on to use.
+	if got["mcp_protocol_version"] != "2026-07-28" {
+		t.Fatalf("expected mcp_protocol_version from supportedVersions[0], got %#v", got["mcp_protocol_version"])
+	}
 	if summary, ok := got["summary"].(string); !ok || summary == "" {
 		t.Fatalf("expected summary field, got %#v", got["summary"])
 	}
 }
 
-// TestRuntimeProbeInstanceCompletesLifecycleHandshake verifies that the probe
-// sends notifications/initialized after initialize, preventing the server from
-// getting stuck in initDone=true, ready=false state (which would block all
-// subsequent operation requests with a lifecycle error).
-func TestRuntimeProbeInstanceCompletesLifecycleHandshake(t *testing.T) {
+// TestRuntimeProbeInstanceProbesRealServer points the probe at a real
+// mcp.Server rather than a stub, which is the only thing that can tell us the
+// request Overcast's own client sends is one Overcast's own server accepts.
+// The stub-backed probe tests answer whatever they are asked and so cannot.
+func TestRuntimeProbeInstanceProbesRealServer(t *testing.T) {
 	root := t.TempDir()
 	provider := NewRepoProvider(root)
 
-	// Use a real MCP server to enforce lifecycle ordering.
 	mcpSrv := mcp.NewServer(nil, nil)
 	srv := httptest.NewServer(mcpSrv.RootHandler())
 	defer srv.Close()
 
-	// Probe the real server — it enforces lifecycle.
 	params, _ := json.Marshal(map[string]any{"endpoint": srv.URL})
 	out, err := provider.toolRuntimeProbeInstance(context.Background(), params)
 	if err != nil {
@@ -1056,11 +1060,78 @@ func TestRuntimeProbeInstanceCompletesLifecycleHandshake(t *testing.T) {
 		t.Fatalf("expected mcp_available=true after probe, got %#v", got)
 	}
 
-	// The probe must have completed the full handshake (initialize +
-	// notifications/initialized). Check the server's ready state directly so
-	// we don't add extra HTTP connections that could perturb test scheduling.
-	if !mcpSrv.Ready() {
-		t.Fatal("expected server to be in ready state after probe (notifications/initialized was not sent)")
+	// There is no handshake left to have completed: server/discover establishes
+	// nothing, which is why it replaced initialize as the probe. What is being
+	// asserted is that the `_meta` and the Mcp-Method header doJSONRPC attaches
+	// satisfy the server's own validation — a stub would accept them regardless.
+	if got["mcp_protocol_version"] != mcp.ProtocolVersion {
+		t.Fatalf("expected the server's advertised version, got %#v", got["mcp_protocol_version"])
+	}
+}
+
+// TestRuntimeProbeInstanceSurfacesServerRPCError asserts the probe reports what
+// the server said was wrong, not merely that something was.
+//
+// 2026-07-28 answers -32020, -32021 and -32022 with a 400 carrying a JSON-RPC
+// error object, and those are precisely the failures a client cannot diagnose
+// from the status alone — they are about the request's metadata, which the
+// status does not name. Discarding the body turns a server that explained
+// itself into "unexpected status 400".
+func TestRuntimeProbeInstanceSurfacesServerRPCError(t *testing.T) {
+	root := t.TempDir()
+	provider := NewRepoProvider(root)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/_overcast/mcp":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-discover","error":{"code":-32022,"message":"unsupported protocol version 1999-01-01"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	params, _ := json.Marshal(map[string]any{"endpoint": srv.URL})
+	out, err := provider.toolRuntimeProbeInstance(context.Background(), params)
+	if err != nil {
+		t.Fatalf("toolRuntimeProbeInstance() error = %v", err)
+	}
+	got := out.(map[string]any)
+	if got["mcp_available"].(bool) {
+		t.Fatalf("expected mcp_available=false, got %#v", got)
+	}
+	probeErrors, _ := got["errors"].([]string)
+	if len(probeErrors) != 1 {
+		t.Fatalf("expected exactly one probe error, got %#v", probeErrors)
+	}
+	for _, want := range []string{"400", "-32022", "unsupported protocol version 1999-01-01"} {
+		if !strings.Contains(probeErrors[0], want) {
+			t.Fatalf("probe error %q does not mention %q", probeErrors[0], want)
+		}
+	}
+}
+
+// TestDoJSONRPCFallsBackToStatusWithoutRPCError covers the other half: a body
+// that is not a JSON-RPC error explains nothing, so the status has to remain
+// the whole of the message rather than being buried under a parse failure.
+func TestDoJSONRPCFallsBackToStatusWithoutRPCError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("<html>proxy is unwell</html>"))
+	}))
+	defer srv.Close()
+
+	body := map[string]any{"jsonrpc": "2.0", "id": "x", "method": "tools/list"}
+	_, err := doJSONRPC(context.Background(), srv.Client(), srv.URL, body)
+	if err == nil {
+		t.Fatal("expected an error from a 502 response")
+	}
+	if !strings.Contains(err.Error(), "502") {
+		t.Fatalf("error %q does not name the status", err.Error())
 	}
 }
 
@@ -1081,8 +1152,8 @@ func TestRuntimeProbeInstanceUsesCacheAndForceRefresh(t *testing.T) {
 			method, _ := req["method"].(string)
 			w.Header().Set("Content-Type", "application/json")
 			switch method {
-			case "initialize":
-				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-init","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}}`))
+			case "server/discover":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-discover","result":{"supportedVersions":["2026-07-28","2025-11-25"],"capabilities":{"tools":{}}}}`))
 			case "tools/list":
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-tools","result":{"tools":[{"name":"runtime_probe_instance"}]}}`))
 			default:
@@ -1152,8 +1223,8 @@ func TestRuntimeRefreshProbeCacheClearsEndpointAndAll(t *testing.T) {
 			method, _ := req["method"].(string)
 			w.Header().Set("Content-Type", "application/json")
 			switch method {
-			case "initialize":
-				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-init","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}}`))
+			case "server/discover":
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-discover","result":{"supportedVersions":["2026-07-28","2025-11-25"],"capabilities":{"tools":{}}}}`))
 			case "tools/list":
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"probe-tools","result":{"tools":[{"name":"runtime_probe_instance"}]}}`))
 			default:

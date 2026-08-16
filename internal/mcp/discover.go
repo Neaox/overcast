@@ -86,9 +86,12 @@ func serverInfoBlock() map[string]string {
 // values win, so a result that has already said it is something other than
 // `complete` — an MRTR `input_required`, when that arrives — is left alone.
 //
-// Only map-shaped results are stamped. The typed ones are the legacy handshake
-// results, which belong to a revision that has no resultType; and a 2025-11-25
-// client ignores fields it does not know, so nothing is harmed either way.
+// Only map-shaped results are stamped. The one typed result left is
+// `ToolResult`, which every `tools/call` is answered with: a struct with a
+// fixed set of JSON fields and nowhere to put a resultType. That is legal,
+// because the revision defines an absent resultType as `complete` — but it is
+// also what phase 5 has to change, since MRTR needs a `tools/call` to be able
+// to say `input_required`.
 func stampResult(payload any) any {
 	result, ok := payload.(map[string]any)
 	if !ok {

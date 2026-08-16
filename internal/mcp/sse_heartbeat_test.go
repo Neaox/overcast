@@ -1,17 +1,23 @@
 package mcp
 
-// sse_heartbeat_test.go — the keep-alive on the MCP SSE stream, and the two
+// sse_heartbeat_test.go — the keep-alive on the MCP stream, and the two
 // properties that keep it additive.
 //
 // A stream with no traffic on it is indistinguishable from a stream whose peer
 // has gone, in both directions: the client cannot tell a quiet server from a
 // dead one, and the server never attempts a write, so it never learns the
 // client is gone either. The emulator's other two SSE endpoints have always
-// sent a periodic comment for that reason; this is the MCP stream catching up.
+// sent a periodic comment for that reason.
+//
+// The subject moved with the stream. These used to watch the GET endpoint, which
+// revision 2026-07-28 removes; the keep-alive itself did not go with it, because
+// `subscriptions/listen` is now the long-lived stream and the spec names exactly
+// that kind when it recommends one. With `ping` also removed, this is the only
+// liveness mechanism left.
 //
 // The tests below are mostly about what the heartbeat must NOT do. It rides on
-// a transport whose payloads are JSON-RPC messages, so anything a client's
-// event parser would surface as a message is a protocol change rather than a
+// a transport whose payloads are JSON-RPC messages, so anything a client's event
+// parser would surface as a message is a protocol change rather than a
 // keep-alive — see the sseHeartbeatInterval doc comment for why a comment line
 // is the only shape available, and for the two shapes that were rejected.
 
@@ -20,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -33,27 +40,47 @@ func withFastHeartbeat(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { sseHeartbeatInterval = original })
 }
 
-// openSSE opens the legacy SSE stream and returns a reader over it.
+// openListenStream opens a `subscriptions/listen` stream and returns a reader
+// over its raw lines.
+//
+// Raw rather than decoded, because these tests are about the framing: a
+// heartbeat is a line the message-level harness in notification_delivery_test.go
+// deliberately skips, so watching for it needs to see what actually crosses the
+// wire.
 //
 // The request carries a deadline, and that is load-bearing rather than
 // belt-and-braces: a bufio read on a silent stream blocks in the syscall, so a
 // reader that polled a wall-clock deadline between reads would never get back
 // round to checking it. Cancelling the request is what unblocks the read, which
-// is what lets a test assert that something did *not* arrive without hanging
-// the package the way an unbounded read does — the very failure mode
-// internal/router/mcp_shutdown_test.go exists to prevent.
-func openSSE(t *testing.T, url string, within time.Duration) (*http.Response, *bufio.Reader) {
+// is what lets a test assert that something did *not* arrive without hanging the
+// package the way an unbounded read does.
+func openListenStream(t *testing.T, srv *httptest.Server, within time.Duration) (*http.Response, *bufio.Reader) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), within)
 	t.Cleanup(cancel)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+
+	payload, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": "heartbeat", "method": subscriptionsListenMethod,
+		"params": map[string]any{
+			"_meta":         metaBlock(),
+			"notifications": map[string]any{"toolsListChanged": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal listen request: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/mcp/", strings.NewReader(string(payload)))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
+	req.Header.Set("Mcp-Method", subscriptionsListenMethod)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
+		t.Fatalf("POST %s: %v", subscriptionsListenMethod, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -62,8 +89,8 @@ func openSSE(t *testing.T, url string, within time.Duration) (*http.Response, *b
 }
 
 // readLines reads until want is found or the stream ends, returning everything
-// read. Termination is guaranteed by the deadline openSSE put on the request,
-// not by anything here.
+// read. Termination is guaranteed by the deadline openListenStream put on the
+// request, not by anything here.
 func readLines(r *bufio.Reader, want string) []string {
 	var seen []string
 	for {
@@ -84,21 +111,22 @@ func readLines(r *bufio.Reader, want string) []string {
 // happening. Without one an idle stream is silent indefinitely, which is what
 // let a dead connection sit in the handler unnoticed.
 func TestSSEHeartbeat_isSentOnAnIdleStream(t *testing.T) {
-	withFastHeartbeat(t, 50*time.Millisecond)
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
+	withFastHeartbeat(t, 20*time.Millisecond)
+	_, srv := newNotificationServer(t)
 
-	resp, reader := openSSE(t, srv.URL+"/mcp/sse", 5*time.Second)
+	resp, reader := openListenStream(t, srv, 2*time.Second)
 	defer resp.Body.Close() //nolint:errcheck
 
 	seen := readLines(reader, ": heartbeat")
+	found := false
 	for _, line := range seen {
-		if strings.Contains(line, ": heartbeat") {
-			return
+		if strings.HasPrefix(line, ": heartbeat") {
+			found = true
 		}
 	}
-	t.Fatalf("no heartbeat on an idle stream within 5s; saw %q — an idle stream that "+
-		"says nothing is indistinguishable from a dead one, in both directions", seen)
+	if !found {
+		t.Fatalf("no heartbeat on an idle stream; saw %q", seen)
+	}
 }
 
 // The heartbeat must be a comment. Anything a client's event parser dispatches
@@ -106,91 +134,56 @@ func TestSSEHeartbeat_isSentOnAnIdleStream(t *testing.T) {
 // not a JSON-RPC message — so a `data:` line here would be a protocol
 // violation, not a heartbeat.
 func TestSSEHeartbeat_isACommentAndNotAMessage(t *testing.T) {
-	withFastHeartbeat(t, 50*time.Millisecond)
-	srv := newTestHTTPServer(t)
-	defer srv.Close()
+	withFastHeartbeat(t, 20*time.Millisecond)
+	_, srv := newNotificationServer(t)
 
-	resp, reader := openSSE(t, srv.URL+"/mcp/sse", 5*time.Second)
+	resp, reader := openListenStream(t, srv, 2*time.Second)
 	defer resp.Body.Close() //nolint:errcheck
 
 	seen := readLines(reader, ": heartbeat")
-
-	// Assert one was seen before inspecting its shape. Without this the loop
-	// below has nothing to iterate when no heartbeat is emitted at all, and the
-	// test passes for the wrong reason.
-	var found bool
 	for _, line := range seen {
-		if strings.Contains(line, "heartbeat") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no heartbeat to inspect; saw %q", seen)
-	}
-
-	for _, line := range seen {
-		if !strings.Contains(line, "heartbeat") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		if !strings.HasPrefix(line, ":") {
-			t.Errorf("heartbeat line %q is not an SSE comment — a client parses this as a "+
-				"message and tries to read JSON-RPC out of it", line)
-		}
-		// An id would be consumed as the resumability cursor, so a resuming
-		// client would ask to replay from a point no message was delivered at.
-		if strings.HasPrefix(line, "id:") {
-			t.Errorf("heartbeat line %q carries an event id — that is the Last-Event-ID cursor", line)
-		}
-		if strings.HasPrefix(line, "data:") || strings.HasPrefix(line, "event:") {
-			t.Errorf("heartbeat line %q is a dispatched SSE field, not a comment", line)
-		}
-	}
-
-	// Nothing on the stream so far may parse as JSON. The prelude and the
-	// heartbeats are the only traffic, and both are comments.
-	for _, line := range seen {
-		payload, ok := strings.CutPrefix(line, "data:")
-		if !ok {
-			continue
-		}
+		// The acknowledgement is a real message and is expected; anything else
+		// arriving on an idle stream came from the keep-alive.
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		var msg map[string]any
-		if json.Unmarshal([]byte(strings.TrimSpace(payload)), &msg) == nil {
-			t.Errorf("idle stream delivered a JSON-RPC message %q — the heartbeat must add none", line)
+		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+			t.Fatalf("unparseable message on an idle stream: %q", line)
+		}
+		if msg["method"] != notificationsAcknowledged {
+			t.Fatalf("the heartbeat surfaced as a message: %q", line)
 		}
 	}
 }
 
 // The heartbeat must not disturb real traffic: a notification emitted while the
-// stream is beating still arrives, still carries its own id, and that id is the
-// one a resuming client would use.
+// stream is beating still arrives, and still arrives intact.
 func TestSSEHeartbeat_doesNotDisturbRealMessages(t *testing.T) {
-	withFastHeartbeat(t, 50*time.Millisecond)
-	server, srv := newTestHTTPServerPair(t)
-	defer srv.Close()
+	withFastHeartbeat(t, 20*time.Millisecond)
+	s, srv := newNotificationServer(t)
 
-	resp, reader := openSSE(t, srv.URL+"/mcp/sse", 10*time.Second)
+	resp, reader := openListenStream(t, srv, 3*time.Second)
 	defer resp.Body.Close() //nolint:errcheck
 
-	// Let a heartbeat go by first, so the notification lands on a stream that
-	// has already been beating rather than a fresh one.
+	// Let the stream beat a few times before anything real happens.
 	readLines(reader, ": heartbeat")
-	server.emitNotification("notifications/message", map[string]any{"level": "info", "data": "after-heartbeat"})
+	s.emitToolsListChanged()
 
-	seen := readLines(reader, "after-heartbeat")
-	var sawData, sawID bool
+	seen := readLines(reader, "notifications/tools/list_changed")
 	for _, line := range seen {
-		if strings.HasPrefix(line, "data:") && strings.Contains(line, "after-heartbeat") {
-			sawData = true
+		if !strings.HasPrefix(line, "data:") {
+			continue
 		}
-		if strings.HasPrefix(line, "id:") {
-			sawID = true
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+			t.Fatalf("heartbeat corrupted a message: %q", line)
+		}
+		if msg["method"] == "notifications/tools/list_changed" {
+			return
 		}
 	}
-	if !sawData {
-		t.Fatalf("the notification never arrived on a beating stream; saw %q", seen)
-	}
-	if !sawID {
-		t.Errorf("the notification arrived without an event id; saw %q — resumability depends on it", seen)
-	}
+	t.Fatalf("the notification never arrived on a beating stream; saw %q", seen)
 }

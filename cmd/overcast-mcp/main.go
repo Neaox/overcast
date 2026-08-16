@@ -23,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	server := intmcp.NewServer(nil, logger, providers.NewRepoProvider(*workspace))
+	server := intmcp.NewServer(logger, providers.NewRepoProvider(*workspace))
 
 	if *stdioFlag {
 		logger.Info("starting workspace MCP server", "transport", "stdio", "workspace", *workspace)

@@ -4,16 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,60 +76,35 @@ type ResourceUpdatedEmitterProvider interface {
 	SetResourceUpdatedEmitter(cb func(uri string))
 }
 
-type SSESource interface {
-	RegisterSSEClient(ch chan []byte)
-	UnregisterSSEClient(ch chan []byte)
-}
-
 type Server struct {
-	sseSource SSESource
-	logger    *slog.Logger
-	mu        sync.RWMutex
-	tools     []Tool
-	handlers  map[string]HandlerFunc
-	initDone  bool
-	ready     bool
+	logger   *slog.Logger
+	mu       sync.RWMutex
+	tools    []Tool
+	handlers map[string]HandlerFunc
 	// Capability advertisement - what the server supports
-	capabilities ServerCapabilities
-	// State tracking for lifecycle
-	clientCapabilities      map[string]any
-	negotiatedVersion       string
-	sessions                map[string]time.Time
-	logLevel                string
-	inFlight                map[string]*inFlightRequest
-	activeProgress          map[string]string
-	notificationSubscribers map[chan []byte]struct{}
-	sseSubscribers          map[chan notificationEvent]struct{}
-	// subscriptions are the open `subscriptions/listen` streams. Kept separate
-	// from sseSubscribers because each carries its own filter, which is what
-	// lets a notification be discarded before it is ever serialised — see
-	// subscriptions.go on why that matters to the emulator and not just to MCP.
-	subscriptions           map[*subscription]struct{}
-	notificationReplay      []notificationEvent
-	nextNotificationID      uint64
-	notificationReplayLimit int
-	resourceSubscriptions   map[string]int // URI -> active subscriber count
-	resourceProviders       []ResourceProvider
-	promptProviders         []PromptProvider
-	requestTimeout          time.Duration
-	authBearerToken         string
+	capabilities   ServerCapabilities
+	inFlight       map[string]*inFlightRequest
+	activeProgress map[string]string
+	// subscriptions are the open `subscriptions/listen` streams. Each carries
+	// its own filter, which is what lets a notification be discarded before it
+	// is ever serialised — see subscriptions.go on why that matters to the
+	// emulator and not just to MCP.
+	subscriptions     map[*subscription]struct{}
+	resourceProviders []ResourceProvider
+	promptProviders   []PromptProvider
+	requestTimeout    time.Duration
+	authBearerToken   string
 	// shutdown is closed by the host when the process is going down, and is
-	// what releases the SSE stream. The request context cannot do that job on
-	// its own: it ends when the client goes away, and an attached MCP client
-	// that has simply gone quiet never does. Nil when no host wired one, which
-	// a select reads as "never fires" — the previous behaviour, and the right
-	// one for a Server nobody is shutting down.
+	// what releases a `subscriptions/listen` stream. The request context cannot
+	// do that job on its own: it ends when the client goes away, and an attached
+	// MCP client that has simply gone quiet never does. Nil when no host wired
+	// one, which a select reads as "never fires" — the right behaviour for a
+	// Server nobody is shutting down.
 	shutdown <-chan struct{}
-}
-
-type notificationEvent struct {
-	id      string
-	payload []byte
 }
 
 type inFlightRequest struct {
 	rawRequestID  any
-	method        string
 	cancel        context.CancelFunc
 	progressToken string
 	cancelled     bool
@@ -181,14 +152,6 @@ type promptDefinition struct {
 	Title       string
 	Description string
 	Messages    []map[string]any
-}
-
-// InitializeResult represents the server's response to initialize.
-type InitializeResult struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	Capabilities    ServerCapabilities `json:"capabilities"`
-	ServerInfo      map[string]string  `json:"serverInfo"`
-	Instructions    string             `json:"instructions,omitempty"`
 }
 
 // ServerCapabilities represents what the server supports.
@@ -252,16 +215,15 @@ const (
 	RPCMissingRequiredClientCapability = -32021
 	RPCUnsupportedProtocolVersion      = -32022
 
-	// ProtocolVersion is the revision the handshake negotiates and reports.
-	// Unchanged: a client that opens with `initialize` is a 2025-11-25 client
-	// and is answered as one.
-	ProtocolVersion = "2025-11-25"
-
-	// ModernProtocolVersion is the revision a request may declare for itself in
-	// `_meta`, skipping the handshake entirely. "Modern" and "legacy" are the
-	// spec's own terms for the two eras, and the distinction is exactly whether
-	// version and capabilities arrive per request or are negotiated once.
-	ModernProtocolVersion = "2026-07-28"
+	// ProtocolVersion is the revision this server speaks, and the one every
+	// request must declare for itself in `_meta`.
+	//
+	// There is exactly one. During the migration there were two names here,
+	// because there were two eras to tell apart — the spec's own "legacy" and
+	// "modern", the distinction being whether version and capabilities arrive
+	// per request or are negotiated once. Phase 4 removed the legacy half, and a
+	// qualifier that no longer distinguishes anything is worse than none.
+	ProtocolVersion = "2026-07-28"
 
 	// The reserved `_meta` keys this server reads. The `io.modelcontextprotocol`
 	// prefix is reserved for MCP's own use, so these names cannot collide with
@@ -271,12 +233,6 @@ const (
 	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 	metaLogLevel           = "io.modelcontextprotocol/logLevel"
 	DefaultRequestTimeout  = 30 * time.Second
-	// DefaultReplayLimit bounds in-memory SSE notification replay history per
-	// process. Replay state is intentionally ephemeral and not shared across
-	// restarts.
-	// TODO(mcp): make replay retention configurable (and optionally durable)
-	// once runtime auth and multi-process reconnect expectations are finalized.
-	DefaultReplayLimit = 256
 )
 
 // sseHeartbeatInterval is how often an idle SSE stream emits a keep-alive, and
@@ -301,56 +257,37 @@ const (
 // conforming client. The cadence is left entirely undefined, which is why the
 // interval below is chosen to match this repo rather than the spec.
 //
-// That revision is not the one this server speaks — ProtocolVersion is
-// 2025-11-25, and 2026-07-28 removes the GET stream, sessions and
-// Last-Event-ID resumability wholesale — but the guidance is about SSE framing
-// rather than about any of those, and the stream it names is the same long-lived
-// shape the GET stream is here. 2025-11-25 permits it for the same underlying
-// reason: it defers to the SSE standard for stream syntax, where a comment is
-// discarded by the client's event parser before anything is dispatched, so it
-// reaches no JSON-RPC reader at all. Note the contrast with stdio, where the
-// spec does impose a "MUST NOT write anything that is not a valid MCP message"
-// rule; no such rule constrains this stream.
+// The stream it is written for is the one that survives. A
+// `subscriptions/listen` response stays open for as long as its client wants
+// notifications, and with `ping` removed the keep-alive is the only liveness
+// mechanism left on it: nothing else obliges either end to say anything during
+// a quiet period.
 //
 // Two shapes were rejected. A `data:` event carrying a heartbeat payload — what
 // eventsHandler sends on the emulator's own event stream — would put a frame on
-// this stream that clients parse as JSON-RPC, and there it would be a protocol
-// violation rather than a keep-alive. The `ping` utility method is a JSON-RPC
-// request that obliges the receiver to answer, so using it would change what
-// the client has to do, which is the opposite of additive.
+// this stream that clients parse as JSON-RPC, so it would be a protocol
+// violation rather than a keep-alive. `ping` was the other, and it is gone with
+// the rest of the utility methods; it was a JSON-RPC request that obliged the
+// receiver to answer, which is more than a liveness probe needs to be.
 //
-// The comment also carries no `id:`, deliberately: under 2025-11-25 event IDs
-// are the resumability cursor a client sends back as Last-Event-ID, and a
-// heartbeat that consumed one would make a resuming client ask to replay from a
-// point no message was ever delivered at.
+// The comment carries no `id:`, which now costs nothing to keep: event IDs were
+// the resumability cursor, and 2026-07-28 removes resumability along with the
+// GET stream it belonged to.
 //
 // A var rather than a const so tests can wind it down; nothing else writes it.
 var sseHeartbeatInterval = 15 * time.Second
 
-var (
-	errInvalidLastEventID = errors.New("invalid Last-Event-ID")
-	errUnknownLastEventID = errors.New("Last-Event-ID is no longer available")
-)
-
-func NewServer(sseSource SSESource, logger *slog.Logger, providers ...ToolProvider) *Server {
+func NewServer(logger *slog.Logger, providers ...ToolProvider) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	s := &Server{
-		sseSource:               sseSource,
-		logger:                  logger,
-		handlers:                make(map[string]HandlerFunc),
-		capabilities:            defaultServerCapabilities(),
-		negotiatedVersion:       ProtocolVersion,
-		sessions:                make(map[string]time.Time),
-		logLevel:                "info",
-		inFlight:                make(map[string]*inFlightRequest),
-		activeProgress:          make(map[string]string),
-		notificationSubscribers: make(map[chan []byte]struct{}),
-		sseSubscribers:          make(map[chan notificationEvent]struct{}),
-		notificationReplayLimit: DefaultReplayLimit,
-		resourceSubscriptions:   make(map[string]int),
-		requestTimeout:          DefaultRequestTimeout,
+		logger:         logger,
+		handlers:       make(map[string]HandlerFunc),
+		capabilities:   defaultServerCapabilities(),
+		inFlight:       make(map[string]*inFlightRequest),
+		activeProgress: make(map[string]string),
+		requestTimeout: DefaultRequestTimeout,
 	}
 	for _, provider := range providers {
 		s.registerProvider(provider)
@@ -450,53 +387,8 @@ func (s *Server) Handler() http.Handler {
 // Callers that mount under a prefix should wrap it with http.StripPrefix.
 func (s *Server) RootHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.handleStreamableGet)
 	mux.HandleFunc("POST /", s.handleRPC)
-	mux.HandleFunc("DELETE /", s.handleSessionDelete)
-	mux.HandleFunc("GET /sse", s.handleSSE)
 	return mux
-}
-
-func (s *Server) handleStreamableGet(w http.ResponseWriter, r *http.Request) {
-	if err := s.validateAuthorizationHeader(r.Header.Get("Authorization")); err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="overcast-mcp"`)
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	if !isOriginAllowed(r.Header.Get("Origin")) {
-		http.Error(w, "forbidden origin", http.StatusForbidden)
-		return
-	}
-	if err := s.validateOptionalSessionHeader(r.Header.Get("MCP-Session-Id")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if !strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
-		http.Error(w, "accept must include text/event-stream", http.StatusNotAcceptable)
-		return
-	}
-	s.handleSSE(w, r)
-}
-
-func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.validateAuthorizationHeader(r.Header.Get("Authorization")); err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="overcast-mcp"`)
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	if !isOriginAllowed(r.Header.Get("Origin")) {
-		http.Error(w, "forbidden origin", http.StatusForbidden)
-		return
-	}
-	sid := strings.TrimSpace(r.Header.Get("MCP-Session-Id"))
-	if sid == "" {
-		http.Error(w, "missing MCP-Session-Id", http.StatusBadRequest)
-		return
-	}
-	s.mu.Lock()
-	delete(s.sessions, sid)
-	s.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
@@ -536,7 +428,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 			s.writeRPCError(w, nil, RPCInternalError, "streaming unsupported")
 			return
 		}
-		stream := &requestStream{w: w, flusher: flusher}
+		stream := &requestStream{out: sseWriter{w: w, flusher: flusher}, http: w}
 		capture := &captureResponseWriter{headers: make(http.Header), statusCode: http.StatusOK}
 		s.handleRPCInternal(capture, r.WithContext(withRequestStream(r.Context(), stream)))
 
@@ -592,21 +484,39 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 	// For requests, ID MUST be non-null (spec §1.2)
 	// ID is already non-null here since we handle nil above
 
-	if req.Method == "ping" {
-		writeRPCResult(w, req.ID, map[string]any{})
-		return
-	}
-
-	if req.Method == "initialize" {
-		s.handleInitialize(w, req)
-		return
-	}
-
 	reqIDKey, err := requestIDKey(req.ID)
 	if err != nil {
 		s.writeRPCError(w, req.ID, RPCInvalidRequest, "invalid request id")
 		return
 	}
+
+	// What the request says about itself: its version, the client's identity and
+	// that client's capabilities, on every request. There is no handshake to
+	// have completed and no session to belong to — "Every request carries its
+	// protocol version, and the server accepts or rejects each request
+	// independently". See request_meta.go.
+	//
+	// This comes before any of the per-request state below because a request
+	// this server will not serve should not be registered as one it is serving.
+	// It also settles the ordering the log threshold needs: the stream is
+	// configured here, before registerInFlight publishes it to the goroutine
+	// that may cancel this request, so nothing can be reading it as it is
+	// written.
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr != nil {
+		writeJSONRPCError(w, req.ID, metaErr)
+		return
+	}
+	if versionErr := meta.validate(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
+		writeJSONRPCError(w, req.ID, versionErr)
+		return
+	}
+	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
+		writeJSONRPCError(w, req.ID, headerErr)
+		return
+	}
+	stream := requestStreamFrom(r.Context())
+	stream.setLogLevel(meta.logLevel)
 
 	progressToken, rawProgressToken, hasProgressToken, progressTokenErr := extractProgressToken(req.Params)
 	if progressTokenErr != nil {
@@ -630,72 +540,14 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		requestCtx, cancel = context.WithCancel(r.Context())
 	}
 	defer cancel()
-	s.registerInFlight(reqIDKey, req.ID, req.Method, progressToken, cancel, requestStreamFrom(r.Context()))
+	s.registerInFlight(reqIDKey, req.ID, progressToken, cancel, stream)
 	defer s.unregisterInFlight(reqIDKey)
 
-	// What the request says about itself. A request that names a protocol
-	// version is a 2026-07-28 request: it carries its own version, identity and
-	// capabilities, so it needs no handshake and the lifecycle gate below has
-	// nothing left to check. Anything else is a 2025-11-25 request and is
-	// governed exactly as before. See request_meta.go.
-	meta, metaErr := parseRequestMeta(req.Params)
-	if metaErr != nil {
-		writeJSONRPCError(w, req.ID, metaErr)
-		return
-	}
-	if versionErr := meta.validate(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
-		writeJSONRPCError(w, req.ID, versionErr)
-		return
-	}
-	if headerErr := validateStandardHeaders(r, req, meta); headerErr != nil {
-		writeJSONRPCError(w, req.ID, headerErr)
-		return
-	}
-
-	// server/discover answers ahead of the lifecycle gate, and deliberately.
-	// It is the probe a client sends when it does not yet know what this server
-	// is — that is how the spec has clients tell a modern server from a legacy
-	// one — so requiring a completed handshake would answer the question only
-	// for clients that already knew it. The version validation above still
-	// applies: a client that declares a version it cannot speak is refused, and
-	// the refusal carries the supported list this method would have returned.
-	if req.Method == "server/discover" {
-		s.handleDiscover(w, req, r)
-		return
-	}
-
-	// The listen stream answers before the lifecycle gate too, for the same
-	// reason: it is a 2026-07-28 method, and a client using it is not one that
-	// has completed a handshake this revision does not have.
-	if req.Method == subscriptionsListenMethod {
-		s.handleSubscriptionsListen(w, req, r)
-		return
-	}
-
-	if !meta.modern {
-		s.mu.RLock()
-		lifecycleErr := validateLifecycle(s.initDone, s.ready)
-		s.mu.RUnlock()
-		if lifecycleErr != nil {
-			writeJSONRPCError(w, req.ID, lifecycleErr)
-			return
-		}
-	}
-	if err := s.validateOptionalSessionHeader(r.Header.Get("MCP-Session-Id")); err != nil {
-		writeJSONRPCError(w, req.ID, &rpcError{Code: RPCInvalidParams, Message: err.Error()})
-		return
-	}
-	// Only for legacy requests. A modern request has already had its header
-	// checked against the version in `_meta`, and this validator knows only the
-	// handshake's version — it would reject a conforming 2026-07-28 header.
-	if !meta.modern {
-		if versionErr := validateProtocolVersionHeader(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
-			writeJSONRPCError(w, req.ID, versionErr)
-			return
-		}
-	}
-
 	switch req.Method {
+	case "server/discover":
+		s.handleDiscover(w, req, r)
+	case subscriptionsListenMethod:
+		s.handleSubscriptionsListen(w, req, r)
 	case "tools/list":
 		s.handleToolsList(w, req)
 	case "tools/call":
@@ -706,18 +558,12 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		s.handleResourceTemplatesList(requestCtx, w, req)
 	case "resources/read":
 		s.handleResourcesRead(requestCtx, w, req)
-	case "resources/subscribe":
-		s.handleResourcesSubscribe(w, req)
-	case "resources/unsubscribe":
-		s.handleResourcesUnsubscribe(w, req)
 	case "prompts/list":
 		s.handlePromptsList(requestCtx, w, req)
 	case "prompts/get":
 		s.handlePromptsGet(requestCtx, w, req)
 	case "completion/complete":
 		s.handleCompletionComplete(requestCtx, w, req)
-	case "logging/setLevel":
-		s.handleLoggingSetLevel(w, req, requestStreamFrom(r.Context()))
 	default:
 		s.writeRPCError(w, req.ID, RPCMethodNotFound, "method not found: "+req.Method)
 	}
@@ -1115,11 +961,6 @@ func (s *Server) handlePromptsList(ctx context.Context, w http.ResponseWriter, r
 // handleNotification processes notifications (which have no ID and should not be replied to).
 func (s *Server) handleNotification(req jsonRPCRequest) {
 	switch req.Method {
-	case "notifications/initialized":
-		// Client indicates it's ready for operations after initialize
-		s.mu.Lock()
-		s.ready = s.initDone
-		s.mu.Unlock()
 	case "notifications/cancelled":
 		var params struct {
 			RequestID any    `json:"requestId"`
@@ -1149,50 +990,6 @@ func (s *Server) handleNotification(req jsonRPCRequest) {
 	case "notifications/message":
 		// Log message from client - just informational
 	}
-}
-
-// handleInitialize processes the initialize request per spec §1.2.
-func (s *Server) handleInitialize(w http.ResponseWriter, req jsonRPCRequest) {
-	var params struct {
-		ProtocolVersion string         `json:"protocolVersion"`
-		Capabilities    map[string]any `json:"capabilities"`
-		ClientInfo      map[string]any `json:"clientInfo"`
-	}
-	if len(req.Params) == 0 {
-		s.writeRPCError(w, req.ID, RPCInvalidParams, "initialize params required")
-		return
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.writeRPCError(w, req.ID, RPCInvalidParams, "invalid initialize params: "+err.Error())
-		return
-	}
-	if params.ProtocolVersion == "" {
-		s.writeRPCError(w, req.ID, RPCInvalidParams, "initialize.protocolVersion required")
-		return
-	}
-
-	s.mu.Lock()
-	s.initDone = true
-	s.ready = false
-	s.clientCapabilities = params.Capabilities
-	s.negotiatedVersion = ProtocolVersion // We only support our version
-	sid := newSessionID()
-	s.sessions[sid] = time.Now()
-	caps := s.capabilities
-	s.mu.Unlock()
-	w.Header().Set("MCP-Session-Id", sid)
-
-	result := InitializeResult{
-		ProtocolVersion: ProtocolVersion,
-		Capabilities:    caps,
-		ServerInfo: map[string]string{
-			"name":       "overcast-mcp",
-			"version":    "1.0.0",
-			"serverRole": "workspace",
-		},
-	}
-
-	writeRPCResult(w, req.ID, result)
 }
 
 // handleToolsList handles tools/list request.
@@ -1407,155 +1204,6 @@ func (s *Server) handleCompletionComplete(ctx context.Context, w http.ResponseWr
 	writeRPCResult(w, req.ID, map[string]any{"completion": map[string]any{"values": values, "hasMore": false}})
 }
 
-func (s *Server) handleResourcesSubscribe(w http.ResponseWriter, req jsonRPCRequest) {
-	normalizedURI, uriErr := decodeRequiredURIParam(req.Params, "resources/subscribe")
-	if uriErr != nil {
-		writeJSONRPCError(w, req.ID, uriErr)
-		return
-	}
-	s.mu.Lock()
-	s.resourceSubscriptions[normalizedURI]++
-	s.mu.Unlock()
-	writeRPCResult(w, req.ID, map[string]any{})
-}
-
-func (s *Server) handleResourcesUnsubscribe(w http.ResponseWriter, req jsonRPCRequest) {
-	normalizedURI, uriErr := decodeRequiredURIParam(req.Params, "resources/unsubscribe")
-	if uriErr != nil {
-		writeJSONRPCError(w, req.ID, uriErr)
-		return
-	}
-	s.mu.Lock()
-	if s.resourceSubscriptions[normalizedURI] > 0 {
-		s.resourceSubscriptions[normalizedURI]--
-		if s.resourceSubscriptions[normalizedURI] == 0 {
-			delete(s.resourceSubscriptions, normalizedURI)
-		}
-	}
-	s.mu.Unlock()
-	writeRPCResult(w, req.ID, map[string]any{})
-}
-
-func (s *Server) handleLoggingSetLevel(w http.ResponseWriter, req jsonRPCRequest, stream *requestStream) {
-	type setLevelParams struct {
-		Level string `json:"level"`
-	}
-	params, paramsErr := decodeRequiredParams[setLevelParams](req.Params, "logging/setLevel")
-	if paramsErr != nil {
-		writeJSONRPCError(w, req.ID, paramsErr)
-		return
-	}
-	level, levelErr := normalizeLoggingLevel(params.Level)
-	if levelErr != nil {
-		writeJSONRPCError(w, req.ID, levelErr)
-		return
-	}
-	s.mu.Lock()
-	s.logLevel = level
-	s.mu.Unlock()
-	s.emitLogMessage(stream, level, fmt.Sprintf("logging level set to %s", level))
-	writeRPCResult(w, req.ID, map[string]any{})
-}
-
-func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
-	if err := s.validateAuthorizationHeader(r.Header.Get("Authorization")); err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="overcast-mcp"`)
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	if !isOriginAllowed(r.Header.Get("Origin")) {
-		http.Error(w, "forbidden origin", http.StatusForbidden)
-		return
-	}
-	if err := s.validateOptionalSessionHeader(r.Header.Get("MCP-Session-Id")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	replay, err := s.replayAfter(lastEventID)
-	if err != nil {
-		switch {
-		case errors.Is(err, errInvalidLastEventID):
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		case errors.Is(err, errUnknownLastEventID):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	if strings.TrimSpace(r.URL.Path) == "/sse" {
-		// Legacy SSE endpoint remains available for compatibility, but advertise
-		// the primary Streamable HTTP endpoint for migration.
-		w.Header().Set("Deprecation", "true")
-		w.Header().Set("Link", "</mcp/>; rel=\"successor-version\"")
-		w.Header().Set("Warning", `299 - "deprecated endpoint; use GET/POST /mcp/"`)
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	ch := make(chan notificationEvent, 256)
-	s.subscribeSSE(ch)
-	defer s.unsubscribeSSE(ch)
-	extCh := make(chan []byte, 256)
-	if s.sseSource != nil {
-		s.sseSource.RegisterSSEClient(extCh)
-		defer s.sseSource.UnregisterSSEClient(extCh)
-	}
-	_, _ = fmt.Fprintf(w, ": connected\n\n")
-	flusher.Flush()
-	for _, ev := range replay {
-		_, _ = fmt.Fprintf(w, "id: %s\n", ev.id)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", ev.payload)
-	}
-	if len(replay) > 0 {
-		flusher.Flush()
-	}
-	// Read once, before the loop: the value cannot change under a running
-	// stream, and reading it per-iteration would take the lock on every event.
-	shutdown := s.shutdownSignal()
-	heartbeat := time.NewTicker(sseHeartbeatInterval)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case <-heartbeat.C:
-			// An SSE comment, not a message: see sseHeartbeatInterval for why
-			// this is the only shape a keep-alive may take on this stream.
-			// A write to a client that has gone away fails here rather than
-			// silently never being attempted, which is what turns a dead
-			// connection into a returned handler.
-			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
-			flusher.Flush()
-		case <-shutdown:
-			// The emulator is going down. Ending the response is what lets a
-			// shutdown waiting on in-flight handlers finish; a client that
-			// wants the stream back reconnects, and Last-Event-ID resumes it.
-			return
-		case <-r.Context().Done():
-			return
-		case ev, ok := <-ch:
-			if !ok {
-				return
-			}
-			_, _ = fmt.Fprintf(w, "id: %s\n", ev.id)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", ev.payload)
-			flusher.Flush()
-		case ev, ok := <-extCh:
-			if !ok {
-				return
-			}
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", ev)
-			flusher.Flush()
-		}
-	}
-}
-
 func (s *Server) writeRPCError(w http.ResponseWriter, id any, code int, message string) {
 	writeRPCResult(w, id, jsonRPCResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: message}})
 }
@@ -1586,110 +1234,20 @@ func TextContent(text string) []map[string]any {
 	return []map[string]any{{"type": "text", "text": text}}
 }
 
-func (s *Server) subscribeNotifications(ch chan []byte) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.notificationSubscribers[ch] = struct{}{}
-}
-
-func (s *Server) unsubscribeNotifications(ch chan []byte) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.notificationSubscribers, ch)
-}
-
-func (s *Server) subscribeSSE(ch chan notificationEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sseSubscribers[ch] = struct{}{}
-}
-
-func (s *Server) unsubscribeSSE(ch chan notificationEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sseSubscribers, ch)
-}
-
-func (s *Server) emitNotification(method string, params any) {
-	payload, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-	})
-	if err != nil {
-		return
-	}
-	s.mu.Lock()
-	s.nextNotificationID++
-	ev := notificationEvent{
-		id:      strconv.FormatUint(s.nextNotificationID, 10),
-		payload: append([]byte(nil), payload...),
-	}
-	if s.notificationReplayLimit > 0 {
-		s.notificationReplay = append(s.notificationReplay, ev)
-		if len(s.notificationReplay) > s.notificationReplayLimit {
-			s.notificationReplay = s.notificationReplay[len(s.notificationReplay)-s.notificationReplayLimit:]
-		}
-	}
-	subs := make([]chan []byte, 0, len(s.notificationSubscribers))
-	for ch := range s.notificationSubscribers {
-		subs = append(subs, ch)
-	}
-	sseSubs := make([]chan notificationEvent, 0, len(s.sseSubscribers))
-	for ch := range s.sseSubscribers {
-		sseSubs = append(sseSubs, ch)
-	}
-	s.mu.Unlock()
-	for _, ch := range subs {
-		select {
-		case ch <- payload:
-		default:
-		}
-	}
-	for _, ch := range sseSubs {
-		select {
-		case ch <- ev:
-		default:
-		}
-	}
-}
-
-func (s *Server) replayAfter(lastEventID string) ([]notificationEvent, error) {
-	if lastEventID == "" {
-		return nil, nil
-	}
-	if _, err := strconv.ParseUint(lastEventID, 10, 64); err != nil {
-		return nil, errInvalidLastEventID
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if len(s.notificationReplay) == 0 {
-		return nil, errUnknownLastEventID
-	}
-	idx := -1
-	for i := range s.notificationReplay {
-		if s.notificationReplay[i].id == lastEventID {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return nil, errUnknownLastEventID
-	}
-	replay := make([]notificationEvent, len(s.notificationReplay[idx+1:]))
-	copy(replay, s.notificationReplay[idx+1:])
-	return replay, nil
-}
-
 // emitLogMessage reports something worth logging, on the response stream of the
-// request that produced it.
+// request that produced it, if that request asked to hear about it.
+//
+// The threshold belongs to the request rather than to the server, which is what
+// `logging/setLevel` used to set and 2026-07-28 replaces: a level is named in
+// `_meta` per request, so two clients cannot change what each other hears. The
+// check comes before the params are built so that the overwhelmingly common
+// case — a request that named no level — costs nothing. See
+// requestStream.wantsLog.
 func (s *Server) emitLogMessage(stream *requestStream, level string, data any) {
-	if !s.shouldEmitLog(level) {
+	if !stream.wantsLog(level) {
 		return
 	}
-	params := logMessageParams{Level: level, Logger: "overcast", Data: data}
-	stream.notify("notifications/message", params)
-	s.emitNotification("notifications/message", params)
+	stream.notify("notifications/message", logMessageParams{Level: level, Logger: "overcast", Data: data})
 }
 
 // emitCancelled tells a request it has been cancelled, on that request's own
@@ -1697,34 +1255,25 @@ func (s *Server) emitLogMessage(stream *requestStream, level string, data any) {
 //
 // The spec requires the notification — "the server MUST send
 // notifications/cancelled" — and it is about one request, so it travels with
-// that request rather than being broadcast. The legacy emit stays until phase 4
-// removes the GET stream that is its only remaining audience.
+// that request rather than being broadcast. Unlike a log message this is not
+// filtered: the client asked for the cancellation, and the notification is the
+// answer to that request rather than something reported in passing.
 func (s *Server) emitCancelled(stream *requestStream, requestID any, reason string) {
 	params := map[string]any{"requestId": requestID}
 	if reason != "" {
 		params["reason"] = reason
 	}
 	stream.notify("notifications/cancelled", params)
-	s.emitNotification("notifications/cancelled", params)
-}
-
-func (s *Server) shouldEmitLog(level string) bool {
-	s.mu.RLock()
-	threshold := s.logLevel
-	s.mu.RUnlock()
-	return loggingLevelRank(level) <= loggingLevelRank(threshold)
 }
 
 // emitProgress reports how far a request has got, on that request's own
 // response stream.
 func (s *Server) emitProgress(stream *requestStream, rawToken any, progress, total float64) {
-	params := map[string]any{
+	stream.notify("notifications/progress", map[string]any{
 		"progressToken": rawToken,
 		"progress":      progress,
 		"total":         total,
-	}
-	stream.notify("notifications/progress", params)
-	s.emitNotification("notifications/progress", params)
+	})
 }
 
 // emitResourceUpdated sends notifications/resources/updated for a URI if at least one
@@ -1735,47 +1284,30 @@ func (s *Server) emitResourceUpdated(uri string) {
 		return
 	}
 
-	// Two independent ways to be subscribed to a resource, and a client uses
-	// exactly one of them. `resources/subscribe` put the URI in a set on the
-	// server; `subscriptions/listen` carries it in the stream's own filter, so
-	// such a client is deliberately absent from that set. Gating the second on
-	// the first would mean a modern client never heard anything.
-	s.mu.RLock()
-	_, subscribed := s.resourceSubscriptions[uri]
-	s.mu.RUnlock()
-
-	// Both audiences are checked before the params map is built, and that
-	// ordering is the point. Providers hold this function through
+	// The audience is checked before the params map is built, and that ordering
+	// is the point. Providers hold this function through
 	// SetResourceUpdatedEmitter and call it whenever a resource changes, so it
 	// runs on the emulator's paths, not MCP's. Building a notification body
 	// first and discovering there is no audience second would charge the
 	// emulator for every update whether or not anyone is using MCP.
-	if !subscribed && !s.hasSubscriberFor("notifications/resources/updated", uri) {
+	if !s.hasSubscriberFor("notifications/resources/updated", uri) {
 		return
 	}
-
-	params := map[string]any{"uri": uri}
-	if subscribed {
-		s.emitNotification("notifications/resources/updated", params)
-	}
-	s.emitToSubscriptions("notifications/resources/updated", params, uri)
+	s.emitToSubscriptions("notifications/resources/updated", map[string]any{"uri": uri}, uri)
 }
 
 // emitResourceListChanged notifies clients that the resource list has changed.
 func (s *Server) emitResourceListChanged() {
-	s.emitNotification("notifications/resources/list_changed", map[string]any{})
 	s.emitToSubscriptions("notifications/resources/list_changed", map[string]any{}, "")
 }
 
 // emitPromptsListChanged notifies clients that the prompts list has changed.
 func (s *Server) emitPromptsListChanged() {
-	s.emitNotification("notifications/prompts/list_changed", map[string]any{})
 	s.emitToSubscriptions("notifications/prompts/list_changed", map[string]any{}, "")
 }
 
 // emitToolsListChanged notifies clients that the tools list has changed.
 func (s *Server) emitToolsListChanged() {
-	s.emitNotification("notifications/tools/list_changed", map[string]any{})
 	s.emitToSubscriptions("notifications/tools/list_changed", map[string]any{}, "")
 }
 
@@ -1813,51 +1345,47 @@ func (w *captureResponseWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
-func newSessionID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("mcp-%d", time.Now().UnixNano())
-	}
-	return "mcp-" + hex.EncodeToString(b[:])
-}
-
 // ServeStdio runs the MCP server over a newline-delimited JSON stdio transport.
 // This is compatible with the stdio transport defined in MCP spec §1.3.1.
 // It exits cleanly when the input stream closes (EOF) or ctx is cancelled.
-// Notifications (id-less messages) are processed synchronously so that lifecycle
-// state (e.g. notifications/initialized → ready) is visible to subsequent requests.
-// Requests are dispatched concurrently to allow parallel tool calls.
+//
+// # Notifications reach a stdio client the same way they reach an HTTP one
+//
+// This loop used to subscribe to a server-wide broadcast and copy every
+// notification onto stdout. 2026-07-28 has no such broadcast: a notification
+// belongs either to a `subscriptions/listen` stream or to one request's
+// response. Both are streams, and a stdio client opens them with an ordinary
+// request — so they are served by the same handlers, writing through the
+// ndjsonWriter below instead of an SSE response. See message_writer.go.
+//
+// # What decides concurrency now
+//
+// Notifications (no "id") run inline; requests are dispatched concurrently so
+// tool calls can overlap. `initialize` used to run inline too, so that the
+// lifecycle state it set was visible to requests behind it on the stream. There
+// is no such state any more — every request carries its own version and
+// capabilities — so that carve-out is gone. Notifications stay inline for a
+// reason of their own: they produce no response, so there is nothing to
+// parallelise and nothing to wait for.
 func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	var writeMu sync.Mutex
 	var workers sync.WaitGroup
-	var notificationWorkers sync.WaitGroup
 	handler := s.RootHandler()
-	notificationCh := make(chan []byte, 256)
-	s.subscribeNotifications(notificationCh)
-	defer func() {
-		workers.Wait()
-		s.unsubscribeNotifications(notificationCh)
-		close(notificationCh)
-		notificationWorkers.Wait()
-	}()
-	notificationWorkers.Add(1)
-	go func() {
-		defer notificationWorkers.Done()
-		for {
-			select {
-			case payload, ok := <-notificationCh:
-				if !ok {
-					return
-				}
-				writeMu.Lock()
-				_, _ = fmt.Fprintln(out, string(payload))
-				writeMu.Unlock()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+
+	// Requests run under a context this loop can cancel, and closing stdin
+	// cancels it. A `subscriptions/listen` request stays open until its context
+	// ends, so without this the first one a client opened would keep the loop
+	// alive after EOF and ServeStdio would never return — the deferred wait
+	// below would block on a stream with nothing left to read it. Cancelling
+	// first and waiting second is what makes EOF actually end the session.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	defer workers.Wait()
+	defer cancelLoop()
+
+	// Every stream this loop serves writes through here, under the same mutex
+	// as the responses, because they share one descriptor.
+	stdioOut := ndjsonWriter{out: out, mu: &writeMu}
 
 	dispatch := func(msg []byte) {
 		// Marked as stdio so the rules that belong to the HTTP binding do not
@@ -1865,7 +1393,12 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 		// synthesised request through the same handler — so without the marker
 		// a header requirement written for HTTP would reject every stdio
 		// request. See standard_headers.go.
-		req, err := http.NewRequestWithContext(withStdioTransport(ctx), http.MethodPost, "/", bytes.NewReader(msg))
+		// The stdio client gets a response stream too, so the notifications that
+		// belong to a request reach it the same way they reach an HTTP client.
+		// Already started, because there is no header to write first.
+		reqCtx := withStdioWriter(withStdioTransport(loopCtx), stdioOut)
+		reqCtx = withRequestStream(reqCtx, &requestStream{out: stdioOut, started: true})
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "/", bytes.NewReader(msg))
 		if err != nil {
 			return
 		}
@@ -1898,21 +1431,15 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 		}
 		msg := append([]byte(nil), payload...)
 
-		// Detect messages that must run synchronously to preserve lifecycle ordering.
-		// Per spec §1.2, the client sends initialize, waits for the result, then
-		// sends notifications/initialized before any operations.  Any notification
-		// (no "id") and the initialize request are processed inline so that
-		// initDone and ready are visible to concurrently-dispatched requests that
-		// follow on the stream.
+		// Notifications run inline; see the concurrency note above.
 		var peek struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
+			ID any `json:"id"`
 		}
-		isSync := false
+		inline := false
 		if jsonErr := json.Unmarshal(msg, &peek); jsonErr == nil {
-			isSync = peek.ID == nil || peek.Method == "initialize"
+			inline = peek.ID == nil
 		}
-		if isSync {
+		if inline {
 			dispatch(msg)
 			continue
 		}
@@ -1964,45 +1491,12 @@ func isOriginAllowed(origin string) bool {
 	return false
 }
 
-// SetNotificationReplayLimit sets the in-memory notification replay history
-// size. A value of 0 disables replay retention entirely.
-func (s *Server) SetNotificationReplayLimit(limit int) {
-	if limit < 0 {
-		limit = 0
-	}
-	s.mu.Lock()
-	s.notificationReplayLimit = limit
-	if limit == 0 {
-		s.notificationReplay = nil
-	} else if len(s.notificationReplay) > limit {
-		s.notificationReplay = s.notificationReplay[len(s.notificationReplay)-limit:]
-	}
-	s.mu.Unlock()
-}
-
 // SetBearerAuthToken enables bearer-token HTTP auth checks when token is
 // non-empty. Empty token disables auth checks.
 func (s *Server) SetBearerAuthToken(token string) {
 	s.mu.Lock()
 	s.authBearerToken = strings.TrimSpace(token)
 	s.mu.Unlock()
-}
-
-// Ready reports whether the lifecycle handshake has completed — initialize
-// followed by notifications/initialized.
-//
-// Exported for callers outside this package that drive a server and need to
-// assert the handshake happened, which the providers package does when it
-// checks that its own MCP client probe completes the exchange rather than
-// stopping halfway. Reading the field directly is not available to them, and
-// re-probing over HTTP to find out would perturb the thing being measured.
-//
-// Note this is a 2025-11-25 concept: revision 2026-07-28 removes the handshake
-// altogether, and this accessor goes with it.
-func (s *Server) Ready() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.ready
 }
 
 // SetShutdownSignal hands the server the channel its host closes when the
@@ -2021,11 +1515,19 @@ func (s *Server) SetShutdownSignal(ch <-chan struct{}) {
 	s.mu.Unlock()
 }
 
-// shutdownSignal reads the shutdown channel under the lock, so a stream that is
-// starting while the host is still wiring up cannot race the setter. A nil
-// channel blocks forever in a select, which is what a server with no host
-// shutdown wants.
-func (s *Server) shutdownSignal() <-chan struct{} {
+// ShutdownSignal reports the channel given to SetShutdownSignal, or nil if the
+// server has no host shutdown to observe.
+//
+// It reads under the lock, so a stream that is starting while the host is still
+// wiring up cannot race the setter. A nil channel blocks forever in a select,
+// which is what a server with no host shutdown wants.
+//
+// Exported because the shutdown signal is the one piece of a server's wiring
+// that nothing else reveals: a host that forgets to hand its channel over
+// builds a server that looks identical and holds the process open at shutdown.
+// A host can assert it wired its own channel without opening a stream to infer
+// it — see internal/router.
+func (s *Server) ShutdownSignal() <-chan struct{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.shutdown
@@ -2259,10 +1761,10 @@ func (s *Server) unregisterProgressToken(requestIDKey string) {
 	}
 }
 
-func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, method, progressToken string, cancel context.CancelFunc, stream *requestStream) {
+func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, progressToken string, cancel context.CancelFunc, stream *requestStream) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, method: method, cancel: cancel, progressToken: progressToken, stream: stream}
+	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, cancel: cancel, progressToken: progressToken, stream: stream}
 }
 
 func (s *Server) unregisterInFlight(requestIDKey string) {
@@ -2276,10 +1778,6 @@ func (s *Server) cancelInFlight(requestIDKey, reason string) {
 	s.mu.Lock()
 	request, ok := s.inFlight[requestIDKey]
 	if !ok {
-		s.mu.Unlock()
-		return
-	}
-	if request.method == "initialize" {
 		s.mu.Unlock()
 		return
 	}

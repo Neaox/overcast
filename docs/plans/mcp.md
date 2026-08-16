@@ -94,9 +94,9 @@ Shared core:
 - `internal/mcp/server.go` provides the shared MCP server implementation.
 - `internal/mcp/protocol_core.go` provides shared protocol helpers and
   capability declaration.
-- Both servers use the same lifecycle rules, error model, capability honesty,
-  pagination helpers, structured tool result helpers, and logging/resource/
-  prompt/completion plumbing.
+- Both servers use the same request-metadata validation, error model,
+  capability honesty, pagination helpers, structured tool result helpers, and
+  logging/resource/prompt/completion plumbing.
 
 Separate ownership:
 
@@ -126,11 +126,14 @@ Operational boundary:
 ### Runtime MCP transport
 
 - Primary transport: Streamable HTTP at `/_overcast/mcp`
-- Supported methods:
-  - `GET /_overcast/mcp` for SSE streams
-  - `POST /_overcast/mcp` for JSON-RPC request/response and SSE response mode
-  - `DELETE /_overcast/mcp` for session termination
-  - `GET /_overcast/mcp/sse` as a legacy compatibility endpoint
+- `POST /_overcast/mcp` is the only endpoint. It answers a JSON-RPC request
+  with JSON, or with an SSE stream when the client sends
+  `Accept: text/event-stream` — on which that request's own notifications
+  arrive ahead of its result. `subscriptions/listen` is a POST like any other,
+  and keeps its response stream open for as long as the client wants
+  notifications.
+- There is no GET stream, no DELETE and no session. Anything else on that path
+  is answered `405` with `Allow: POST`.
 - Available only in non-slim builds
 
 ### Local-only posture
@@ -148,21 +151,32 @@ Both MCP servers are intended for local development and debugging.
 
 ## Protocol And Capability Contract
 
-Both servers target MCP `2025-11-25` for the capabilities they advertise.
+Both servers target MCP `2026-07-28`, and only that revision. It is the
+stateless one: there is no negotiation handshake, and every request carries its
+own protocol version, client identity and client capabilities in `_meta`. A
+request that does not is refused. See
+`docs/plans/mcp-2026-07-28-migration.md` for how the move was made and why
+serving the older era as well was rejected.
 
 Shared protocol behavior includes:
 
-- initialize / initialized lifecycle gating
-- `ping`
+- per-request protocol metadata, validated against the `MCP-Protocol-Version`
+  header when one is sent
+- `server/discover`, which reports the versions and capabilities `initialize`
+  used to
+- `Mcp-Method` and `Mcp-Name` header mirroring, checked against the body
+- `resultType` on every result, and `ttlMs`/`cacheScope` on the cacheable ones
 - request vs notification handling
 - capability advertisement through one shared declaration path
 - JSON-RPC error normalization
 - pagination helpers for list methods
 - structured tool results
 - resources, prompts, completions, and logging support
-- resource subscriptions and list-changed notifications
-- prompt and tool list-changed notifications
-- logging level negotiation and `notifications/message`
+- `subscriptions/listen`, one long-lived stream carrying only the notification
+  types and resource URIs a client named
+- request-scoped notifications — progress, cancellation and `notifications/message`
+  — on the response stream of the request they relate to, at the log level that
+  request asked for
 
 Important rule:
 
@@ -244,7 +258,7 @@ What the workspace MCP is good at:
 - helping an agent get context quickly without large codebase scans
 - answering repository questions without starting Overcast
 - identifying impacted services and validation commands
-- helping an agent find a live Overcast instance and negotiate with it
+- helping an agent find a live Overcast instance and probe what it serves
 
 What it should not do:
 
@@ -325,9 +339,12 @@ from the active provider.
   implemented.
 - The runtime provider contributes the richest resources because it has live
   instance state.
-- Resource subscriptions are supported, and runtime mutations emit
+- Resource subscriptions are supported through `subscriptions/listen`, which
+  names the URIs of interest in its filter; runtime mutations emit
   `notifications/resources/updated` and `notifications/resources/list_changed`
-  where appropriate.
+  where appropriate. An emit with no matching listener costs nothing — the
+  audience is checked before anything is serialised, because these fire on the
+  emulator's own mutation paths whether or not MCP is in use.
 
 ### Prompts
 
@@ -343,8 +360,13 @@ from the active provider.
 
 ### Logging
 
-- `logging/setLevel` is implemented.
-- `notifications/message` is emitted using RFC 5424-style level names.
+- The log level is stated per request, in `_meta`, rather than set once for a
+  connection — `logging/setLevel` is gone with the rest of the connection model.
+- A request that names no level is sent no `notifications/message` at all. The
+  revision requires that, and it means silence is the default rather than a
+  threshold nobody chose.
+- `notifications/message` is emitted using RFC 5424-style level names, on the
+  response stream of the request that produced it.
 - Server-emitted log notifications include the `logger` field so clients can
   attribute the source to Overcast.
 
@@ -391,9 +413,10 @@ are still some areas that could be improved later.
 - broader and deeper typed runtime resource coverage as more services gain
   better MCP representations
 - more prompt content only if it proves genuinely useful for agent workflows
-- configurable or persistent notification replay if reconnect durability becomes
-  important during long debugging sessions
 - additional safe mutating runtime actions where the safety boundary is clear
+- MRTR, if a tool ever needs elicitation. `tools/call` answers with a typed
+  `ToolResult` today and so cannot carry a `resultType`, which is what would
+  have to change first — see `docs/plans/mcp-2026-07-28-migration.md`, phase 5
 
 ### Explicitly deferred, not active gaps
 
