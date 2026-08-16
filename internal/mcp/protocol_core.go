@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -46,10 +45,6 @@ var capabilityDescriptors = []capabilityDescriptor{
 		},
 	},
 }
-
-var (
-	errUnknownSessionHeader = errors.New("unknown MCP session")
-)
 
 var loggingLevelRankings = map[string]int{
 	"debug":     7,

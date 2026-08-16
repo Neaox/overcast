@@ -123,6 +123,40 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 	}
 }
 
+// TestRuntimeMCPRoutes_ServerWatchesTheShutdownChannel covers the wiring, and
+// only the wiring: the channel this package owns is the channel the server it
+// builds will watch.
+//
+// That a stream then ends when the channel closes is a separate property, and
+// it belongs to internal/mcp — TestSubscriptions_shutdownEndsTheStreamWithA
+// ClosingResult asserts it there, on a server it wires by hand. Which is
+// exactly why that test cannot see this: it supplies its own channel, so it
+// would pass just as happily against a router that forgot to supply one.
+//
+// Asserting the identity rather than the effect is what keeps the two apart. A
+// router-level test that opened a listen stream and waited for it to end would
+// re-run the whole mechanism to observe one assignment, and would have to bound
+// the wait with a deadline — the formulation the deleted
+// TestRuntimeMCPRoutes_SSEStreamLetsGoOnPreShutdown had, which flaked on CI at
+// its 20-second bound. There is nothing to wait for here.
+func TestRuntimeMCPRoutes_ServerWatchesTheShutdownChannel(t *testing.T) {
+	shutdownCh := make(chan struct{})
+
+	srv := newRuntimeMCPServer(&config.Config{}, shutdownCh)
+
+	got := srv.ShutdownSignal()
+	if got == nil {
+		t.Fatal("the server was built with no shutdown signal, so nothing but a client " +
+			"disconnecting will end its streams and shutdown will wait for that forever")
+	}
+	// Compared by identity: a server watching *some* channel is not the point,
+	// and comparing anything else would pass on a channel the router cannot
+	// close.
+	if got != (<-chan struct{})(shutdownCh) {
+		t.Fatal("the server is watching a channel other than the one it was handed")
+	}
+}
+
 // TestRuntimeMCPRoutes_PostIsTheOnlyEndpoint pins the shape of the surface the
 // router exposes: one endpoint, one method.
 //

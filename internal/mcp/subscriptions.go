@@ -269,7 +269,7 @@ func (s *Server) handleSubscriptionsListen(w http.ResponseWriter, req jsonRPCReq
 
 // serveSubscription is the stream's lifetime.
 func (s *Server) serveSubscription(out messageWriter, sub *subscription, req jsonRPCRequest, ctx context.Context) {
-	shutdown := s.shutdownSignal()
+	shutdown := s.ShutdownSignal()
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
 

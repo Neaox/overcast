@@ -1515,11 +1515,19 @@ func (s *Server) SetShutdownSignal(ch <-chan struct{}) {
 	s.mu.Unlock()
 }
 
-// shutdownSignal reads the shutdown channel under the lock, so a stream that is
-// starting while the host is still wiring up cannot race the setter. A nil
-// channel blocks forever in a select, which is what a server with no host
-// shutdown wants.
-func (s *Server) shutdownSignal() <-chan struct{} {
+// ShutdownSignal reports the channel given to SetShutdownSignal, or nil if the
+// server has no host shutdown to observe.
+//
+// It reads under the lock, so a stream that is starting while the host is still
+// wiring up cannot race the setter. A nil channel blocks forever in a select,
+// which is what a server with no host shutdown wants.
+//
+// Exported because the shutdown signal is the one piece of a server's wiring
+// that nothing else reveals: a host that forgets to hand its channel over
+// builds a server that looks identical and holds the process open at shutdown.
+// A host can assert it wired its own channel without opening a stream to infer
+// it — see internal/router.
+func (s *Server) ShutdownSignal() <-chan struct{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.shutdown

@@ -37,19 +37,14 @@ import (
 // The slim build tag excludes this file entirely so overcast-slim never
 // exposes /_overcast/mcp.
 func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger, shutdownCh <-chan struct{}) {
+	// Built eagerly, and served lazily below. The order matters: AttachEventBus
+	// subscribes the provider to the bus so it can keep a window of recent
+	// events, and a subscription that waited for the first MCP request would
+	// have missed everything the emulator did before it.
 	provider := mcpproviders.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
 	root := sync.OnceValue(func() http.Handler {
-		runtimeMCP := mcp.NewServer(slog.Default(), provider)
-		// A `subscriptions/listen` stream is a long-lived handler, so it needs
-		// the same pre-shutdown channel eventsHandler and domainsWatchHandler
-		// get. Without it the stream ends only when the client disconnects, and
-		// a shutdown that waits for in-flight handlers waits for that forever.
-		runtimeMCP.SetShutdownSignal(shutdownCh)
-		if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
-			runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)
-		}
-		return runtimeMCP.RootHandler()
+		return newRuntimeMCPServer(cfg, shutdownCh, provider).RootHandler()
 	})
 	strip := http.StripPrefix("/_overcast/mcp", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		root().ServeHTTP(w, req)
@@ -71,4 +66,27 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 		rewritten.URL = &urlCopy
 		root().ServeHTTP(w, rewritten)
 	})
+}
+
+// newRuntimeMCPServer builds the runtime MCP server with the host wiring it
+// cannot discover for itself.
+//
+// Separate from registerMCPRoutes so that shutdownCh is a parameter of building
+// a server rather than a step someone has to remember afterwards — the same
+// shape eventsHandler and domainsWatchHandler already have, where the channel
+// is an argument you cannot leave out and still compile. What the compiler
+// cannot check is that this function passes it on, which is the one thing
+// TestRuntimeMCPRoutes_ServerWatchesTheShutdownChannel exists for.
+//
+// A `subscriptions/listen` stream is a long-lived handler and needs the same
+// pre-shutdown channel those two get. Without it the stream ends only when the
+// client disconnects, and a shutdown that waits for in-flight handlers waits
+// for that forever.
+func newRuntimeMCPServer(cfg *config.Config, shutdownCh <-chan struct{}, providers ...mcp.ToolProvider) *mcp.Server {
+	srv := mcp.NewServer(slog.Default(), providers...)
+	srv.SetShutdownSignal(shutdownCh)
+	if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
+		srv.SetBearerAuthToken(cfg.MCPAuthToken)
+	}
+	return srv
 }
