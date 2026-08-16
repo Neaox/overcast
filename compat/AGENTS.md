@@ -296,8 +296,12 @@ The compat server embeds an **MCP (Model Context Protocol)** server at `/mcp/`
 that AI agents can use to trigger test runs and query results without parsing
 raw SSE streams or JSON files.
 
-**Transport:** Streamable HTTP — JSON-RPC 2.0 over `POST /mcp/`, with an
-optional SSE stream at `GET /mcp/sse` for live event notifications.
+**Transport:** Streamable HTTP — JSON-RPC 2.0 over `POST /mcp/`, and that is
+the only endpoint. MCP revision `2026-07-28` is stateless: there is no
+handshake to perform first, no session, and no GET stream. Every request
+declares its own protocol version in `_meta` and mirrors its method into the
+`Mcp-Method` header, or it is refused. For live event notifications use the
+dashboard's own `GET /events`, which carries the same feed.
 
 **When the compat dev server is running** (`go run ./cmd/compat --dev`, or the
 `compat/dev.sh` / `compat\dev.ps1` wrappers), the MCP endpoint is live under
@@ -307,16 +311,27 @@ prints rather than assuming. The examples below use `:7777`; substitute the
 port you were given. Agents with an MCP client configured can call tools
 directly. Agents without an MCP client can call the endpoint via `curl`:
 
+Every request needs the `_meta` block and the `Mcp-Method` header; `tools/call`
+also needs `Mcp-Name` naming the tool, because the server checks the headers
+against the body and refuses a disagreement with `-32020`.
+
 ```bash
 # List all available tools
 curl -s -X POST http://localhost:7777/mcp/ \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}}}}' | jq '.result.tools[].name'
 
 # Run all node-js-sdk tests
 curl -s -X POST http://localhost:7777/mcp/ \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"compat_run_tests","arguments":{"suite":"node-js-sdk","all":true}}}'
+  -H "Mcp-Method: tools/call" -H "Mcp-Name: compat_run_tests" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}},
+        "name":"compat_run_tests","arguments":{"suite":"node-js-sdk","all":true}}}'
 ```
 
 **Available tools:**
@@ -345,9 +360,12 @@ real-time state rather than the last completed run.
   other file.
 - `POST /mcp/` responds synchronously (JSON-RPC result or error). Long-running
   operations (`compat_run_tests`) return immediately with a `batch_id`; the
-  actual test output arrives via SSE.
-- `GET /mcp/sse` streams the same event feed as `GET /events` — do not add a
-  second SSE pump; reuse the orchestrator's existing channel.
+  actual test output arrives on `GET /events`.
+- There is no MCP event stream. `GET /mcp/sse` used to copy the orchestrator's
+  events onto MCP, and went with the GET stream in revision `2026-07-28` —
+  `subscriptions/listen` only carries notification types a client named, and
+  raw suite events are not one of them. `GET /events` was always the primary
+  feed and is now the only one; do not add a second pump.
 
 ---
 

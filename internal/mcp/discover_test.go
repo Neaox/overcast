@@ -154,7 +154,7 @@ func TestDiscover_stillValidatesADeclaredVersion(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
 
-	meta := modernMeta()
+	meta := metaBlock()
 	meta[metaProtocolVersion] = "1900-01-01"
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "server/discover",

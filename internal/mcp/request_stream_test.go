@@ -57,7 +57,7 @@ func openRequestStream(t *testing.T, srv *httptest.Server, id any, method string
 		params = map[string]any{}
 	}
 	existing, _ := params["_meta"].(map[string]any)
-	params["_meta"] = mergeMeta(modernMeta(), existing)
+	params["_meta"] = mergeMeta(metaBlock(), existing)
 
 	headers := map[string]string{
 		"MCP-Protocol-Version": ProtocolVersion,
@@ -421,7 +421,7 @@ func TestRequestStream_APlainRequestStillGetsAPlainAnswer(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 70, "method": "tools/call",
 		"params": map[string]any{
-			"_meta":     mergeMeta(modernMeta(), map[string]any{"progressToken": "prog-2"}),
+			"_meta":     mergeMeta(metaBlock(), map[string]any{"progressToken": "prog-2"}),
 			"name":      "slow",
 			"arguments": map[string]any{},
 		},
@@ -457,7 +457,7 @@ func TestRequestStream_ARejectedRequestIsStillAnHTTPError(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 80, "method": "tools/list",
 		"params": map[string]any{
-			"_meta": mergeMeta(modernMeta(), map[string]any{
+			"_meta": mergeMeta(metaBlock(), map[string]any{
 				metaProtocolVersion: "1999-01-01",
 			}),
 		},

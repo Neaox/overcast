@@ -94,7 +94,7 @@ func asModernRequest(body any, headers map[string]string) (any, map[string]strin
 	// progressToken still needs the protocol version alongside it, and a test
 	// whose subject *is* the protocol version must keep the one it chose.
 	meta, _ := merged["_meta"].(map[string]any)
-	withMeta := modernMeta()
+	withMeta := metaBlock()
 	for k, v := range meta {
 		withMeta[k] = v
 	}
@@ -2231,7 +2231,7 @@ func TestServer_StreamableHTTP_PostSSEResponseMode(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      99,
 		"method":  "tools/list",
-		"params":  map[string]any{"_meta": modernMeta()},
+		"params":  map[string]any{"_meta": metaBlock()},
 	})
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/mcp/", bytes.NewReader(b))
 	if err != nil {
@@ -2611,7 +2611,7 @@ func stdioLine(t *testing.T, msg map[string]any) []byte {
 			merged[k] = v
 		}
 		meta, _ := merged["_meta"].(map[string]any)
-		withMeta := modernMeta()
+		withMeta := metaBlock()
 		for k, v := range meta {
 			withMeta[k] = v
 		}

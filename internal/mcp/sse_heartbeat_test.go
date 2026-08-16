@@ -62,7 +62,7 @@ func openListenStream(t *testing.T, srv *httptest.Server, within time.Duration) 
 	payload, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": "heartbeat", "method": subscriptionsListenMethod,
 		"params": map[string]any{
-			"_meta":         modernMeta(),
+			"_meta":         metaBlock(),
 			"notifications": map[string]any{"toolsListChanged": true},
 		},
 	})

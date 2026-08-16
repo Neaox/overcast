@@ -29,7 +29,7 @@ func TestSubscriptions_acknowledgesFirstWithItsID(t *testing.T) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 7, "method": subscriptionsListenMethod,
 		"params": map[string]any{
-			"_meta":         modernMeta(),
+			"_meta":         metaBlock(),
 			"notifications": map[string]any{"toolsListChanged": true},
 		},
 	}, map[string]string{

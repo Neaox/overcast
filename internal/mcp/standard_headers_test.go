@@ -32,7 +32,7 @@ func modernHeaders(method, name string) map[string]string {
 }
 
 func modernParams(extra map[string]any) map[string]any {
-	params := map[string]any{"_meta": modernMeta()}
+	params := map[string]any{"_meta": metaBlock()}
 	for k, v := range extra {
 		params[k] = v
 	}

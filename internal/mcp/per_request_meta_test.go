@@ -9,24 +9,12 @@ package mcp
 // travel in `_meta` on every request instead of being negotiated once by
 // `initialize` and remembered for the connection.
 //
-// This is the first half of that move, and it is deliberately additive. The
-// server learns to read `_meta` and to serve a request that carries it without
-// an `initialize` first; the 2025-11-25 handshake keeps working exactly as
-// before for requests that do not. Nothing is removed here — the handshake, the
-// sessions and the replay buffer come out later, once nothing depends on them.
-// See docs/plans/mcp-2026-07-28-migration.md.
-//
-// Two things make the split clean rather than a fork in the road:
-//
-//   - The server already ignores what the handshake negotiated. clientCapabilities
-//     and negotiatedVersion are written by handleInitialize and read nowhere;
-//     the result hardcodes ProtocolVersion. So per-request metadata is not
-//     competing with a live negotiated value, it is filling a gap.
-//   - A modern request is self-describing, so the lifecycle gate has nothing to
-//     check. Skipping it for those requests is what the Go SDK does too: "if the
-//     request carries io.modelcontextprotocol/protocolVersion in its _meta
-//     field, it follows the new sessionless protocol. The initialization gate is
-//     skipped for such requests."
+// This landed in phase 1 as an additive change, alongside a handshake that
+// still worked for requests carrying no `_meta`. Phase 4 removed that handshake,
+// so what was once "one of two ways in" is now the only one, and these tests
+// changed with it: the case that used to prove the legacy path still worked now
+// proves there is no longer a path for such a request to take. See
+// docs/plans/mcp-2026-07-28-migration.md.
 
 import (
 	"bytes"
@@ -36,8 +24,8 @@ import (
 	"testing"
 )
 
-// modernMeta is the `_meta` block a 2026-07-28 client puts on every request.
-func modernMeta() map[string]any {
+// metaBlock is the `_meta` block a 2026-07-28 client puts on every request.
+func metaBlock() map[string]any {
 	return map[string]any{
 		metaProtocolVersion:    ProtocolVersion,
 		metaClientInfo:         map[string]any{"name": "router-test", "version": "1.0"},
@@ -53,7 +41,7 @@ func postModern(t *testing.T, srv *httptest.Server, method string, params map[st
 		params = map[string]any{}
 	}
 	if _, ok := params["_meta"]; !ok {
-		params["_meta"] = modernMeta()
+		params["_meta"] = metaBlock()
 	}
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": method, "params": params,
@@ -116,9 +104,15 @@ func TestPerRequestMeta_servesARequestWithNoHandshake(t *testing.T) {
 	}
 }
 
-// The other half of the rule: a request WITHOUT `_meta` is a 2025-11-25 request
-// and the handshake still governs it. This is what keeps the change additive.
-func TestPerRequestMeta_legacyRequestStillNeedsTheHandshake(t *testing.T) {
+// The other half of the rule, and the half phase 4 changed the meaning of.
+//
+// A request carrying no `_meta` used to be a 2025-11-25 request, governed by the
+// handshake; this test proved the handshake still governed it. There is no
+// handshake now, so the same request has nothing to fall back to and is refused
+// — which is what "modern-only" means at the wire. The revision says as much
+// about the client on the other end: "legacy clients have no fall-forward
+// mechanism", so there is no answer that would help one.
+func TestPerRequestMeta_aRequestThatDescribesItselfIsTheOnlyKindServed(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
 
@@ -141,8 +135,9 @@ func TestPerRequestMeta_legacyRequestStillNeedsTheHandshake(t *testing.T) {
 
 	_, rpcErr := decodeRPC(t, resp)
 	if rpcErr == nil {
-		t.Fatal("a request with no _meta and no handshake was served — the 2025-11-25 " +
-			"lifecycle must keep governing requests that do not describe themselves")
+		t.Fatal("a request carrying no _meta was served — there is no era left for it " +
+			"to belong to, so it has no version, no identity and no capabilities " +
+			"the server could act on")
 	}
 }
 
@@ -152,7 +147,7 @@ func TestPerRequestMeta_unsupportedVersionIsRefusedWithSupportedList(t *testing.
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
 
-	meta := modernMeta()
+	meta := metaBlock()
 	meta[metaProtocolVersion] = "1900-01-01"
 	resp := postModern(t, srv, "tools/list", map[string]any{"_meta": meta}, nil)
 	defer resp.Body.Close() //nolint:errcheck
@@ -227,7 +222,7 @@ func TestPerRequestMeta_missingClientCapabilitiesIsInvalidParams(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
 
-	meta := modernMeta()
+	meta := metaBlock()
 	delete(meta, metaClientCapabilities)
 	resp := postModern(t, srv, "tools/list", map[string]any{"_meta": meta}, nil)
 	defer resp.Body.Close() //nolint:errcheck

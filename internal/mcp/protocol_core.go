@@ -234,7 +234,9 @@ func loggingLevelRank(level string) int {
 // than a detail of this transport.
 //
 // Everything else keeps 200 with a JSON-RPC error in the body, which is what
-// JSON-RPC over HTTP has always done here and what 2025-11-25 clients expect.
+// JSON-RPC over HTTP has always done here: the transport delivered the message
+// and the application refused it, and only the three above are singled out for
+// a status an intermediary can act on without parsing anything.
 func httpStatusForRPCError(code int) int {
 	switch code {
 	case RPCHeaderMismatch, RPCMissingRequiredClientCapability, RPCUnsupportedProtocolVersion:

@@ -119,7 +119,7 @@ func listen(t *testing.T, srv *httptest.Server, filter map[string]any) *listener
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": nextListenID(), "method": subscriptionsListenMethod,
 		"params": map[string]any{
-			"_meta":         modernMeta(),
+			"_meta":         metaBlock(),
 			"notifications": wanted,
 		},
 	}, map[string]string{
@@ -507,7 +507,7 @@ func callToolModern(t *testing.T, srv *httptest.Server, name string) {
 	resp := mcpPost(t, srv, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{
-			"_meta":     modernMeta(),
+			"_meta":     metaBlock(),
 			"name":      name,
 			"arguments": map[string]any{},
 		},
