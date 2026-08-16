@@ -411,12 +411,22 @@ func (s *Server) registerProvider(provider ToolProvider) {
 			s.handlers[tool.Name] = handler
 		}
 	}
-	shouldEmit := s.initDone && s.ready
 	s.mu.Unlock()
 
-	if !shouldEmit {
-		return
-	}
+	// Emission is unconditional, and this is where the handshake stopped being
+	// load-bearing.
+	//
+	// It used to be gated on `s.initDone && s.ready` — do not tell a client the
+	// list changed before it has finished initialising. In 2026-07-28 there is no
+	// such moment to wait for: "There is no negotiation handshake", so the
+	// condition has no successor to be rewritten into. Nor does it need one. A
+	// client hears about a change because it opened a `subscriptions/listen`
+	// stream and named the type, which is a stronger statement of readiness than
+	// a handshake ever was — it cannot have subscribed before it was ready to
+	// receive.
+	//
+	// This costs nothing when nobody is listening: emitToSubscriptions returns on
+	// a length check before it serialises anything. See subscriptions.go.
 	if addedTools {
 		s.emitToolsListChanged()
 	}
@@ -1685,7 +1695,6 @@ func (s *Server) emitResourceUpdated(uri string) {
 	if uri == "" {
 		return
 	}
-	params := map[string]any{"uri": uri}
 
 	// Two independent ways to be subscribed to a resource, and a client uses
 	// exactly one of them. `resources/subscribe` put the URI in a set on the
@@ -1695,6 +1704,18 @@ func (s *Server) emitResourceUpdated(uri string) {
 	s.mu.RLock()
 	_, subscribed := s.resourceSubscriptions[uri]
 	s.mu.RUnlock()
+
+	// Both audiences are checked before the params map is built, and that
+	// ordering is the point. Providers hold this function through
+	// SetResourceUpdatedEmitter and call it whenever a resource changes, so it
+	// runs on the emulator's paths, not MCP's. Building a notification body
+	// first and discovering there is no audience second would charge the
+	// emulator for every update whether or not anyone is using MCP.
+	if !subscribed && !s.hasSubscriberFor("notifications/resources/updated", uri) {
+		return
+	}
+
+	params := map[string]any{"uri": uri}
 	if subscribed {
 		s.emitNotification("notifications/resources/updated", params)
 	}

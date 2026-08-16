@@ -149,6 +149,23 @@ func (s *Server) matchingSubscriptions(method, uri string) []*subscription {
 	return matched
 }
 
+// hasSubscriberFor reports whether any stream asked for this notification.
+//
+// The same question matchingSubscriptions answers, without building the slice —
+// for callers that need to know whether there is an audience *before* they
+// construct the notification's params. An empty subscription map makes this a
+// lock and a loop that does not run.
+func (s *Server) hasSubscriberFor(method, uri string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for sub := range s.subscriptions {
+		if sub.filter.wants(method, uri) {
+			return true
+		}
+	}
+	return false
+}
+
 // emitToSubscriptions delivers one notification to every stream that asked for
 // it, tagged with that stream's subscription id.
 //
