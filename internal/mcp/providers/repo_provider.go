@@ -41,6 +41,10 @@ type cachedProbeResult struct {
 const runtimeProbeCacheTTL = 15 * time.Second
 const compatSubsetMaxSuites = 3
 
+// maxJSONRPCResponseSize bounds anything read back from a remote MCP endpoint,
+// success or failure alike.
+const maxJSONRPCResponseSize = 10 * 1024 * 1024 // 10 MiB
+
 var compatSuiteNamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 type discoveredRuntimeEndpoint struct {
@@ -1760,7 +1764,10 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 	} else {
 		out["mcp_available"] = true
 		if res, ok := initResp["result"].(map[string]any); ok {
-			if versions, ok := res["protocolVersions"].([]any); ok && len(versions) > 0 {
+			// `supportedVersions` is a list, newest first, because a modern
+			// server negotiates nothing and so has no single version to name.
+			// The newest is what a client that just asked would go on to use.
+			if versions, ok := res["supportedVersions"].([]any); ok && len(versions) > 0 {
 				out["mcp_protocol_version"] = versions[0]
 			}
 		}
@@ -3050,14 +3057,37 @@ func doJSONRPC(ctx context.Context, client *http.Client, endpoint string, payloa
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status %d%s", resp.StatusCode, describeRPCFailure(resp.Body))
 	}
-	const maxResponseSize = 10 * 1024 * 1024 // 10 MiB
 	var out map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONRPCResponseSize)).Decode(&out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// describeRPCFailure returns the server's own account of a failed request, as a
+// suffix to hang off the status, or "" when it did not give one.
+//
+// 2026-07-28 rejects a request on its metadata — -32020, -32021, -32022 — with
+// a 400 whose body names the reason. Those are exactly the failures the status
+// cannot describe, because they are about what the request said about itself
+// rather than about what it asked for. Reporting the status alone discards a
+// diagnosis the server had already made.
+func describeRPCFailure(body io.Reader) string {
+	var payload struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, maxJSONRPCResponseSize)).Decode(&payload); err != nil {
+		return ""
+	}
+	if payload.Error == nil || strings.TrimSpace(payload.Error.Message) == "" {
+		return ""
+	}
+	return fmt.Sprintf(": %s (%d)", payload.Error.Message, payload.Error.Code)
 }
 
 func minInt(a, b int) int {
