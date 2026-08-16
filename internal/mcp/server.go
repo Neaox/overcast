@@ -1226,7 +1226,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, w http.ResponseWriter,
 	}
 	providers := s.snapshotResourceProviders()
 	if len(providers) == 0 {
-		writeRPCResult(w, req.ID, map[string]any{"contents": []any{}})
+		writeRPCResult(w, req.ID, markCacheable(map[string]any{"contents": []any{}}))
 		return
 	}
 	contents, readErr := s.readResourceFromProviders(ctx, uri, true)
@@ -1238,7 +1238,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, w http.ResponseWriter,
 		s.writeRPCError(w, req.ID, RPCInvalidParams, "resource not found")
 		return
 	}
-	writeRPCResult(w, req.ID, map[string]any{"contents": contents})
+	writeRPCResult(w, req.ID, markCacheable(map[string]any{"contents": contents}))
 }
 
 func (s *Server) handlePromptsGet(ctx context.Context, w http.ResponseWriter, req jsonRPCRequest) {
@@ -1500,7 +1500,10 @@ func writeRPCResult(w http.ResponseWriter, id any, payload any) {
 	case jsonRPCResponse:
 		_ = json.NewEncoder(w).Encode(value)
 	default:
-		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: id, Result: payload})
+		// stampResult adds the resultType and identity 2026-07-28 requires. Done
+		// here so a handler cannot forget it; see its comment for why only
+		// map-shaped results are touched.
+		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: id, Result: stampResult(payload)})
 	}
 }
 

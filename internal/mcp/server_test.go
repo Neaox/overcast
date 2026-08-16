@@ -4480,8 +4480,18 @@ func TestServer_ResourcesSubscribe_ReturnsEmpty(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s result type = %T", method, body["result"])
 			}
-			if len(result) != 0 {
-				t.Fatalf("%s result = %v, want empty", method, result)
+			// No payload is the point — subscribe acknowledges and returns
+			// nothing of its own. It is not literally an empty object any
+			// more: 2026-07-28 requires a resultType and the server's
+			// identity on every result, and those are stamped centrally.
+			// Assert the absence of payload rather than counting keys, so
+			// this keeps testing the behaviour and not the envelope.
+			for key := range result {
+				switch key {
+				case "resultType", "_meta":
+				default:
+					t.Fatalf("%s result carries %q = %v, want no payload", method, key, result[key])
+				}
 			}
 		})
 	}

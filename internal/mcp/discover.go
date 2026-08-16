@@ -59,6 +59,67 @@ const (
 	cacheScopePublic = "public"
 )
 
+// cacheableListTTLMs is how long a client may reuse a list or a resource read.
+//
+// Deliberately far shorter than discover's hour: these answers genuinely
+// change. A provider registering new tools moves `tools/list`, and a resource
+// can change under any request. What keeps the number from mattering much is
+// that the notifications are the real mechanism — a client that subscribes is
+// told the moment a list changes, and the TTL is only the backstop for one that
+// does not. A minute is short enough that an unsubscribed client is not working
+// from a stale list for long, and long enough that a chatty one is not
+// re-listing on every call.
+const cacheableListTTLMs = 60000
+
+// serverInfoBlock is what this server reports as its identity. Advisory: the
+// spec is explicit that it is self-reported, unverified, and "SHOULD NOT" be
+// used to change behaviour or inform security decisions.
+func serverInfoBlock() map[string]string {
+	return map[string]string{"name": "overcast-mcp", "version": "1.0.0"}
+}
+
+// stampResult adds what 2026-07-28 requires of every result: a resultType, and
+// the server's identity in `_meta`.
+//
+// Applied centrally at the point results are written rather than at each of the
+// dozens of sites that build one, so a new handler cannot forget it. Existing
+// values win, so a result that has already said it is something other than
+// `complete` — an MRTR `input_required`, when that arrives — is left alone.
+//
+// Only map-shaped results are stamped. The typed ones are the legacy handshake
+// results, which belong to a revision that has no resultType; and a 2025-11-25
+// client ignores fields it does not know, so nothing is harmed either way.
+func stampResult(payload any) any {
+	result, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+	if _, exists := result["resultType"]; !exists {
+		result["resultType"] = resultTypeComplete
+	}
+	if _, exists := result["_meta"]; !exists {
+		result["_meta"] = map[string]any{metaServerInfo: serverInfoBlock()}
+	}
+	return result
+}
+
+// markCacheable adds the ttlMs/cacheScope pair the revision requires on
+// `tools/list`, `prompts/list`, `resources/list`, `resources/read` and
+// `resources/templates/list`.
+//
+// The scope is public on all of them because none varies by caller: the spec
+// requires that a list "MUST NOT vary per-connection", and nothing here varies
+// by credential either, so one client's cached view cannot misrepresent
+// another's.
+func markCacheable(result map[string]any) map[string]any {
+	if result == nil {
+		return result
+	}
+	result["ttlMs"] = cacheableListTTLMs
+	result["cacheScope"] = cacheScopePublic
+	return result
+}
+
 // discoverResult is the shape `server/discover` returns.
 //
 // Written as an explicit map rather than a struct because the capability block
@@ -76,12 +137,7 @@ func (s *Server) discoverResult() map[string]any {
 		"capabilities":      caps,
 		"ttlMs":             discoverTTLMs,
 		"cacheScope":        cacheScopePublic,
-		"_meta": map[string]any{
-			metaServerInfo: map[string]string{
-				"name":    "overcast-mcp",
-				"version": "1.0.0",
-			},
-		},
+		"_meta":             map[string]any{metaServerInfo: serverInfoBlock()},
 	}
 }
 
