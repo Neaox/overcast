@@ -29,9 +29,10 @@ import (
 // "There is no negotiation handshake. Every request carries its protocol
 // version, and the server accepts or rejects each request independently."
 //
-// Auth posture: Origin validation is always enforced. When
-// OVERCAST_MCP_REMOTE_EXPOSURE=true, runtime MCP additionally requires a
-// configured bearer token (OVERCAST_MCP_AUTH_TOKEN) on all HTTP endpoints.
+// Auth posture: Origin validation is always enforced, and with one endpoint it
+// is enforced in one place. When OVERCAST_MCP_REMOTE_EXPOSURE=true, runtime MCP
+// additionally requires a configured bearer token (OVERCAST_MCP_AUTH_TOKEN) on
+// every request.
 //
 // The slim build tag excludes this file entirely so overcast-slim never
 // exposes /_overcast/mcp.
@@ -57,15 +58,17 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 
 	// Explicitly route the base path without trailing slash so clients can use
 	// /_overcast/mcp and /_overcast/mcp/ interchangeably.
-	rootPath := func(w http.ResponseWriter, req *http.Request) {
+	//
+	// Every method, not just POST: the MCP handler is the one that decides which
+	// methods its surface has, and it answers anything but POST with 405 and an
+	// Allow header. Enumerating methods here would put a second, quietly
+	// divergent copy of that answer in the router.
+	r.HandleFunc("/_overcast/mcp", func(w http.ResponseWriter, req *http.Request) {
 		rewritten := req.Clone(req.Context())
 		urlCopy := *req.URL
 		urlCopy.Path = "/"
 		urlCopy.RawPath = "/"
 		rewritten.URL = &urlCopy
 		root().ServeHTTP(w, rewritten)
-	}
-	r.MethodFunc(http.MethodGet, "/_overcast/mcp", rootPath)
-	r.MethodFunc(http.MethodPost, "/_overcast/mcp", rootPath)
-	r.MethodFunc(http.MethodDelete, "/_overcast/mcp", rootPath)
+	})
 }
