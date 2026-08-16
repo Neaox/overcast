@@ -137,6 +137,10 @@ type inFlightRequest struct {
 	cancel        context.CancelFunc
 	progressToken string
 	cancelled     bool
+
+	// stream is the response this request is being answered on, or nil if the
+	// client did not ask for one. Its notifications go here and nowhere else.
+	stream *requestStream
 }
 
 type jsonRPCRequest struct {
@@ -522,11 +526,35 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Everything else gets a real stream: the request's own notifications as
+		// they happen, then its answer. The result is still captured rather than
+		// written straight through, because it must be the *last* event — a
+		// client reading in order should see the work reported before the answer
+		// to it. See request_stream.go.
+		flusher, streamable := w.(http.Flusher)
+		if !streamable {
+			s.writeRPCError(w, nil, RPCInternalError, "streaming unsupported")
+			return
+		}
+		stream := &requestStream{w: w, flusher: flusher}
 		capture := &captureResponseWriter{headers: make(http.Header), statusCode: http.StatusOK}
-		s.handleRPCInternal(capture, r)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		s.handleRPCInternal(capture, r.WithContext(withRequestStream(r.Context(), stream)))
+
+		// Nothing was streamed and the handler wants a non-OK status, so this
+		// never became a stream and should answer as itself. That is how a
+		// rejected protocol version stays an HTTP error rather than becoming a
+		// 200 with the refusal buried in an event.
+		if !stream.hasStarted() && capture.statusCode != http.StatusOK && capture.statusCode != http.StatusNoContent {
+			for k, vals := range capture.headers {
+				for _, v := range vals {
+					w.Header().Add(k, v)
+				}
+			}
+			w.WriteHeader(capture.statusCode)
+			_, _ = io.WriteString(w, capture.body.String())
+			return
+		}
+
 		for k, vals := range capture.headers {
 			if strings.EqualFold(k, "Content-Type") {
 				continue
@@ -535,14 +563,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 				w.Header().Add(k, v)
 			}
 		}
-		if capture.statusCode != http.StatusOK && capture.statusCode != http.StatusNoContent {
-			w.WriteHeader(capture.statusCode)
-		}
-		if capture.body.Len() == 0 {
-			_, _ = fmt.Fprint(w, ": no response\n\n")
-			return
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", strings.TrimSpace(capture.body.String()))
+		stream.finish(strings.TrimSpace(capture.body.String()))
 		return
 	}
 
@@ -609,7 +630,7 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 		requestCtx, cancel = context.WithCancel(r.Context())
 	}
 	defer cancel()
-	s.registerInFlight(reqIDKey, req.ID, req.Method, progressToken, cancel)
+	s.registerInFlight(reqIDKey, req.ID, req.Method, progressToken, cancel, requestStreamFrom(r.Context()))
 	defer s.unregisterInFlight(reqIDKey)
 
 	// What the request says about itself. A request that names a protocol
@@ -696,7 +717,7 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 	case "completion/complete":
 		s.handleCompletionComplete(requestCtx, w, req)
 	case "logging/setLevel":
-		s.handleLoggingSetLevel(w, req)
+		s.handleLoggingSetLevel(w, req, requestStreamFrom(r.Context()))
 	default:
 		s.writeRPCError(w, req.ID, RPCMethodNotFound, "method not found: "+req.Method)
 	}
@@ -1210,8 +1231,11 @@ func (s *Server) handleToolsCall(ctx context.Context, reqIDKey string, rawProgre
 		s.writeRPCError(w, req.ID, RPCMethodNotFound, "unknown tool: "+call.Name)
 		return
 	}
+	// The stream this call is being answered on, if the client asked for one.
+	// Everything below reports to it and to nowhere else.
+	stream := requestStreamFrom(ctx)
 	if rawProgressToken != nil {
-		s.emitProgress(rawProgressToken, 0, 1)
+		s.emitProgress(stream, rawProgressToken, 0, 1)
 	}
 	result, err := handler(ctx, call.Arguments)
 	if s.isInFlightCancelled(reqIDKey) {
@@ -1219,10 +1243,10 @@ func (s *Server) handleToolsCall(ctx context.Context, reqIDKey string, rawProgre
 		return
 	}
 	if rawProgressToken != nil {
-		s.emitProgress(rawProgressToken, 1, 1)
+		s.emitProgress(stream, rawProgressToken, 1, 1)
 	}
 	if err != nil {
-		s.emitLogMessage("error", err.Error())
+		s.emitLogMessage(stream, "error", err.Error())
 		writeRPCResult(w, req.ID, normalizeToolResult(nil, err))
 		return
 	}
@@ -1412,7 +1436,7 @@ func (s *Server) handleResourcesUnsubscribe(w http.ResponseWriter, req jsonRPCRe
 	writeRPCResult(w, req.ID, map[string]any{})
 }
 
-func (s *Server) handleLoggingSetLevel(w http.ResponseWriter, req jsonRPCRequest) {
+func (s *Server) handleLoggingSetLevel(w http.ResponseWriter, req jsonRPCRequest, stream *requestStream) {
 	type setLevelParams struct {
 		Level string `json:"level"`
 	}
@@ -1429,7 +1453,7 @@ func (s *Server) handleLoggingSetLevel(w http.ResponseWriter, req jsonRPCRequest
 	s.mu.Lock()
 	s.logLevel = level
 	s.mu.Unlock()
-	s.emitLogMessage(level, fmt.Sprintf("logging level set to %s", level))
+	s.emitLogMessage(stream, level, fmt.Sprintf("logging level set to %s", level))
 	writeRPCResult(w, req.ID, map[string]any{})
 }
 
@@ -1657,18 +1681,30 @@ func (s *Server) replayAfter(lastEventID string) ([]notificationEvent, error) {
 	return replay, nil
 }
 
-func (s *Server) emitLogMessage(level string, data any) {
+// emitLogMessage reports something worth logging, on the response stream of the
+// request that produced it.
+func (s *Server) emitLogMessage(stream *requestStream, level string, data any) {
 	if !s.shouldEmitLog(level) {
 		return
 	}
-	s.emitNotification("notifications/message", logMessageParams{Level: level, Logger: "overcast", Data: data})
+	params := logMessageParams{Level: level, Logger: "overcast", Data: data}
+	stream.notify("notifications/message", params)
+	s.emitNotification("notifications/message", params)
 }
 
-func (s *Server) emitCancelled(requestID any, reason string) {
+// emitCancelled tells a request it has been cancelled, on that request's own
+// response stream.
+//
+// The spec requires the notification — "the server MUST send
+// notifications/cancelled" — and it is about one request, so it travels with
+// that request rather than being broadcast. The legacy emit stays until phase 4
+// removes the GET stream that is its only remaining audience.
+func (s *Server) emitCancelled(stream *requestStream, requestID any, reason string) {
 	params := map[string]any{"requestId": requestID}
 	if reason != "" {
 		params["reason"] = reason
 	}
+	stream.notify("notifications/cancelled", params)
 	s.emitNotification("notifications/cancelled", params)
 }
 
@@ -1679,13 +1715,16 @@ func (s *Server) shouldEmitLog(level string) bool {
 	return loggingLevelRank(level) <= loggingLevelRank(threshold)
 }
 
-// emitProgress sends a notifications/progress notification for the given raw progress token.
-func (s *Server) emitProgress(rawToken any, progress, total float64) {
-	s.emitNotification("notifications/progress", map[string]any{
+// emitProgress reports how far a request has got, on that request's own
+// response stream.
+func (s *Server) emitProgress(stream *requestStream, rawToken any, progress, total float64) {
+	params := map[string]any{
 		"progressToken": rawToken,
 		"progress":      progress,
 		"total":         total,
-	})
+	}
+	stream.notify("notifications/progress", params)
+	s.emitNotification("notifications/progress", params)
 }
 
 // emitResourceUpdated sends notifications/resources/updated for a URI if at least one
@@ -2220,10 +2259,10 @@ func (s *Server) unregisterProgressToken(requestIDKey string) {
 	}
 }
 
-func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, method, progressToken string, cancel context.CancelFunc) {
+func (s *Server) registerInFlight(requestIDKey string, rawRequestID any, method, progressToken string, cancel context.CancelFunc, stream *requestStream) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, method: method, cancel: cancel, progressToken: progressToken}
+	s.inFlight[requestIDKey] = &inFlightRequest{rawRequestID: rawRequestID, method: method, cancel: cancel, progressToken: progressToken, stream: stream}
 }
 
 func (s *Server) unregisterInFlight(requestIDKey string) {
@@ -2250,9 +2289,10 @@ func (s *Server) cancelInFlight(requestIDKey, reason string) {
 	}
 	request.cancelled = true
 	requestID = request.rawRequestID
+	stream := request.stream
 	request.cancel()
 	s.mu.Unlock()
-	s.emitCancelled(requestID, reason)
+	s.emitCancelled(stream, requestID, reason)
 }
 
 func (s *Server) isInFlightCancelled(requestIDKey string) bool {
