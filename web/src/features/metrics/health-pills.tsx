@@ -1,7 +1,12 @@
 /**
- * HealthStrip — the Metrics & Health page's top-of-page summary row.
+ * HealthPills — the storage half of the Metrics & Health page's top-of-page
+ * summary band.
  *
- * Combines two data sources so the strip degrades gracefully when
+ * Rendered as a fragment, not its own row: the page lays these pills and the
+ * static runtime pills (Go version, CPU count, …) out in a single wrapping
+ * row, so a wide window fills one band instead of leaving two half-empty ones.
+ *
+ * Combines two data sources so the pills degrade gracefully when
  * OVERCAST_DEBUG is off (the common case — see debugMetricsQueryOptions's
  * doc comment):
  * - GET /_overcast/health (always available): storage mode + healthy/degraded status.
@@ -69,7 +74,7 @@ function lastFlushAt(debug: DebugMetricsResponse | undefined): string | undefine
   return timestamps.at(-1)
 }
 
-export function HealthStrip({ uptime }: { uptime?: string }) {
+export function HealthPills({ uptime }: { uptime?: string }) {
   const healthQuery = useQuery(healthQueryOptions())
   const debugQuery = useQuery(debugMetricsQueryOptions())
   // Undefined covers both "not fetched yet" and "debug mode is off"; every
@@ -81,8 +86,8 @@ export function HealthStrip({ uptime }: { uptime?: string }) {
   const lastFlush = lastFlushAt(debug)
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="flex flex-col gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
+    <>
+      <div className="flex flex-col justify-center gap-0.5 rounded-md border border-border bg-bg-elevated px-3 py-2">
         <span className={cn(fieldLabel, "text-fg-muted")}>Storage</span>
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-medium text-fg">{storageMode}</span>
@@ -95,6 +100,6 @@ export function HealthStrip({ uptime }: { uptime?: string }) {
         value={lastFlush ? new Date(lastFlush).toLocaleTimeString() : "No flushes yet"}
       />
       {uptime && <StatPill label="Uptime" value={uptime} />}
-    </div>
+    </>
   )
 }
