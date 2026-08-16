@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +148,13 @@ func newRegistriesSince(t *testing.T, dc *docker.Client, before map[string]bool)
 
 // waitForNewManagedRegistry polls until a managed registry not in before is
 // running, and returns its inspect result.
+//
+// What it establishes is that a registry appeared, and nothing more. "New since
+// a snapshot" is a statement about timing, not about ownership: parallel test
+// packages share this daemon and start registries of their own, so the
+// container it returns may well be a sibling's. A test that needs *its own*
+// server's registry — to assert its address, its lifetime, or its removal —
+// must ask ownRegistryContainer instead.
 func waitForNewManagedRegistry(t *testing.T, dc *docker.Client, before map[string]bool) *docker.ContainerInspect {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -165,6 +174,66 @@ func waitForNewManagedRegistry(t *testing.T, dc *docker.Client, before map[strin
 func waitForManagedRegistry(t *testing.T, dc *docker.Client) *docker.ContainerInspect {
 	t.Helper()
 	return waitForNewManagedRegistry(t, dc, nil)
+}
+
+// ownRegistryContainer returns the registry container srv started, identified
+// by the host port srv advertises to its clients.
+//
+// The port is what makes this ownership rather than coincidence. A published
+// host port is exclusive — one container on this daemon can hold it — so the
+// port the server hands out names the container the server itself created, and
+// names no other. Identifying it by which registry appeared while the server
+// was starting cannot say that: under a loaded full-suite run a sibling package
+// starts its own registry inside the same window, the diff returns whichever
+// the daemon listed first, and an assertion about this server's registry ends
+// up watching a container this server never created and will never remove.
+//
+// GetAuthorizationToken is the question asked because it waits for the registry
+// to be up before answering, so the endpoint it reports is a started
+// container's rather than the port-less fallback.
+func ownRegistryContainer(t *testing.T, dc *docker.Client, srv *helpers.TestServer) docker.ContainerSummary {
+	t.Helper()
+	port := advertisedRegistryPort(t, srv)
+	for _, c := range findManagedRegistries(t, dc) {
+		for _, p := range c.Ports {
+			if p.HostPort == port {
+				return c
+			}
+		}
+	}
+	t.Fatalf("no managed registry container publishes host port %d, the one the server advertises", port)
+	return docker.ContainerSummary{}
+}
+
+// advertisedRegistryPort returns the host port in the server's proxyEndpoint,
+// failing the test when the server is serving the registry-less fallback — its
+// own API port, which no registry container publishes.
+func advertisedRegistryPort(t *testing.T, srv *helpers.TestServer) int {
+	t.Helper()
+	resp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("expected 200 from GetAuthorizationToken, got %d", resp.StatusCode)
+	}
+	body := mustDecode(t, resp)
+	data, _ := body["authorizationData"].([]any)
+	if len(data) == 0 {
+		t.Fatalf("expected authorizationData from GetAuthorizationToken, got %#v", body)
+	}
+	entry, _ := data[0].(map[string]any)
+	proxy, _ := entry["proxyEndpoint"].(string)
+	u, err := url.Parse(proxy)
+	if err != nil {
+		t.Fatalf("parse proxyEndpoint %q: %v", proxy, err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("proxyEndpoint %q carries no host port: %v", proxy, err)
+	}
+	if port == srv.Config.Port {
+		t.Fatalf("the server started no registry: proxyEndpoint %q names its own API port", proxy)
+	}
+	return port
 }
 
 //nolint:unused // Kept for Docker CLI tests that need stdin.
@@ -1158,34 +1227,31 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 	dc := skipWithoutDocker(t)
 
 	// The server's own registry is the one whose removal is asserted; a
-	// sibling process's registry on this daemon must survive our shutdown,
-	// so the assertion tracks the container this server created, by ID.
-	before := registryIDSet(t, dc)
+	// sibling process's registry on this daemon must survive our shutdown, so
+	// the assertion tracks the container this server created — the one holding
+	// the port it advertises — by ID.
 	var ownID string
 
 	// Register the final assertion first so it runs after helper server cleanup.
+	//
+	// It looks once, and is entitled to: shutdown does not request removal and
+	// leave, it polls the daemon until the container is gone before returning,
+	// so by the time this runs the daemon has already answered the question.
+	// A grace period here would only hide a shutdown that gave up.
 	t.Cleanup(func() {
+		if ownID == "" {
+			return // the body failed before it identified a container
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		for {
-			summaries, err := dc.ListContainers(ctx, "ecr")
-			if err != nil {
-				t.Fatalf("list ecr containers after shutdown: %v", err)
-			}
-			present := false
-			for _, c := range summaries {
-				if c.ID == ownID {
-					present = true
-				}
-			}
-			if !present {
-				return
-			}
-			select {
-			case <-ctx.Done():
-				t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s", ownID)
-			case <-time.After(100 * time.Millisecond):
+		summaries, err := dc.ListContainers(ctx, "ecr")
+		if err != nil {
+			t.Fatalf("list ecr containers after shutdown: %v", err)
+		}
+		for _, c := range summaries {
+			if c.ID == ownID {
+				t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s state=%s", ownID, c.State)
 			}
 		}
 	})
@@ -1200,8 +1266,7 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 		t.Fatalf("expected 200 creating repository, got %d", resp.StatusCode)
 	}
 
-	// Registry container is started in a background goroutine — poll until ready.
-	ownID = waitForNewManagedRegistry(t, dc, before).ID
+	ownID = ownRegistryContainer(t, dc, srv).ID
 }
 
 // ---- RPC v2 CBOR tests ----
