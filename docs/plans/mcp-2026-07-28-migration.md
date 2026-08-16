@@ -254,12 +254,33 @@ Deletion, once nothing depends on them. Includes `MCPReplayLimit` and
 
 ### 5 — MRTR
 
-**Only worth doing when a tool actually needs elicitation, and none does.** As of
-phase 4 no Overcast tool asks the user anything: every handler either answers
-from repo or runtime state or fails. MRTR would be a whole feature — signed
-`requestState`, replay protection, an `input_required` result shape — with no
-caller, which is the same argument that kept `requireCapability` out of phase 1.
-So this stays unbuilt until a tool needs it, and the plan is complete without it.
+**Only worth doing when a tool actually needs elicitation, and none does.**
+
+This was checked rather than assumed, because the obvious guess is wrong. The 75
+tools are not all readers: 31 of them mutate live emulator state and are declared
+destructive — `runtime_s3_delete_bucket`, `runtime_sqs_purge_queue`,
+`runtime_secretsmanager_delete_secret`, `runtime_kms_schedule_key_deletion` and
+the rest. "Delete this bucket, are you sure?" is exactly the shape that sounds
+like it wants elicitation.
+
+It does not, and the reason is that the revision already puts that question
+somewhere else. Confirming a destructive action is the *client's* job, signalled
+by the `destructiveHint` annotation these tools already carry; a server that
+interrupted the call to ask would be duplicating a decision the client is meant
+to have made before sending it. Elicitation is for a server that cannot proceed
+without information it was not given — a missing parameter it can describe, an
+ambiguity only the user can resolve — and no handler here is in that position.
+Every one either has what it needs in its params or returns an error saying what
+was wrong; there is no "which of these did you mean?" path anywhere in
+`internal/mcp/providers`.
+
+So MRTR would be a whole feature — signed `requestState`, replay protection, an
+`input_required` result shape — with no caller, which is the same argument that
+kept `requireCapability` out of phase 1. It stays unbuilt until a tool needs it,
+and the plan is complete without it.
+
+What would change the answer: a tool that has to disambiguate, or one whose
+required input cannot be known by the caller in advance. Neither exists yet.
 
 Two things to know when that day comes:
 
