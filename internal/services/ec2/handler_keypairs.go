@@ -109,13 +109,15 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DescribeKeyPairs lists key pairs, optionally filtered by KeyName.
+// DescribeKeyPairs lists key pairs, optionally selected by KeyName.N or
+// filtered.
 func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
-	filterNames := parseIndexedParam(r, "KeyName")
-	filterNameSet := make(map[string]bool, len(filterNames))
-	for _, n := range filterNames {
-		filterNameSet[n] = true
+	filters, aerr := keyPairFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
+	requested := requestedIDs(r, "KeyName")
 
 	all, aerr := h.store.listKeyPairs(r.Context())
 	if aerr != nil {
@@ -125,7 +127,7 @@ func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlKeyPairItem, 0, len(all))
 	for _, kp := range all {
-		if len(filterNameSet) > 0 && !filterNameSet[kp.KeyName] {
+		if !requested.has(kp.KeyName) || !filters.matches(kp) {
 			continue
 		}
 		items = append(items, xmlKeyPairItem{

@@ -127,14 +127,12 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 
 // DescribeRouteTables lists route tables, optionally filtered.
 func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
-	filterIDs := parseIndexedParam(r, "RouteTableId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := routeTableFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	filterRouteTableID := parseFilterValues(r, "route-table-id")
-	filterVpcID := parseFilterValues(r, "vpc-id")
+	requested := requestedIDs(r, "RouteTableId")
 
 	all, aerr := h.store.listRouteTables(r.Context())
 	if aerr != nil {
@@ -150,13 +148,7 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlRouteTable, 0, len(all))
 	for _, rt := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[rt.RouteTableID] {
-			continue
-		}
-		if len(filterRouteTableID) > 0 && !filterRouteTableID[rt.RouteTableID] {
-			continue
-		}
-		if len(filterVpcID) > 0 && !filterVpcID[rt.VpcID] {
+		if !requested.has(rt.RouteTableID) || !filters.matches(rt) {
 			continue
 		}
 		tags, ok := tagsView.keep(rt.RouteTableID)

@@ -2,6 +2,8 @@ package ec2
 
 import (
 	"context"
+	"encoding/xml"
+	"net/url"
 	"slices"
 	"testing"
 
@@ -193,41 +195,53 @@ func TestDefaultVPCGuard_reassertsADriftedNetwork(t *testing.T) {
 // context provider sends filters, treats the response as already filtered, and
 // fails unless exactly one comes back — so an unfiltered DescribeVpcs would
 // break `Vpc.fromLookup` for anyone who has a VPC of their own.
-func TestFilterVPCs(t *testing.T) {
-	def := &VPC{VpcID: "vpc-default", IsDefault: true}
-	mine := &VPC{VpcID: "vpc-mine"}
-	all := []*VPC{def, mine}
-
+func TestDescribeVpcs_selectors(t *testing.T) {
 	cases := []struct {
-		name      string
-		ids       []string
-		filterIDs map[string]bool
-		isDefault map[string]bool
-		want      []string
+		name   string
+		params url.Values
+		want   []string
 	}{
-		{name: "no selectors returns everything", want: []string{"vpc-default", "vpc-mine"}},
-		{name: "VpcId.N", ids: []string{"vpc-mine"}, want: []string{"vpc-mine"}},
-		{name: "vpc-id filter", filterIDs: map[string]bool{"vpc-mine": true}, want: []string{"vpc-mine"}},
-		{name: "isDefault true", isDefault: map[string]bool{"true": true}, want: []string{"vpc-default"}},
-		{name: "isDefault false", isDefault: map[string]bool{"false": true}, want: []string{"vpc-mine"}},
-		{name: "isDefault is case-insensitive", isDefault: map[string]bool{"True": true}, want: []string{"vpc-default"}},
+		{name: "no selectors returns everything", params: url.Values{}, want: []string{"vpc-default", "vpc-mine"}},
+		{name: "VpcId.N", params: url.Values{"VpcId.1": {"vpc-mine"}}, want: []string{"vpc-mine"}},
+		{name: "vpc-id filter", params: filterParams("vpc-id", "vpc-mine"), want: []string{"vpc-mine"}},
+		{name: "isDefault true", params: filterParams("isDefault", "true"), want: []string{"vpc-default"}},
+		{name: "isDefault false", params: filterParams("isDefault", "false"), want: []string{"vpc-mine"}},
+		{name: "isDefault is case-insensitive", params: filterParams("isDefault", "True"), want: []string{"vpc-default"}},
+		{name: "a filter name is case-insensitive", params: filterParams("VPC-ID", "vpc-mine"), want: []string{"vpc-mine"}},
 		{
-			name:      "selectors are AND-ed",
-			ids:       []string{"vpc-mine"},
-			isDefault: map[string]bool{"true": true},
-			want:      nil,
+			name: "selectors are AND-ed",
+			params: url.Values{
+				"VpcId.1":          {"vpc-mine"},
+				"Filter.1.Name":    {"isDefault"},
+				"Filter.1.Value.1": {"true"},
+			},
+			want: nil,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filterVPCs(all, tc.ids, tc.filterIDs, tc.isDefault)
-			ids := make([]string, 0, len(got))
-			for _, v := range got {
+			h := defaultVPCHandler(t)
+			ctx := context.Background()
+			for _, v := range []*VPC{
+				{VpcID: "vpc-default", State: "available", CidrBlock: "172.31.0.0/16", IsDefault: true},
+				{VpcID: "vpc-mine", State: "available", CidrBlock: "10.42.0.0/16"},
+			} {
+				if aerr := h.store.putVPC(ctx, v); aerr != nil {
+					t.Fatalf("putVPC: %v", aerr.Message)
+				}
+			}
+
+			var resp xmlDescribeVpcsResponse
+			if err := xml.Unmarshal(describe(t, h, h.DescribeVpcs, tc.params), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			ids := make([]string, 0, len(resp.VpcSet))
+			for _, v := range resp.VpcSet {
 				ids = append(ids, v.VpcID)
 			}
 			if !slices.Equal(ids, tc.want) {
-				t.Fatalf("filterVPCs = %#v, want %#v", ids, tc.want)
+				t.Fatalf("DescribeVpcs = %#v, want %#v", ids, tc.want)
 			}
 		})
 	}

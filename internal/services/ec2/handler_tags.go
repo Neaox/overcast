@@ -99,35 +99,27 @@ type xmlTagItem struct {
 
 // DescribeTags lists tags for resources.
 func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
-	// Collect resource IDs from Filter.N.Value.M where Filter.N.Name = "resource-id"
-	var filterResources []string
-	for k, vals := range r.Form {
-		if strings.HasPrefix(k, "Filter.") && strings.HasSuffix(k, ".Name") {
-			if len(vals) > 0 && vals[0] == "resource-id" {
-				prefix := k[:len(k)-len("Name")]
-				for vk, vvals := range r.Form {
-					if strings.HasPrefix(vk, prefix+"Value.") && len(vvals) > 0 {
-						filterResources = append(filterResources, vvals[0])
-					}
-				}
-			}
-		}
+	filters, aerr := tagItemFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
 
 	items := make([]xmlTagItem, 0)
 	allTags, _ := h.store.listAllTags(r.Context())
 	for rid, tags := range allTags {
-		if len(filterResources) > 0 && !containsStr(filterResources, rid) {
-			continue
-		}
 		resType := inferResourceType(rid)
 		for k, v := range tags {
-			items = append(items, xmlTagItem{
+			item := xmlTagItem{
 				ResourceID:   rid,
 				ResourceType: resType,
 				Key:          k,
 				Value:        v,
-			})
+			}
+			if !filters.matches(item) {
+				continue
+			}
+			items = append(items, item)
 		}
 	}
 
@@ -178,16 +170,6 @@ func collectFormTags(r *http.Request, prefix string) map[string]string {
 		tags[key] = vals[n]
 	}
 	return tags
-}
-
-// containsStr reports whether s appears in the slice.
-func containsStr(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // inferResourceType guesses the EC2 resource type from an ID prefix.

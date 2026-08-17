@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Neaox/overcast/internal/events"
@@ -244,14 +243,12 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 
 // DescribeInstances returns instances, optionally filtered by ID or state.
 func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
-	filterIDs := parseIndexedParam(r, "InstanceId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := instanceFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	// Parse Filter.N.Name / Filter.N.Value.M parameters.
-	stateFilter := parseFilterValues(r, "instance-state-name")
+	requested := requestedIDs(r, "InstanceId")
 
 	all, aerr := h.store.listInstances(r.Context())
 	if aerr != nil {
@@ -267,10 +264,7 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlInstance, 0, len(all))
 	for _, inst := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[inst.InstanceID] {
-			continue
-		}
-		if len(stateFilter) > 0 && !stateFilter[inst.State.Name] {
+		if !requested.has(inst.InstanceID) || !filters.matches(inst) {
 			continue
 		}
 		tags, ok := tagsView.keep(inst.InstanceID)
@@ -533,28 +527,6 @@ func parseIndexedParam(r *http.Request, prefix string) []string {
 			break
 		}
 		result = append(result, v)
-	}
-	return result
-}
-
-// parseFilterValues extracts values for a named filter from Filter.N.Name / Filter.N.Value.M params.
-func parseFilterValues(r *http.Request, filterName string) map[string]bool {
-	result := map[string]bool{}
-	for i := 1; ; i++ {
-		name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
-		if name == "" {
-			break
-		}
-		if !strings.EqualFold(name, filterName) {
-			continue
-		}
-		for j := 1; ; j++ {
-			val := r.FormValue(fmt.Sprintf("Filter.%d.Value.%d", i, j))
-			if val == "" {
-				break
-			}
-			result[val] = true
-		}
 	}
 	return result
 }
