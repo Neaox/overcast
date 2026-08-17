@@ -158,6 +158,143 @@ func TestRefusalNamesTheSupportedFilters(t *testing.T) {
 	}
 }
 
+// A filter name is matched exactly, because AWS matches it exactly. Overcast
+// used to fold case here, which accepted a call real EC2 refuses.
+func TestFilterNamesAreCaseSensitive(t *testing.T) {
+	h := defaultVPCHandler(t)
+	for _, name := range []string{"VPC-ID", "isdefault", "TAG-KEY"} {
+		if code, _ := refused(t, h, h.DescribeVpcs, filterParams(name, "anything")); code != "InvalidParameterValue" {
+			t.Errorf("%q: code = %q, want InvalidParameterValue", name, code)
+		}
+	}
+	// The spellings AWS uses are of course still accepted, including the one
+	// EC2 spells in camel case.
+	describe(t, h, h.DescribeVpcs, filterParams("isDefault", "true"))
+	describe(t, h, h.DescribeVpcs, filterParams("tag-key", "Name"))
+}
+
+// wildcardMatch is the whole of AWS's filter-value pattern language, and the
+// table is where its edges are pinned rather than in a describe.
+func TestWildcardMatch(t *testing.T) {
+	cases := []struct {
+		pattern, value string
+		want           bool
+	}{
+		{"", "", true},
+		{"", "a", false},
+		{"a", "", false},
+		{"a", "a", true},
+		{"a", "b", false},
+
+		{"*", "", true},
+		{"*", "anything", true},
+		{"a*", "a", true},
+		{"a*", "abc", true},
+		{"a*", "b", false},
+		{"*c", "abc", true},
+		{"*c", "abd", false},
+		{"a*c", "ac", true},
+		{"a*c", "abc", true},
+		{"a*c", "abbbc", true},
+		{"a*c", "ab", false},
+		{"overcast-*", "overcast-local", true},
+		{"overcast-*", "other-local", false},
+		{"com.amazonaws.*.s3", "com.amazonaws.us-east-1.s3", true},
+		{"com.amazonaws.*.s3", "com.amazonaws.us-east-1.dynamodb", false},
+
+		{"?", "a", true},
+		{"?", "", false},
+		{"?", "ab", false},
+		{"a?c", "abc", true},
+		{"a?c", "ac", false},
+		{"us-east-1?", "us-east-1a", true},
+		{"us-east-1?", "us-east-1", false},
+
+		// A backslash asks for the literal character after it.
+		{`a\*c`, "a*c", true},
+		{`a\*c`, "abc", false},
+		{`a\?c`, "a?c", true},
+		{`a\?c`, "abc", false},
+		{`a\\c`, `a\c`, true},
+
+		// Adjacent and repeated stars must not turn the scan exponential; this
+		// is the classic pathological pattern for a backtracking matcher.
+		{"**", "ab", true},
+		{"*a*b*c*", "xxaxxbxxcxx", true},
+		{"*a*b*c*", "xxaxxcxxbxx", false},
+		{"a*a*a*a*a*a*a*b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false},
+
+		// path.Match would read these as a character class and a path
+		// separator; an EC2 filter value is an opaque string.
+		{"[abc]", "[abc]", true},
+		{"[abc]", "a", false},
+		{"a/*", "a/b/c", true},
+	}
+	for _, tc := range cases {
+		if got := wildcardMatch(tc.pattern, tc.value); got != tc.want {
+			t.Errorf("wildcardMatch(%q, %q) = %v, want %v", tc.pattern, tc.value, got, tc.want)
+		}
+	}
+}
+
+// A value with no metacharacter stays a literal comparison — the common case,
+// decided once per request rather than per resource.
+func TestPlainValuesAreNotPatterns(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"vpc-mine", false},
+		{"overcast-*", true},
+		{"us-east-1?", true},
+		{`literal\*`, true},
+	} {
+		if got := parseFilterValue(tc.value).wildcard; got != tc.want {
+			t.Errorf("parseFilterValue(%q).wildcard = %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+// The reported bug's own filter, with the wildcard a find-or-create script
+// would plausibly reach for.
+func TestTagFilterMatchesAWildcard(t *testing.T) {
+	h := defaultVPCHandler(t)
+	taggedVPC(t, h, "vpc-mine", map[string]string{"Name": "overcast-local"})
+	taggedVPC(t, h, "vpc-other", map[string]string{"Name": "something-else"})
+
+	var resp xmlDescribeVpcsResponse
+	body := describe(t, h, h.DescribeVpcs, filterParams("tag:Name", "overcast-*"))
+	if err := xml.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.VpcSet) != 1 || resp.VpcSet[0].VpcID != "vpc-mine" {
+		ids := make([]string, 0, len(resp.VpcSet))
+		for _, v := range resp.VpcSet {
+			ids = append(ids, v.VpcID)
+		}
+		t.Fatalf("tag:Name=overcast-* returned %v, want [vpc-mine]", ids)
+	}
+}
+
+// CDK's AMI context provider sends `MachineImage.lookup`'s name filter, which is
+// a wildcard in every documented example of it. Matching values exactly meant
+// the lookup found nothing and CDK reported AmiNotFound.
+func TestImageNameLookupMatchesAWildcard(t *testing.T) {
+	h := defaultVPCHandler(t)
+	var resp xmlDescribeImagesResponse
+	body := describe(t, h, h.DescribeImages, filterParams("name", "Amazon Linux 2*"))
+	if err := xml.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	names := make([]string, 0, len(resp.ImagesSet))
+	for _, img := range resp.ImagesSet {
+		names = append(names, img.Name)
+	}
+	if !slices.Equal(names, []string{"Amazon Linux 2", "Amazon Linux 2023"}) {
+		t.Fatalf("name=Amazon Linux 2* returned %v, want both Amazon Linux AMIs", names)
+	}
+}
+
 // An operation that implements no filters says so, rather than trailing off
 // after the colon.
 func TestRefusalNamesTheEmptySet(t *testing.T) {

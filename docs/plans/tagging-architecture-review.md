@@ -239,14 +239,18 @@ closed for EC2.
    `attachment.state` and `state` to `DescribeVpnGateways` — every one of them
    implemented, and asserted by `TestCDKVpcLookupFiltersAreAllImplemented`.
 
+   **EC2's matching is now AWS's, both halves.** The two gaps this section used
+   to list are closed: a filter *value* is the pattern AWS treats it as — `*`
+   for any run of characters, `?` for exactly one, a backslash for a literal —
+   and a filter *name* is matched exactly rather than case-folded. Values and
+   names are deliberately held to opposite standards. `wildcardMatch` is
+   hand-rolled rather than `path.Match` because a filter value is an opaque
+   string: no character classes, and `*` crosses a `/`.
+
    **Still open, for the other services.** #1032 was scoped to EC2, the service
-   the report came from. Nothing here has been surveyed for how DynamoDB, ECS,
-   RDS and the rest treat a selector they do not implement, and the pattern
-   `filterSpec` establishes is worth reusing before the same divergence is
-   rediscovered somewhere else. Two known gaps remain inside EC2 as well: filter
-   *values* are matched exactly, so AWS's `*` and `?` wildcards are still
-   unimplemented, and filter names are matched case-insensitively where AWS's
-   are not.
+   the report came from; how the rest treat a selector they do not implement is
+   surveyed in
+   [ec2-filter-rule-cross-service.md](./ec2-filter-rule-cross-service.md).
 3. **Collapse the four helper families to one per storage strategy.** Two
    strategies genuinely exist (namespaced, inline) and both are legitimate.
    Four entry-point sets for them are not. Retire the `waf`-only generic first —

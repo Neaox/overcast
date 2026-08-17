@@ -136,13 +136,18 @@ find-or-create script, which then adopts the wrong one. An error costs a minute;
 a wrong answer costs an afternoon. If you hit one, drop the filter or narrow the
 call by resource ID.
 
-Two things a filter still does not do:
+A filter **name** is matched exactly, as AWS matches it — `Name=VPC-ID` is
+refused, because real EC2 refuses it too.
 
-- **Values match exactly.** AWS accepts `*` and `?` wildcards in a filter value;
-  Overcast does not, so `Name=name,Values=amzn2-ami-hvm-*` matches only a value
-  that literally contains an asterisk.
-- **Filter names are case-insensitive**, where AWS's are not, so a call AWS would
-  refuse for casing alone is accepted here.
+A filter **value** is a pattern, as on AWS: `*` stands for any run of characters
+including none, `?` for exactly one, and a backslash escapes either so you can
+ask for a literal one.
+
+```sh
+aws ec2 describe-vpcs        --filters 'Name=tag:Name,Values=overcast-*'
+aws ec2 describe-images      --filters 'Name=name,Values=Amazon Linux 2*'
+aws ec2 describe-subnets     --filters 'Name=availability-zone,Values=us-east-1?'
+```
 
 Filters are AND-ed with each other and the values within one are OR-ed, as on
 AWS, and a `<Resource>Id.N` parameter is AND-ed with them.
