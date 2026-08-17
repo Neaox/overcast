@@ -42,10 +42,11 @@ package ec2
 // operation's capability note is held to — so what Overcast claims and what it
 // does cannot drift apart. See TestCapabilityNotesNameTheFiltersOnly.
 //
-// Not implemented: AWS also accepts `*` and `?` wildcards in a filter *value*.
-// Overcast matches values exactly, so a value containing one will not match the
-// way it would on AWS. That is a value-side gap, unchanged by this file, and it
-// is documented at filterQuery.matches.
+// Names and values are held to opposite standards, deliberately. A *name* is
+// matched exactly, because AWS matches it exactly and because a name is
+// something the caller either knows or does not. A *value* is a pattern: AWS
+// reads `*` as any run of characters and `?` as exactly one, so `tag:Name` of
+// `overcast-*` selects what a caller means by it. See filterValue.
 
 import (
 	"fmt"
@@ -131,24 +132,6 @@ func (spec filterSpec[T]) supported() []string {
 	return names
 }
 
-// lookup resolves a filter name to its accessor.
-//
-// Names match case-insensitively. parseFilterValues did; the attribute-map
-// idiom did not; and under a rule that now refuses what it does not recognise,
-// the lenient of the two is the one that cannot turn a working call into an
-// error.
-func (spec filterSpec[T]) lookup(name string) (filterAttr[T], bool) {
-	if a, ok := spec.attrs[name]; ok {
-		return a, true
-	}
-	for declared, a := range spec.attrs {
-		if strings.EqualFold(declared, name) {
-			return a, true
-		}
-	}
-	return filterAttr[T]{}, false
-}
-
 // invalidFilter is AWS's answer to a filter an operation does not accept.
 //
 // AWS's sentence comes first and unaltered, so a client matching on it still
@@ -184,11 +167,111 @@ type filterQuery[T any] struct {
 // from it.
 type filterTerm[T any] struct {
 	attr   filterAttr[T]
-	values []string
+	values []filterValue
+}
+
+// filterValue is one Filter.N.Value.M.
+//
+// AWS treats a filter value as a pattern, not a literal: `*` stands for any run
+// of characters and `?` for exactly one, and a backslash escapes either. Almost
+// every value is still a plain string, so which kind this is gets decided once
+// per request — the per-resource comparison of a literal stays a string
+// equality rather than a walk.
+type filterValue struct {
+	pattern  string
+	wildcard bool
+}
+
+// parseFilterValue classifies a caller's value.
+//
+// A backslash counts as making it a pattern even with no wildcard beside it,
+// because the escape still has to be stripped before anything can match — and
+// stripping it is what wildcardMatch does.
+func parseFilterValue(v string) filterValue {
+	return filterValue{pattern: v, wildcard: strings.ContainsAny(v, `*?\`)}
+}
+
+// parseFilterValues classifies every value of one filter.
+func parseFilterValues(values []string) []filterValue {
+	out := make([]filterValue, 0, len(values))
+	for _, v := range values {
+		out = append(out, parseFilterValue(v))
+	}
+	return out
+}
+
+// matchesAny reports whether have satisfies any of the caller's values — the OR
+// inside a single filter. It is the one place a filter value is compared, for
+// the resource's own attributes and for its tags alike.
+func matchesAny(values []filterValue, have string, fold bool) bool {
+	return slices.ContainsFunc(values, func(fv filterValue) bool {
+		return fv.matches(have, fold)
+	})
+}
+
+// matches reports whether a resource's value satisfies this one.
+func (fv filterValue) matches(have string, fold bool) bool {
+	if fv.wildcard {
+		if fold {
+			return wildcardMatch(strings.ToLower(fv.pattern), strings.ToLower(have))
+		}
+		return wildcardMatch(fv.pattern, have)
+	}
+	if fold {
+		return strings.EqualFold(have, fv.pattern)
+	}
+	return have == fv.pattern
+}
+
+// wildcardMatch reports whether value satisfies an AWS filter pattern, in which
+// `*` stands for any run of characters (including none), `?` for exactly one,
+// and `\` escapes the next character so a caller can ask for a literal `*`,
+// `?` or `\`.
+//
+// This is not path.Match: that reads `[a-z]` as a character class and refuses
+// to let `*` cross a `/`, neither of which is true of an EC2 filter — a value
+// is an opaque string, and `com.amazonaws.*.s3` has to match a service name.
+// The scan backtracks to the last `*` rather than recursing, so a pattern of
+// many stars cannot turn a describe into an exponential walk.
+func wildcardMatch(pattern, value string) bool {
+	pat, val := []rune(pattern), []rune(value)
+	// star is where the most recent `*` sits, and mark how much of the value it
+	// has absorbed so far.
+	p, v, star, mark := 0, 0, -1, 0
+	for v < len(val) {
+		switch {
+		case p+1 < len(pat) && pat[p] == '\\':
+			if val[v] == pat[p+1] {
+				p, v = p+2, v+1
+				continue
+			}
+		case p < len(pat) && (pat[p] == '?' || pat[p] == val[v]):
+			p, v = p+1, v+1
+			continue
+		case p < len(pat) && pat[p] == '*':
+			star, mark = p, v
+			p++
+			continue
+		}
+		if star < 0 {
+			return false
+		}
+		// Give the last `*` one more character and try again from there.
+		p, mark = star+1, mark+1
+		v = mark
+	}
+	// Only trailing stars can still match, having nothing left to consume.
+	for p < len(pat) && pat[p] == '*' {
+		p++
+	}
+	return p == len(pat)
 }
 
 // parse reads the request's filters and refuses any name the operation does not
 // implement.
+//
+// Names are matched exactly, as AWS matches them: `VPC-ID` is not `vpc-id` and
+// real EC2 refuses it. Values are the lenient half — see filterValue.
 //
 // Handlers call this before reading their collection, so an unrecognised filter
 // is refused whether or not the region holds anything to filter. The empty case
@@ -200,11 +283,11 @@ func (spec filterSpec[T]) parse(r *http.Request) (filterQuery[T], *protocol.AWSE
 		if spec.tagged && isTagFilter(name) {
 			continue // matched against the resource's tags by tagFilters
 		}
-		a, ok := spec.lookup(name)
+		a, ok := spec.attrs[name]
 		if !ok {
 			return filterQuery[T]{}, spec.invalidFilter(name)
 		}
-		q.terms = append(q.terms, filterTerm[T]{attr: a, values: values})
+		q.terms = append(q.terms, filterTerm[T]{attr: a, values: parseFilterValues(values)})
 	}
 	return q, nil
 }
@@ -214,19 +297,10 @@ func (spec filterSpec[T]) parse(r *http.Request) (filterQuery[T], *protocol.AWSE
 // Filters are AND-ed with each other and the values within one are OR-ed, which
 // is AWS's rule. A filter carrying no values therefore matches nothing: the
 // caller asked for a value drawn from an empty set.
-//
-// Values match exactly. AWS also accepts `*` and `?` wildcards here; they are
-// not implemented, so a value containing one matches only a resource whose
-// value contains the same literal character.
 func (q filterQuery[T]) matches(res T) bool {
 	for _, term := range q.terms {
 		if !slices.ContainsFunc(term.attr.values(res), func(have string) bool {
-			return slices.ContainsFunc(term.values, func(want string) bool {
-				if term.attr.fold {
-					return strings.EqualFold(have, want)
-				}
-				return have == want
-			})
+			return matchesAny(term.values, have, term.attr.fold)
 		}) {
 			return false
 		}
