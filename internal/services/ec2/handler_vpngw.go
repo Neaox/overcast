@@ -32,7 +32,7 @@ type xmlVpnGateway struct {
 	AvailabilityZone string                    `xml:"availabilityZone,omitempty"`
 	Attachments      []xmlVpnGatewayAttachment `xml:"attachments>item"`
 	AmazonSideAsn    int64                     `xml:"amazonSideAsn"`
-	Tags             []xmlResourceTag          `xml:"tagSet>item,omitempty"`
+	Tags             []xmlTag                  `xml:"tagSet>item,omitempty"`
 }
 
 type xmlVpnGatewayAttachment struct {
@@ -86,9 +86,16 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 		Type:             vgwType,
 		AmazonSideAsn:    asn,
 		AvailabilityZone: r.FormValue("AvailabilityZone"),
-		Tags:             collectTagSpecifications(r, "vpn-gateway"),
 	}
 	if aerr := h.store.putVpnGateway(r.Context(), vgw); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without having to read two sources.
+	tags := parseTagSpecifications(r, "vpn-gateway")
+	if aerr := h.putResourceTags(r.Context(), vgw.VpnGatewayID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -96,7 +103,7 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateVpnGatewayResponse{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(r.Context()),
-		VpnGateway: vpnGatewayToXML(vgw),
+		VpnGateway: vpnGatewayToXML(vgw, sortTags(tags)),
 	})
 }
 
@@ -112,6 +119,12 @@ func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
 	filterIDs := collectFormValues(r, "VpnGatewayId.")
 	filters := collectFormFilters(r)
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlVpnGateway, 0, len(all))
 	for _, vgw := range all {
 		if len(filterIDs) > 0 && !containsStr(filterIDs, vgw.VpnGatewayID) {
@@ -120,7 +133,11 @@ func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
 		if !vpnGatewayMatchesFilters(vgw, filters) {
 			continue
 		}
-		items = append(items, vpnGatewayToXML(vgw))
+		tags, ok := tagsView.keep(vgw.VpnGatewayID)
+		if !ok {
+			continue
+		}
+		items = append(items, vpnGatewayToXML(vgw, tags))
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpnGatewaysResponse{
@@ -260,14 +277,10 @@ func parseAmazonSideAsn(raw string) (int64, *protocol.AWSError) {
 	return 0, ec2err("InvalidParameterValue", "AmazonSideAsn is out of range", http.StatusBadRequest)
 }
 
-func vpnGatewayToXML(vgw *VpnGateway) xmlVpnGateway {
+func vpnGatewayToXML(vgw *VpnGateway, tags []Tag) xmlVpnGateway {
 	attachments := make([]xmlVpnGatewayAttachment, 0, len(vgw.Attachments))
 	for _, att := range vgw.Attachments {
 		attachments = append(attachments, xmlVpnGatewayAttachment(att))
-	}
-	tags := make([]xmlResourceTag, 0, len(vgw.Tags))
-	for _, tag := range vgw.Tags {
-		tags = append(tags, xmlResourceTag(tag))
 	}
 	return xmlVpnGateway{
 		VpnGatewayID:     vgw.VpnGatewayID,
@@ -276,7 +289,7 @@ func vpnGatewayToXML(vgw *VpnGateway) xmlVpnGateway {
 		AvailabilityZone: vgw.AvailabilityZone,
 		Attachments:      attachments,
 		AmazonSideAsn:    vgw.AmazonSideAsn,
-		Tags:             tags,
+		Tags:             xmlTagsOf(tags),
 	}
 }
 

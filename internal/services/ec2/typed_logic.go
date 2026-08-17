@@ -1096,12 +1096,13 @@ func (h *Handler) describeInstancesTyped(ctx context.Context, _ *describeInstanc
 	if aerr != nil {
 		return nil, aerr
 	}
+	tags, aerr := h.loadTags(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
 	items := make([]typedInstanceXML, 0, len(all))
 	for _, inst := range all {
-		xmlTags := make([]typedTagXML, 0, len(inst.Tags))
-		for _, tag := range inst.Tags {
-			xmlTags = append(xmlTags, typedTagXML(tag))
-		}
+		xmlTags := typedTagsOf(tags.tags(inst.InstanceID))
 		xmlSGs := make([]typedSGRefXML, 0, len(inst.SecurityGroups))
 		for _, sg := range inst.SecurityGroups {
 			xmlSGs = append(xmlSGs, typedSGRefXML(sg))
@@ -1419,9 +1420,13 @@ func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsRe
 	if aerr != nil {
 		return nil, aerr
 	}
+	tagsIndex, aerr := h.loadTags(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
 	items := make([]typedSubnetXML, 0, len(all))
 	for _, sub := range all {
-		tags, _ := h.store.getTags(ctx, sub.SubnetID)
+		tags := tagsIndex.tags(sub.SubnetID)
 		items = append(items, typedSubnetXML{
 			SubnetID:                sub.SubnetID,
 			State:                   sub.State,
@@ -1431,7 +1436,7 @@ func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsRe
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
-			TagSet:                  typedTags(tags),
+			TagSet:                  typedTagsOf(tags),
 		})
 	}
 	return &describeSubnetsResp{
@@ -2366,7 +2371,7 @@ func (h *Handler) createVpnGatewayTyped(ctx context.Context, req *createVpnGatew
 	return &createVpnGatewayResp{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(ctx),
-		VpnGateway: vpnGatewayToTypedXML(vgw),
+		VpnGateway: vpnGatewayToTypedXML(vgw, nil),
 	}, nil
 }
 
@@ -2408,9 +2413,13 @@ func (h *Handler) describeVpnGatewaysTyped(ctx context.Context, _ *describeVpnGa
 	if aerr != nil {
 		return nil, aerr
 	}
+	tags, aerr := h.loadTags(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
 	items := make([]typedVpnGatewayXML, 0, len(all))
 	for _, vgw := range all {
-		items = append(items, vpnGatewayToTypedXML(vgw))
+		items = append(items, vpnGatewayToTypedXML(vgw, tags.tags(vgw.VpnGatewayID)))
 	}
 	return &describeVpnGatewaysResp{
 		Xmlns:         ec2XMLNS,
@@ -2665,17 +2674,6 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 	}
 }
 
-func typedTags(tags map[string]string) []typedTagXML {
-	if len(tags) == 0 {
-		return nil
-	}
-	out := make([]typedTagXML, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, typedTagXML{Key: k, Value: v})
-	}
-	return out
-}
-
 func igwToTypedXML(igw *InternetGateway) typedIGWXML {
 	atts := make([]typedIGWAttachmentXML, 0, len(igw.Attachments))
 	for _, a := range igw.Attachments {
@@ -2687,14 +2685,14 @@ func igwToTypedXML(igw *InternetGateway) typedIGWXML {
 	}
 }
 
-func vpnGatewayToTypedXML(vgw *VpnGateway) typedVpnGatewayXML {
+func vpnGatewayToTypedXML(vgw *VpnGateway, tags []Tag) typedVpnGatewayXML {
 	attachments := make([]typedVpnGatewayAttachmentXML, 0, len(vgw.Attachments))
 	for _, att := range vgw.Attachments {
 		attachments = append(attachments, typedVpnGatewayAttachmentXML(att))
 	}
-	tags := make([]typedResourceTagXML, 0, len(vgw.Tags))
-	for _, tag := range vgw.Tags {
-		tags = append(tags, typedResourceTagXML(tag))
+	resourceTags := make([]typedResourceTagXML, 0, len(tags))
+	for _, tag := range tags {
+		resourceTags = append(resourceTags, typedResourceTagXML(tag))
 	}
 	return typedVpnGatewayXML{
 		VpnGatewayID:     vgw.VpnGatewayID,
@@ -2703,7 +2701,7 @@ func vpnGatewayToTypedXML(vgw *VpnGateway) typedVpnGatewayXML {
 		AvailabilityZone: vgw.AvailabilityZone,
 		Attachments:      attachments,
 		AmazonSideAsn:    vgw.AmazonSideAsn,
-		Tags:             tags,
+		Tags:             resourceTags,
 	}
 }
 

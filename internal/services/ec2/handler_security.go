@@ -53,6 +53,7 @@ type xmlSecurityGroup struct {
 	VpcID               string            `xml:"vpcId"`
 	IpPermissions       []xmlIpPermission `xml:"ipPermissions>item,omitempty"`
 	IpPermissionsEgress []xmlIpPermission `xml:"ipPermissionsEgress>item,omitempty"`
+	TagSet              []xmlTag          `xml:"tagSet>item,omitempty"`
 }
 
 type xmlIpPermission struct {
@@ -346,6 +347,12 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlSecurityGroup, 0, len(all))
 	for _, sg := range all {
 		if len(filterIDSet) > 0 && !filterIDSet[sg.GroupID] {
@@ -358,6 +365,10 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		if len(filterVpcID) > 0 && !filterVpcID[sg.VpcID] {
+			continue
+		}
+		tags, ok := tagsView.keep(sg.GroupID)
+		if !ok {
 			continue
 		}
 
@@ -397,6 +408,7 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 			VpcID:               sg.VpcID,
 			IpPermissions:       ingress,
 			IpPermissionsEgress: egress,
+			TagSet:              xmlTagsOf(tags),
 		})
 	}
 
@@ -433,6 +445,12 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlSubnet, 0, len(all))
 	for _, sub := range all {
 		if len(filterIDSet) > 0 && !filterIDSet[sub.SubnetID] {
@@ -448,7 +466,10 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		tags, _ := h.store.getTags(r.Context(), sub.SubnetID)
+		tags, ok := tagsView.keep(sub.SubnetID)
+		if !ok {
+			continue
+		}
 		items = append(items, xmlSubnet{
 			SubnetID:                sub.SubnetID,
 			State:                   sub.State,
@@ -458,7 +479,7 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
-			TagSet:                  typedTags(tags),
+			TagSet:                  typedTagsOf(tags),
 		})
 	}
 

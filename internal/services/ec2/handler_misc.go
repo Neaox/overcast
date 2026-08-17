@@ -206,14 +206,15 @@ type xmlCreateNetworkInterfaceResponse struct {
 }
 
 type xmlNetworkInterface struct {
-	NetworkInterfaceID string `xml:"networkInterfaceId"`
-	SubnetID           string `xml:"subnetId"`
-	VpcID              string `xml:"vpcId"`
-	AvailabilityZone   string `xml:"availabilityZone"`
-	Description        string `xml:"description"`
-	PrivateIPAddress   string `xml:"privateIpAddress"`
-	Status             string `xml:"status"`
-	MacAddress         string `xml:"macAddress"`
+	NetworkInterfaceID string   `xml:"networkInterfaceId"`
+	SubnetID           string   `xml:"subnetId"`
+	VpcID              string   `xml:"vpcId"`
+	AvailabilityZone   string   `xml:"availabilityZone"`
+	Description        string   `xml:"description"`
+	PrivateIPAddress   string   `xml:"privateIpAddress"`
+	Status             string   `xml:"status"`
+	MacAddress         string   `xml:"macAddress"`
+	TagSet             []xmlTag `xml:"tagSet>item,omitempty"`
 }
 
 // CreateNetworkInterface creates a network interface in a subnet.
@@ -305,6 +306,12 @@ func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 	filterIDs := collectFormValues(r, "NetworkInterfaceId.")
 	filters := collectFormFilters(r)
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlNetworkInterface, 0, len(all))
 	for _, eni := range all {
 		if len(filterIDs) > 0 && !containsStr(filterIDs, eni.NetworkInterfaceID) {
@@ -317,6 +324,10 @@ func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 		}) {
 			continue
 		}
+		tags, ok := tagsView.keep(eni.NetworkInterfaceID)
+		if !ok {
+			continue
+		}
 		items = append(items, xmlNetworkInterface{
 			NetworkInterfaceID: eni.NetworkInterfaceID,
 			SubnetID:           eni.SubnetID,
@@ -326,6 +337,7 @@ func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 			PrivateIPAddress:   h.privateIPForAPI(r.Context(), eni.VpcID, eni.PrivateIPAddress),
 			Status:             eni.Status,
 			MacAddress:         eni.MacAddress,
+			TagSet:             xmlTagsOf(tags),
 		})
 	}
 

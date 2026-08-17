@@ -21,13 +21,13 @@ type xmlCreateNatGatewayResponse struct {
 }
 
 type xmlNatGateway struct {
-	NatGatewayID string           `xml:"natGatewayId"`
-	SubnetID     string           `xml:"subnetId"`
-	VpcID        string           `xml:"vpcId"`
-	State        string           `xml:"state"`
-	CreateTime   string           `xml:"createTime"`
-	Addresses    []xmlNatGWAddr   `xml:"natGatewayAddressSet>item"`
-	Tags         []xmlResourceTag `xml:"tagSet>item,omitempty"`
+	NatGatewayID string         `xml:"natGatewayId"`
+	SubnetID     string         `xml:"subnetId"`
+	VpcID        string         `xml:"vpcId"`
+	State        string         `xml:"state"`
+	CreateTime   string         `xml:"createTime"`
+	Addresses    []xmlNatGWAddr `xml:"natGatewayAddressSet>item"`
+	Tags         []xmlTag       `xml:"tagSet>item,omitempty"`
 }
 
 type xmlNatGWAddr struct {
@@ -35,11 +35,6 @@ type xmlNatGWAddr struct {
 	PublicIP           string `xml:"publicIp,omitempty"`
 	PrivateIP          string `xml:"privateIp,omitempty"`
 	NetworkInterfaceID string `xml:"networkInterfaceId,omitempty"`
-}
-
-type xmlResourceTag struct {
-	Key   string `xml:"key"`
-	Value string `xml:"value"`
 }
 
 // CreateNatGateway creates a NAT gateway in a subnet.
@@ -91,13 +86,15 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	privateIP, _, _ := h.allocatePrivateIPForSubnet(r.Context(), subnetID)
 	ngw.PrivateIP = privateIP
 
-	// Collect tags from TagSpecification.N.Tag.M.Key/Value.
-	tags := collectTagSpecifications(r, "natgateway")
-	if len(tags) > 0 {
-		ngw.Tags = tags
+	if aerr := h.store.putNatGateway(r.Context(), ngw); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
 
-	if aerr := h.store.putNatGateway(r.Context(), ngw); aerr != nil {
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without having to read two sources.
+	tags := parseTagSpecifications(r, "natgateway")
+	if aerr := h.putResourceTags(r.Context(), natID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -107,11 +104,6 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 		PublicIP:     publicIP,
 		PrivateIP:    ngw.PrivateIP,
 	}}
-
-	var xmlTags []xmlResourceTag
-	for _, t := range ngw.Tags {
-		xmlTags = append(xmlTags, xmlResourceTag(t))
-	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateNatGatewayResponse{
 		Xmlns:     ec2XMLNS,
@@ -123,7 +115,7 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 			State:        "available",
 			CreateTime:   now,
 			Addresses:    addrs,
-			Tags:         xmlTags,
+			Tags:         xmlTagsOf(sortTags(tags)),
 		},
 	})
 }
@@ -151,6 +143,12 @@ func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 	// Filter by Filter.N (support nat-gateway-id, vpc-id, subnet-id, state)
 	filters := collectFormFilters(r)
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlNatGateway, 0, len(all))
 	for _, ngw := range all {
 		if len(filterIDs) > 0 && !containsStr(filterIDs, ngw.NatGatewayID) {
@@ -164,17 +162,16 @@ func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 		}) {
 			continue
 		}
+		tags, ok := tagsView.keep(ngw.NatGatewayID)
+		if !ok {
+			continue
+		}
 
 		addrs := []xmlNatGWAddr{{
 			AllocationID: ngw.AllocationID,
 			PublicIP:     ngw.PublicIP,
 			PrivateIP:    ngw.PrivateIP,
 		}}
-
-		var xmlTags []xmlResourceTag
-		for _, t := range ngw.Tags {
-			xmlTags = append(xmlTags, xmlResourceTag(t))
-		}
 
 		items = append(items, xmlNatGateway{
 			NatGatewayID: ngw.NatGatewayID,
@@ -183,7 +180,7 @@ func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 			State:        ngw.State,
 			CreateTime:   ngw.CreateTime,
 			Addresses:    addrs,
-			Tags:         xmlTags,
+			Tags:         xmlTagsOf(tags),
 		})
 	}
 
@@ -234,32 +231,6 @@ func (h *Handler) DeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-// collectTagSpecifications parses TagSpecification.N.Tag.M.Key/Value for a given resource type.
-func collectTagSpecifications(r *http.Request, resourceType string) []Tag {
-	var tags []Tag
-	// Find the TagSpecification.N that matches our resource type, then collect its tags.
-	for n := 1; n < 10; n++ {
-		rtKey := fmt.Sprintf("TagSpecification.%d.ResourceType", n)
-		rt := r.FormValue(rtKey)
-		if rt == "" {
-			break
-		}
-		if rt != resourceType {
-			continue
-		}
-		for m := 1; m < 50; m++ {
-			keyKey := fmt.Sprintf("TagSpecification.%d.Tag.%d.Key", n, m)
-			valKey := fmt.Sprintf("TagSpecification.%d.Tag.%d.Value", n, m)
-			k := r.FormValue(keyKey)
-			if k == "" {
-				break
-			}
-			tags = append(tags, Tag{Key: k, Value: r.FormValue(valKey)})
-		}
-	}
-	return tags
-}
-
 // collectFormFilters extracts Filter.N.Name / Filter.N.Value.M from query/form params.
 func collectFormFilters(r *http.Request) map[string][]string {
 	filters := make(map[string][]string)
@@ -282,8 +253,14 @@ func collectFormFilters(r *http.Request) map[string][]string {
 }
 
 // matchFilters checks if a resource's attributes match all provided filters.
+//
+// Tag selectors are skipped: they are matched against the resource's tags by
+// tagFilters, and are never entries in an attribute map.
 func matchFilters(filters map[string][]string, attrs map[string]string) bool {
 	for name, allowed := range filters {
+		if isTagFilter(name) {
+			continue
+		}
 		val, ok := attrs[name]
 		if !ok {
 			return false

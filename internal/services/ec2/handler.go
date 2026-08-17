@@ -449,11 +449,23 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 		parseFilterValues(r, "vpc-id"),
 		parseFilterValues(r, "isDefault"))
 
+	tags, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlVpc, 0, len(vpcs))
 	for _, v := range vpcs {
 		ns := v.NetworkStatus
 		if ns == "" {
 			ns = vpcNetworkStatusOK
+		}
+		// The network-status tag is Overcast's own diagnostic, not the caller's,
+		// so it is merged in rather than replacing what they set.
+		vpcTags, ok := tags.keepWith(v.VpcID, Tag{Key: vpcNetworkStatusTag, Value: ns})
+		if !ok {
+			continue
 		}
 		items = append(items, xmlVpc{
 			VpcID:           v.VpcID,
@@ -461,9 +473,7 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 			CidrBlock:       v.CidrBlock,
 			InstanceTenancy: "default",
 			IsDefault:       v.IsDefault,
-			TagSet: []xmlTag{
-				{Key: "overcast:network-status", Value: ns},
-			},
+			TagSet:          xmlTagsOf(vpcTags),
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpcsResponse{
