@@ -1,9 +1,13 @@
 # The unrecognised-filter rule, beyond EC2
 
-> Status: survey complete, fixes **not** applied here. #1032 settled what an
-> unrecognised filter means and applied it to EC2. This is the answer to the
-> question that issue deliberately left open — whether anything else in Overcast
-> has the same divergence — and what it is worth doing about it.
+> Status: survey complete, and the two findings that could produce a wrong
+> answer are **fixed** — `ssm:DescribeParameters` and `autoscaling:DescribeTags`.
+> The third, `secretsmanager`, is a deliberate divergence that fails safe and is
+> left alone; see [What to do](#what-to-do).
+>
+> #1032 settled what an unrecognised filter means and applied it to EC2. This is
+> the answer to the question that issue deliberately left open — whether
+> anything else in Overcast has the same divergence.
 >
 > Parent review: [tagging-architecture-review.md](./tagging-architecture-review.md),
 > item 2 of "What remains".
@@ -37,9 +41,10 @@ one, and they do not agree.
 
 ## Findings
 
-### 1. `ssm:DescribeParameters` — ignores the name, returns everything
+### 1. `ssm:DescribeParameters` — ignored the name, returned everything — **fixed**
 
-`internal/services/ssm/handler.go`, `matchesFilters`:
+As it was, in `internal/services/ssm/handler.go`'s `matchesFilters` — and again,
+verbatim, in `typed_logic.go`'s `matchesTypedFilters`:
 
 ```go
 for _, f := range filters {
@@ -52,30 +57,32 @@ for _, f := range filters {
 return true
 ```
 
-This is EC2's `parseFilterValues` shape exactly, and it is the more dangerous of
-the two failure modes. Three separate ways to get a confidently wrong answer:
+That is EC2's `parseFilterValues` shape exactly, and the more dangerous of the
+two failure modes. There were three separate ways to get a confidently wrong
+answer:
 
 - **An unimplemented `Key`** — `Type`, `KeyId`, `Path`, `Label`, `Tier`,
-  `DataType` are all real AWS filter keys, and every one of them is ignored.
+  `DataType` are all real AWS filter keys, and every one of them was ignored.
 - **An unimplemented `Option` on an implemented `Key`** — `Key=Name` with
-  `Option=Equals` or `Contains` falls through the inner `if` and is ignored, so
-  a filter the caller reasonably believes is narrowing does nothing.
+  `Option=Equals` or `Contains` fell through the inner `if` and was ignored, so
+  a filter the caller reasonably believed was narrowing did nothing.
 - **A missing `Option`** — AWS defaults `Option` to `Equals` for most keys, not
-  `BeginsWith`, so `{Key: "Name", Values: ["/app/db"]}` with no `Option` is
-  ignored here and would be an exact match on AWS.
+  `BeginsWith`, so `{Key: "Name", Values: ["/app/db"]}` with no `Option` was
+  ignored here and is an exact match on AWS.
 
 AWS models this precisely: `InvalidFilterKey`, `InvalidFilterOption` and
 `InvalidFilterValue` are all declared errors of `DescribeParameters`. So unlike
-EC2, the honest answer here needs no judgement call about what to invent — the
-error already exists in the API.
+EC2, the honest answer here needed no judgement call about what to invent — the
+error already existed in the API.
 
-**Blast radius of fixing it:** small. `DescribeParameters` is a console and CLI
-operation; CDK and CloudFormation read parameters through `GetParameter`, which
-takes no filters.
+**Blast radius:** small. `DescribeParameters` is a console and CLI operation;
+CDK and CloudFormation read parameters through `GetParameter`, which takes no
+filters.
 
-### 2. `autoscaling:DescribeTags` — ignores the name, returns everything
+### 2. `autoscaling:DescribeTags` — ignored the name, returned everything — **fixed**
 
-`internal/services/autoscaling/typed_logic.go`, `describeTagsTyped`:
+As it was, in `internal/services/autoscaling/typed_logic.go`'s
+`describeTagsTyped`:
 
 ```go
 for _, f := range req.Filters {
@@ -85,16 +92,16 @@ for _, f := range req.Filters {
 }
 ```
 
-Same shape, plus two narrower bugs of its own that the same fix should settle:
+Same shape, plus two narrower bugs of its own that the same fix settled:
 
 - `key`, `value` and `propagate-at-launch` are real AWS filter names for this
-  operation and all are ignored.
-- Only `Values[0]` of `auto-scaling-group` is read, so a caller asking about
-  three groups is answered about the first and told nothing about it.
+  operation and all were ignored.
+- Only `Values[0]` of `auto-scaling-group` was read, so a caller asking about
+  three groups was answered about the first and told nothing about the others.
 
 **Blast radius:** very small. Nothing in the compat suites filters ASG tags.
 
-### 3. `secretsmanager:ListSecrets` / `BatchGetSecretValue` — matches nothing
+### 3. `secretsmanager:ListSecrets` / `BatchGetSecretValue` — matches nothing — left as is
 
 `internal/services/secretsmanager/handler.go`, `secretMatchesFilter`, already
 ends:
@@ -124,25 +131,35 @@ being translated, not a query API.
 
 ## What to do
 
-Ranked. The first two are the ones that can hand a caller a wrong answer.
+Ranked when this was written. The first two could hand a caller a wrong answer,
+and both are now done.
 
-1. **`ssm:DescribeParameters`** — refuse an unimplemented `Key` with
-   `InvalidFilterKey` and an unimplemented `Option` with `InvalidFilterOption`,
-   and implement `Equals` (AWS's default) alongside `BeginsWith`. The declared
-   AWS errors mean this needs no invented behaviour.
-2. **`autoscaling:DescribeTags`** — refuse an unimplemented filter name, honour
-   every value of `auto-scaling-group` rather than the first, and implement
-   `key`, `value` and `propagate-at-launch`, all of which are on the record
-   already.
-3. **`secretsmanager`** — optional, and lower value than it looks. Moving from
-   "matches nothing" to `ValidationException` is a fidelity improvement with no
-   wrong answers to prevent.
+1. ~~**`ssm:DescribeParameters`**~~ **Done.** An unimplemented `Key` is refused
+   with `InvalidFilterKey` and an unimplemented `Option` with
+   `InvalidFilterOption` — both declared errors of the operation, so no
+   behaviour had to be invented. `Equals` (AWS's default for an omitted
+   `Option`, and previously the comparison that matched everything) and
+   `Contains` are implemented alongside `BeginsWith`, and `Type` alongside
+   `Name`. The legacy handler and the typed path now validate and match through
+   one declaration in `internal/services/ssm/filters.go` rather than two copies
+   of the same eight lines — which is how EC2's two idioms started.
+2. ~~**`autoscaling:DescribeTags`**~~ **Done.** All four filter names AWS
+   documents are implemented, a name outside them is refused with
+   `ValidationError`, and every value of `auto-scaling-group` is honoured rather
+   than only the first. The single-group case still answers from the tag key's
+   prefix scan; several groups fall back to a full scan.
+3. **`secretsmanager`** — **not done, deliberately.** Moving from "matches
+   nothing" to `ValidationException` is a fidelity improvement with no wrong
+   answers to prevent: the existing behaviour already refuses to widen a result,
+   it is commented with that reasoning, and it fails safe. It is worth doing the
+   next time someone is in that file, and is not worth a change of its own.
 
 ### Should `filterSpec` be shared?
 
-**Not yet.** EC2's `filterSpec` is worth copying as a *pattern* — declare the
-implemented names in one place, and let that declaration be the matcher, the
-error and the documentation — but not yet worth extracting into `serviceutil`:
+**Not yet — and having now written it twice more, still not yet.** EC2's
+`filterSpec` is worth copying as a *pattern* — declare the implemented names in
+one place, and let that declaration be the matcher, the error and the
+documentation — but not worth extracting into `serviceutil`:
 
 - The four APIs have four different request shapes. EC2 reads
   `Filter.N.Name`/`Filter.N.Value.M` off a Query form; SSM takes
@@ -154,9 +171,15 @@ error and the documentation — but not yet worth extracting into `serviceutil`:
   `ValidationException` — and the error is the point of the rule.
 - Two call sites is not yet evidence of a shape. A third would be.
 
-The cost of copying the pattern twice is a few dozen lines; the cost of the
+What the SSM and AutoScaling fixes actually shared with EC2 was the *shape* — a
+map from implemented name to accessor, validated before the scan and matched
+after it — and each landed in about thirty lines. What they did not share was
+the parsing, the option dimension SSM has and nothing else does, or the error.
+A helper covering all three would be mostly parameters.
+
+The cost of copying the pattern is a few dozen lines a service; the cost of the
 wrong abstraction across four wire formats is paid by everyone who touches a
-filter afterwards. Revisit when a fourth service grows a filter API, and keep
+filter afterwards. Revisit when a fifth service grows a filter API, and keep
 `internal/services/ec2/filters.go` as the worked example in the meantime.
 
 ### What this does not cover

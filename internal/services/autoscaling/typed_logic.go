@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1536,25 +1538,70 @@ func (h *Handler) deleteTagsTyped(ctx context.Context, req *deleteTagsReq) (*del
 	return &deleteTagsResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
+// tagFilterValues maps each DescribeTags filter this handler implements to the
+// value it reads off a tag. These four are the whole of what AWS documents for
+// the operation, so the set is complete rather than a subset.
+//
+// A name outside it is refused, not ignored. Ignoring one answered with every
+// tag in the account presented as a filtered result — the divergence #1032
+// fixed for EC2, and the reason `key`, `value` and `propagate-at-launch` looked
+// like they worked.
+var tagFilterValues = map[string]func(GroupTag) string{
+	"auto-scaling-group":  func(t GroupTag) string { return t.ResourceId },
+	"key":                 func(t GroupTag) string { return t.Key },
+	"propagate-at-launch": func(t GroupTag) string { return strconv.FormatBool(t.PropagateAtLaunch) },
+	"value":               func(t GroupTag) string { return t.Value },
+}
+
 func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (*describeTagsResp, *protocol.AWSError) {
 	s := h.svc
-	var resourceFilter string
 	for _, f := range req.Filters {
-		if f.Name == "auto-scaling-group" && len(f.Values) > 0 {
-			resourceFilter = f.Values[0]
+		if _, ok := tagFilterValues[f.Name]; !ok {
+			return nil, asgValidationError(
+				"Value (%s) for parameter Filters is invalid. Valid filter names are: %s",
+				f.Name, strings.Join(slices.Sorted(maps.Keys(tagFilterValues)), ", "))
 		}
 	}
-	tags, err := s.st.listTagsForGroup(ctx, resourceFilter)
+
+	// One group is the common shape and the only one the tag key's prefix can
+	// answer; several fall back to a full scan and are matched below like every
+	// other filter. Reading only Values[0] used to be the whole of the filter,
+	// so a caller asking about three groups was answered about the first.
+	scanPrefix := ""
+	for _, f := range req.Filters {
+		if f.Name == "auto-scaling-group" && len(f.Values) == 1 {
+			scanPrefix = f.Values[0]
+		}
+	}
+	tags, err := s.st.listTagsForGroup(ctx, scanPrefix)
 	if err != nil {
 		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan tags", HTTPStatus: http.StatusInternalServerError}
 	}
+
 	xmlTags := make([]asgXMLTag, 0, len(tags))
 	for _, t := range tags {
-		xmlTags = append(xmlTags, asgXMLTag(*t))
+		if tagMatchesFilters(*t, req.Filters) {
+			xmlTags = append(xmlTags, asgXMLTag(*t))
+		}
 	}
 	return &describeTagsResp{
 		Xmlns:  asXMLNS,
 		Result: tagsResult{Tags: xmlTags},
 		Meta:   asgMetaFromCtx(ctx),
 	}, nil
+}
+
+// tagMatchesFilters reports whether a tag satisfies every filter. Filters AND
+// together and the values within one OR together, which is AWS's rule.
+func tagMatchesFilters(tag GroupTag, filters []asgFilterMember) bool {
+	for _, f := range filters {
+		read, ok := tagFilterValues[f.Name]
+		if !ok {
+			continue // refused before the scan
+		}
+		if !slices.Contains(f.Values, read(tag)) {
+			return false
+		}
+	}
+	return true
 }

@@ -236,13 +236,19 @@ func (h *Handler) getParametersByPathTyped(ctx context.Context, req *getParamete
 }
 
 func (h *Handler) describeParametersTyped(ctx context.Context, req *describeParametersRequest) (*describeParametersResponse, *protocol.AWSError) {
+	// Refused before the scan, and against the same declaration handler.go's
+	// DescribeParameters validates against — the two paths answering the same
+	// filter differently is the shape of bug this guards.
+	if aerr := validateParameterFilters(req.ParameterFilters); aerr != nil {
+		return nil, aerr
+	}
 	all, err := h.store.Scan(ctx, "")
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	filtered := make([]*ParameterRecord, 0, len(all))
 	for _, rec := range all {
-		if matchesTypedFilters(rec, req.ParameterFilters) {
+		if matchesFilters(rec, req.ParameterFilters) {
 			filtered = append(filtered, rec)
 		}
 	}
@@ -441,22 +447,4 @@ func (h *Handler) publishCtx(ctx context.Context, t events.Type, name string) {
 			Payload: events.ResourcePayload{Name: name, ARN: h.paramARN(name)},
 		})
 	}
-}
-
-func matchesTypedFilters(rec *ParameterRecord, filters []parameterFilter) bool {
-	for _, f := range filters {
-		if f.Key == "Name" && f.Option == "BeginsWith" {
-			matched := false
-			for _, v := range f.Values {
-				if strings.HasPrefix(rec.Name, v) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return false
-			}
-		}
-	}
-	return true
 }

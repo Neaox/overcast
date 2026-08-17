@@ -26,7 +26,7 @@ func init() {
 		capabilities.Capability{Operation: "RecordLifecycleActionHeartbeat", Status: capabilities.StatusSupported, Notes: "Extends the hook's heartbeat window"},
 		capabilities.Capability{Operation: "CreateOrUpdateTags", Status: capabilities.StatusSupported, Notes: "PropagateAtLaunch tags are applied to launched EC2 instances"},
 		capabilities.Capability{Operation: "DeleteTags", Status: capabilities.StatusSupported},
-		capabilities.Capability{Operation: "DescribeTags", Status: capabilities.StatusSupported},
+		capabilities.Capability{Operation: "DescribeTags", Status: capabilities.StatusSupported, Notes: "Filters: auto-scaling-group, key, propagate-at-launch, value; an unimplemented filter name is refused, not ignored"},
 		capabilities.Capability{Operation: "DescribeAutoScalingInstances", Status: capabilities.StatusSupported, Notes: "Reports the real instance set the reconciler owns"},
 		capabilities.Capability{Operation: "DescribeScalingActivities", Status: capabilities.StatusSupported, Notes: "One activity per launch and termination, with AWS's StatusCode and Cause wording"},
 		capabilities.Capability{Operation: "SetInstanceHealth", Status: capabilities.StatusSupported, Notes: "Unhealthy instances are terminated and replaced by the reconciler"},

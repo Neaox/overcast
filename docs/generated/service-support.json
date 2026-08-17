@@ -6166,7 +6166,8 @@
         {
           "operation": "DescribeParameters",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "ParameterFilters keys: Name, Type; options: Equals (the default), BeginsWith, Contains; an unimplemented key or option is refused, not ignored"
         },
         {
           "operation": "GetParameter",
@@ -6965,7 +6966,8 @@
         },
         {
           "operation": "DescribeTags",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Filters: auto-scaling-group, key, propagate-at-launch, value; an unimplemented filter name is refused, not ignored"
         },
         {
           "operation": "DescribeAutoScalingInstances",

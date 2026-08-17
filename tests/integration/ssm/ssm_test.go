@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	cborlib "github.com/fxamacker/cbor/v2"
@@ -745,5 +746,115 @@ func TestUnsupportedOperations_notImplemented(t *testing.T) {
 			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
 			helpers.AssertJSONError(t, resp, "NotImplemented")
 		})
+	}
+}
+
+// A filter key DescribeParameters does not implement used to be ignored, so the
+// call answered with every parameter in the account presented as a filtered
+// result. SSM models the answer — InvalidFilterKey is a declared error of the
+// operation — so it is refused.
+func TestDescribeParameters_unimplementedFilterKeyIsRefused(t *testing.T) {
+	// Given: parameters exist, so an empty result cannot be mistaken for one
+	srv := helpers.NewTestServer(t)
+	putParam(t, srv, "/db/host", "h", "String", false)
+
+	// When: DescribeParameters filters on a key Overcast cannot answer
+	resp := ssmCall(t, srv, "DescribeParameters", map[string]any{
+		"ParameterFilters": []map[string]any{
+			{"Key": "KeyId", "Values": []string{"alias/aws/ssm"}},
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: the filter is refused rather than applied to nothing
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	var result struct {
+		Type    string `json:"__type"`
+		Message string `json:"message"`
+	}
+	decodeJSON(t, resp, &result)
+	if !strings.Contains(result.Type, "InvalidFilterKey") {
+		t.Errorf("__type = %q, want InvalidFilterKey", result.Type)
+	}
+	if !strings.Contains(result.Message, "Name") || !strings.Contains(result.Message, "Type") {
+		t.Errorf("message = %q, want it to name the implemented keys", result.Message)
+	}
+}
+
+// An Option the handler does not implement was ignored the same way, including
+// on a key it does implement.
+func TestDescribeParameters_unimplementedFilterOptionIsRefused(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	putParam(t, srv, "/db/host", "h", "String", false)
+
+	resp := ssmCall(t, srv, "DescribeParameters", map[string]any{
+		"ParameterFilters": []map[string]any{
+			{"Key": "Name", "Option": "Recursive", "Values": []string{"/db"}},
+		},
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	var result struct {
+		Type string `json:"__type"`
+	}
+	decodeJSON(t, resp, &result)
+	if !strings.Contains(result.Type, "InvalidFilterOption") {
+		t.Errorf("__type = %q, want InvalidFilterOption", result.Type)
+	}
+}
+
+// AWS defaults an omitted Option to Equals. Overcast applied nothing at all
+// unless BeginsWith was spelled out, so the default comparison — the one a
+// caller gets without thinking about it — matched every parameter.
+func TestDescribeParameters_omittedOptionIsEquals(t *testing.T) {
+	// Given: two parameters, one an exact match and one merely prefixed by it
+	srv := helpers.NewTestServer(t)
+	putParam(t, srv, "/db/host", "h", "String", false)
+	putParam(t, srv, "/db/host/extra", "x", "String", false)
+
+	// When: the filter names one of them with no Option
+	resp := ssmCall(t, srv, "DescribeParameters", map[string]any{
+		"ParameterFilters": []map[string]any{
+			{"Key": "Name", "Values": []string{"/db/host"}},
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: only the exact match comes back
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Parameters []struct {
+			Name string `json:"Name"`
+		} `json:"Parameters"`
+	}
+	decodeJSON(t, resp, &result)
+	if len(result.Parameters) != 1 || result.Parameters[0].Name != "/db/host" {
+		t.Errorf("got %+v, want only /db/host", result.Parameters)
+	}
+}
+
+// Type is a filter the record can answer and the old code ignored.
+func TestDescribeParameters_filterByType(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	putParam(t, srv, "/plain", "v", "String", false)
+	putParam(t, srv, "/secret", "v", "SecureString", false)
+
+	resp := ssmCall(t, srv, "DescribeParameters", map[string]any{
+		"ParameterFilters": []map[string]any{
+			{"Key": "Type", "Values": []string{"SecureString"}},
+		},
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Parameters []struct {
+			Name string `json:"Name"`
+		} `json:"Parameters"`
+	}
+	decodeJSON(t, resp, &result)
+	if len(result.Parameters) != 1 || result.Parameters[0].Name != "/secret" {
+		t.Errorf("got %+v, want only /secret", result.Parameters)
 	}
 }
