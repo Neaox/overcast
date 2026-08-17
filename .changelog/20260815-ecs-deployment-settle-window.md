@@ -1,1 +1,0 @@
-* [ecs/cloudformation] an ECS deployment now reaches its steady state only once its tasks have stayed up, so a CloudFormation stack no longer reports CREATE_COMPLETE around a service whose containers crash-loop; a service that fails to stabilize also reports the failure rather than "deployment in progress"
