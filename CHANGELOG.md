@@ -93,6 +93,12 @@ can be applied mechanically rather than reconstructed from memory.
 - **BREAKING** [ec2] a filter *name* is matched exactly, as AWS matches it. `Name=VPC-ID` and `Name=isdefault` are refused with the `InvalidParameterValue` any unrecognised name gets, where the pre-#1038 `parseFilterValues` describes folded case and accepted them. The other two filter idioms it replaced were already case-sensitive, so this settles a split rather than tightening a uniform behaviour, and it is what real EC2 does
   migration: spell the filter name the way the AWS docs spell it — lower-case and hyphenated for all but `isDefault`, and the error message names every spelling the operation accepts
 
+- **BREAKING** [autoscaling] `DescribeTags` refuses a filter name it does not implement with AWS's `ValidationError`, and implements all four names AWS documents — `auto-scaling-group`, `key`, `value` and `propagate-at-launch`. Only `auto-scaling-group` was read before and the rest were ignored, so a filter on `key` or `value` returned every tag in the account. It also read only the first value of `auto-scaling-group`, so a caller asking about three groups was answered about one of them and told nothing about the other two
+  migration: a call passing a filter name outside those four now fails instead of returning everything
+
+- **BREAKING** [ssm] `DescribeParameters` refuses a `ParameterFilters` key or option it does not implement, with the `InvalidFilterKey` and `InvalidFilterOption` errors AWS declares on the operation. It applied a filter only when the caller had spelled `Key=Name, Option=BeginsWith` exactly, and ignored everything else — so a filter on `Type`, `KeyId`, `Path`, `Label` or `Tier`, or `Option=Equals`/`Contains` on `Name`, answered with every parameter in the account presented as a filtered result. The same eight lines were written twice, in the legacy handler and the typed path, so the two could also disagree; there is now one declaration behind both. `Type` is implemented alongside `Name`, and `Contains` alongside `BeginsWith`
+  migration: a call passing a filter key or option Overcast does not implement now fails instead of silently returning everything; the error names what is accepted
+
 ### Fixed
 
 - [backup] `GetBackupPlan` is reachable from an AWS SDK. AWS binds it to `GET /backup/plans/{backupPlanId}/` with a trailing slash — unlike `UpdateBackupPlan` and `DeleteBackupPlan` on the same resource, which carry none — and only the slash-less spelling was registered, so a signed client got a 501 and an unsigned one fell through to S3's wildcard and got a `NoSuchKey`. Both spellings are now registered, as they already were for the three collection operations
@@ -175,6 +181,9 @@ can be applied mechanically rather than reconstructed from memory.
 - [router] startup defers event queues, MCP metadata, diagnostic histories, login templates, and Lambda validation patterns until first use
 
 - [router] a modeled operation whose URI carries an ARN now reaches its 501 instead of falling through to S3. Every AWS client percent-encodes an ARN into a single path segment, because a Smithy non-greedy label binds one segment, and the REST fallback classified the *decoded* path — so the ARN's `%2F` slashes reappeared as extra path segments, no modeled binding matched, and S3's bucket/object wildcard answered. `aws kafka list-cluster-operations-v2`, correctly signed, came back `<Error><Code>NoSuchKey</Code>…v2/clusters/arn:aws:kafka:…/operations</Error>`. That is the fault #963 records, reached by a second route, and it held for every service that puts an ARN in the path
+
+- **BREAKING** [ssm] an omitted `ParameterFilters` `Option` means `Equals`, as it does on AWS. It previously meant "apply no filter at all", so the comparison a caller gets by default — `{Key: "Name", Values: ["/app/db"]}` — matched every parameter rather than the one named
+  migration: a caller relying on an unfiltered result from a filter with no `Option` will now get the exact match they asked for
 
 ### Removed
 
