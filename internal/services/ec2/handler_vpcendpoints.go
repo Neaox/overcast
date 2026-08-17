@@ -97,22 +97,15 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 
 // ── DescribeVpcEndpoints ──────────────────────────────────────────────────────
 
-// DescribeVpcEndpoints handles Action=DescribeVpcEndpoints.
-// Supports filter vpc-id and VpcEndpointId.N positional params.
+// DescribeVpcEndpoints lists VPC endpoints, optionally selected by
+// VpcEndpointId.N or filtered.
 func (h *Handler) DescribeVpcEndpoints(w http.ResponseWriter, r *http.Request) {
-	// Collect requested endpoint IDs from VpcEndpointId.N params.
-	requestedIDs := map[string]bool{}
-	for i := 1; ; i++ {
-		id := r.FormValue(fmt.Sprintf("VpcEndpointId.%d", i))
-		if id == "" {
-			break
-		}
-		requestedIDs[id] = true
+	filters, aerr := vpcEndpointFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	// Collect vpc-id filter values.
-	vpcFilter := parseFilterValues(r, "vpc-id")
-	serviceFilter := parseFilterValues(r, "service-name")
+	requested := requestedIDs(r, "VpcEndpointId")
 
 	all, aerr := h.store.listVpcEndpoints(r.Context())
 	if aerr != nil {
@@ -122,13 +115,7 @@ func (h *Handler) DescribeVpcEndpoints(w http.ResponseWriter, r *http.Request) {
 
 	var items []xmlVpcEndpoint
 	for _, ep := range all {
-		if len(requestedIDs) > 0 && !requestedIDs[ep.VpcEndpointID] {
-			continue
-		}
-		if len(vpcFilter) > 0 && !vpcFilter[ep.VpcID] {
-			continue
-		}
-		if len(serviceFilter) > 0 && !serviceFilter[ep.ServiceName] {
+		if !requested.has(ep.VpcEndpointID) || !filters.matches(ep) {
 			continue
 		}
 		items = append(items, xmlVpcEndpoint{

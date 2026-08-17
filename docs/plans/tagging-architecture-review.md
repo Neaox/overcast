@@ -122,6 +122,10 @@ were not in the response to filter on.
 
 ### 4. Tag filters, and two opposite wrong answers
 
+> Both halves are now fixed. The tag selectors landed on this branch; the
+> unrecognised-filter rule landed under **#1032** — see item 2 of
+> [What remains](#what-remains).
+
 No EC2 `Describe*` implemented `tag:<key>`, `tag-key` or `tag-value`. Worse, the
 package held two filter idioms that disagreed about an unrecognised filter:
 
@@ -211,23 +215,38 @@ of item 2 under [What remains](#what-remains).)
 ## What remains
 
 Ranked by how likely each is to produce a wrong answer rather than untidy code.
-Items 1 and 3–5 are tracked in **#1031**; item 2 has its own issue, **#1032**,
-because it is a behavioural decision rather than a defect to clear.
+Items 1 and 3–5 are tracked in **#1031**; item 2 had its own issue, **#1032**,
+because it was a behavioural decision rather than a defect to clear, and is now
+closed for EC2.
 
 1. **Close the tag leak in eventbridge, elasticache, rds and scheduler.** The
    same one-line-per-delete fix this branch applied to EC2. Best done by giving
    `serviceutil` the delete helper it lacks, so the next service gets it free.
-2. **Decide what an unrecognised filter means, and make every service agree.**
-   AWS answers `InvalidParameterValue`. Overcast currently answers "everything"
-   or "nothing" depending on which helper the handler happened to use. This is
-   the root of the reported bug: implementing `tag:Name` fixes *this* filter,
-   while the next unimplemented one fails exactly the same way. Erroring is the
-   honest option and matches AGENTS.md's "a 501 with an honest explanation is
-   better than a divergent 200", but it is a real behavioural change — a filter
-   AWS models and Overcast does not implement would go from silently wrong to
-   loudly refused, which could break a working CDK lookup. It needs a
-   per-operation supported-filter list and its own review; it is deliberately
-   **not** done here. Tracked in #1032.
+2. ~~**Decide what an unrecognised filter means, and make every service
+   agree.**~~ **Done for EC2** in #1032. The rule is to refuse the name with
+   AWS's `InvalidParameterValue`, applied by every EC2 describe, before the
+   collection is read. The middle option — refuse only names AWS does not model,
+   and ignore-with-a-warning the ones it does — was rejected on the evidence of
+   the reported bug itself: `tag:Name` is a name AWS models, so that rule would
+   have left this bug exactly as it was. What each operation implements is
+   declared once in `internal/services/ec2/filters.go`, and that declaration is
+   what matches the filter, writes the error and is checked against the
+   capability notes; the three filter idioms are one. The regression the
+   decision risked was measured rather than assumed: CDK's VPC context provider
+   (aws-cdk 2.1132.0, `toolkit-lib/lib/context-providers/vpcs.ts`) sends
+   `vpc-id`, `isDefault` and `tag:<key>` to `DescribeVpcs`, `vpc-id` to
+   `DescribeSubnets` and `DescribeRouteTables`, and `attachment.vpc-id`,
+   `attachment.state` and `state` to `DescribeVpnGateways` — every one of them
+   implemented, and asserted by `TestCDKVpcLookupFiltersAreAllImplemented`.
+
+   **Still open, for the other services.** #1032 was scoped to EC2, the service
+   the report came from. Nothing here has been surveyed for how DynamoDB, ECS,
+   RDS and the rest treat a selector they do not implement, and the pattern
+   `filterSpec` establishes is worth reusing before the same divergence is
+   rediscovered somewhere else. Two known gaps remain inside EC2 as well: filter
+   *values* are matched exactly, so AWS's `*` and `?` wildcards are still
+   unimplemented, and filter names are matched case-insensitively where AWS's
+   are not.
 3. **Collapse the four helper families to one per storage strategy.** Two
    strategies genuinely exist (namespaced, inline) and both are legitimate.
    Four entry-point sets for them are not. Retire the `waf`-only generic first —

@@ -3,8 +3,6 @@ package ec2
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -189,45 +187,6 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		zap.String("region", region),
 		zap.String("network", vpc.DockerNetworkID))
 	return vpc, nil
-}
-
-// filterVPCs applies the selectors DescribeVpcs accepts. Each is AND-ed with
-// the others and an empty one matches everything, which is AWS's rule.
-//
-// ids and filterIDs are the two ways a caller names VPCs — `VpcId.N` params and
-// a `vpc-id` filter — and they are OR-ed with each other because AWS treats
-// them as one selection.
-func filterVPCs(vpcs []*VPC, ids []string, filterIDs, isDefault map[string]bool) []*VPC {
-	wanted := make(map[string]bool, len(ids)+len(filterIDs))
-	for _, id := range ids {
-		wanted[id] = true
-	}
-	for id := range filterIDs {
-		wanted[id] = true
-	}
-
-	out := make([]*VPC, 0, len(vpcs))
-	for _, v := range vpcs {
-		if len(wanted) > 0 && !wanted[v.VpcID] {
-			continue
-		}
-		if len(isDefault) > 0 && !matchesBool(isDefault, v.IsDefault) {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
-// matchesBool reports whether any of the boolean spellings in values matches
-// want. AWS accepts "true"/"false" in either case.
-func matchesBool(values map[string]bool, want bool) bool {
-	for v := range values {
-		if strings.EqualFold(strings.TrimSpace(v), strconv.FormatBool(want)) {
-			return true
-		}
-	}
-	return false
 }
 
 // ensureDefaultVPCQuietly is ensureDefaultVPC for read paths that have no good

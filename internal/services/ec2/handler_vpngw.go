@@ -111,13 +111,18 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 
 // DescribeVpnGateways lists virtual private gateways, optionally filtered.
 func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := vpnGatewayFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "VpnGatewayId")
+
 	all, aerr := h.store.listVpnGateways(r.Context())
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	filterIDs := collectFormValues(r, "VpnGatewayId.")
-	filters := collectFormFilters(r)
 
 	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
 	if aerr != nil {
@@ -127,10 +132,7 @@ func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlVpnGateway, 0, len(all))
 	for _, vgw := range all {
-		if len(filterIDs) > 0 && !containsStr(filterIDs, vgw.VpnGatewayID) {
-			continue
-		}
-		if !vpnGatewayMatchesFilters(vgw, filters) {
+		if !requested.has(vgw.VpnGatewayID) || !filters.matches(vgw) {
 			continue
 		}
 		tags, ok := tagsView.keep(vgw.VpnGatewayID)
@@ -291,49 +293,4 @@ func vpnGatewayToXML(vgw *VpnGateway, tags []Tag) xmlVpnGateway {
 		AmazonSideAsn:    vgw.AmazonSideAsn,
 		Tags:             xmlTagsOf(tags),
 	}
-}
-
-func vpnGatewayMatchesFilters(vgw *VpnGateway, filters map[string][]string) bool {
-	for name, values := range filters {
-		switch name {
-		case "amazon-side-asn":
-			if !containsStr(values, strconv.FormatInt(vgw.AmazonSideAsn, 10)) {
-				return false
-			}
-		case "availability-zone":
-			if !containsStr(values, vgw.AvailabilityZone) {
-				return false
-			}
-		case "state":
-			if !containsStr(values, vgw.State) {
-				return false
-			}
-		case "type":
-			if !containsStr(values, vgw.Type) {
-				return false
-			}
-		case "vpn-gateway-id":
-			if !containsStr(values, vgw.VpnGatewayID) {
-				return false
-			}
-		case "attachment.state":
-			if !vpnGatewayAttachmentMatches(vgw, values, func(att VpnGatewayAttachment) string { return att.State }) {
-				return false
-			}
-		case "attachment.vpc-id":
-			if !vpnGatewayAttachmentMatches(vgw, values, func(att VpnGatewayAttachment) string { return att.VpcID }) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func vpnGatewayAttachmentMatches(vgw *VpnGateway, values []string, pick func(VpnGatewayAttachment) string) bool {
-	for _, att := range vgw.Attachments {
-		if containsStr(values, pick(att)) {
-			return true
-		}
-	}
-	return false
 }

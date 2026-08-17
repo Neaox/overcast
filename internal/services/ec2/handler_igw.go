@@ -80,14 +80,12 @@ func (h *Handler) CreateInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 // DescribeInternetGateways lists internet gateways, optionally filtered.
 func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Request) {
-	filterIDs := parseIndexedParam(r, "InternetGatewayId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := internetGatewayFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	filterIGWID := parseFilterValues(r, "internet-gateway-id")
-	filterAttachVpc := parseFilterValues(r, "attachment.vpc-id")
+	requested := requestedIDs(r, "InternetGatewayId")
 
 	all, aerr := h.store.listInternetGateways(r.Context())
 	if aerr != nil {
@@ -103,23 +101,8 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 
 	items := make([]xmlInternetGateway, 0, len(all))
 	for _, igw := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[igw.InternetGatewayID] {
+		if !requested.has(igw.InternetGatewayID) || !filters.matches(igw) {
 			continue
-		}
-		if len(filterIGWID) > 0 && !filterIGWID[igw.InternetGatewayID] {
-			continue
-		}
-		if len(filterAttachVpc) > 0 {
-			matched := false
-			for _, att := range igw.Attachments {
-				if filterAttachVpc[att.VpcID] {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
 		}
 		tags, ok := tagsView.keep(igw.InternetGatewayID)
 		if !ok {
