@@ -90,18 +90,18 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 
 ### General
 
-| Operation             | Status       | Notes | AWS Docs                                                                                             |
-| --------------------- | ------------ | ----- | ---------------------------------------------------------------------------------------------------- |
-| `AddTagsToResource`   | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_AddTagsToResource.html)   |
-| `DeleteParameter`     | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html)     |
-| `DeleteParameters`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameters.html)    |
-| `DescribeParameters`  | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html)  |
-| `GetParameter`        | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameter.html)        |
-| `GetParameterHistory` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameterHistory.html) |
-| `GetParameters`       | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameters.html)       |
-| `GetParametersByPath` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html) |
-| `ListTagsForResource` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ListTagsForResource.html) |
-| `PutParameter`        | ✅ Supported |       | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html)        |
+| Operation             | Status       | Notes                                                                                                                                          | AWS Docs                                                                                             |
+| --------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `AddTagsToResource`   | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_AddTagsToResource.html)   |
+| `DeleteParameter`     | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html)     |
+| `DeleteParameters`    | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameters.html)    |
+| `DescribeParameters`  | ✅ Supported | ParameterFilters keys: Name, Type; options: Equals (the default), BeginsWith, Contains; an unimplemented key or option is refused, not ignored | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html)  |
+| `GetParameter`        | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameter.html)        |
+| `GetParameterHistory` | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameterHistory.html) |
+| `GetParameters`       | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameters.html)       |
+| `GetParametersByPath` | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html) |
+| `ListTagsForResource` | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ListTagsForResource.html) |
+| `PutParameter`        | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html)        |
 
 ### Parameters
 

@@ -574,3 +574,101 @@ func TestXMLResponseIsWellFormed(t *testing.T) {
 		t.Errorf("XML response is not well-formed: %v\nbody: %s", err, body)
 	}
 }
+
+// asgWithTags creates a group carrying one tag, so DescribeTags has something
+// to select between.
+func asgWithTags(t *testing.T, srv *helpers.TestServer, group, key, value string) {
+	t.Helper()
+	r := asCall(t, srv, "CreateLaunchConfiguration", map[string]string{
+		"LaunchConfigurationName": group + "-lc",
+		"ImageId":                 "ami-12345678",
+		"InstanceType":            "t3.micro",
+	})
+	r.Body.Close()
+	r2 := asCall(t, srv, "CreateAutoScalingGroup", map[string]string{
+		"AutoScalingGroupName":       group,
+		"LaunchConfigurationName":    group + "-lc",
+		"MinSize":                    "0",
+		"MaxSize":                    "0",
+		"AvailabilityZones.member.1": "us-east-1a",
+	})
+	r2.Body.Close()
+	r3 := asCall(t, srv, "CreateOrUpdateTags", map[string]string{
+		"Tags.member.1.ResourceId":        group,
+		"Tags.member.1.ResourceType":      "auto-scaling-group",
+		"Tags.member.1.Key":               key,
+		"Tags.member.1.Value":             value,
+		"Tags.member.1.PropagateAtLaunch": "true",
+	})
+	r3.Body.Close()
+}
+
+// DescribeTags read only the `auto-scaling-group` filter, and only its first
+// value, and ignored every other name — so `key` and `value` looked like they
+// worked while answering with every tag in the account.
+func TestDescribeTags_unimplementedFilterIsRefused(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	asgWithTags(t, srv, "asg-a", "Environment", "test")
+
+	resp := asCall(t, srv, "DescribeTags", map[string]string{
+		"Filters.member.1.Name":            "not-a-filter",
+		"Filters.member.1.Values.member.1": "anything",
+	})
+	body := xmlText(t, resp)
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	if !strings.Contains(body, "ValidationError") {
+		t.Errorf("expected ValidationError, got: %s", body)
+	}
+	if !strings.Contains(body, "auto-scaling-group") || !strings.Contains(body, "propagate-at-launch") {
+		t.Errorf("expected the message to name the valid filters, got: %s", body)
+	}
+}
+
+// `key` is one of the four filters AWS documents for this operation and was
+// silently ignored.
+func TestDescribeTags_filtersByKey(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	asgWithTags(t, srv, "asg-a", "Environment", "test")
+	asgWithTags(t, srv, "asg-b", "Owner", "platform")
+
+	resp := asCall(t, srv, "DescribeTags", map[string]string{
+		"Filters.member.1.Name":            "key",
+		"Filters.member.1.Values.member.1": "Owner",
+	})
+	body := xmlText(t, resp)
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if strings.Contains(body, "Environment") {
+		t.Errorf("key=Owner returned the Environment tag too: %s", body)
+	}
+	if !strings.Contains(body, "Owner") {
+		t.Errorf("key=Owner returned nothing: %s", body)
+	}
+}
+
+// Only Values[0] of auto-scaling-group was read, so a caller asking about two
+// groups was answered about the first and told nothing about the second.
+func TestDescribeTags_honoursEveryGroupValue(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	asgWithTags(t, srv, "asg-a", "Environment", "test")
+	asgWithTags(t, srv, "asg-b", "Owner", "platform")
+	asgWithTags(t, srv, "asg-c", "Team", "infra")
+
+	resp := asCall(t, srv, "DescribeTags", map[string]string{
+		"Filters.member.1.Name":            "auto-scaling-group",
+		"Filters.member.1.Values.member.1": "asg-a",
+		"Filters.member.1.Values.member.2": "asg-b",
+	})
+	body := xmlText(t, resp)
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	for _, want := range []string{"Environment", "Owner"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected the %s tag, got: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Team") {
+		t.Errorf("asg-c was not asked for but came back: %s", body)
+	}
+}
