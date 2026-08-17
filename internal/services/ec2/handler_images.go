@@ -81,18 +81,18 @@ var syntheticAMIs = []xmlImage{
 	},
 }
 
-// DescribeImages returns a set of synthetic AMIs, optionally filtered by ImageId.
+// DescribeImages returns the synthetic AMIs that match the request.
 func (h *Handler) DescribeImages(w http.ResponseWriter, r *http.Request) {
-	// Collect ImageId.N filter params.
-	filterIDs := parseIndexedParam(r, "ImageId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := imageFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
+	requested := requestedIDs(r, "ImageId")
 
 	images := make([]xmlImage, 0, len(syntheticAMIs))
 	for _, ami := range syntheticAMIs {
-		if len(filterIDSet) > 0 && !filterIDSet[ami.ImageID] {
+		if !requested.has(ami.ImageID) || !filters.matches(ami) {
 			continue
 		}
 		images = append(images, ami)

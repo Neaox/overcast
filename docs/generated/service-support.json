@@ -3177,91 +3177,91 @@
           "operation": "DescribeAddresses",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by AllocationId"
+          "notes": "Selects by AllocationId.N; Filters: allocation-id, association-id, domain, instance-id, network-interface-id, private-ip-address, public-ip"
         },
         {
           "operation": "DescribeAvailabilityZones",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "3 AZs per region (a, b, c)"
+          "notes": "3 AZs per region (a, b, c); Filters: region-name, state, zone-name"
         },
         {
           "operation": "DescribeDhcpOptions",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns default DHCP options set for the VPC"
+          "notes": "Returns a fabricated default DHCP options set; Filters: none"
         },
         {
           "operation": "DescribeImages",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Hardcoded set of 4 AMIs (AL2, Ubuntu, Windows, AL2023); filter by ImageId"
+          "notes": "Hardcoded set of 4 AMIs (AL2, Ubuntu, Windows, AL2023); selects by ImageId.N; Filters: architecture, description, image-id, image-type, is-public, name, owner-id, root-device-type, state, virtualization-type"
         },
         {
           "operation": "DescribeInstanceTypes",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Hardcoded set: t3.micro/small/medium, m5.large/xlarge"
+          "notes": "Hardcoded set: t3.micro/small/medium, m5.large/xlarge; Filters: current-generation, instance-type, memory-info.size-in-mib, vcpu-info.default-vcpus"
         },
         {
           "operation": "DescribeInstances",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by instance-id, instance-state-name, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by InstanceId.N; Filters: availability-zone, image-id, instance-id, instance-state-code, instance-state-name, instance-type, placement.availability-zone, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeInternetGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by internet-gateway-id, attachment.vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by InternetGatewayId.N; Filters: attachment.state, attachment.vpc-id, internet-gateway-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeKeyPairs",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by KeyName"
+          "notes": "Selects by KeyName.N; Filters: fingerprint, key-name, key-pair-id"
         },
         {
           "operation": "DescribeNatGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by nat-gateway-id, vpc-id, subnet-id, state, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by NatGatewayId.N; Filters: nat-gateway-id, state, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeNetworkInterfaces",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by network-interface-id, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by NetworkInterfaceId.N; Filters: availability-zone, description, mac-address, network-interface-id, status, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeRegions",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Hardcoded list of 8 regions"
+          "notes": "Hardcoded list of 8 regions; Filters: endpoint, opt-in-status, region-name"
         },
         {
           "operation": "DescribeRouteTables",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by route-table-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value; includes NAT gateway routes"
+          "notes": "Selects by RouteTableId.N; includes NAT gateway routes; Filters: association.main, association.route-table-association-id, association.subnet-id, route-table-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeSecurityGroups",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by group-id, group-name, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by GroupId.N; Filters: description, group-id, group-name, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeSubnets",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by subnet-id, vpc-id, availability-zone, tag:\u003ckey\u003e, tag-key, tag-value; includes tagSet for CDK subnet groups"
+          "notes": "Selects by SubnetId.N; includes tagSet for CDK subnet groups; Filters: availability-zone, cidr-block, state, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeTags",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by resource-id, resource-type, key"
+          "notes": "Filters: key, resource-id, resource-type, value"
         },
         {
           "operation": "DescribeVpcAttribute",
@@ -3273,25 +3273,25 @@
           "operation": "DescribeVpcEndpoints",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by VpcEndpointId.N, vpc-id filter, service-name filter"
+          "notes": "Selects by VpcEndpointId.N; Filters: service-name, vpc-endpoint-id, vpc-endpoint-state, vpc-endpoint-type, vpc-id"
         },
         {
           "operation": "DescribeVpnGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by vpn-gateway-id, state, type, attachment.vpc-id, attachment.state, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by VpnGatewayId.N; Filters: amazon-side-asn, attachment.state, attachment.vpc-id, availability-zone, state, type, vpn-gateway-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeVpcPeeringConnections",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by ID, status-code, requester/accepter VPC"
+          "notes": "Selects by VpcPeeringConnectionId.N; Filters: accepter-vpc-info.vpc-id, requester-vpc-info.vpc-id, status-code, vpc-peering-connection-id"
         },
         {
           "operation": "DescribeVpcs",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by VpcId, vpc-id, isDefault, tag:\u003ckey\u003e, tag-key, tag-value"
+          "notes": "Selects by VpcId.N; Filters: cidr, isDefault, state, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DetachInternetGateway",

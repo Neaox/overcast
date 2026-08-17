@@ -162,7 +162,12 @@ type xmlRegion struct {
 
 // DescribeRegions returns a hardcoded list of AWS regions.
 func (h *Handler) DescribeRegions(w http.ResponseWriter, r *http.Request) {
-	regions := []xmlRegion{
+	filters, aerr := regionFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	all := []xmlRegion{
 		{RegionName: "us-east-1", RegionEndpoint: "ec2.us-east-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
 		{RegionName: "us-east-2", RegionEndpoint: "ec2.us-east-2.amazonaws.com", OptInStatus: "opt-in-not-required"},
 		{RegionName: "us-west-1", RegionEndpoint: "ec2.us-west-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
@@ -171,6 +176,12 @@ func (h *Handler) DescribeRegions(w http.ResponseWriter, r *http.Request) {
 		{RegionName: "eu-central-1", RegionEndpoint: "ec2.eu-central-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
 		{RegionName: "ap-southeast-1", RegionEndpoint: "ec2.ap-southeast-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
 		{RegionName: "ap-northeast-1", RegionEndpoint: "ec2.ap-northeast-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
+	}
+	regions := make([]xmlRegion, 0, len(all))
+	for _, region := range all {
+		if filters.matches(region) {
+			regions = append(regions, region)
+		}
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeRegionsResponse{
 		Xmlns:      ec2XMLNS,
@@ -196,11 +207,22 @@ type xmlAZ struct {
 
 // DescribeAvailabilityZones returns the AZs for the configured region.
 func (h *Handler) DescribeAvailabilityZones(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := azFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	region := h.cfg.Region
-	azs := []xmlAZ{
+	all := []xmlAZ{
 		{ZoneName: region + "a", ZoneState: "available", RegionName: region},
 		{ZoneName: region + "b", ZoneState: "available", RegionName: region},
 		{ZoneName: region + "c", ZoneState: "available", RegionName: region},
+	}
+	azs := make([]xmlAZ, 0, len(all))
+	for _, az := range all {
+		if filters.matches(az) {
+			azs = append(azs, az)
+		}
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeAZsResponse{
 		Xmlns:                ec2XMLNS,
@@ -241,6 +263,11 @@ func (h *Handler) DescribeInstanceTypes(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
 	}
+	filters, aerr := instanceTypeFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	// Collect requested types from InstanceType.N query parameters.
 	var items []xmlInstanceTypeItem
 	requested := map[string]bool{}
@@ -268,16 +295,18 @@ func (h *Handler) DescribeInstanceTypes(w http.ResponseWriter, r *http.Request) 
 		"m5.xlarge": {InstanceType: "m5.xlarge", CurrentGeneration: true, VCpuInfo: xmlVCpuInfo{4}, MemoryInfo: xmlMemoryInfo{16384}},
 	}
 	for t := range requested {
-		if info, ok := typeInfo[t]; ok {
-			items = append(items, info)
-		} else {
+		info, ok := typeInfo[t]
+		if !ok {
 			// Return a generic entry for unknown types.
-			items = append(items, xmlInstanceTypeItem{
+			info = xmlInstanceTypeItem{
 				InstanceType:      t,
 				CurrentGeneration: false,
 				VCpuInfo:          xmlVCpuInfo{1},
 				MemoryInfo:        xmlMemoryInfo{512},
-			})
+			}
+		}
+		if filters.matches(info) {
+			items = append(items, info)
 		}
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInstanceTypesResponse{
@@ -435,6 +464,13 @@ type xmlDescribeVpcsResponse struct {
 // back — so an unfiltered response breaks `Vpc.fromLookup` the moment a region
 // holds more than one VPC, which seeding a default VPC guarantees.
 func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := vpcFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "VpcId")
+
 	// Every AWS region has a default VPC. Seeding on first read rather than at
 	// startup keeps regions nobody touches free of records.
 	h.ensureDefaultVPCQuietly(r.Context())
@@ -444,10 +480,6 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	vpcs = filterVPCs(vpcs,
-		parseIndexedParam(r, "VpcId"),
-		parseFilterValues(r, "vpc-id"),
-		parseFilterValues(r, "isDefault"))
 
 	tags, aerr := h.tagViewFor(r.Context(), r, true)
 	if aerr != nil {
@@ -457,6 +489,9 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlVpc, 0, len(vpcs))
 	for _, v := range vpcs {
+		if !requested.has(v.VpcID) || !filters.matches(v) {
+			continue
+		}
 		ns := v.NetworkStatus
 		if ns == "" {
 			ns = vpcNetworkStatusOK

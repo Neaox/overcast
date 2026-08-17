@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -131,17 +130,18 @@ type xmlDescribeNatGatewaysResponse struct {
 
 // DescribeNatGateways lists NAT gateways with optional filtering.
 func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := natGatewayFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "NatGatewayId")
+
 	all, aerr := h.store.listNatGateways(r.Context())
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	// Filter by NatGatewayId.N
-	filterIDs := collectFormValues(r, "NatGatewayId.")
-
-	// Filter by Filter.N (support nat-gateway-id, vpc-id, subnet-id, state)
-	filters := collectFormFilters(r)
 
 	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
 	if aerr != nil {
@@ -151,15 +151,7 @@ func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlNatGateway, 0, len(all))
 	for _, ngw := range all {
-		if len(filterIDs) > 0 && !containsStr(filterIDs, ngw.NatGatewayID) {
-			continue
-		}
-		if !matchFilters(filters, map[string]string{
-			"nat-gateway-id": ngw.NatGatewayID,
-			"vpc-id":         ngw.VpcID,
-			"subnet-id":      ngw.SubnetID,
-			"state":          ngw.State,
-		}) {
+		if !requested.has(ngw.NatGatewayID) || !filters.matches(ngw) {
 			continue
 		}
 		tags, ok := tagsView.keep(ngw.NatGatewayID)
@@ -227,47 +219,4 @@ func (h *Handler) DeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 		RequestID:    protocol.RequestIDFromContext(r.Context()),
 		NatGatewayID: natID,
 	})
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-// collectFormFilters extracts Filter.N.Name / Filter.N.Value.M from query/form params.
-func collectFormFilters(r *http.Request) map[string][]string {
-	filters := make(map[string][]string)
-	for k, vals := range r.Form {
-		if !strings.HasPrefix(k, "Filter.") || !strings.Contains(k, ".Name") {
-			continue
-		}
-		if len(vals) == 0 {
-			continue
-		}
-		name := vals[0]
-		prefix := k[:len(k)-len("Name")]
-		for vk, vvals := range r.Form {
-			if strings.HasPrefix(vk, prefix+"Value.") && len(vvals) > 0 {
-				filters[name] = append(filters[name], vvals[0])
-			}
-		}
-	}
-	return filters
-}
-
-// matchFilters checks if a resource's attributes match all provided filters.
-//
-// Tag selectors are skipped: they are matched against the resource's tags by
-// tagFilters, and are never entries in an attribute map.
-func matchFilters(filters map[string][]string, attrs map[string]string) bool {
-	for name, allowed := range filters {
-		if isTagFilter(name) {
-			continue
-		}
-		val, ok := attrs[name]
-		if !ok {
-			return false
-		}
-		if !containsStr(allowed, val) {
-			return false
-		}
-	}
-	return true
 }

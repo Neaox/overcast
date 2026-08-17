@@ -329,17 +329,12 @@ func matchIpRanges(a, b []IpRange) bool {
 
 // DescribeSecurityGroups returns security groups, optionally filtered.
 func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request) {
-	// Parse GroupId.N params.
-	filterIDs := parseIndexedParam(r, "GroupId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := securityGroupFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	// Parse filters.
-	filterGroupID := parseFilterValues(r, "group-id")
-	filterGroupName := parseFilterValues(r, "group-name")
-	filterVpcID := parseFilterValues(r, "vpc-id")
+	requested := requestedIDs(r, "GroupId")
 
 	all, aerr := h.store.listSecurityGroups(r.Context())
 	if aerr != nil {
@@ -355,16 +350,7 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 
 	items := make([]xmlSecurityGroup, 0, len(all))
 	for _, sg := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[sg.GroupID] {
-			continue
-		}
-		if len(filterGroupID) > 0 && !filterGroupID[sg.GroupID] {
-			continue
-		}
-		if len(filterGroupName) > 0 && !filterGroupName[sg.GroupName] {
-			continue
-		}
-		if len(filterVpcID) > 0 && !filterVpcID[sg.VpcID] {
+		if !requested.has(sg.GroupID) || !filters.matches(sg) {
 			continue
 		}
 		tags, ok := tagsView.keep(sg.GroupID)
@@ -423,21 +409,16 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 
 // DescribeSubnets returns subnets, optionally filtered.
 func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := subnetFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "SubnetId")
+
 	// The default VPC's subnets are part of what a lookup expects to find, and
 	// this is one of the reads that would observe their absence.
 	h.ensureDefaultVPCQuietly(r.Context())
-
-	// Parse SubnetId.N params.
-	filterIDs := parseIndexedParam(r, "SubnetId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
-	}
-
-	// Parse filters.
-	filterSubnetID := parseFilterValues(r, "subnet-id")
-	filterVpcID := parseFilterValues(r, "vpc-id")
-	filterAZ := parseFilterValues(r, "availability-zone")
 
 	all, aerr := h.store.listSubnets(r.Context())
 	if aerr != nil {
@@ -453,19 +434,9 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]xmlSubnet, 0, len(all))
 	for _, sub := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[sub.SubnetID] {
+		if !requested.has(sub.SubnetID) || !filters.matches(sub) {
 			continue
 		}
-		if len(filterSubnetID) > 0 && !filterSubnetID[sub.SubnetID] {
-			continue
-		}
-		if len(filterVpcID) > 0 && !filterVpcID[sub.VpcID] {
-			continue
-		}
-		if len(filterAZ) > 0 && !filterAZ[sub.AvailabilityZone] {
-			continue
-		}
-
 		tags, ok := tagsView.keep(sub.SubnetID)
 		if !ok {
 			continue

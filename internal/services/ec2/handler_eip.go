@@ -98,17 +98,22 @@ type xmlAddress struct {
 
 // DescribeAddresses lists Elastic IP addresses.
 func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := addressFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "AllocationId")
+
 	all, aerr := h.store.listElasticIPs(r.Context())
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 
-	// Filter by AllocationId.N if provided.
-	filterIDs := collectFormValues(r, "AllocationId.")
 	items := make([]xmlAddress, 0, len(all))
 	for _, a := range all {
-		if len(filterIDs) > 0 && !containsStr(filterIDs, a.AllocationID) {
+		if !requested.has(a.AllocationID) || !filters.matches(a) {
 			continue
 		}
 		items = append(items, xmlAddress{

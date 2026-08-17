@@ -14,11 +14,9 @@ package ec2
 // Filtering is the other half. AWS lets a caller select on `tag:<key>`,
 // `tag-key` and `tag-value`, and a script that finds-or-creates its own
 // resource depends on an unmatched filter returning nothing. Overcast
-// implemented none of the three, and the two filter idioms in this package
-// disagreed about what to do with a filter they did not know: the handlers
-// built on parseFilterValues ignored it and returned everything, the ones built
-// on matchFilters excluded everything. Both are wrong and they are wrong in
-// opposite directions. Tag selectors are parsed here, once, for every describe.
+// implemented none of the three. Tag selectors are parsed here, once, for every
+// describe; everything else about a describe's filters — which names it
+// implements and what an unrecognised one means — is in filters.go.
 
 import (
 	"context"
@@ -189,9 +187,9 @@ type tagFilters struct {
 // isTagFilter reports whether a filter name is a tag selector, and so is
 // matched by tagFilters rather than against a resource's own attributes.
 //
-// The attribute-map handlers reject any name their map has no entry for, and a
-// tag selector is never in that map — so without this they answer a tag filter
-// with nothing at all.
+// filterSpec.parse consults it before deciding a name is unrecognised, but only
+// for an operation that matches tags: on one that does not, a tag selector is
+// as unanswerable as any other name it has no accessor for.
 func isTagFilter(name string) bool {
 	return strings.HasPrefix(name, tagFilterPrefix) ||
 		strings.EqualFold(name, tagKeyFilter) ||
@@ -297,31 +295,4 @@ func parseTagFilters(r *http.Request) tagFilters {
 		}
 	}
 	return tf
-}
-
-// eachFilter yields every Filter.N.Name and its Filter.N.Value.M values, in
-// index order, in a single pass.
-//
-// collectFormFilters, the map-scanning equivalent still used by the handlers
-// that match filters by attribute map, rescans the whole form for each filter
-// it finds — work proportional to filters × parameters rather than to
-// parameters. It reaches the same answer; this is the cheaper way to ask.
-func eachFilter(r *http.Request) map[string][]string {
-	filters := make(map[string][]string)
-	for i := 1; ; i++ {
-		name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
-		if name == "" {
-			break
-		}
-		var values []string
-		for j := 1; ; j++ {
-			v, ok := r.Form[fmt.Sprintf("Filter.%d.Value.%d", i, j)]
-			if !ok || len(v) == 0 {
-				break
-			}
-			values = append(values, v[0])
-		}
-		filters[name] = append(filters[name], values...)
-	}
-	return filters
 }

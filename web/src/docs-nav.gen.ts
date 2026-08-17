@@ -2624,6 +2624,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Filters",
+        "id": "filters"
+      },
+      {
+        "depth": 3,
         "text": "Security groups",
         "id": "security-groups"
       },

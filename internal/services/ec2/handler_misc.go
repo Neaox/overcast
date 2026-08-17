@@ -149,6 +149,14 @@ type xmlDhcpValue struct {
 
 // DescribeDhcpOptions returns a default DHCP options set.
 func (h *Handler) DescribeDhcpOptions(w http.ResponseWriter, r *http.Request) {
+	// The option set below is fabricated per call rather than stored, so there
+	// is no record for a filter to select against and dhcpOptionsFilters
+	// implements none. Parsing is still what refuses one, rather than accepting
+	// it and answering as though it had been applied.
+	if _, aerr := dhcpOptionsFilters.parse(r); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDhcpOptionsResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -297,14 +305,18 @@ type xmlDescribeNetworkInterfacesResponse struct {
 
 // DescribeNetworkInterfaces lists network interfaces with optional filtering.
 func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
+	filters, aerr := networkInterfaceFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	requested := requestedIDs(r, "NetworkInterfaceId")
+
 	all, aerr := h.store.listNetworkInterfaces(r.Context())
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	filterIDs := collectFormValues(r, "NetworkInterfaceId.")
-	filters := collectFormFilters(r)
 
 	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
 	if aerr != nil {
@@ -314,14 +326,7 @@ func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 
 	items := make([]xmlNetworkInterface, 0, len(all))
 	for _, eni := range all {
-		if len(filterIDs) > 0 && !containsStr(filterIDs, eni.NetworkInterfaceID) {
-			continue
-		}
-		if !matchFilters(filters, map[string]string{
-			"network-interface-id": eni.NetworkInterfaceID,
-			"subnet-id":            eni.SubnetID,
-			"vpc-id":               eni.VpcID,
-		}) {
+		if !requested.has(eni.NetworkInterfaceID) || !filters.matches(eni) {
 			continue
 		}
 		tags, ok := tagsView.keep(eni.NetworkInterfaceID)

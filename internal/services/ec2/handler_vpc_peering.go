@@ -184,15 +184,12 @@ func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 
 // DescribeVpcPeeringConnections lists peering connections, optionally filtered.
 func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.Request) {
-	filterIDs := parseIndexedParam(r, "VpcPeeringConnectionId")
-	filterIDSet := make(map[string]bool, len(filterIDs))
-	for _, id := range filterIDs {
-		filterIDSet[id] = true
+	filters, aerr := vpcPeeringFilters.parse(r)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
 	}
-
-	filterStatusCode := parseFilterValues(r, "status-code")
-	filterRequesterVpc := parseFilterValues(r, "requester-vpc-info.vpc-id")
-	filterAccepterVpc := parseFilterValues(r, "accepter-vpc-info.vpc-id")
+	requested := requestedIDs(r, "VpcPeeringConnectionId")
 
 	ctx := r.Context()
 	all, aerr := h.store.listVpcPeeringConnections(ctx)
@@ -203,16 +200,7 @@ func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 
 	items := make([]xmlVpcPeeringConnection, 0, len(all))
 	for _, pcx := range all {
-		if len(filterIDSet) > 0 && !filterIDSet[pcx.VpcPeeringConnectionID] {
-			continue
-		}
-		if len(filterStatusCode) > 0 && !filterStatusCode[pcx.Status.Code] {
-			continue
-		}
-		if len(filterRequesterVpc) > 0 && !filterRequesterVpc[pcx.RequesterVpcInfo.VpcID] {
-			continue
-		}
-		if len(filterAccepterVpc) > 0 && !filterAccepterVpc[pcx.AccepterVpcInfo.VpcID] {
+		if !requested.has(pcx.VpcPeeringConnectionID) || !filters.matches(pcx) {
 			continue
 		}
 		items = append(items, pcxToXML(pcx))
