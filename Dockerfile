@@ -65,7 +65,7 @@
 # Builds the SPA (Vite). The compiled assets are embedded into the Go binary
 # by the console builder — Node.js is NOT present in any runtime image, and
 # the slim build never reaches this stage at all.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web-builder
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS web-builder
 
 WORKDIR /web
 
@@ -86,7 +86,7 @@ RUN VITE_BUNDLED=true pnpm run build
 # Everything up to (but not including) the SPA overlay and the compile itself.
 # Both builders start here, so the module download and source COPYs are one
 # cached layer set rather than two.
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS go-src
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS go-src
 
 WORKDIR /src
 
@@ -171,7 +171,7 @@ RUN for marker in 'web/dist/index.html' '/_overcast/mcp'; do \
 
 # ---- Stage 5: shared runtime base ------------------------------------------
 # Both slim and console images share the same OS-level setup.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS base
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS base
 
 RUN apk add --no-cache ca-certificates su-exec
 
