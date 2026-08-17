@@ -33,14 +33,7 @@ func (h *Handler) CreateTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, rid := range resourceIDs {
-		existing, _ := h.store.getTags(r.Context(), rid)
-		if existing == nil {
-			existing = make(map[string]string)
-		}
-		for k, v := range tags {
-			existing[k] = v
-		}
-		if aerr := h.store.putTags(r.Context(), rid, existing); aerr != nil {
+		if aerr := h.putResourceTags(r.Context(), rid, sortedTags(tags)); aerr != nil {
 			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}

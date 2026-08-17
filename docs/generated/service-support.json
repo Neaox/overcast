@@ -3066,7 +3066,7 @@
           "operation": "CreateTags",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Tag any resource by ID"
+          "notes": "Tag any resource by ID; visible to that resource's own describe"
         },
         {
           "operation": "CreateVpc",
@@ -3141,7 +3141,7 @@
           "operation": "DeleteTags",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Remove tags by key from resources"
+          "notes": "Remove tags by key; a resource's tags are removed with the resource"
         },
         {
           "operation": "DeleteVpc",
@@ -3207,13 +3207,13 @@
           "operation": "DescribeInstances",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by instance-id, instance-state-name"
+          "notes": "Filter by instance-id, instance-state-name, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeInternetGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by internet-gateway-id, attachment.vpc-id"
+          "notes": "Filter by internet-gateway-id, attachment.vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeKeyPairs",
@@ -3225,13 +3225,13 @@
           "operation": "DescribeNatGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by nat-gateway-id, vpc-id, subnet-id, state"
+          "notes": "Filter by nat-gateway-id, vpc-id, subnet-id, state, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeNetworkInterfaces",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by network-interface-id, subnet-id"
+          "notes": "Filter by network-interface-id, subnet-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeRegions",
@@ -3243,19 +3243,19 @@
           "operation": "DescribeRouteTables",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by route-table-id, vpc-id; includes NAT gateway routes"
+          "notes": "Filter by route-table-id, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value; includes NAT gateway routes"
         },
         {
           "operation": "DescribeSecurityGroups",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by group-id, group-name, vpc-id"
+          "notes": "Filter by group-id, group-name, vpc-id, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeSubnets",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by subnet-id, vpc-id, availability-zone; includes tagSet for CDK subnet groups"
+          "notes": "Filter by subnet-id, vpc-id, availability-zone, tag:\u003ckey\u003e, tag-key, tag-value; includes tagSet for CDK subnet groups"
         },
         {
           "operation": "DescribeTags",
@@ -3279,7 +3279,7 @@
           "operation": "DescribeVpnGateways",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Filter by vpn-gateway-id, state, type, attachment.vpc-id, attachment.state"
+          "notes": "Filter by vpn-gateway-id, state, type, attachment.vpc-id, attachment.state, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DescribeVpcPeeringConnections",
@@ -3291,7 +3291,7 @@
           "operation": "DescribeVpcs",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists all VPCs; filter by VpcId"
+          "notes": "Filter by VpcId, vpc-id, isDefault, tag:\u003ckey\u003e, tag-key, tag-value"
         },
         {
           "operation": "DetachInternetGateway",

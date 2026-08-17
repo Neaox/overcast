@@ -120,7 +120,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	maxCount := formInt(r, "MaxCount", minCount)
 	subnetID := r.FormValue("SubnetId")
 	securityGroups := parseIndexedParam(r, "SecurityGroupId")
-	tags := parseTagSpecifications(r)
+	tags := parseTagSpecifications(r, "instance")
 
 	// Resolve SG names for the response.
 	sgRefs := make([]InstanceSG, 0, len(securityGroups))
@@ -181,10 +181,16 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 			PrivateIPAddress: realPrivateIP,
 			SecurityGroups:   sgRefs,
 			Placement:        Placement{AvailabilityZone: az},
-			Tags:             tags,
 			VpcID:            vpcID,
 		}
 		if aerr := h.store.putInstance(r.Context(), inst); aerr != nil {
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
+			return
+		}
+
+		// Create-time tags go to the tag store, the same place CreateTags
+		// writes, so a later describe sees both without reading two sources.
+		if aerr := h.putResourceTags(r.Context(), instID, tags); aerr != nil {
 			protocol.WriteEC2QueryXMLError(w, r, aerr)
 			return
 		}
@@ -205,11 +211,6 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 
 		h.publish(r, events.EC2InstanceLaunched, events.ResourcePayload{Name: instID})
 
-		xmlTags := make([]xmlTag, 0, len(tags))
-		for _, tag := range tags {
-			xmlTags = append(xmlTags, xmlTag(tag))
-		}
-
 		xmlSGs := make([]xmlSGRef, 0, len(sgRefs))
 		for _, sg := range sgRefs {
 			xmlSGs = append(xmlSGs, xmlSGRef(sg))
@@ -226,7 +227,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 			PrivateIP:     apiPrivateIP,
 			Placement:     xmlPlacement{AvailabilityZone: az},
 			GroupSet:      xmlSGs,
-			TagSet:        xmlTags,
+			TagSet:        xmlTagsOf(sortTags(tags)),
 		})
 	}
 
@@ -258,6 +259,12 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlInstance, 0, len(all))
 	for _, inst := range all {
 		if len(filterIDSet) > 0 && !filterIDSet[inst.InstanceID] {
@@ -266,10 +273,11 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 		if len(stateFilter) > 0 && !stateFilter[inst.State.Name] {
 			continue
 		}
-		xmlTags := make([]xmlTag, 0, len(inst.Tags))
-		for _, tag := range inst.Tags {
-			xmlTags = append(xmlTags, xmlTag(tag))
+		tags, ok := tagsView.keep(inst.InstanceID)
+		if !ok {
+			continue
 		}
+		xmlTags := xmlTagsOf(tags)
 		xmlSGs := make([]xmlSGRef, 0, len(inst.SecurityGroups))
 		for _, sg := range inst.SecurityGroups {
 			xmlSGs = append(xmlSGs, xmlSGRef(sg))
@@ -527,30 +535,6 @@ func parseIndexedParam(r *http.Request, prefix string) []string {
 		result = append(result, v)
 	}
 	return result
-}
-
-// parseTagSpecifications parses TagSpecification.N.Tag.M.{Key,Value} form params
-// for ResourceType=instance.
-func parseTagSpecifications(r *http.Request) []Tag {
-	var tags []Tag
-	for i := 1; ; i++ {
-		rt := r.FormValue(fmt.Sprintf("TagSpecification.%d.ResourceType", i))
-		if rt == "" {
-			break
-		}
-		if rt != "instance" {
-			continue
-		}
-		for j := 1; ; j++ {
-			key := r.FormValue(fmt.Sprintf("TagSpecification.%d.Tag.%d.Key", i, j))
-			val := r.FormValue(fmt.Sprintf("TagSpecification.%d.Tag.%d.Value", i, j))
-			if key == "" {
-				break
-			}
-			tags = append(tags, Tag{Key: key, Value: val})
-		}
-	}
-	return tags
 }
 
 // parseFilterValues extracts values for a named filter from Filter.N.Name / Filter.N.Value.M params.

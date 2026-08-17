@@ -29,6 +29,7 @@ type xmlRouteTable struct {
 	VpcID          string                     `xml:"vpcId"`
 	RouteSet       []xmlRoute                 `xml:"routeSet>item"`
 	AssociationSet []xmlRouteTableAssociation `xml:"associationSet>item,omitempty"`
+	TagSet         []xmlTag                   `xml:"tagSet>item,omitempty"`
 }
 
 type xmlRoute struct {
@@ -118,7 +119,7 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateRouteTableResponse{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(r.Context()),
-		RouteTable: routeTableToXML(rt),
+		RouteTable: routeTableToXML(rt, nil),
 	})
 }
 
@@ -141,6 +142,12 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlRouteTable, 0, len(all))
 	for _, rt := range all {
 		if len(filterIDSet) > 0 && !filterIDSet[rt.RouteTableID] {
@@ -152,7 +159,11 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 		if len(filterVpcID) > 0 && !filterVpcID[rt.VpcID] {
 			continue
 		}
-		items = append(items, routeTableToXML(rt))
+		tags, ok := tagsView.keep(rt.RouteTableID)
+		if !ok {
+			continue
+		}
+		items = append(items, routeTableToXML(rt, tags))
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeRouteTablesResponse{
@@ -417,7 +428,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-func routeTableToXML(rt *RouteTable) xmlRouteTable {
+func routeTableToXML(rt *RouteTable, tags []Tag) xmlRouteTable {
 	routes := make([]xmlRoute, 0, len(rt.Routes))
 	for _, r := range rt.Routes {
 		routes = append(routes, xmlRoute{
@@ -437,5 +448,6 @@ func routeTableToXML(rt *RouteTable) xmlRouteTable {
 		VpcID:          rt.VpcID,
 		RouteSet:       routes,
 		AssociationSet: assocs,
+		TagSet:         xmlTagsOf(tags),
 	}
 }

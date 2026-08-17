@@ -153,7 +153,7 @@ func (s *ec2Store) deleteVPC(ctx context.Context, id string) *protocol.AWSError 
 	if err := s.store.Delete(ctx, nsVPCs, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── Subnets ───────────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ func (s *ec2Store) deleteSubnet(ctx context.Context, id string) *protocol.AWSErr
 	if err := s.store.Delete(ctx, nsSubnets, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 func (s *ec2Store) listSubnets(ctx context.Context) ([]*Subnet, *protocol.AWSError) {
@@ -239,7 +239,7 @@ func (s *ec2Store) deleteSecurityGroup(ctx context.Context, id string) *protocol
 	if err := s.store.Delete(ctx, nsSecurityGroups, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 func (s *ec2Store) listSecurityGroups(ctx context.Context) ([]*SecurityGroup, *protocol.AWSError) {
@@ -272,7 +272,6 @@ type Instance struct {
 	PrivateIPAddress string        `json:"PrivateIpAddress,omitempty"`
 	SecurityGroups   []InstanceSG  `json:"SecurityGroups,omitempty"`
 	Placement        Placement     `json:"Placement"`
-	Tags             []Tag         `json:"Tags,omitempty"`
 }
 
 // VPCIPTranslation persists fakeIP↔realIP mapping for remapped VPCs.
@@ -452,7 +451,7 @@ func (s *ec2Store) deleteKeyPair(ctx context.Context, name string) *protocol.AWS
 	if err := s.store.Delete(ctx, nsKeyPairs, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, name)
 }
 
 // ── Route Tables ──────────────────────────────────────────────────────────────
@@ -531,7 +530,7 @@ func (s *ec2Store) deleteRouteTable(ctx context.Context, id string) *protocol.AW
 	if err := s.store.Delete(ctx, nsRouteTables, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── Internet Gateways ─────────────────────────────────────────────────────────
@@ -598,7 +597,7 @@ func (s *ec2Store) deleteInternetGateway(ctx context.Context, id string) *protoc
 	if err := s.store.Delete(ctx, nsInternetGateways, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── VPN Gateways ─────────────────────────────────────────────────────────────
@@ -611,7 +610,6 @@ type VpnGateway struct {
 	AmazonSideAsn    int64                  `json:"AmazonSideAsn"`
 	AvailabilityZone string                 `json:"AvailabilityZone,omitempty"`
 	Attachments      []VpnGatewayAttachment `json:"Attachments,omitempty"`
-	Tags             []Tag                  `json:"Tags,omitempty"`
 }
 
 // VpnGatewayAttachment represents a virtual private gateway VPC attachment.
@@ -670,7 +668,7 @@ func (s *ec2Store) deleteVpnGateway(ctx context.Context, id string) *protocol.AW
 	if err := s.store.Delete(ctx, nsVpnGateways, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── VPC Peering Connections ───────────────────────────────────────────────────
@@ -695,7 +693,6 @@ type VpcPeeringConnection struct {
 	RequesterVpcInfo       VpcPeeringConnectionVpcInfo `json:"RequesterVpcInfo"`
 	AccepterVpcInfo        VpcPeeringConnectionVpcInfo `json:"AccepterVpcInfo"`
 	Status                 VpcPeeringConnectionStatus  `json:"Status"`
-	Tags                   []Tag                       `json:"Tags,omitempty"`
 }
 
 func (s *ec2Store) putVpcPeeringConnection(ctx context.Context, pcx *VpcPeeringConnection) *protocol.AWSError {
@@ -749,6 +746,19 @@ func (s *ec2Store) putTags(ctx context.Context, resourceID string, tags map[stri
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if err := s.store.Set(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), resourceID), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// deleteTags removes a resource's tags, and is called by every delete above.
+//
+// Tags are keyed by resource ID in a namespace of their own, so nothing ties
+// them to the record's lifetime. Left behind they outlive the resource:
+// DescribeTags goes on reporting them, the store grows for the life of the
+// session, and anything created with the same ID inherits them.
+func (s *ec2Store) deleteTags(ctx context.Context, resourceID string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), resourceID)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -850,7 +860,7 @@ func (s *ec2Store) deleteElasticIP(ctx context.Context, allocID string) *protoco
 	if err := s.store.Delete(ctx, nsElasticIPs, serviceutil.RegionKey(s.region(ctx), allocID)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, allocID)
 }
 
 // ── NAT Gateways ──────────────────────────────────────────────────────────────
@@ -865,7 +875,6 @@ type NatGateway struct {
 	PublicIP     string `json:"PublicIp,omitempty"`
 	PrivateIP    string `json:"PrivateIp,omitempty"`
 	CreateTime   string `json:"CreateTime"`
-	Tags         []Tag  `json:"Tags,omitempty"`
 }
 
 func (s *ec2Store) putNatGateway(ctx context.Context, ngw *NatGateway) *protocol.AWSError {
@@ -915,7 +924,7 @@ func (s *ec2Store) deleteNatGateway(ctx context.Context, id string) *protocol.AW
 	if err := s.store.Delete(ctx, nsNatGateways, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── Network Interfaces ────────────────────────────────────────────────────────
@@ -963,7 +972,7 @@ func (s *ec2Store) deleteNetworkInterface(ctx context.Context, id string) *proto
 	if err := s.store.Delete(ctx, nsNetworkInterfaces, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }
 
 // ── VPC Endpoints ─────────────────────────────────────────────────────────────
@@ -1008,5 +1017,5 @@ func (s *ec2Store) deleteVpcEndpoint(ctx context.Context, id string) *protocol.A
 	if err := s.store.Delete(ctx, nsVpcEndpoints, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	return nil
+	return s.deleteTags(ctx, id)
 }

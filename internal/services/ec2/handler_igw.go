@@ -27,6 +27,7 @@ type xmlDescribeInternetGatewaysResponse struct {
 type xmlInternetGateway struct {
 	InternetGatewayID string             `xml:"internetGatewayId"`
 	AttachmentSet     []xmlIGWAttachment `xml:"attachmentSet>item,omitempty"`
+	TagSet            []xmlTag           `xml:"tagSet>item,omitempty"`
 }
 
 type xmlIGWAttachment struct {
@@ -94,6 +95,12 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlInternetGateway, 0, len(all))
 	for _, igw := range all {
 		if len(filterIDSet) > 0 && !filterIDSet[igw.InternetGatewayID] {
@@ -114,7 +121,11 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 		}
-		items = append(items, igwToXML(igw))
+		tags, ok := tagsView.keep(igw.InternetGatewayID)
+		if !ok {
+			continue
+		}
+		items = append(items, igwToXML(igw, tags))
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInternetGatewaysResponse{
@@ -286,7 +297,7 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-func igwToXML(igw *InternetGateway) xmlInternetGateway {
+func igwToXML(igw *InternetGateway, tags []Tag) xmlInternetGateway {
 	atts := make([]xmlIGWAttachment, 0, len(igw.Attachments))
 	for _, a := range igw.Attachments {
 		atts = append(atts, xmlIGWAttachment(a))
@@ -294,5 +305,6 @@ func igwToXML(igw *InternetGateway) xmlInternetGateway {
 	return xmlInternetGateway{
 		InternetGatewayID: igw.InternetGatewayID,
 		AttachmentSet:     atts,
+		TagSet:            xmlTagsOf(tags),
 	}
 }
