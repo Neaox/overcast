@@ -49,6 +49,14 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a NAT gateway behind.
+	tags := parseTagSpecifications(r, "natgateway")
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	// Validate subnet and resolve VPC.
 	sub, aerr := h.store.getSubnet(r.Context(), subnetID)
 	if aerr != nil {
@@ -92,7 +100,6 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 
 	// Create-time tags go to the tag store, the same place CreateTags writes,
 	// so a later describe sees both without having to read two sources.
-	tags := parseTagSpecifications(r, "natgateway")
 	if aerr := h.putResourceTags(r.Context(), natID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return

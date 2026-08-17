@@ -275,9 +275,8 @@ func (s *Service) listTagsForDeliveryStreamTyped(ctx context.Context, req *listT
 	if aerr != nil {
 		return nil, aerr
 	}
-	tagList := make([]firehoseTag, 0, len(tags))
-	for k, v := range tags {
-		tagList = append(tagList, firehoseTag{Key: k, Value: v})
-	}
+	tagList := serviceutil.TagElements(tags, func(k, v string) firehoseTag {
+		return firehoseTag{Key: k, Value: v}
+	})
 	return &listTagsForDeliveryStreamResp{Tags: tagList, HasMoreTags: false}, nil
 }

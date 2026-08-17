@@ -61,7 +61,7 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if aerr := serviceutil.ApplyStoreTags(r.Context(), store, store.key, req.Tags, lambdaTagCfg); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), store, store.key, req.Tags, lambdaTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -87,7 +87,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if aerr := serviceutil.RemoveStoreTags(r.Context(), store, store.key, tagKeys); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(r.Context(), store, store.key, tagKeys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -106,13 +106,10 @@ func (h *Handler) listTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tags, aerr := serviceutil.ListStoreTags(r.Context(), store, store.key)
+	tags, aerr := store.Load(r.Context(), store.key)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
-	}
-	if tags == nil {
-		tags = map[string]string{}
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
 		Tags map[string]string `json:"Tags"`
@@ -234,6 +231,13 @@ func (s functionTagStore) Save(ctx context.Context, name string, tags map[string
 	return nil
 }
 
+// Delete clears the function's tags. Deleting the function removes the record
+// they ride on, so this exists for the interface rather than for a caller: a
+// function's tags cannot outlive it.
+func (s functionTagStore) Delete(ctx context.Context, name string) *protocol.AWSError {
+	return s.Save(ctx, name, nil)
+}
+
 // esmTagStore keeps event source mapping tags in their own namespace:
 // EventSourceMappingConfiguration has no Tags member, and the mapping record is
 // marshalled to the wire as-is.
@@ -245,4 +249,11 @@ func (s esmTagStore) Load(ctx context.Context, uuid string) (map[string]string, 
 
 func (s esmTagStore) Save(ctx context.Context, uuid string, tags map[string]string) *protocol.AWSError {
 	return s.ls.putESMTags(ctx, uuid, tags)
+}
+
+// Delete removes a mapping's tags. deleteESM calls it before dropping the
+// mapping record, so the tags cannot be left addressable by an ARN that no
+// longer resolves.
+func (s esmTagStore) Delete(ctx context.Context, uuid string) *protocol.AWSError {
+	return s.ls.esmTagNS().Delete(ctx, s.ls.esmTagKey(ctx, uuid))
 }

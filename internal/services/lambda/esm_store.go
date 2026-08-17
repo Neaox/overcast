@@ -173,8 +173,8 @@ func (e *esmStore) putESM(ctx context.Context, m *EventSourceMapping) *protocol.
 
 // deleteESM removes the ESM and its tags from the store.
 func (e *esmStore) deleteESM(ctx context.Context, uuid string) *protocol.AWSError {
-	if err := e.s.store.Delete(ctx, nsESMTags, serviceutil.RegionKey(e.s.region(ctx), uuid)); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("esm delete tags %s: %w", uuid, err))
+	if aerr := (esmTagStore{ls: e.s}).Delete(ctx, uuid); aerr != nil {
+		return aerr
 	}
 	// The mapping record goes last: while it exists the mapping is still
 	// addressable, so a failed cleanup can simply be retried.
@@ -184,17 +184,28 @@ func (e *esmStore) deleteESM(ctx context.Context, uuid string) *protocol.AWSErro
 	return nil
 }
 
+// esmTagNS is the namespace event source mapping tags live in:
+// EventSourceMappingConfiguration has no Tags member, and the mapping record is
+// marshalled to the wire as-is, so they cannot ride on it.
+func (s *lambdaStore) esmTagNS() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsESMTags}
+}
+
+// esmTagKey scopes a mapping's tags to the caller's region.
+func (s *lambdaStore) esmTagKey(ctx context.Context, uuid string) string {
+	return serviceutil.RegionKey(s.region(ctx), uuid)
+}
+
 // esmTags reads an event source mapping's tags. A malformed tag record reads as
 // empty rather than failing the request — one corrupt blob must not make the
 // mapping untaggable.
 func (s *lambdaStore) esmTags(ctx context.Context, uuid string) (map[string]string, *protocol.AWSError) {
-	return serviceutil.TagsFromStore(ctx, s.store, nsESMTags, serviceutil.RegionKey(s.region(ctx), uuid))
+	return s.esmTagNS().Load(ctx, s.esmTagKey(ctx, uuid))
 }
 
 // putESMTags replaces an event source mapping's tags.
 func (s *lambdaStore) putESMTags(ctx context.Context, uuid string, tags map[string]string) *protocol.AWSError {
-	store := &serviceutil.NSStore{Store: s.store, NS: nsESMTags}
-	return store.Save(ctx, serviceutil.RegionKey(s.region(ctx), uuid), tags)
+	return s.esmTagNS().Save(ctx, s.esmTagKey(ctx, uuid), tags)
 }
 
 // listESMs returns all event source mappings, optionally filtered by

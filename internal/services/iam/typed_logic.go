@@ -3,11 +3,11 @@ package iam
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ─── respMeta ────────────────────────────────────────────────────────────────
@@ -1959,12 +1959,9 @@ func removeTagKeys(existing map[string]string, keys []string) map[string]string 
 // map iteration per process, so without this the Tags list would reorder
 // between otherwise identical responses.
 func sortedTagXML(tags map[string]string) []tagXML {
-	out := make([]tagXML, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, tagXML{Key: k, Value: v})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
+	return serviceutil.TagElements(tags, func(k, v string) tagXML {
+		return tagXML{Key: k, Value: v}
+	})
 }
 
 // --- Service-Linked Roles ---

@@ -2038,10 +2038,7 @@ type listTagsOfResourceRequest struct {
 }
 
 type listTagsOfResourceResponse struct {
-	Tags []struct {
-		Key   string `json:"Key"`
-		Value string `json:"Value"`
-	} `json:"Tags"`
+	Tags []serviceutil.TagPair `json:"Tags"`
 }
 
 type untagResourceRequest struct {
@@ -2131,18 +2128,7 @@ func (h *Handler) ListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tagList := make([]struct {
-		Key   string `json:"Key"`
-		Value string `json:"Value"`
-	}, 0, len(tags))
-	for k, v := range tags {
-		tagList = append(tagList, struct {
-			Key   string `json:"Key"`
-			Value string `json:"Value"`
-		}{Key: k, Value: v})
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, &listTagsOfResourceResponse{Tags: tagList})
+	protocol.WriteJSON(w, r, http.StatusOK, &listTagsOfResourceResponse{Tags: serviceutil.TagsToList(tags)})
 }
 
 func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
@@ -2217,18 +2203,7 @@ func (h *Handler) listTagsOfResourceTyped(ctx context.Context, req *listTagsOfRe
 		return nil, aerr
 	}
 
-	tagList := make([]struct {
-		Key   string `json:"Key"`
-		Value string `json:"Value"`
-	}, 0, len(tags))
-	for k, v := range tags {
-		tagList = append(tagList, struct {
-			Key   string `json:"Key"`
-			Value string `json:"Value"`
-		}{Key: k, Value: v})
-	}
-
-	return &listTagsOfResourceResponse{Tags: tagList}, nil
+	return &listTagsOfResourceResponse{Tags: serviceutil.TagsToList(tags)}, nil
 }
 
 func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {

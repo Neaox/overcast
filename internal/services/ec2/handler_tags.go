@@ -105,23 +105,17 @@ func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]xmlTagItem, 0)
 	allTags, _ := h.store.listAllTags(r.Context())
-	for rid, tags := range allTags {
-		resType := inferResourceType(rid)
-		for k, v := range tags {
-			item := xmlTagItem{
+	items := tagItems(tagIndex(allTags),
+		func(rid string, tag Tag) xmlTagItem {
+			return xmlTagItem{
 				ResourceID:   rid,
-				ResourceType: resType,
-				Key:          k,
-				Value:        v,
+				ResourceType: inferResourceType(rid),
+				Key:          tag.Key,
+				Value:        tag.Value,
 			}
-			if !filters.matches(item) {
-				continue
-			}
-			items = append(items, item)
-		}
-	}
+		},
+		filters.matches)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeTagsResponse{
 		Xmlns:     ec2XMLNS,

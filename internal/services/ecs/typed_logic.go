@@ -1129,12 +1129,7 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	region := h.store.region(ctx)
-	pairs := make([]serviceutil.TagPair, len(req.Tags))
-	for i, t := range req.Tags {
-		pairs[i] = serviceutil.TagPair{Key: t.Key, Value: t.Value}
-	}
-	if _, aerr := serviceutil.ApplyTagsToStore(ctx, ecsTagCfg, nsTags, serviceutil.RegionKey(region, req.ResourceArn), pairs, h.store.store); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(ctx, h.tagStore(), h.tagKey(ctx, req.ResourceArn), tagMap(req.Tags), ecsTagCfg); aerr != nil {
 		return nil, aerr
 	}
 	return &tagResourceResponse{}, nil
@@ -1146,8 +1141,7 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	region := h.store.region(ctx)
-	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, serviceutil.RegionKey(region, req.ResourceArn), req.TagKeys, h.store.store); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(ctx, h.tagStore(), h.tagKey(ctx, req.ResourceArn), req.TagKeys); aerr != nil {
 		return nil, aerr
 	}
 	return &untagResourceResponse{}, nil
@@ -1159,16 +1153,11 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	region := h.store.region(ctx)
-	existing, aerr := serviceutil.TagsFromStore(ctx, h.store.store, nsTags, serviceutil.RegionKey(region, req.ResourceArn))
+	existing, aerr := h.tagStore().Load(ctx, h.tagKey(ctx, req.ResourceArn))
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]Tag, 0, len(existing))
-	for k, v := range existing {
-		tags = append(tags, Tag{Key: k, Value: v})
-	}
-	return &listTagsForResourceResponse{Tags: tags}, nil
+	return &listTagsForResourceResponse{Tags: tagList(existing)}, nil
 }
 
 func (h *Handler) createCapacityProviderTyped(ctx context.Context, req *createCapacityProviderRequest) (*createCapacityProviderResponse, *protocol.AWSError) {

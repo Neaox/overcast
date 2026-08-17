@@ -18,6 +18,33 @@ var ecsTagCfg = serviceutil.TagValidationConfig{
 	ExceededMessage: "Tag key list exceeds maximum tag limit",
 }
 
+// tagStore is the namespace ECS resource tags live in.
+func (h *Handler) tagStore() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+}
+
+// tagKey scopes a resource ARN to the caller's region, which is how every tag
+// in the namespace is keyed.
+func (h *Handler) tagKey(ctx context.Context, arn string) string {
+	return serviceutil.RegionKey(h.store.region(ctx), arn)
+}
+
+// tagMap converts the wire's tag list to the map the shared helpers speak.
+func tagMap(tags []Tag) map[string]string {
+	out := make(map[string]string, len(tags))
+	for _, t := range tags {
+		out[t.Key] = t.Value
+	}
+	return out
+}
+
+// tagList renders a tag map into the wire's tag list, ordered by key.
+func tagList(tags map[string]string) []Tag {
+	return serviceutil.TagElements(tags, func(k, v string) Tag {
+		return Tag{Key: k, Value: v}
+	})
+}
+
 // storeTaskDefinitionTags records the tags a RegisterTaskDefinition call
 // carried, against the revision's own ARN.
 //
@@ -30,12 +57,7 @@ func (h *Handler) storeTaskDefinitionTags(ctx context.Context, arn string, tags 
 	if len(tags) == 0 {
 		return nil
 	}
-	pairs := make([]serviceutil.TagPair, len(tags))
-	for i, t := range tags {
-		pairs[i] = serviceutil.TagPair{Key: t.Key, Value: t.Value}
-	}
-	key := serviceutil.RegionKey(h.store.region(ctx), arn)
-	_, aerr := serviceutil.ApplyTagsToStore(ctx, ecsTagCfg, nsTags, key, pairs, h.store.store)
+	_, aerr := serviceutil.ApplyStoreTags(ctx, h.tagStore(), h.tagKey(ctx, arn), tagMap(tags), ecsTagCfg)
 	return aerr
 }
 
@@ -50,8 +72,7 @@ func (h *Handler) taskDefinitionTags(ctx context.Context, arn string) map[string
 	if arn == "" {
 		return nil
 	}
-	key := serviceutil.RegionKey(h.store.region(ctx), arn)
-	tags, aerr := serviceutil.TagsFromStore(ctx, h.store.store, nsTags, key)
+	tags, aerr := h.tagStore().Load(ctx, h.tagKey(ctx, arn))
 	if aerr != nil {
 		h.log.Warn("ecs: could not read task definition tags — any tag-driven behaviour is skipped for this task",
 			zap.String("task_definition", arn), zap.String("error", aerr.Message))
@@ -79,12 +100,7 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	region := h.store.region(ctx)
-	pairs := make([]serviceutil.TagPair, len(req.Tags))
-	for i, t := range req.Tags {
-		pairs[i] = serviceutil.TagPair{Key: t.Key, Value: t.Value}
-	}
-	if _, aerr := serviceutil.ApplyTagsToStore(ctx, ecsTagCfg, nsTags, serviceutil.RegionKey(region, req.ResourceArn), pairs, h.store.store); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(ctx, h.tagStore(), h.tagKey(ctx, req.ResourceArn), tagMap(req.Tags), ecsTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -110,8 +126,7 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	region := h.store.region(ctx)
-	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, serviceutil.RegionKey(region, req.ResourceArn), req.TagKeys, h.store.store); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(ctx, h.tagStore(), h.tagKey(ctx, req.ResourceArn), req.TagKeys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -136,15 +151,10 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	region := h.store.region(ctx)
-	existing, aerr := serviceutil.TagsFromStore(ctx, h.store.store, nsTags, serviceutil.RegionKey(region, req.ResourceArn))
+	existing, aerr := h.tagStore().Load(ctx, h.tagKey(ctx, req.ResourceArn))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	tags := make([]Tag, 0, len(existing))
-	for k, v := range existing {
-		tags = append(tags, Tag{Key: k, Value: v})
-	}
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"tags": tags}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"tags": tagList(existing)}, "application/x-amz-json-1.1")
 }

@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createStreamRequest struct {
@@ -161,12 +161,9 @@ func createStreamTags(incoming map[string]string) map[string]string {
 // (the JSON1.1 handler and the CBOR typed dispatch) must serialize through
 // this helper to keep the Tags array order deterministic.
 func sortedTagEntries(tags map[string]string) []tagEntry {
-	entries := make([]tagEntry, 0, len(tags))
-	for k, v := range tags {
-		entries = append(entries, tagEntry{Key: k, Value: v})
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
-	return entries
+	return serviceutil.TagElements(tags, func(k, v string) tagEntry {
+		return tagEntry{Key: k, Value: v}
+	})
 }
 
 type listTagsForStreamResponse struct {

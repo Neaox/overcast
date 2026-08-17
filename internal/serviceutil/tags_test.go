@@ -2,6 +2,7 @@ package serviceutil
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,16 +14,26 @@ import (
 // than turning every tag operation on that resource into a 500. See
 // AGENTS.md § Malformed persisted state must be isolated.
 
-func TestTagsFromStore_corruptBlobIsIsolated(t *testing.T) {
-	// Given: a corrupt tag blob
+// tagNS returns a namespaced tag store over a fresh memory store, optionally
+// seeded with a raw blob at "arn:x".
+func tagNS(t *testing.T, seed string) (context.Context, *NSStore) {
+	t.Helper()
 	ctx := context.Background()
 	st := state.NewMemoryStore()
-	if err := st.Set(ctx, "svc:tags", "arn:x", "{not json"); err != nil {
-		t.Fatalf("seed: %v", err)
+	if seed != "" {
+		if err := st.Set(ctx, "svc:tags", "arn:x", seed); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
 	}
+	return ctx, &NSStore{Store: st, NS: "svc:tags"}
+}
+
+func TestNSStoreLoad_corruptBlobIsIsolated(t *testing.T) {
+	// Given: a corrupt tag blob
+	ctx, ns := tagNS(t, "{not json")
 
 	// When: the tags are read
-	tags, aerr := TagsFromStore(ctx, st, "svc:tags", "arn:x")
+	tags, aerr := ns.Load(ctx, "arn:x")
 
 	// Then: the record reads as empty instead of an internal error
 	if aerr != nil {
@@ -33,17 +44,29 @@ func TestTagsFromStore_corruptBlobIsIsolated(t *testing.T) {
 	}
 }
 
-func TestApplyTagsToStore_corruptBlobIsReplaced(t *testing.T) {
-	// Given: a corrupt tag blob
-	ctx := context.Background()
-	st := state.NewMemoryStore()
-	if err := st.Set(ctx, "svc:tags", "arn:x", "[[["); err != nil {
-		t.Fatalf("seed: %v", err)
+func TestNSStoreLoad_persistedNullIsNotANilMap(t *testing.T) {
+	// Given: a tag blob that decodes to a nil map
+	ctx, ns := tagNS(t, "null")
+
+	// When: the tags are read
+	tags, aerr := ns.Load(ctx, "arn:x")
+
+	// Then: callers index into the result, so they are handed an empty map
+	if aerr != nil {
+		t.Fatalf("aerr = %v, want nil", aerr)
 	}
+	if tags == nil {
+		t.Fatal("tags = nil, want an empty map")
+	}
+}
+
+func TestApplyStoreTags_corruptBlobIsReplaced(t *testing.T) {
+	// Given: a corrupt tag blob
+	ctx, ns := tagNS(t, "[[[")
 
 	// When: tags are applied over it
 	cfg := TagValidationConfig{ExceededCode: "X", InvalidCode: "X"}
-	tags, aerr := ApplyTagsToStore(ctx, cfg, "svc:tags", "arn:x", []TagPair{{Key: "env", Value: "prod"}}, st)
+	tags, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"env": "prod"}, cfg)
 	if aerr != nil {
 		t.Fatalf("aerr = %v, want nil", aerr)
 	}
@@ -52,7 +75,7 @@ func TestApplyTagsToStore_corruptBlobIsReplaced(t *testing.T) {
 	}
 
 	// Then: the blob is healed — a follow-up read returns the new tags
-	got, aerr := TagsFromStore(ctx, st, "svc:tags", "arn:x")
+	got, aerr := ns.Load(ctx, "arn:x")
 	if aerr != nil {
 		t.Fatalf("re-read aerr = %v", aerr)
 	}
@@ -61,20 +84,129 @@ func TestApplyTagsToStore_corruptBlobIsReplaced(t *testing.T) {
 	}
 }
 
-func TestNSStoreLoad_corruptBlobIsIsolated(t *testing.T) {
-	ctx := context.Background()
-	st := state.NewMemoryStore()
-	if err := st.Set(ctx, "svc:tags", "arn:y", "42x"); err != nil {
-		t.Fatalf("seed: %v", err)
+func TestApplyStoreTags_mergesAndRejectsWithoutWriting(t *testing.T) {
+	// Given: a resource that already carries a tag
+	ctx, ns := tagNS(t, "")
+	cfg := TagValidationConfig{ExceededCode: "X", InvalidCode: "Invalid"}
+	if _, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"env": "prod"}, cfg); aerr != nil {
+		t.Fatalf("seed apply: %v", aerr)
 	}
 
-	ns := &NSStore{Store: st, NS: "svc:tags"}
-	tags, aerr := ns.Load(ctx, "arn:y")
+	// When: a second call adds a tag, leaving the first alone
+	tags, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"team": "core"}, cfg)
 	if aerr != nil {
 		t.Fatalf("aerr = %v, want nil", aerr)
 	}
+	if tags["env"] != "prod" || tags["team"] != "core" {
+		t.Fatalf("tags = %v, want both env and team", tags)
+	}
+
+	// Then: a rejected set is not written — the resource keeps what it had
+	if _, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"aws:owner": "x"}, cfg); aerr == nil {
+		t.Fatal("aerr = nil, want the reserved-prefix rejection")
+	}
+	got, _ := ns.Load(ctx, "arn:x")
+	if len(got) != 2 {
+		t.Fatalf("tags after rejection = %v, want the two that were already there", got)
+	}
+}
+
+// Namespaced tags are keyed by resource ID with nothing tying them to the
+// record's lifetime, so a delete path needs a way to take them with it.
+func TestNSStoreDelete_removesEveryTag(t *testing.T) {
+	// Given: a tagged resource
+	ctx, ns := tagNS(t, "")
+	cfg := TagValidationConfig{ExceededCode: "X", InvalidCode: "X"}
+	if _, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"env": "prod"}, cfg); aerr != nil {
+		t.Fatalf("seed: %v", aerr)
+	}
+
+	// When: its tags are deleted
+	if aerr := ns.Delete(ctx, "arn:x"); aerr != nil {
+		t.Fatalf("aerr = %v, want nil", aerr)
+	}
+
+	// Then: nothing is left to report
+	tags, aerr := ns.Load(ctx, "arn:x")
+	if aerr != nil {
+		t.Fatalf("re-read aerr = %v", aerr)
+	}
 	if len(tags) != 0 {
 		t.Fatalf("tags = %v, want empty", tags)
+	}
+}
+
+// A delete path calls Delete whether or not the resource was ever tagged, so an
+// untagged resource must not be a special case its author has to remember.
+func TestNSStoreDelete_untaggedResourceIsNotAnError(t *testing.T) {
+	ctx, ns := tagNS(t, "")
+	if aerr := ns.Delete(ctx, "arn:never-tagged"); aerr != nil {
+		t.Fatalf("aerr = %v, want nil", aerr)
+	}
+}
+
+func TestRemoveStoreTags_leavesTheRest(t *testing.T) {
+	// Given: a resource with two tags
+	ctx, ns := tagNS(t, "")
+	cfg := TagValidationConfig{ExceededCode: "X", InvalidCode: "X"}
+	if _, aerr := ApplyStoreTags(ctx, ns, "arn:x", map[string]string{"env": "prod", "team": "core"}, cfg); aerr != nil {
+		t.Fatalf("seed: %v", aerr)
+	}
+
+	// When: one is removed, alongside a key that was never there
+	tags, aerr := RemoveStoreTags(ctx, ns, "arn:x", []string{"env", "absent"})
+	if aerr != nil {
+		t.Fatalf("aerr = %v, want nil", aerr)
+	}
+
+	// Then: the other survives and the absent key is not an error
+	if len(tags) != 1 || tags["team"] != "core" {
+		t.Fatalf("tags = %v, want just team=core", tags)
+	}
+}
+
+// ---- Rendering --------------------------------------------------------------
+
+// Go randomises map iteration, so a renderer that ranges a tag map straight
+// into a response hands a client a different order on every call. Every render
+// site goes through here, so the order is a property of the helper rather than
+// something each of them has to remember.
+func TestTagElements_ordersByKeyEveryTime(t *testing.T) {
+	// Given: a tag map big enough that map iteration order will vary
+	tags := map[string]string{
+		"zebra": "1", "alpha": "2", "mike": "3", "bravo": "4",
+		"yankee": "5", "delta": "6", "kilo": "7", "echo": "8",
+	}
+	want := []string{"alpha", "bravo", "delta", "echo", "kilo", "mike", "yankee", "zebra"}
+
+	// When: it is rendered repeatedly
+	for i := 0; i < 20; i++ {
+		got := TagElements(tags, func(k, _ string) string { return k })
+
+		// Then: the order is the same, and it is sorted by key
+		if !slices.Equal(got, want) {
+			t.Fatalf("run %d rendered %v, want %v", i, got, want)
+		}
+	}
+}
+
+func TestTagElements_carriesKeyAndValue(t *testing.T) {
+	got := TagsToList(map[string]string{"b": "two", "a": "one"})
+	want := []TagPair{{Key: "a", Value: "one"}, {Key: "b", Value: "two"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("TagsToList = %v, want %v", got, want)
+	}
+}
+
+// A response shape that distinguishes an empty tag list from an absent one
+// needs the empty list, not nil.
+func TestTagElements_emptyMapRendersAnEmptyList(t *testing.T) {
+	for _, tags := range []map[string]string{nil, {}} {
+		if got := TagsToList(tags); got == nil {
+			t.Fatalf("TagsToList(%v) = nil, want an empty list", tags)
+		} else if len(got) != 0 {
+			t.Fatalf("TagsToList(%v) = %v, want empty", tags, got)
+		}
 	}
 }
 
@@ -114,6 +246,17 @@ func TestValidateTags_rules(t *testing.T) {
 		{name: "key over 128", tags: map[string]string{strings.Repeat("k", 129): "v"}, wantCode: "InvalidTag"},
 		{name: "value over 256", tags: map[string]string{"k": strings.Repeat("v", 257)}, wantCode: "InvalidTag"},
 		{name: "reserved aws: prefix", tags: map[string]string{"aws:owner": "v"}, wantCode: "InvalidTag"},
+
+		// The charset AWS documents for every service's tags:
+		// ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$.
+		{name: "every punctuation mark the pattern allows", tags: map[string]string{"_.:/=+-@": "_.:/=+-@"}},
+		{name: "spaces are legal", tags: map[string]string{"cost centre": "team one"}},
+		{name: "letters outside ASCII are legal", tags: map[string]string{"środowisko": "produkcja"}},
+		{name: "a CDK-shaped key", tags: map[string]string{"aws-cdk:subnet-name": "Private"}},
+		{name: "illegal character in a key", tags: map[string]string{"env!": "prod"}, wantCode: "InvalidTag"},
+		{name: "illegal character in a value", tags: map[string]string{"env": "prod(1)"}, wantCode: "InvalidTag"},
+		{name: "a tab is not one of the separators", tags: map[string]string{"env": "pr\tod"}, wantCode: "InvalidTag"},
+		{name: "a newline is not one of the separators", tags: map[string]string{"env": "pr\nod"}, wantCode: "InvalidTag"},
 	}
 
 	for _, tc := range cases {

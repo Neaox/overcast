@@ -86,13 +86,10 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tags, aerr := serviceutil.TagsFromStore(ctx, s.store, nsTags, tagKey(arn))
+	tags, aerr := s.tagStore().Load(ctx, tagKey(arn))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
-	}
-	if tags == nil {
-		tags = map[string]string{}
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
 }
@@ -121,11 +118,7 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	pairs := make([]serviceutil.TagPair, 0, len(req.Tags))
-	for k, v := range req.Tags {
-		pairs = append(pairs, serviceutil.TagPair{Key: k, Value: v})
-	}
-	if _, aerr := serviceutil.ApplyTagsToStore(ctx, eksTagCfg, nsTags, tagKey(arn), pairs, s.store); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(ctx, s.tagStore(), tagKey(arn), req.Tags, eksTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -151,11 +144,20 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, tagKey(arn), keys, s.store); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(ctx, s.tagStore(), tagKey(arn), keys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+// tagStore is the namespace EKS resource tags live in, keyed by resource ARN.
+//
+// Every tag path in the service goes through it. EKS used to reach this one
+// namespace through two different abstractions, which is how a service ends up
+// with two answers to "where are the tags".
+func (s *Service) tagStore() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
 }
 
 // putInlineTags writes an inline tags map (from a create-resource request body)
@@ -164,9 +166,7 @@ func (s *Service) putInlineTags(ctx context.Context, arn string, tags map[string
 	if len(tags) == 0 {
 		return nil
 	}
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	aerr := tagStore.Save(ctx, arn, tags)
-	if aerr != nil {
+	if aerr := s.tagStore().Save(ctx, tagKey(arn), tags); aerr != nil {
 		return aerr
 	}
 	return nil
@@ -175,7 +175,6 @@ func (s *Service) putInlineTags(ctx context.Context, arn string, tags map[string
 // readTagsForARN loads the tag map for an ARN from the tag store.
 // Returns an empty map when no tags are found.
 func (s *Service) readTagsForARN(ctx context.Context, arn string) map[string]string {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	tags, _ := tagStore.Load(ctx, arn)
+	tags, _ := s.tagStore().Load(ctx, tagKey(arn))
 	return tags
 }
