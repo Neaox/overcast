@@ -127,6 +127,30 @@ func parseRequestMeta(params json.RawMessage) (requestMeta, *rpcError) {
 	return out, nil
 }
 
+// ClientRequestMeta is the `_meta` block a client inside this repository puts on
+// every request it sends to an MCP server.
+//
+// Exported because the keys are not: a caller in another package that hand-rolls
+// this block gets the names right by copying them, and then keeps whatever it
+// copied when they change. The workspace probe in
+// internal/mcp/providers/repo_provider.go sent no `_meta` at all and was
+// answered -32602 by any conforming server, this one included (#1035).
+//
+// Both members it sets are required on every request: the protocol version, and
+// the capabilities — an empty object being the honest answer for a client that
+// supports no optional capabilities, rather than a member to leave out.
+// clientInfo is a SHOULD and is filled in from the caller's own name.
+func ClientRequestMeta(clientName, clientVersion string) map[string]any {
+	return map[string]any{
+		metaProtocolVersion:    ProtocolVersion,
+		metaClientCapabilities: map[string]any{},
+		metaClientInfo: map[string]any{
+			"name":    clientName,
+			"version": clientVersion,
+		},
+	}
+}
+
 // metaString reads one string-valued `_meta` key, distinguishing absent from
 // present-but-not-a-string.
 func metaString(meta map[string]json.RawMessage, key string) (string, *rpcError) {
@@ -172,12 +196,29 @@ func (m requestMeta) validate(header string) *rpcError {
 	// binding MAY additionally mirror selected body fields into envelope
 	// metadata." A missing mirror is a lesser fault than a missing original, and
 	// stdio has no mirror at all.
+	//
+	// `server/discover` is **not** exempt, though it reads as though it should
+	// be. The revision marks `protocolVersion` and `clientCapabilities` required
+	// on every request, gives `DiscoverRequest` the same `RequestParams` as
+	// everything else, and grants no exemption anywhere — so a client probes by
+	// naming the version it speaks and reading -32022's `supported` list when it
+	// guesses wrong, not by declaring nothing. Discover exists to report
+	// capabilities up front, and the blog for this revision is explicit that it
+	// "is not required" at all.
+	//
+	// The 400 is required too, and was the bug (#1035): "A request missing any
+	// required field is malformed; the server MUST reject it with JSON-RPC error
+	// code -32602 (Invalid params). On HTTP, the response status MUST be 400 Bad
+	// Request." The sibling refusal below in parseRequestMeta always set it;
+	// this one did not, so a missing version came back -32602 inside a 200 and
+	// an intermediary reading status alone saw a success.
 	if !m.versioned {
 		return &rpcError{
 			Code: RPCInvalidParams,
 			Message: "request must carry its protocol version in _meta." +
 				metaProtocolVersion,
-			Data: map[string]any{"supported": supportedProtocolVersions()},
+			Data:       map[string]any{"supported": supportedProtocolVersions()},
+			httpStatus: http.StatusBadRequest,
 		}
 	}
 	supported := supportedProtocolVersions()
