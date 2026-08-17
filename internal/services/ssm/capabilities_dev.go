@@ -9,7 +9,7 @@ func init() {
 		capabilities.Capability{Service: "ssm", Operation: "AddTagsToResource", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "DeleteParameter", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "DeleteParameters", Category: "General", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "ssm", Operation: "DescribeParameters", Category: "General", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "ssm", Operation: "DescribeParameters", Category: "General", Status: capabilities.StatusSupported, Notes: "ParameterFilters keys: Name, Type; options: Equals (the default), BeginsWith, Contains; an unimplemented key or option is refused, not ignored"},
 		capabilities.Capability{Service: "ssm", Operation: "GetParameter", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "GetParameterHistory", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "GetParameters", Category: "General", Status: capabilities.StatusSupported},

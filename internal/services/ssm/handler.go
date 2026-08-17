@@ -283,15 +283,17 @@ func (h *Handler) GetParametersByPath(w http.ResponseWriter, r *http.Request) {
 // DescribeParameters returns parameter metadata with optional filters.
 func (h *Handler) DescribeParameters(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ParameterFilters []struct {
-			Key    string   `json:"Key"`
-			Option string   `json:"Option"`
-			Values []string `json:"Values"`
-		} `json:"ParameterFilters"`
-		MaxResults int    `json:"MaxResults"`
-		NextToken  string `json:"NextToken"`
+		ParameterFilters []parameterFilter `json:"ParameterFilters"`
+		MaxResults       int               `json:"MaxResults"`
+		NextToken        string            `json:"NextToken"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	// Refused before the scan, so an account with no parameters cannot answer
+	// an unanswerable filter with an empty page that reads as "no match".
+	if aerr := validateParameterFilters(req.ParameterFilters); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	ctx := r.Context()
@@ -338,31 +340,6 @@ func (h *Handler) DescribeParameters(w http.ResponseWriter, r *http.Request) {
 		resp["NextToken"] = page.NextToken
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, resp, "application/x-amz-json-1.1")
-}
-
-// matchesFilters returns true if the record satisfies all ParameterFilters.
-func matchesFilters(rec *ParameterRecord, filters []struct {
-	Key    string   `json:"Key"`
-	Option string   `json:"Option"`
-	Values []string `json:"Values"`
-}) bool {
-	for _, f := range filters {
-		if f.Key == "Name" {
-			if f.Option == "BeginsWith" {
-				matched := false
-				for _, v := range f.Values {
-					if strings.HasPrefix(rec.Name, v) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return false
-				}
-			}
-		}
-	}
-	return true
 }
 
 // GetParameterHistory returns all versions of a parameter.
