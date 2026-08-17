@@ -207,7 +207,7 @@ func TestDescribeVpcs_selectors(t *testing.T) {
 		{name: "isDefault true", params: filterParams("isDefault", "true"), want: []string{"vpc-default"}},
 		{name: "isDefault false", params: filterParams("isDefault", "false"), want: []string{"vpc-mine"}},
 		{name: "isDefault is case-insensitive", params: filterParams("isDefault", "True"), want: []string{"vpc-default"}},
-		{name: "a filter name is case-insensitive", params: filterParams("VPC-ID", "vpc-mine"), want: []string{"vpc-mine"}},
+		{name: "a value may be a wildcard", params: filterParams("vpc-id", "vpc-m*"), want: []string{"vpc-mine"}},
 		{
 			name: "selectors are AND-ed",
 			params: url.Values{

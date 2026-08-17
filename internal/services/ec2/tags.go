@@ -169,19 +169,19 @@ const (
 // the others and with the request's non-tag filters; the values within one are
 // OR-ed. That is AWS's rule for every filter.
 //
-// Values match exactly. AWS also accepts `*` and `?` wildcards in a filter
-// value; those are not implemented, and a value containing one will not match
-// the way it would on AWS.
+// The values are filterValues, the same as a non-tag filter's, so `*` and `?`
+// mean here what they mean everywhere else — `tag:Name=overcast-*` is one of
+// the likelier places a caller reaches for a wildcard.
 type tagFilters struct {
 	// byKey holds `tag:<key>` selectors: the tag must exist and hold one of
 	// the listed values.
-	byKey map[string][]string
+	byKey map[string][]filterValue
 	// keys holds `tag-key`: the resource must carry a tag with one of these
 	// keys, whatever its value.
-	keys []string
+	keys []filterValue
 	// values holds `tag-value`: the resource must carry a tag with one of
 	// these values, whatever its key.
-	values []string
+	values []filterValue
 }
 
 // isTagFilter reports whether a filter name is a tag selector, and so is
@@ -190,10 +190,13 @@ type tagFilters struct {
 // filterSpec.parse consults it before deciding a name is unrecognised, but only
 // for an operation that matches tags: on one that does not, a tag selector is
 // as unanswerable as any other name it has no accessor for.
+//
+// Names are compared exactly, as every other filter name now is and as AWS
+// compares them: `TAG-KEY` is not `tag-key`.
 func isTagFilter(name string) bool {
 	return strings.HasPrefix(name, tagFilterPrefix) ||
-		strings.EqualFold(name, tagKeyFilter) ||
-		strings.EqualFold(name, tagValueFilter)
+		name == tagKeyFilter ||
+		name == tagValueFilter
 }
 
 // active reports whether the request selected on tags at all.
@@ -205,18 +208,18 @@ func (tf tagFilters) active() bool {
 func (tf tagFilters) matches(tags []Tag) bool {
 	for key, allowed := range tf.byKey {
 		if !slices.ContainsFunc(tags, func(t Tag) bool {
-			return t.Key == key && slices.Contains(allowed, t.Value)
+			return t.Key == key && matchesAny(allowed, t.Value, false)
 		}) {
 			return false
 		}
 	}
 	if len(tf.keys) > 0 && !slices.ContainsFunc(tags, func(t Tag) bool {
-		return slices.Contains(tf.keys, t.Key)
+		return matchesAny(tf.keys, t.Key, false)
 	}) {
 		return false
 	}
 	if len(tf.values) > 0 && !slices.ContainsFunc(tags, func(t Tag) bool {
-		return slices.Contains(tf.values, t.Value)
+		return matchesAny(tf.values, t.Value, false)
 	}) {
 		return false
 	}
@@ -282,16 +285,16 @@ func parseTagFilters(r *http.Request) tagFilters {
 	var tf tagFilters
 	for name, values := range eachFilter(r) {
 		switch {
-		case strings.EqualFold(name, tagKeyFilter):
-			tf.keys = append(tf.keys, values...)
-		case strings.EqualFold(name, tagValueFilter):
-			tf.values = append(tf.values, values...)
+		case name == tagKeyFilter:
+			tf.keys = append(tf.keys, parseFilterValues(values)...)
+		case name == tagValueFilter:
+			tf.values = append(tf.values, parseFilterValues(values)...)
 		case strings.HasPrefix(name, tagFilterPrefix):
 			key := strings.TrimPrefix(name, tagFilterPrefix)
 			if tf.byKey == nil {
-				tf.byKey = map[string][]string{}
+				tf.byKey = map[string][]filterValue{}
 			}
-			tf.byKey[key] = append(tf.byKey[key], values...)
+			tf.byKey[key] = append(tf.byKey[key], parseFilterValues(values)...)
 		}
 	}
 	return tf
