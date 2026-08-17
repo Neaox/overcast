@@ -134,9 +134,20 @@ func (g *rdsCliGroup) DeleteDBInstance(_ context.Context, t *harness.TestContext
 // so the CLI suite was the one asking for something real AWS refuses too:
 // stop-db-instance on a creating instance is InvalidDBInstanceState there as
 // well.
+// The budget this suite already carried — two minutes, because a first boot
+// initialises the data directory — now expressed as wall-clock time and shared
+// with the other four suites. Counting attempts and counting seconds stop
+// meaning the same thing the moment the machine is busy, and here each attempt
+// shells out to the AWS CLI, so the drift is larger than anywhere else.
+const (
+	rdsWaitBudget   = 120 * time.Second
+	rdsPollInterval = 2 * time.Second
+)
+
 func waitForDBStatus(t *harness.TestContext, id, target string) error {
-	const maxAttempts = 60 // a first boot initialises the data directory
-	for range maxAttempts {
+	deadline := time.Now().Add(rdsWaitBudget)
+	last := "(none reported)"
+	for {
 		out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "describe-db-instances",
 			"--db-instance-identifier", id,
 		)
@@ -147,6 +158,9 @@ func waitForDBStatus(t *harness.TestContext, id, target string) error {
 		if len(instances) > 0 {
 			db, _ := instances[0].(map[string]interface{})
 			status, _ := db["DBInstanceStatus"].(string)
+			if status != "" {
+				last = status
+			}
 			if status == target {
 				return nil
 			}
@@ -154,9 +168,12 @@ func waitForDBStatus(t *harness.TestContext, id, target string) error {
 				return fmt.Errorf("%s went to failed while waiting for %s", id, target)
 			}
 		}
-		time.Sleep(2 * time.Second)
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s did not reach %s within %s (last status %q)",
+				id, target, rdsWaitBudget, last)
+		}
+		time.Sleep(rdsPollInterval)
 	}
-	return fmt.Errorf("%s never reached %s", id, target)
 }
 
 func (g *rdsCliGroup) StopDBInstance(_ context.Context, t *harness.TestContext) error {
