@@ -226,11 +226,13 @@ is the pattern; a shared row is not), and the fetched+tailed merge pipeline (liv
 concern). The same judgement applies here: the S3 browser's scan-cap drain, its folder/object/
 version rows and its search-term highlighting stayed in `features/s3/`.
 
-**Open follow-up:** the logs feature still runs on its own originals — `logEventKey` in
-`features/cloudwatch/logs/tail.ts` and `highlightJSON` in `lib/log-format.ts`, plus inline
-edge-fetch effects in `log-events-viewer.tsx`. They are behaviourally identical to the kernel
-modules (the kernel was extracted from them); a later PR re-points the logs surfaces at
-`stableRowKey`, `highlightCode("json" | …)` and `useLoadMoreAtEdge` and deletes the originals.
+**Follow-up closed (2026-08-18):** the logs feature now runs on the kernel — `logEventKey`
+re-exports `stableRowKey` (the name kept because "the key of a log event" is what call sites
+mean), `highlightJSON` delegates to `highlightCode(text, "json")`, and the viewer's forward
+edge-fetch uses `useLoadMoreAtEdge`. One inline effect deliberately remains: the backward
+expansion captures its prepend-anchor snapshot atomically with scheduling the fetch, and
+modelling a before-fetch callback in the hook would cost more than the duplication — the same
+judgement as the pin-to-bottom logic above, recorded in the effect's comment.
 
 ### What "add a new AWS service page" looks like afterwards
 

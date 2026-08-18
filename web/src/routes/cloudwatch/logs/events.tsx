@@ -13,7 +13,11 @@ export const Route = createFileRoute("/cloudwatch/logs/events")({
   validateSearch: (search: Record<string, unknown>): EventsSearch => ({
     groupName: typeof search.groupName === "string" ? search.groupName : undefined,
     ...(typeof search.anchorTs === "number" ? { anchorTs: search.anchorTs } : {}),
-    ...(typeof search.anchorSig === "string" ? { anchorSig: search.anchorSig } : {}),
+    // Base36 signature: all-digit values arrive as numbers — String() them
+    // back rather than dropping to timestamp-only matching (see stream.tsx).
+    ...(typeof search.anchorSig === "string" || typeof search.anchorSig === "number"
+      ? { anchorSig: String(search.anchorSig) }
+      : {}),
   }),
   head: () => ({
     meta: [{ title: "CloudWatch Logs — Overcast" }],

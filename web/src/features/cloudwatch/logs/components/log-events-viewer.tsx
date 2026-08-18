@@ -44,6 +44,7 @@ import {
   mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
+import { useLoadMoreAtEdge } from "@/hooks/use-load-more-at-edge"
 import { useLogViewPrefs } from "@/features/cloudwatch/logs/use-log-view-prefs"
 import { ExportMenu } from "@/features/cloudwatch/logs/components/export-menu"
 
@@ -334,22 +335,21 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
 
   // Fetch the following page as the user nears the edge where it will attach —
   // the bottom under Oldest-first, the top under Newest-first. The fetched
-  // pages advance toward newer events either way.
-  //
-  // Keyed on the page token rather than on `hasNextPage`: the boolean holds
-  // steady from one page to the next, and when a response lands fast enough
-  // that no `isFetchingNextPage` render ever commits, an effect keyed on the
-  // booleans sees nothing change and the chain stalls. The token is different
-  // for every page, so each arrival re-arms the effect.
+  // pages advance toward newer events either way. The token-keyed re-arming
+  // this viewer pioneered now lives in the shared hook (see its module docs
+  // for the stall race it prevents).
   const virtualItems = virtualizer.getVirtualItems()
-  const nearNewestEdge = sortAsc
-    ? (virtualItems.at(-1)?.index ?? 0) >= events.length - 25
-    : (virtualItems[0]?.index ?? Number.MAX_SAFE_INTEGER) <= 25
   const nextPageToken = data?.pages.at(-1)?.nextToken
-  useEffect(() => {
-    if (!nextPageToken || isFetchingNextPage || !nearNewestEdge) return
-    void fetchNextPage()
-  }, [nextPageToken, isFetchingNextPage, nearNewestEdge, fetchNextPage])
+  useLoadMoreAtEdge({
+    firstIndex: virtualItems[0]?.index,
+    lastIndex: virtualItems.at(-1)?.index,
+    count: events.length,
+    edge: sortAsc ? "end" : "start",
+    threshold: 25,
+    nextPageToken,
+    isFetchingNextPage,
+    fetchNextPage,
+  })
 
   /** Compiled once per filter, not once per row per scroll frame. */
   const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
@@ -422,10 +422,14 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   // ── Backward expansion ───────────────────────────────────────────────────
   // Load older events as the user nears the oldest edge of loaded data — the
   // top under Oldest-first, the bottom under Newest-first. Same re-arming
-  // trick as the forward effect, keyed on the oldest page's param (a fresh
-  // chunk object per backward page); the isFetchingPreviousPage guard keeps
-  // exactly one backward window in flight. Held back while an anchored
-  // arrival is still paging toward its event, so the two never compete.
+  // trick as the forward edge (see use-load-more-at-edge), keyed on the
+  // oldest page's param (a fresh chunk object per backward page) — but
+  // deliberately NOT the shared hook: the prepend snapshot below must be
+  // captured atomically with scheduling the fetch, and modelling a
+  // before-fetch callback in the hook would cost more than this duplication.
+  // The isFetchingPreviousPage guard keeps exactly one backward window in
+  // flight. Held back while an anchored arrival is still paging toward its
+  // event, so the two never compete.
   const oldestPageParam = data?.pageParams[0]
   const nearOldestEdge = sortAsc
     ? (virtualItems[0]?.index ?? Number.MAX_SAFE_INTEGER) <= 25
