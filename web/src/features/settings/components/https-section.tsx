@@ -92,13 +92,26 @@ interface CommandTabDef {
  * One command, several dialects — a restart line in bash vs PowerShell, a
  * trust install per OS. The default tab comes from the caller (usually the
  * detected client OS), so most users never touch the tabs at all.
+ *
+ * `label` names the tablist. Several of these coexist on this page with the
+ * same tab labels ("PowerShell" appears in both the restart step and the
+ * endpoint step), so without it neither a screen-reader user nor a test can
+ * tell which group a tab belongs to.
  */
-function CommandTabs({ tabs, defaultKey }: { tabs: CommandTabDef[]; defaultKey: string }) {
+function CommandTabs({
+  tabs,
+  defaultKey,
+  label,
+}: {
+  tabs: CommandTabDef[]
+  defaultKey: string
+  label: string
+}) {
   const [selected, setSelected] = useState(defaultKey)
   const selectedKey = tabs.some((t) => t.id === selected) ? selected : tabs[0].id
   return (
     <Tabs selectedKey={selectedKey} onSelectionChange={setSelected}>
-      <TabList>
+      <TabList aria-label={label}>
         {tabs.map((t) => (
           <Tab key={t.id} id={t.id}>
             {t.label}
@@ -148,6 +161,99 @@ function trustBadge(status: HttpsStatus) {
     default:
       return <Badge>managed from the host</Badge>
   }
+}
+
+// ─── Durable CA ─────────────────────────────────────────────────────────────
+
+/**
+ * Shown when the daemon's CA lives inside the container, which makes it as
+ * disposable as the container — and a trust anchor must not be.
+ *
+ * Installing a root certificate is a per-machine, permanent act guarded by an
+ * OS approval prompt. If the CA it anchors is reborn on every `docker compose
+ * down`, that prompt becomes a recurring tax and the trust store slowly fills
+ * with dead roots. The fix is to invert the ownership: the host creates the CA
+ * once, the container mounts it read-only and mints only leaves — the same
+ * anchor-durable/leaf-ephemeral split mkcert, Caddy and step-ca all use.
+ */
+function DurableCANotice({ status }: { status: HttpsStatus }) {
+  if (!status.caEphemeral || !status.caShareCommand) return null
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+      <p className="flex items-center gap-1.5 text-[13px] font-semibold text-warning">
+        <AlertCircle size={14} /> This CA dies with the container
+      </p>
+      <p className="text-[13px] text-fg-muted">
+        The certificate authority lives inside the container, so recreating it mints a fresh one and
+        every browser and SDK stops trusting this daemon — you would approve a new root certificate
+        each time. Let the host own the CA instead and mount it read-only; the container then mints
+        only short-lived server certificates from it, and survives
+        <Code>down</Code>, recreation and image upgrades with the trust install intact.
+      </p>
+      <CommandRow command={status.caShareCommand} />
+    </div>
+  )
+}
+
+// ─── Endpoint switch (SDKs and the CLI) ─────────────────────────────────────
+
+/**
+ * The step everyone forgets. Turning TLS on changes the API's scheme, and a
+ * client still pointed at `http://localhost:4566` does not fail with anything
+ * that names the cause: the daemon answers the plain-HTTP request with a TLS
+ * handshake error ("client sent an HTTP request to an HTTPS server") and the
+ * SDK surfaces a bare connection error.
+ *
+ * The CA bundle lines are not optional extras either. Installing the CA into
+ * the system trust store fixes browsers; the AWS CLI (botocore) and the
+ * Node.js SDK ship their OWN root bundles and never consult it, so they need
+ * the certificate named explicitly.
+ */
+function EndpointCommands({ status, clientOS }: { status: HttpsStatus; clientOS: ClientOS }) {
+  const endpoint = status.httpsEndpoint
+  // In a container the daemon's own CA path names a file inside it; the host
+  // uses the copy it downloaded or the one `overcast https enable --endpoint`
+  // cached. Nothing here can know where that landed.
+  const caPath = status.caCertPath ?? "/path/to/overcast-ca.pem"
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[13px] text-fg-muted">
+        The API changes scheme too. Anything still pointed at <Code>http://</Code> stops working —
+        update the endpoint URL, and name the CA certificate so the AWS CLI and Node.js SDK verify
+        it (they ship their own root bundles and ignore the system trust store):
+      </p>
+      <CommandTabs
+        label="Endpoint URL commands"
+        defaultKey={clientOS === "windows" ? "powershell" : "shell"}
+        tabs={[
+          {
+            id: "shell",
+            label: "macOS / Linux",
+            command: [
+              `export AWS_ENDPOINT_URL=${endpoint}`,
+              `export AWS_CA_BUNDLE=${caPath}          # AWS CLI + boto3`,
+              `export NODE_EXTRA_CA_CERTS=${caPath}    # Node.js SDK`,
+            ].join("\n"),
+          },
+          {
+            id: "powershell",
+            label: "PowerShell",
+            command: [
+              `$env:AWS_ENDPOINT_URL = "${endpoint}"`,
+              `$env:AWS_CA_BUNDLE = "${caPath}"`,
+              `$env:NODE_EXTRA_CA_CERTS = "${caPath}"`,
+            ].join("\n"),
+          },
+          {
+            id: "cli",
+            label: "One-off CLI call",
+            note: "No environment changes — pass the endpoint per command.",
+            command: `aws --endpoint-url ${endpoint} s3 ls`,
+          },
+        ]}
+      />
+    </div>
+  )
 }
 
 // ─── Switch-to-https affordance ─────────────────────────────────────────────
@@ -217,9 +323,7 @@ export function HttpsSection() {
     onSuccess: (result: HttpsSetupResult) => {
       void qc.invalidateQueries({ queryKey: settingsKeys.https() })
       toast({
-        title: result.trustInstalled
-          ? "HTTPS is set up on this machine"
-          : "Certificates are ready",
+        title: result.trustInstalled ? "HTTPS is set up on this machine" : "Certificates are ready",
         description: result.restartRequired
           ? "One step left: restart Overcast with OVERCAST_TLS=auto."
           : undefined,
@@ -303,11 +407,13 @@ export function HttpsSection() {
       </div>
 
       {status.mode === "explicit" ? (
-        <p className="text-[13px] text-fg-muted">
-          Overcast is serving a certificate you configured via{" "}
-          <Code>OVERCAST_TLS_CERT</Code> / <Code>OVERCAST_TLS_KEY</Code>, so trust management
-          is in your hands. Nothing to do here.
-        </p>
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] text-fg-muted">
+            Overcast is serving a certificate you configured via <Code>OVERCAST_TLS_CERT</Code> /{" "}
+            <Code>OVERCAST_TLS_KEY</Code>, so trust management is in your hands.
+          </p>
+          <EndpointCommands status={status} clientOS={clientOS} />
+        </div>
       ) : status.mode !== "off" && pageIsHttps ? (
         <div className="flex flex-col gap-3">
           <p className="flex items-center gap-1.5 text-[13px] text-success">
@@ -317,9 +423,9 @@ export function HttpsSection() {
           {!trustDone && oneClickTrust && (
             <div className="flex flex-col gap-2">
               <p className="text-[13px] text-fg-muted">
-                This browser reached the page, but the overcast CA is not in the system trust
-                store (you may have clicked through a warning). Install it to make the warning
-                go away everywhere:
+                This browser reached the page, but the overcast CA is not in the system trust store
+                (you may have clicked through a warning). Install it to make the warning go away
+                everywhere:
               </p>
               <Button
                 className="self-start"
@@ -334,32 +440,44 @@ export function HttpsSection() {
           {!trustDone && !oneClickTrust && hostCommand && (
             <div className="flex flex-col gap-2">
               <p className="text-[13px] text-fg-muted">
-                To make browsers and SDKs on this machine trust the daemon, run this on the
-                host:
+                To make browsers and SDKs on this machine trust the daemon, run this on the host:
               </p>
               <CommandRow command={hostCommand} />
             </div>
           )}
+          <DurableCANotice status={status} />
+          <EndpointCommands status={status} clientOS={clientOS} />
         </div>
       ) : status.mode !== "off" ? (
         // Serving HTTPS, but this page is on plain HTTP (e.g. the dev server).
-        <SwitchToHttps
-          httpsOrigin={httpsOrigin}
-          probe={probe}
-          hint="The daemon is already serving HTTPS — this page just isn't using it."
-        />
+        <div className="flex flex-col gap-4">
+          <SwitchToHttps
+            httpsOrigin={httpsOrigin}
+            probe={probe}
+            hint="The daemon is already serving HTTPS — this page just isn't using it."
+          />
+          <DurableCANotice status={status} />
+          <EndpointCommands status={status} clientOS={clientOS} />
+        </div>
       ) : (
         // mode === "off": the guided enablement flow.
         <div className="flex flex-col gap-5">
           <p className="text-[13px] text-fg-muted">
-            HTTPS unlocks HTTP/2 for the console, which keeps the UI responsive while event
-            streams and Lambda invocations are running. Plain HTTP keeps working for SDKs and
-            the CLI until you switch.
+            HTTPS unlocks HTTP/2 for the console, which keeps the UI responsive while event streams
+            and Lambda invocations are running. Plain HTTP keeps working for SDKs and the CLI until
+            you switch.
           </p>
+
+          {/* Ownership before steps: a container-minted CA makes every step
+              below a recurring cost rather than a one-off. */}
+          <DurableCANotice status={status} />
 
           {/* Step 1 — certificates (+ trust, when we can do it from here). */}
           <div className="flex flex-col gap-2.5">
-            <StepHeading n={1} title={oneClickTrust ? "Prepare certificates & trust" : "Prepare certificates"} />
+            <StepHeading
+              n={1}
+              title={oneClickTrust ? "Prepare certificates & trust" : "Prepare certificates"}
+            />
             {trustDone && certsDone ? (
               <p className="flex items-center gap-1.5 text-[13px] text-success">
                 <CheckCircle2 size={14} /> Done — certificates exist and the CA is trusted.
@@ -368,8 +486,8 @@ export function HttpsSection() {
               <div className="flex flex-col gap-2">
                 <p className="text-[13px] text-fg-muted">
                   Creates the local certificate authority, mints the server certificate, and
-                  installs the CA into your system trust store. Your OS will ask you to
-                  approve — that prompt is the only manual part.
+                  installs the CA into your system trust store. Your OS will ask you to approve —
+                  that prompt is the only manual part.
                 </p>
                 <Button
                   className="self-start"
@@ -389,9 +507,8 @@ export function HttpsSection() {
                 ) : (
                   <>
                     <p className="text-[13px] text-fg-muted">
-                      Creates the certificate authority and server certificate inside the
-                      container (persisted under <Code>/data</Code> — keep that on a volume,
-                      or every recreation mints a fresh CA).
+                      Creates the certificate authority and server certificate inside the container,
+                      under <Code>OVERCAST_CA_DIR</Code>.
                     </p>
                     <Button
                       className="self-start"
@@ -412,13 +529,13 @@ export function HttpsSection() {
             <div className="flex flex-col gap-2.5">
               <StepHeading n={2} title="Trust the certificate on this machine" />
               <p className="text-[13px] text-fg-muted">
-                With the overcast CLI installed on the host, one command fetches and installs
-                the CA:
+                With the overcast CLI installed on the host, one command fetches and installs the
+                CA:
               </p>
               {hostCommand && <CommandRow command={hostCommand} />}
               <p className="text-[13px] text-fg-muted">
-                No CLI on the host? Download the CA certificate, then install it from the
-                folder it landed in:
+                No CLI on the host? Download the CA certificate, then install it from the folder it
+                landed in:
               </p>
               <Button
                 variant="secondary"
@@ -430,6 +547,7 @@ export function HttpsSection() {
                 <Download size={14} /> Download CA certificate
               </Button>
               <CommandTabs
+                label="Trust install commands"
                 defaultKey={clientOS}
                 tabs={[
                   {
@@ -471,17 +589,14 @@ export function HttpsSection() {
 
           {/* Restart with TLS on. */}
           <div className="flex flex-col gap-2.5">
-            <StepHeading
-              n={oneClickTrust ? 2 : 3}
-              title="Restart Overcast with TLS enabled"
-            />
+            <StepHeading n={oneClickTrust ? 2 : 3} title="Restart Overcast with TLS enabled" />
             {status.inContainer ? (
               <>
                 <p className="text-[13px] text-fg-muted">
-                  Recreate the container with <Code>OVERCAST_TLS=auto</Code> in its
-                  environment:
+                  Recreate the container with <Code>OVERCAST_TLS=auto</Code> in its environment:
                 </p>
                 <CommandTabs
+                  label="Container restart commands"
                   defaultKey="compose"
                   tabs={[
                     {
@@ -503,10 +618,11 @@ export function HttpsSection() {
             ) : (
               <>
                 <p className="text-[13px] text-fg-muted">
-                  Overcast is configured through environment variables, so this is the one
-                  step the console cannot do for you:
+                  Overcast is configured through environment variables, so this is the one step the
+                  console cannot do for you:
                 </p>
                 <CommandTabs
+                  label="Restart commands"
                   defaultKey={clientOS === "windows" ? "powershell" : "shell"}
                   tabs={[
                     { id: "shell", label: "macOS / Linux", command: restartCommand },
@@ -534,6 +650,14 @@ export function HttpsSection() {
               probe={probe}
               hint="After the restart, plain-HTTP pages like this one stop working — check that HTTPS is up, then switch."
             />
+          </div>
+
+          {/* Repoint SDKs and the CLI. Last, because it is the step that
+              outlives the setup: the console fixes itself with one click, and
+              every other client stays broken until its endpoint URL changes. */}
+          <div className="flex flex-col gap-2.5">
+            <StepHeading n={oneClickTrust ? 4 : 5} title="Update your endpoint URL to https" />
+            <EndpointCommands status={status} clientOS={clientOS} />
           </div>
         </div>
       )}

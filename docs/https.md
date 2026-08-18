@@ -48,9 +48,9 @@ Re-running `overcast https enable` is safe — it reports what is already in
 place. `overcast https status` shows the current state, and
 `overcast https disable` removes the CA from the trust store again.
 
-Running Overcast in Docker instead? See [Docker](#docker) below — the daemon
-serves its own CA certificate, so trusting it is one command with no shared
-volume.
+Running Overcast in Docker instead? See [Docker](#docker) below — run the
+command above on the host, then mount that CA into the container so the trust
+install survives every recreation.
 
 ## From the web console
 
@@ -67,7 +67,9 @@ The same setup is available UI-first: **Settings → HTTPS & certificates**
   host-side one-liner (`overcast https enable --endpoint ...`) — or a CA
   certificate download plus the [manual install commands](#doing-it-manually)
   if the CLI isn't installed on the host — followed by the same
-  restart-and-switch steps.
+  restart-and-switch steps. When the CA lives inside the container it also
+  says so, and shows how to hand the daemon a CA that outlives it, because
+  otherwise that trust install is due again on the next recreation.
 
 Under the hood this uses `GET /_overcast/tls/status` and
 `POST /_overcast/tls/setup` on the API port (proxied by the console's own
@@ -78,27 +80,39 @@ OS pop certificate prompts.
 
 ## Docker
 
-The container mints its CA inside the container, where the host cannot read
-it — so the daemon serves the CA **certificate** (public half only, never
-the key) at `GET /_overcast/ca.pem`, and the host-side CLI fetches and
-installs it. Two commands total:
+A container's CA is as disposable as the container. Trust installs are not:
+approving a root certificate is a per-**machine**, permanent act. Letting the
+most ephemeral thing in the system own the trust anchor is what turns "install
+a root cert once" into "install a root cert every `docker compose down`", so
+the recommended arrangement inverts it — **the host owns the CA, the container
+mints leaves from it**. That is the same anchor-durable/leaf-ephemeral split
+mkcert, Caddy and step-ca all use.
+
+Point `OVERCAST_CA_DIR` at the host's CA and mount it read-only:
 
 ```bash
+overcast https enable            # once per machine: mint the CA, approve the
+                                 # OS prompt. Never needed again.
+
 docker run -d -e OVERCAST_TLS=auto \
-  -v overcast-data:/data \
+  -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
   -p 4566:4566 -p 4567:4567 \
   ghcr.io/neaox/overcast:alpha
-
-overcast https enable --endpoint http://localhost:4566
 ```
 
-Then open **<https://localhost.overcast.sh:4567>**. The `http://` spelling
-is fine — the CLI notices the daemon answers TLS and fetches over https
-(unverified for this one bootstrap fetch; the payload is validated as a CA
-certificate, and the endpoint must be loopback — see below). The daemon also
-logs this exact command at startup when it detects it is containerized.
+Then open **<https://localhost.overcast.sh:4567>**. Recreate the container,
+`down -v` it, upgrade the image, run five of them at once — every one serves
+a certificate chaining to the root this machine already trusts, and you are
+never prompted again.
 
-With docker-compose:
+`:ro` is deliberate. The daemon needs to *read* the CA to sign leaves; it has
+no business rewriting your machine's trust anchor. Leaf certificates are
+normally cached next to the CA, and on a read-only mount that caching is
+skipped — the daemon re-mints at startup instead, which costs about a
+millisecond.
+
+With docker-compose, give the CA its own volume so `down` cannot take it
+(or mount the host CA as above, which is better still):
 
 ```yaml
 services:
@@ -106,14 +120,17 @@ services:
     image: ghcr.io/neaox/overcast:alpha
     environment:
       OVERCAST_TLS: auto
+      OVERCAST_CA_DIR: /ca
     ports:
       - "4566:4566"
       - "4567:4567"
     volumes:
       - overcast-data:/data
+      - overcast-ca:/ca        # or ~/.overcast/data/ca:/ca:ro
 
 volumes:
   overcast-data:
+  overcast-ca:
 ```
 
 Both images work the same way: the **console** image serves the web UI on
@@ -121,15 +138,39 @@ Both images work the same way: the **console** image serves the web UI on
 but its API listener does TLS + HTTP/2 identically (skip the `4567` port
 mapping). Both images' health checks handle TLS.
 
-**Persist `/data`.** The named volume above is not optional decoration: the
-CA lives under the data dir, so without a volume every container recreation
-mints a **fresh CA** — the one you installed goes stale, browsers show
-warnings again, and `AWS_CA_BUNDLE` paths stop verifying. With the volume
-the CA survives recreations and the trust install keeps working. If you do
-recreate without a volume, re-trusting is the same one command again:
-`overcast https enable --endpoint http://localhost:4566` (it fetches the new
+### No overcast CLI on the host?
+
+Then the container has to mint the CA, and the host fetches it: the daemon
+serves the CA **certificate** (public half only, never the key) at
+`GET /_overcast/ca.pem`, and `overcast https enable --endpoint` installs it.
+
+```bash
+docker run -d -e OVERCAST_TLS=auto \
+  -e OVERCAST_CA_DIR=/ca -v overcast-ca:/ca \
+  -p 4566:4566 -p 4567:4567 \
+  ghcr.io/neaox/overcast:alpha
+
+overcast https enable --endpoint https://localhost:4566
+```
+
+Keep `OVERCAST_CA_DIR` on a named volume even here — it is what stops the
+next recreation from minting a CA your machine has never seen. Without it
+every recreation mints a **fresh** CA: the one you installed goes stale,
+browsers warn again, and `AWS_CA_BUNDLE` paths stop verifying. Re-trusting is
+the same command again (`overcast https enable --endpoint ...` fetches the new
 CA and installs it alongside; `overcast https disable --endpoint ...` removes
-one when you're done with it).
+one when you are done with it) — but re-approving a root certificate on a
+schedule set by your container lifecycle is the thing this section exists to
+avoid.
+
+Use the `https://` spelling: a container serving TLS answers a plain-HTTP dial
+with `http: TLS handshake error ...: client sent an HTTP request to an HTTPS
+server`. The `http://` spelling still *works* — the CLI notices the daemon
+answers TLS and retries over https (unverified for this one bootstrap fetch;
+the payload is validated as a CA certificate, and the endpoint must be
+loopback — see below) — it just costs you a confusing line in the log. The
+daemon logs the correct command at startup when it detects it is
+containerized.
 
 How the `--endpoint` flow works, precisely:
 
@@ -144,7 +185,8 @@ How the `--endpoint` flow works, precisely:
   `localhost.overcast.sh` that merely *resolve* to 127.0.0.1) is refused
   unless you add `--trust-remote`.
 - The same flag works on the lower-level commands:
-  `overcast trust install|status|uninstall --endpoint http://localhost:4566`.
+  `overcast trust install|status|uninstall --endpoint https://localhost:4566`
+  (either scheme is accepted; name the one the daemon is actually serving).
 - No `overcast` binary on the host? Fetch the cert yourself and use the
   [manual install commands](#doing-it-manually):
   `curl -ko rootCA.pem https://localhost:4566/_overcast/ca.pem` (the UI port
@@ -259,7 +301,7 @@ certutil.exe -user -addstore Root "$(wslpath -w ~/.overcast/data/ca/rootCA.pem)"
 (or from a Windows shell, using the UNC path:
 `certutil.exe -user -addstore Root \\wsl$\<distro>\home\<user>\.overcast\data\ca\rootCA.pem`;
 or, with a Windows `overcast.exe` installed,
-`overcast.exe https enable --endpoint http://localhost:4566` — WSL2's
+`overcast.exe https enable --endpoint https://localhost:4566` — WSL2's
 localhost forwarding carries the fetch). Approve the confirmation dialog.
 WSL2's localhost forwarding then makes <https://localhost:4567> — and
 `localhost.overcast.sh`, which resolves to `127.0.0.1` — work from the

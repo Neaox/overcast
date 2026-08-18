@@ -85,7 +85,7 @@ func (m *Mapper) CABundleTar() ([]byte, error) {
 func (m *Mapper) buildCABundleTar() ([]byte, error) {
 	pemPath := m.cfg.TLSCertFile
 	if m.cfg.TLSAuto() {
-		pemPath = filepath.Join(trust.DirFor(m.cfg.DataDir), trust.CACertFile)
+		pemPath = filepath.Join(m.cfg.CACertDir(), trust.CACertFile)
 	}
 	pem, err := os.ReadFile(pemPath)
 	if err != nil {

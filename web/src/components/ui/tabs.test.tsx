@@ -62,6 +62,26 @@ describe("Tabs > keyboard navigation", () => {
   })
 })
 
+describe("Tabs > accessible name", () => {
+  it("names the tablist, so pages with several can tell them apart", () => {
+    render(
+      <Tabs selectedKey="a" onSelectionChange={() => {}}>
+        <TabList aria-label="Restart commands">
+          <Tab id="a">PowerShell</Tab>
+        </TabList>
+      </Tabs>,
+    )
+
+    expect(screen.getByRole("tablist", { name: "Restart commands" })).toBeInTheDocument()
+  })
+
+  it("leaves the tablist unnamed when no label is given", () => {
+    render(<Harness />)
+
+    expect(screen.getByRole("tablist")).not.toHaveAttribute("aria-label")
+  })
+})
+
 describe("Tabs > disabled tab", () => {
   it("does not select when clicked", async () => {
     const onSelect = vi.fn()

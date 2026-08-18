@@ -416,6 +416,11 @@ export const DOCS_NAV = [
         "id": "docker"
       },
       {
+        "depth": 3,
+        "text": "No overcast CLI on the host?",
+        "id": "no-overcast-cli-on-the-host"
+      },
+      {
         "depth": 2,
         "text": "What you're living with over plain HTTP",
         "id": "what-you-re-living-with-over-plain-http"

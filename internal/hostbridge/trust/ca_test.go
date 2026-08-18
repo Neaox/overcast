@@ -11,6 +11,22 @@ import (
 	"time"
 )
 
+// blockLeafCache makes the leaf cache unwritable, which is what a read-only
+// CA mount (`-v ~/.overcast/data/ca:/ca:ro`) does to the daemon.
+//
+// It occupies the two cache paths with directories rather than chmod-ing dir,
+// because chmod does not stop file creation inside a directory on Windows —
+// the real mount is read-only on every platform, so the test has to be too.
+// The CA files themselves stay readable, exactly as on a real mount.
+func blockLeafCache(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{leafCertFile, leafKeyFile} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatalf("block %s: %v", name, err)
+		}
+	}
+}
+
 // leafFromTLS parses the leaf certificate out of a tls.Certificate.
 func leafFromTLS(t *testing.T, c tls.Certificate) *x509.Certificate {
 	t.Helper()
@@ -117,6 +133,63 @@ func TestServerCertificate_reusesCachedLeaf(t *testing.T) {
 	if l1.SerialNumber.Cmp(l2.SerialNumber) != 0 {
 		t.Errorf("leaf was re-minted for an identical SAN set: serial %v != %v",
 			l2.SerialNumber, l1.SerialNumber)
+	}
+}
+
+// Sharing one CA with ephemeral daemons means mounting the host's CA
+// directory, and mounting it read-only is the correct way to do that — the
+// container has no business rewriting the machine's trust anchor. Minting a
+// leaf must therefore succeed without writing anything.
+func TestServerCertificate_mintsFromAReadOnlyCADir(t *testing.T) {
+	// Given: an existing CA in a directory that cannot be written to
+	dir := t.TempDir()
+	if _, err := LoadOrCreateCA(dir); err != nil {
+		t.Fatalf("LoadOrCreateCA: %v", err)
+	}
+	sans := []string{"localhost", "127.0.0.1"}
+	blockLeafCache(t, dir)
+
+	// When: a server certificate is requested
+	cert, pool, err := ServerCertificate(dir, sans)
+	if err != nil {
+		t.Fatalf("ServerCertificate on a read-only CA dir: %v", err)
+	}
+
+	// Then: it is a usable leaf, chaining to the CA that was already there
+	leaf := leafFromTLS(t, cert)
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		t.Errorf("leaf does not chain to the mounted CA: %v", err)
+	}
+	if !slices.Contains(leaf.DNSNames, "localhost") {
+		t.Errorf("leaf DNS names = %v, want localhost covered", leaf.DNSNames)
+	}
+}
+
+// The uncacheable case must still be correct across restarts: each start
+// re-mints rather than reusing, and every leaf stays valid.
+func TestServerCertificate_readOnlyCADirRemintsEachTime(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := LoadOrCreateCA(dir); err != nil {
+		t.Fatalf("LoadOrCreateCA: %v", err)
+	}
+	sans := []string{"localhost"}
+	blockLeafCache(t, dir)
+
+	first, _, err := ServerCertificate(dir, sans)
+	if err != nil {
+		t.Fatalf("ServerCertificate (first): %v", err)
+	}
+	second, _, err := ServerCertificate(dir, sans)
+	if err != nil {
+		t.Fatalf("ServerCertificate (second): %v", err)
+	}
+
+	l1, l2 := leafFromTLS(t, first), leafFromTLS(t, second)
+	if l1.SerialNumber.Cmp(l2.SerialNumber) == 0 {
+		t.Error("leaf was cached despite the CA dir being read-only")
 	}
 }
 

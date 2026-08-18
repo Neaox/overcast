@@ -131,6 +131,105 @@ func TestTLSStatus_containerReportsUnknownTrustAndHostCommand(t *testing.T) {
 	if got.HostCommand != want {
 		t.Errorf("hostCommand = %q, want %q", got.HostCommand, want)
 	}
+	// The endpoint to switch SDKs to is always the https spelling, on the same
+	// host-dialable port — it is what the console tells the user to move to,
+	// and it is needed before the restart, not after.
+	if got.HTTPSEndpoint != "https://localhost:4580" {
+		t.Errorf("httpsEndpoint = %q, want https://localhost:4580", got.HTTPSEndpoint)
+	}
+	// A containerized daemon's CA path names a file the host cannot open.
+	if got.CACertPath != "" {
+		t.Errorf("caCertPath = %q, want empty for a containerized daemon", got.CACertPath)
+	}
+}
+
+// A containerized daemon that minted its own CA is telling the user to
+// install a trust root that dies with the container. The console leads with
+// the host-owned alternative, so the status has to say which case this is.
+func TestTLSStatus_containerWithOwnCAReportsEphemeral(t *testing.T) {
+	withTLSSeams(t, &fakeTrustStore{}, nil, true)
+	cfg := &config.Config{DataDir: t.TempDir(), CADir: t.TempDir(), Port: 4566}
+	rec := httptest.NewRecorder()
+
+	tlsStatusHandler(cfg, zap.NewNop())(rec, httptest.NewRequest(http.MethodGet, "/_overcast/tls/status", nil))
+
+	got := decodeJSON[tlsStatusResponse](t, rec)
+	if !got.CAEphemeral {
+		t.Error("caEphemeral = false; a container-minted CA does not survive recreation")
+	}
+	if got.CAShareCommand == "" {
+		t.Error("caShareCommand should carry the host-owned-CA recipe")
+	}
+}
+
+// OVERCAST_CA_DIR set is the signal that someone deliberately placed the CA —
+// mounted from the host, on a dedicated volume. Nagging then would be wrong.
+func TestTLSStatus_containerWithSharedCAIsNotEphemeral(t *testing.T) {
+	withTLSSeams(t, &fakeTrustStore{}, nil, true)
+	cfg := &config.Config{DataDir: t.TempDir(), CADir: t.TempDir(), CADirConfigured: true, Port: 4566}
+	rec := httptest.NewRecorder()
+
+	tlsStatusHandler(cfg, zap.NewNop())(rec, httptest.NewRequest(http.MethodGet, "/_overcast/tls/status", nil))
+
+	got := decodeJSON[tlsStatusResponse](t, rec)
+	if got.CAEphemeral {
+		t.Error("caEphemeral = true despite OVERCAST_CA_DIR naming a host-owned directory")
+	}
+	if got.CAShareCommand != "" {
+		t.Errorf("caShareCommand = %q, want empty once the CA is already shared", got.CAShareCommand)
+	}
+}
+
+// A native daemon's CA is already as durable as the machine.
+func TestTLSStatus_nativeDaemonIsNeverEphemeral(t *testing.T) {
+	withTLSSeams(t, &fakeTrustStore{}, nil, false)
+	cfg := &config.Config{DataDir: t.TempDir(), CADir: t.TempDir(), Port: 4566}
+	rec := httptest.NewRecorder()
+
+	tlsStatusHandler(cfg, zap.NewNop())(rec, httptest.NewRequest(http.MethodGet, "/_overcast/tls/status", nil))
+
+	if got := decodeJSON[tlsStatusResponse](t, rec); got.CAEphemeral {
+		t.Error("caEphemeral = true for a native daemon")
+	}
+}
+
+// Once TLS is on, the host command has to dial https. Spelled http it still
+// works — trust.FetchRemoteCA retries — but the daemon logs a
+// "client sent an HTTP request to an HTTPS server" handshake error for a
+// command the console itself handed the user.
+func TestTLSStatus_hostCommandUsesHTTPSOnceTLSIsOn(t *testing.T) {
+	withTLSSeams(t, &fakeTrustStore{}, nil, true)
+	cfg := &config.Config{DataDir: t.TempDir(), Port: 4566, TLSMode: config.TLSModeAuto}
+	rec := httptest.NewRecorder()
+
+	tlsStatusHandler(cfg, zap.NewNop())(rec, httptest.NewRequest(http.MethodGet, "/_overcast/tls/status", nil))
+
+	got := decodeJSON[tlsStatusResponse](t, rec)
+	want := "overcast https enable --endpoint https://localhost:4566"
+	if got.HostCommand != want {
+		t.Errorf("hostCommand = %q, want %q", got.HostCommand, want)
+	}
+}
+
+// Native daemons share a filesystem with the caller, so the CA path is usable
+// as AWS_CA_BUNDLE — which the AWS CLI needs even after the CA is installed
+// into the system trust store, since botocore ships its own root bundle.
+func TestTLSStatus_nativeDaemonReportsCACertPath(t *testing.T) {
+	withTLSSeams(t, &fakeTrustStore{}, nil, false)
+	dir := t.TempDir()
+	rec := httptest.NewRecorder()
+
+	tlsStatusHandler(&config.Config{DataDir: dir, Port: 4566}, zap.NewNop())(
+		rec, httptest.NewRequest(http.MethodGet, "/_overcast/tls/status", nil))
+
+	got := decodeJSON[tlsStatusResponse](t, rec)
+	want := filepath.Join(trust.DirFor(dir), trust.CACertFile)
+	if got.CACertPath != want {
+		t.Errorf("caCertPath = %q, want %q", got.CACertPath, want)
+	}
+	if got.HTTPSEndpoint != "https://localhost:4566" {
+		t.Errorf("httpsEndpoint = %q, want https://localhost:4566", got.HTTPSEndpoint)
+	}
 }
 
 func TestTLSStatus_failedTrustCheckReportsUnknownNotUninstalled(t *testing.T) {
