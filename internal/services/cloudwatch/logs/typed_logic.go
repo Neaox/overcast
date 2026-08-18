@@ -629,16 +629,25 @@ func (h *Handler) filterLogEventsTyped(ctx context.Context, req *filterLogEvents
 		searched = append(searched, searchedLogStreamResponse{LogStreamName: ls.Name, SearchedCompletely: true})
 	}
 
-	// An explicit LogStreamNames set isn't expressible as a single SQL
-	// prefix, so that case queries the whole group (streamPrefix "") and
-	// filters to the requested names in Go below — less efficient than the
-	// prefix/no-filter case when the group has many unrelated streams, but
-	// still bounded by the time window (never a full-history read) and
-	// still correct. LogStreamNamePrefix, the far more common filter shape,
-	// pushes all the way down to SQL (see sqlEventBackend.getGroupEventsRange).
+	// An explicit LogStreamNames set of two or more isn't expressible as a
+	// single SQL prefix, so that case queries the whole group (streamPrefix
+	// "") and filters to the requested names in Go below — less efficient
+	// than the prefix/no-filter case when the group has many unrelated
+	// streams, but still bounded by the time window (never a full-history
+	// read) and still correct. A SINGLE explicit name — the shape the web
+	// UI's single-stream viewer issues on every window chunk — IS pushed
+	// down, as its own prefix: any prefix-collision streams the bound also
+	// matches (name "app" also matching "app-2") are dropped by the
+	// `relevant` check below, exactly as before, so this narrows the raw
+	// scan set without changing what the call returns.
+	// LogStreamNamePrefix, the other common filter shape, pushes all the
+	// way down as before (see sqlEventBackend.getGroupEventsRange).
 	streamPrefix := ""
-	if !explicitNames {
+	switch {
+	case !explicitNames:
 		streamPrefix = req.LogStreamNamePrefix
+	case len(req.LogStreamNames) == 1:
+		streamPrefix = req.LogStreamNames[0]
 	}
 
 	var matched []filteredEventResponse

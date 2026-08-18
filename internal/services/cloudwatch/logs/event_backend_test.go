@@ -403,6 +403,52 @@ func TestEventBackend_DebugScan_MemoryAndSQL_Parity(t *testing.T) {
 	}
 }
 
+// TestEventBackend_SeqMonotonicAcrossDeleteStream_Parity pins the A1-style
+// counter lesson on BOTH backends: per-stream seq stays monotonic across a
+// delete+recreate of the same stream name within one process, so a cursor
+// token minted before the delete can never alias an event written after it.
+// memEventBackend always behaved this way (its nextSeq map deliberately
+// survives deleteStream); sqlEventBackend used to re-derive the counter from
+// MAX(seq) per append — restarting at 0 after a delete — and failed this
+// test until its per-process counter cache (reserveSeqs) aligned it.
+func TestEventBackend_SeqMonotonicAcrossDeleteStream_Parity(t *testing.T) {
+	for name, b := range newTestBackends(t) {
+		b := b
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			const region, group, stream = "us-east-1", "g", "s"
+
+			if err := b.appendEvents(ctx, region, group, stream, []LogEvent{
+				{Timestamp: 100, Message: "before-a"},
+				{Timestamp: 200, Message: "before-b"},
+			}); err != nil {
+				t.Fatalf("appendEvents: %v", err)
+			}
+			if err := b.deleteStream(ctx, region, group, stream); err != nil {
+				t.Fatalf("deleteStream: %v", err)
+			}
+			if err := b.appendEvents(ctx, region, group, stream, []LogEvent{
+				{Timestamp: 300, Message: "after"},
+			}); err != nil {
+				t.Fatalf("appendEvents (recreated): %v", err)
+			}
+
+			got, err := b.getEventsRange(ctx, region, group, stream, 0, 1000, eventCursor{}, 0, true)
+			if err != nil {
+				t.Fatalf("getEventsRange: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("got %d events after recreate, want 1", len(got))
+			}
+			// The pre-delete events held seqs 0 and 1; the post-delete event
+			// must continue the counter (seq >= 2), never reuse seq 0.
+			if got[0].Seq < 2 {
+				t.Fatalf("post-delete event has Seq %d — the per-stream counter was reset by deleteStream (pre-delete cursors could alias it), want >= 2", got[0].Seq)
+			}
+		})
+	}
+}
+
 // The newEventBackendFor backend-selection tests live in
 // event_backend_sqlite_test.go, which carries //go:build !nosqlite: both are
 // about picking sqlEventBackend over memEventBackend, which is only a real
