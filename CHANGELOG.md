@@ -222,6 +222,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudwatch/web] the log group page's cross-stream search results are virtualized and render through the shared log-row pipeline, gaining level tints and badges, ANSI colour and filter-match highlighting — previously a plain table that rendered every result and showed none of these
 
+- [cloudwatch/web] clicking a cross-stream search result opens its log stream centred on that exact event — scrolled into view, persistently highlighted, with the preceding 15 minutes of context above and infinite scrolling below, the way the AWS console focuses a search hit; the results table also moves the stream column to the right, matching the console
+
 ### Removed
 
 - **BREAKING** [mcp] the `2025-11-25` half of the MCP surface is gone: the `initialize` handshake and `notifications/initialized`, protocol sessions and the `Mcp-Session-Id` header, the `DELETE` that ended one, the `GET /_overcast/mcp` stream and the legacy `/_overcast/mcp/sse` bridge, stream resumability with `Last-Event-ID` and the `OVERCAST_MCP_REPLAY_LIMIT` that bounded it, `ping`, `logging/setLevel`, and `resources/subscribe` / `unsubscribe`. MCP revision `2026-07-28` replaces the whole connection model rather than extending it, and Overcast now serves that revision and nothing else: `POST /_overcast/mcp` is the only endpoint, and every request declares its own protocol version in `_meta` rather than negotiating one. Nothing is lost with the surface: `server/discover` reports what `initialize` did, `subscriptions/listen` carries what the GET stream and `resources/subscribe` carried, a request's own notifications travel on its response stream, and the keep-alive on a long-lived stream replaces `ping` as the liveness check

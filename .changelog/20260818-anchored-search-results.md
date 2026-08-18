@@ -1,1 +1,0 @@
-* [cloudwatch/web] clicking a cross-stream search result opens its log stream centred on that exact event — scrolled into view, persistently highlighted, with the preceding 15 minutes of context above and infinite scrolling below, the way the AWS console focuses a search hit; the results table also moves the stream column to the right, matching the console
