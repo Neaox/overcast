@@ -306,13 +306,53 @@ func applyMigration(ctx context.Context, db *sql.DB, m Migration) error {
 	return nil
 }
 
-// readUserVersion reads the database's current schema version.
+// migrateBusyRetryTimeout bounds how long readUserVersion waits out a lock.
+//
+// Longer than hybridSQLiteReadRetryTimeout, which covers a read competing with
+// this process's own writer and can afford to give up quickly because the
+// caller sees one failed operation. Here the caller is startup: giving up
+// fails the whole store, and the contention is another *process* opening the
+// same file, which is a slower thing to clear. Still bounded, because a lock
+// nobody releases must surface rather than hang.
+const migrateBusyRetryTimeout = 10 * time.Second
+
+// readUserVersion reads the database's current schema version, waiting out a
+// lock another connection is holding.
+//
+// This is the first statement RunMigrations issues, and it runs at startup —
+// when a second connection may still be opening the same file. Every other
+// read in this package already treats SQLITE_BUSY as something to wait
+// through (hybrid.go, and docs/dev/storage-backends.md § Storage pressure);
+// this one did not, so a transient lock failed the entire store with
+// `migrate: state: read user_version: database is locked` over a condition
+// the rest of the code tolerates.
+//
+// Same classifier and same delay as that path, deliberately: one definition of
+// "transient" for the package, not a second opinion that could drift from it.
+//
+// The migrations themselves are not wrapped. Each runs in its own transaction
+// that rolls back cleanly, so a lock taken mid-migration surfaces as a failed
+// startup with nothing half-applied — noisy, but correct, and not what has
+// been observed. Widening the retry to cover them would mean reasoning about
+// the pre-migration backup as well, which is a larger change than the fault
+// justifies.
 func readUserVersion(ctx context.Context, db *sql.DB) (int, error) {
-	var v int
-	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
-		return 0, err
+	deadline := time.Now().Add(migrateBusyRetryTimeout)
+	for {
+		var v int
+		err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v)
+		if err == nil {
+			return v, nil
+		}
+		if !isSQLiteTransient(err) || !time.Now().Before(deadline) {
+			return 0, err
+		}
+		if sleepErr := sleepHybridSQLiteRetry(ctx); sleepErr != nil {
+			// The caller's context ended; report the lock, which is the
+			// useful half, rather than the cancellation it caused.
+			return 0, err
+		}
 	}
-	return v, nil
 }
 
 // databaseHasTables reports whether db already has at least one table —
