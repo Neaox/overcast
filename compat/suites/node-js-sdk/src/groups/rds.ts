@@ -30,24 +30,55 @@ import { makeClients } from "../lib/clients.ts";
 import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
-/** Poll until the DB instance reaches `targetStatus` or throw after maxAttempts. */
+// How long a DB instance is given to reach a target status, and how often it is
+// asked. Shared with the go, python, java and cli suites, which wait for the
+// same thing against the same emulator.
+//
+// A wall-clock budget rather than a count of attempts, because those two stop
+// meaning the same thing the moment the machine is busy: "60 attempts, 500ms
+// apart" is 30 seconds only while every DescribeDBInstances returns instantly.
+// What is being waited for is a real database container's first boot, data
+// directory initialisation included, and 30 seconds does not cover that on a
+// loaded machine — this suite, go and java all failed here during a release run
+// with five suites in flight, and passed run alone. The CLI suite already
+// carried 120 seconds for exactly this reason; this is that number, made common.
+const RDS_WAIT_BUDGET_MS = 120_000;
+const RDS_POLL_INTERVAL_MS = 1_000;
+
+/** Poll until the DB instance reaches `targetStatus`, or throw once the budget is spent. */
 async function waitForDBStatus(
   rds: RDSClient,
   dbId: string,
   targetStatus: string,
-  maxAttempts = 60,
+  budgetMs = RDS_WAIT_BUDGET_MS,
 ): Promise<void> {
-  for (let i = 0; i < maxAttempts; i++) {
+  const deadline = Date.now() + budgetMs;
+  let last = "(none reported)";
+  for (;;) {
     const resp = await rds.send(
       new DescribeDBInstancesCommand({ DBInstanceIdentifier: dbId }),
     );
     const status = resp.DBInstances?.[0]?.DBInstanceStatus;
-    if (status === targetStatus) return;
-    await new Promise<void>((r) => globalThis.setTimeout(r, 500));
+    if (status) {
+      last = status;
+      if (status === targetStatus) return;
+      // A failed instance will never reach any target, so spending the rest of
+      // the budget on it only delays the report.
+      if (status === "failed") {
+        throw new Error(
+          `DB instance ${dbId} went to "failed" while waiting for "${targetStatus}"`,
+        );
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `DB instance ${dbId} did not reach "${targetStatus}" within ${budgetMs}ms (last status "${last}")`,
+      );
+    }
+    await new Promise<void>((r) =>
+      globalThis.setTimeout(r, RDS_POLL_INTERVAL_MS),
+    );
   }
-  throw new Error(
-    `DB instance ${dbId} did not reach "${targetStatus}" after ${maxAttempts} attempts`,
-  );
 }
 
 export function makeRDSGroups(suite: string): TestGroup[] {

@@ -46,23 +46,52 @@ type rdsGroup struct{ c *clients.Clients }
 
 func (g *rdsGroup) cl() *rds.Client { return g.c.RDS() }
 
+// How long a DB instance is given to reach a target status, and how often it is
+// asked. Shared with the node, python, java and cli suites, which wait for the
+// same thing against the same emulator.
+//
+// A wall-clock budget rather than a count of attempts, because those two stop
+// meaning the same thing the moment the machine is busy: "60 attempts, 500ms
+// apart" is 30 seconds only while every DescribeDBInstances returns instantly.
+// What is being waited for is a real database container's first boot, data
+// directory initialisation included, and 30 seconds does not cover that on a
+// loaded machine — the go, node and java suites all failed here during a
+// release run with five suites in flight, and passed run alone. The CLI suite
+// already carried 120 seconds for exactly this reason; this is that number,
+// made common.
+const (
+	rdsWaitBudget   = 120 * time.Second
+	rdsPollInterval = time.Second
+)
+
 func (g *rdsGroup) waitForDBStatus(ctx context.Context, dbID, target string) error {
-	for i := 0; i < 60; i++ {
+	deadline := time.Now().Add(rdsWaitBudget)
+	last := "(none reported)"
+	for {
 		resp, err := g.cl().DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 			DBInstanceIdentifier: aws.String(dbID),
 		})
 		if err == nil && len(resp.DBInstances) > 0 && resp.DBInstances[0].DBInstanceStatus != nil {
-			if *resp.DBInstances[0].DBInstanceStatus == target {
+			last = *resp.DBInstances[0].DBInstanceStatus
+			if last == target {
 				return nil
 			}
+			// A failed instance will never reach any target, so spending the
+			// rest of the budget on it only delays the report.
+			if last == "failed" {
+				return fmt.Errorf("DB instance %s went to %q while waiting for %q", dbID, last, target)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("DB instance %s did not reach %q within %s (last status %q)",
+				dbID, target, rdsWaitBudget, last)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(rdsPollInterval):
 		}
 	}
-	return fmt.Errorf("DB instance %s did not reach %q after 60 attempts", dbID, target)
 }
 
 func (g *rdsGroup) setupInstances(_ context.Context, _ *harness.TestContext) error { return nil }
