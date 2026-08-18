@@ -15,7 +15,12 @@ export const Route = createFileRoute("/cloudwatch/logs/stream")({
     groupName: typeof search.groupName === "string" ? search.groupName : undefined,
     streamName: typeof search.streamName === "string" ? search.streamName : undefined,
     ...(typeof search.anchorTs === "number" ? { anchorTs: search.anchorTs } : {}),
-    ...(typeof search.anchorSig === "string" ? { anchorSig: search.anchorSig } : {}),
+    // The signature is base36, so one made only of digits round-trips through
+    // the router's search parser as a number — String() it back rather than
+    // dropping it and silently degrading to timestamp-only matching.
+    ...(typeof search.anchorSig === "string" || typeof search.anchorSig === "number"
+      ? { anchorSig: String(search.anchorSig) }
+      : {}),
   }),
   component: function LogEventsPage() {
     const { groupName, streamName, anchorTs, anchorSig } = Route.useSearch()

@@ -13,7 +13,7 @@
  * these read it: a colourised line starts with an escape sequence, not with
  * `{` or `ERROR`.
  */
-import Prism from "@/lib/prism"
+import { highlightCode } from "@/lib/highlight-code"
 import { stripAnsi } from "@/lib/ansi"
 
 export type LogLevel = "error" | "warn" | "info" | "debug"
@@ -156,39 +156,14 @@ export function stringifyJSON(obj: object, pretty: boolean): string {
 /**
  * PrismJS-highlighted JSON, as HTML.
  *
- * Memoised, because the callers are virtualised rows: `@tanstack/react-virtual`
- * flush-syncs a render on every scroll event, so an uncached tokenise ran once
- * per visible JSON row per scroll frame — which a Firefox profile of the stream
- * viewer showed as 80–247 ms tasks inside the scroll handler. Highlighting is a
- * pure function of the text, so a repeat render is a map lookup.
- *
- * Returning the identical string on a hit matters as much as the saved work: an
- * unchanged `dangerouslySetInnerHTML` value leaves the DOM untouched, and a row
- * that mutates nothing costs nothing downstream — no style recalc, and no
- * MutationObserver record for whatever extensions the user has installed.
+ * The caching lives in [highlight-code.ts](./highlight-code.ts), which
+ * generalised this function's original implementation (LRU, size cap, and the
+ * identical-string-on-hit guarantee that keeps `dangerouslySetInnerHTML` from
+ * touching the DOM) so the S3 preview could share it. Kept as a named export
+ * because "highlight this log document" is what the log rows mean.
  */
-const HIGHLIGHT_CACHE_LIMIT = 400
-/** Above this, a document is cheaper to re-highlight than to hold onto. */
-const HIGHLIGHT_CACHE_MAX_CHARS = 100_000
-const highlightCache = new Map<string, string>()
-
 export function highlightJSON(text: string): string {
-  const cached = highlightCache.get(text)
-  if (cached !== undefined) {
-    // Re-insert so the map's insertion order is least-recently-used first.
-    highlightCache.delete(text)
-    highlightCache.set(text, cached)
-    return cached
-  }
-  const html = Prism.highlight(text, Prism.languages.json, "json")
-  if (text.length <= HIGHLIGHT_CACHE_MAX_CHARS) {
-    if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) {
-      const oldest = highlightCache.keys().next().value
-      if (oldest !== undefined) highlightCache.delete(oldest)
-    }
-    highlightCache.set(text, html)
-  }
-  return html
+  return highlightCode(text, "json")
 }
 
 /**
