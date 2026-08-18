@@ -39,7 +39,7 @@ const EVENTS: FilteredLogEvent[] = [
 
 describe("LogSearchResults", () => {
   it("renders every result with its stream and level", () => {
-    render(<LogSearchResults events={EVENTS} filterPattern="" onOpenStream={() => {}} />)
+    render(<LogSearchResults events={EVENTS} filterPattern="" onOpenEvent={() => {}} />)
 
     expect(screen.getByText(/upstream refused/)).toBeInTheDocument()
     expect(screen.getByText(/all quiet/)).toBeInTheDocument()
@@ -49,19 +49,23 @@ describe("LogSearchResults", () => {
   })
 
   it("marks the filter's matches inside the message", () => {
-    render(<LogSearchResults events={EVENTS} filterPattern="upstream" onOpenStream={() => {}} />)
+    render(<LogSearchResults events={EVENTS} filterPattern="upstream" onOpenEvent={() => {}} />)
 
     const marks = screen.getAllByText("upstream", { selector: "mark" })
     expect(marks).toHaveLength(1)
   })
 
-  it("opens the event's stream on click", async () => {
+  it("opens the clicked event — stream, timestamp and signature — not just its stream", async () => {
     const user = userEvent.setup()
-    const onOpenStream = vi.fn()
-    render(<LogSearchResults events={EVENTS} filterPattern="" onOpenStream={onOpenStream} />)
+    const onOpenEvent = vi.fn()
+    render(<LogSearchResults events={EVENTS} filterPattern="" onOpenEvent={onOpenEvent} />)
 
     await user.click(screen.getByText(/all quiet/))
 
-    expect(onOpenStream).toHaveBeenCalledWith("stream-b")
+    expect(onOpenEvent).toHaveBeenCalledWith({
+      streamName: "stream-b",
+      timestamp: 1_700_000_001_000,
+      signature: expect.stringMatching(/^[0-9a-z]+$/) as string,
+    })
   })
 })

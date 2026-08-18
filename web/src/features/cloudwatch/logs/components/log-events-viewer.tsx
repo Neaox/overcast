@@ -33,6 +33,7 @@ import {
   compileFilterHighlighter,
   dropTailedDuplicates,
   logEventKey,
+  logEventSignature,
   mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
@@ -55,16 +56,33 @@ const NO_EVENTS: FilteredLogEvent[] = []
 
 // â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** An event a deep link wants the view centred on — a search result, usually. */
+export interface LogEventAnchor {
+  timestamp: number
+  /** `logEventSignature` of the event, to pick it out of its millisecond. */
+  signature?: string
+}
+
+/**
+ * How much history loads above an anchored event before it. The anchor lands
+ * with its lead-up in view rather than at the very top of the list; scrolling
+ * further back is the time-range filter's job.
+ */
+const ANCHOR_CONTEXT_BEFORE_MS = 15 * 60 * 1000
+
 interface Props {
   groupName: string
   streamName?: string
+  anchor?: LogEventAnchor
 }
 
-export function LogEventsViewer({ groupName, streamName }: Props) {
+export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const navigate = useNavigate()
   const [filterInput, setFilterInput] = useState("")
   const [activeFilter, setActiveFilter] = useState("")
-  const [timeRange, setTimeRange] = useState<TimeRange>({})
+  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
+    anchor ? { startTime: anchor.timestamp - ANCHOR_CONTEXT_BEFORE_MS } : {},
+  )
   const [displayMode, setDisplayMode] = useState<"table" | "plain">("table")
   const [formatted, setFormatted] = useState(false)
   const [syntaxHighlight, setSyntaxHighlight] = useState(true)
@@ -186,6 +204,38 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 
   /** Compiled once per filter, not once per row per scroll frame. */
   const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
+
+  // ── Anchored arrival ─────────────────────────────────────────────────────
+  // A search result deep-links here with an event to centre on. Find it,
+  // scroll to it once, and keep it visibly marked; if it sits beyond the
+  // loaded pages, keep paging until it turns up — the anchor is what the user
+  // came for, not the top of the window.
+  const anchorIndex = useMemo(() => {
+    if (!anchor) return -1
+    return events.findIndex(
+      (evt) =>
+        evt.timestamp === anchor.timestamp &&
+        (!anchor.signature || logEventSignature(evt) === anchor.signature),
+    )
+  }, [events, anchor])
+
+  const anchorScrolledRef = useRef(false)
+  useEffect(() => {
+    if (!anchor || anchorScrolledRef.current) return
+    if (anchorIndex < 0) {
+      if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+      return
+    }
+    anchorScrolledRef.current = true
+    pinnedToLatestRef.current = false
+    virtualizer.scrollToIndex(anchorIndex, { align: "center" })
+    // Estimated row heights put the first landing near, not on, centre;
+    // repeat once after this frame's measurements settle.
+    const settle = requestAnimationFrame(() =>
+      virtualizer.scrollToIndex(anchorIndex, { align: "center" }),
+    )
+    return () => cancelAnimationFrame(settle)
+  }, [anchor, anchorIndex, hasNextPage, isFetchingNextPage, fetchNextPage, virtualizer])
 
   // Scroll-to-bottom
   const [showScrollBottom, setShowScrollBottom] = useState(false)
@@ -533,14 +583,20 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
               {virtualItems.map((virtualRow) => {
                 const evt = events[virtualRow.index]
                 const meta = describeLogEvent(evt)
+                const isAnchor = anchorIndex >= 0 && virtualRow.index === anchorIndex
                 return (
                   <div
                     key={virtualRow.key}
                     data-index={virtualRow.index}
+                    data-anchored={isAnchor || undefined}
                     ref={virtualizer.measureElement}
                     className={cn(
                       "group/row absolute top-0 left-0 flex w-full border-b border-l-2 border-border-muted border-l-transparent",
-                      meta.level && logLevelRowClass[meta.level],
+                      // The anchored row is the one the deep link came for; its
+                      // marking outranks the level tint.
+                      isAnchor
+                        ? "border-l-accent bg-accent/10"
+                        : meta.level && logLevelRowClass[meta.level],
                     )}
                     style={{
                       transform: `translateY(${virtualRow.start}px)`,

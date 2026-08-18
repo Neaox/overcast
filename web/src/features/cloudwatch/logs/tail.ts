@@ -101,6 +101,26 @@ export function logEventKey(event: object): number {
 }
 
 /**
+ * A short, URL-safe signature for one event's content — for deep links that
+ * anchor a view on a specific event.
+ *
+ * `logEventKey` is identity *within one page's memory* and dies with it; a
+ * link needs identity that survives a fresh fetch in another tab. Timestamp
+ * plus a message hash is enough to pick an event out of its millisecond; two
+ * truly identical events in the same millisecond are indistinguishable on
+ * every field the emulator returns, so matching the first is not a loss.
+ */
+export function logEventSignature(event: MergeableLogEvent): string {
+  const message = event.message ?? ""
+  // djb2 — tiny, stable, and adequate for disambiguation, not for security.
+  let hash = 5381
+  for (let i = 0; i < message.length; i++) {
+    hash = ((hash << 5) + hash + message.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
+/**
  * Chronological order, with the tie-breaks that keep it total: two events in
  * the same millisecond fall back to ingestion order, then to the stream name,
  * so a sort is stable across refetches that shuffle their input.
