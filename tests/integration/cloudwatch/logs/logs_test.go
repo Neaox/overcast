@@ -88,6 +88,105 @@ func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {
 	}
 }
 
+func TestStartLiveTail_manySmallWritesAllArrive(t *testing.T) {
+	// Given: an open Live Tail session on one stream
+	srv := helpers.NewTestServer(t)
+	groupName := "/aws/lambda/live-tail-small-writes"
+	groupARN := "arn:aws:logs:us-east-1:000000000000:log-group:" + groupName
+	createLogGroup(t, srv, groupName)
+	createLogStream(t, srv, groupName, "app/one")
+
+	resp := logsCall(t, srv, "StartLiveTail", map[string]any{
+		"logGroupIdentifiers": []string{groupARN},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	start := readEventStreamMessage(t, resp.Body)
+	if start.Headers[":event-type"] != "sessionStart" {
+		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
+	}
+
+	// When: thirty separate PutLogEvents calls land between drains. Real
+	// producers write one call per line all the time — the awslogs driver, a
+	// Lambda runtime, a CLI loop — and thirty lines in a second is a quiet
+	// stream, nowhere near AWS's 500-events-per-second sampling threshold.
+	const writes = 30
+	for i := 0; i < writes; i++ {
+		putLogEvents(t, srv, groupName, "app/one", []logEvent{
+			{Timestamp: int64(2000 + i), Message: "line " + strconv.Itoa(i)},
+		})
+	}
+
+	// Then: every line is delivered, none sampled away. The session buffer
+	// must be bounded by AWS's five-thousand-event contract, not by a count
+	// of however many write calls the producer happened to split lines into.
+	seen := make(map[string]bool, writes)
+	for attempts := 0; attempts < 5 && len(seen) < writes; attempts++ {
+		payload := readLiveTailUpdate(t, resp.Body)
+		if payload.SessionMetadata.Sampled {
+			t.Fatal("expected sampled=false for 30 events in a second")
+		}
+		for _, result := range payload.SessionResults {
+			seen[result.Message] = true
+		}
+	}
+	if len(seen) != writes {
+		missing := make([]string, 0)
+		for i := 0; i < writes; i++ {
+			if !seen["line "+strconv.Itoa(i)] {
+				missing = append(missing, strconv.Itoa(i))
+			}
+		}
+		t.Fatalf("delivered %d of %d events; missing: %v", len(seen), writes, missing)
+	}
+}
+
+func TestStartLiveTail_overflowDropsOldestAndSaysSampled(t *testing.T) {
+	// Given: an open Live Tail session
+	srv := helpers.NewTestServer(t)
+	groupName := "/aws/lambda/live-tail-overflow"
+	groupARN := "arn:aws:logs:us-east-1:000000000000:log-group:" + groupName
+	createLogGroup(t, srv, groupName)
+	createLogStream(t, srv, groupName, "app/one")
+
+	resp := logsCall(t, srv, "StartLiveTail", map[string]any{
+		"logGroupIdentifiers": []string{groupARN},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	start := readEventStreamMessage(t, resp.Body)
+	if start.Headers[":event-type"] != "sessionStart" {
+		t.Fatalf("first event type = %q, want sessionStart", start.Headers[":event-type"])
+	}
+
+	// When: more events than the session buffer holds land between drains
+	// (AWS buffers 5,000 events and drops the oldest beyond that).
+	const total = 5600
+	events := make([]logEvent, total)
+	for i := range events {
+		events[i] = logEvent{Timestamp: int64(3000 + i), Message: "flood " + strconv.Itoa(i)}
+	}
+	putLogEvents(t, srv, groupName, "app/one", events)
+
+	// Then: the update that follows the overflow admits it sampled, and what
+	// it delivers is the newest events — the oldest are what a lagging tail
+	// loses, per the AWS buffering contract.
+	payload := readLiveTailUpdate(t, resp.Body)
+	for attempts := 0; attempts < 3 && len(payload.SessionResults) == 0; attempts++ {
+		payload = readLiveTailUpdate(t, resp.Body)
+	}
+	if len(payload.SessionResults) == 0 {
+		t.Fatal("no session results delivered after overflow")
+	}
+	if !payload.SessionMetadata.Sampled {
+		t.Fatal("expected sampled=true after the buffer dropped events")
+	}
+	first := payload.SessionResults[0].Message
+	if first != "flood 600" {
+		t.Fatalf("first delivered message = %q, want %q (oldest 600 dropped)", first, "flood 600")
+	}
+}
+
 // ---- CreateLogGroup --------------------------------------------------------
 
 func TestCreateLogGroup_success(t *testing.T) {

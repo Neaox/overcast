@@ -191,8 +191,11 @@ at the cost of fighting global Tailwind styles — not planned, only noted.
 
 The AWS console's strategy is to bound everything before it reaches the DOM, then be honest about
 what was dropped: Live Tail's wire protocol samples to 500 events/second and drops the oldest
-events once 10 updates / 5,000 events are buffered (limits our emulator's StartLiveTail should
-mirror — verify `internal/services/cloudwatch/logs/live_tail.go`); the console tail view is a
+events once 10 updates / 5,000 events are buffered. **Verified and fixed**: our emulator's
+StartLiveTail buffered 10 *write batches*, not 5,000 events, and silently lost lines at eleven
+quiet single-line writes per second — found by this plan's browser verification, fixed with the
+buffer counted in events and `sampled: true` on the update after a drop
+(`internal/services/cloudwatch/logs/live_tail.go`); the console tail view is a
 rolling window that shows a "% displayed" figure when it samples and pauses on click; the events
 viewer renders collapsed single-line fixed-height rows with JSON formatting only on per-row
 expansion; filtering is always server-side; Logs Insights hard-caps results at 10,000 rows.
@@ -299,7 +302,13 @@ object's identity index within the feed), never the array index.
   respected — verify against the emulator; otherwise page from the end) and either gets a real
   `refetchInterval: 5_000` or loses the "auto-refreshes" claim. Failing test first for the label.
 
-### Phase 5 — DRY consolidation (M) — fixes F8
+### Phase 5 — DRY consolidation (M) — fixes F8 — **outstanding**
+
+Note for whoever picks this up: the log-group detail page's cross-stream search results are now
+the only unvirtualized log surface. They are bounded (one FilterLogEvents page, ≤10k rows, only
+rendered after an explicit search), so this is a structure problem more than a jank emergency —
+but the fix is the same shared-row work below, because that table needs the stream column and
+row navigation, which the generic `LogViewer` does not offer.
 
 - One shared `LogRow`/`LogMessage` used by all four surfaces (level badge, ANSI, platform summary,
   optional stream column, optional filter highlight).
