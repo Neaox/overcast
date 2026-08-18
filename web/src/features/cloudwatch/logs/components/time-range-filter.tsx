@@ -78,15 +78,17 @@ function matchesPreset(range: TimeRange, preset: RelativePreset): boolean {
 interface TimeRangeFilterProps {
   value: TimeRange
   onChange: (range: TimeRange) => void
+  /** Render the chip's absolute-range label in UTC, matching the viewer's timestamp toggle. */
+  utc?: boolean
 }
 
-export function TimeRangeFilter({ value, onChange }: TimeRangeFilterProps) {
+export function TimeRangeFilter({ value, onChange, utc = false }: TimeRangeFilterProps) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ top: 0, right: 0 })
 
-  const label = getLabel(value)
+  const label = getLabel(value, utc)
   const hasRange = value.startTime != null || value.endTime != null
 
   const updatePosition = useCallback(() => {
@@ -147,7 +149,7 @@ export function TimeRangeFilter({ value, onChange }: TimeRangeFilterProps) {
   )
 }
 
-function getLabel(range: TimeRange): string {
+function getLabel(range: TimeRange, utc = false): string {
   if (!range.startTime && !range.endTime) return "All time"
   if (range.startTime && !range.endTime) {
     const elapsed = Date.now() - range.startTime
@@ -161,6 +163,7 @@ function getLabel(range: TimeRange): string {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      ...(utc ? { timeZone: "UTC" } : {}),
     })
   if (range.startTime && range.endTime) return `${fmt(range.startTime)} – ${fmt(range.endTime)}`
   if (range.startTime) return `From ${fmt(range.startTime)}`

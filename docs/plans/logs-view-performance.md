@@ -201,11 +201,13 @@ viewer renders collapsed single-line fixed-height rows with JSON formatting only
 expansion; filtering is always server-side; Logs Insights hard-caps results at 10,000 rows.
 
 Adopted into this plan: the bounded rolling buffer with an explicit drop counter (Phase 1) gains a
-"% displayed"-style honesty label when the tail samples or the cap trims. Deliberately **not**
-adopted without a product decision: collapsed-by-default single-line rows with expand-on-demand —
-it is the single biggest reason the AWS viewer stays cheap (fixed heights need no measurement
-pass), but our rows wrap and show badges/ANSI inline by design; if Phases 1–3 don't reach budget
-on very wide events, this is the next lever, as an explicit UX change.
+"% displayed"-style honesty label when the tail samples or the cap trims. Collapsed single-line
+rows with expand-on-demand — the single biggest reason the AWS viewer stays cheap (fixed heights
+need no measurement pass) — **landed 2026-08-18 as the opt-in "Collapse" toggle** (§3c): collapsed
+rows are a fixed-height constant the virtualizer never measures, badges/ANSI/summaries stay on the
+one line, and clicking a row expands just that row to the full rendering. What remains a product
+decision is only the *default*: the console collapses by default, we still expand by default, and
+flipping that is a deliberate later call, not a side effect of shipping the lever.
 
 ## 3. Plan
 
@@ -389,17 +391,40 @@ Phase 4's backward time-window expansion — the anchor flow inherited it for fr
 (pinned by a test), since the lead-in is exactly the system-chosen window start expansion widens.
 The stream column sits on the right of the results, as the console has it.
 
-### QOL backlog (viewer-side, fidelity-safe — none started)
+### QOL backlog (viewer-side, fidelity-safe)
 
-Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes: a UTC/local
-timestamp toggle (the console has one; we always show local); inter-row time deltas à la browser
-devtools; copy-deep-link on any row (the anchor URL machinery already exists); collapsed
-single-line rows with per-row expand (both the console's default and the plan's §2c perf lever);
-keyboard row navigation (j/k, Enter to expand, c to copy); click a Lambda requestId to filter to
-that invocation's lines; "filter for selection"; persisted view preferences (Format/Syntax/Wrap/
-sort survive revisits); export visible events (the console offers CSV download). Jump-to-timestamp
-landed with Phase 4's backward half (it reuses the anchor flow, as planned). Highest leverage for
-Lambda debugging: requestId click-to-filter and copy-deep-link.
+Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes. **Landed 2026-08-18**
+(stream/all-streams viewer):
+
+- **UTC/local timestamp toggle** — `formatLogTime`/`formatLogDate` grew an explicit `utc` flag
+  (local by default, so every other call site is untouched); the toolbar pill switches rows, the
+  plaintext prefix and the time-range chip's absolute label together. The jump-to-timestamp picker
+  stays local: `datetime-local` is inherently zone-local input.
+- **Inter-row time deltas** — opt-in "Deltas" toggle, off by default; the gap to the
+  chronologically previous event renders beside the Time column's timestamp (Table mode; the
+  plaintext prefix stays as it was). O(1) per row from the neighbouring index, no derived array;
+  signed, so out-of-order ingestion shows its direction rather than a lie.
+- **Persisted view preferences** — Table/Plaintext, Format, Syntax, Wrap, sort direction, UTC,
+  Deltas and Collapse survive revisits via one versioned localStorage key
+  (`overcast.logs.viewPrefs.v1`, `use-log-view-prefs.ts`): read once at mount, one write per
+  change, corrupt/missing state falls back to the defaults silently. Tail, the cleared-through
+  cut and per-row expansion are session state and deliberately do not persist.
+- **Collapsed single-line rows** — the §2c lever, as an opt-in "Collapse" toggle (persisted,
+  default OFF): every row is one fixed-height truncated line the virtualizer never measures
+  (constant `estimateSize`, no `measureElement` ref), badges/tints/ANSI/platform-summaries stay,
+  click expands just that row to the full current rendering and click again folds it.
+  **Collapsed-by-default — the console's behaviour — is left open as a product decision.**
+- **Export visible events** — a toolbar Export control downloading exactly what the list holds,
+  in the displayed sort order: CSV in the console's search-results shape (ISO 8601 timestamps,
+  raw stored message bytes — never the stripped or summarised rendering) and JSON with the four
+  raw fields. When more events remain server-side the control says the export excludes them,
+  never implying full history.
+
+Still open: copy-deep-link on any row (the anchor URL machinery already exists); keyboard row
+navigation (j/k, Enter to expand, c to copy); click a Lambda requestId to filter to that
+invocation's lines; "filter for selection". Jump-to-timestamp landed with Phase 4's backward half
+(it reuses the anchor flow, as planned). Highest leverage for Lambda debugging: requestId
+click-to-filter and copy-deep-link.
 
 ## 4. Explicit non-goals
 
