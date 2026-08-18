@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -264,7 +266,31 @@ type TagValidationConfig struct {
 	InvalidCode string
 	// Limit overrides MaxTags for this service. Zero means use MaxTags.
 	Limit int
-	// TODO(priority:P2): add a charset pattern here so services can enforce their model's TagKey/TagValue pattern (Lambda's is ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$); only lengths and the reserved aws: prefix are checked today, so invalid characters are accepted by every service that shares this validator.
+}
+
+// legalTagRune reports whether r may appear in a tag key or value.
+//
+// Every AWS service that models tags documents the same pattern for them —
+// ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$ — so the charset is enforced for every
+// service sharing this validator rather than being something each one opts
+// into. There is no per-service override because no service's model asks for
+// one; the day one does, it earns a field on TagValidationConfig.
+//
+// It is spelled as a rune test rather than a regexp because tags are validated
+// on every tag write and the character class is small enough to read. The
+// Unicode categories are matched exactly: unicode.IsSpace would also admit the
+// control characters \t and \n, which are category Cc and not \p{Z}.
+func legalTagRune(r rune) bool {
+	switch r {
+	case '_', '.', ':', '/', '=', '+', '-', '@':
+		return true
+	}
+	return unicode.Is(unicode.L, r) || unicode.Is(unicode.Z, r) || unicode.Is(unicode.N, r)
+}
+
+// legalTagText reports whether every rune of s may appear in a tag.
+func legalTagText(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return !legalTagRune(r) }) < 0
 }
 
 // ValidateTags checks standard AWS tag constraints and returns an AWSError
@@ -314,10 +340,24 @@ func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWS
 				HTTPStatus: http.StatusBadRequest,
 			}
 		}
+		if !legalTagText(k) {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag key " + strconv.Quote(k) + " contains characters that are not letters, numbers, spaces, or one of _ . : / = + - @.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
 		if len(v) > 256 {
 			return &protocol.AWSError{
 				Code:       cfg.InvalidCode,
 				Message:    "Tag value must be 256 characters or fewer.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if !legalTagText(v) {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag value for key " + strconv.Quote(k) + " contains characters that are not letters, numbers, spaces, or one of _ . : / = + - @.",
 				HTTPStatus: http.StatusBadRequest,
 			}
 		}
@@ -331,23 +371,4 @@ func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWS
 type TagPair struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
-}
-
-// TagsToList converts an internal tag map to the common tag-array response
-// shape.
-func TagsToList(tags map[string]string) []TagPair {
-	out := make([]TagPair, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, TagPair{Key: k, Value: v})
-	}
-	return out
-}
-
-// TagsFromList converts a tag-array request shape to an internal tag map.
-func TagsFromList(pairs []TagPair) map[string]string {
-	out := make(map[string]string, len(pairs))
-	for _, p := range pairs {
-		out[p.Key] = p.Value
-	}
-	return out
 }

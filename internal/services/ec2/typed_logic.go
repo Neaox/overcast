@@ -2020,21 +2020,16 @@ func (h *Handler) createTagsTyped(ctx context.Context, req *createTagsReq) (*cre
 	if len(req.ResourceIDs) == 0 {
 		return nil, ec2err("MissingParameter", "ResourceId is required", http.StatusBadRequest)
 	}
-	tags := make(map[string]string, len(req.Tags))
+	// The same merge-and-validate the Query path uses, so the two wire paths
+	// cannot come to different conclusions about what a tag write means.
+	tags := make([]Tag, 0, len(req.Tags))
 	for _, tag := range req.Tags {
 		if tag.Key != "" {
-			tags[tag.Key] = tag.Value
+			tags = append(tags, Tag(tag))
 		}
 	}
 	for _, rid := range req.ResourceIDs {
-		existing, _ := h.store.getTags(ctx, rid)
-		if existing == nil {
-			existing = make(map[string]string, len(tags))
-		}
-		for k, v := range tags {
-			existing[k] = v
-		}
-		if aerr := h.store.putTags(ctx, rid, existing); aerr != nil {
+		if aerr := h.putResourceTags(ctx, rid, tags); aerr != nil {
 			return nil, aerr
 		}
 	}
@@ -2055,18 +2050,14 @@ func (h *Handler) deleteTagsTyped(ctx context.Context, _ *deleteTagsReq) (*delet
 
 func (h *Handler) describeTagsTyped(ctx context.Context, _ *describeTagsReq) (*describeTagsResp, *protocol.AWSError) {
 	allTags, _ := h.store.listAllTags(ctx)
-	items := make([]typedTagItemXML, 0)
-	for rid, tags := range allTags {
-		resType := inferResourceType(rid)
-		for k, v := range tags {
-			items = append(items, typedTagItemXML{
-				ResourceID:   rid,
-				ResourceType: resType,
-				Key:          k,
-				Value:        v,
-			})
+	items := tagItems(tagIndex(allTags), func(rid string, tag Tag) typedTagItemXML {
+		return typedTagItemXML{
+			ResourceID:   rid,
+			ResourceType: inferResourceType(rid),
+			Key:          tag.Key,
+			Value:        tag.Value,
 		}
-	}
+	}, nil)
 	return &describeTagsResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),

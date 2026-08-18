@@ -1687,11 +1687,7 @@ type eksTagResourceRequest struct {
 
 func (s *Service) eksTagResourceTyped(ctx context.Context, req *eksTagResourceRequest) (any, *protocol.AWSError) {
 	arn := s.tryDecodeARN(req.ResourceArn)
-	pairs := make([]serviceutil.TagPair, 0, len(req.Tags))
-	for k, v := range req.Tags {
-		pairs = append(pairs, serviceutil.TagPair{Key: k, Value: v})
-	}
-	if _, aerr := serviceutil.ApplyTagsToStore(ctx, eksTagCfg, nsTags, tagKey(arn), pairs, s.store); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(ctx, s.tagStore(), tagKey(arn), req.Tags, eksTagCfg); aerr != nil {
 		return nil, aerr
 	}
 	return struct{}{}, nil
@@ -1707,7 +1703,7 @@ func (s *Service) eksUntagResourceTyped(ctx context.Context, req *eksUntagResour
 	if len(req.TagKeys) == 0 {
 		return nil, &protocol.AWSError{Code: "InvalidParameterException", Message: "at least one tagKeys query parameter is required", HTTPStatus: 400}
 	}
-	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, tagKey(arn), req.TagKeys, s.store); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(ctx, s.tagStore(), tagKey(arn), req.TagKeys); aerr != nil {
 		return nil, aerr
 	}
 	return struct{}{}, nil
@@ -1723,12 +1719,9 @@ type eksListTagsForResourceResponse struct {
 
 func (s *Service) eksListTagsForResourceTyped(ctx context.Context, req *eksListTagsForResourceRequest) (*eksListTagsForResourceResponse, *protocol.AWSError) {
 	arn := s.tryDecodeARN(req.ResourceArn)
-	tags, aerr := serviceutil.TagsFromStore(ctx, s.store, nsTags, tagKey(arn))
+	tags, aerr := s.tagStore().Load(ctx, tagKey(arn))
 	if aerr != nil {
 		return nil, aerr
-	}
-	if tags == nil {
-		tags = map[string]string{}
 	}
 	return &eksListTagsForResourceResponse{Tags: tags}, nil
 }

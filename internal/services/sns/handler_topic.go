@@ -391,10 +391,9 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	members := make([]xmlTagMember, 0, len(tags))
-	for k, v := range tags {
-		members = append(members, xmlTagMember{Key: k, Value: v})
-	}
+	members := serviceutil.TagElements(tags, func(k, v string) xmlTagMember {
+		return xmlTagMember{Key: k, Value: v}
+	})
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlListTagsForResourceResponse{
 		Xmlns: snsXMLNS,

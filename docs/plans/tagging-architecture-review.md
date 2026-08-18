@@ -1,7 +1,9 @@
 # Tagging Architecture Review
 
-> Status: review complete. The EC2 findings are **fixed** on this branch; the
-> cross-service findings are **reported, not fixed**, and are listed under
+> Status: **closed**. Every finding is fixed — see
+> [What was fixed](#what-was-fixed). One residue is open and tracked elsewhere:
+> finding 4's rule for an unrecognised filter is settled and applied to EC2, the
+> service the report came from, but not yet to the other services. See
 > [What remains](#what-remains).
 >
 > This is the *architecture* axis of tagging — how tags are stored, read, kept
@@ -42,6 +44,10 @@ asked a question, could not answer it, and answered anyway.
    merge base.
 
 ## Findings
+
+> These describe the code **as the review found it**, and are kept in that tense
+> as the record of what was wrong and why. All but finding 4 have since been
+> fixed — see [What was fixed](#what-was-fixed).
 
 ### 1. The shared helper is four helpers wearing one coat
 
@@ -209,56 +215,123 @@ Two incidental wins on the parsing side: `collectFormFilters` rescans the entire
 form map for each filter it finds, costing filters × parameters rather than
 parameters; and `DescribeVpcs` walked the filter list three times, once per
 named filter. Tag filters are now parsed in a single indexed pass. (The
-attribute-map handlers still use `collectFormFilters`; converging them is part
-of item 2 under [What remains](#what-remains).)
+attribute-map handlers still used `collectFormFilters` at this point; #1038
+converged the three filter idioms into one declaration per operation.)
+
+## What was fixed
+
+In three passes. The EC2 findings (3, and finding 4's tag selectors) went first,
+in #1033 — see [What this branch changed](#what-this-branch-changed). Finding 4
+proper, what an unrecognised filter means, was decided and applied to EC2 in
+#1032 (#1038, #1040, #1041) — summarised under
+[What remains](#what-remains), which is where its cross-service residue lives.
+The cross-service findings below — 1, 2, 5 and 6 — were cleared in #1031.
+
+### Tags die with their resource (finding 2)
+
+`serviceutil` has the delete helper it lacked: `TagStore` gained a `Delete`, so
+a service takes a resource's tags with it by naming its namespace once rather
+than by remembering a store call. The four leaking services call it —
+`eventbridge` (rules and buses), `elasticache` and `rds` (at the store, which is
+where every delete path funnels through, so a new resource type needs one line
+rather than a memory), and `scheduler` (schedules and groups, the group taking
+its schedules' tags with it).
+
+Each has a test that fails without the fix, asserting on the whole namespace
+rather than on one read — a tag blob that no longer has a resource pointing at
+it is still a leak.
+
+Two things surfaced on the way:
+
+- **EventBridge keyed tags by the caller's ARN string.** A default-bus rule ARN
+  is legal with or without the bus segment, so tagging through one spelling hid
+  the tags from the other — and from a delete path, which only ever has the
+  rule's name. `requireTaggableResource` now returns the canonical ARN, and it
+  is the only key written.
+- **The JSON and typed paths minted different ARNs for the same resource**,
+  `region(ctx)` against `cfg.Region`. Both now go through one `ruleARN`/`busARN`
+  pair, which is also what the tag key is built from.
+
+### One set of entry points per storage strategy (finding 1)
+
+Five `Apply*`, four `Remove*` and three `List*` are now two entry points and one
+interface per strategy:
+
+| Strategy | Entry points |
+| --- | --- |
+| Namespaced | `TagStore` (`NSStore`) — `Load`, `Save`, `Delete` — plus `ApplyStoreTags` and `RemoveStoreTags` for merge-and-validate |
+| Inline | `ApplyInlineTags`, `RemoveInlineTags`, `ListInlineTags` over `Taggable` |
+
+`ApplyTagsToStore`, `RemoveTagsFromStore` and `TagsFromStore` are gone: they did
+the same thing to the same storage shape as the `TagStore` family and differed
+only in signature. The survivor takes the interface (family 2's shape) and
+returns the merged set (family 1's, which the responses that echo tags back
+need). `ListStoreTags` is gone too — it was a pass-through, and reading is now
+`store.Load`. The `waf`-only `ApplyTags`/`RemoveTags` generic is gone; `waf`
+uses `ApplyInlineTags` like the other seven inline services, which is what the
+two-type-parameter form was working around rather than needing.
+
+`eks`, `elasticache` and `lambda` no longer reach one namespace through two
+abstractions.
+
+### Ordered output by construction (finding 5)
+
+`serviceutil.TagElements` renders a tag map into a service's own tag element
+type, key-sorted, and `TagsToList` is one line of it. Every render site goes
+through it, so a service cannot range an unordered map into a response by
+accident — including the eight that were already ordered, which had each
+hand-rolled the same `sort.Slice`. EC2's `DescribeTags` had two unordered map
+walks rather than one, being a list of resources as well as of tags; it is
+ordered by resource ID and then by key.
+
+### Validation (finding 6)
+
+EC2 validates its tags, on both wire paths and on the create calls that carry
+`TagSpecification.N` — the latter *before* the resource is made, since AWS
+refuses the whole call rather than launching an instance and then failing.
+
+The standing charset `TODO` is implemented rather than closed: every AWS service
+documents the same tag pattern, `^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`, so it is
+enforced for every service sharing the validator rather than being something
+each opts into. There is no per-service override because no service's model asks
+for one.
+
+One thing the charset check turned up, which is worth knowing before adding
+another: **the reserved `aws:` prefix is reserved from callers, not from AWS.**
+Real Auto Scaling stamps `aws:autoscaling:groupName` on every instance it
+launches, and Overcast's does the same — through the same `RunInstances` call a
+customer makes, because that is the only way in. Refusing the prefix outright
+stopped every Auto Scaling launch. EC2 names the keys Overcast's own services
+mint; a caller's own `aws:` key is still refused.
 
 ## What remains
 
-Ranked by how likely each is to produce a wrong answer rather than untidy code.
-Items 1 and 3–5 are tracked in **#1031**; item 2 had its own issue, **#1032**,
-because it was a behavioural decision rather than a defect to clear, and is now
-closed for EC2.
+**How the services other than EC2 treat a filter they do not implement**
+(finding 4, cross-service residue).
 
-1. **Close the tag leak in eventbridge, elasticache, rds and scheduler.** The
-   same one-line-per-delete fix this branch applied to EC2. Best done by giving
-   `serviceutil` the delete helper it lacks, so the next service gets it free.
-2. ~~**Decide what an unrecognised filter means, and make every service
-   agree.**~~ **Done for EC2** in #1032. The rule is to refuse the name with
-   AWS's `InvalidParameterValue`, applied by every EC2 describe, before the
-   collection is read. The middle option — refuse only names AWS does not model,
-   and ignore-with-a-warning the ones it does — was rejected on the evidence of
-   the reported bug itself: `tag:Name` is a name AWS models, so that rule would
-   have left this bug exactly as it was. What each operation implements is
-   declared once in `internal/services/ec2/filters.go`, and that declaration is
-   what matches the filter, writes the error and is checked against the
-   capability notes; the three filter idioms are one. The regression the
-   decision risked was measured rather than assumed: CDK's VPC context provider
-   (aws-cdk 2.1132.0, `toolkit-lib/lib/context-providers/vpcs.ts`) sends
-   `vpc-id`, `isDefault` and `tag:<key>` to `DescribeVpcs`, `vpc-id` to
-   `DescribeSubnets` and `DescribeRouteTables`, and `attachment.vpc-id`,
-   `attachment.state` and `state` to `DescribeVpnGateways` — every one of them
-   implemented, and asserted by `TestCDKVpcLookupFiltersAreAllImplemented`.
+The decision itself is made and applied. #1032 settled it for EC2: refuse the
+name with AWS's `InvalidParameterValue`, from every describe, before the
+collection is read. The middle option — refuse only names AWS does not model,
+and ignore-with-a-warning the ones it does — was rejected on the evidence of the
+reported bug itself: `tag:Name` is a name AWS models, so that rule would have
+left this bug exactly as it was. What each operation implements is declared once
+in `internal/services/ec2/filters.go`, and that declaration is what matches the
+filter, writes the error and is checked against the capability notes; the three
+filter idioms are one. The regression the decision risked was measured rather
+than assumed: CDK's VPC context provider (aws-cdk 2.1132.0,
+`toolkit-lib/lib/context-providers/vpcs.ts`) sends `vpc-id`, `isDefault` and
+`tag:<key>` to `DescribeVpcs`, `vpc-id` to `DescribeSubnets` and
+`DescribeRouteTables`, and `attachment.vpc-id`, `attachment.state` and `state`
+to `DescribeVpnGateways` — every one of them implemented, and asserted by
+`TestCDKVpcLookupFiltersAreAllImplemented`.
 
-   **EC2's matching is now AWS's, both halves.** The two gaps this section used
-   to list are closed: a filter *value* is the pattern AWS treats it as — `*`
-   for any run of characters, `?` for exactly one, a backslash for a literal —
-   and a filter *name* is matched exactly rather than case-folded. Values and
-   names are deliberately held to opposite standards. `wildcardMatch` is
-   hand-rolled rather than `path.Match` because a filter value is an opaque
-   string: no character classes, and `*` crosses a `/`.
+EC2's matching is now AWS's in both halves: a filter *value* is the pattern AWS
+treats it as — `*` for any run of characters, `?` for exactly one, a backslash
+for a literal — and a filter *name* is matched exactly rather than case-folded.
+Values and names are deliberately held to opposite standards. `wildcardMatch` is
+hand-rolled rather than `path.Match` because a filter value is an opaque string:
+no character classes, and `*` crosses a `/`.
 
-   **Still open, for the other services.** #1032 was scoped to EC2, the service
-   the report came from; how the rest treat a selector they do not implement is
-   surveyed in
-   [ec2-filter-rule-cross-service.md](./ec2-filter-rule-cross-service.md).
-3. **Collapse the four helper families to one per storage strategy.** Two
-   strategies genuinely exist (namespaced, inline) and both are legitimate.
-   Four entry-point sets for them are not. Retire the `waf`-only generic first —
-   it has two call sites — then converge families 1 and 2, which differ only in
-   signature, and move the three services using both onto the survivor.
-4. **Make ordered output the default.** Have the shared list/render helper
-   return key-sorted tags so a service cannot render an unordered map by
-   accident, rather than fixing 19 sites individually.
-5. **Give EC2 tag validation**, and resolve the standing charset `TODO` in
-   `ValidateTags` so the services that do validate enforce what their model
-   says.
+What remains is applying the same rule beyond EC2, the service the report came
+from. How the rest behave today is surveyed in
+[ec2-filter-rule-cross-service.md](./ec2-filter-rule-cross-service.md).

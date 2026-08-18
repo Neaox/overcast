@@ -268,7 +268,7 @@ func (s *Service) createDomain(w http.ResponseWriter, r *http.Request) {
 	// TagList is applied at creation, as it is on AWS, so a ListTags that
 	// follows a tagged CreateDomain sees the tags without a second call.
 	if len(req.TagList) > 0 {
-		if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, domain.ARN,
+		if _, aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, domain.ARN,
 			serviceutil.TagsFromList(req.TagList), tagValidation); aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
 			return
@@ -381,7 +381,7 @@ func (s *Service) addTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, validationError("ARN is required"))
 		return
 	}
-	if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, req.ARN,
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, req.ARN,
 		serviceutil.TagsFromList(req.TagList), tagValidation); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -397,7 +397,7 @@ func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, validationError("arn is required"))
 		return
 	}
-	tags, aerr := serviceutil.ListStoreTags(r.Context(), s.store.tags, arn)
+	tags, aerr := s.store.tags.Load(r.Context(), arn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -414,7 +414,7 @@ func (s *Service) removeTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, validationError("ARN is required"))
 		return
 	}
-	if aerr := serviceutil.RemoveStoreTags(r.Context(), s.store.tags, req.ARN, req.TagKeys); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(r.Context(), s.store.tags, req.ARN, req.TagKeys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

@@ -120,6 +120,12 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 	securityGroups := parseIndexedParam(r, "SecurityGroupId")
 	tags := parseTagSpecifications(r, "instance")
+	// Create-time tags are checked before anything is launched, as on AWS: a
+	// rejected tag must fail the call rather than leave instances running.
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	// Resolve SG names for the response.
 	sgRefs := make([]InstanceSG, 0, len(securityGroups))

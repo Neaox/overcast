@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"maps"
 
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
@@ -62,34 +63,46 @@ func (s *Service) SupportedProtocols() []codec.Codec {
 	return []codec.Codec{codec.JSON10, codec.JSON11, codec.RPCv2CBOR}
 }
 
+// tagStore is the namespace schedule and schedule-group tags live in, keyed by
+// the resource's ARN.
+func (s *Service) tagStore() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
+}
+
 func (s *Service) saveTagsJSON(ctx context.Context, arn string, tags map[string]string) {
 	if len(tags) == 0 {
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	_ = tagStore.Save(ctx, arn, tags)
+	_ = s.tagStore().Save(ctx, arn, tags)
 }
 
 func (s *Service) mergeTags(ctx context.Context, arn string, tags map[string]string) {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
 	existing := s.loadTags(ctx, arn)
-	for k, v := range tags {
-		existing[k] = v
-	}
-	_ = tagStore.Save(ctx, arn, existing)
+	maps.Copy(existing, tags)
+	_ = s.tagStore().Save(ctx, arn, existing)
 }
 
 func (s *Service) removeTags(ctx context.Context, arn string, keys []string) {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
 	existing := s.loadTags(ctx, arn)
 	for _, k := range keys {
 		delete(existing, k)
 	}
-	_ = tagStore.Save(ctx, arn, existing)
+	_ = s.tagStore().Save(ctx, arn, existing)
 }
 
 func (s *Service) loadTags(ctx context.Context, arn string) map[string]string {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	tags, _ := tagStore.Load(ctx, arn)
+	tags, _ := s.tagStore().Load(ctx, arn)
 	return tags
+}
+
+// deleteTags removes the tags of a resource that is going away.
+//
+// Nothing ties a tag blob to the lifetime of the record it describes, so the
+// delete paths that forgot this left ListTagsForResource answering for a
+// schedule or group that no longer existed.
+func (s *Service) deleteTags(ctx context.Context, arn string) error {
+	if aerr := s.tagStore().Delete(ctx, arn); aerr != nil {
+		return aerr
+	}
+	return nil
 }

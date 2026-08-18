@@ -146,7 +146,7 @@ type putEventsResponse struct {
 }
 
 func (s *Service) createEventBusTyped(ctx context.Context, req *createEventBusRequest) (*createEventBusResponse, *protocol.AWSError) {
-	arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	arn := s.busARN(ctx, req.Name)
 	bus := eventBus{Name: req.Name, ARN: arn}
 	b, _ := json.Marshal(bus)
 	if err := s.store.Set(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), req.Name), string(b)); err != nil {
@@ -163,7 +163,7 @@ func (s *Service) describeEventBusTyped(ctx context.Context, req *describeEventB
 	}
 	raw, found, err := s.store.Get(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), name))
 	if err != nil || !found {
-		arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "event-bus/"+name)
+		arn := s.busARN(ctx, name)
 		return &describeEventBusResponse{Name: name, Arn: arn}, nil
 	}
 	var bus eventBus
@@ -177,7 +177,7 @@ func (s *Service) listEventBusesTyped(ctx context.Context, _ *listEventBusesRequ
 		return nil, protocol.ErrInternalError
 	}
 	items := make([]eventBusResponse, 0, len(kvs)+1)
-	defaultARN := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "event-bus/default")
+	defaultARN := s.busARN(ctx, "default")
 	items = append(items, eventBusResponse{Name: "default", Arn: defaultARN})
 	for _, kv := range kvs {
 		var bus eventBus
@@ -211,16 +211,17 @@ func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]tagEntry, 0, len(stored))
-	for k, v := range stored {
-		tags = append(tags, tagEntry{Key: k, Value: v})
-	}
+	tags := serviceutil.TagElements(stored, func(k, v string) tagEntry {
+		return tagEntry{Key: k, Value: v}
+	})
 	return &listTagsForResourceResponse{Tags: tags}, nil
 }
 
 func (s *Service) deleteEventBusTyped(ctx context.Context, req *deleteEventBusRequest) (*struct{}, *protocol.AWSError) {
-	s.store.Delete(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), req.Name)) //nolint:errcheck
-	arn := protocol.ARN(s.region(ctx), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	arn, aerr := s.deleteEventBusRecord(ctx, req.Name)
+	if aerr != nil {
+		return nil, aerr
+	}
 	s.publishCtx(ctx, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &struct{}{}, nil
 }
@@ -237,7 +238,7 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 			return nil, scheduleValidationError(err)
 		}
 	}
-	arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
+	arn := s.ruleARN(ctx, req.EventBusName, req.Name)
 	rule := ebRule{
 		Name:         req.Name,
 		ARN:          arn,
@@ -371,15 +372,10 @@ func (s *Service) setRuleStateTyped(ctx context.Context, req *setRuleStateReques
 }
 
 func (s *Service) deleteRuleTyped(ctx context.Context, req *deleteRuleRequest) (*struct{}, *protocol.AWSError) {
-	if req.EventBusName == "" {
-		req.EventBusName = "default"
+	arn, aerr := s.deleteRuleRecord(ctx, req.EventBusName, req.Name)
+	if aerr != nil {
+		return nil, aerr
 	}
-	key := serviceutil.RegionKey(s.region(ctx), req.EventBusName+"/"+req.Name)
-	s.store.Delete(ctx, nsRules, key)    //nolint:errcheck
-	s.store.Delete(ctx, nsTargets, key)  //nolint:errcheck
-	s.store.Delete(ctx, nsLastFire, key) //nolint:errcheck
-	s.store.Delete(ctx, nsNextFire, key) //nolint:errcheck
-	arn := protocol.ARN(s.cfg.Region, s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
 	s.publishCtx(ctx, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &struct{}{}, nil
 }

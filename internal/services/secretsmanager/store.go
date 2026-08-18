@@ -104,11 +104,14 @@ func (s *Secret) GetTags() map[string]string {
 	}
 	return out
 }
+
+// SetTags stores the tags key-sorted, because this slice is what the wire sees:
+// a secret's tags are rendered in the order they are held, so an unordered
+// write here is a response that reorders between identical calls.
 func (s *Secret) SetTags(tags map[string]string) {
-	s.Tags = make([]Tag, 0, len(tags))
-	for k, v := range tags {
-		s.Tags = append(s.Tags, Tag{Key: k, Value: v})
-	}
+	s.Tags = serviceutil.TagElements(tags, func(k, v string) Tag {
+		return Tag{Key: k, Value: v}
+	})
 }
 
 // currentVersion returns the version carrying AWSCURRENT, or nil.

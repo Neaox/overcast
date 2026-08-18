@@ -542,9 +542,7 @@ func workGroupNameFromARN(arn string) (string, *protocol.AWSError) {
 }
 
 func tagsToList(tags map[string]string) []athenaTag {
-	list := make([]athenaTag, 0, len(tags))
-	for k, v := range tags {
-		list = append(list, athenaTag{Key: k, Value: v})
-	}
-	return list
+	return serviceutil.TagElements(tags, func(k, v string) athenaTag {
+		return athenaTag{Key: k, Value: v}
+	})
 }

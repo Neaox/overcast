@@ -157,6 +157,32 @@ func (s *cacheStore) region(ctx context.Context) string {
 	return middleware.RegionFromContext(ctx, s.defaultRegion)
 }
 
+// ── Tags store ────────────────────────────────────────────────────────────────
+
+// tags is the namespace resource tags live in. They are keyed by the resource's
+// own ARN, which is the string a caller passes as ResourceName.
+func (s *cacheStore) tags() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
+}
+
+// deleteTags removes the tags of a resource that is going away.
+//
+// Nothing ties a tag blob to the lifetime of the record it describes, so a
+// delete path that forgets this leaves ListTagsForResource answering for a
+// resource that no longer exists, and leaves the blob in the store for the rest
+// of the session. Every delete path below calls it, so a new one is a visibly
+// missing line rather than a silent leak.
+//
+// An untagged resource is not a special case: deleting a key that was never
+// written is a no-op. An empty ARN is — it would name the whole namespace's
+// zero key rather than this resource.
+func (s *cacheStore) deleteTags(ctx context.Context, arn string) *protocol.AWSError {
+	if arn == "" {
+		return nil
+	}
+	return s.tags().Delete(ctx, arn)
+}
+
 // ── CacheCluster store ────────────────────────────────────────────────────────
 
 func (s *cacheStore) putCacheCluster(ctx context.Context, c *CacheCluster) *protocol.AWSError {
@@ -183,6 +209,13 @@ func (s *cacheStore) getCacheCluster(ctx context.Context, id string) (*CacheClus
 }
 
 func (s *cacheStore) deleteCacheCluster(ctx context.Context, id string) *protocol.AWSError {
+	// The record is read for the ARN its tags are keyed by. A record that has
+	// already gone has no tags left to key, so its absence is not an error.
+	if c, aerr := s.getCacheCluster(ctx, id); aerr == nil {
+		if aerr := s.deleteTags(ctx, c.ARN); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -231,6 +264,11 @@ func (s *cacheStore) getReplicationGroup(ctx context.Context, id string) (*Repli
 }
 
 func (s *cacheStore) deleteReplicationGroup(ctx context.Context, id string) *protocol.AWSError {
+	if rg, aerr := s.getReplicationGroup(ctx, id); aerr == nil {
+		if aerr := s.deleteTags(ctx, rg.ARN); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsReplication, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -279,6 +317,11 @@ func (s *cacheStore) getServerlessCache(ctx context.Context, name string) (*Serv
 }
 
 func (s *cacheStore) deleteServerlessCache(ctx context.Context, name string) *protocol.AWSError {
+	if c, aerr := s.getServerlessCache(ctx, name); aerr == nil {
+		if aerr := s.deleteTags(ctx, c.ARN); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsServerless, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -327,6 +370,11 @@ func (s *cacheStore) getCacheSubnetGroup(ctx context.Context, name string) (*Cac
 }
 
 func (s *cacheStore) deleteCacheSubnetGroup(ctx context.Context, name string) *protocol.AWSError {
+	if sg, aerr := s.getCacheSubnetGroup(ctx, name); aerr == nil {
+		if aerr := s.deleteTags(ctx, sg.ARN); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsSubnetGroups, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -375,6 +423,11 @@ func (s *cacheStore) getCacheParameterGroup(ctx context.Context, name string) (*
 }
 
 func (s *cacheStore) deleteCacheParameterGroup(ctx context.Context, name string) *protocol.AWSError {
+	if pg, aerr := s.getCacheParameterGroup(ctx, name); aerr == nil {
+		if aerr := s.deleteTags(ctx, pg.ARN); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsParameterGroups, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

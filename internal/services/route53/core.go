@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // Core business logic shared by the REST-XML handlers and the typed
@@ -681,12 +682,9 @@ func (s *Service) listTagsCore(ctx context.Context, resourceType, bareID string)
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	out := make([]Tag, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, Tag{Key: k, Value: v})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out, nil
+	return serviceutil.TagElements(tags, func(k, v string) Tag {
+		return Tag{Key: k, Value: v}
+	}), nil
 }
 
 // ─── Health checks ────────────────────────────────────────────────────────────

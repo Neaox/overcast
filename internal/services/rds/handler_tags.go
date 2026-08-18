@@ -115,7 +115,6 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
 	// The RDS model gives TagList's member the locationName "Tag", so every
 	// SDK and the CLI send Tags.Tag.N.Key / Tags.Tag.N.Value. Keep the
 	// member-indexed form as a fallback for hand-rolled clients.
@@ -123,7 +122,7 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 	if len(incoming) == 0 {
 		incoming = parseIndexedTags(r, "Tags.member")
 	}
-	if aerr := serviceutil.ApplyStoreTags(r.Context(), tagStore, arn, incoming, rdsTagCfg); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), arn, incoming, rdsTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -144,16 +143,14 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
-	tags, aerr := serviceutil.ListStoreTags(r.Context(), tagStore, arn)
+	tags, aerr := h.store.tags().Load(r.Context(), arn)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	items := make([]rdsXMLTag, 0, len(tags))
-	for k, v := range tags {
-		items = append(items, rdsXMLTag{Key: k, Value: v})
-	}
+	items := serviceutil.TagElements(tags, func(k, v string) rdsXMLTag {
+		return rdsXMLTag{Key: k, Value: v}
+	})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &rdsXMLListTagsResponse{
 		Xmlns:            rdsXMLNS,
 		Result:           rdsXMLListTagsResult{TagList: rdsXMLTagList{Items: items}},
@@ -171,7 +168,6 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
 	// TagKeys is a plain KeyList with no locationName override, so clients
 	// send the standard Query form TagKeys.member.N.
 	var keys []string
@@ -182,7 +178,7 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		}
 		keys = append(keys, key)
 	}
-	if aerr := serviceutil.RemoveStoreTags(r.Context(), tagStore, arn, keys); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(r.Context(), h.store.tags(), arn, keys); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}

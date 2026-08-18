@@ -295,7 +295,7 @@ func (s *Service) createEventBus(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	arn := s.busARN(r.Context(), req.Name)
 	bus := eventBus{Name: req.Name, ARN: arn}
 	b, _ := json.Marshal(bus)
 	if err := s.store.Set(r.Context(), nsBuses, serviceutil.RegionKey(s.region(r.Context()), req.Name), string(b)); err != nil {
@@ -319,7 +319,7 @@ func (s *Service) describeEventBus(w http.ResponseWriter, r *http.Request) {
 	raw, found, err := s.store.Get(r.Context(), nsBuses, serviceutil.RegionKey(s.region(r.Context()), req.Name))
 	if err != nil || !found {
 		// Return a default bus if not found
-		arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+		arn := s.busARN(r.Context(), req.Name)
 		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Name": req.Name, "Arn": arn})
 		return
 	}
@@ -336,7 +336,7 @@ func (s *Service) listEventBuses(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(kvs)+1)
 	// Always include the default bus
-	defaultARN := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "event-bus/default")
+	defaultARN := s.busARN(r.Context(), "default")
 	items = append(items, map[string]any{"Name": "default", "Arn": defaultARN})
 	for _, kv := range kvs {
 		var bus eventBus
@@ -383,10 +383,9 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Return Tags as array of {Key, Value} objects (AWS SDK wire format).
-	tags := make([]map[string]string, 0, len(stored))
-	for k, v := range stored {
-		tags = append(tags, map[string]string{"Key": k, "Value": v})
-	}
+	tags := serviceutil.TagElements(stored, func(k, v string) map[string]string {
+		return map[string]string{"Key": k, "Value": v}
+	})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
 }
 
@@ -412,8 +411,11 @@ func (s *Service) deleteEventBus(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	s.store.Delete(r.Context(), nsBuses, serviceutil.RegionKey(s.region(r.Context()), req.Name)) //nolint:errcheck
-	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "event-bus/"+req.Name)
+	arn, aerr := s.deleteEventBusRecord(r.Context(), req.Name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	s.publish(r, events.EventBridgeBusDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
@@ -443,7 +445,7 @@ func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
+	arn := s.ruleARN(r.Context(), req.EventBusName, req.Name)
 	rule := ebRule{
 		Name:         req.Name,
 		ARN:          arn,
@@ -674,15 +676,11 @@ func (s *Service) deleteRule(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.EventBusName == "" {
-		req.EventBusName = "default"
+	arn, aerr := s.deleteRuleRecord(r.Context(), req.EventBusName, req.Name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Name)
-	s.store.Delete(r.Context(), nsRules, key)    //nolint:errcheck
-	s.store.Delete(r.Context(), nsTargets, key)  //nolint:errcheck
-	s.store.Delete(r.Context(), nsLastFire, key) //nolint:errcheck
-	s.store.Delete(r.Context(), nsNextFire, key) //nolint:errcheck
-	arn := protocol.ARN(s.region(r.Context()), s.cfg.AccountID, "events", "rule/"+req.EventBusName+"/"+req.Name)
 	s.publish(r, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
