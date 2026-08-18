@@ -597,6 +597,24 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                 )
               })}
             </div>
+
+            {/* The list's edge must say what it is: empty space below the last
+                row reads the same whether everything is loaded, a page is
+                still coming, or a tail is quietly waiting. Ascending only —
+                under Newest-first the bottom is the oldest edge of the loaded
+                window, and claiming "end of logs" there would be a lie
+                whenever the time range cut history off. */}
+            {sortAsc && (
+              <div className="py-2 text-center font-mono text-[10px] text-fg-muted">
+                {isFetchingNextPage
+                  ? "Loading more events…"
+                  : hasNextPage
+                    ? null
+                    : tailMode
+                      ? "Live tail — watching for new events"
+                      : "End of logs"}
+              </div>
+            )}
           </div>
 
           {/* Scroll to bottom FAB */}
