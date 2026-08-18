@@ -14,7 +14,7 @@ import (
 //
 // This is what makes the Docker HTTPS flow one command: a containerized
 // daemon mints its CA inside the container where the host CLI cannot read
-// it, so `overcast https enable --endpoint http://localhost:4566` fetches it
+// it, so `overcast https enable --endpoint https://localhost:4566` fetches it
 // from here instead of requiring a shared volume. Registered under /_
 // (exempt from the NotReady middleware like every internal endpoint) and
 // read from disk per request, so it needs no startup work and always serves
@@ -23,7 +23,7 @@ import (
 // 404 means "no CA minted" — the daemon is not running with
 // OVERCAST_TLS=auto and has never done so with this data dir.
 func caCertHandler(cfg *config.Config) http.HandlerFunc {
-	certPath := filepath.Join(trust.DirFor(cfg.DataDir), trust.CACertFile)
+	certPath := filepath.Join(cfg.CACertDir(), trust.CACertFile)
 	return func(w http.ResponseWriter, _ *http.Request) {
 		pem, err := os.ReadFile(certPath)
 		if err != nil {

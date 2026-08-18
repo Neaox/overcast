@@ -388,7 +388,7 @@ Daemon running in Docker? Trust it without a shared volume — the daemon
 serves its CA certificate at `/_overcast/ca.pem` and the CLI fetches it:
 
 ```bash
-overcast https enable --endpoint http://localhost:4566
+overcast https enable --endpoint https://localhost:4566
 ```
 
 (Loopback endpoints only, unless you acknowledge the trust decision with

@@ -200,8 +200,14 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// needed). Once, at startup; browserAPIPort is the port a host-side
 	// caller actually dials when the API port is remapped.
 	if cfg.TLSAuto() && containerendpoint.RunningInContainer() {
+		// https, not http: this branch only runs with TLS already on, and a
+		// plain-HTTP dial at the TLS port is answered with a handshake error
+		// ("client sent an HTTP request to an HTTPS server") that the operator
+		// then has to reason about. The fetch survives the wrong spelling —
+		// trust.FetchRemoteCA retries https — but the log line is the thing
+		// people copy, so it has to name the scheme the listener speaks.
 		logger.Info("running in a container with TLS — trust this daemon's CA from the host with one command",
-			zap.String("command", fmt.Sprintf("overcast https enable --endpoint http://localhost:%d", browserAPIPort(cfg))),
+			zap.String("command", fmt.Sprintf("overcast https enable --endpoint https://localhost:%d", browserAPIPort(cfg))),
 		)
 	}
 	prof.mark("serverTLSConfig")
@@ -298,7 +304,15 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 				// governs both, so the SPA's https origin can call the https
 				// API, and browsers get HTTP/2 (via ALPN) for the UI's SSE and
 				// progress streams instead of the 6-connection HTTP/1.1 cap.
-				uiSrv := &http.Server{Handler: uiHandler, TLSConfig: tlsServerConf, IdleTimeout: 60 * time.Second}
+				//
+				// Shared material, not a shared *tls.Config. ServeTLS calls
+				// http2ConfigureServer, which appends "h2"/"http/1.1" to
+				// srv.TLSConfig.NextProtos in place — so handing the same
+				// pointer to two http.Servers that each ServeTLS from their own
+				// goroutine is a data race on the ALPN list both listeners
+				// advertise (`go test -race` reports it on this exact shape).
+				// A clone per server costs nothing and removes it.
+				uiSrv := &http.Server{Handler: uiHandler, TLSConfig: cloneServerTLSConfig(tlsServerConf), IdleTimeout: 60 * time.Second}
 				go func() {
 					logger.Info("web UI listening",
 						zap.String("addr", uiLn.Addr().String()),
@@ -692,7 +706,7 @@ func buildHookEnv(cfg *config.Config) []string {
 	// root so their https calls verify: the local CA in auto mode, the
 	// operator's own certificate chain in explicit mode.
 	if cfg.TLSAuto() {
-		env = append(env, "AWS_CA_BUNDLE="+filepath.Join(trust.DirFor(cfg.DataDir), trust.CACertFile))
+		env = append(env, "AWS_CA_BUNDLE="+filepath.Join(cfg.CACertDir(), trust.CACertFile))
 	} else if cfg.TLSEnabled() {
 		env = append(env, "AWS_CA_BUNDLE="+cfg.TLSCertFile)
 	}
@@ -713,7 +727,7 @@ func buildHookEnv(cfg *config.Config) []string {
 func serverTLSConfig(cfg *config.Config, logger *zap.Logger) (*tls.Config, []byte, error) {
 	switch {
 	case cfg.TLSAuto():
-		caDir := trust.DirFor(cfg.DataDir)
+		caDir := cfg.CACertDir()
 		cert, _, err := trust.ServerCertificate(caDir, cfg.TLSAutoSANs())
 		if err != nil {
 			return nil, nil, fmt.Errorf("mint TLS certificate: %w", err)
@@ -740,6 +754,17 @@ func serverTLSConfig(cfg *config.Config, logger *zap.Logger) (*tls.Config, []byt
 	default:
 		return nil, nil, nil
 	}
+}
+
+// cloneServerTLSConfig returns a copy each http.Server can own. ServeTLS
+// mutates the config it is handed (http2ConfigureServer appends to NextProtos),
+// so the API and UI servers must not be given the same pointer. nil in, nil out
+// — the TLS-off path relies on that.
+func cloneServerTLSConfig(c *tls.Config) *tls.Config {
+	if c == nil {
+		return nil
+	}
+	return c.Clone()
 }
 
 // browserAPIPort returns the API port a browser on the host must dial, which

@@ -19,12 +19,28 @@ services:
       OVERCAST_DEFAULT_REGION: us-east-1
       OVERCAST_ACCOUNT_ID: "000000000000"
       # OVERCAST_SIGV4_VALIDATE: "false"  # TODO: set to true once implemented
+      # Where the local CA lives. Kept OFF /data deliberately: state is
+      # disposable and per-environment, a CA is a trust anchor you installed
+      # into this machine's trust store once. Pointing them at the same volume
+      # means `down -v` costs you a root-certificate re-approval.
+      OVERCAST_CA_DIR: /ca
     volumes:
       # Persist SQLite data across container restarts when STATE=sqlite.
       # Has no effect when STATE=memory.
       - overcast-data:/data
+      # The CA, on its own volume so it survives `down`, recreation and image
+      # upgrades. Better still for HTTPS: create the CA on the host once
+      # (`overcast https enable`) and mount it read-only, so every environment
+      # on this machine shares the one root you approved —
+      #   - ~/.overcast/data/ca:/ca:ro
+      - overcast-ca:/ca
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health" ]
+      # Mirrors the Dockerfile's HEALTHCHECK, https first (see the reasoning
+      # there): a compose healthcheck REPLACES the image's, so an http-only
+      # probe here marks the container unhealthy for the whole life of an
+      # OVERCAST_TLS=auto run. --no-check-certificate is fine — this is a
+      # liveness probe against our own loopback, not a trust decision.
+      test: [ "CMD-SHELL", "wget -qO- --no-check-certificate https://localhost:4566/_overcast/health || wget -qO- http://localhost:4566/_overcast/health" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -33,3 +49,4 @@ services:
 
 volumes:
   overcast-data:
+  overcast-ca:

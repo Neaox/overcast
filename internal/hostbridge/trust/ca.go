@@ -220,6 +220,14 @@ func (ca *CA) IssueServerCert(sans []string) (certPEM, keyPEM []byte, err error)
 // chains to the current CA, does not cover every requested SAN, or expires
 // within leafRenewalMargin. Re-minting a leaf never touches the CA, so an
 // installed trust-store entry stays valid.
+//
+// Caching the leaf is best-effort, and deliberately so: dir may be a
+// READ-ONLY mount. Sharing one CA with an ephemeral daemon means mounting the
+// directory the host owns, and mounting it `:ro` is the correct way to do
+// that — the container has no business rewriting the machine's trust anchor.
+// A leaf is derived data worth about a millisecond of ECDSA, so failing to
+// persist it costs a re-mint per restart, not a startup. Creating the CA
+// itself stays fatal: that is the one thing here that is not reproducible.
 func ServerCertificate(dir string, sans []string) (tls.Certificate, *x509.CertPool, error) {
 	ca, err := LoadOrCreateCA(dir)
 	if err != nil {
@@ -238,17 +246,23 @@ func ServerCertificate(dir string, sans []string) (tls.Certificate, *x509.CertPo
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return tls.Certificate{}, nil, fmt.Errorf("trust: write leaf certificate: %w", err)
-	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-		return tls.Certificate{}, nil, fmt.Errorf("trust: write leaf key: %w", err)
-	}
+	cacheLeaf(certPath, keyPath, certPEM, keyPEM)
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return tls.Certificate{}, nil, fmt.Errorf("trust: load freshly-minted leaf: %w", err)
 	}
 	return cert, pool, nil
+}
+
+// cacheLeaf persists a freshly-minted leaf, ignoring failures — see
+// ServerCertificate. The key is written first and the certificate second, so a
+// half-written pair never presents as a usable cache entry (loadCachedLeaf
+// needs both, and reads the certificate first).
+func cacheLeaf(certPath, keyPath string, certPEM, keyPEM []byte) {
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return
+	}
+	_ = os.WriteFile(certPath, certPEM, 0o644)
 }
 
 // loadCachedLeaf returns the on-disk leaf when it is still fit for use:

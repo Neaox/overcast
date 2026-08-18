@@ -11,7 +11,7 @@ package main
 //     the command cannot flip the mode on for future `overcast serve` runs
 //     itself — echoing the exact line is the whole remaining step.
 //
-//   - Remote (--endpoint http://localhost:4566): the Docker flow. The daemon
+//   - Remote (--endpoint https://localhost:4566): the Docker flow. The daemon
 //     minted its CA inside the container; fetch its *certificate* from
 //     /_overcast/ca.pem, cache it locally, and install it into the trust
 //     store — no shared volume, no per-OS certutil incantation. Loopback
@@ -52,10 +52,17 @@ func newHTTPSCmd() *cobra.Command {
 
 Safe to re-run: every step is idempotent.
 
-Docker golden path:
+Docker golden path — create the CA here, then let the container borrow it, so
+recreating the container never costs you another trust prompt:
 
-  docker run -e OVERCAST_TLS=auto -v overcast-data:/data -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
-  overcast https enable --endpoint http://localhost:4566
+  overcast https enable
+  docker run -e OVERCAST_TLS=auto -e OVERCAST_CA_DIR=/ca \
+    -v ~/.overcast/data/ca:/ca:ro -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
+
+No overcast CLI on the host? The daemon can mint its own CA and serve the
+certificate for --endpoint to install instead:
+
+  overcast https enable --endpoint https://localhost:4566
 
 Overcast is configured via environment variables only, so for a local daemon
 finish by setting OVERCAST_TLS=auto (the command prints the exact line).`,
@@ -96,7 +103,7 @@ func httpsStore(cmd *cobra.Command) (trust.Store, *config.Config, trustTarget, e
 	if err != nil {
 		return nil, nil, trustTarget{}, err
 	}
-	tt := resolveTrustTarget(cmd, cfg.DataDir)
+	tt := resolveTrustTarget(cmd, cfg)
 	store, err := trust.New(log, tt.caDir)
 	if err != nil {
 		if errors.Is(err, trust.ErrUnsupported) {
@@ -162,16 +169,29 @@ Open the web console at
 
 	// 4. Overcast has no persisted config file — everything is environment
 	// variables — so the one remaining step is the user's.
+	//
+	// The Docker line mounts this CA read-only rather than letting the
+	// container mint its own. A container's CA dies with the container, and
+	// re-installing a trust root on every recreation is not a workflow; the
+	// machine already owns a CA at this point, so containers should borrow it
+	// and mint leaves. Read-only because a trust anchor is the host's.
 	fmt.Fprintf(out, `
 HTTPS is set up. Start (or restart) the daemon with TLS enabled:
 
   OVERCAST_TLS=auto overcast serve
 
-or add OVERCAST_TLS=auto to your environment / docker run -e flags, then open
+In Docker, share this CA so container recreation never invalidates the trust
+install you just approved:
+
+  docker run -e OVERCAST_TLS=auto \
+    -e OVERCAST_CA_DIR=/ca -v %s:/ca:ro \
+    -p 4566:4566 -p %d:%d ghcr.io/neaox/overcast:alpha
+
+Then open
 
   https://localhost.overcast.sh:%d
 
-`, defaultUIPort)
+`, tt.caDir, defaultUIPort, defaultUIPort, defaultUIPort)
 	return nil
 }
 

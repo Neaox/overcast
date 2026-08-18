@@ -178,6 +178,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_WAL_FSYNC_INTERVAL`    | `100ms`                | Periodic fsync interval used when `OVERCAST_WAL_FSYNC=interval`                      |
 | `OVERCAST_WAL_MAX_LOG_BYTES`     | `67108864`             | WAL log compaction threshold in bytes (default 64 MiB)                               |
 | `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state                                    |
+| `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local overcast CA lives. Separable from the data dir because the two have opposite lifetimes: state is disposable, a CA is a trust anchor you installed into this machine once. Point it at a host-owned directory (`-v ~/.overcast/data/ca:/ca:ro`) so an ephemeral container mints leaves from a root that outlives it — see [HTTPS and HTTP/2](./https.md#docker). May be read-only |
 | `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when not present in SigV4 header                        |
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
@@ -409,14 +410,22 @@ overcast https enable            # once per machine: local CA → system trust s
 OVERCAST_TLS=auto overcast serve # both listeners now serve HTTPS + HTTP/2
 ```
 
-Running in Docker? Also two commands — the daemon serves its CA certificate
-at `/_overcast/ca.pem`, so no shared volume or manual cert wrangling:
+Running in Docker? Still those two commands — mount the CA the first one
+created, read-only, so the container mints certificates from a root this
+machine already trusts and recreating it never costs you another approval
+prompt:
 
 ```bash
-docker run -d -e OVERCAST_TLS=auto -v overcast-data:/data \
+overcast https enable            # once per machine
+docker run -d -e OVERCAST_TLS=auto \
+  -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
   -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
-overcast https enable --endpoint http://localhost:4566
 ```
+
+No `overcast` on the host? The daemon can mint its own CA and serve the
+certificate at `/_overcast/ca.pem` for `overcast https enable --endpoint
+https://localhost:4566` to install — keep `OVERCAST_CA_DIR` on a named volume
+so it survives recreation. See [HTTPS and HTTP/2](./https.md#docker).
 
 Then open <https://localhost.overcast.sh:4567> (public DNS resolves
 `*.localhost.overcast.sh` to `127.0.0.1` — no hosts-file edits). Both the API
