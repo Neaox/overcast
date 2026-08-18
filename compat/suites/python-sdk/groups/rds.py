@@ -12,17 +12,47 @@ def _rds(ctx: TestContext):
     return make_clients(ctx.endpoint, ctx.region)._get("rds")
 
 
-def _wait_for_status(rds, db_id: str, target: str, max_attempts: int = 60) -> None:
-    """Poll until the DB instance reaches *target* status or raise after max_attempts."""
-    for _ in range(max_attempts):
+# How long a DB instance is given to reach a target status, and how often it is
+# asked. Shared with the go, node, java and cli suites, which wait for the same
+# thing against the same emulator.
+#
+# A wall-clock budget rather than a count of attempts, because those two stop
+# meaning the same thing the moment the machine is busy: "60 attempts, 0.5s
+# apart" is 30 seconds only while every describe_db_instances returns instantly.
+# What is being waited for is a real database container's first boot, data
+# directory initialisation included, and 30 seconds does not cover that on a
+# loaded machine — the go, node and java suites all failed here during a release
+# run with five suites in flight, and passed run alone. The CLI suite already
+# carried 120 seconds for exactly this reason; this is that number, made common.
+RDS_WAIT_BUDGET_SECONDS = 120.0
+RDS_POLL_INTERVAL_SECONDS = 1.0
+
+
+def _wait_for_status(
+    rds, db_id: str, target: str, budget: float = RDS_WAIT_BUDGET_SECONDS
+) -> None:
+    """Poll until the DB instance reaches *target* status, or raise once the budget is spent."""
+    deadline = time.monotonic() + budget
+    last = "(none reported)"
+    while True:
         resp = rds.describe_db_instances(DBInstanceIdentifier=db_id)
         status = resp.get("DBInstances", [{}])[0].get("DBInstanceStatus", "")
-        if status == target:
-            return
-        time.sleep(0.5)
-    raise AssertionError(
-        f"DB instance {db_id} did not reach '{target}' after {max_attempts} attempts"
-    )
+        if status:
+            last = status
+            if status == target:
+                return
+            # A failed instance will never reach any target, so spending the
+            # rest of the budget on it only delays the report.
+            if status == "failed":
+                raise AssertionError(
+                    f"DB instance {db_id} went to 'failed' while waiting for '{target}'"
+                )
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"DB instance {db_id} did not reach '{target}' within {budget:.0f}s "
+                f"(last status '{last}')"
+            )
+        time.sleep(RDS_POLL_INTERVAL_SECONDS)
 
 
 # ── rds-instances ─────────────────────────────────────────────────────────────

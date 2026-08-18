@@ -126,15 +126,54 @@ public final class RdsGroup implements ServiceGroup {
         Assertions.assertNotNull(resp.dbInstance(), "StartDBInstance: missing dbInstance");
     }
 
-    /** Polls DescribeDBInstances until the instance reaches the expected status (max 10 s). */
+    /**
+     * How long a DB instance is given to reach a target status, and how often it is asked.
+     * Shared with the go, node, python and cli suites, which wait for the same thing against
+     * the same emulator.
+     *
+     * <p>A wall-clock budget rather than a count of attempts, because those two stop meaning
+     * the same thing the moment the machine is busy. This suite had the tightest budget of the
+     * five — 20 attempts at 500ms, ten seconds — for a real database container's first boot,
+     * data directory initialisation included. The CLI suite already carried 120 seconds for
+     * this reason; this is that number, made common.
+     */
+    private static final long RDS_WAIT_BUDGET_MS = 120_000L;
+    private static final long RDS_POLL_INTERVAL_MS = 1_000L;
+
+    /**
+     * Polls DescribeDBInstances until the instance reaches the expected status, and throws once
+     * the budget is spent.
+     *
+     * <p>It used to return quietly instead, which is how a ten-second budget presented as a
+     * server fault: StopDBInstance ran anyway and failed with "must be available to stop", so
+     * the report named the operation that came after the wait rather than the wait that had not
+     * finished. A wait that gives up has to say so.
+     */
     private void waitForStatus(String id, String expected) throws Exception {
-        for (int i = 0; i < 20; i++) {
+        long deadline = System.nanoTime() + RDS_WAIT_BUDGET_MS * 1_000_000L;
+        String last = "(none reported)";
+        while (true) {
             var resp = rds().describeDBInstances(r -> r.dbInstanceIdentifier(id));
-            if (!resp.dbInstances().isEmpty()
-                    && expected.equals(resp.dbInstances().get(0).dbInstanceStatus())) {
-                return;
+            if (!resp.dbInstances().isEmpty()) {
+                String status = resp.dbInstances().get(0).dbInstanceStatus();
+                if (status != null) {
+                    last = status;
+                    if (expected.equals(status)) {
+                        return;
+                    }
+                    // A failed instance will never reach any target, so spending the rest of
+                    // the budget on it only delays the report.
+                    if ("failed".equals(status)) {
+                        throw new AssertionError("DB instance " + id
+                                + " went to \"failed\" while waiting for \"" + expected + "\"");
+                    }
+                }
             }
-            Thread.sleep(500);
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("DB instance " + id + " did not reach \"" + expected
+                        + "\" within " + RDS_WAIT_BUDGET_MS + "ms (last status \"" + last + "\")");
+            }
+            Thread.sleep(RDS_POLL_INTERVAL_MS);
         }
     }
 
