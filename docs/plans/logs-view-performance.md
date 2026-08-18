@@ -213,10 +213,12 @@ Ordered so each phase is independently shippable and measurable. Failing-test-fi
 changes observable behavior; paced benchmarks before/after each phase (see Phase 0).
 
 **Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`), 2 (peek virtualization),
-3 (row render cost), 4's forward direction (nextToken paging, auto-load at the newest edge,
-"+" count label, monitor-tab refetch made honest) and 5 (shared `LogMessage`, virtualized search
-results — see its section for the two consolidations deliberately declined) landed. Still open:
-Phase 0's formal benchmark baseline, Phase 4's *backward* time-window expansion, and the peek's
+3 (row render cost), 4 (nextToken paging, auto-load at the newest edge, "+" count label,
+monitor-tab refetch made honest — and the backward half: time-window expansion at the oldest
+edge, with "Start of logs"/"Start of range" markers and jump-to-timestamp riding the anchor
+machinery) and 5 (shared `LogMessage`, virtualized search results — see its section for the two
+consolidations deliberately declined) landed. Still open:
+Phase 0's formal benchmark baseline and the peek's
 forward paging. Phase 1 shipped without the full
 `useLogFeed` extraction — the hook owns the session + buffer + cap and both surfaces consume it;
 the fetched-side merge stayed in the viewers (sorted-merge, no per-batch re-sort), and the
@@ -283,7 +285,8 @@ object's identity index within the feed), never the array index.
 - `data-1p-ignore` + `data-lpignore="true"` on the log filter inputs (see §2b — keeps password
   managers' field analysis away from the page's only fill-candidate elements).
 
-### Phase 4 — Pagination fidelity (M) — fixes F7 — **landed** (forward direction)
+### Phase 4 — Pagination fidelity (M) — fixes F7 — **landed** (stream/all-streams both
+directions; the peek's forward paging remains open)
 
 - `filterEvents` gains `nextToken`/`limit` passthrough; `LogEventsViewer` moves to
   `useInfiniteQuery` with a bottom sentinel ("load more" as the user nears the end of loaded
@@ -295,6 +298,26 @@ object's identity index within the feed), never the array index.
   "load older" is *time-window expansion*: extend `startTime` backward and fetch the exposed
   sub-range `[T−δ, oldestLoaded)` as its own fully-paged query, prepended (with the virtualizer's
   scroll anchoring). Newer events come from the `nextToken` walk or the live tail.
+- **Backward half, as landed.** One bidirectional `useInfiniteQuery`: forward pageParams are
+  nextTokens, backward pageParams are time-window chunks, each chunk a fully-paged sub-query of
+  its window. Chunks start at the anchor lead-in's 15 minutes and *double* per step (uncapped):
+  O(log) requests across sparse history — the store's time-range pushdown makes wide-but-empty
+  windows cheap — while dense history self-limits, since the next chunk loads only after the
+  user scrolls through the previous one. Boundaries honour FilterLogEvents' inclusive `endTime`:
+  adjacent chunks are `[a, b]`, `[b+1, c]`, so a boundary-millisecond event loads exactly once.
+  The stop condition is metadata, not probing: min `firstEventTimestamp` over the streams in
+  view (one `DescribeLogStreams`) is the floor *hint* — best-effort in real AWS, so the final
+  chunk goes out with no `startTime` at all rather than clipping to the hint; with no hint, one
+  empty probe is tolerated before the unbounded close-out. Expansion runs only when the window
+  start is system-chosen (an anchor's lead-in): a user-set start is a hard floor, never fetched
+  past, and the oldest edge says "Start of range" with the time filter as the reason —
+  "Start of logs" when history is truly exhausted, "Loading older events…" in flight, mirrored
+  top/bottom with the sort direction. Prepends anchor by row key (the peek's pattern), sort each
+  chunk once and merge (never a re-sort of loaded pages), keep one backward window in flight,
+  and the query skips focus refetches so a refocus never replays every window. Jump-to-timestamp
+  (toolbar, next to the time filter) navigates to the same route with `anchorTs` and no
+  signature; anchor matching falls back to the first event at-or-after the timestamp, with the
+  persistent mark reserved for exact matches.
 - Note on mutation cost (see §2b): React's commit already inserts each newly-mounted row's
   subtree as one detached-built insertion, and a whole commit reaches observers as one
   microtask-batched callback — so pagination prepends are cheap *provided keys are stable*;
@@ -361,9 +384,10 @@ live. If that case ever matters, the heartbeat makes a staleness watchdog trivia
 A search hit now deep-links to its stream anchored on the exact event (`anchorTs` + a djb2
 message signature in the URL): the viewer widens its window to 15 minutes before the anchor,
 pages until the event is loaded, centres it, and keeps it marked. Context below is the ordinary
-newest-edge infinite scroll; context *above* beyond the 15-minute lead-in is still bounded by the
-window — the full upgrade is Phase 4's open backward expansion, at which point the anchor flow
-inherits it for free. The stream column sits on the right of the results, as the console has it.
+newest-edge infinite scroll; context *above* beyond the 15-minute lead-in now loads through
+Phase 4's backward time-window expansion — the anchor flow inherited it for free, as predicted
+(pinned by a test), since the lead-in is exactly the system-chosen window start expansion widens.
+The stream column sits on the right of the results, as the console has it.
 
 ### QOL backlog (viewer-side, fidelity-safe — none started)
 
@@ -373,9 +397,9 @@ devtools; copy-deep-link on any row (the anchor URL machinery already exists); c
 single-line rows with per-row expand (both the console's default and the plan's §2c perf lever);
 keyboard row navigation (j/k, Enter to expand, c to copy); click a Lambda requestId to filter to
 that invocation's lines; "filter for selection"; persisted view preferences (Format/Syntax/Wrap/
-sort survive revisits); export visible events (the console offers CSV download); jump-to-timestamp
-(reuses the anchor flow). Highest leverage for Lambda debugging: requestId click-to-filter and
-copy-deep-link.
+sort survive revisits); export visible events (the console offers CSV download). Jump-to-timestamp
+landed with Phase 4's backward half (it reuses the anchor flow, as planned). Highest leverage for
+Lambda debugging: requestId click-to-filter and copy-deep-link.
 
 ## 4. Explicit non-goals
 
