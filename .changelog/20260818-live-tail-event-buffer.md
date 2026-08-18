@@ -1,1 +1,0 @@
-* [cloudwatch] Live Tail no longer drops events when a producer writes many small PutLogEvents calls — the session buffer is now counted in events (5,000, matching AWS) rather than write batches (10), and an update that follows an overflow reports `sampled: true` instead of losing lines silently
