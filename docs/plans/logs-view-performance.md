@@ -406,6 +406,38 @@ Phase 4's backward time-window expansion — the anchor flow inherited it for fr
 (pinned by a test), since the lead-in is exactly the system-chosen window start expansion widens.
 The stream column sits on the right of the results, as the console has it.
 
+## 3d. Storage-side access audit (2026-08-18) — every log-view pattern measured, four fixed
+
+The emulator side of this plan: an audit of `internal/services/cloudwatch/logs/`'s storage layer
+against each access pattern the surfaces above generate, benchmark-first
+(`access_pattern_bench_test.go`, run against BOTH backends — memory and SQLite). Median of
+`-count=5` on the dev box (Ryzen 9 5900X, Windows; SQLite in a temp dir):
+
+| Pattern | Verdict | Before → after (median) |
+| --- | --- | --- |
+| FilterLogEvents window chunk (backward window-walk, Phase 4) | already O(chunk), both backends | mem ~38µs, SQL ~2.8ms per 1k-event chunk, flat at any depth in a 500k-event group |
+| GetLogEvents token page 400k deep (peek walking back) | **fixed** — was O(distance from window edge) | mem 664µs → 2.6µs; SQL 89ms → 0.36ms (flat vs shallow) |
+| FilterLogEvents scan-budget batch resume at depth | **fixed** — same O(distance) shape | mem 913µs → 46µs; SQL 92ms → 3.4ms (flat vs shallow) |
+| FilterLogEvents `logStreamNames: [one]` (single-stream viewer) | **fixed** — scanned the whole group's window | 3.0ms → 82µs (20-stream group, mem) |
+| DescribeLogStreams (firstEventTimestamp as history floor) | already metadata-only, O(1) per put | ~15µs regardless of 1k vs 500k events behind it |
+| PutLogEvents flush vs stream history | **fixed** — SQL re-ran `MAX(seq)` (a per-stream index scan) per batch; mem re-sorted the whole stream per flush | SQL 129ms → 0.65ms per batch at 500k events; mem 3.8ms → 0.9µs |
+| Retention expiry | already indexed (`region, group_name, ts` range delete via `idx_logs_events_group` — the same index the flat window-chunk numbers above exercise) | — |
+
+The fixes, all in `event_backend.go` (+ one line in `typed_logic.go`): binary-search positioning
+for the memory backend's range reads (the matching set is contiguous in the `(ts, seq)` order, so
+deep pages are O(log n + page)); a monotonic-append fast path skipping the full re-sort; folding a
+cursor's implied ts bound into the SQL window predicate so a resume is an index SEEK (the cursor
+expressed only as a row-value/OR residual is treated as a filter by the planner — measured, not
+assumed); a per-process seq counter replacing the per-batch `MAX(seq)` (aligning SQL with the
+memory backend's monotonic-across-delete semantics, pinned by a new parity test); and pushing a
+single explicit `logStreamNames` entry down as its own prefix bound.
+
+Consequence for Phase 4's backward time-window expansion (landed the same day): each
+`[T−δ, oldestLoaded)` chunk lands on an O(chunk) storage path in both backends, and repeated
+"load older" walks cost the same for the oldest chunk as the newest. No wire-visible semantics
+changed (inclusive/exclusive bounds, token shapes, interleaving order all pinned by the existing
+integration suite).
+
 ### QOL backlog (viewer-side, fidelity-safe)
 
 Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes. **Landed 2026-08-18**

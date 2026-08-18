@@ -280,13 +280,23 @@ func (b *memEventBackend) appendEvents(_ context.Context, region, group, stream 
 		seq++
 	}
 	b.nextSeq[key] = seq
-	merged := append(b.streams[key], stored...)
-	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].Timestamp != merged[j].Timestamp {
-			return merged[i].Timestamp < merged[j].Timestamp
-		}
-		return merged[i].seq < merged[j].seq
-	})
+	existing := b.streams[key]
+	// Fast path: the caller guarantees `events` is sorted ascending by
+	// Timestamp (see the interface doc), and this batch's seqs are all
+	// larger than any existing ones — so when the batch starts at or after
+	// the current tail's timestamp, a plain append preserves the
+	// (Timestamp, seq) order and the O(history) re-sort per flush is
+	// skipped. Out-of-order batches (a writer back-filling older
+	// timestamps) still take the full stable sort.
+	merged := append(existing, stored...)
+	if len(existing) > 0 && stored[0].Timestamp < existing[len(existing)-1].Timestamp {
+		sort.SliceStable(merged, func(i, j int) bool {
+			if merged[i].Timestamp != merged[j].Timestamp {
+				return merged[i].Timestamp < merged[j].Timestamp
+			}
+			return merged[i].seq < merged[j].seq
+		})
+	}
 	b.streams[key] = merged
 	return nil
 }
@@ -305,57 +315,60 @@ func (b *memEventBackend) getEvents(_ context.Context, region, group, stream str
 
 // getEventsRange implements the eventBackend interface method of the same
 // name (see its doc comment there) against the in-process map. b.streams'
-// per-stream slice is already sorted ascending by (Timestamp, seq), so both
-// directions are a single linear scan with early termination.
+// per-stream slice is already sorted ascending by (Timestamp, seq), and every
+// constraint — the [startTs, endTs] window and the direction-aware cursor —
+// is a prefix or suffix predicate on that order, so the matching events are
+// one CONTIGUOUS range whose bounds binary search finds in O(log n). The old
+// linear scan from the slice edge made a token page cost O(distance from
+// that edge) — a backward page resumed 400k events before the tail visited
+// (and cursor-rejected) all 400k newer events first — which is exactly the
+// deep-page pathology the access-pattern benchmarks
+// (access_pattern_bench_test.go) exist to keep out.
 func (b *memEventBackend) getEventsRange(_ context.Context, region, group, stream string, startTs, endTs int64, after eventCursor, limit int, forward bool) ([]RangedEvent, error) {
 	key := memEventKey(region, group, stream)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	src := b.streams[key]
 
-	if forward {
-		out := make([]RangedEvent, 0)
-		for _, e := range src {
-			if e.Timestamp > endTs {
-				break
-			}
-			if e.Timestamp < startTs {
-				continue
-			}
-			if !cursorAllows(e.Timestamp, e.seq, after, true) {
-				continue
-			}
-			out = append(out, RangedEvent{LogEvent: e.LogEvent, Seq: e.seq})
-			if limit > 0 && len(out) >= limit {
-				break
-			}
-		}
-		return out, nil
-	}
-
-	// Backward: walk from the end, collecting the LAST `limit` matches, then
-	// reverse to ascending order — AWS always returns events chronologically
-	// ascending regardless of paging direction.
-	var rev []RangedEvent
-	for i := len(src) - 1; i >= 0; i-- {
+	// lo: first index inside the window and allowed by a forward cursor.
+	// Both "ts >= startTs" and "(ts, seq) > cursor" are monotone along the
+	// slice, so their conjunction is a valid sort.Search predicate.
+	lo := sort.Search(len(src), func(i int) bool {
 		e := src[i]
 		if e.Timestamp < startTs {
-			break
+			return false
 		}
+		if forward && !cursorAllows(e.Timestamp, e.seq, after, true) {
+			return false
+		}
+		return true
+	})
+	// hi: first index PAST the window's end (or at/past a backward cursor
+	// — "(ts, seq) < cursor" holds for a prefix of the slice, so its
+	// negation is monotone too).
+	hi := sort.Search(len(src), func(i int) bool {
+		e := src[i]
 		if e.Timestamp > endTs {
-			continue
+			return true
 		}
-		if !cursorAllows(e.Timestamp, e.seq, after, false) {
-			continue
+		if !forward && !cursorAllows(e.Timestamp, e.seq, after, false) {
+			return true
 		}
-		rev = append(rev, RangedEvent{LogEvent: e.LogEvent, Seq: e.seq})
-		if limit > 0 && len(rev) >= limit {
-			break
+		return false
+	})
+	if hi < lo {
+		hi = lo
+	}
+	if limit > 0 && hi-lo > limit {
+		if forward {
+			hi = lo + limit // earliest `limit` matches
+		} else {
+			lo = hi - limit // latest `limit` matches
 		}
 	}
-	out := make([]RangedEvent, len(rev))
-	for i, e := range rev {
-		out[len(rev)-1-i] = e
+	out := make([]RangedEvent, 0, hi-lo)
+	for _, e := range src[lo:hi] {
+		out = append(out, RangedEvent{LogEvent: e.LogEvent, Seq: e.seq})
 	}
 	return out, nil
 }
@@ -385,13 +398,22 @@ func (b *memEventBackend) getGroupEventsRange(_ context.Context, region, group, 
 		if streamPrefix != "" && !strings.HasPrefix(streamName, streamPrefix) {
 			continue
 		}
-		// Position idx at the first event satisfying startTs/the cursor —
-		// binary search on Timestamp>=startTs (monotonic since ascending),
-		// then a short linear advance past any tied-at-cursor entries.
-		startIdx := sort.Search(len(events), func(i int) bool { return events[i].Timestamp >= startTs })
-		for startIdx < len(events) && !groupCursorAllows(events[startIdx].Timestamp, streamName, events[startIdx].seq, after) {
-			startIdx++
-		}
+		// Position idx at the first event satisfying startTs AND the cursor,
+		// in one binary search: for a FIXED stream name, groupCursorAllows is
+		// monotone along the (Timestamp, seq)-sorted slice (it reduces to
+		// ts >= cursor.ts, ts > cursor.ts, or (ts, seq) > (cursor.ts,
+		// cursor.seq) depending on how streamName compares to the cursor's),
+		// so the conjunction is a valid sort.Search predicate. The previous
+		// linear advance past cursor-disallowed entries made FilterLogEvents'
+		// scan-budget batches cost O(distance from startTs) to resume —
+		// batch k re-visited every event batches 1..k-1 had already walked.
+		startIdx := sort.Search(len(events), func(i int) bool {
+			e := events[i]
+			if e.Timestamp < startTs {
+				return false
+			}
+			return groupCursorAllows(e.Timestamp, streamName, e.seq, after)
+		})
 		streams = append(streams, streamCursor{name: streamName, events: events, idx: startIdx})
 	}
 
@@ -539,13 +561,27 @@ type sqlEventBackend struct {
 	db   *sql.DB
 	once sync.Once
 	err  error // set by init; sticky
+
+	// seqMu guards nextSeq, the per-stream monotonic seq counter — the SQL
+	// analogue of memEventBackend.nextSeq. Seeded lazily from MAX(seq) on a
+	// stream's first append of the process (the PRIMARY KEY orders by (ts,
+	// seq) within a stream, so MAX(seq) is a full per-stream index scan —
+	// affordable once per process, pathological once per flush, which is
+	// what the previous per-appendEvents MAX query did: PutLogEvents' write
+	// cost grew linearly with the stream's persisted history, measured at
+	// ~1.2ms → ~104ms per batch from 1k → 500k persisted events). Counters
+	// deliberately survive deleteStream/deleteGroup, matching the memory
+	// backend's A1-style lesson (see memEventBackend.deleteStream); only
+	// debugDeleteAll (the debug/reset path) clears them, again matching.
+	seqMu   sync.Mutex
+	nextSeq map[string]int64 // key: memEventKey(region, group, stream)
 }
 
 // newSQLEventBackend returns a backend that lazily resolves the *sql.DB on
 // first use. Deferring DB resolution avoids blocking startup when the
 // underlying store opens SQLite asynchronously.
 func newSQLEventBackend(dbFn func() *sql.DB) *sqlEventBackend {
-	return &sqlEventBackend{dbFn: dbFn}
+	return &sqlEventBackend{dbFn: dbFn, nextSeq: make(map[string]int64)}
 }
 
 func (b *sqlEventBackend) init() error {
@@ -558,6 +594,29 @@ func (b *sqlEventBackend) init() error {
 	return b.err
 }
 
+// reserveSeqs allocates n consecutive per-stream seq values, returning the
+// first. The in-process counter is seeded from MAX(seq) on a stream's first
+// append of the process (see the nextSeq field's doc comment for why that
+// scan must not run per flush). Seq gaps from a failed transaction are
+// harmless — only relative order matters — so the reservation is not rolled
+// back on append failure.
+func (b *sqlEventBackend) reserveSeqs(ctx context.Context, region, group, stream string, n int) (int64, error) {
+	key := memEventKey(region, group, stream)
+	b.seqMu.Lock()
+	defer b.seqMu.Unlock()
+	next, ok := b.nextSeq[key]
+	if !ok {
+		if err := b.db.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(seq), -1) + 1 FROM logs_events WHERE region = ? AND group_name = ? AND stream_name = ?`,
+			region, group, stream,
+		).Scan(&next); err != nil {
+			return 0, fmt.Errorf("seed next seq: %w", err)
+		}
+	}
+	b.nextSeq[key] = next + int64(n)
+	return next, nil
+}
+
 func (b *sqlEventBackend) appendEvents(ctx context.Context, region, group, stream string, events []LogEvent) error {
 	if len(events) == 0 {
 		return nil
@@ -565,25 +624,20 @@ func (b *sqlEventBackend) appendEvents(ctx context.Context, region, group, strea
 	if err := b.init(); err != nil {
 		return err
 	}
+
+	// seq must be unique (and insertion-ordered) within (region, group,
+	// stream, ts) — allocated from the per-process counter, NOT a per-batch
+	// MAX(seq) query (see reserveSeqs).
+	nextSeq, err := b.reserveSeqs(ctx, region, group, stream, len(events))
+	if err != nil {
+		return fmt.Errorf("cloudwatch logs append events [%s/%s/%s]: %w", region, group, stream, err)
+	}
+
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cloudwatch logs append events [%s/%s/%s]: begin tx: %w", region, group, stream, err)
 	}
 	defer tx.Rollback() //nolint:errcheck // best-effort; no-op after a successful Commit.
-
-	// seq must be unique (and ideally insertion-ordered) within
-	// (region, group, stream, ts). A per-stream monotonic counter, seeded
-	// from the current max, is cheap (one indexed scalar lookup) compared to
-	// the old design's full-history rewrite, and correct regardless of
-	// whether this stream pre-existed (from the migration or an earlier
-	// process) or is brand new.
-	var nextSeq int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(seq), -1) + 1 FROM logs_events WHERE region = ? AND group_name = ? AND stream_name = ?`,
-		region, group, stream,
-	).Scan(&nextSeq); err != nil {
-		return fmt.Errorf("cloudwatch logs append events [%s/%s/%s]: next seq: %w", region, group, stream, err)
-	}
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO logs_events (region, group_name, stream_name, ts, seq, ingestion_ts, message)
@@ -646,16 +700,34 @@ func (b *sqlEventBackend) getEventsRange(ctx context.Context, region, group, str
 	if err := b.init(); err != nil {
 		return nil, err
 	}
+	// A valid cursor implies a tighter ts bound than the caller's window on
+	// the resume side: forward resume means ts >= after.Timestamp, backward
+	// means ts <= after.Timestamp. Folding that into the window's own range
+	// term is what makes the resume an INDEX SEEK — measured on this
+	// machine's planner (modernc SQLite), the cursor expressed only as a
+	// row-value/OR residual is treated as a filter, so a page resuming 400k
+	// events from the window edge still scanned all 400k already-paged index
+	// entries (~90-125ms/page at 500k events; ~0.6ms once the bound is
+	// tightened, flat at any depth). The strict part of the comparison (the
+	// tied-timestamp rows) stays as the residual predicate below.
+	if after.Valid {
+		if forward && after.Timestamp > startTs {
+			startTs = after.Timestamp
+		}
+		if !forward && after.Timestamp < endTs {
+			endTs = after.Timestamp
+		}
+	}
 	query := `SELECT ts, seq, ingestion_ts, message FROM logs_events
 		WHERE region = ? AND group_name = ? AND stream_name = ? AND ts >= ? AND ts <= ?`
 	args := []any{region, group, stream, startTs, endTs}
 	if after.Valid {
 		if forward {
-			query += ` AND (ts > ? OR (ts = ? AND seq > ?))`
+			query += ` AND (ts, seq) > (?, ?)`
 		} else {
-			query += ` AND (ts < ? OR (ts = ? AND seq < ?))`
+			query += ` AND (ts, seq) < (?, ?)`
 		}
-		args = append(args, after.Timestamp, after.Timestamp, after.Seq)
+		args = append(args, after.Timestamp, after.Seq)
 	}
 	if forward {
 		query += ` ORDER BY ts ASC, seq ASC`
@@ -706,6 +778,15 @@ func (b *sqlEventBackend) getGroupEventsRange(ctx context.Context, region, group
 	if err := b.init(); err != nil {
 		return nil, err
 	}
+	// Fold the cursor's implied lower ts bound into the window's own range
+	// term — group-range resumes are always forward, so a valid cursor
+	// implies ts >= after.Timestamp. Same planner rationale as
+	// getEventsRange's clamp above: this is what turns each scan-budget
+	// batch's resume into an idx_logs_events_group seek instead of a
+	// re-scan of every previously-walked row.
+	if after.Valid && after.Timestamp > startTs {
+		startTs = after.Timestamp
+	}
 	query := `SELECT ts, seq, ingestion_ts, message, stream_name FROM logs_events
 		WHERE region = ? AND group_name = ? AND ts >= ? AND ts <= ?`
 	args := []any{region, group, startTs, endTs}
@@ -718,8 +799,14 @@ func (b *sqlEventBackend) getGroupEventsRange(ctx context.Context, region, group
 		}
 	}
 	if after.Valid {
-		query += ` AND (ts > ? OR (ts = ? AND (stream_name > ? OR (stream_name = ? AND seq > ?))))`
-		args = append(args, after.Timestamp, after.Timestamp, after.StreamName, after.StreamName, after.Seq)
+		// Residual cursor predicate for the tied-timestamp rows the clamp
+		// above still admits — a row-value comparison rather than the
+		// equivalent nested-OR form for brevity, not for the planner (the
+		// clamp is what provides the seek; only ts is indexed after the
+		// region/group prefix, so the stream_name/seq tail is a residual
+		// filter either way).
+		query += ` AND (ts, stream_name, seq) > (?, ?, ?)`
+		args = append(args, after.Timestamp, after.StreamName, after.Seq)
 	}
 	query += ` ORDER BY ts ASC, stream_name ASC, seq ASC`
 	if limit > 0 {
@@ -833,6 +920,12 @@ func (b *sqlEventBackend) debugDeleteAll(ctx context.Context) error {
 	if _, err := b.db.ExecContext(ctx, `DELETE FROM logs_events`); err != nil {
 		return fmt.Errorf("cloudwatch logs debug delete all: %w", err)
 	}
+	// Reset the per-stream seq counters too, matching memEventBackend's
+	// debugDeleteAll — debug/reset is the one path that intentionally
+	// restarts the world.
+	b.seqMu.Lock()
+	b.nextSeq = make(map[string]int64)
+	b.seqMu.Unlock()
 	return nil
 }
 
