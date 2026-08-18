@@ -195,6 +195,56 @@ describe("LogEventsViewer > clearing the buffer", () => {
   })
 })
 
+/*
+ * Filter highlighting is driven by a matcher the viewer compiles once per
+ * filter and hands to every row, rather than by each row re-parsing the pattern
+ * on every scroll frame. That plumbing is invisible from the outside — which is
+ * exactly why it is worth a test that looks at the rendered marks.
+ */
+describe("LogEventsViewer > filter highlighting", () => {
+  async function search(term: string, events: FilteredLogEvent[]) {
+    const { user } = renderViewer([])
+    live.stored = events.map((e) => ({
+      timestamp: e.timestamp ?? 0,
+      message: e.message ?? "",
+      logStreamName: e.logStreamName ?? "s1",
+    }))
+
+    await user.type(await screen.findByPlaceholderText(/^Filter/), term)
+    await user.click(screen.getByRole("button", { name: /^search$/i }))
+    return user
+  }
+
+  it("marks the matching term inside a row", async () => {
+    await search("timeout", levelled(["connection timeout after 30s"]))
+
+    const marks = await screen.findAllByText("timeout", {
+      selector: "mark",
+    })
+    expect(marks).toHaveLength(1)
+  })
+
+  it("marks every row that matches, not just the first", async () => {
+    await search(
+      "timeout",
+      levelled(["connection timeout after 30s", "timeout talking to upstream"]),
+    )
+
+    // A shared global regex whose `lastIndex` carried between rows would light
+    // up every other row instead of all of them.
+    await waitFor(async () =>
+      expect(await screen.findAllByText("timeout", { selector: "mark" })).toHaveLength(2),
+    )
+  })
+
+  it("leaves a non-matching row unmarked", async () => {
+    await search("timeout", levelled(["all is well"]))
+
+    expect(await screen.findByText(/all is well/)).toBeInTheDocument()
+    expect(document.querySelectorAll("mark")).toHaveLength(0)
+  })
+})
+
 // ─── Live tail ─────────────────────────────────────────────────────────────
 
 const TAILED = {

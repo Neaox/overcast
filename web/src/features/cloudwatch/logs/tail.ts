@@ -45,6 +45,27 @@ export function parseLogFilterTerms(pattern: string): string[] {
   return terms
 }
 
+/**
+ * One regex matching any of a filter pattern's terms, or null when the pattern
+ * selects everything.
+ *
+ * Compiled once per pattern rather than per row: the viewers highlight matches
+ * inside every visible row on every scroll frame, and building the same regex
+ * there made the pattern's cost scale with rows rendered instead of with edits
+ * to the filter box.
+ *
+ * The capturing group is what makes `String.split` interleave the matches, so
+ * callers can take the odd indices as the hits. `split` never reads or writes
+ * the regex's `lastIndex` — it clones with a sticky flag internally — so one
+ * compiled instance is safe to share across rows.
+ */
+export function compileFilterHighlighter(pattern: string): RegExp | null {
+  const terms = parseLogFilterTerms(pattern)
+  if (terms.length === 0) return null
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  return new RegExp(`(${escaped.join("|")})`, "gi")
+}
+
 // ── Merging a stored page with a live session ──────────────────────────────
 
 /** The fields a stored and a tailed log event have in common. */

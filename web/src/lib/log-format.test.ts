@@ -4,6 +4,7 @@
  * Extracting them is only worth it if the shared behaviour is pinned.
  */
 import {
+  describeLogEvent,
   detectLogLevel,
   formatLogDate,
   formatLogTime,
@@ -264,5 +265,74 @@ describe("summarisePlatformRecords", () => {
   it("leaves a platform record it cannot summarise as it found it", () => {
     const line = '{"type":"platform.initStart","record":{"requestId":"8f1c"}}'
     expect(summarisePlatformRecords(line)).toBe(line)
+  })
+})
+
+/*
+ * The two caches the virtualised log views lean on. Both exist for the same
+ * reason: `@tanstack/react-virtual` flush-syncs a render on every scroll event,
+ * so whatever a row computes is computed at scroll frequency unless it can be
+ * looked up instead.
+ */
+
+describe("highlightJSON > caching", () => {
+  it("returns the identical string for a repeated document", () => {
+    const text = '{"requestId":"13aa488f","status":"timeout"}'
+
+    // Identity, not just equality: React skips the DOM write when the value
+    // handed to `dangerouslySetInnerHTML` is unchanged, and a row that mutates
+    // nothing costs nothing downstream — no style recalc, and no mutation
+    // record for whatever extensions are observing the document.
+    expect(highlightJSON(text)).toBe(highlightJSON(text))
+  })
+
+  it("still highlights a document too large to be worth holding onto", () => {
+    const huge = JSON.stringify({ blob: "x".repeat(120_000) })
+
+    expect(highlightJSON(huge)).toContain("token")
+  })
+})
+
+describe("describeLogEvent", () => {
+  /** Escapes rather than literals, so this file carries no control bytes of its own. */
+  const esc = String.fromCharCode(27)
+
+  it("derives the plain text, level and summary of a line", () => {
+    const meta = describeLogEvent({ message: `${esc}[31mERROR${esc}[0m upstream refused` })
+
+    expect(meta.plain).toBe("ERROR upstream refused")
+    expect(meta.level).toBe("error")
+    expect(meta.summary).toBeNull()
+  })
+
+  it("reads a system log record as the line it replaced", () => {
+    const meta = describeLogEvent({ message: reportRecord })
+
+    expect(meta.summary).toMatch(/^REPORT RequestId: 8f1c\t/)
+    expect(meta.level).toBe("info")
+  })
+
+  it("agrees with detectLogLevel on a record that did not succeed", () => {
+    const timedOut = reportRecord.replace('"status":"success"', '"status":"timeout"')
+
+    expect(describeLogEvent({ message: timedOut }).level).toBe("warn")
+    expect(detectLogLevel(timedOut)).toBe("warn")
+  })
+
+  it("derives an event once, however often its row re-renders", () => {
+    const event = { message: '{"level":"warn","message":"disk filling"}' }
+
+    // A live tail used to re-derive its whole history for every event that
+    // arrived; keyed on the event, history is never re-read.
+    expect(describeLogEvent(event)).toBe(describeLogEvent(event))
+    expect(describeLogEvent(event).level).toBe("warn")
+  })
+
+  it("treats a missing message as an empty line rather than throwing", () => {
+    const meta = describeLogEvent({})
+
+    expect(meta.plain).toBe("")
+    expect(meta.level).toBeNull()
+    expect(meta.summary).toBeNull()
   })
 })

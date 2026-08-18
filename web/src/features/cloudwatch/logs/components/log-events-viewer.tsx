@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
+﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect, memo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -26,13 +26,11 @@ import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
 import {
-  detectLogLevel,
+  describeLogEvent,
   formatLogTime,
-  formatPlatformRecord,
   highlightJSON,
   logLevelBadgeClass,
   logLevelRowClass,
-  parsePlatformRecord,
   stringifyJSON,
   tryParseJSON,
   type LogLevel,
@@ -40,20 +38,18 @@ import {
 import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
 import {
+  compileFilterHighlighter,
   dropTailedDuplicates,
-  parseLogFilterTerms,
   tailLogEvents,
 } from "@/features/cloudwatch/logs/tail"
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/** Highlight matching filter terms in a message string. */
-function highlightMatches(message: string, filterPattern: string): React.ReactNode {
-  if (!filterPattern) return message
-  const terms = parseLogFilterTerms(filterPattern)
-  if (terms.length === 0) return message
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-  const parts = message.split(new RegExp(`(${escaped.join("|")})`, "gi"))
+/** Highlight a filter's matches in a message string, using a pre-compiled matcher. */
+function highlightMatches(message: string, matcher: RegExp | null): React.ReactNode {
+  if (!matcher) return message
+  const parts = message.split(matcher)
+  if (parts.length === 1) return message
   // `split` with a capturing group interleaves the captures, so the matches are
   // exactly the odd indices. Re-testing each part against the pattern would
   // read a global regex's `lastIndex` between calls and skip every other match.
@@ -183,34 +179,18 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     [visibleFetched, visibleTailed, sortAsc],
   )
 
-  // Pre-compute cheap row metadata once per data change. JSON parsing/highlighting stays row-local.
-  const rowMeta = useMemo(
-    () =>
-      events.map((evt) => {
-        const msg = evt.message ?? ""
-        // `plain` is the message without its escape sequences â€” what the level
-        // detector reads, what the row height is estimated from, and what the
-        // copy button puts on the clipboard.
-        const plain = stripAnsi(msg)
-        // A Lambda system log record reads as the START / END / REPORT line it
-        // replaced; ticking Format swaps in the record itself.
-        const platform = parsePlatformRecord(plain)
-        return {
-          msg,
-          plain,
-          level: detectLogLevel(plain),
-          summary: platform ? formatPlatformRecord(platform) : null,
-        }
-      }),
-    [events],
-  )
-
+  // Row metadata is derived per event and cached on the event itself, so a
+  // tail that has accumulated history never re-reads it: only the event that
+  // just arrived is new work. See `describeLogEvent`.
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (index) => estimateRowHeight(rowMeta[index]?.plain ?? "", formatted),
+    estimateSize: (index) => estimateRowHeight(describeLogEvent(events[index]).plain, formatted),
     overscan: 15,
   })
+
+  /** Compiled once per filter, not once per row per scroll frame. */
+  const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
 
   // Scroll-to-bottom
   const [showScrollBottom, setShowScrollBottom] = useState(false)
@@ -310,10 +290,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         : { title: "No log events", description: "This stream has no events yet." }
 
   const virtualItems = virtualizer.getVirtualItems()
-  const scrollOffset = virtualizer.scrollOffset ?? 0
-  const viewportHeight = parentRef.current?.clientHeight ?? 0
-  const highlightStart = Math.max(0, scrollOffset - viewportHeight)
-  const highlightEnd = scrollOffset + viewportHeight * 2
 
   return (
     <div className="flex h-full w-full flex-col gap-3">
@@ -359,6 +335,11 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           <Search className="h-4 w-4 shrink-0 text-fg-muted" />
           <Input
             data-log-filter
+            // A log filter is never a credential field. Password managers scan
+            // the page's inputs on every DOM change, and this view mutates a
+            // lot; opting out keeps their field analysis off the hot path.
+            data-1p-ignore
+            data-lpignore="true"
             className="h-7 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
             placeholder='Filter â€” e.g. ERROR, "request failed", ERROR timeout'
             value={filterInput}
@@ -528,11 +509,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             >
               {virtualItems.map((virtualRow) => {
                 const evt = events[virtualRow.index]
-                const meta = rowMeta[virtualRow.index]
-                const enableSyntax =
-                  syntaxHighlight &&
-                  virtualRow.end >= highlightStart &&
-                  virtualRow.start <= highlightEnd
+                const meta = describeLogEvent(evt)
                 return (
                   <div
                     key={virtualRow.key}
@@ -568,12 +545,12 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                         )}
                         <div className="min-w-0 flex-1 px-1 py-1.5">
                           <LogMessage
-                            message={meta.msg}
+                            message={evt.message ?? ""}
                             summary={meta.summary}
                             formatted={formatted}
-                            syntaxHighlight={enableSyntax}
+                            syntaxHighlight={syntaxHighlight}
                             wrapLines={wrapLines}
-                            filterPattern={activeFilter}
+                            filterMatcher={filterMatcher}
                             level={meta.level}
                           />
                         </div>
@@ -582,12 +559,12 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                       <div className="min-w-0 flex-1 px-2 py-1.5">
                         <LogMessage
                           prefix={`${formatLogTime(evt.timestamp)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
-                          message={meta.msg}
+                          message={evt.message ?? ""}
                           summary={meta.summary}
                           formatted={formatted}
-                          syntaxHighlight={enableSyntax}
+                          syntaxHighlight={syntaxHighlight}
                           wrapLines={wrapLines}
-                          filterPattern={activeFilter}
+                          filterMatcher={filterMatcher}
                           level={meta.level}
                           hideLevel
                         />
@@ -654,14 +631,22 @@ function LevelBadge({ level }: { level: LogLevel }) {
   )
 }
 
-function LogMessage({
+/**
+ * Memoised on purpose: the virtualizer flush-syncs a render on every scroll
+ * event, so without this every toolbar keystroke and every scroll tick re-ran
+ * the whole message pipeline for every visible row. Each prop is a primitive or
+ * a value the viewer holds stable across renders (`filterMatcher` is compiled
+ * per filter), so a row that has not changed re-renders to the identical output
+ * and touches no DOM.
+ */
+const LogMessage = memo(function LogMessage({
   prefix,
   message,
   summary = null,
   formatted,
   syntaxHighlight,
   wrapLines,
-  filterPattern,
+  filterMatcher,
   level,
   hideLevel = false,
 }: {
@@ -672,7 +657,8 @@ function LogMessage({
   formatted: boolean
   syntaxHighlight: boolean
   wrapLines: boolean
-  filterPattern: string
+  /** Pre-compiled filter matcher, or null when nothing is filtered. */
+  filterMatcher: RegExp | null
   level: LogLevel | null
   hideLevel?: boolean
 }) {
@@ -728,9 +714,9 @@ function LogMessage({
       >
         <AnsiText
           text={displayText}
-          renderText={(chunk) => highlightMatches(chunk, filterPattern)}
+          renderText={filterMatcher ? (chunk) => highlightMatches(chunk, filterMatcher) : undefined}
         />
       </pre>
     </div>
   )
-}
+})

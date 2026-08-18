@@ -14,6 +14,7 @@
  * `{` or `ERROR`.
  */
 import Prism from "@/lib/prism"
+import { stripAnsi } from "@/lib/ansi"
 
 export type LogLevel = "error" | "warn" | "info" | "debug"
 
@@ -120,9 +121,83 @@ export function stringifyJSON(obj: object, pretty: boolean): string {
   return JSON.stringify(obj, null, pretty ? 2 : 0)
 }
 
-/** PrismJS-highlighted JSON, as HTML. */
+/**
+ * PrismJS-highlighted JSON, as HTML.
+ *
+ * Memoised, because the callers are virtualised rows: `@tanstack/react-virtual`
+ * flush-syncs a render on every scroll event, so an uncached tokenise ran once
+ * per visible JSON row per scroll frame — which a Firefox profile of the stream
+ * viewer showed as 80–247 ms tasks inside the scroll handler. Highlighting is a
+ * pure function of the text, so a repeat render is a map lookup.
+ *
+ * Returning the identical string on a hit matters as much as the saved work: an
+ * unchanged `dangerouslySetInnerHTML` value leaves the DOM untouched, and a row
+ * that mutates nothing costs nothing downstream — no style recalc, and no
+ * MutationObserver record for whatever extensions the user has installed.
+ */
+const HIGHLIGHT_CACHE_LIMIT = 400
+/** Above this, a document is cheaper to re-highlight than to hold onto. */
+const HIGHLIGHT_CACHE_MAX_CHARS = 100_000
+const highlightCache = new Map<string, string>()
+
 export function highlightJSON(text: string): string {
-  return Prism.highlight(text, Prism.languages.json, "json")
+  const cached = highlightCache.get(text)
+  if (cached !== undefined) {
+    // Re-insert so the map's insertion order is least-recently-used first.
+    highlightCache.delete(text)
+    highlightCache.set(text, cached)
+    return cached
+  }
+  const html = Prism.highlight(text, Prism.languages.json, "json")
+  if (text.length <= HIGHLIGHT_CACHE_MAX_CHARS) {
+    if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) {
+      const oldest = highlightCache.keys().next().value
+      if (oldest !== undefined) highlightCache.delete(oldest)
+    }
+    highlightCache.set(text, html)
+  }
+  return html
+}
+
+/**
+ * What every viewer needs to know about a log event before it can draw a row:
+ * the message without its escape sequences, the level that tints and labels it,
+ * and — for a Lambda system log record — the line it stands in for.
+ */
+export interface LogEventMeta {
+  /** The message as it reads without styling: what the level detector saw, and what Copy yields. */
+  plain: string
+  level: LogLevel | null
+  /** A Lambda system log record's summary line, or null when the message is not one. */
+  summary: string | null
+}
+
+/**
+ * Derived row metadata for one event, computed once per event object.
+ *
+ * The viewers used to re-derive this for their whole list whenever anything
+ * changed, so a live tail paid to re-scan all of its history for every event
+ * that arrived. Keyed on the event itself, history is never re-read: the query
+ * cache and the tail buffer both hand out stable objects, and a `WeakMap` lets
+ * an event that falls out of the buffer take its metadata with it.
+ */
+const metaCache = new WeakMap<object, LogEventMeta>()
+
+export function describeLogEvent(event: { message?: string }): LogEventMeta {
+  const cached = metaCache.get(event)
+  if (cached) return cached
+
+  const plain = stripAnsi(event.message ?? "")
+  // One parse, read twice: `detectLogLevel` would otherwise parse the record
+  // again to ask the same question this already has the answer to.
+  const platform = parsePlatformRecord(plain)
+  const meta: LogEventMeta = {
+    plain,
+    level: platform ? platformRecordLevel(platform) : detectLogLevel(plain),
+    summary: platform ? formatPlatformRecord(platform) : null,
+  }
+  metaCache.set(event, meta)
+  return meta
 }
 
 // ─── Lambda system log records ─────────────────────────────────────────────
