@@ -204,36 +204,42 @@ describe("useLogTailBuffer", () => {
     })
   })
 
-  it("keeps what it caught when the session dies mid-stream", async () => {
+  it("keeps what it caught when the session dies mid-stream, and says the session is gone", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {
       const { result } = renderBuffer()
       const s = await session()
+      expect(result.current.status).toBe("live")
 
       act(() => s.push("caught", 1_000))
       await waitFor(() => expect(result.current.events).toHaveLength(1))
 
       // The emulator restarting kills the transport without an abort. That is
-      // an ordinary dev-loop event, not an unhandled rejection.
+      // an ordinary dev-loop event, not an unhandled rejection — but a dead
+      // session must not keep reporting itself live, because on a quiet
+      // stream the two are otherwise indistinguishable.
       act(() => s.fail(new TypeError("network error")))
-      await waitFor(() => expect(warn).toHaveBeenCalled())
+      await waitFor(() => expect(result.current.status).toBe("error"))
 
+      expect(warn).toHaveBeenCalled()
       expect(result.current.events.map((e) => e.message)).toEqual(["caught"])
     } finally {
       warn.mockRestore()
     }
   })
 
-  it("hangs up when disabled", async () => {
+  it("hangs up when disabled, and reports idle", async () => {
     live.reset()
-    const { rerender } = renderHook(
+    const { result, rerender } = renderHook(
       ({ enabled }: { enabled: boolean }) => useLogTailBuffer({ enabled, groupIdentifier: "g" }),
       { initialProps: { enabled: true } },
     )
     await session()
+    expect(result.current.status).toBe("live")
 
     rerender({ enabled: false })
 
     await waitFor(() => expect(activeSessions()).toHaveLength(0))
+    expect(result.current.status).toBe("idle")
   })
 })

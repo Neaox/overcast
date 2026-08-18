@@ -21,7 +21,7 @@ import {
   TimeRangeFilter,
   type TimeRange,
 } from "@/features/cloudwatch/logs/components/time-range-filter"
-import { AnsiText } from "@/components/logs/ansi-text"
+import { LogSearchResults } from "@/features/cloudwatch/logs/components/log-search-results"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
@@ -304,41 +304,16 @@ export function LogGroupDetail({ groupName }: Props) {
               description="Try a different filter pattern."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-44">Timestamp</TableHead>
-                  <TableHead className="w-40">Stream</TableHead>
-                  <TableHead>Message</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredEvents.map((evt, i) => (
-                  <TableRow
-                    key={`${evt.timestamp}-${evt.logStreamName}-${i}`}
-                    className="cursor-pointer"
-                    onClick={() =>
-                      navigate({
-                        to: "/cloudwatch/logs/stream",
-                        search: { groupName, streamName: evt.logStreamName ?? "" },
-                      })
-                    }
-                  >
-                    <TableCell className="whitespace-nowrap text-fg-muted">
-                      {formatLogDate(evt.timestamp)}
-                    </TableCell>
-                    <TableCell className="text-fg-muted" title={evt.logStreamName}>
-                      {evt.logStreamName}
-                    </TableCell>
-                    <TableCell>
-                      <pre className="max-w-2xl font-mono text-xs break-all whitespace-pre-wrap">
-                        <AnsiText text={evt.message ?? ""} />
-                      </pre>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <LogSearchResults
+              events={filteredEvents}
+              filterPattern={activeFilter}
+              onOpenStream={(streamName) =>
+                void navigate({
+                  to: "/cloudwatch/logs/stream",
+                  search: { groupName, streamName },
+                })
+              }
+            />
           )}
         </>
       )}

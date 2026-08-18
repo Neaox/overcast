@@ -15,6 +15,7 @@ import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { X, FileText, Zap } from "lucide-react"
 import { AnsiText } from "@/components/logs/ansi-text"
+import { LiveTailIndicator } from "@/components/logs/live-tail-indicator"
 import { formatLogTime } from "@/lib/log-format"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
@@ -180,6 +181,11 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
                   icon={<FileText className="h-3.5 w-3.5" />}
                   label="Logs"
                   disabled={!target.logGroup || !target.logStream}
+                  trailing={
+                    tail.status !== "idle" ? (
+                      <LiveTailIndicator status={tail.status} className="ml-0.5" />
+                    ) : null
+                  }
                 />
                 {target.triggerEvent && (
                   <TabButton
@@ -221,12 +227,15 @@ function TabButton({
   icon,
   label,
   disabled,
+  trailing,
 }: {
   active: boolean
   onClick: () => void
   icon: React.ReactNode
   label: string
   disabled?: boolean
+  /** e.g. the live-session dot on the Logs tab. */
+  trailing?: React.ReactNode
 }) {
   return (
     <button
@@ -244,6 +253,7 @@ function TabButton({
     >
       {icon}
       {label}
+      {trailing}
     </button>
   )
 }

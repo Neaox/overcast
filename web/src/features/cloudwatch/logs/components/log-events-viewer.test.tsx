@@ -224,6 +224,35 @@ describe("LogEventsViewer > pagination", () => {
     await waitFor(() => expect(live.filterCalls).toBe(2))
   })
 
+  it("says so at the end of the list once everything is loaded", async () => {
+    renderViewer(EVENTS)
+
+    // Everything the server has is on screen and no token remains — the list
+    // must end with an explicit marker, not just trail off into empty space
+    // that reads the same as "still loading".
+    expect(await screen.findByText("End of logs")).toBeInTheDocument()
+  })
+
+  it("swaps the end marker for a live-tail notice while tailing", async () => {
+    const { user } = renderViewer(EVENTS)
+    await screen.findByText("End of logs")
+
+    await user.click(await tailButton())
+
+    expect(await screen.findByText(/watching for new events/i)).toBeInTheDocument()
+    expect(screen.queryByText("End of logs")).not.toBeInTheDocument()
+  })
+
+  it("shows the live dot on the Tail button while a session is open", async () => {
+    const { user } = renderViewer(EVENTS)
+    expect(screen.queryByTestId("live-tail-indicator")).not.toBeInTheDocument()
+
+    await user.click(await tailButton())
+
+    const dot = await screen.findByTestId("live-tail-indicator")
+    expect(dot).toHaveAttribute("data-status", "live")
+  })
+
   it("chains through every page and settles on the full, unqualified count", async () => {
     const { user } = renderViewer([])
     await clearButton() // wait for the toolbar to mount
