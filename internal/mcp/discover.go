@@ -11,19 +11,24 @@ package mcp
 // "lets a client query a server's supported protocol versions, capabilities,
 // and identity before sending any other requests. Servers MUST implement it."
 //
-// # Why it answers before anything else does
+// # It is an ordinary request, and that is easy to get wrong
 //
-// This is the era probe. A client that does not know whether it is talking to a
-// handshake-based server or a stateless one sends this first and reads the
-// answer: a DiscoverResult means modern, a "method not found" or a timeout
-// means legacy and it should fall back to `initialize`. That only works if the
-// method is answerable by a client that knows nothing yet — so it cannot
-// require a completed lifecycle, and it cannot require the caller to declare a
-// protocol version in order to ask which versions exist.
+// The name invites a reading where discover is the one method a client can send
+// knowing nothing — a probe that must therefore be answerable with no `_meta` at
+// all. This comment used to say exactly that, and it was wrong: 2026-07-28 marks
+// `io.modelcontextprotocol/protocolVersion` and
+// `io.modelcontextprotocol/clientCapabilities` **required on every request**,
+// gives `DiscoverRequest` the same `RequestParams` as every other method, and
+// grants no exemption. A request missing either is malformed and "the server
+// MUST reject it with JSON-RPC error code -32602 (Invalid params)", with HTTP
+// "400 Bad Request".
 //
-// It is still not a free pass. A client that *does* declare a version gets it
-// validated like anywhere else; the refusal carries the supported list, which
-// is the same thing discover would have told it.
+// So a client does not probe by declaring nothing. It names the version it
+// speaks like any other request; if this server cannot speak it, -32022 carries
+// the `supported` list to retry with — which is the same information discover
+// would have returned. Discover's job is to report capabilities and identity up
+// front, and the revision's own announcement is explicit that calling it "is not
+// required" at all.
 //
 // Unlike `initialize`, answering this confers no state. There is nothing to
 // remember, which is the whole point of the revision.
@@ -33,6 +38,10 @@ import (
 )
 
 const (
+	// discoverMethod is the method name, kept here beside the handler rather
+	// than spelled out at the dispatch site.
+	discoverMethod = "server/discover"
+
 	// resultTypeComplete is the ordinary answer: this result is the result.
 	// 2026-07-28 requires a resultType on every result, and reserves other
 	// values for answers that are not final — `input_required` is the one MRTR

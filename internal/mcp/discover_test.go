@@ -7,12 +7,12 @@ package mcp
 // client that does not know whether it is talking to a handshake-based server
 // or a stateless one sends this first, and the shape of the answer decides.
 //
-// That makes one property load-bearing above all others, and it is the first
-// test below: **it must be answerable with no handshake and no `_meta`**. A
-// client probing a server it knows nothing about cannot be expected to have
-// completed a lifecycle it may not need, nor to declare a protocol version when
-// asking which versions exist. A discover that required either would answer the
-// question only for clients that already knew.
+// What it is *not* is exempt from the metadata every other request carries. The
+// revision marks `protocolVersion` and `clientCapabilities` required on every
+// request and gives `DiscoverRequest` the same `RequestParams` as everything
+// else, so a bare discover is malformed and refused — the first test below. A
+// client that does not know which version to name learns it from -32022's
+// `supported` list, which carries the same information discover would have.
 //
 // See docs/plans/mcp-2026-07-28-migration.md, phase 2.
 
@@ -22,13 +22,62 @@ import (
 	"testing"
 )
 
-// The probe case: a bare request, no handshake, no `_meta`, no headers.
-func TestDiscover_answersWithNoHandshakeAndNoMeta(t *testing.T) {
+// Discover is not exempt from the per-request metadata every other method
+// carries, and a bare one is refused like any other malformed request.
+//
+// This test used to assert the opposite — that a `_meta`-less discover is
+// answered — on the reasoning that a probe cannot be expected to know a version.
+// The revision does not agree: `protocolVersion` and `clientCapabilities` are
+// required on every request, `DiscoverRequest` takes the same `RequestParams` as
+// everything else, and no exemption is granted anywhere. The old test passed
+// only because `mcpPost` put the `_meta` back on the way out (#1035), so it
+// never sent the request it described. Sent raw here, deliberately.
+func TestDiscover_bareRequestIsRefusedLikeAnyOther(t *testing.T) {
+	srv := newTestHTTPServer(t)
+	defer srv.Close()
+
+	resp := mcpPostRaw(t, srv, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": discoverMethod,
+	}, nil)
+	defer resp.Body.Close() //nolint:errcheck
+
+	// "On HTTP, the response status MUST be 400 Bad Request." This is the half
+	// that was wrong: the refusal carried the right code inside a 200, so an
+	// intermediary reading status alone saw a success.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 — a request missing a required _meta field is malformed",
+			resp.StatusCode)
+	}
+	var envelope struct {
+		Error map[string]any `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if envelope.Error == nil {
+		t.Fatal("a discover carrying no protocol version was served")
+	}
+	if code, _ := envelope.Error["code"].(float64); int(code) != RPCInvalidParams {
+		t.Errorf("code = %v, want %d (InvalidParams)", envelope.Error["code"], RPCInvalidParams)
+	}
+
+	// The refusal has to say what to retry with, and say it truthfully: one
+	// entry, the modern one. Listing a revision this server cannot serve invites
+	// a client to send a request it will then be refused for.
+	data, _ := envelope.Error["data"].(map[string]any)
+	supported, _ := data["supported"].([]any)
+	if len(supported) != 1 || supported[0] != ProtocolVersion {
+		t.Errorf("supported = %v, want exactly [%q]", supported, ProtocolVersion)
+	}
+}
+
+// The conforming case: a discover that declares itself properly gets the answer.
+func TestDiscover_answersAConformingRequest(t *testing.T) {
 	srv := newTestHTTPServer(t)
 	defer srv.Close()
 
 	resp := mcpPost(t, srv, map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "server/discover",
+		"jsonrpc": "2.0", "id": 1, "method": discoverMethod,
 	}, nil)
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -43,16 +92,9 @@ func TestDiscover_answersWithNoHandshakeAndNoMeta(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if envelope.Error != nil {
-		t.Fatalf("server/discover was rejected: %v — this is the request a client "+
-			"sends when it does not yet know what the server is, so it cannot "+
-			"require a handshake or a declared version", envelope.Error)
+		t.Fatalf("server/discover was rejected: %v", envelope.Error)
 	}
 
-	// One entry, and it is the modern one. A server that lists a revision it
-	// cannot serve invites a client to send a request it will then refuse:
-	// 2025-11-25 means `initialize`, a session and a GET stream, and phase 4
-	// removed all three. The list is the only thing a client has to choose from,
-	// so it has to be the truth about what this server answers.
 	versions, _ := envelope.Result["supportedVersions"].([]any)
 	if len(versions) != 1 || versions[0] != ProtocolVersion {
 		t.Errorf("supportedVersions = %v, want exactly [%q] — anything else offers a "+
