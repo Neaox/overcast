@@ -7,6 +7,7 @@ import {
   describeLogEvent,
   detectLogLevel,
   formatLogDate,
+  formatLogDelta,
   formatLogTime,
   formatPlatformRecord,
   highlightJSON,
@@ -42,6 +43,53 @@ describe("formatLogTime", () => {
     expect(formatLogTime(null)).toBe("—")
     expect(formatLogTime(0)).toBe("—")
   })
+
+  it("renders the UTC clock time when asked, whatever the machine's zone", () => {
+    // 2026-08-04T09:05:07.042Z, built from UTC parts so the expectation does
+    // not depend on where the test runs.
+    const ts = Date.UTC(2026, 7, 4, 9, 5, 7, 42)
+    expect(formatLogTime(ts, true)).toBe("09:05:07.042")
+  })
+
+  it("defaults to local time, which is what every existing call site expects", () => {
+    const ts = new Date(2026, 7, 4, 9, 5, 7, 42).getTime()
+    expect(formatLogTime(ts)).toBe(formatLogTime(ts, false))
+  })
+})
+
+describe("formatLogDelta", () => {
+  it("renders sub-second gaps in milliseconds", () => {
+    expect(formatLogDelta(3)).toBe("+3 ms")
+    expect(formatLogDelta(999)).toBe("+999 ms")
+  })
+
+  it("renders sub-minute gaps in seconds", () => {
+    expect(formatLogDelta(1_000)).toBe("+1.00 s")
+    expect(formatLogDelta(1_240)).toBe("+1.24 s")
+    expect(formatLogDelta(59_990)).toBe("+59.99 s")
+  })
+
+  it("renders minute-scale gaps as minutes and seconds", () => {
+    expect(formatLogDelta(60_000)).toBe("+1m 0s")
+    expect(formatLogDelta(125_000)).toBe("+2m 5s")
+  })
+
+  it("renders hour-scale gaps as hours and minutes", () => {
+    expect(formatLogDelta(3_600_000)).toBe("+1h 0m")
+    expect(formatLogDelta(7_380_000)).toBe("+2h 3m")
+  })
+
+  it("keeps the sign of a negative gap rather than hiding it", () => {
+    // Deltas are display-only fiction over real timestamps: out-of-order
+    // ingestion is a thing that happens, and a delta that lied about the
+    // direction would imply event times that are not the event's.
+    expect(formatLogDelta(-15)).toBe("-15 ms")
+    expect(formatLogDelta(-1_240)).toBe("-1.24 s")
+  })
+
+  it("renders a same-millisecond neighbour as +0 ms", () => {
+    expect(formatLogDelta(0)).toBe("+0 ms")
+  })
 })
 
 describe("formatLogDate", () => {
@@ -53,6 +101,13 @@ describe("formatLogDate", () => {
   it("shows a dash for a missing timestamp", () => {
     expect(formatLogDate(undefined)).toBe("—")
     expect(formatLogDate(0)).toBe("—")
+  })
+
+  it("renders in UTC when asked", () => {
+    const ts = Date.UTC(2026, 7, 4, 9, 5)
+    expect(formatLogDate(ts, true)).toBe(
+      new Date(ts).toLocaleString(undefined, { timeZone: "UTC" }),
+    )
   })
 })
 

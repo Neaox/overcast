@@ -18,14 +18,21 @@ import { stripAnsi } from "@/lib/ansi"
 
 export type LogLevel = "error" | "warn" | "info" | "debug"
 
-/** Clock time of a log event, to the millisecond: `14:22:07.481`. */
-export function formatLogTime(ts?: number | null): string {
+/**
+ * Clock time of a log event, to the millisecond: `14:22:07.481`.
+ *
+ * Local by default — every long-standing call site reads that way — with an
+ * explicit `utc` flag for the viewers that offer the AWS console's local/UTC
+ * display toggle. One function, one flag: forking a UTC formatter per surface
+ * is how the pre-consolidation copies drifted.
+ */
+export function formatLogTime(ts?: number | null, utc = false): string {
   if (ts == null || ts === 0) return "—"
   const d = new Date(ts)
-  const hh = String(d.getHours()).padStart(2, "0")
-  const mm = String(d.getMinutes()).padStart(2, "0")
-  const ss = String(d.getSeconds()).padStart(2, "0")
-  const ms = String(d.getMilliseconds()).padStart(3, "0")
+  const hh = String(utc ? d.getUTCHours() : d.getHours()).padStart(2, "0")
+  const mm = String(utc ? d.getUTCMinutes() : d.getMinutes()).padStart(2, "0")
+  const ss = String(utc ? d.getUTCSeconds() : d.getSeconds()).padStart(2, "0")
+  const ms = String(utc ? d.getUTCMilliseconds() : d.getMilliseconds()).padStart(3, "0")
   return `${hh}:${mm}:${ss}.${ms}`
 }
 
@@ -33,9 +40,34 @@ export function formatLogTime(ts?: number | null): string {
  * Full date and time, for a log group or stream's own metadata — creation,
  * last event, retention — where the day matters and the millisecond does not.
  */
-export function formatLogDate(ts?: number | null): string {
+export function formatLogDate(ts?: number | null, utc = false): string {
   if (!ts) return "—"
-  return new Date(ts).toLocaleString()
+  return utc
+    ? new Date(ts).toLocaleString(undefined, { timeZone: "UTC" })
+    : new Date(ts).toLocaleString()
+}
+
+/**
+ * The gap between a log event and its chronological predecessor, compactly:
+ * `+3 ms`, `+1.24 s`, `+2m 5s`, `+1h 0m`.
+ *
+ * Display-only annotation beside real timestamps — it never stands in for one.
+ * The sign is kept even when negative (out-of-order ingestion happens), because
+ * a delta that hid the direction would imply event times the events don't have.
+ */
+export function formatLogDelta(deltaMs: number): string {
+  const sign = deltaMs < 0 ? "-" : "+"
+  const abs = Math.abs(deltaMs)
+  if (abs < 1_000) return `${sign}${abs} ms`
+  if (abs < 60_000) return `${sign}${(abs / 1_000).toFixed(2)} s`
+  if (abs < 3_600_000) {
+    const minutes = Math.floor(abs / 60_000)
+    const seconds = Math.floor((abs % 60_000) / 1_000)
+    return `${sign}${minutes}m ${seconds}s`
+  }
+  const hours = Math.floor(abs / 3_600_000)
+  const minutes = Math.floor((abs % 3_600_000) / 60_000)
+  return `${sign}${hours}h ${minutes}m`
 }
 
 /**
