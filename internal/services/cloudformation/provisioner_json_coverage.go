@@ -1120,21 +1120,12 @@ func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.
 	body := map[string]any{
 		"Name": name,
 	}
-	// The template carries tags as [{Key,Value}]; the emulated scheduler API
-	// takes a flat map.
-	if tags, ok := props["Tags"].([]any); ok {
-		m := map[string]string{}
-		for _, t := range tags {
-			if tm, ok := t.(map[string]any); ok {
-				if k, _ := tm["Key"].(string); k != "" {
-					v, _ := tm["Value"].(string)
-					m[k] = v
-				}
-			}
-		}
-		if len(m) > 0 {
-			body["Tags"] = m
-		}
+	// The template's [{Key,Value}] is the shape CreateScheduleGroup models, so
+	// the tags go straight through. They were flattened into a map here to
+	// match the emulator's own decoding of the member, which no longer differs
+	// from the template's.
+	if tags, ok := props["Tags"].([]any); ok && len(tags) > 0 {
+		body["Tags"] = tags
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateScheduleGroup", body)

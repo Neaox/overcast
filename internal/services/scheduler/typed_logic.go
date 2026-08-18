@@ -121,8 +121,8 @@ type scheduleWrite struct {
 // ─── Schedule groups ──────────────────────────────────────────────────────────
 
 type createScheduleGroupRequest struct {
-	Name string            `json:"Name" cbor:"Name"`
-	Tags map[string]string `json:"Tags" cbor:"Tags"`
+	Name string                `json:"Name" cbor:"Name"`
+	Tags []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
 type createScheduleGroupResponse struct {
@@ -152,7 +152,7 @@ func (s *Service) createScheduleGroupTyped(ctx context.Context, req *createSched
 	if err := s.saveGroup(ctx, region, g); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.saveTagsJSON(ctx, g.Arn, req.Tags)
+	s.saveTagsJSON(ctx, g.Arn, serviceutil.TagsFromList(req.Tags))
 	return &createScheduleGroupResponse{ScheduleGroupArn: g.Arn}, nil
 }
 
@@ -251,13 +251,22 @@ func (s *Service) listScheduleGroupsTyped(ctx context.Context, req *listSchedule
 
 // ─── Tags ─────────────────────────────────────────────────────────────────────
 
+// Tags travel on the wire as AWS models them: a TagList of {Key, Value}
+// structures, not a JSON object. Decoding them as map[string]string made every
+// generated client's TagResource body unparseable — the array an SDK sends is
+// the model's shape, not a matter of preference — and rendered an object where
+// ListTagsForResource is modeled to return a list. Storage stays a map, which
+// is what the shared tag helpers speak; serviceutil.TagPair is the conversion
+// at the edge, so the emulator has one Key/Value tag element rather than a
+// per-service copy of it.
+
 type tagResourceRequest struct {
-	ResourceArn string            `json:"ResourceArn" cbor:"ResourceArn"`
-	Tags        map[string]string `json:"Tags" cbor:"Tags"`
+	ResourceArn string                `json:"ResourceArn" cbor:"ResourceArn"`
+	Tags        []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
 func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (any, *protocol.AWSError) {
-	s.mergeTags(ctx, req.ResourceArn, req.Tags)
+	s.mergeTags(ctx, req.ResourceArn, serviceutil.TagsFromList(req.Tags))
 	return struct{}{}, nil
 }
 
@@ -276,11 +285,14 @@ type listTagsForResourceRequest struct {
 }
 
 type listTagsForResourceResponse struct {
-	Tags map[string]string `json:"Tags" cbor:"Tags"`
+	Tags []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
+// listTagsForResourceTyped renders the stored map as the modeled TagList.
+// TagsToList orders by key and never returns nil, so an untagged resource
+// answers `"Tags": []` rather than null and two calls agree on the order.
 func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
-	return &listTagsForResourceResponse{Tags: s.loadTags(ctx, req.ResourceArn)}, nil
+	return &listTagsForResourceResponse{Tags: serviceutil.TagsToList(s.loadTags(ctx, req.ResourceArn))}, nil
 }
 
 // ─── Schedules ────────────────────────────────────────────────────────────────
