@@ -12,6 +12,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { X, FileText, Zap } from "lucide-react"
 import { AnsiText } from "@/components/logs/ansi-text"
 import { formatLogTime } from "@/lib/log-format"
@@ -247,6 +248,27 @@ function TabButton({
   )
 }
 
+/**
+ * Identity for a log event that survives pagination.
+ *
+ * Loading an older page prepends events, shifting every index — a key with the
+ * index in it remounted the whole list on each backward page, which is a full
+ * delete-and-insert storm for React, for layout, and for every extension
+ * watching the document with a MutationObserver. The event objects themselves
+ * are stable (the query cache and the tail buffer hand out the same objects
+ * across renders), so identity can simply be the object.
+ */
+const eventKeys = new WeakMap<LogEvent, number>()
+let nextEventKey = 0
+function eventKey(event: LogEvent): number {
+  let key = eventKeys.get(event)
+  if (key === undefined) {
+    key = nextEventKey++
+    eventKeys.set(event, key)
+  }
+  return key
+}
+
 function LogsPane({
   logEvents,
   loading,
@@ -271,11 +293,35 @@ function LogsPane({
   const initializedRef = useRef(false)
   const prevLenRef = useRef(0)
   const prependSnapshotRef = useRef<{
-    scrollHeight: number
-    scrollTop: number
+    totalSize: number
+    scrollOffset: number
     itemCount: number
   } | null>(null)
   const skipUnreadRef = useRef(false)
+
+  const virtualizer = useVirtualizer({
+    count: logEvents.length,
+    getScrollElement: () => scrollRef.current,
+    // One unwrapped line at text-[11px] leading-relaxed; wrapped lines are
+    // corrected by measurement.
+    estimateSize: () => 18,
+    overscan: 20,
+    // Keyed by event, not by index, so a measurement made for a row stays
+    // with that row when older pages shift every index under it.
+    getItemKey: (index) => eventKey(logEvents[index]),
+  })
+  const totalSize = virtualizer.getTotalSize()
+
+  // When a row above the viewport is measured and turns out taller or shorter
+  // than its estimate, shift the scroll position by the difference so what the
+  // user is looking at does not move. An instance property rather than an
+  // option in this version of the virtualizer (its docs mark it experimental),
+  // hence the assignment; it is read on each measurement, so an effect is
+  // early enough.
+  useLayoutEffect(() => {
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+      item.start < (instance.scrollOffset ?? 0)
+  }, [virtualizer])
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current
@@ -286,15 +332,14 @@ function LogsPane({
   }, [])
 
   const handleLoadMore = useCallback(() => {
-    const el = scrollRef.current
-    if (!el || !hasMore || loadingMore) return
+    if (!hasMore || loadingMore) return
     prependSnapshotRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
+      totalSize: virtualizer.getTotalSize(),
+      scrollOffset: virtualizer.scrollOffset ?? scrollRef.current?.scrollTop ?? 0,
       itemCount: logEvents.length,
     }
     onLoadMore()
-  }, [hasMore, loadingMore, logEvents.length, onLoadMore])
+  }, [hasMore, loadingMore, logEvents.length, onLoadMore, virtualizer])
 
   // Load older logs when the top sentinel enters view
   const topSentinelRef = useScrollTrigger({
@@ -328,8 +373,12 @@ function LogsPane({
       const snapshot = prependSnapshotRef.current
       prependSnapshotRef.current = null
       if (logEvents.length > snapshot.itemCount) {
-        const addedHeight = el.scrollHeight - snapshot.scrollHeight
-        el.scrollTop = snapshot.scrollTop + addedHeight
+        // The prepended rows added estimated height above the viewport; move
+        // the scroll position by exactly that much and the visible rows stay
+        // put. Estimates refining later is the virtualizer's own
+        // scroll-adjustment doing the same correction per row.
+        const addedHeight = virtualizer.getTotalSize() - snapshot.totalSize
+        virtualizer.scrollToOffset(snapshot.scrollOffset + addedHeight)
         skipUnreadRef.current = true
       }
       prevLenRef.current = logEvents.length
@@ -351,7 +400,15 @@ function LogsPane({
       const unreadTimer = window.setTimeout(() => setHasUnread(true), 0)
       return () => window.clearTimeout(unreadTimer)
     }
-  }, [logEvents.length, loadingMore])
+  }, [logEvents.length, loadingMore, virtualizer])
+
+  // Measurement refines row heights after the pin-to-bottom scroll above, so
+  // the true bottom keeps moving for a frame or two; while pinned, follow it.
+  useLayoutEffect(() => {
+    if (!initializedRef.current || !pinnedRef.current || prependSnapshotRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [totalSize])
 
   if (!hasStream) {
     return (
@@ -395,19 +452,27 @@ function LogsPane({
             the buffer
           </div>
         )}
-        {logEvents.map((e, i) => (
-          <div
-            key={`${e.timestamp ?? i}-${(e.message ?? "").slice(0, 16)}-${i}`}
-            className="flex gap-2 hover:bg-fg-muted/5"
-          >
-            <span className="shrink-0 font-mono text-fg-muted tabular-nums">
-              {formatLogTime(e.timestamp)}
-            </span>
-            <span className="min-w-0 wrap-break-word text-fg">
-              <AnsiText text={e.message ?? ""} />
-            </span>
-          </div>
-        ))}
+        <div style={{ height: `${totalSize}px`, width: "100%", position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const e = logEvents[virtualRow.index]
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 flex w-full gap-2 hover:bg-fg-muted/5"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <span className="shrink-0 font-mono text-fg-muted tabular-nums">
+                  {formatLogTime(e.timestamp)}
+                </span>
+                <span className="min-w-0 wrap-break-word text-fg">
+                  <AnsiText text={e.message ?? ""} />
+                </span>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* "New logs" pill — visible when scrolled up and new events arrive */}

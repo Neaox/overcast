@@ -209,11 +209,13 @@ on very wide events, this is the next lever, as an explicit UX change.
 Ordered so each phase is independently shippable and measurable. Failing-test-first where a phase
 changes observable behavior; paced benchmarks before/after each phase (see Phase 0).
 
-**Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`) and 3 (row render cost)
-landed. Phases 0, 2, 4, 5 outstanding. Phase 1 shipped without the full `useLogFeed` extraction —
-the hook owns the session + buffer + cap and both surfaces consume it; the fetched-side merge
-stayed in the viewers (sorted-merge, no per-batch re-sort), and the remaining consolidation is
-Phase 5's.
+**Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`), 2 (peek virtualization)
+and 3 (row render cost) landed. Phases 0, 4, 5 outstanding. Phase 1 shipped without the full
+`useLogFeed` extraction — the hook owns the session + buffer + cap and both surfaces consume it;
+the fetched-side merge stayed in the viewers (sorted-merge, no per-batch re-sort), and the
+remaining consolidation is Phase 5's. Phase 2's scroll anchoring cannot be exercised in jsdom
+(the tests stub the virtualizer), so the in-browser pass against a built image is the required
+verification for it.
 
 ### Phase 0 — Baseline harness (S)
 
@@ -253,7 +255,7 @@ Extract a `useLogFeed` hook (feature-local, `features/cloudwatch/logs/`) that ow
 
 `LogEventsViewer` and `LogStreamPeek` both consume this hook.
 
-### Phase 2 — Virtualize the log peek (M) — fixes F1, F1b
+### Phase 2 — Virtualize the log peek (M) — fixes F1, F1b — **landed**
 
 `LogsPane` adopts the same `useVirtualizer` pattern as `LogEventsViewer` (dynamic `measureElement`,
 overscan ~15), keeping: reverse pagination via the top sentinel, prepend scroll anchoring (the
