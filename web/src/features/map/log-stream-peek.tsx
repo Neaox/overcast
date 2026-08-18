@@ -272,9 +272,11 @@ function LogsPane({
   const initializedRef = useRef(false)
   const prevLenRef = useRef(0)
   const prependSnapshotRef = useRef<{
-    totalSize: number
-    scrollOffset: number
     itemCount: number
+    /** Key of the first rendered row — the content the user was looking at. */
+    anchorKey: React.Key | null
+    /** How far the viewport top sat below that row's start. */
+    anchorDelta: number
   } | null>(null)
   const skipUnreadRef = useRef(false)
 
@@ -312,10 +314,17 @@ function LogsPane({
 
   const handleLoadMore = useCallback(() => {
     if (!hasMore || loadingMore) return
+    // Anchor on the first rendered row's *key*, not on a pixel offset: the
+    // prepended rows enter as height estimates, and an offset restore lands
+    // the accumulated estimate error right in the viewport. The key survives
+    // the prepend, so the restore can put that exact row back at the top and
+    // leave the estimate error above the fold, where the virtualizer's own
+    // scroll adjustment corrects it row by row.
+    const firstItem = virtualizer.getVirtualItems().at(0)
     prependSnapshotRef.current = {
-      totalSize: virtualizer.getTotalSize(),
-      scrollOffset: virtualizer.scrollOffset ?? scrollRef.current?.scrollTop ?? 0,
       itemCount: logEvents.length,
+      anchorKey: firstItem?.key ?? null,
+      anchorDelta: firstItem ? (virtualizer.scrollOffset ?? 0) - firstItem.start : 0,
     }
     onLoadMore()
   }, [hasMore, loadingMore, logEvents.length, onLoadMore, virtualizer])
@@ -351,13 +360,16 @@ function LogsPane({
     if (prependSnapshotRef.current && !loadingMore) {
       const snapshot = prependSnapshotRef.current
       prependSnapshotRef.current = null
-      if (logEvents.length > snapshot.itemCount) {
-        // The prepended rows added estimated height above the viewport; move
-        // the scroll position by exactly that much and the visible rows stay
-        // put. Estimates refining later is the virtualizer's own
-        // scroll-adjustment doing the same correction per row.
-        const addedHeight = virtualizer.getTotalSize() - snapshot.totalSize
-        virtualizer.scrollToOffset(snapshot.scrollOffset + addedHeight)
+      if (logEvents.length > snapshot.itemCount && snapshot.anchorKey != null) {
+        const anchorIndex = logEvents.findIndex(
+          (event) => logEventKey(event) === snapshot.anchorKey,
+        )
+        if (anchorIndex >= 0) {
+          const [offset] = virtualizer.getOffsetForIndex(anchorIndex, "start") ?? [null]
+          if (offset != null) {
+            virtualizer.scrollToOffset(offset + snapshot.anchorDelta)
+          }
+        }
         skipUnreadRef.current = true
       }
       prevLenRef.current = logEvents.length
@@ -379,7 +391,7 @@ function LogsPane({
       const unreadTimer = window.setTimeout(() => setHasUnread(true), 0)
       return () => window.clearTimeout(unreadTimer)
     }
-  }, [logEvents.length, loadingMore, virtualizer])
+  }, [logEvents, loadingMore, virtualizer])
 
   // Measurement refines row heights after the pin-to-bottom scroll above, so
   // the true bottom keeps moving for a frame or two; while pinned, follow it.

@@ -98,14 +98,23 @@ export function useLogTailBuffer({
     }
 
     void (async () => {
-      for await (const event of tailLogEvents({
-        groupIdentifier,
-        streamName,
-        filterPattern,
-        signal: controller.signal,
-      })) {
-        pending.push(event)
-        frame ??= requestAnimationFrame(flush)
+      try {
+        for await (const event of tailLogEvents({
+          groupIdentifier,
+          streamName,
+          filterPattern,
+          signal: controller.signal,
+        })) {
+          pending.push(event)
+          frame ??= requestAnimationFrame(flush)
+        }
+      } catch (err) {
+        // A session dies mid-stream when the emulator restarts or the network
+        // drops — ordinary events in a dev loop, and nothing an effect body
+        // can catch once it has escaped here as an unhandled rejection.
+        if (!controller.signal.aborted) {
+          console.warn("live tail session ended unexpectedly", err)
+        }
       }
     })()
 

@@ -18,6 +18,8 @@ const live = vi.hoisted(() => {
   class Session {
     private queue: unknown[] = []
     private waiter: ((v: IteratorResult<unknown>) => void) | null = null
+    private rejecter: ((err: Error) => void) | null = null
+    private error: Error | null = null
     closed = false
 
     push(message: string, timestamp = 1_700_000_000_000) {
@@ -35,13 +37,26 @@ const live = vi.hoisted(() => {
       }
     }
 
+    /** Kill the transport mid-stream, the way an emulator restart does. */
+    fail(err: Error) {
+      this.error = err
+      if (this.waiter) {
+        const reject = this.rejecter
+        this.waiter = null
+        this.rejecter = null
+        reject?.(err)
+      }
+    }
+
     [Symbol.asyncIterator]() {
       return {
         next: (): Promise<IteratorResult<unknown>> => {
+          if (this.error) return Promise.reject(this.error)
           if (this.queue.length) return Promise.resolve({ value: this.queue.shift(), done: false })
           if (this.closed) return Promise.resolve({ value: undefined, done: true })
-          return new Promise((resolve) => {
+          return new Promise((resolve, reject) => {
             this.waiter = resolve
+            this.rejecter = reject
           })
         },
         return: (): Promise<IteratorResult<unknown>> => {
@@ -187,6 +202,26 @@ describe("useLogTailBuffer", () => {
       expect(live.sessions.length).toBeGreaterThanOrEqual(2)
       expect(activeSessions()).toHaveLength(1)
     })
+  })
+
+  it("keeps what it caught when the session dies mid-stream", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const { result } = renderBuffer()
+      const s = await session()
+
+      act(() => s.push("caught", 1_000))
+      await waitFor(() => expect(result.current.events).toHaveLength(1))
+
+      // The emulator restarting kills the transport without an abort. That is
+      // an ordinary dev-loop event, not an unhandled rejection.
+      act(() => s.fail(new TypeError("network error")))
+      await waitFor(() => expect(warn).toHaveBeenCalled())
+
+      expect(result.current.events.map((e) => e.message)).toEqual(["caught"])
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it("hangs up when disabled", async () => {
