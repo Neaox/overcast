@@ -336,13 +336,19 @@ row navigation, which the generic `LogViewer` does not offer.
 - No web worker for the standard row path. A worker's price is the string round-trip plus a
   second render when the result lands — an extra commit and mutation batch per row, a step
   backwards for rows whose synchronous highlight is sub-millisecond (nearly all of them, and a
-  repeat highlight is a cache hit since Phase 3). The one shape that earns a worker is a single
-  giant JSON document, where the *first* `Prism.highlight` alone can blow the frame budget:
-  if Phase 0's baseline shows that case janking, add a size threshold — small documents highlight
-  synchronously, large ones render as plain text and upgrade when the worker responds. The
-  upgrade is layout-stable by construction: Prism only wraps text in spans, the text content is
-  identical, so row height and wrapping cannot change and `measureElement` never re-fires.
-  No OffscreenCanvas / canvas log rendering under any trigger.
+  repeat highlight is a cache hit since Phase 3). Measured (Node 24, this dev machine,
+  `Prism.highlight` on realistic nested JSON): 2 KiB → 0.33 ms, 17 KiB → 2 ms, 83 KiB → 8 ms,
+  166 KiB → 19 ms, 414 KiB → 59 ms, 827 KiB → 123 ms. A typical log line is under 2 KiB; the
+  16 ms frame budget falls around **~70 KiB**, and CloudWatch caps a single event at 256 KB, so
+  the worst *legal* first-highlight is a ~35–60 ms hitch (row memoisation makes it per-mount,
+  not per-frame; the LRU declines >100 KB documents by design). If real streams hit that case,
+  the fix is a size threshold: below ~50 KiB highlight synchronously, above it render plain text
+  and upgrade when the worker responds. The upgrade is layout-stable by construction — Prism
+  only wraps text in spans, the text content is identical, so row height and wrapping cannot
+  change and `measureElement` never re-fires. Note the same is NOT true of Format-mode
+  pretty-printing: that changes the text itself and therefore the row height, so it can never be
+  applied as an async upgrade and stays synchronous. No OffscreenCanvas / canvas log rendering
+  under any trigger.
 - No change to `tail.ts`'s generator contract or the emulator's live-tail wire behavior.
 - No redesign of the viewers' look or controls; toggles, badges, and empty states stay as-is.
 - `use-event-stream.ts` / map animation performance is out of scope (separate surface).
