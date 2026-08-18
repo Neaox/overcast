@@ -79,9 +79,10 @@ func TestSchedulerTags_sharedTagsPathSpace(t *testing.T) {
 	arn := createGroup(t, srv, "tag-grp")
 	escaped := url.PathEscape(arn)
 
-	// When: TagResource is sent to POST /tags/{ResourceArn}
+	// When: TagResource is sent to POST /tags/{ResourceArn}, with Tags as the
+	// TagList of {Key,Value} structures AWS models and every SDK sends
 	tag := schDo(t, srv, http.MethodPost, "/tags/"+escaped, map[string]any{
-		"Tags": map[string]string{"Env": "test"},
+		"Tags": []map[string]string{{"Key": "Env", "Value": "test"}},
 	})
 	tag.Body.Close()
 	helpers.AssertStatus(t, tag, http.StatusOK)
@@ -93,10 +94,10 @@ func TestSchedulerTags_sharedTagsPathSpace(t *testing.T) {
 	defer list.Body.Close()
 	helpers.AssertStatus(t, list, http.StatusOK)
 	var result struct {
-		Tags map[string]string `json:"Tags"`
+		Tags []struct{ Key, Value string } `json:"Tags"`
 	}
 	helpers.DecodeJSON(t, list, &result)
-	if result.Tags["Env"] != "test" {
+	if len(result.Tags) != 1 || result.Tags[0].Key != "Env" || result.Tags[0].Value != "test" {
 		t.Errorf("expected Env=test, got %+v", result.Tags)
 	}
 
@@ -108,7 +109,7 @@ func TestSchedulerTags_sharedTagsPathSpace(t *testing.T) {
 	after := schDo(t, srv, http.MethodGet, "/tags/"+escaped, nil)
 	defer after.Body.Close()
 	var remaining struct {
-		Tags map[string]string `json:"Tags"`
+		Tags []struct{ Key, Value string } `json:"Tags"`
 	}
 	helpers.DecodeJSON(t, after, &remaining)
 	if len(remaining.Tags) != 0 {

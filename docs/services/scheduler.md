@@ -181,6 +181,6 @@ every target type EventBridge rules reach.
 | --------------------- | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `TagResource`         | ✅ Supported | Merges tags on ARN, at the shared `/tags/{ResourceArn}` path | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_TagResource.html)         |
 | `UntagResource`       | ✅ Supported | Removes `?TagKeys` from ARN                                  | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Returns tag map                                              | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
+| `ListTagsForResource` | ✅ Supported | Returns the modeled `TagList`, ordered by key                | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->
