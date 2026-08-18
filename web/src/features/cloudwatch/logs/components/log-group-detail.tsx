@@ -307,10 +307,15 @@ export function LogGroupDetail({ groupName }: Props) {
             <LogSearchResults
               events={filteredEvents}
               filterPattern={activeFilter}
-              onOpenStream={(streamName) =>
+              onOpenEvent={(hit) =>
                 void navigate({
                   to: "/cloudwatch/logs/stream",
-                  search: { groupName, streamName },
+                  search: {
+                    groupName,
+                    streamName: hit.streamName,
+                    anchorTs: hit.timestamp,
+                    anchorSig: hit.signature,
+                  },
                 })
               }
             />

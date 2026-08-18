@@ -356,6 +356,27 @@ it today, so a connection that dies *silently* (no FIN — machine sleep, NAT ti
 live. If that case ever matters, the heartbeat makes a staleness watchdog trivial: no frame for
 ~10 s ⇒ mark the session dead. Not built — on localhost the error path is what actually fires.
 
+## 3c. Anchored search navigation (landed after Phase 5)
+
+A search hit now deep-links to its stream anchored on the exact event (`anchorTs` + a djb2
+message signature in the URL): the viewer widens its window to 15 minutes before the anchor,
+pages until the event is loaded, centres it, and keeps it marked. Context below is the ordinary
+newest-edge infinite scroll; context *above* beyond the 15-minute lead-in is still bounded by the
+window — the full upgrade is Phase 4's open backward expansion, at which point the anchor flow
+inherits it for free. The stream column sits on the right of the results, as the console has it.
+
+### QOL backlog (viewer-side, fidelity-safe — none started)
+
+Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes: a UTC/local
+timestamp toggle (the console has one; we always show local); inter-row time deltas à la browser
+devtools; copy-deep-link on any row (the anchor URL machinery already exists); collapsed
+single-line rows with per-row expand (both the console's default and the plan's §2c perf lever);
+keyboard row navigation (j/k, Enter to expand, c to copy); click a Lambda requestId to filter to
+that invocation's lines; "filter for selection"; persisted view preferences (Format/Syntax/Wrap/
+sort survive revisits); export visible events (the console offers CSV download); jump-to-timestamp
+(reuses the anchor flow). Highest leverage for Lambda debugging: requestId click-to-filter and
+copy-deep-link.
+
 ## 4. Explicit non-goals
 
 - No web worker for the standard row path. A worker's price is the string round-trip plus a
