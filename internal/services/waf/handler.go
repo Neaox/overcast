@@ -320,7 +320,7 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
 		return h.getACL(ctx, scope, id)
 	}
-	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, req.Tags, getter, h.putACL); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, scope+"/"+id, serviceutil.TagsFromList(req.Tags), wafTagCfg, getter, h.putACL); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -344,7 +344,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
 		return h.getACL(ctx, scope, id)
 	}
-	if aerr := serviceutil.RemoveTags(ctx, scope+"/"+id, req.TagKeys, getter, h.putACL); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(ctx, scope+"/"+id, req.TagKeys, getter, h.putACL); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

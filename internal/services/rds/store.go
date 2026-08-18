@@ -274,6 +274,13 @@ func (s *rdsStore) getDBInstance(ctx context.Context, id string) (*DBInstance, *
 }
 
 func (s *rdsStore) deleteDBInstance(ctx context.Context, id string) *protocol.AWSError {
+	// The record is read for the ARN its tags are keyed by. A record that has
+	// already gone has no tags left to key, so its absence is not an error.
+	if inst, aerr := s.getDBInstance(ctx, id); aerr == nil {
+		if aerr := s.deleteTags(ctx, inst.DBInstanceArn); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -559,6 +566,11 @@ func (s *rdsStore) listDBSubnetGroups(ctx context.Context) ([]*DBSubnetGroup, *p
 }
 
 func (s *rdsStore) deleteDBSubnetGroup(ctx context.Context, name string) *protocol.AWSError {
+	if sg, aerr := s.getDBSubnetGroup(ctx, name); aerr == nil {
+		if aerr := s.deleteTags(ctx, sg.DBSubnetGroupArn); aerr != nil {
+			return aerr
+		}
+	}
 	key := serviceutil.RegionKey(s.region(ctx), name)
 	if err := s.store.Delete(ctx, nsSubnetGroups, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -608,6 +620,11 @@ func (s *rdsStore) listDBParameterGroups(ctx context.Context) ([]*DBParameterGro
 }
 
 func (s *rdsStore) deleteDBParameterGroup(ctx context.Context, name string) *protocol.AWSError {
+	if pg, aerr := s.getDBParameterGroup(ctx, name); aerr == nil {
+		if aerr := s.deleteTags(ctx, pg.DBParameterGroupArn); aerr != nil {
+			return aerr
+		}
+	}
 	key := serviceutil.RegionKey(s.region(ctx), name)
 	if err := s.store.Delete(ctx, nsParameterGroups, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -616,6 +633,30 @@ func (s *rdsStore) deleteDBParameterGroup(ctx context.Context, name string) *pro
 }
 
 // ── Tags store ────────────────────────────────────────────────────────────────
+
+// tags is the namespace resource tags live in. They are keyed by the resource's
+// own ARN, which is the string a caller passes as ResourceName.
+func (s *rdsStore) tags() *serviceutil.NSStore {
+	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
+}
+
+// deleteTags removes the tags of a resource that is going away.
+//
+// Nothing ties a tag blob to the lifetime of the record it describes, so a
+// delete path that forgets this leaves ListTagsForResource answering for a
+// resource that no longer exists, and leaves the blob in the store for the rest
+// of the session. Every delete path below calls it, so a new one is a visibly
+// missing line rather than a silent leak.
+//
+// An untagged resource is not a special case: deleting a key that was never
+// written is a no-op. An empty ARN is — it would name the whole namespace's
+// zero key rather than this resource.
+func (s *rdsStore) deleteTags(ctx context.Context, arn string) *protocol.AWSError {
+	if arn == "" {
+		return nil
+	}
+	return s.tags().Delete(ctx, arn)
+}
 
 // ── Cluster store ─────────────────────────────────────────────────────────────
 
@@ -643,6 +684,11 @@ func (s *rdsStore) getDBCluster(ctx context.Context, id string) (*DBCluster, *pr
 }
 
 func (s *rdsStore) deleteDBCluster(ctx context.Context, id string) *protocol.AWSError {
+	if c, aerr := s.getDBCluster(ctx, id); aerr == nil {
+		if aerr := s.deleteTags(ctx, c.DBClusterArn); aerr != nil {
+			return aerr
+		}
+	}
 	if err := s.store.Delete(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

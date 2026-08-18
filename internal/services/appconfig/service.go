@@ -900,7 +900,7 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, req.Tags, appConfigTagCfg); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, req.Tags, appConfigTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -918,7 +918,7 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if aerr := serviceutil.RemoveStoreTags(r.Context(), s.store.tags, key, keys); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(r.Context(), s.store.tags, key, keys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -931,7 +931,7 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	tags, aerr := serviceutil.ListStoreTags(r.Context(), s.store.tags, key)
+	tags, aerr := s.store.tags.Load(r.Context(), key)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -946,7 +946,7 @@ func (s *Service) applyInlineTags(w http.ResponseWriter, r *http.Request, key st
 	if len(tags) == 0 {
 		return true
 	}
-	if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, tags, appConfigTagCfg); aerr != nil {
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, tags, appConfigTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return false
 	}

@@ -829,10 +829,9 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 		return nil, aerr
 	}
 
-	members := make([]xmlTagMemberTyped, 0, len(tags))
-	for k, v := range tags {
-		members = append(members, xmlTagMemberTyped{Key: k, Value: v})
-	}
+	members := serviceutil.TagElements(tags, func(k, v string) xmlTagMemberTyped {
+		return xmlTagMemberTyped{Key: k, Value: v}
+	})
 
 	return &listTagsForResourceResp{
 		Xmlns: snsXMLNS,

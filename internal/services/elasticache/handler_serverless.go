@@ -167,17 +167,24 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 		cache.NetworkType = "ipv4"
 	}
 
+	// Create-time tags are validated before anything is written, so a rejected
+	// tag set fails the create rather than leaving a cache that exists with the
+	// tags the caller asked for missing.
+	tags := formTags(r)
+	if aerr := serviceutil.ValidateTags(cacheTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	if aerr := h.store.putServerlessCache(r.Context(), cache); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if tags := formTags(r); len(tags) > 0 {
-		tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
-		existing, _ := tagStore.Load(r.Context(), arn)
-		for k, v := range tags {
-			existing[k] = v
+	if len(tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), arn, tags, cacheTagCfg); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
 		}
-		tagStore.Save(r.Context(), arn, existing) //nolint:errcheck
 	}
 
 	if h.dockerReady.Load() {

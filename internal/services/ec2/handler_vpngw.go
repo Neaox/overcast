@@ -80,6 +80,14 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a gateway behind.
+	tags := parseTagSpecifications(r, "vpn-gateway")
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	vgw := &VpnGateway{
 		VpnGatewayID:     fmt.Sprintf("vgw-%s", shortID()),
 		State:            "available",
@@ -94,7 +102,6 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 
 	// Create-time tags go to the tag store, the same place CreateTags writes,
 	// so a later describe sees both without having to read two sources.
-	tags := parseTagSpecifications(r, "vpn-gateway")
 	if aerr := h.putResourceTags(r.Context(), vgw.VpnGatewayID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return

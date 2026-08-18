@@ -1036,11 +1036,9 @@ func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
 func tagDescXML(arn string, tags map[string]string) xmlTagDescription {
 	desc := xmlTagDescription{ResourceArn: arn}
 	if len(tags) > 0 {
-		members := make([]xmlTag, 0, len(tags))
-		for k, v := range tags {
-			members = append(members, xmlTag{Key: k, Value: v})
-		}
-		desc.Tags.Member = members
+		desc.Tags.Member = serviceutil.TagElements(tags, func(k, v string) xmlTag {
+			return xmlTag{Key: k, Value: v}
+		})
 	} else {
 		desc.Tags.Member = []xmlTag{}
 	}

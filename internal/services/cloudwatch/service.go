@@ -2089,7 +2089,7 @@ func sortedTags(tags map[string]string) []Tag {
 // tagStore exposes the cloudwatch:tags namespace through serviceutil's shared
 // tag helpers, so the merge, remove and validation rules are the ones every
 // other service uses rather than a third hand-rolled copy of them.
-func (s *Service) tagStore() serviceutil.TagStore {
+func (s *Service) tagStore() *serviceutil.NSStore {
 	return &serviceutil.NSStore{Store: s.store.store, NS: nsTags}
 }
 
@@ -2101,18 +2101,20 @@ func (s *Service) addResourceTags(ctx context.Context, arn string, add []Tag, cf
 	for _, t := range add {
 		incoming[t.Key] = t.Value
 	}
-	return serviceutil.ApplyStoreTags(ctx, s.tagStore(), arn, incoming, cfg)
+	_, aerr := serviceutil.ApplyStoreTags(ctx, s.tagStore(), arn, incoming, cfg)
+	return aerr
 }
 
 // removeResourceTags deletes keys from the tag set stored against arn.
 // A key that is not present is ignored, as on AWS.
 func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []string) *protocol.AWSError {
-	return serviceutil.RemoveStoreTags(ctx, s.tagStore(), arn, keys)
+	_, aerr := serviceutil.RemoveStoreTags(ctx, s.tagStore(), arn, keys)
+	return aerr
 }
 
 // resourceTags reads the tag set stored against arn.
 func (s *Service) resourceTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
-	return serviceutil.ListStoreTags(ctx, s.tagStore(), arn)
+	return s.tagStore().Load(ctx, arn)
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {

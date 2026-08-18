@@ -499,23 +499,22 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	var pairs []serviceutil.TagPair
+	incoming := map[string]string{}
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
 		if key == "" {
 			break
 		}
-		pairs = append(pairs, serviceutil.TagPair{Key: key, Value: r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))})
+		incoming[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
 	}
-	tags, aerr := serviceutil.ApplyTagsToStore(r.Context(), cacheTagCfg, nsTags, arn, pairs, h.store.store)
+	tags, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), arn, incoming, cacheTagCfg)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	items := make([]xmlTag, 0, len(tags))
-	for k, v := range tags {
-		items = append(items, xmlTag{Key: k, Value: v})
-	}
+	items := serviceutil.TagElements(tags, func(k, v string) xmlTag {
+		return xmlTag{Key: k, Value: v}
+	})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAddTagsResponse{
 		Xmlns:            cacheXMLNS,
 		Result:           xmlAddTagsResult{TagList: xmlTagList{Items: items}},
@@ -529,18 +528,14 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := serviceutil.TagsFromStore(r.Context(), h.store.store, nsTags, arn)
+	tags, aerr := h.store.tags().Load(r.Context(), arn)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if tags == nil {
-		tags = map[string]string{}
-	}
-	items := make([]xmlTag, 0, len(tags))
-	for k, v := range tags {
-		items = append(items, xmlTag{Key: k, Value: v})
-	}
+	items := serviceutil.TagElements(tags, func(k, v string) xmlTag {
+		return xmlTag{Key: k, Value: v}
+	})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlListTagsResponse{
 		Xmlns:            cacheXMLNS,
 		Result:           xmlListTagsResult{TagList: xmlTagList{Items: items}},
@@ -562,7 +557,7 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		}
 		keys = append(keys, key)
 	}
-	if _, aerr := serviceutil.RemoveTagsFromStore(r.Context(), nsTags, arn, keys, h.store.store); aerr != nil {
+	if _, aerr := serviceutil.RemoveStoreTags(r.Context(), h.store.tags(), arn, keys); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}

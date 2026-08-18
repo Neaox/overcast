@@ -452,10 +452,9 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tagList := make([]map[string]string, 0, len(tags))
-	for k, v := range tags {
-		tagList = append(tagList, map[string]string{"key": k, "value": v})
-	}
+	tagList := serviceutil.TagElements(tags, func(k, v string) map[string]string {
+		return map[string]string{"key": k, "value": v}
+	})
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tagList})
 }

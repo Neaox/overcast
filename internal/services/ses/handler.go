@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -716,12 +715,9 @@ func writeV2EmptyJSON(w http.ResponseWriter) {
 // iteration order per process, so without this the Tags array would reorder
 // between otherwise identical responses.
 func sortedSESTags(tags map[string]string) []sesTag {
-	out := make([]sesTag, 0, len(tags))
-	for k, v := range tags {
-		out = append(out, sesTag{Key: k, Value: v})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
+	return serviceutil.TagElements(tags, func(k, v string) sesTag {
+		return sesTag{Key: k, Value: v}
+	})
 }
 
 // ─── Delivery helpers ────────────────────────────────────────────────────────

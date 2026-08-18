@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -69,6 +70,31 @@ func sortedTags(tags map[string]string) []Tag {
 	return out
 }
 
+// tagItems renders every tag in the index into a DescribeTags item, ordered by
+// resource ID and then by key.
+//
+// DescribeTags walks the whole index rather than one resource, so it has two
+// map iterations to make deterministic rather than one — and it is the response
+// most likely to be diffed, being the one that answers "what is tagged here".
+//
+// keep is applied to the rendered item rather than to the resource ID, because
+// DescribeTags is the one describe whose filters select tags rather than the
+// resources carrying them: `key` and `value` are only knowable once the item
+// exists. It may be nil, which keeps everything.
+func tagItems[T any](index tagIndex, item func(resourceID string, tag Tag) T, keep func(T) bool) []T {
+	out := make([]T, 0, len(index))
+	for _, rid := range slices.Sorted(maps.Keys(index)) {
+		for _, t := range sortedTags(index[rid]) {
+			rendered := item(rid, t)
+			if keep != nil && !keep(rendered) {
+				continue
+			}
+			out = append(out, rendered)
+		}
+	}
+	return out
+}
+
 // sortTags orders tags by key without disturbing the caller's slice, so a
 // create response and the describes that follow it agree on the order.
 func sortTags(tags []Tag) []Tag {
@@ -79,9 +105,58 @@ func sortTags(tags []Tag) []Tag {
 
 // ── Writing ──────────────────────────────────────────────────────────────────
 
+// ec2TagCfg tunes the shared tag validation to EC2's error shape. EC2 answers
+// TagLimitExceeded for too many tags and InvalidParameterValue for a key or
+// value its model would refuse.
+var ec2TagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "TagLimitExceeded",
+	ExceededMessage: "The maximum number of tags for this resource has been reached.",
+	InvalidCode:     "InvalidParameterValue",
+}
+
+// serviceStampedTagKeys are the reserved keys Overcast's own services set on a
+// resource as they create it.
+//
+// The aws: prefix is reserved from callers, not from AWS. Real Auto Scaling
+// stamps aws:autoscaling:groupName on every instance it launches, and
+// Overcast's does the same — through the same RunInstances call a customer
+// makes, because that is the only way in. Validation therefore has no way to
+// tell the two apart except by the key, so the keys Overcast mints are named
+// here. A caller's own aws: key is still refused.
+var serviceStampedTagKeys = map[string]bool{
+	"aws:autoscaling:groupName": true,
+}
+
+// validateResourceTags applies AWS's tag rules to a set EC2 is about to store,
+// less the keys Overcast's services stamp themselves.
+func validateResourceTags(tags map[string]string) *protocol.AWSError {
+	stamped := 0
+	for k := range tags {
+		if serviceStampedTagKeys[k] {
+			stamped++
+		}
+	}
+	if stamped == 0 {
+		return serviceutil.ValidateTags(ec2TagCfg, tags)
+	}
+	callerSet := make(map[string]string, len(tags)-stamped)
+	for k, v := range tags {
+		if !serviceStampedTagKeys[k] {
+			callerSet[k] = v
+		}
+	}
+	return serviceutil.ValidateTags(ec2TagCfg, callerSet)
+}
+
 // putResourceTags merges tags into resourceID's existing tags, which is what
 // both CreateTags and a create call's TagSpecification.N do. Absent tags are
 // left alone; DeleteTags is the way to remove one.
+//
+// The merged set is validated before it is written, so EC2 no longer accepts a
+// 300-character key that AWS would reject. Validating the merge rather than the
+// incoming tags is what makes the tag-count limit mean anything: a resource is
+// taken over the limit by the call that pushes it there, not by one oversized
+// request.
 func (h *Handler) putResourceTags(ctx context.Context, resourceID string, tags []Tag) *protocol.AWSError {
 	if len(tags) == 0 {
 		return nil
@@ -96,7 +171,27 @@ func (h *Handler) putResourceTags(ctx context.Context, resourceID string, tags [
 	for _, t := range tags {
 		existing[t.Key] = t.Value
 	}
+	if aerr := validateResourceTags(existing); aerr != nil {
+		return aerr
+	}
 	return h.store.putTags(ctx, resourceID, existing)
+}
+
+// validateTagSpecifications rejects a create call's TagSpecification.N before
+// the resource is made.
+//
+// The tags themselves cannot be stored until the resource has an ID, but AWS
+// refuses the whole call over a bad tag rather than creating the resource and
+// then failing — so the check happens first and the write follows.
+func validateTagSpecifications(tags []Tag) *protocol.AWSError {
+	if len(tags) == 0 {
+		return nil
+	}
+	incoming := make(map[string]string, len(tags))
+	for _, t := range tags {
+		incoming[t.Key] = t.Value
+	}
+	return validateResourceTags(incoming)
 }
 
 // parseTagSpecifications parses TagSpecification.N.Tag.M.{Key,Value} for the

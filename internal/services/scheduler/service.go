@@ -392,6 +392,9 @@ func (s *Service) loadGroup(ctx context.Context, region, name string) (*Schedule
 }
 
 func (s *Service) deleteGroup(ctx context.Context, region, name string) error {
+	if err := s.deleteTags(ctx, s.groupARN(region, name)); err != nil {
+		return err
+	}
 	return s.store.Delete(ctx, nsGroups, s.groupKey(region, name))
 }
 
@@ -457,6 +460,9 @@ func (s *Service) loadSchedule(ctx context.Context, region, group, name string) 
 }
 
 func (s *Service) deleteScheduleRecord(ctx context.Context, region, group, name string) error {
+	if err := s.deleteTags(ctx, s.scheduleARN(region, group, name)); err != nil {
+		return err
+	}
 	_ = s.store.Delete(ctx, nsLastFire, s.scheduleKey(region, group, name))
 	return s.store.Delete(ctx, nsSchedules, s.scheduleKey(region, group, name))
 }
