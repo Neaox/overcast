@@ -38,6 +38,6 @@ func init() {
 		capabilities.Capability{Operation: "UntagResource", Category: catTags,
 			Status: capabilities.StatusSupported, Notes: "Removes `?TagKeys` from ARN"},
 		capabilities.Capability{Operation: "ListTagsForResource", Category: catTags,
-			Status: capabilities.StatusSupported, Notes: "Returns tag map"},
+			Status: capabilities.StatusSupported, Notes: "Returns the modeled `TagList`, ordered by key"},
 	)
 }

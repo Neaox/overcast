@@ -4972,7 +4972,7 @@
           "operation": "ListTagsForResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Returns tag map"
+          "notes": "Returns the modeled `TagList`, ordered by key"
         }
       ]
     },

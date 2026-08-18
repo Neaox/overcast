@@ -13,6 +13,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -54,7 +55,7 @@ func seedTaggedSchedule(t *testing.T, s *Service, group, name string) {
 	}
 	if _, aerr := s.tagResourceTyped(ctx, &tagResourceRequest{
 		ResourceArn: s.scheduleARN("us-east-1", group, name),
-		Tags:        map[string]string{"env": "prod"},
+		Tags:        []serviceutil.TagPair{{Key: "env", Value: "prod"}},
 	}); aerr != nil {
 		t.Fatalf("tagResourceTyped: %v", aerr)
 	}
@@ -92,7 +93,7 @@ func TestDeleteScheduleGroup_takesEveryTagWithIt(t *testing.T) {
 	ctx := context.Background()
 	if _, aerr := s.createScheduleGroupTyped(ctx, &createScheduleGroupRequest{
 		Name: "batch",
-		Tags: map[string]string{"env": "prod"},
+		Tags: []serviceutil.TagPair{{Key: "env", Value: "prod"}},
 	}); aerr != nil {
 		t.Fatalf("createScheduleGroupTyped: %v", aerr)
 	}
