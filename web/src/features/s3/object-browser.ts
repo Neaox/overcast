@@ -151,6 +151,36 @@ export interface VersionRow {
 
 export type BrowserRow = PrefixRow | ObjectRow | VersionRow
 
+/**
+ * Stable identity for a browser row — the virtualizer's `getItemKey` and the
+ * row's React key.
+ *
+ * Keyed by index, a sort flip or a filter keystroke remaps every row to a new
+ * key: React remounts the whole visible list, the virtualizer re-measures
+ * every row, and measurements taken under one key get attributed to whatever
+ * row now wears it. S3 rows have natural string identity — a folder is its
+ * prefix, an object its key, a version its key + versionId (delete markers
+ * carry a versionId like any other version) — so no synthetic identity is
+ * needed; see `lib/stable-row-key.ts` for the object-identity fallback used
+ * where none exists.
+ *
+ * The type tag keeps an object named like a folder's prefix from colliding
+ * with it. A version's id leads its key because ids are drawn from a
+ * colon-free alphabet (base64url characters, or the literal `null`) while a
+ * key can contain anything — id first, the first two colons always delimit
+ * the same way and `(key, versionId)` pairs cannot collide.
+ */
+export function browserRowKey(row: BrowserRow): string {
+  switch (row.type) {
+    case "prefix":
+      return `p:${row.prefix}`
+    case "object":
+      return `o:${row.key}`
+    case "version":
+      return `v:${row.version.versionId}:${row.version.key}`
+  }
+}
+
 export interface BuildRowsInput {
   /** The folder the breadcrumb is on — what row names are shown relative to. */
   browsePrefix: string

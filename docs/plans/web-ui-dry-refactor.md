@@ -204,6 +204,34 @@ component**, `ConfirmDialog`. So 54 of 55 dialog-bearing files silently lack the
 **Composition API after the work** — a `<ResourceFormDialog schema fields …>` driven by the zod
 schema, so `create-topic-dialog.tsx` becomes ~25 lines and `create-rest-api-dialog.tsx` ~30.
 
+### Archetype E — Virtualized unbounded list (added 2026-08-18)
+
+The screens that render a server-paginated listing through `@tanstack/react-virtual`: the
+CloudWatch log viewers (where the techniques were developed and measured —
+[logs-view-performance.md](./logs-view-performance.md)), the S3 object browser (retrofitted
+2026-08-18), the debug state browser, the event console. What they share is not a component but a
+**kernel of three mechanisms**, extracted as:
+
+| Module | What it owns |
+| --- | --- |
+| `hooks/use-load-more-at-edge.ts` | Fetch the next page as the user nears the list edge, keyed on the **page token** — a boolean-keyed effect stalls when a fast response commits no fetching-state render, and an effect depending on `getVirtualItems()` re-runs every scroll frame. The hook's docblock carries the full race reasoning. |
+| `lib/stable-row-key.ts` | WeakMap object-identity keys for rows with no natural identity (log events). Rows that *have* natural string identity use it directly — the S3 browser keys rows by prefix/key/key+versionId (`browserRowKey` in `features/s3/object-browser.ts`); index keys remount and re-measure every row on a sort flip or filter keystroke. |
+| `lib/highlight-code.ts` | Prism highlighting behind a ~400-entry LRU with a ~100 KB size cap, keyed on (language, text). A cache hit returns the **identical** string, so an unchanged `dangerouslySetInnerHTML` leaves the DOM untouched — no style recalc and no MutationObserver records (the logs plan's §2b mutation-budget reasoning). `lib/format-body.ts` routes through it; callers cap what they highlight (the logs work measured Prism's frame budget falling around ~70 KiB). |
+
+**What stays feature-local**, per the logs plan's deliberately-declined consolidations (its Phase
+5): pin-to-bottom/unread logic (sort-direction-aware in one surface, prepend-anchored in another —
+one hook serving both needs more configuration than either has code), the row renderings
+themselves (a memoized row component per feature, fed primitives and identity-stable references,
+is the pattern; a shared row is not), and the fetched+tailed merge pipeline (live-tail is a logs
+concern). The same judgement applies here: the S3 browser's scan-cap drain, its folder/object/
+version rows and its search-term highlighting stayed in `features/s3/`.
+
+**Open follow-up:** the logs feature still runs on its own originals — `logEventKey` in
+`features/cloudwatch/logs/tail.ts` and `highlightJSON` in `lib/log-format.ts`, plus inline
+edge-fetch effects in `log-events-viewer.tsx`. They are behaviourally identical to the kernel
+modules (the kernel was extracted from them); a later PR re-points the logs surfaces at
+`stableRowKey`, `highlightCode("json" | …)` and `useLoadMoreAtEdge` and deletes the originals.
+
 ### What "add a new AWS service page" looks like afterwards
 
 1. One entry in `lib/service-registry.ts` (icon, colour, route, category) — already the single
@@ -434,7 +462,9 @@ at all when Overcast was served over plain HTTP from anything other than `localh
 - `head: ({params}) => ({meta:[{title: \`… — Overcast\`}]})` appears in 76 route files. A
   `serviceTitle("ECR")` helper saves 1 line each and costs an indirection. **Not worth it.**
 - Pagination: only 6 files touch `nextToken`/`fetchNextPage` and they page different things
-  (DynamoDB items, S3 keys, log events). **Not yet a pattern.**
+  (DynamoDB items, S3 keys, log events). ~~**Not yet a pattern.**~~ Partially superseded: the
+  *near-edge auto-fetch* half became a pattern and is extracted (Archetype E's
+  `useLoadMoreAtEdge`); the query definitions themselves stay per-feature, as before.
 - "N of M" counters: 2 real sites (`debug-page.tsx:343`, `dynamodb/table-detail.tsx:676`). **No.**
 
 ---
