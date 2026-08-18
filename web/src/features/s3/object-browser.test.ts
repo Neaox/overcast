@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   DEFAULT_SORT,
+  browserRowKey,
   buildRows,
   highlightSlices,
   isServerOrder,
@@ -318,5 +319,79 @@ describe("buildRows", () => {
       since: "2026-02-01T00:00:00.000Z",
       rank: 0,
     })
+  })
+})
+
+describe("browserRowKey", () => {
+  const base = {
+    browsePrefix: "",
+    listPrefix: "",
+    term: "",
+    sort: DEFAULT_SORT,
+    prefixes: [],
+  }
+
+  it("keys a folder by its full prefix and an object by its full key", () => {
+    const rows = buildRows({
+      ...base,
+      prefixes: [{ prefix: "logs/" }],
+      objects: [obj("report.csv")],
+    })
+    expect(rows.map(browserRowKey)).toEqual(["p:logs/", "o:report.csv"])
+  })
+
+  it("keeps a row's key across a sort flip, which is the point of it", () => {
+    const input = {
+      ...base,
+      objects: [obj("a.txt"), obj("b.txt")],
+    }
+    const asc = buildRows(input)
+    const desc = buildRows({ ...input, sort: { column: "name", direction: "desc" as const } })
+    expect(browserRowKey(desc[1])).toBe(browserRowKey(asc[0]))
+    expect(browserRowKey(desc[0])).toBe(browserRowKey(asc[1]))
+  })
+
+  it("tells two versions of one key apart", () => {
+    const rows = buildRows({
+      ...base,
+      versions: [
+        version("a.txt", { versionId: "v2" }),
+        version("a.txt", { versionId: "v1", isLatest: false }),
+      ],
+    })
+    const keys = rows.map(browserRowKey)
+    expect(new Set(keys).size).toBe(2)
+  })
+
+  it("gives a delete marker a key of its own", () => {
+    // A delete marker carries a real versionId like any other version; the
+    // marker and the version it tombstones must not collapse into one row key.
+    const rows = buildRows({
+      ...base,
+      versions: [
+        version("a.txt", { versionId: "marker-1", isDeleteMarker: true }),
+        version("a.txt", { versionId: "v1", isLatest: false }),
+      ],
+    })
+    const keys = rows.map(browserRowKey)
+    expect(new Set(keys).size).toBe(2)
+  })
+
+  it("cannot collide across row types or across key/versionId boundaries", () => {
+    const rows = buildRows({
+      ...base,
+      prefixes: [{ prefix: "a.txt" }],
+      objects: [obj("a.txt")],
+    })
+    const versionRows = buildRows({
+      ...base,
+      versions: [
+        // Adversarial pair: the same concatenation, split differently.
+        version("a.txt", { versionId: "v1x" }),
+        version("a.txtv", { versionId: "1x", isLatest: false }),
+      ],
+    })
+    const keys = [...rows, ...versionRows].map(browserRowKey)
+    expect(new Set(keys).size).toBe(keys.length)
   })
 })

@@ -98,6 +98,52 @@ describe("formatPreviewText", () => {
     expect(formatted.text).toBe(["{", '  "ok": true', "}"].join("\n"))
     expect(formatted.html).toContain("token")
   })
+
+  it("highlights CSS and JavaScript", () => {
+    expect(formatPreviewText("body { color: red }", "text/css", "site.css").html).toContain(
+      "token selector",
+    )
+    expect(formatPreviewText("const x = 1", "text/javascript", "app.js").html).toContain(
+      "token keyword",
+    )
+  })
+
+  it("returns the identical highlight for a repeated document", () => {
+    // The output feeds dangerouslySetInnerHTML; an identical string means
+    // React leaves the DOM untouched on a re-render of the same preview.
+    const text = "body { color: red }"
+    expect(formatPreviewText(text, "text/css", "site.css").html).toBe(
+      formatPreviewText(text, "text/css", "site.css").html,
+    )
+  })
+
+  it("declines to highlight a script too large for the frame budget", () => {
+    // Prism's cost is linear in the text (the logs work measured ~19 ms at
+    // 166 KiB); a preview can hold up to 1 MiB, which would be a multi-hundred
+    // millisecond freeze at dialog-open. Past the cap the preview is plain
+    // text, and says so.
+    const huge = `var x = 1;\n`.repeat(30_000) // ~330 KiB
+    const formatted = formatPreviewText(huge, "text/javascript", "bundle.js")
+
+    expect(formatted.html).toBeUndefined()
+    expect(formatted.text).toBe(huge)
+    expect(formatted.highlightSkipped).toBe(true)
+  })
+
+  it("says when a JSON document was too large to pretty-print", () => {
+    const huge = JSON.stringify({ blob: "x".repeat(300_000) })
+    const formatted = formatPreviewText(huge, "application/json", "blob.json")
+
+    expect(formatted.html).toBeUndefined()
+    expect(formatted.highlightSkipped).toBe(true)
+  })
+
+  it("does not blame size when JSON simply failed to parse", () => {
+    const formatted = formatPreviewText('{"truncated":', "application/json", "part.json")
+
+    expect(formatted.html).toBeUndefined()
+    expect(formatted.highlightSkipped).toBeUndefined()
+  })
 })
 
 // ─── The dialog ────────────────────────────────────────────────────────────

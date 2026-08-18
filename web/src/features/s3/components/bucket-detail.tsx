@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react"
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -39,17 +39,21 @@ import {
 } from "@/features/s3/data"
 import {
   DEFAULT_SORT,
+  browserRowKey,
   buildRows,
   highlightSlices,
   isServerOrder,
   nextSort,
   splitSearch,
-  type NameSlice,
+  type ObjectRow as ObjectRowData,
   type ObjectSort,
+  type PrefixRow as PrefixRowData,
   type SortColumn,
+  type VersionRow as VersionRowData,
 } from "@/features/s3/object-browser"
 import { HighlightedName, ObjectSearchBar, SortHead } from "./object-controls"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { useLoadMoreAtEdge } from "@/hooks/use-load-more-at-edge"
 import { s3 } from "@/services/api"
 import { uploadStore } from "@/lib/upload-store"
 import { Button } from "@/components/ui/button"
@@ -73,7 +77,6 @@ import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
 import {
   estimateExpiry,
   formatExpiryDistance,
-  type NoncurrentPosition,
   type LifecycleCandidate,
 } from "@/features/s3/lifecycle"
 import { shortVersionId } from "@/features/s3/version-id"
@@ -94,6 +97,9 @@ const SEARCH_DEBOUNCE_MS = 200
  * and points at the prefix that would narrow it.
  */
 const MAX_SCAN_ENTRIES = 20_000
+
+/** Stable "no rules" so the memoized rows see one identity across renders. */
+const NO_LIFECYCLE_RULES: S3LifecycleRule[] = []
 
 export function BucketDetail() {
   "use no memo"
@@ -230,9 +236,20 @@ export function BucketDetail() {
   })
 
   // One request per bucket, not per row: the expiry hint on each object row is
-  // computed from these rules rather than a HeadObject apiece.
+  // computed from these rules rather than a HeadObject apiece. The shared
+  // empty fallback keeps the prop identity stable for the memoized rows — a
+  // fresh [] every render would defeat their memo.
   const { data: lifecycle } = useQuery(s3BucketLifecycleQueryOptions(bucket))
-  const lifecycleRules = lifecycle?.rules ?? []
+  const lifecycleRules = lifecycle?.rules ?? NO_LIFECYCLE_RULES
+
+  // Stable callbacks for the memoized rows: each takes the row's own datum,
+  // so one function serves every row without re-rendering any of them when
+  // unrelated state (a dialog, a hover, the search box) changes.
+  const inspectObject = useCallback((key: string) => setMetaTarget({ key }), [])
+  const inspectVersion = useCallback(
+    (version: S3ObjectVersion) => setMetaTarget({ key: version.key, versionId: version.versionId }),
+    [],
+  )
 
   const deleteMutation = useMutation({
     ...deleteObjectMutationOptions(bucket),
@@ -342,17 +359,38 @@ export function BucketDetail() {
     estimateSize: () => 41,
     measureElement: (el) => el.getBoundingClientRect().height,
     overscan: 15,
+    // Keyed by S3 identity, not by index: a sort flip or a filter keystroke
+    // shifts every index, and index keys would remount and re-measure every
+    // visible row for content that merely moved.
+    getItemKey: (index) => browserRowKey(allItems[index]),
   })
 
-  // Fetch next page when the user scrolls within 10 rows of the end.
+  // Fetch the next page as the user scrolls within 10 rows of the end. Keyed
+  // on the continuation token rather than on `hasNextPage` — the boolean
+  // holds steady from page to page, and a fast response can commit no
+  // fetching-state render, stalling a boolean-keyed effect (see
+  // useLoadMoreAtEdge). The scan drain above is separate and stays: it reads
+  // the listing to the end regardless of where the user has scrolled.
   const virtualItems = rowVirtualizer.getVirtualItems()
-  useEffect(() => {
-    const last = virtualItems.at(-1)
-    if (!last) return
-    if (last.index >= allItems.length - 10 && hasNextPage && !isFetchingNextPage) {
-      void fetchNextPage()
-    }
-  }, [virtualItems, allItems.length, hasNextPage, isFetchingNextPage, fetchNextPage])
+  const lastObjectsPage = objectsQuery.data?.pages.at(-1)
+  const lastVersionsPage = versionsQuery.data?.pages.at(-1)
+  // An opaque re-arm value mirroring each query's own getNextPageParam:
+  // null/undefined exactly when it would return undefined.
+  const nextPageToken = viewingVersions
+    ? lastVersionsPage?.isTruncated && lastVersionsPage.nextKeyMarker
+      ? `${lastVersionsPage.nextKeyMarker}:${lastVersionsPage.nextVersionIdMarker ?? ""}`
+      : undefined
+    : lastObjectsPage?.nextContinuationToken
+  useLoadMoreAtEdge({
+    firstIndex: virtualItems[0]?.index,
+    lastIndex: virtualItems.at(-1)?.index,
+    count: allItems.length,
+    edge: "end",
+    threshold: 10,
+    nextPageToken,
+    isFetchingNextPage,
+    fetchNextPage,
+  })
 
   return (
     <div
@@ -545,172 +583,68 @@ export function BucketDetail() {
                 </tr>
               </thead>
               <tbody>
-                {rowVirtualizer.getVirtualItems().length > 0 && (
+                {virtualItems.length > 0 && (
                   <tr>
-                    <td colSpan={5} style={{ height: rowVirtualizer.getVirtualItems()[0].start }} />
+                    <td colSpan={5} style={{ height: virtualItems[0].start }} />
                   </tr>
                 )}
-                {rowVirtualizer.getVirtualItems().map((vr) => {
+                {/* Rows are memoized components fed primitives and stable
+                    references, so a scroll frame — the virtualizer re-renders
+                    this map on every one — or an unrelated state change (a
+                    dialog opening, the search box) re-renders none of them. */}
+                {virtualItems.map((vr) => {
                   const item = allItems[vr.index]
-                  const isLastRow = vr.index === allItems.length - 1
+                  const chrome = {
+                    index: vr.index,
+                    isLastRow: vr.index === allItems.length - 1,
+                    measure: rowVirtualizer.measureElement,
+                  }
 
-                  return (
-                    <tr
+                  return item.type === "prefix" ? (
+                    <FolderRow
                       key={vr.key}
-                      data-index={vr.index}
-                      ref={rowVirtualizer.measureElement}
-                      className={cn(
-                        "transition-colors",
-                        !isLastRow && "border-b border-border-muted",
-                        // Only folder rows navigate as a whole. On object rows the name
-                        // and the action buttons are the click targets, so the row itself
-                        // gets neither the pointer nor the interactive hover tint.
-                        item.type === "prefix" && "cursor-pointer hover:bg-accent-muted",
-                      )}
-                      onClick={item.type === "prefix" ? () => goToPrefix(item.prefix) : undefined}
-                    >
-                      {item.type === "prefix" ? (
-                        <>
-                          <TableCell colSpan={3}>
-                            <div className="flex min-w-0 items-center gap-2">
-                              <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
-                              <span className="truncate text-accent hover:underline">
-                                <HighlightedName
-                                  slices={highlightSlices(item.name, term, nameOffset)}
-                                />
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge>Folder</Badge>
-                          </TableCell>
-                          <TableCell className="px-1">
-                            <div className="flex items-center gap-0.5">
-                              <CopyUrlButton
-                                compact
-                                noun="URL"
-                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.prefix)}
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="Delete folder"
-                                className="hover:text-danger"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setDeletePrefixTarget(item.prefix)
-                                }}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </>
-                      ) : item.type === "version" ? (
-                        <VersionRow
-                          bucket={bucket}
-                          name={item.name}
-                          nameSlices={highlightSlices(item.name, term, nameOffset)}
-                          version={item.version}
-                          noncurrent={item.noncurrent}
-                          rules={lifecycleRules}
-                          onInspect={() =>
-                            setMetaTarget({
-                              key: item.version.key,
-                              versionId: item.version.versionId,
-                            })
-                          }
-                          onDelete={() => setDeleteVersionTarget(item.version)}
-                        />
-                      ) : (
-                        <>
-                          <TableCell className="max-w-0">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
-                              <button
-                                className="truncate text-left text-accent hover:underline"
-                                title="Inspect"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setMetaTarget({ key: item.key })
-                                }}
-                              >
-                                <HighlightedName
-                                  slices={highlightSlices(item.name, term, nameOffset)}
-                                />
-                              </button>
-                            </div>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-fg-muted">
-                            {formatBytes(item.size)}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-fg-muted">
-                            {formatDate(item.lastModified)}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap">
-                            <div className="flex items-center gap-1">
-                              <Badge variant="default">
-                                {formatStorageClass(item.storageClass)}
-                              </Badge>
-                              <ExpiryBadge rules={lifecycleRules} object={item} />
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-1">
-                            <div className="flex items-center gap-0.5">
-                              <CopyUrlButton
-                                compact
-                                noun="URL"
-                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.key)}
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="Inspect"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setMetaTarget({ key: item.key })
-                                }}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="Download"
-                                asChild
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <a href={s3.getObjectDownloadUrl(bucket, item.key)} download>
-                                  <Download className="h-3.5 w-3.5" />
-                                </a>
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="Delete"
-                                className="hover:text-danger"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setDeleteTarget(item.key)
-                                }}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </>
-                      )}
-                    </tr>
+                      {...chrome}
+                      row={item}
+                      term={term}
+                      nameOffset={nameOffset}
+                      baseUrl={endpoint.baseUrl}
+                      bucket={bucket}
+                      onOpen={goToPrefix}
+                      onDelete={setDeletePrefixTarget}
+                    />
+                  ) : item.type === "version" ? (
+                    <VersionRow
+                      key={vr.key}
+                      {...chrome}
+                      row={item}
+                      term={term}
+                      nameOffset={nameOffset}
+                      bucket={bucket}
+                      rules={lifecycleRules}
+                      onInspect={inspectVersion}
+                      onDelete={setDeleteVersionTarget}
+                    />
+                  ) : (
+                    <ObjectFileRow
+                      key={vr.key}
+                      {...chrome}
+                      row={item}
+                      term={term}
+                      nameOffset={nameOffset}
+                      baseUrl={endpoint.baseUrl}
+                      bucket={bucket}
+                      rules={lifecycleRules}
+                      onInspect={inspectObject}
+                      onDelete={setDeleteTarget}
+                    />
                   )
                 })}
-                {rowVirtualizer.getVirtualItems().length > 0 && (
+                {virtualItems.length > 0 && (
                   <tr>
                     <td
                       colSpan={5}
                       style={{
-                        height:
-                          rowVirtualizer.getTotalSize() -
-                          (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                        height: rowVirtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0),
                       }}
                     />
                   </tr>
@@ -864,7 +798,190 @@ export function BucketDetail() {
   )
 }
 
-// ─── Version row ───────────────────────────────────────────────────────────
+// ─── Rows ──────────────────────────────────────────────────────────────────
+//
+// Each row type is a `memo`ized component fed primitives and identity-stable
+// references (the row datum from the memoized `buildRows` array, callbacks
+// that take the datum, the shared rules array). The virtualizer re-renders
+// the row map on every scroll frame, and the browser's other state — dialogs,
+// the search box, hover — re-renders the page; memoized rows keep both from
+// re-rendering every visible row's cells. Derived values like the highlight
+// slices are computed inside the row from its primitive props, so they cost
+// one row's work exactly when that row's inputs changed.
+
+/** What every row needs from the virtualizer. */
+interface RowChrome {
+  /** The row's index in the flat listing, for measurement attribution. */
+  index: number
+  /** The last row draws no bottom border. */
+  isLastRow: boolean
+  /** The virtualizer's `measureElement` — identity-stable on the instance. */
+  measure: (el: HTMLTableRowElement | null) => void
+}
+
+/** One folder of the listing. The whole row navigates. */
+const FolderRow = memo(function FolderRow({
+  index,
+  isLastRow,
+  measure,
+  row,
+  term,
+  nameOffset,
+  baseUrl,
+  bucket,
+  onOpen,
+  onDelete,
+}: RowChrome & {
+  row: PrefixRowData
+  term: string
+  nameOffset: number
+  baseUrl: string
+  bucket: string
+  onOpen: (prefix: string) => void
+  onDelete: (prefix: string) => void
+}) {
+  return (
+    <tr
+      data-index={index}
+      ref={measure}
+      className={cn(
+        "transition-colors",
+        !isLastRow && "border-b border-border-muted",
+        // Only folder rows navigate as a whole. On object rows the name and
+        // the action buttons are the click targets, so those rows get neither
+        // the pointer nor the interactive hover tint.
+        "cursor-pointer hover:bg-accent-muted",
+      )}
+      onClick={() => onOpen(row.prefix)}
+    >
+      <TableCell colSpan={3}>
+        <div className="flex min-w-0 items-center gap-2">
+          <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
+          <span className="truncate text-accent hover:underline">
+            <HighlightedName slices={highlightSlices(row.name, term, nameOffset)} />
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <Badge>Folder</Badge>
+      </TableCell>
+      <TableCell className="px-1">
+        <div className="flex items-center gap-0.5">
+          <CopyUrlButton compact noun="URL" formats={s3CopyFormats(baseUrl, bucket, row.prefix)} />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Delete folder"
+            className="hover:text-danger"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(row.prefix)
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </TableCell>
+    </tr>
+  )
+})
+
+/** One current object of the listing. */
+const ObjectFileRow = memo(function ObjectFileRow({
+  index,
+  isLastRow,
+  measure,
+  row,
+  term,
+  nameOffset,
+  baseUrl,
+  bucket,
+  rules,
+  onInspect,
+  onDelete,
+}: RowChrome & {
+  row: ObjectRowData
+  term: string
+  nameOffset: number
+  baseUrl: string
+  bucket: string
+  rules: S3LifecycleRule[]
+  onInspect: (key: string) => void
+  onDelete: (key: string) => void
+}) {
+  return (
+    <tr
+      data-index={index}
+      ref={measure}
+      className={cn("transition-colors", !isLastRow && "border-b border-border-muted")}
+    >
+      <TableCell className="max-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+          <button
+            className="truncate text-left text-accent hover:underline"
+            title="Inspect"
+            onClick={(e) => {
+              e.stopPropagation()
+              onInspect(row.key)
+            }}
+          >
+            <HighlightedName slices={highlightSlices(row.name, term, nameOffset)} />
+          </button>
+        </div>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-fg-muted">{formatBytes(row.size)}</TableCell>
+      <TableCell className="whitespace-nowrap text-fg-muted">
+        {formatDate(row.lastModified)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap">
+        <div className="flex items-center gap-1">
+          <Badge variant="default">{formatStorageClass(row.storageClass)}</Badge>
+          <ExpiryBadge rules={rules} object={row} />
+        </div>
+      </TableCell>
+      <TableCell className="px-1">
+        <div className="flex items-center gap-0.5">
+          <CopyUrlButton compact noun="URL" formats={s3CopyFormats(baseUrl, bucket, row.key)} />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Inspect"
+            onClick={(e) => {
+              e.stopPropagation()
+              onInspect(row.key)
+            }}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Download"
+            asChild
+            onClick={(e) => e.stopPropagation()}
+          >
+            <a href={s3.getObjectDownloadUrl(bucket, row.key)} download>
+              <Download className="h-3.5 w-3.5" />
+            </a>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Delete"
+            className="hover:text-danger"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(row.key)
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </TableCell>
+    </tr>
+  )
+})
 
 /**
  * One entry of the version listing.
@@ -879,28 +996,34 @@ export function BucketDetail() {
  * delete marker — so an "expires" badge there would say the wrong thing; the
  * object list, which is the view of current versions, carries that hint already.
  */
-function VersionRow({
+const VersionRow = memo(function VersionRow({
+  index,
+  isLastRow,
+  measure,
+  row,
+  term,
+  nameOffset,
   bucket,
-  name,
-  nameSlices,
-  version,
-  noncurrent,
   rules,
   onInspect,
   onDelete,
-}: {
+}: RowChrome & {
+  row: VersionRowData
+  term: string
+  nameOffset: number
   bucket: string
-  /** The key relative to the folder being browsed. */
-  name: string
-  nameSlices: NameSlice[]
-  version: S3ObjectVersion
-  noncurrent?: NoncurrentPosition
   rules: S3LifecycleRule[]
-  onInspect: () => void
-  onDelete: () => void
+  onInspect: (version: S3ObjectVersion) => void
+  onDelete: (version: S3ObjectVersion) => void
 }) {
+  const { name, version, noncurrent } = row
+  const nameSlices = highlightSlices(name, term, nameOffset)
   return (
-    <>
+    <tr
+      data-index={index}
+      ref={measure}
+      className={cn("transition-colors", !isLastRow && "border-b border-border-muted")}
+    >
       <TableCell className="max-w-0">
         <div className={cn("flex min-w-0 items-center gap-2", !version.isLatest && "opacity-60")}>
           {version.isDeleteMarker ? (
@@ -918,7 +1041,7 @@ function VersionRow({
               title="Inspect"
               onClick={(e) => {
                 e.stopPropagation()
-                onInspect()
+                onInspect(version)
               }}
             >
               <HighlightedName slices={nameSlices} />
@@ -983,16 +1106,16 @@ function VersionRow({
             className="hover:text-danger"
             onClick={(e) => {
               e.stopPropagation()
-              onDelete()
+              onDelete(version)
             }}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
       </TableCell>
-    </>
+    </tr>
   )
-}
+})
 
 // ─── Expiry hint ───────────────────────────────────────────────────────────
 
