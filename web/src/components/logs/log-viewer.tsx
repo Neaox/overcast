@@ -1,15 +1,12 @@
-import { useMemo, useState, useRef } from "react"
+import { memo, useState, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
-import { stripAnsi } from "@/lib/ansi"
 import {
-  detectLogLevel,
+  describeLogEvent,
   formatLogTime,
-  formatPlatformRecord,
   highlightJSON,
   logLevelRowClass,
-  parsePlatformRecord,
   stringifyJSON,
   tryParseJSON,
 } from "@/lib/log-format"
@@ -62,30 +59,12 @@ export function LogViewer({
     rootMargin: "120px",
   })
 
-  const normalizedEvents = useMemo(
-    () =>
-      events.map((event) => {
-        const msg = String(event.message ?? "")
-        // Level detection and JSON parsing read the message as it *reads*: a
-        // colourised line starts with an escape sequence, not with `{`.
-        const plain = stripAnsi(msg)
-        // A Lambda system log record reads as the START / END / REPORT line it
-        // replaced; ticking Format swaps in the record itself.
-        const platform = parsePlatformRecord(plain)
-        return {
-          timestamp: event.timestamp,
-          ingestionTime: event.ingestionTime,
-          logStreamName: event.logStreamName,
-          message: (platform && formatPlatformRecord(platform)) ?? msg,
-          level: detectLogLevel(plain),
-          json: formatted ? tryParseJSON(plain) : null,
-        }
-      }),
-    [events, formatted],
-  )
-
+  // Row content is derived per row, not per list: this used to map every event
+  // on any change and — with Format ticked — `JSON.parse` all of them, so a
+  // 10,000-event page paid 10,000 parses to show the ~30 rows on screen.
+  // `describeLogEvent` caches the cheap part per event; the parse is row-local.
   const virtualizer = useVirtualizer({
-    count: normalizedEvents.length,
+    count: events.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
     overscan: 15,
@@ -132,7 +111,7 @@ export function LogViewer({
       )}
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto rounded bg-bg-elevated p-2">
-        {loading && normalizedEvents.length === 0 && (
+        {loading && events.length === 0 && (
           <div className="py-4 text-center text-[10px] text-fg-muted">Loading logs...</div>
         )}
 
@@ -140,11 +119,11 @@ export function LogViewer({
           <div className="py-4 text-center text-[10px] text-red-400">{error}</div>
         )}
 
-        {!loading && !error && normalizedEvents.length === 0 && (
+        {!loading && !error && events.length === 0 && (
           <div className="py-4 text-center text-[10px] text-fg-muted">{emptyMessage}</div>
         )}
 
-        {normalizedEvents.length > 0 && (
+        {events.length > 0 && (
           <div
             style={{
               height: `${virtualizer.getTotalSize()}px`,
@@ -152,67 +131,17 @@ export function LogViewer({
               position: "relative",
             }}
           >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const event = normalizedEvents[virtualRow.index]
-
-              const showHighlighted = formatted && event.json != null
-
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  className={cn(
-                    "absolute top-0 left-0 w-full border-l-2 border-l-transparent",
-                    event.level && logLevelRowClass[event.level],
-                  )}
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
-                >
-                  {mode === "plain" ? (
-                    <div className="flex gap-2 py-0.5 font-mono text-[10px] text-fg-subtle">
-                      <span className="shrink-0 font-mono text-fg-muted tabular-nums">
-                        {formatLogTime(event.timestamp)}
-                      </span>
-                      {showHighlighted ? (
-                        <pre
-                          className="min-w-0 leading-relaxed wrap-break-word whitespace-pre-wrap text-fg"
-                          dangerouslySetInnerHTML={{
-                            __html: highlightJSON(stringifyJSON(event.json!, true)),
-                          }}
-                        />
-                      ) : (
-                        <span className="min-w-0 wrap-break-word whitespace-pre-wrap text-fg">
-                          <AnsiText text={event.message} />
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex border-b border-border-muted">
-                      <div className="w-20 shrink-0 py-1 pr-2 font-mono text-[10px] text-fg-muted tabular-nums">
-                        {formatLogTime(event.timestamp)}
-                      </div>
-                      <div className="min-w-0 flex-1 py-1 pr-2">
-                        {showHighlighted ? (
-                          <pre
-                            className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg"
-                            dangerouslySetInnerHTML={{
-                              __html: highlightJSON(stringifyJSON(event.json!, true)),
-                            }}
-                          />
-                        ) : (
-                          <pre className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
-                            <AnsiText text={event.message} />
-                          </pre>
-                        )}
-                      </div>
-                      <div className="w-20 shrink-0 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
-                        {formatLogTime(event.ingestionTime)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {virtualizer.getVirtualItems().map((virtualRow) => (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 w-full"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <LogViewerRow event={events[virtualRow.index]} mode={mode} formatted={formatted} />
+              </div>
+            ))}
           </div>
         )}
 
@@ -224,10 +153,89 @@ export function LogViewer({
           <div ref={sentinelRef} className="h-3" aria-hidden="true" />
         )}
 
-        {!isFetchingMore && !hasMore && normalizedEvents.length > 0 && (
+        {!isFetchingMore && !hasMore && events.length > 0 && (
           <div className="pt-2 text-center text-[10px] text-fg-muted">End of logs</div>
         )}
       </div>
     </div>
   )
 }
+
+/**
+ * One log line.
+ *
+ * Memoised and derived row-locally: the virtualizer re-renders its visible rows
+ * on every scroll frame, so anything computed here is computed at 60 Hz unless
+ * the row can bail out. `event` comes from a query cache that hands out stable
+ * objects, and the remaining props are booleans, so an unchanged row re-renders
+ * to identical output and leaves the DOM alone.
+ */
+const LogViewerRow = memo(function LogViewerRow({
+  event,
+  mode,
+  formatted,
+}: {
+  event: LogViewerEvent
+  mode: "table" | "plain"
+  formatted: boolean
+}) {
+  const { level, plain, summary } = describeLogEvent(event)
+
+  // Only the row on screen pays for a parse, and only while Format is ticked.
+  // No `useMemo`: the React Compiler memoises this body, and `highlightJSON`
+  // is itself cached, so a repeat render costs a map lookup either way.
+  const json = formatted ? tryParseJSON(plain) : null
+  const highlighted = json ? highlightJSON(stringifyJSON(json, true)) : null
+  // A Lambda system log record reads as the START / END / REPORT line it
+  // replaced; ticking Format swaps in the record itself.
+  const text = summary ?? String(event.message ?? "")
+
+  const body = highlighted ? (
+    <pre
+      className={cn(
+        "min-w-0 leading-relaxed wrap-break-word whitespace-pre-wrap text-fg",
+        mode === "table" && "font-mono text-[10px]",
+      )}
+      dangerouslySetInnerHTML={{ __html: highlighted }}
+    />
+  ) : mode === "plain" ? (
+    <span className="min-w-0 wrap-break-word whitespace-pre-wrap text-fg">
+      <AnsiText text={text} />
+    </span>
+  ) : (
+    <pre className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
+      <AnsiText text={text} />
+    </pre>
+  )
+
+  return (
+    <div
+      className={cn(
+        "flex border-l-2 border-l-transparent",
+        mode === "table"
+          ? "border-b border-border-muted"
+          : "gap-2 py-0.5 font-mono text-[10px] text-fg-subtle",
+        level && logLevelRowClass[level],
+      )}
+    >
+      {mode === "plain" ? (
+        <>
+          <span className="shrink-0 font-mono text-fg-muted tabular-nums">
+            {formatLogTime(event.timestamp)}
+          </span>
+          {body}
+        </>
+      ) : (
+        <>
+          <div className="w-20 shrink-0 py-1 pr-2 font-mono text-[10px] text-fg-muted tabular-nums">
+            {formatLogTime(event.timestamp)}
+          </div>
+          <div className="min-w-0 flex-1 py-1 pr-2">{body}</div>
+          <div className="w-20 shrink-0 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
+            {formatLogTime(event.ingestionTime)}
+          </div>
+        </>
+      )}
+    </div>
+  )
+})

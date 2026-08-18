@@ -111,6 +111,25 @@ vi.mock("@/services/aws-clients", () => ({
   },
 }))
 
+// jsdom gives every element a zero height, so the real virtualizer renders no
+// rows at all and a live event would never be observable in the DOM.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 18,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 18,
+        end: index * 18 + 18,
+      })),
+    measureElement: vi.fn(),
+    scrollToIndex: vi.fn(),
+    scrollToOffset: vi.fn(),
+    scrollOffset: 0,
+  }),
+}))
+
 const { tailLogEvents } = await import("@/features/cloudwatch/logs/tail")
 const { LogStreamPeek } = await import("@/features/map/log-stream-peek")
 

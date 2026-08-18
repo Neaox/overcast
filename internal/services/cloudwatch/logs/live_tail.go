@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	eventsbus "github.com/Neaox/overcast/internal/events"
@@ -13,9 +14,16 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
+// AWS's Live Tail buffering contract (StartLiveTail API reference): a session
+// update carries at most 500 events, and a lagging consumer is buffered up to
+// 5,000 events, after which the oldest are dropped. The buffer is counted in
+// *events*: it used to be a 10-slot channel of write batches, and since a real
+// producer writes one PutLogEvents call per line all the time, ten quiet
+// single-line writes in one drain interval were enough to start silently
+// losing lines the store had accepted.
 const (
-	liveTailQueueSize     = 10
 	liveTailMaxUpdateSize = 500
+	liveTailBufferEvents  = 5000
 )
 
 type startLiveTailRequest struct {
@@ -116,9 +124,14 @@ func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			batch := session.Drain(liveTailMaxUpdateSize)
+			batch, sampled := session.Drain(liveTailMaxUpdateSize)
 			h.writeLiveTailEvent(w, flusher, "sessionUpdate", map[string]any{
-				"sessionMetadata": map[string]any{"sampled": false},
+				// AWS sets sampled when an update carries a subset of what
+				// matched; here that is exactly when the buffer overflowed
+				// and dropped the oldest since the last update. A drop the
+				// metadata does not admit to reads as a bug in whatever the
+				// user is tailing.
+				"sessionMetadata": map[string]any{"sampled": sampled},
 				"sessionResults":  batch,
 			})
 		}
@@ -128,18 +141,23 @@ func (h *Handler) StartLiveTail(w http.ResponseWriter, r *http.Request) {
 type liveTailSession struct {
 	cancel  context.CancelFunc
 	unsub   func()
-	events  chan []liveTailEvent
 	req     startLiveTailRequest
 	groups  map[string]string
 	matcher Matcher
 	now     func() time.Time
+
+	mu sync.Mutex
+	// Matched events awaiting the next drain, oldest first, at most
+	// liveTailBufferEvents of them.
+	buffer []liveTailEvent
+	// Whether the cap dropped events since the last drain.
+	dropped bool
 }
 
 func newLiveTailSession(parent context.Context, bus *eventsbus.Bus, req startLiveTailRequest, groups map[string]string, matcher Matcher, now func() time.Time) *liveTailSession {
 	ctx, cancel := context.WithCancel(parent)
 	s := &liveTailSession{
 		cancel:  cancel,
-		events:  make(chan []liveTailEvent, liveTailQueueSize),
 		req:     req,
 		groups:  groups,
 		matcher: matcher,
@@ -158,7 +176,7 @@ func newLiveTailSession(parent context.Context, bus *eventsbus.Bus, req startLiv
 		if len(batch) == 0 {
 			return
 		}
-		s.enqueue(ctx, batch)
+		s.enqueue(batch)
 	})
 	return s
 }
@@ -170,41 +188,35 @@ func (s *liveTailSession) Close() {
 	}
 }
 
-func (s *liveTailSession) enqueue(ctx context.Context, batch []liveTailEvent) {
-	select {
-	case s.events <- batch:
-		return
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	select {
-	case <-s.events:
-	default:
-	}
-	select {
-	case s.events <- batch:
-	case <-ctx.Done():
+func (s *liveTailSession) enqueue(batch []liveTailEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buffer = append(s.buffer, batch...)
+	if over := len(s.buffer) - liveTailBufferEvents; over > 0 {
+		s.buffer = s.buffer[over:]
+		s.dropped = true
 	}
 }
 
-func (s *liveTailSession) Drain(limit int) []liveTailEvent {
-	out := make([]liveTailEvent, 0)
-	for len(out) < limit {
-		select {
-		case batch := <-s.events:
-			remaining := limit - len(out)
-			if len(batch) > remaining {
-				out = append(out, batch[:remaining]...)
-				return out
-			}
-			out = append(out, batch...)
-		default:
-			return out
-		}
+// Drain returns up to limit buffered events and whether the buffer dropped
+// any since the previous drain — the update that follows a drop is the one
+// that must say so.
+func (s *liveTailSession) Drain(limit int) ([]liveTailEvent, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := min(limit, len(s.buffer))
+	out := make([]liveTailEvent, n)
+	copy(out, s.buffer[:n])
+	if n == len(s.buffer) {
+		// Let the drained backing array go rather than tail-slicing it —
+		// a tail slice pins every drained event for the array's lifetime.
+		s.buffer = nil
+	} else {
+		s.buffer = append([]liveTailEvent(nil), s.buffer[n:]...)
 	}
-	return out
+	sampled := s.dropped
+	s.dropped = false
+	return out, sampled
 }
 
 func (s *liveTailSession) match(event eventsbus.Event) []liveTailEvent {

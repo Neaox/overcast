@@ -8,7 +8,12 @@ import type { FilteredLogEvent, LambdaFunction } from "@/types"
 export function MonitorTab({ fn }: { fn: LambdaFunction }) {
   const logGroup = fn.LoggingConfig?.LogGroup ?? ""
 
-  const { data, isLoading, isError } = useQuery(logsFilterQueryOptions(logGroup))
+  // The footer promises a 5-second refresh, so the query keeps it. (It said so
+  // for a long time without any interval actually configured.)
+  const { data, isLoading, isError } = useQuery({
+    ...logsFilterQueryOptions(logGroup),
+    refetchInterval: 5_000,
+  })
 
   const events: FilteredLogEvent[] = data?.events.slice(-100) ?? []
 

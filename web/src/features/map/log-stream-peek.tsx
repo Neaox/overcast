@@ -9,9 +9,10 @@
  *   invocation (as recorded by the instance tracker).
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { X, FileText, Zap } from "lucide-react"
 import { AnsiText } from "@/components/logs/ansi-text"
 import { formatLogTime } from "@/lib/log-format"
@@ -19,7 +20,8 @@ import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
-import { dropTailedDuplicates, tailLogEvents } from "@/features/cloudwatch/logs/tail"
+import { dropTailedDuplicates, logEventKey } from "@/features/cloudwatch/logs/tail"
+import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
 type Tab = "logs" | "trigger"
@@ -70,14 +72,12 @@ interface LogStreamPeekProps {
 export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: LogStreamPeekProps) {
   const visible = target !== null
   const [activeTab, setActiveTab] = useState<Tab>("logs")
-  const [appendedEvents, setAppendedEvents] = useState<LogEvent[]>([])
 
-  // Reset appended events and active tab when the target stream changes.
+  // Reset the active tab when the panel closes.
   const prevTargetKey = useRef<string | null>(null)
   const targetKey = target ? `${target.logGroup}::${target.logStream}` : null
   if (targetKey !== prevTargetKey.current) {
     prevTargetKey.current = targetKey
-    if (appendedEvents.length > 0) setAppendedEvents([])
     if (!target && activeTab !== "logs") setActiveTab("logs")
   }
 
@@ -90,37 +90,18 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     ),
   )
 
-  // Append new log events for the active stream, from a live tail session the
-  // cleanup hangs up when the stream changes or the panel closes.
-  //
-  // Keyed on the stream itself rather than the target object: the map builds a
-  // fresh target on every peek click, so an object dependency would tear down a
-  // perfectly good session only to open an identical one.
+  // The live session, its per-frame batching and its bounded buffer. Keyed on
+  // the stream itself rather than the target object: the map builds a fresh
+  // target on every peek click, so an object dependency would tear down a
+  // perfectly good session only to open an identical one. The buffer resets
+  // itself when the stream changes.
   const logGroup = target?.logGroup
   const logStream = target?.logStream
-  useEffect(() => {
-    if (!logGroup || !logStream || activeTab !== "logs") return
-
-    const controller = new AbortController()
-    void (async () => {
-      for await (const event of tailLogEvents({
-        groupIdentifier: logGroup,
-        streamName: logStream,
-        signal: controller.signal,
-      })) {
-        setAppendedEvents((prev) => [
-          ...prev,
-          {
-            timestamp: event.timestamp,
-            message: event.message,
-            ingestionTime: event.ingestionTime,
-          },
-        ])
-      }
-    })()
-
-    return () => controller.abort()
-  }, [logGroup, logStream, activeTab])
+  const tail = useLogTailBuffer({
+    enabled: !!logGroup && !!logStream && activeTab === "logs",
+    groupIdentifier: logGroup,
+    streamName: logStream,
+  })
 
   // All historical events: pages are in reverse order (newest first page),
   // so reverse them to get chronological order, then append live events.
@@ -132,8 +113,8 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
   // has pushed, so the live events are reconciled against it rather than
   // simply appended.
   const logEvents = useMemo(
-    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, appendedEvents)],
-    [historicalEvents, appendedEvents],
+    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, tail.events)],
+    [historicalEvents, tail.events],
   )
 
   return (
@@ -221,6 +202,7 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
                     hasMore={logQuery.hasNextPage}
                     loadingMore={logQuery.isFetchingNextPage}
                     onLoadMore={() => logQuery.fetchNextPage()}
+                    tailOverflowed={tail.overflowed}
                   />
                 )}
                 {activeTab === "trigger" && <TriggerPane triggerEvent={target.triggerEvent} />}
@@ -273,6 +255,7 @@ function LogsPane({
   hasMore,
   loadingMore,
   onLoadMore,
+  tailOverflowed = 0,
 }: {
   logEvents: LogEvent[]
   loading: boolean
@@ -280,6 +263,8 @@ function LogsPane({
   hasMore: boolean
   loadingMore: boolean
   onLoadMore: () => void
+  /** Live events the bounded tail buffer has dropped — shown, never silent. */
+  tailOverflowed?: number
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
@@ -287,11 +272,37 @@ function LogsPane({
   const initializedRef = useRef(false)
   const prevLenRef = useRef(0)
   const prependSnapshotRef = useRef<{
-    scrollHeight: number
-    scrollTop: number
     itemCount: number
+    /** Key of the first rendered row — the content the user was looking at. */
+    anchorKey: React.Key | null
+    /** How far the viewport top sat below that row's start. */
+    anchorDelta: number
   } | null>(null)
   const skipUnreadRef = useRef(false)
+
+  const virtualizer = useVirtualizer({
+    count: logEvents.length,
+    getScrollElement: () => scrollRef.current,
+    // One unwrapped line at text-[11px] leading-relaxed; wrapped lines are
+    // corrected by measurement.
+    estimateSize: () => 18,
+    overscan: 20,
+    // Keyed by event, not by index, so a measurement made for a row stays
+    // with that row when older pages shift every index under it.
+    getItemKey: (index) => logEventKey(logEvents[index]),
+  })
+  const totalSize = virtualizer.getTotalSize()
+
+  // When a row above the viewport is measured and turns out taller or shorter
+  // than its estimate, shift the scroll position by the difference so what the
+  // user is looking at does not move. An instance property rather than an
+  // option in this version of the virtualizer (its docs mark it experimental),
+  // hence the assignment; it is read on each measurement, so an effect is
+  // early enough.
+  useLayoutEffect(() => {
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+      item.start < (instance.scrollOffset ?? 0)
+  }, [virtualizer])
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current
@@ -302,15 +313,21 @@ function LogsPane({
   }, [])
 
   const handleLoadMore = useCallback(() => {
-    const el = scrollRef.current
-    if (!el || !hasMore || loadingMore) return
+    if (!hasMore || loadingMore) return
+    // Anchor on the first rendered row's *key*, not on a pixel offset: the
+    // prepended rows enter as height estimates, and an offset restore lands
+    // the accumulated estimate error right in the viewport. The key survives
+    // the prepend, so the restore can put that exact row back at the top and
+    // leave the estimate error above the fold, where the virtualizer's own
+    // scroll adjustment corrects it row by row.
+    const firstItem = virtualizer.getVirtualItems().at(0)
     prependSnapshotRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
       itemCount: logEvents.length,
+      anchorKey: firstItem?.key ?? null,
+      anchorDelta: firstItem ? (virtualizer.scrollOffset ?? 0) - firstItem.start : 0,
     }
     onLoadMore()
-  }, [hasMore, loadingMore, logEvents.length, onLoadMore])
+  }, [hasMore, loadingMore, logEvents.length, onLoadMore, virtualizer])
 
   // Load older logs when the top sentinel enters view
   const topSentinelRef = useScrollTrigger({
@@ -343,9 +360,16 @@ function LogsPane({
     if (prependSnapshotRef.current && !loadingMore) {
       const snapshot = prependSnapshotRef.current
       prependSnapshotRef.current = null
-      if (logEvents.length > snapshot.itemCount) {
-        const addedHeight = el.scrollHeight - snapshot.scrollHeight
-        el.scrollTop = snapshot.scrollTop + addedHeight
+      if (logEvents.length > snapshot.itemCount && snapshot.anchorKey != null) {
+        const anchorIndex = logEvents.findIndex(
+          (event) => logEventKey(event) === snapshot.anchorKey,
+        )
+        if (anchorIndex >= 0) {
+          const [offset] = virtualizer.getOffsetForIndex(anchorIndex, "start") ?? [null]
+          if (offset != null) {
+            virtualizer.scrollToOffset(offset + snapshot.anchorDelta)
+          }
+        }
         skipUnreadRef.current = true
       }
       prevLenRef.current = logEvents.length
@@ -367,7 +391,15 @@ function LogsPane({
       const unreadTimer = window.setTimeout(() => setHasUnread(true), 0)
       return () => window.clearTimeout(unreadTimer)
     }
-  }, [logEvents.length, loadingMore])
+  }, [logEvents, loadingMore, virtualizer])
+
+  // Measurement refines row heights after the pin-to-bottom scroll above, so
+  // the true bottom keeps moving for a frame or two; while pinned, follow it.
+  useLayoutEffect(() => {
+    if (!initializedRef.current || !pinnedRef.current || prependSnapshotRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [totalSize])
 
   if (!hasStream) {
     return (
@@ -405,19 +437,33 @@ function LogsPane({
         {!loadingMore && !hasMore && (
           <div className="py-2 text-center text-[11px] text-fg-muted">No earlier logs</div>
         )}
-        {logEvents.map((e, i) => (
-          <div
-            key={`${e.timestamp ?? i}-${(e.message ?? "").slice(0, 16)}-${i}`}
-            className="flex gap-2 hover:bg-fg-muted/5"
-          >
-            <span className="shrink-0 font-mono text-fg-muted tabular-nums">
-              {formatLogTime(e.timestamp)}
-            </span>
-            <span className="min-w-0 wrap-break-word text-fg">
-              <AnsiText text={e.message ?? ""} />
-            </span>
+        {tailOverflowed > 0 && (
+          <div className="py-1 text-center text-[11px] text-yellow-600 dark:text-yellow-400">
+            {tailOverflowed.toLocaleString()} older live events dropped — the stream is faster than
+            the buffer
           </div>
-        ))}
+        )}
+        <div style={{ height: `${totalSize}px`, width: "100%", position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const e = logEvents[virtualRow.index]
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 flex w-full gap-2 hover:bg-fg-muted/5"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <span className="shrink-0 font-mono text-fg-muted tabular-nums">
+                  {formatLogTime(e.timestamp)}
+                </span>
+                <span className="min-w-0 wrap-break-word text-fg">
+                  <AnsiText text={e.message ?? ""} />
+                </span>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* "New logs" pill — visible when scrolled up and new events arrive */}
