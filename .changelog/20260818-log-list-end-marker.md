@@ -1,1 +1,0 @@
-* [cloudwatch/web] the log stream viewer's list now ends with an explicit marker — "End of logs" when everything is loaded, "Loading more events…" while a page is in flight, and "Live tail — watching for new events" while tailing — instead of empty space that read the same in all three cases

@@ -1,1 +1,0 @@
-* [cloudwatch/web] the log group page's cross-stream search results are virtualized and render through the shared log-row pipeline, gaining level tints and badges, ANSI colour and filter-match highlighting — previously a plain table that rendered every result and showed none of these
