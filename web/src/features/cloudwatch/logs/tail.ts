@@ -90,26 +90,14 @@ export interface MergeableLogEvent {
 /**
  * Identity for a log event that survives pagination and re-sorting.
  *
- * Rendering a virtualised list keyed by array index remounts rows whenever a
- * prepend or a sort-order flip shifts the indexes — a delete-and-insert storm
- * for React, for layout, and for every extension watching the document with a
- * MutationObserver. The event *objects* are stable (the query cache and the
- * tail buffer hand out the same objects across renders), so identity is the
- * object; a `WeakMap` lets an event that falls out of the buffer take its key
- * with it. Duplicate lines a function really did log twice get distinct keys,
- * which content-derived keys cannot promise.
+ * The original of the object-identity pattern, now living in
+ * [stable-row-key.ts](../../../lib/stable-row-key.ts) — log events are its
+ * canonical "no natural key" case (duplicate lines a function really did log
+ * twice must get distinct keys, which content-derived keys cannot promise).
+ * Kept as a named export because "the key of a log event" is what call sites
+ * mean; the shared module is how they all mean the same thing.
  */
-const eventKeys = new WeakMap<object, number>()
-let nextEventKey = 0
-
-export function logEventKey(event: object): number {
-  let key = eventKeys.get(event)
-  if (key === undefined) {
-    key = nextEventKey++
-    eventKeys.set(event, key)
-  }
-  return key
-}
+export { stableRowKey as logEventKey } from "@/lib/stable-row-key"
 
 /**
  * A short, URL-safe signature for one event's content — for deep links that
