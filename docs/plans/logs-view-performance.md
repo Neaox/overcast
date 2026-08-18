@@ -209,7 +209,11 @@ on very wide events, this is the next lever, as an explicit UX change.
 Ordered so each phase is independently shippable and measurable. Failing-test-first where a phase
 changes observable behavior; paced benchmarks before/after each phase (see Phase 0).
 
-**Progress:** Phase 3 landed (row render cost). Phases 0, 1, 2, 4, 5 outstanding.
+**Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`) and 3 (row render cost)
+landed. Phases 0, 2, 4, 5 outstanding. Phase 1 shipped without the full `useLogFeed` extraction —
+the hook owns the session + buffer + cap and both surfaces consume it; the fetched-side merge
+stayed in the viewers (sorted-merge, no per-batch re-sort), and the remaining consolidation is
+Phase 5's.
 
 ### Phase 0 — Baseline harness (S)
 
@@ -224,7 +228,7 @@ Measure in a clean browser profile — extensions off, DevTools panels closed �
 trace shows a password-manager content script and a CC/GC pause contributing 7.7s of stall that
 is not app code (§2b).
 
-### Phase 1 — Shared ingestion model, incremental derivation (M) — fixes F2, F5, most of F3
+### Phase 1 — Shared ingestion model, incremental derivation (M) — fixes F2, F5, most of F3 — **landed**
 
 Extract a `useLogFeed` hook (feature-local, `features/cloudwatch/logs/`) that owns:
 
@@ -315,7 +319,16 @@ object's identity index within the feed), never the array index.
 
 ## 4. Explicit non-goals
 
-- No web worker / OffscreenCanvas log rendering — unwarranted once derivation is incremental.
+- No web worker for the standard row path. A worker's price is the string round-trip plus a
+  second render when the result lands — an extra commit and mutation batch per row, a step
+  backwards for rows whose synchronous highlight is sub-millisecond (nearly all of them, and a
+  repeat highlight is a cache hit since Phase 3). The one shape that earns a worker is a single
+  giant JSON document, where the *first* `Prism.highlight` alone can blow the frame budget:
+  if Phase 0's baseline shows that case janking, add a size threshold — small documents highlight
+  synchronously, large ones render as plain text and upgrade when the worker responds. The
+  upgrade is layout-stable by construction: Prism only wraps text in spans, the text content is
+  identical, so row height and wrapping cannot change and `measureElement` never re-fires.
+  No OffscreenCanvas / canvas log rendering under any trigger.
 - No change to `tail.ts`'s generator contract or the emulator's live-tail wire behavior.
 - No redesign of the viewers' look or controls; toggles, badges, and empty states stay as-is.
 - `use-event-stream.ts` / map animation performance is out of scope (separate surface).

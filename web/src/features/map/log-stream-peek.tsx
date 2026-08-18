@@ -9,7 +9,7 @@
  *   invocation (as recorded by the instance tracker).
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X, FileText, Zap } from "lucide-react"
@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
-import { dropTailedDuplicates, tailLogEvents } from "@/features/cloudwatch/logs/tail"
+import { dropTailedDuplicates } from "@/features/cloudwatch/logs/tail"
+import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
 type Tab = "logs" | "trigger"
@@ -70,14 +71,12 @@ interface LogStreamPeekProps {
 export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: LogStreamPeekProps) {
   const visible = target !== null
   const [activeTab, setActiveTab] = useState<Tab>("logs")
-  const [appendedEvents, setAppendedEvents] = useState<LogEvent[]>([])
 
-  // Reset appended events and active tab when the target stream changes.
+  // Reset the active tab when the panel closes.
   const prevTargetKey = useRef<string | null>(null)
   const targetKey = target ? `${target.logGroup}::${target.logStream}` : null
   if (targetKey !== prevTargetKey.current) {
     prevTargetKey.current = targetKey
-    if (appendedEvents.length > 0) setAppendedEvents([])
     if (!target && activeTab !== "logs") setActiveTab("logs")
   }
 
@@ -90,37 +89,18 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     ),
   )
 
-  // Append new log events for the active stream, from a live tail session the
-  // cleanup hangs up when the stream changes or the panel closes.
-  //
-  // Keyed on the stream itself rather than the target object: the map builds a
-  // fresh target on every peek click, so an object dependency would tear down a
-  // perfectly good session only to open an identical one.
+  // The live session, its per-frame batching and its bounded buffer. Keyed on
+  // the stream itself rather than the target object: the map builds a fresh
+  // target on every peek click, so an object dependency would tear down a
+  // perfectly good session only to open an identical one. The buffer resets
+  // itself when the stream changes.
   const logGroup = target?.logGroup
   const logStream = target?.logStream
-  useEffect(() => {
-    if (!logGroup || !logStream || activeTab !== "logs") return
-
-    const controller = new AbortController()
-    void (async () => {
-      for await (const event of tailLogEvents({
-        groupIdentifier: logGroup,
-        streamName: logStream,
-        signal: controller.signal,
-      })) {
-        setAppendedEvents((prev) => [
-          ...prev,
-          {
-            timestamp: event.timestamp,
-            message: event.message,
-            ingestionTime: event.ingestionTime,
-          },
-        ])
-      }
-    })()
-
-    return () => controller.abort()
-  }, [logGroup, logStream, activeTab])
+  const tail = useLogTailBuffer({
+    enabled: !!logGroup && !!logStream && activeTab === "logs",
+    groupIdentifier: logGroup,
+    streamName: logStream,
+  })
 
   // All historical events: pages are in reverse order (newest first page),
   // so reverse them to get chronological order, then append live events.
@@ -132,8 +112,8 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
   // has pushed, so the live events are reconciled against it rather than
   // simply appended.
   const logEvents = useMemo(
-    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, appendedEvents)],
-    [historicalEvents, appendedEvents],
+    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, tail.events)],
+    [historicalEvents, tail.events],
   )
 
   return (
@@ -221,6 +201,7 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
                     hasMore={logQuery.hasNextPage}
                     loadingMore={logQuery.isFetchingNextPage}
                     onLoadMore={() => logQuery.fetchNextPage()}
+                    tailOverflowed={tail.overflowed}
                   />
                 )}
                 {activeTab === "trigger" && <TriggerPane triggerEvent={target.triggerEvent} />}
@@ -273,6 +254,7 @@ function LogsPane({
   hasMore,
   loadingMore,
   onLoadMore,
+  tailOverflowed = 0,
 }: {
   logEvents: LogEvent[]
   loading: boolean
@@ -280,6 +262,8 @@ function LogsPane({
   hasMore: boolean
   loadingMore: boolean
   onLoadMore: () => void
+  /** Live events the bounded tail buffer has dropped — shown, never silent. */
+  tailOverflowed?: number
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
@@ -404,6 +388,12 @@ function LogsPane({
         )}
         {!loadingMore && !hasMore && (
           <div className="py-2 text-center text-[11px] text-fg-muted">No earlier logs</div>
+        )}
+        {tailOverflowed > 0 && (
+          <div className="py-1 text-center text-[11px] text-yellow-600 dark:text-yellow-400">
+            {tailOverflowed.toLocaleString()} older live events dropped — the stream is faster than
+            the buffer
+          </div>
         )}
         {logEvents.map((e, i) => (
           <div

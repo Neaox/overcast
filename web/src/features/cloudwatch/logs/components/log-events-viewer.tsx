@@ -38,10 +38,12 @@ import {
 import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
 import {
+  compareLogEvents,
   compileFilterHighlighter,
   dropTailedDuplicates,
-  tailLogEvents,
+  mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
+import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -80,16 +82,6 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
 /** Stable empty fallback â€” a fresh `[]` would re-run every memo keyed on it. */
 const NO_EVENTS: FilteredLogEvent[] = []
 
-function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[] {
-  return [...events].sort((a, b) => {
-    const timeDelta = (a.timestamp ?? 0) - (b.timestamp ?? 0)
-    if (timeDelta !== 0) return asc ? timeDelta : -timeDelta
-    const ingestDelta = (a.ingestionTime ?? 0) - (b.ingestionTime ?? 0)
-    if (ingestDelta !== 0) return asc ? ingestDelta : -ingestDelta
-    return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "") * (asc ? 1 : -1)
-  })
-}
-
 // â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Props {
@@ -108,7 +100,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [wrapLines, setWrapLines] = useState(true)
   const [tailMode, setTailMode] = useState(false)
   const [sortAsc, setSortAsc] = useState(true)
-  const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
   // query cache, so they are held back by timestamp instead â€” a marker that
@@ -128,28 +119,20 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     }),
   })
 
+  // The buffer resets itself when the group, stream or filter changes; the
+  // time range is not part of the session's identity, so a range change has to
+  // reset by hand along with the cleared-through cut.
+  const tail = useLogTailBuffer({
+    enabled: tailMode,
+    groupIdentifier: groupName,
+    streamName,
+    filterPattern: activeFilter,
+  })
+  const clearTail = tail.clear
   useEffect(() => {
-    setTailEvents([])
+    clearTail()
     setClearedThrough(null)
-  }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
-
-  useEffect(() => {
-    if (!tailMode) return
-
-    const controller = new AbortController()
-    void (async () => {
-      for await (const event of tailLogEvents({
-        groupIdentifier: groupName,
-        streamName,
-        filterPattern: activeFilter,
-        signal: controller.signal,
-      })) {
-        setTailEvents((prev) => [...prev, event])
-      }
-    })()
-
-    return () => controller.abort()
-  }, [activeFilter, groupName, streamName, tailMode])
+  }, [clearTail, groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
 
   const fetchedEvents = data?.events ?? NO_EVENTS
   const visibleFetched = useMemo(
@@ -170,13 +153,25 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   // screen is what was counted. Clear empties the tail buffer as it hides the
   // fetched rows, so the two lists never disagree about an event it hid.
   const visibleTailed = useMemo(
-    () => dropTailedDuplicates(visibleFetched, tailEvents),
-    [visibleFetched, tailEvents],
+    () => dropTailedDuplicates(visibleFetched, tail.events),
+    [visibleFetched, tail.events],
   )
 
+  // Ascending is the canonical order and the other direction is its mirror:
+  // the fetched page sorts once per fetch, the tail buffer maintains its own
+  // order, and combining them is a linear merge â€” never a fresh sort of
+  // everything per batch of live events, which is what this replaced.
+  const ascendingFetched = useMemo(
+    () => [...visibleFetched].sort(compareLogEvents),
+    [visibleFetched],
+  )
+  const ascending = useMemo(
+    () => mergeSortedEvents(ascendingFetched, visibleTailed),
+    [ascendingFetched, visibleTailed],
+  )
   const events = useMemo(
-    () => sortEvents([...visibleFetched, ...visibleTailed], sortAsc),
-    [visibleFetched, visibleTailed, sortAsc],
+    () => (sortAsc ? ascending : [...ascending].reverse()),
+    [ascending, sortAsc],
   )
 
   // Row metadata is derived per event and cached on the event itself, so a
@@ -221,10 +216,10 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     setClearedThrough(
       events.reduce((newest, evt) => Math.max(newest, evt.timestamp ?? 0), clearedThrough ?? 0),
     )
-    setTailEvents([])
+    clearTail()
     pinnedToLatestRef.current = true
     setShowScrollBottom(false)
-  }, [events, clearedThrough])
+  }, [events, clearedThrough, clearTail])
 
   const restoreCleared = useCallback(() => setClearedThrough(null), [])
 
@@ -468,6 +463,17 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           <span className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums">
             {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
           </span>
+          {tail.overflowed > 0 && (
+            // The AWS console shows "% displayed" when Live Tail samples; the
+            // same honesty here â€” a capped buffer must say it dropped, not
+            // quietly show a window and let it read as everything.
+            <span
+              className="font-mono text-[10px] text-yellow-600 tabular-nums dark:text-yellow-400"
+              title="The live tail buffer is full, so the oldest events were dropped from view. Narrow the filter to keep up with the stream."
+            >
+              {tail.overflowed.toLocaleString()} dropped
+            </span>
+          )}
         </div>
       </div>
 
