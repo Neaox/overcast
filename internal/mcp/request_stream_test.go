@@ -22,6 +22,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -276,6 +277,60 @@ func TestRequestStream_CancellationIsReportedOnTheCancelledRequestsStream(t *tes
 	}
 	if params["reason"] != "user requested cancel" {
 		t.Errorf("reason = %v, want user requested cancel", params["reason"])
+	}
+}
+
+// The notification is written before the cancelled request is released, and
+// that ordering is what this pins.
+//
+// cancelInFlight runs on the goroutine serving the *cancelling* request, while
+// the cancelled request's handler is parked on its context. The moment that
+// context fires the handler may return, its response finish, and net/http
+// reclaim the connection — after which the stream's ResponseWriter is recycled
+// memory and a write to it panics the serving goroutine (the intermittent
+// "http: panic serving ... nil pointer dereference" this test's streamed twin
+// used to produce under -count). While the handler is still parked the
+// response cannot end, so writing first is what makes the write safe — and the
+// delivery certain rather than raced.
+func TestRequestStream_CancellationIsWrittenBeforeTheCancelledRequestIsReleased(t *testing.T) {
+	s := NewServer(nil)
+	var out bytes.Buffer
+	stream := &requestStream{out: ndjsonWriter{out: &out, mu: &sync.Mutex{}}, started: true}
+
+	var notifiedBeforeRelease bool
+	release := func() {
+		notifiedBeforeRelease = strings.Contains(out.String(), "notifications/cancelled")
+	}
+	s.registerInFlight("id-11", 11, "", release, stream)
+	s.cancelInFlight("id-11", "user requested cancel")
+
+	if !strings.Contains(out.String(), "notifications/cancelled") {
+		t.Fatal("cancelInFlight wrote no notifications/cancelled")
+	}
+	if !notifiedBeforeRelease {
+		t.Fatal("the cancelled request was released before its notification was written; once released, its response can finish and the connection be reclaimed while the write is still on its way")
+	}
+}
+
+// And a notification that arrives after the response has ended is dropped, not
+// written.
+//
+// This is the one case the ordering above cannot cover: a request that
+// finishes of its own accord while a notifications/cancelled for it is being
+// served. The canceller found the stream in the in-flight table before the
+// request left it, and by the time it writes, the response is over and what
+// backed the stream has been handed back to net/http — so the only safe thing
+// to do with the write is not make it.
+func TestRequestStream_ANotificationAfterTheResponseHasEndedIsDropped(t *testing.T) {
+	var out bytes.Buffer
+	rs := &requestStream{out: ndjsonWriter{out: &out, mu: &sync.Mutex{}}, started: true}
+	rs.finish(`{"jsonrpc":"2.0","id":1,"result":{}}`)
+	rs.close()
+
+	before := out.Len()
+	rs.notify("notifications/cancelled", map[string]any{"requestId": 1})
+	if out.Len() != before {
+		t.Fatalf("a notification was written to a response that had already ended: %s", out.String()[before:])
 	}
 }
 

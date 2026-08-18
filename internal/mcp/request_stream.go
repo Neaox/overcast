@@ -60,6 +60,11 @@ type requestStream struct {
 	http    http.ResponseWriter
 	started bool
 
+	// closed means the response this stream belonged to is over, and what
+	// backed it has been handed back to net/http. Set by close, checked by
+	// notify.
+	closed bool
+
 	// logLevel is the threshold this request named in `_meta`, empty when it
 	// named none. Written once by the dispatcher before the request is
 	// registered in flight, so no other goroutine can be holding this stream
@@ -118,8 +123,27 @@ func (rs *requestStream) notify(method string, params any) {
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	if rs.closed {
+		// The response is over and its ResponseWriter reclaimed; a write now
+		// would land in recycled memory. This is reachable when the request
+		// finished of its own accord while a notifications/cancelled for it
+		// was being served: the canceller found this stream in the in-flight
+		// table before the request left it, and lost the race to write.
+		return
+	}
 	rs.begin()
 	rs.out.writeMessage(payload)
+}
+
+// close marks the response as over. It is deferred by the HTTP layer alongside
+// the stream's creation, so from here on whatever backed the stream is about
+// to be handed back to net/http and notify must not touch it. Never called
+// over stdio, whose writer is the process's own stdout and outlives every
+// request.
+func (rs *requestStream) close() {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.closed = true
 }
 
 // setLogLevel records the threshold this request named. A nil receiver is a
