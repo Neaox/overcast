@@ -144,6 +144,16 @@ func (s *Service) createScheduleGroupTyped(ctx context.Context, req *createSched
 			HTTPStatus: http.StatusConflict,
 		}
 	}
+	// Before the group is written, not after: a request refused for its tags
+	// must not leave the group behind for the caller to clean up.
+	//
+	// mergeTags below validates again, on the merged set. For a group being
+	// created there is nothing to merge with, so the two checks agree — the
+	// duplication buys the ordering, which is the part that matters here.
+	tags := serviceutil.TagsFromList(req.Tags)
+	if aerr := validateTags(tags); aerr != nil {
+		return nil, aerr
+	}
 	now := s.clk.Now()
 	g := &ScheduleGroup{
 		Name: req.Name, Arn: s.groupARN(region, req.Name), State: "ACTIVE",
@@ -152,7 +162,11 @@ func (s *Service) createScheduleGroupTyped(ctx context.Context, req *createSched
 	if err := s.saveGroup(ctx, region, g); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.saveTagsJSON(ctx, g.Arn, serviceutil.TagsFromList(req.Tags))
+	if len(tags) > 0 {
+		if aerr := s.mergeTags(ctx, g.Arn, tags); aerr != nil {
+			return nil, aerr
+		}
+	}
 	return &createScheduleGroupResponse{ScheduleGroupArn: g.Arn}, nil
 }
 
@@ -266,7 +280,9 @@ type tagResourceRequest struct {
 }
 
 func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (any, *protocol.AWSError) {
-	s.mergeTags(ctx, req.ResourceArn, serviceutil.TagsFromList(req.Tags))
+	if aerr := s.mergeTags(ctx, req.ResourceArn, serviceutil.TagsFromList(req.Tags)); aerr != nil {
+		return nil, aerr
+	}
 	return struct{}{}, nil
 }
 
