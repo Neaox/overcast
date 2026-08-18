@@ -620,7 +620,9 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                   : hasNextPage
                     ? null
                     : tailMode
-                      ? "Live tail — watching for new events"
+                      ? tail.status === "error"
+                        ? "Live tail disconnected — toggle Tail to reconnect"
+                        : "Live tail — watching for new events"
                       : "End of logs"}
               </div>
             )}
