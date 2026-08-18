@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
-import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { describeLogEvent, formatLogDelta, formatLogTime, logLevelRowClass } from "@/lib/log-format"
 import { LiveTailIndicator } from "@/components/logs/live-tail-indicator"
 import { LogMessage } from "@/components/logs/log-message"
 import type { FilteredLogEvent } from "@/types/logs"
@@ -41,8 +41,18 @@ import {
   mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
+import { useLogViewPrefs } from "@/features/cloudwatch/logs/use-log-view-prefs"
+import { ExportMenu } from "@/features/cloudwatch/logs/components/export-menu"
 
 // â”€â”€ Row height estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/**
+ * A collapsed row's height, exactly: `py-1.5` (12px) around one
+ * `text-[11px] leading-relaxed` line (18px). Collapsed rows carry a fixed
+ * height and are never measured — a constant estimate with no measurement
+ * churn is the point of the mode — so this must match what the CSS produces.
+ */
+const COLLAPSED_ROW_HEIGHT = 30
 
 /** Estimate the row height for a log event based on message length and format state. */
 function estimateRowHeight(msg: string, formatted: boolean): number {
@@ -107,12 +117,16 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   // while the lead-in is system-chosen and free to widen.
   const [timeRange, setTimeRange] = useState<TimeRange>({})
   const [timeRangeTouched, setTimeRangeTouched] = useState(false)
-  const [displayMode, setDisplayMode] = useState<"table" | "plain">("table")
-  const [formatted, setFormatted] = useState(false)
-  const [syntaxHighlight, setSyntaxHighlight] = useState(true)
-  const [wrapLines, setWrapLines] = useState(true)
+  // Display preferences persist across visits (one localStorage key, read once
+  // at mount); Tail and the cleared-through cut are session state and do not.
+  const { prefs, setPref } = useLogViewPrefs()
+  const { displayMode, formatted, syntaxHighlight, wrapLines, sortAsc, utc, showDeltas } = prefs
+  const collapseMode = prefs.collapsed
   const [tailMode, setTailMode] = useState(false)
-  const [sortAsc, setSortAsc] = useState(true)
+  // Rows the user expanded out of collapse mode — by the same per-event key
+  // the virtualizer uses, so a sort flip or a prepend keeps the expansion on
+  // the same event. Session state: a revisit starts collapsed again.
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<number>>(() => new Set())
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
   // query cache, so they are held back by timestamp instead â€” a marker that
@@ -255,12 +269,28 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (index) => estimateRowHeight(describeLogEvent(events[index]).plain, formatted),
+    // Collapsed rows are FIXED-height — a constant, not an estimate: they skip
+    // the measurement pass entirely (no `measureElement` ref), which is what
+    // makes collapse mode cheap. Expanded rows still estimate and measure.
+    estimateSize: (index) => {
+      const evt = events[index]
+      if (collapseMode && !expandedKeys.has(logEventKey(evt))) return COLLAPSED_ROW_HEIGHT
+      return estimateRowHeight(describeLogEvent(evt).plain, formatted)
+    },
     overscan: 15,
     // Keyed by event, not by index: a sort-order flip or a newly fetched page
     // shifts every index, and index keys would remount every row with it.
     getItemKey: (index) => logEventKey(events[index]),
   })
+
+  // Entering or leaving collapse mode — and expanding or collapsing one row —
+  // invalidates sizes the virtualizer measured under the previous rendering,
+  // and a row that is now collapsed will never re-measure (by design). Drop
+  // the measurement cache so collapsed rows take the constant and expanded
+  // rows re-measure on mount. One-off per toggle, not a per-frame cost.
+  useEffect(() => {
+    virtualizer.measure()
+  }, [virtualizer, collapseMode, expandedKeys])
 
   // When a row above the viewport is measured and turns out taller or shorter
   // than its estimate, shift the scroll position by the difference so what the
@@ -457,6 +487,24 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
 
   const restoreCleared = useCallback(() => setClearedThrough(null), [])
 
+  // One handler for every row (the key rides the DOM, not a per-row closure):
+  // in collapse mode a click expands just that row to the full current
+  // rendering, and a second click folds it back to its single line.
+  const handleRowToggle = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // A click that was really a text selection, or that landed on the row's
+    // own controls (Copy, links), is not an expand request.
+    if (window.getSelection()?.toString()) return
+    if ((e.target as Element).closest("button, a")) return
+    const key = Number(e.currentTarget.dataset.rowKey)
+    if (!Number.isFinite(key)) return
+    setExpandedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
   useLayoutEffect(() => {
     if (events.length <= previousEventCountRef.current) {
       previousEventCountRef.current = events.length
@@ -623,6 +671,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
           <div className="mx-0.5 h-5 w-px bg-border" />
           <TimeRangeFilter
             value={timeRange}
+            utc={utc}
             onChange={(range) => {
               setTimeRange(range)
               setTimeRangeTouched(true)
@@ -652,7 +701,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             type="button"
             size="sm"
             variant={displayMode === "table" ? "default" : "ghost"}
-            onClick={() => setDisplayMode("table")}
+            onClick={() => setPref("displayMode", "table")}
             className="h-7 px-2 text-[10px] uppercase"
           >
             Table
@@ -661,7 +710,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             type="button"
             size="sm"
             variant={displayMode === "plain" ? "default" : "ghost"}
-            onClick={() => setDisplayMode("plain")}
+            onClick={() => setPref("displayMode", "plain")}
             className="h-7 px-2 text-[10px] uppercase"
           >
             Plaintext
@@ -670,7 +719,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             <input
               type="checkbox"
               checked={formatted}
-              onChange={(e) => setFormatted(e.target.checked)}
+              onChange={(e) => setPref("formatted", e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
             Format
@@ -679,7 +728,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             <input
               type="checkbox"
               checked={syntaxHighlight}
-              onChange={(e) => setSyntaxHighlight(e.target.checked)}
+              onChange={(e) => setPref("syntaxHighlight", e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
             Syntax
@@ -688,10 +737,48 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             <input
               type="checkbox"
               checked={wrapLines}
-              onChange={(e) => setWrapLines(e.target.checked)}
+              onChange={(e) => setPref("wrapLines", e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
             Wrap
+          </label>
+          <label
+            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
+            title="Show every row as one line — click a row to expand it"
+          >
+            <input
+              type="checkbox"
+              checked={collapseMode}
+              onChange={(e) => setPref("collapsed", e.target.checked)}
+              className="h-3 w-3 accent-accent"
+            />
+            Collapse
+          </label>
+          <Button
+            type="button"
+            size="sm"
+            variant={utc ? "default" : "ghost"}
+            onClick={() => setPref("utc", !utc)}
+            className="h-7 px-2 text-[10px] uppercase"
+            title={
+              utc
+                ? "Timestamps are shown in UTC — switch to local time"
+                : "Timestamps are shown in local time — switch to UTC"
+            }
+          >
+            UTC
+          </Button>
+          <label
+            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
+            title="Show the time elapsed since the previous event beside each timestamp"
+          >
+            <input
+              type="checkbox"
+              checked={showDeltas}
+              onChange={(e) => setPref("showDeltas", e.target.checked)}
+              className="h-3 w-3 accent-accent"
+            />
+            Deltas
           </label>
           <Button
             type="button"
@@ -741,12 +828,13 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             type="button"
             size="sm"
             variant="ghost"
-            onClick={() => setSortAsc((v) => !v)}
+            onClick={() => setPref("sortAsc", !sortAsc)}
             className="h-7 px-2 text-[10px] uppercase"
           >
             <ArrowDownUp className="mr-1 h-3 w-3" />
             {sortAsc ? "Oldest" : "Newest"}
           </Button>
+          <ExportMenu events={events} hasMore={!!hasNextPage} baseName={streamName ?? groupName} />
           <span
             className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums"
             // "+" while a nextToken remains: the server caps a page at 10,000
@@ -790,7 +878,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
           {displayMode === "table" && (
             <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
               <div className="w-10 shrink-0 px-1 text-center">#</div>
-              <div className="w-20 shrink-0 px-1">Time</div>
+              <div className={cn("shrink-0 px-1", showDeltas ? "w-36" : "w-20")}>Time</div>
               {!streamName && <div className="w-44 shrink-0 px-1">Stream</div>}
               <div className="min-w-0 flex-1 px-1">Message</div>
             </div>
@@ -817,14 +905,37 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                 // Exact matches only: a jump's nearest-match neighbour gets
                 // centred, never marked as the event the link meant.
                 const isAnchor = anchorExact && anchorIndex >= 0 && virtualRow.index === anchorIndex
+                const rowCollapsed = collapseMode && !expandedKeys.has(logEventKey(evt))
+                // The chronological predecessor, by index in the display
+                // order: the row above under Oldest-first, the row below
+                // under Newest-first. O(1) per row, derived from the same
+                // array the row came from — never a second pass or a stored
+                // parallel list.
+                const prevIndex = sortAsc ? virtualRow.index - 1 : virtualRow.index + 1
+                const prevTimestamp =
+                  prevIndex >= 0 && prevIndex < events.length
+                    ? events[prevIndex].timestamp
+                    : undefined
                 return (
                   <div
                     key={virtualRow.key}
                     data-index={virtualRow.index}
+                    // The event's own key, straight from `logEventKey`:
+                    // `virtualRow.key` is the same value in production, but
+                    // the expansion set must match what `estimateSize` checks
+                    // even where the virtualizer is mocked.
+                    data-row-key={logEventKey(evt)}
                     data-anchored={isAnchor || undefined}
-                    ref={virtualizer.measureElement}
+                    // Collapsed rows are fixed-height and never measured —
+                    // skipping `measureElement` is what removes the
+                    // measurement churn in collapse mode. Expanded rows keep
+                    // the dynamic pipeline.
+                    ref={rowCollapsed ? undefined : virtualizer.measureElement}
+                    onClick={collapseMode ? handleRowToggle : undefined}
                     className={cn(
                       "group/row absolute top-0 left-0 flex w-full border-b border-l-2 border-border-muted border-l-transparent",
+                      collapseMode && "cursor-pointer",
+                      rowCollapsed && "overflow-hidden",
                       // The anchored row is the one the deep link came for; its
                       // marking outranks the level tint.
                       isAnchor
@@ -833,6 +944,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                     )}
                     style={{
                       transform: `translateY(${virtualRow.start}px)`,
+                      ...(rowCollapsed ? { height: `${COLLAPSED_ROW_HEIGHT}px` } : {}),
                     }}
                   >
                     {displayMode === "table" ? (
@@ -840,8 +952,21 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                         <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 font-mono text-[9px] text-fg-muted/40 tabular-nums select-none">
                           {virtualRow.index + 1}
                         </div>
-                        <div className="flex w-20 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums">
-                          {formatLogTime(evt.timestamp)}
+                        <div
+                          className={cn(
+                            "flex shrink-0 items-start gap-1.5 px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums",
+                            showDeltas ? "w-36" : "w-20",
+                          )}
+                        >
+                          {formatLogTime(evt.timestamp, utc)}
+                          {/* The gap to the previous event — display-only
+                              annotation beside the real timestamp, never in
+                              place of it. */}
+                          {showDeltas && evt.timestamp != null && prevTimestamp != null && (
+                            <span className="text-fg-muted/60">
+                              {formatLogDelta(evt.timestamp - prevTimestamp)}
+                            </span>
+                          )}
                         </div>
                         {!streamName && (
                           // Truncated, not just narrow: a Lambda stream name is
@@ -864,13 +989,14 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                             wrapLines={wrapLines}
                             filterMatcher={filterMatcher}
                             level={meta.level}
+                            collapsed={rowCollapsed}
                           />
                         </div>
                       </>
                     ) : (
                       <div className="min-w-0 flex-1 px-2 py-1.5">
                         <LogMessage
-                          prefix={`${formatLogTime(evt.timestamp)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
+                          prefix={`${formatLogTime(evt.timestamp, utc)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
                           message={evt.message ?? ""}
                           summary={meta.summary}
                           formatted={formatted}
@@ -879,6 +1005,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                           filterMatcher={filterMatcher}
                           level={meta.level}
                           hideLevel
+                          collapsed={rowCollapsed}
                         />
                       </div>
                     )}

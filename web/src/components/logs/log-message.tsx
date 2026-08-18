@@ -84,6 +84,7 @@ export const LogMessage = memo(function LogMessage({
   filterMatcher,
   level,
   hideLevel = false,
+  collapsed = false,
   sizeClassName = "text-[11px]",
 }: {
   prefix?: string
@@ -97,21 +98,29 @@ export const LogMessage = memo(function LogMessage({
   filterMatcher: RegExp | null
   level: LogLevel | null
   hideLevel?: boolean
+  /**
+   * Render as one truncated line — the AWS console's collapsed row. The badge
+   * stays, ANSI still colours the line, a platform record still shows its
+   * summary; Format/Syntax belong to the expanded rendering and are skipped
+   * (along with their JSON parse — collapsed rows are the cheap ones).
+   */
+  collapsed?: boolean
   /** Font-size class; the surfaces render at different densities. */
   sizeClassName?: string
 }) {
   const jsonText = useMemo(() => {
+    if (collapsed) return null
     if (!formatted && !syntaxHighlight) return null
     // A colourised JSON line is still JSON; the escape sequences around it are
     // not, so they come off before the parse attempt.
     const json = tryParseJSON(stripAnsi(message))
     if (!json) return null
     return stringifyJSON(json, formatted)
-  }, [formatted, message, syntaxHighlight])
+  }, [collapsed, formatted, message, syntaxHighlight])
   // A system log record would otherwise render as a JSON blob among the
   // function's own output, so the summary is what shows until Format is ticked
   // — which is the toggle that means "show me the document".
-  const asSummary = summary != null && !formatted
+  const asSummary = summary != null && (!formatted || collapsed)
   const withPrefix = (text: string) => `${prefix ? `${prefix} ` : ""}${text}`
   const displayText = asSummary
     ? withPrefix(summary)
@@ -119,6 +128,24 @@ export const LogMessage = memo(function LogMessage({
       ? jsonText
       : withPrefix(message)
   const showSyntax = !asSummary && syntaxHighlight && jsonText
+
+  if (collapsed) {
+    // `truncate` is what enforces the single line: nowrap turns any embedded
+    // newline into a space and the overflow into an ellipsis.
+    return (
+      <div className="flex min-w-0 items-center gap-1.5">
+        {level && !hideLevel && <LevelBadge level={level} />}
+        <div className={cn("min-w-0 flex-1 truncate font-mono leading-relaxed", sizeClassName)}>
+          <AnsiText
+            text={displayText}
+            renderText={
+              filterMatcher ? (chunk) => highlightMatches(chunk, filterMatcher) : undefined
+            }
+          />
+        </div>
+      </div>
+    )
+  }
 
   if (showSyntax) {
     return (

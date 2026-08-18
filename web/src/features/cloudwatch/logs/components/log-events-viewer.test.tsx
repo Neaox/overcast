@@ -14,6 +14,7 @@ import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
 import { logEventSignature } from "@/features/cloudwatch/logs/tail"
+import { formatLogTime } from "@/lib/log-format"
 import type { FilteredLogEvent } from "@/types/logs"
 import { LogEventsViewer } from "./log-events-viewer"
 
@@ -37,6 +38,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         end: index * 34 + 34,
       })),
     measureElement: vi.fn(),
+    measure: vi.fn(),
     scrollToIndex: virt.scrollToIndex,
     scrollToOffset: virt.scrollToOffset,
     getOffsetForIndex: (index: number) => [index * 34, "start"] as const,
@@ -47,6 +49,9 @@ vi.mock("@tanstack/react-virtual", () => ({
 beforeEach(() => {
   virt.scrollToIndex.mockClear()
   virt.scrollToOffset.mockClear()
+  // View preferences persist to localStorage; a toggle flipped by one test
+  // must never leak into the next test's defaults.
+  localStorage.clear()
 })
 
 // A live-tail session, plus whatever the next FilterLogEvents should return.
@@ -935,5 +940,283 @@ describe("LogEventsViewer > level badges", () => {
     await user.click(screen.getByRole("button", { name: /^plaintext$/i }))
 
     expect(badge("warn")).not.toBeInTheDocument()
+  })
+})
+
+/*
+ * The AWS console offers local or UTC timestamp display; we always showed
+ * local. The toggle switches the whole viewer's rendering — rows and the
+ * time-range chip — without touching the stored timestamps.
+ */
+describe("LogEventsViewer > UTC timestamp display", () => {
+  const utcButton = () => screen.findByRole("button", { name: /^utc$/i })
+
+  it("shows local time by default, as every call site always has", async () => {
+    renderViewer()
+
+    await screen.findByText("first message")
+    expect(screen.getByText(formatLogTime(1_000))).toBeInTheDocument()
+  })
+
+  it("switches the time column to UTC when toggled", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await utcButton())
+
+    // EVENTS[0] sits at epoch+1000ms — 00:00:01.000 UTC wherever this runs.
+    expect(screen.getByText("00:00:01.000")).toBeInTheDocument()
+    expect(screen.getByText("00:00:02.000")).toBeInTheDocument()
+  })
+
+  it("switches back to local when toggled off", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await utcButton())
+    await user.click(await utcButton())
+
+    expect(screen.getByText(formatLogTime(1_000))).toBeInTheDocument()
+  })
+})
+
+/*
+ * Inter-row time deltas, devtools-style: an optional "+N ms" beside the time
+ * showing the gap to the chronologically previous event. Display-only fiction
+ * over real timestamps — the timestamps themselves never change.
+ */
+describe("LogEventsViewer > inter-row time deltas", () => {
+  const deltasToggle = () => screen.findByRole("checkbox", { name: /deltas/i })
+
+  it("shows no deltas by default", async () => {
+    renderViewer()
+
+    await screen.findByText("first message")
+    expect(screen.queryByText("+1.00 s")).not.toBeInTheDocument()
+  })
+
+  it("shows the gap to the previous event when toggled on", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await deltasToggle())
+
+    // 1_000 → 2_000: one second. The oldest event has no predecessor, so
+    // exactly one delta renders for two events.
+    expect(await screen.findByText("+1.00 s")).toBeInTheDocument()
+    expect(screen.getAllByText(/^[+-]/)).toHaveLength(1)
+  })
+
+  it("keeps the delta chronological under Newest-first", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await deltasToggle())
+    await user.click(screen.getByRole("button", { name: /oldest/i }))
+
+    // The display order flips; the gap between the same two events does not.
+    expect(await screen.findByText("+1.00 s")).toBeInTheDocument()
+  })
+})
+
+/*
+ * View preferences persist: Table/Plaintext, Format, Syntax, Wrap, sort
+ * direction, UTC, Deltas and Collapse survive a revisit through one versioned
+ * localStorage key. The unit tests for the hook cover corrupt state; these
+ * pin that the viewer actually consumes it.
+ */
+describe("LogEventsViewer > persisted view preferences", () => {
+  it("restores persisted toggles on mount", async () => {
+    localStorage.setItem(
+      "overcast.logs.viewPrefs.v1",
+      JSON.stringify({ formatted: true, wrapLines: false, sortAsc: false }),
+    )
+
+    renderViewer()
+
+    expect(await screen.findByRole("checkbox", { name: /format/i })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: /wrap/i })).not.toBeChecked()
+    // sortAsc false renders the toggle in its "Newest" state.
+    expect(screen.getByRole("button", { name: /^newest$/i })).toBeInTheDocument()
+  })
+
+  it("writes a toggle change back to storage", async () => {
+    const { user } = renderViewer()
+
+    await user.click(await screen.findByRole("checkbox", { name: /format/i }))
+
+    await waitFor(() => {
+      const stored = localStorage.getItem("overcast.logs.viewPrefs.v1")
+      expect(stored).not.toBeNull()
+      expect(JSON.parse(stored!)).toMatchObject({ formatted: true })
+    })
+  })
+})
+
+/*
+ * Collapsed single-line rows — the AWS console's default presentation and the
+ * plan doc's §2c perf lever, here as an opt-in toggle (default OFF; flipping
+ * the default is a later product decision). Every row renders as one truncated
+ * line; clicking a row expands just that row to the full current rendering.
+ */
+describe("LogEventsViewer > collapsed rows", () => {
+  const collapseToggle = () => screen.findByRole("checkbox", { name: /collapse/i })
+  const rowOf = (text: string | RegExp) => {
+    const el = screen.getByText(text)
+    const row = el.closest("[data-index]")
+    if (!row) throw new Error("row not found")
+    return row
+  }
+
+  it("renders rows fully by default — collapse is opt-in", async () => {
+    renderViewer()
+
+    await screen.findByText("first message")
+    expect(rowOf("first message").querySelector("pre")).not.toBeNull()
+  })
+
+  it("renders every row as one truncated line when Collapse is on", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await collapseToggle())
+
+    // The wrapping <pre> is gone; a single-line truncating container remains.
+    expect(rowOf("first message").querySelector("pre")).toBeNull()
+    expect(rowOf("first message").querySelector(".truncate")).not.toBeNull()
+  })
+
+  it("keeps the level badge and tint on a collapsed row", async () => {
+    const { user } = renderViewer(levelled([CONSOLE_WARN]))
+    await screen.findByText("warn")
+
+    await user.click(await collapseToggle())
+
+    expect(screen.getByText("warn")).toBeInTheDocument()
+  })
+
+  it("still shows a platform record's summary as the collapsed text", async () => {
+    const { user } = renderViewer(levelled([TIMED_OUT_REPORT]))
+    await screen.findByText(/REPORT RequestId/)
+
+    await user.click(await collapseToggle())
+
+    expect(screen.getByText(/REPORT RequestId: 13aa488f/)).toBeInTheDocument()
+  })
+
+  it("expands just the clicked row to the full rendering, and collapses it again", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+    await user.click(await collapseToggle())
+
+    await user.click(screen.getByText("first message"))
+
+    expect(rowOf("first message").querySelector("pre")).not.toBeNull()
+    // The neighbour stays collapsed: expansion is per-row.
+    expect(rowOf("second message").querySelector("pre")).toBeNull()
+
+    await user.click(screen.getByText("first message"))
+
+    expect(rowOf("first message").querySelector("pre")).toBeNull()
+  })
+
+  it("persists the collapse preference", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(await collapseToggle())
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem("overcast.logs.viewPrefs.v1")!)).toMatchObject({
+        collapsed: true,
+      })
+    })
+  })
+})
+
+/*
+ * Export downloads the currently loaded events — exactly what the list holds,
+ * in the displayed sort order. CSV mirrors the console's search-results shape;
+ * the builders' escaping and field fidelity are unit-tested in
+ * export-log-events.test.ts, so these cover the wiring.
+ */
+describe("LogEventsViewer > export", () => {
+  /** jsdom's Blob has no .text(); FileReader is the lowest common denominator. */
+  const blobText = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(new Error("blob read failed"))
+      reader.readAsText(blob)
+    })
+  const captured: Blob[] = []
+  const createObjectURL = vi.fn((blob: Blob) => {
+    captured.push(blob)
+    return "blob:mock-url"
+  })
+  const revokeObjectURL = vi.fn()
+
+  beforeEach(() => {
+    captured.length = 0
+    createObjectURL.mockClear()
+    revokeObjectURL.mockClear()
+    // jsdom has no object URLs at all, so these are definitions, not spies.
+    Object.assign(URL, { createObjectURL, revokeObjectURL })
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+  })
+
+  it("downloads the loaded events as CSV in display order", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(screen.getByRole("button", { name: /export/i }))
+    await user.click(await screen.findByRole("button", { name: /csv/i }))
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    const text = await blobText(captured[0])
+    expect(text).toBe(
+      "timestamp,logStreamName,message\r\n" +
+        "1970-01-01T00:00:01.000Z,s1,first message\r\n" +
+        "1970-01-01T00:00:02.000Z,s1,second message\r\n",
+    )
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url")
+  })
+
+  it("exports in the flipped order when the sort is Newest-first", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(screen.getByRole("button", { name: /oldest/i }))
+    await user.click(screen.getByRole("button", { name: /export/i }))
+    await user.click(await screen.findByRole("button", { name: /csv/i }))
+
+    const text = await blobText(captured[0])
+    const lines = text.trimEnd().split("\r\n")
+    expect(lines[1]).toContain("second message")
+    expect(lines[2]).toContain("first message")
+  })
+
+  it("offers a JSON export carrying the raw fields", async () => {
+    const { user } = renderViewer()
+    await screen.findByText("first message")
+
+    await user.click(screen.getByRole("button", { name: /export/i }))
+    await user.click(await screen.findByRole("button", { name: /json/i }))
+
+    const parsed = JSON.parse(await blobText(captured[0])) as { message?: string }[]
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0]).toEqual({
+      timestamp: 1_000,
+      ingestionTime: 1_000,
+      logStreamName: "s1",
+      message: "first message",
+    })
+  })
+
+  it("is disabled with nothing loaded to export", async () => {
+    renderViewer([])
+
+    await clearButton()
+    expect(screen.getByRole("button", { name: /export/i })).toBeDisabled()
   })
 })
