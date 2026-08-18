@@ -98,6 +98,9 @@ export const settingsHandlers = [
       trustStore: "not_installed",
       inContainer: false,
       restartCommand: "OVERCAST_TLS=auto overcast serve",
+      httpsEndpoint: "https://localhost:4566",
+      caEphemeral: false,
+      caCertPath: "/home/dev/.overcast/data/ca/rootCA.pem",
     }),
   ),
   http.post("/api/settings/https/enable", () =>
