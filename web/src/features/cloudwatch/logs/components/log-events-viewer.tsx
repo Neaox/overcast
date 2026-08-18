@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
 import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { LiveTailIndicator } from "@/components/logs/live-tail-indicator"
 import { LogMessage } from "@/components/logs/log-message"
 import type { FilteredLogEvent } from "@/types/logs"
 import {
@@ -418,9 +419,17 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             variant={tailMode ? "default" : "ghost"}
             onClick={() => setTailMode((v) => !v)}
             className="h-7 px-2 text-[10px] uppercase"
-            title="Live tail refreshes the current filtered view"
+            title={
+              tail.status === "error"
+                ? "The live tail session ended unexpectedly — toggle to reconnect"
+                : "Live tail streams new events as they arrive"
+            }
           >
-            <Zap className="mr-1 h-3 w-3" />
+            {tail.status === "idle" ? (
+              <Zap className="mr-1 h-3 w-3" />
+            ) : (
+              <LiveTailIndicator status={tail.status} className="mr-1.5" />
+            )}
             Tail
           </Button>
           <Button

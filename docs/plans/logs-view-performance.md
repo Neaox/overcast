@@ -344,6 +344,18 @@ than the duplication:
 - Web UI visual verification happens against a Docker image built from this worktree, published to
   127.0.0.1 (host `preview_start` resolves the wrong tree).
 
+## 3b. Live-session health (landed with Phase 5)
+
+Tailing is a push stream (StartLiveTail over AWS event-stream framing), not polling, so the
+indicator worth showing is session *health*, not activity: `useLogTailBuffer` exposes
+`status: idle | live | error`, and both tailing surfaces render a wordless dot — green pulse
+while the session is open, red and still when it died without being asked to (emulator restart,
+dropped network), which on a quiet stream is otherwise indistinguishable from healthy. The
+emulator writes an empty `sessionUpdate` every second, a de-facto heartbeat; the client ignores
+it today, so a connection that dies *silently* (no FIN — machine sleep, NAT timeout) still looks
+live. If that case ever matters, the heartbeat makes a staleness watchdog trivial: no frame for
+~10 s ⇒ mark the session dead. Not built — on localhost the error path is what actually fires.
+
 ## 4. Explicit non-goals
 
 - No web worker for the standard row path. A worker's price is the string round-trip plus a

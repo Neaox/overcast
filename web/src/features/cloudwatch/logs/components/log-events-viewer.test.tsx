@@ -243,6 +243,16 @@ describe("LogEventsViewer > pagination", () => {
     expect(screen.queryByText("End of logs")).not.toBeInTheDocument()
   })
 
+  it("shows the live dot on the Tail button while a session is open", async () => {
+    const { user } = renderViewer(EVENTS)
+    expect(screen.queryByTestId("live-tail-indicator")).not.toBeInTheDocument()
+
+    await user.click(await tailButton())
+
+    const dot = await screen.findByTestId("live-tail-indicator")
+    expect(dot).toHaveAttribute("data-status", "live")
+  })
+
   it("chains through every page and settles on the full, unqualified count", async () => {
     const { user } = renderViewer([])
     await clearButton() // wait for the toolbar to mount
