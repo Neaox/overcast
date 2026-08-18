@@ -1,5 +1,5 @@
 ﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
-import { useInfiniteQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
@@ -15,11 +15,15 @@ import {
   Zap,
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
-import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
+import {
+  logsFilterInfiniteQueryOptions,
+  logsStreamsQueryOptions,
+} from "@/features/cloudwatch/logs/data"
 import {
   TimeRangeFilter,
   type TimeRange,
 } from "@/features/cloudwatch/logs/components/time-range-filter"
+import { JumpToTimestamp } from "@/features/cloudwatch/logs/components/jump-to-timestamp"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
@@ -54,6 +58,24 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
 /** Stable empty fallback â€” a fresh `[]` would re-run every memo keyed on it. */
 const NO_EVENTS: FilteredLogEvent[] = []
 
+/**
+ * Each fetched page sorted once, cached on the page object: the query cache
+ * hands out stable page identities, so a backward chunk prepending to the
+ * pages array costs one sort of the chunk — never a re-sort of every page
+ * already loaded. Cross-stream order is `compareLogEvents`' total order
+ * (timestamp, ingestionTime, stream), the same one the tail merge uses.
+ */
+const pageSortCache = new WeakMap<object, FilteredLogEvent[]>()
+
+function sortedPageEvents(page: { events: FilteredLogEvent[] }): FilteredLogEvent[] {
+  let sorted = pageSortCache.get(page)
+  if (!sorted) {
+    sorted = [...page.events].sort(compareLogEvents)
+    pageSortCache.set(page, sorted)
+  }
+  return sorted
+}
+
 // â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** An event a deep link wants the view centred on — a search result, usually. */
@@ -80,9 +102,11 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const navigate = useNavigate()
   const [filterInput, setFilterInput] = useState("")
   const [activeFilter, setActiveFilter] = useState("")
-  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
-    anchor ? { startTime: anchor.timestamp - ANCHOR_CONTEXT_BEFORE_MS } : {},
-  )
+  // The user's time filter, kept apart from the anchor's lead-in window: an
+  // explicit start here is a hard floor backward expansion must not cross,
+  // while the lead-in is system-chosen and free to widen.
+  const [timeRange, setTimeRange] = useState<TimeRange>({})
+  const [timeRangeTouched, setTimeRangeTouched] = useState(false)
   const [displayMode, setDisplayMode] = useState<"table" | "plain">("table")
   const [formatted, setFormatted] = useState(false)
   const [syntaxHighlight, setSyntaxHighlight] = useState(true)
@@ -99,18 +123,76 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const pinnedToLatestRef = useRef(true)
   const previousEventCountRef = useRef(0)
 
-  // Paged: FilterLogEvents caps a page at 10,000 events, so one page read as
-  // "the results" silently truncated everything past the cap. Pages advance
-  // forward through the time window; newer events arrive by fetching more.
-  const { data, isLoading, isFetching, refetch, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useInfiniteQuery({
-      ...logsFilterInfiniteQueryOptions(groupName, {
+  // A jump navigates to the same route with a new anchorTs, which re-renders
+  // this mounted component rather than remounting it — so an anchor change has
+  // to hand the anchor machinery a clean slate itself.
+  const anchorKey = anchor ? `${anchor.timestamp}:${anchor.signature ?? ""}` : null
+  const [settledAnchorKey, setSettledAnchorKey] = useState<string | null>(null)
+  const [prevAnchorKey, setPrevAnchorKey] = useState(anchorKey)
+  if (anchorKey !== prevAnchorKey) {
+    setPrevAnchorKey(anchorKey)
+    setTimeRangeTouched(false)
+  }
+
+  // The window the query actually searches. Untouched by the user, an anchor
+  // opens its 15-minute lead-in; once the user drives the time filter, their
+  // choice wins outright.
+  const userStartTime = timeRangeTouched ? timeRange.startTime : undefined
+  const anchorLeadStart =
+    anchor && !timeRangeTouched ? anchor.timestamp - ANCHOR_CONTEXT_BEFORE_MS : undefined
+  const windowStart = userStartTime ?? anchorLeadStart
+  const windowEnd = timeRangeTouched ? timeRange.endTime : undefined
+
+  // Backward expansion applies exactly when the window's start is
+  // system-chosen: a user-set start is a hard floor, and no start at all means
+  // the window already reaches the beginning of history.
+  const expandable = anchorLeadStart != null
+
+  // The floor hint for expansion — min firstEventTimestamp over the streams in
+  // view: one DescribeLogStreams instead of probing history with empty range
+  // scans. Best-effort in real AWS, so it schedules the final chunk rather
+  // than clipping it (see logsFilterInfiniteQueryOptions).
+  const streamsQuery = useQuery({ ...logsStreamsQueryOptions(groupName), enabled: expandable })
+  const streamsData = streamsQuery.data
+  const historyFloor = useMemo(() => {
+    if (!expandable || !streamsData) return undefined
+    const inView = streamName
+      ? streamsData.filter((s) => s.logStreamName === streamName)
+      : streamsData
+    const known = inView
+      .map((s) => s.firstEventTimestamp)
+      .filter((t): t is number => t != null && t > 0)
+    return known.length > 0 ? Math.min(...known) : undefined
+  }, [expandable, streamsData, streamName])
+
+  // Paged, both ways: FilterLogEvents caps a page at 10,000 events, so one
+  // page read as "the results" silently truncated everything past the cap.
+  // Forward pages advance through the time window on nextTokens; previous
+  // pages are backward time-window chunks (the API pages forward only, so
+  // "older" means widening the window's start).
+  const {
+    data,
+    isLoading,
+    isFetching,
+    refetch,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasPreviousPage,
+    isFetchingPreviousPage,
+    fetchPreviousPage,
+  } = useInfiniteQuery({
+    ...logsFilterInfiniteQueryOptions(
+      groupName,
+      {
         filterPattern: activeFilter || undefined,
-        startTime: timeRange.startTime,
-        endTime: timeRange.endTime,
+        startTime: windowStart,
+        endTime: windowEnd,
         ...(streamName ? { logStreamNames: [streamName] } : {}),
-      }),
-    })
+      },
+      { enabled: expandable, floor: historyFloor },
+    ),
+  })
 
   // The buffer resets itself when the group, stream or filter changes; the
   // time range is not part of the session's identity, so a range change has to
@@ -125,20 +207,26 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   useEffect(() => {
     clearTail()
     setClearedThrough(null)
-  }, [clearTail, groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
+  }, [clearTail, groupName, streamName, activeFilter, windowStart, windowEnd])
 
-  const fetchedEvents = useMemo(
-    () => (data ? data.pages.flatMap((page) => page.events) : NO_EVENTS),
-    [data],
-  )
+  // Ascending is the canonical order and the other direction is its mirror.
+  // Each page sorts once on first sight (cached on the page object itself, so
+  // a backward prepend never re-sorts what was already loaded) and the pages
+  // merge linearly — never a fresh sort of the world per prepend or per batch
+  // of live events, which is what this replaced.
+  const ascendingFetched = useMemo(() => {
+    const pages = data?.pages ?? []
+    if (pages.length === 0) return NO_EVENTS
+    return pages.map(sortedPageEvents).reduce((merged, page) => mergeSortedEvents(merged, page))
+  }, [data])
   const visibleFetched = useMemo(
     () =>
       clearedThrough == null
-        ? fetchedEvents
-        : fetchedEvents.filter((evt) => (evt.timestamp ?? 0) > clearedThrough),
-    [fetchedEvents, clearedThrough],
+        ? ascendingFetched
+        : ascendingFetched.filter((evt) => (evt.timestamp ?? 0) > clearedThrough),
+    [ascendingFetched, clearedThrough],
   )
-  const clearedCount = fetchedEvents.length - visibleFetched.length
+  const clearedCount = ascendingFetched.length - visibleFetched.length
 
   // A refetch while tailing re-reads events the open session has already
   // pushed, so the two sources are reconciled rather than concatenated.
@@ -152,18 +240,9 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
     () => dropTailedDuplicates(visibleFetched, tail.events),
     [visibleFetched, tail.events],
   )
-
-  // Ascending is the canonical order and the other direction is its mirror:
-  // the fetched page sorts once per fetch, the tail buffer maintains its own
-  // order, and combining them is a linear merge â€” never a fresh sort of
-  // everything per batch of live events, which is what this replaced.
-  const ascendingFetched = useMemo(
-    () => [...visibleFetched].sort(compareLogEvents),
-    [visibleFetched],
-  )
   const ascending = useMemo(
-    () => mergeSortedEvents(ascendingFetched, visibleTailed),
-    [ascendingFetched, visibleTailed],
+    () => mergeSortedEvents(visibleFetched, visibleTailed),
+    [visibleFetched, visibleTailed],
   )
   const events = useMemo(
     () => (sortAsc ? ascending : [...ascending].reverse()),
@@ -182,6 +261,18 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
     // shifts every index, and index keys would remount every row with it.
     getItemKey: (index) => logEventKey(events[index]),
   })
+
+  // When a row above the viewport is measured and turns out taller or shorter
+  // than its estimate, shift the scroll position by the difference so what the
+  // user is looking at does not move — essential once backward chunks put
+  // estimated rows above the fold. An instance property rather than an option
+  // in this version of the virtualizer (its docs mark it experimental), hence
+  // the assignment; it is read on each measurement, so an effect is early
+  // enough. Same pattern as the log peek's prepend anchoring.
+  useLayoutEffect(() => {
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+      item.start < (instance.scrollOffset ?? 0)
+  }, [virtualizer])
 
   // Fetch the following page as the user nears the edge where it will attach —
   // the bottom under Oldest-first, the top under Newest-first. The fetched
@@ -206,27 +297,52 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
 
   // ── Anchored arrival ─────────────────────────────────────────────────────
-  // A search result deep-links here with an event to centre on. Find it,
-  // scroll to it once, and keep it visibly marked; if it sits beyond the
-  // loaded pages, keep paging until it turns up — the anchor is what the user
-  // came for, not the top of the window.
-  const anchorIndex = useMemo(() => {
-    if (!anchor) return -1
-    return events.findIndex(
+  // A search result deep-links here with an event to centre on; a
+  // jump-to-timestamp arrives the same way, minus the signature. Find the
+  // event, scroll to it once, and keep an exact match visibly marked; if it
+  // sits beyond the loaded pages, keep paging until it turns up — the anchor
+  // is what the user came for, not the top of the window. Without a signature
+  // and without an event on the exact millisecond, the first event at-or-after
+  // the timestamp is centred instead — but only an exact match wears the
+  // persistent mark, because "this is the one" must never be claimed of a
+  // neighbour.
+  const anchorMatch = useMemo(() => {
+    if (!anchor) return { ascendingIndex: -1, exact: false }
+    const exactIndex = ascending.findIndex(
       (evt) =>
         evt.timestamp === anchor.timestamp &&
         (!anchor.signature || logEventSignature(evt) === anchor.signature),
     )
-  }, [events, anchor])
+    if (exactIndex >= 0) return { ascendingIndex: exactIndex, exact: true }
+    if (anchor.signature) return { ascendingIndex: -1, exact: false }
+    // Loaded pages are a prefix of the window's ascending order, so the first
+    // loaded event at-or-after the timestamp is the first one overall.
+    const nearestIndex = ascending.findIndex((evt) => (evt.timestamp ?? 0) >= anchor.timestamp)
+    return { ascendingIndex: nearestIndex, exact: false }
+  }, [ascending, anchor])
+  const anchorIndex =
+    anchorMatch.ascendingIndex < 0
+      ? -1
+      : sortAsc
+        ? anchorMatch.ascendingIndex
+        : events.length - 1 - anchorMatch.ascendingIndex
+  const anchorExact = anchorMatch.exact
 
-  const anchorScrolledRef = useRef(false)
+  const pendingAnchorKey = anchorKey != null && settledAnchorKey !== anchorKey ? anchorKey : null
+  const anchorPending = pendingAnchorKey != null
   useEffect(() => {
-    if (!anchor || anchorScrolledRef.current) return
+    if (pendingAnchorKey == null) return
     if (anchorIndex < 0) {
-      if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+      if (hasNextPage && !isFetchingNextPage) {
+        void fetchNextPage()
+      } else if (!hasNextPage && !isLoading) {
+        // Paged to the end and never found it — settle so the rest of the
+        // view (backward expansion included) stops waiting on the anchor.
+        setSettledAnchorKey(pendingAnchorKey)
+      }
       return
     }
-    anchorScrolledRef.current = true
+    setSettledAnchorKey(pendingAnchorKey)
     pinnedToLatestRef.current = false
     virtualizer.scrollToIndex(anchorIndex, { align: "center" })
     // Estimated row heights put the first landing near, not on, centre;
@@ -235,7 +351,75 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       virtualizer.scrollToIndex(anchorIndex, { align: "center" }),
     )
     return () => cancelAnimationFrame(settle)
-  }, [anchor, anchorIndex, hasNextPage, isFetchingNextPage, fetchNextPage, virtualizer])
+  }, [
+    pendingAnchorKey,
+    anchorIndex,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    fetchNextPage,
+    virtualizer,
+  ])
+
+  // ── Backward expansion ───────────────────────────────────────────────────
+  // Load older events as the user nears the oldest edge of loaded data — the
+  // top under Oldest-first, the bottom under Newest-first. Same re-arming
+  // trick as the forward effect, keyed on the oldest page's param (a fresh
+  // chunk object per backward page); the isFetchingPreviousPage guard keeps
+  // exactly one backward window in flight. Held back while an anchored
+  // arrival is still paging toward its event, so the two never compete.
+  const oldestPageParam = data?.pageParams[0]
+  const nearOldestEdge = sortAsc
+    ? (virtualItems[0]?.index ?? Number.MAX_SAFE_INTEGER) <= 25
+    : (virtualItems.at(-1)?.index ?? 0) >= events.length - 25
+  const prependSnapshotRef = useRef<{
+    eventCount: number
+    /** Key of the first rendered row — the content the user was looking at. */
+    anchorRowKey: React.Key | null
+    /** How far the viewport top sat below that row's start. */
+    anchorDelta: number
+  } | null>(null)
+  useEffect(() => {
+    if (!hasPreviousPage || isFetchingPreviousPage || !nearOldestEdge || anchorPending) return
+    // Under Oldest-first the prepend grows the list above the viewport, so
+    // anchor on the first rendered row's *key*, not a pixel offset: the new
+    // rows enter as height estimates, and an offset restore would land the
+    // accumulated estimate error right in the viewport. The key survives the
+    // prepend, so the restore puts that exact row back where it was and
+    // leaves the estimate error above the fold, where the virtualizer's own
+    // scroll adjustment corrects it row by row. (Under Newest-first the older
+    // rows attach below the viewport and nothing on screen moves.)
+    if (sortAsc) {
+      const firstItem = virtualizer.getVirtualItems().at(0)
+      prependSnapshotRef.current = {
+        eventCount: events.length,
+        anchorRowKey: firstItem?.key ?? null,
+        anchorDelta: firstItem ? (virtualizer.scrollOffset ?? 0) - firstItem.start : 0,
+      }
+    }
+    void fetchPreviousPage({ cancelRefetch: false })
+  }, [
+    oldestPageParam,
+    hasPreviousPage,
+    isFetchingPreviousPage,
+    nearOldestEdge,
+    anchorPending,
+    sortAsc,
+    events.length,
+    fetchPreviousPage,
+    virtualizer,
+  ])
+
+  useLayoutEffect(() => {
+    const snapshot = prependSnapshotRef.current
+    if (!snapshot || isFetchingPreviousPage) return
+    prependSnapshotRef.current = null
+    if (events.length <= snapshot.eventCount || snapshot.anchorRowKey == null) return
+    const restoreIndex = events.findIndex((evt) => logEventKey(evt) === snapshot.anchorRowKey)
+    if (restoreIndex < 0) return
+    const [offset] = virtualizer.getOffsetForIndex(restoreIndex, "start") ?? [null]
+    if (offset != null) virtualizer.scrollToOffset(offset + snapshot.anchorDelta)
+  }, [events, isFetchingPreviousPage, virtualizer])
 
   // Scroll-to-bottom
   const [showScrollBottom, setShowScrollBottom] = useState(false)
@@ -290,6 +474,26 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
     setActiveFilter("")
   }
 
+  // Jump-to-timestamp rides the anchor machinery: same route, new anchorTs,
+  // no signature — so the view repositions on the first event at-or-after the
+  // chosen time with exactly the fetches an anchored arrival makes.
+  const handleJump = useCallback(
+    (timestamp: number) => {
+      if (streamName) {
+        void navigate({
+          to: "/cloudwatch/logs/stream",
+          search: { groupName, streamName, anchorTs: timestamp },
+        })
+      } else {
+        void navigate({
+          to: "/cloudwatch/logs/events",
+          search: { groupName, anchorTs: timestamp },
+        })
+      }
+    },
+    [navigate, groupName, streamName],
+  )
+
   // Keyboard shortcut: Ctrl/Cmd+F focuses filter, Escape clears
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -333,6 +537,25 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       : activeFilter
         ? { title: "No matching events", description: "Try a different filter pattern." }
         : { title: "No log events", description: "This stream has no events yet." }
+
+  // The oldest edge must say what it is, symmetric with "End of logs" at the
+  // newest: empty space beyond the first row reads the same whether history
+  // is exhausted, an older window is still loading, or the time filter cut it
+  // off. It sits at the top under Oldest-first and at the bottom under
+  // Newest-first — wherever the oldest edge actually is — and keeps a
+  // constant height so its text changing never nudges the rows mid-restore.
+  const oldestEdgeMarker = (
+    <div className="flex h-7 shrink-0 items-center justify-center text-center font-mono text-[10px] text-fg-muted">
+      {isFetchingPreviousPage
+        ? "Loading older events…"
+        : hasPreviousPage
+          ? // More history is reachable; nearing this edge loads it.
+            null
+          : userStartTime != null
+            ? "Start of range — the time filter begins here; widen it to search earlier events"
+            : "Start of logs"}
+    </div>
+  )
 
   return (
     <div className="flex h-full w-full flex-col gap-3">
@@ -398,7 +621,14 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             </Button>
           )}
           <div className="mx-0.5 h-5 w-px bg-border" />
-          <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
+          <TimeRangeFilter
+            value={timeRange}
+            onChange={(range) => {
+              setTimeRange(range)
+              setTimeRangeTouched(true)
+            }}
+          />
+          <JumpToTimestamp onJump={handleJump} />
           <Button
             size="sm"
             onClick={handleSearch}
@@ -573,6 +803,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             onScroll={handleScrollCheck}
             style={{ height: "calc(100vh - 280px)" }}
           >
+            {sortAsc && oldestEdgeMarker}
             <div
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
@@ -583,7 +814,9 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
               {virtualItems.map((virtualRow) => {
                 const evt = events[virtualRow.index]
                 const meta = describeLogEvent(evt)
-                const isAnchor = anchorIndex >= 0 && virtualRow.index === anchorIndex
+                // Exact matches only: a jump's nearest-match neighbour gets
+                // centred, never marked as the event the link meant.
+                const isAnchor = anchorExact && anchorIndex >= 0 && virtualRow.index === anchorIndex
                 return (
                   <div
                     key={virtualRow.key}
@@ -665,11 +898,11 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
 
             {/* The list's edge must say what it is: empty space below the last
                 row reads the same whether everything is loaded, a page is
-                still coming, or a tail is quietly waiting. Ascending only —
-                under Newest-first the bottom is the oldest edge of the loaded
-                window, and claiming "end of logs" there would be a lie
-                whenever the time range cut history off. */}
-            {sortAsc && (
+                still coming, or a tail is quietly waiting. The newest-edge
+                marker is ascending only — under Newest-first the bottom is
+                the oldest edge of the loaded window, so it carries the
+                oldest-edge marker there instead (the mirrored reasoning). */}
+            {sortAsc ? (
               <div className="py-2 text-center font-mono text-[10px] text-fg-muted">
                 {isFetchingNextPage
                   ? "Loading more events…"
@@ -681,6 +914,8 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                         : "Live tail — watching for new events"
                       : "End of logs"}
               </div>
+            ) : (
+              oldestEdgeMarker
             )}
           </div>
 

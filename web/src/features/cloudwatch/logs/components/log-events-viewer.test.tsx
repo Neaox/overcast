@@ -7,8 +7,8 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router"
-import { render } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { fireEvent, render } from "@testing-library/react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createTestQueryClient, renderWithRouter, screen, userEvent, waitFor } from "@/test/render"
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -16,6 +16,13 @@ import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
 import { logEventSignature } from "@/features/cloudwatch/logs/tail"
 import type { FilteredLogEvent } from "@/types/logs"
 import { LogEventsViewer } from "./log-events-viewer"
+
+// Shared spies so a test can assert on scrolls the viewer requested; the mock
+// below hands the same instances to every render.
+const virt = vi.hoisted(() => ({
+  scrollToIndex: vi.fn(),
+  scrollToOffset: vi.fn(),
+}))
 
 // jsdom gives every element a zero height, so the real virtualizer renders no
 // rows at all and nothing about the buffer would be observable.
@@ -30,10 +37,17 @@ vi.mock("@tanstack/react-virtual", () => ({
         end: index * 34 + 34,
       })),
     measureElement: vi.fn(),
-    scrollToIndex: vi.fn(),
+    scrollToIndex: virt.scrollToIndex,
+    scrollToOffset: virt.scrollToOffset,
+    getOffsetForIndex: (index: number) => [index * 34, "start"] as const,
     scrollOffset: 0,
   }),
 }))
+
+beforeEach(() => {
+  virt.scrollToIndex.mockClear()
+  virt.scrollToOffset.mockClear()
+})
 
 // A live-tail session, plus whatever the next FilterLogEvents should return.
 // The viewer shows a fetched page and the session's pushes together, and those
@@ -82,19 +96,32 @@ const live = vi.hoisted(() => {
   return {
     Session,
     sessions: [] as InstanceType<typeof Session>[],
-    /** What the next FilterLogEvents call returns. */
+    /**
+     * What FilterLogEvents draws on. Time-bounded requests get the subset
+     * inside [startTime, endTime] — both ends inclusive, which is
+     * FilterLogEvents' contract (GetLogEvents' endTime is the exclusive one).
+     */
     stored: [] as { timestamp: number; message: string; logStreamName: string }[],
     /**
      * Extra pages, consumed one per FilterLogEvents call after the first: a
      * response hands out a nextToken whenever pages remain.
      */
     pages: [] as { timestamp: number; message: string; logStreamName: string }[][],
+    /** What DescribeLogStreams returns — the backward floor's metadata. */
+    streams: [] as { logStreamName: string; firstEventTimestamp?: number }[],
+    /** When set, time-bounded FilterLogEvents calls wait on it before replying. */
+    gate: null as Promise<void> | null,
     filterCalls: 0,
+    /** Every FilterLogEvents input, for asserting on window boundaries. */
+    filterInputs: [] as { nextToken?: string; startTime?: number; endTime?: number }[],
     reset() {
       this.sessions = []
       this.stored = []
       this.pages = []
+      this.streams = []
+      this.gate = null
       this.filterCalls = 0
+      this.filterInputs = []
     },
   }
 })
@@ -102,15 +129,33 @@ const live = vi.hoisted(() => {
 vi.mock("@/services/aws-clients", () => ({
   awsClients: {
     logs: () => ({
-      send: (command: { constructor: { name: string }; input?: { nextToken?: string } }) => {
+      send: (command: {
+        constructor: { name: string }
+        input?: { nextToken?: string; startTime?: number; endTime?: number }
+      }) => {
         if (command.constructor.name === "FilterLogEventsCommand") {
           live.filterCalls++
-          const events = command.input?.nextToken ? (live.pages.shift() ?? []) : live.stored
-          return Promise.resolve({
-            events: events.map((e) => ({ ...e })),
-            searchedLogStreams: [],
-            ...(live.pages.length > 0 ? { nextToken: `page-${live.filterCalls}` } : {}),
-          })
+          const input = command.input ?? {}
+          live.filterInputs.push({ ...input })
+          const respond = () => {
+            const events = input.nextToken
+              ? (live.pages.shift() ?? [])
+              : live.stored.filter(
+                  (e) =>
+                    (input.startTime == null || e.timestamp >= input.startTime) &&
+                    (input.endTime == null || e.timestamp <= input.endTime),
+                )
+            return {
+              events: events.map((e) => ({ ...e })),
+              searchedLogStreams: [],
+              ...(live.pages.length > 0 ? { nextToken: `page-${live.filterCalls}` } : {}),
+            }
+          }
+          if (live.gate && input.endTime != null) return live.gate.then(respond)
+          return Promise.resolve(respond())
+        }
+        if (command.constructor.name === "DescribeLogStreamsCommand") {
+          return Promise.resolve({ logStreams: live.streams.map((s) => ({ ...s })) })
         }
         const session = new live.Session()
         live.sessions.push(session)
@@ -316,6 +361,274 @@ describe("LogEventsViewer > anchored arrival", () => {
 
     await screen.findByText("first message")
     expect(document.querySelector("[data-anchored]")?.textContent).toContain("first message")
+  })
+})
+
+/*
+ * FilterLogEvents pages forward only, so "load older" is time-window
+ * expansion: the viewer extends its window's start backward in chunks, each
+ * chunk fetched as its own fully-paged query and prepended. The anchored
+ * arrival is the flow with a bounded window start (the 15-minute lead-in), so
+ * it is where expansion is observable — and the mocked virtualizer renders
+ * every row, which makes the oldest edge permanently "in view" and lets the
+ * expansion drain without simulated scrolling.
+ */
+
+/** A realistic anchor instant, and the lead-in window it opens. */
+const T = 1_700_000_000_000
+const LEAD_MS = 15 * 60 * 1000
+const WINDOW_START = T - LEAD_MS
+
+/**
+ * Render anchored WITHOUT seeding the query cache, so the base window and the
+ * backward chunks all go through the mocked client. Callers configure `live`
+ * (and call `live.reset()`) first.
+ */
+function renderAnchoredUnseeded(anchor: { timestamp: number; signature?: string }) {
+  return renderWithRouter(
+    () => (
+      <Providers>
+        <LogEventsViewer groupName={GROUP} streamName="s1" anchor={anchor} />
+      </Providers>
+    ),
+    { queryClient: createTestQueryClient() },
+  )
+}
+
+describe("LogEventsViewer > backward time-window expansion", () => {
+  it("loads events older than the anchored lead-in — the anchored flow inherits expansion", async () => {
+    live.reset()
+    live.stored = [
+      { timestamp: WINDOW_START - 120_000, message: "older context line", logStreamName: "s1" },
+      { timestamp: WINDOW_START + 1_000, message: "lead-in line", logStreamName: "s1" },
+      { timestamp: T, message: "the anchor line", logStreamName: "s1" },
+    ]
+    live.streams = [{ logStreamName: "s1", firstEventTimestamp: WINDOW_START - 120_000 }]
+
+    renderAnchoredUnseeded({ timestamp: T })
+
+    await screen.findByText("the anchor line")
+    // The event before the lead-in arrives without any change to the filter.
+    expect(await screen.findByText("older context line")).toBeInTheDocument()
+    // The chunk was a plain time window ending right where the loaded window
+    // began — endTime is inclusive, so the boundary is windowStart − 1.
+    const chunk = live.filterInputs.find((i) => i.endTime != null)
+    expect(chunk).toBeDefined()
+    expect(chunk!.endTime).toBe(WINDOW_START - 1)
+    // History exhausted — the oldest edge says so.
+    expect(await screen.findByText("Start of logs")).toBeInTheDocument()
+  })
+
+  it("fetches each window exactly once — adjacent inclusive chunks, no refetch of loaded pages", async () => {
+    live.reset()
+    live.stored = [
+      {
+        timestamp: WINDOW_START - 900_001,
+        message: "second chunk boundary line",
+        logStreamName: "s1",
+      },
+      { timestamp: WINDOW_START - 900_000, message: "first chunk start line", logStreamName: "s1" },
+      {
+        timestamp: WINDOW_START - 1,
+        message: "boundary line before the window",
+        logStreamName: "s1",
+      },
+      { timestamp: WINDOW_START, message: "boundary line inside the window", logStreamName: "s1" },
+      { timestamp: T, message: "the anchor line", logStreamName: "s1" },
+    ]
+    // A floor an hour back: the first two chunks stay bounded, the third
+    // closes out unbounded.
+    live.streams = [{ logStreamName: "s1", firstEventTimestamp: WINDOW_START - 3_600_000 }]
+
+    renderAnchoredUnseeded({ timestamp: T })
+
+    await screen.findByText("the anchor line")
+    expect(await screen.findByText("second chunk boundary line")).toBeInTheDocument()
+    await screen.findByText("Start of logs")
+
+    // Base window + three chunks, and not a request more: a prepend never
+    // refetches pages that are already loaded.
+    await waitFor(() => expect(live.filterCalls).toBe(4))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(live.filterCalls).toBe(4)
+
+    // Windows are adjacent under inclusive-endTime semantics: [a, b], [b+1, c]
+    // — nothing skipped, nothing double-covered — and the chunk sizes double.
+    const chunks = live.filterInputs.filter((i) => i.endTime != null)
+    expect(chunks).toHaveLength(3)
+    expect(chunks[0].endTime).toBe(WINDOW_START - 1)
+    expect(chunks[0].startTime).toBe(WINDOW_START - 900_000)
+    expect(chunks[1].endTime).toBe(WINDOW_START - 900_001)
+    expect(chunks[1].startTime).toBe(WINDOW_START - 900_000 - 1_800_000)
+    expect(chunks[2].endTime).toBe(WINDOW_START - 900_000 - 1_800_000 - 1)
+    expect(chunks[2].startTime).toBeUndefined()
+
+    // Every boundary event rendered exactly once.
+    for (const e of live.stored) {
+      expect(rowsShowing(e.message)).toBe(1)
+    }
+  })
+
+  it("closes out with one unbounded window after an empty chunk when no floor is known", async () => {
+    live.reset()
+    live.stored = [{ timestamp: T, message: "the anchor line", logStreamName: "s1" }]
+    // The stream reports no firstEventTimestamp — the floor is a hint that can
+    // be absent, and its absence must not turn into open-ended probing.
+    live.streams = [{ logStreamName: "s1" }]
+
+    renderAnchoredUnseeded({ timestamp: T })
+
+    await screen.findByText("the anchor line")
+    expect(await screen.findByText("Start of logs")).toBeInTheDocument()
+
+    // Base window, one empty probe, one unbounded close-out — then silence.
+    await waitFor(() => expect(live.filterCalls).toBe(3))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(live.filterCalls).toBe(3)
+    const chunks = live.filterInputs.filter((i) => i.endTime != null)
+    expect(chunks[1].startTime).toBeUndefined()
+  })
+
+  it("says it is loading older events while a backward fetch is in flight", async () => {
+    live.reset()
+    let release!: () => void
+    live.gate = new Promise<void>((r) => {
+      release = r
+    })
+    live.stored = [
+      { timestamp: WINDOW_START - 60_000, message: "older line", logStreamName: "s1" },
+      { timestamp: T, message: "the anchor line", logStreamName: "s1" },
+    ]
+    live.streams = [{ logStreamName: "s1", firstEventTimestamp: WINDOW_START - 60_000 }]
+
+    renderAnchoredUnseeded({ timestamp: T })
+
+    await screen.findByText("the anchor line")
+    expect(await screen.findByText("Loading older events…")).toBeInTheDocument()
+
+    release()
+    live.gate = null
+    expect(await screen.findByText("older line")).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText("Loading older events…")).not.toBeInTheDocument())
+  })
+
+  it("treats an explicit start time as a hard floor and says the range start is the reason", async () => {
+    const { user } = renderViewer(EVENTS)
+    await clearButton()
+    live.stored = [{ timestamp: Date.now() - 60_000, message: "recent line", logStreamName: "s1" }]
+
+    // Pick "Last 5 minutes" — an explicit, user-chosen startTime.
+    await user.click(screen.getByRole("button", { name: /all time/i }))
+    await user.click(screen.getByTitle("Last 5 minutes"))
+
+    expect(await screen.findByText("recent line")).toBeInTheDocument()
+    expect(await screen.findByText(/start of range/i)).toBeInTheDocument()
+    expect(screen.queryByText("Start of logs")).not.toBeInTheDocument()
+    // Never a fetch past the floor: no backward window was requested.
+    expect(live.filterInputs.filter((i) => i.endTime != null)).toHaveLength(0)
+  })
+
+  it("marks the oldest edge as the start of logs when the window was never bounded", async () => {
+    renderViewer(EVENTS)
+
+    // An unbounded window's first page already begins at the oldest event, so
+    // the marker is symmetric with "End of logs" from the outset.
+    expect(await screen.findByText("Start of logs")).toBeInTheDocument()
+    expect(await screen.findByText("End of logs")).toBeInTheDocument()
+  })
+})
+
+/*
+ * Jump-to-timestamp reuses the anchor machinery: the toolbar control navigates
+ * to the same route with `anchorTs`, and anchor matching falls back to the
+ * first event at-or-after the timestamp when nothing sits exactly on it. The
+ * persistent mark stays reserved for exact matches.
+ */
+describe("LogEventsViewer > jump to timestamp", () => {
+  function renderAtStreamRoute() {
+    const queryClient = createTestQueryClient()
+    const rootRoute = createRootRoute()
+    const streamRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/cloudwatch/logs/stream",
+      validateSearch: (search: Record<string, unknown>) => ({
+        groupName: typeof search.groupName === "string" ? search.groupName : undefined,
+        streamName: typeof search.streamName === "string" ? search.streamName : undefined,
+        ...(typeof search.anchorTs === "number" ? { anchorTs: search.anchorTs } : {}),
+        ...(typeof search.anchorSig === "string" ? { anchorSig: search.anchorSig } : {}),
+      }),
+      component: function StreamPage() {
+        const { groupName, streamName, anchorTs, anchorSig } = streamRoute.useSearch()
+        if (!groupName || !streamName) return null
+        return (
+          <Providers>
+            <LogEventsViewer
+              groupName={groupName}
+              streamName={streamName}
+              anchor={anchorTs != null ? { timestamp: anchorTs, signature: anchorSig } : undefined}
+            />
+          </Providers>
+        )
+      },
+    })
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([streamRoute]),
+      history: createMemoryHistory({
+        initialEntries: [
+          `/cloudwatch/logs/stream?groupName=${encodeURIComponent(GROUP)}&streamName=s1`,
+        ],
+      }),
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    )
+    return { user: userEvent.setup(), router }
+  }
+
+  it("navigates to the same route anchored on the chosen time", async () => {
+    live.reset()
+    const target = new Date("2026-01-05T10:30").getTime()
+    live.stored = [
+      { timestamp: target - 30_000, message: "line before the jump", logStreamName: "s1" },
+      { timestamp: target, message: "jump target line", logStreamName: "s1" },
+    ]
+    live.streams = [{ logStreamName: "s1", firstEventTimestamp: target - 30_000 }]
+    const { user, router } = renderAtStreamRoute()
+    await screen.findByText("line before the jump")
+
+    await user.click(screen.getByRole("button", { name: /jump to timestamp/i }))
+    fireEvent.change(await screen.findByLabelText(/date and time/i), {
+      target: { value: "2026-01-05T10:30" },
+    })
+    await user.click(screen.getByRole("button", { name: /^jump$/i }))
+
+    await waitFor(() =>
+      expect((router.state.location.search as { anchorTs?: number }).anchorTs).toBe(target),
+    )
+    // The anchor machinery takes over: the exact-timestamp event gets the mark.
+    await waitFor(() =>
+      expect(document.querySelector("[data-anchored]")?.textContent).toContain("jump target line"),
+    )
+  })
+
+  it("centres on the first event at-or-after the time, without marking a nearest match", async () => {
+    live.reset()
+    live.stored = [
+      { timestamp: T - 5_000, message: "before the jump point", logStreamName: "s1" },
+      { timestamp: T + 5_000, message: "after the jump point", logStreamName: "s1" },
+    ]
+    live.streams = [{ logStreamName: "s1", firstEventTimestamp: T - 5_000 }]
+
+    renderAnchoredUnseeded({ timestamp: T })
+
+    await screen.findByText("after the jump point")
+    await waitFor(() => expect(virt.scrollToIndex).toHaveBeenCalled())
+    // Centred on the first event at-or-after the timestamp…
+    expect(virt.scrollToIndex).toHaveBeenCalledWith(1, { align: "center" })
+    // …but the persistent highlight is for exact matches only.
+    expect(document.querySelector("[data-anchored]")).toBeNull()
   })
 })
 
