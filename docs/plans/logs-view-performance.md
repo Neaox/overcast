@@ -213,10 +213,11 @@ Ordered so each phase is independently shippable and measurable. Failing-test-fi
 changes observable behavior; paced benchmarks before/after each phase (see Phase 0).
 
 **Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`), 2 (peek virtualization),
-3 (row render cost) and 4's forward direction (nextToken paging, auto-load at the newest edge,
-"+" count label, monitor-tab refetch made honest) landed. Phase 4's *backward* time-window
-expansion (older-than-the-window events) and the peek's forward paging are still open, as are
-Phases 0 and 5. Phase 1 shipped without the full
+3 (row render cost), 4's forward direction (nextToken paging, auto-load at the newest edge,
+"+" count label, monitor-tab refetch made honest) and 5 (shared `LogMessage`, virtualized search
+results — see its section for the two consolidations deliberately declined) landed. Still open:
+Phase 0's formal benchmark baseline, Phase 4's *backward* time-window expansion, and the peek's
+forward paging. Phase 1 shipped without the full
 `useLogFeed` extraction — the hook owns the session + buffer + cap and both surfaces consume it;
 the fetched-side merge stayed in the viewers (sorted-merge, no per-batch re-sort), and the
 remaining consolidation is Phase 5's. Phase 2's scroll anchoring cannot be exercised in jsdom
@@ -302,13 +303,25 @@ object's identity index within the feed), never the array index.
   respected — verify against the emulator; otherwise page from the end) and either gets a real
   `refetchInterval: 5_000` or loses the "auto-refreshes" claim. Failing test first for the label.
 
-### Phase 5 — DRY consolidation (M) — fixes F8 — **outstanding**
+### Phase 5 — DRY consolidation (M) — fixes F8 — **landed** (scoped)
 
-Note for whoever picks this up: the log-group detail page's cross-stream search results are now
-the only unvirtualized log surface. They are bounded (one FilterLogEvents page, ≤10k rows, only
-rendered after an explicit search), so this is a structure problem more than a jank emergency —
-but the fix is the same shared-row work below, because that table needs the stream column and
-row navigation, which the generic `LogViewer` does not offer.
+What landed: `LogMessage`/`LevelBadge` extracted to `components/logs/log-message.tsx` (with the
+filter-mark helper) and consumed by the stream viewer, the generic `LogViewer`'s rows, and the
+log-group search results; the search results left their raw `<Table>` for a virtualized region
+(`log-search-results.tsx`) with level tint + badge, ANSI colour and filter-match marks — the one
+surface that had none of them — keeping click-through-to-stream. `logEventKey`, the comparator
+and the merge already live once in `tail.ts` from earlier phases.
+
+Two consolidations deliberately **not** taken, because the abstraction would have been worse
+than the duplication:
+
+- The pin-to-bottom/unread logic stays per-surface. The stream viewer's version is
+  sort-direction-aware and drives `scrollToIndex`; the peek's is bottom-only `scrollTop` pinning
+  entangled with prepend anchoring and the unread pill. One hook serving both needs more
+  configuration than either implementation has code.
+- The peek's row stays a bare timestamp + `AnsiText` line. Routing it through `LogMessage` with
+  everything switched off would add indirection and no shared behaviour; if the peek ever grows
+  badges or summaries, adopt `LogMessage` then.
 
 - One shared `LogRow`/`LogMessage` used by all four surfaces (level badge, ANSI, platform summary,
   optional stream column, optional filter highlight).
@@ -330,6 +343,18 @@ row navigation, which the generic `LogViewer` does not offer.
   differ meaningfully.
 - Web UI visual verification happens against a Docker image built from this worktree, published to
   127.0.0.1 (host `preview_start` resolves the wrong tree).
+
+## 3b. Live-session health (landed with Phase 5)
+
+Tailing is a push stream (StartLiveTail over AWS event-stream framing), not polling, so the
+indicator worth showing is session *health*, not activity: `useLogTailBuffer` exposes
+`status: idle | live | error`, and both tailing surfaces render a wordless dot — green pulse
+while the session is open, red and still when it died without being asked to (emulator restart,
+dropped network), which on a quiet stream is otherwise indistinguishable from healthy. The
+emulator writes an empty `sessionUpdate` every second, a de-facto heartbeat; the client ignores
+it today, so a connection that dies *silently* (no FIN — machine sleep, NAT timeout) still looks
+live. If that case ever matters, the heartbeat makes a staleness watchdog trivial: no frame for
+~10 s ⇒ mark the session dead. Not built — on localhost the error path is what actually fires.
 
 ## 4. Explicit non-goals
 

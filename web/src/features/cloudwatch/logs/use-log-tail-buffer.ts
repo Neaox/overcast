@@ -38,6 +38,13 @@ export interface LogTailBuffer {
   events: TailedLogEvent[]
   /** How many events the cap has pushed out since the buffer last reset. */
   overflowed: number
+  /**
+   * Whether a live session is open. "error" means the session died without
+   * being asked to — an emulator restart, a dropped network — which otherwise
+   * looks exactly like a healthy session on a quiet stream. Toggling the tail
+   * off and on opens a fresh session and clears the error.
+   */
+  status: "idle" | "live" | "error"
   /** Empty the buffer without hanging up the session. */
   clear: () => void
 }
@@ -73,6 +80,7 @@ export function useLogTailBuffer({
   cap = 10_000,
 }: LogTailBufferOptions): LogTailBuffer {
   const [buffer, setBuffer] = useState<BufferState>(EMPTY)
+  const [died, setDied] = useState(false)
 
   // A buffer belongs to one stream identity. When the identity changes the
   // old events are another stream's, so they go — but `enabled` is not part
@@ -83,6 +91,10 @@ export function useLogTailBuffer({
 
   useEffect(() => {
     if (!enabled || !groupIdentifier) return
+
+    // Each session opening starts healthy — a fresh session is how the user
+    // recovers from a dead one (toggle the tail off and on).
+    setDied(false)
 
     const controller = new AbortController()
     // Arrivals stage here between frames; only `flush` touches React state.
@@ -111,9 +123,12 @@ export function useLogTailBuffer({
       } catch (err) {
         // A session dies mid-stream when the emulator restarts or the network
         // drops — ordinary events in a dev loop, and nothing an effect body
-        // can catch once it has escaped here as an unhandled rejection.
+        // can catch once it has escaped here as an unhandled rejection. Left
+        // only in the console, a dead session looks exactly like a healthy one
+        // on a quiet stream, so the death is state the viewers can show.
         if (!controller.signal.aborted) {
           console.warn("live tail session ended unexpectedly", err)
+          setDied(true)
         }
       }
     })()
@@ -130,5 +145,6 @@ export function useLogTailBuffer({
   // just after it.
   const clear = useCallback(() => setBuffer(EMPTY), [])
 
-  return { events: buffer.events, overflowed: buffer.overflowed, clear }
+  const status = !enabled || !groupIdentifier ? "idle" : died ? "error" : "live"
+  return { events: buffer.events, overflowed: buffer.overflowed, status, clear }
 }
