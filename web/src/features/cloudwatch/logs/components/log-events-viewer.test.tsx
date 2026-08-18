@@ -13,6 +13,7 @@ import { createTestQueryClient, renderWithRouter, screen, userEvent, waitFor } f
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
+import { logEventSignature } from "@/features/cloudwatch/logs/tail"
 import type { FilteredLogEvent } from "@/types/logs"
 import { LogEventsViewer } from "./log-events-viewer"
 
@@ -269,6 +270,52 @@ describe("LogEventsViewer > pagination", () => {
     expect(await screen.findByText(/page three/)).toBeInTheDocument()
     await waitFor(() => expect(live.filterCalls).toBe(3))
     expect(screen.getByText(/^3 events$/)).toBeInTheDocument()
+  })
+})
+
+/*
+ * A search result deep-links to the stream view anchored on one event: the
+ * view scrolls to it and keeps it visibly marked, the way the AWS console
+ * highlights the focused message when a search hit opens its stream.
+ */
+describe("LogEventsViewer > anchored arrival", () => {
+  function renderAnchored(anchor: { timestamp: number; signature?: string }) {
+    live.reset()
+    const queryClient = createTestQueryClient()
+    queryClient.setQueryData(
+      logsFilterInfiniteQueryOptions(GROUP, {
+        logStreamNames: ["s1"],
+        startTime: anchor.timestamp - 15 * 60 * 1000,
+      }).queryKey,
+      {
+        pages: [{ events: EVENTS, searchedLogStreams: [], nextToken: undefined }],
+        pageParams: [undefined],
+      },
+    )
+    return renderWithRouter(
+      () => (
+        <Providers>
+          <LogEventsViewer groupName={GROUP} streamName="s1" anchor={anchor} />
+        </Providers>
+      ),
+      { queryClient },
+    )
+  }
+
+  it("marks the anchored event's row", async () => {
+    renderAnchored({ timestamp: 2_000, signature: logEventSignature(EVENTS[1]) })
+
+    await screen.findByText("second message")
+    const anchored = document.querySelector("[data-anchored]")
+    expect(anchored).not.toBeNull()
+    expect(anchored?.textContent).toContain("second message")
+  })
+
+  it("matches by timestamp alone when no signature is given", async () => {
+    renderAnchored({ timestamp: 1_000 })
+
+    await screen.findByText("first message")
+    expect(document.querySelector("[data-anchored]")?.textContent).toContain("first message")
   })
 })
 

@@ -16,16 +16,28 @@ import { formatLogDate, describeLogEvent, logLevelRowClass } from "@/lib/log-for
 import { LogMessage } from "@/components/logs/log-message"
 import { cn } from "@/lib/utils"
 import type { FilteredLogEvent } from "@/types/logs"
-import { compileFilterHighlighter, logEventKey } from "@/features/cloudwatch/logs/tail"
+import {
+  compileFilterHighlighter,
+  logEventKey,
+  logEventSignature,
+} from "@/features/cloudwatch/logs/tail"
+
+/** Where a clicked result should take the user: this event, in its stream. */
+export interface LogSearchHit {
+  streamName: string
+  timestamp: number
+  /** Picks the event out of its millisecond once the stream view loads. */
+  signature: string
+}
 
 interface Props {
   events: FilteredLogEvent[]
   /** The active filter, for marking its matches inside each message. */
   filterPattern: string
-  onOpenStream: (streamName: string) => void
+  onOpenEvent: (hit: LogSearchHit) => void
 }
 
-export function LogSearchResults({ events, filterPattern, onOpenStream }: Props) {
+export function LogSearchResults({ events, filterPattern, onOpenEvent }: Props) {
   const parentRef = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
@@ -43,8 +55,10 @@ export function LogSearchResults({ events, filterPattern, onOpenStream }: Props)
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
         <div className="w-40 shrink-0 px-2">Timestamp</div>
-        <div className="w-44 shrink-0 px-1">Stream</div>
         <div className="min-w-0 flex-1 px-1">Message</div>
+        {/* On the right, as the AWS console places it: the message is what a
+            search is read by, the stream is where a hit takes you. */}
+        <div className="w-44 shrink-0 px-1">Stream</div>
       </div>
       <div ref={parentRef} className="max-h-[60vh] overflow-auto">
         <div
@@ -63,16 +77,16 @@ export function LogSearchResults({ events, filterPattern, onOpenStream }: Props)
                   meta.level && logLevelRowClass[meta.level],
                 )}
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
-                onClick={() => onOpenStream(evt.logStreamName ?? "")}
+                onClick={() =>
+                  onOpenEvent({
+                    streamName: evt.logStreamName ?? "",
+                    timestamp: evt.timestamp ?? 0,
+                    signature: logEventSignature(evt),
+                  })
+                }
               >
                 <div className="w-40 shrink-0 px-2 py-1.5 font-mono text-[10px] whitespace-nowrap text-fg-muted">
                   {formatLogDate(evt.timestamp)}
-                </div>
-                <div
-                  className="w-44 shrink-0 truncate px-1 py-1.5 font-mono text-[10px] text-fg-muted"
-                  title={evt.logStreamName}
-                >
-                  {evt.logStreamName}
                 </div>
                 <div className="min-w-0 flex-1 px-1 py-1.5">
                   <LogMessage
@@ -84,6 +98,12 @@ export function LogSearchResults({ events, filterPattern, onOpenStream }: Props)
                     filterMatcher={filterMatcher}
                     level={meta.level}
                   />
+                </div>
+                <div
+                  className="w-44 shrink-0 truncate px-1 py-1.5 font-mono text-[10px] text-fg-muted"
+                  title={evt.logStreamName}
+                >
+                  {evt.logStreamName}
                 </div>
               </div>
             )
