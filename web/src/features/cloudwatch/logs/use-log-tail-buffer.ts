@@ -40,9 +40,11 @@ export interface LogTailBuffer {
   overflowed: number
   /**
    * Whether a live session is open. "error" means the session died without
-   * being asked to — an emulator restart, a dropped network — which otherwise
-   * looks exactly like a healthy session on a quiet stream. Toggling the tail
-   * off and on opens a fresh session and clears the error.
+   * being asked to — an emulator restart, a dropped network, or a connection
+   * that simply went quiet (no frame for `TAIL_STALE_MS`, when the emulator
+   * heartbeats every second) — which otherwise looks exactly like a healthy
+   * session on a quiet stream. Toggling the tail off and on opens a fresh
+   * session and clears the error.
    */
   status: "idle" | "live" | "error"
   /** Empty the buffer without hanging up the session. */
@@ -55,6 +57,20 @@ interface BufferState {
 }
 
 const EMPTY: BufferState = { events: [], overflowed: 0 }
+
+/**
+ * How long without a single frame before the session is declared dead.
+ *
+ * Tuned to *our emulator*, which writes an empty sessionUpdate roughly every
+ * second as a de-facto heartbeat — ten missed beats is decisively a dead
+ * connection, not a slow one. This is not an AWS contract: real Live Tail
+ * documents no fixed update cadence, so against real AWS this threshold would
+ * need rethinking rather than reusing.
+ */
+const TAIL_STALE_MS = 10_000
+
+/** Watchdog cadence. Each tick is one ref read and a compare — O(1), no state. */
+const TAIL_WATCHDOG_TICK_MS = 1_000
 
 /** Fold one frame's arrivals into the buffer, keeping order and the cap. */
 function appendBatch(prev: BufferState, batch: TailedLogEvent[], cap: number): BufferState {
@@ -109,6 +125,26 @@ export function useLogTailBuffer({
       setBuffer((prev) => appendBatch(prev, batch, cap))
     }
 
+    // Staleness watchdog. A connection that dies *without* an error — machine
+    // sleep, NAT timeout, no FIN — never rejects, so the generator just parks
+    // forever and the session looks live. The emulator's per-second heartbeat
+    // frames land here as activity; when they stop, silence is the only
+    // signal. Activity is a plain timestamp write (never React state — a
+    // heartbeat arrives every second forever, and a state write per beat
+    // would be a standing 1 Hz re-render of every tailing surface).
+    let lastActivity = Date.now()
+    const markActivity = () => {
+      lastActivity = Date.now()
+    }
+    const watchdog = window.setInterval(() => {
+      if (Date.now() - lastActivity < TAIL_STALE_MS) return
+      // Deliberately "went quiet", not "errored": nothing failed, the frames
+      // simply stopped. Toggling the tail off and on opens a fresh session.
+      console.warn("live tail session went quiet — no frame for 10s; treating it as dead")
+      setDied(true)
+      window.clearInterval(watchdog)
+    }, TAIL_WATCHDOG_TICK_MS)
+
     void (async () => {
       try {
         for await (const event of tailLogEvents({
@@ -116,6 +152,7 @@ export function useLogTailBuffer({
           streamName,
           filterPattern,
           signal: controller.signal,
+          onActivity: markActivity,
         })) {
           pending.push(event)
           frame ??= requestAnimationFrame(flush)
@@ -135,6 +172,7 @@ export function useLogTailBuffer({
 
     return () => {
       controller.abort()
+      window.clearInterval(watchdog)
       if (frame != null) cancelAnimationFrame(frame)
     }
   }, [enabled, groupIdentifier, streamName, filterPattern, cap])

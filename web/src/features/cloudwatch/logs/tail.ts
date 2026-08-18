@@ -16,6 +16,17 @@ export interface TailLogEventsOptions {
   streamNamePrefixes?: string[]
   filterPattern?: string
   signal?: AbortSignal
+  /**
+   * Called once per frame received from the session — including the empty
+   * sessionUpdate frames the emulator writes every second as a heartbeat,
+   * which the generator otherwise consumes invisibly (they yield no events).
+   * This is what lets a caller tell a quiet-but-healthy session from a
+   * connection that died without an error (machine sleep, NAT timeout: no
+   * FIN ever arrives, so nothing rejects). Kept off React state by callers:
+   * heartbeats arrive forever, so a per-frame state write would be a standing
+   * once-a-second re-render.
+   */
+  onActivity?: () => void
 }
 
 export function parseLogFilterTerms(pattern: string): string[] {
@@ -267,6 +278,9 @@ export async function* tailLogEvents(opts: TailLogEventsOptions): AsyncGenerator
     for (;;) {
       const next = await Promise.race([iterator.next(), aborted])
       if (next === ABORTED || signal?.aborted || next.done) return
+      // Every received frame is proof the connection is alive — the empty
+      // heartbeat frames especially, since they are all a quiet stream sends.
+      opts.onActivity?.()
       const results = next.value.sessionUpdate?.sessionResults ?? []
       for (const event of results) {
         yield {

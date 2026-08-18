@@ -23,11 +23,19 @@ const live = vi.hoisted(() => {
     closed = false
 
     push(message: string, timestamp = 1_700_000_000_000) {
-      const frame = {
+      this.deliver({
         sessionUpdate: {
           sessionResults: [{ timestamp, ingestionTime: timestamp, logStreamName: "s", message }],
         },
-      }
+      })
+    }
+
+    /** An empty sessionUpdate — the emulator's once-a-second heartbeat. */
+    heartbeat() {
+      this.deliver({ sessionUpdate: { sessionResults: [] } })
+    }
+
+    private deliver(frame: unknown) {
       if (this.waiter) {
         const resolve = this.waiter
         this.waiter = null
@@ -225,6 +233,66 @@ describe("useLogTailBuffer", () => {
       expect(result.current.events.map((e) => e.message)).toEqual(["caught"])
     } finally {
       warn.mockRestore()
+    }
+  })
+
+  it("marks the session gone when no frame arrives for the staleness window", async () => {
+    // Fake timers drive both the watchdog interval and Date.now; the session
+    // mock is purely promise-based, and advanceTimersByTimeAsync flushes
+    // microtasks between ticks, so the generator keeps consuming.
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      live.reset()
+      const { result } = renderHook(() => useLogTailBuffer({ enabled: true, groupIdentifier: "g" }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(activeSessions()).toHaveLength(1)
+      expect(result.current.status).toBe("live")
+
+      // Just short of the threshold: still presumed live.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(9_000)
+      })
+      expect(result.current.status).toBe("live")
+
+      // Ten missed heartbeats: the connection died without a FIN (machine
+      // sleep, NAT timeout) and nothing will ever reject — only silence tells.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000)
+      })
+      expect(result.current.status).toBe("error")
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("quiet"))
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("stays live while only empty heartbeat frames arrive", async () => {
+    vi.useFakeTimers()
+    try {
+      live.reset()
+      const { result } = renderHook(() => useLogTailBuffer({ enabled: true, groupIdentifier: "g" }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      const s = activeSessions()[0]
+      expect(result.current.status).toBe("live")
+
+      // Well past the staleness window in total, but a heartbeat lands every
+      // second — a quiet stream on a healthy session must never go red.
+      for (let i = 0; i < 15; i++) {
+        s.heartbeat()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000)
+        })
+      }
+      expect(result.current.status).toBe("live")
+      expect(result.current.events).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
     }
   })
 

@@ -217,9 +217,9 @@ changes observable behavior; paced benchmarks before/after each phase (see Phase
 monitor-tab refetch made honest — and the backward half: time-window expansion at the oldest
 edge, with "Start of logs"/"Start of range" markers and jump-to-timestamp riding the anchor
 machinery) and 5 (shared `LogMessage`, virtualized search results — see its section for the two
-consolidations deliberately declined) landed. Still open:
-Phase 0's formal benchmark baseline and the peek's
-forward paging. Phase 1 shipped without the full
+consolidations deliberately declined) landed; so have the peek's forward paging (a dead-tail
+token walk, `useForwardLogPages`) and §3b's staleness watchdog. Still open: Phase 0's formal
+benchmark baseline. Phase 1 shipped without the full
 `useLogFeed` extraction — the hook owns the session + buffer + cap and both surfaces consume it;
 the fetched-side merge stayed in the viewers (sorted-merge, no per-batch re-sort), and the
 remaining consolidation is Phase 5's. Phase 2's scroll anchoring cannot be exercised in jsdom
@@ -286,7 +286,7 @@ object's identity index within the feed), never the array index.
   managers' field analysis away from the page's only fill-candidate elements).
 
 ### Phase 4 — Pagination fidelity (M) — fixes F7 — **landed** (stream/all-streams both
-directions; the peek's forward paging remains open)
+directions; the peek's dead-tail forward paging landed with §3b's watchdog)
 
 - `filterEvents` gains `nextToken`/`limit` passthrough; `LogEventsViewer` moves to
   `useInfiniteQuery` with a bottom sentinel ("load more" as the user nears the end of loaded
@@ -367,17 +367,32 @@ than the duplication:
 - Web UI visual verification happens against a Docker image built from this worktree, published to
   127.0.0.1 (host `preview_start` resolves the wrong tree).
 
-## 3b. Live-session health (landed with Phase 5)
+## 3b. Live-session health (landed with Phase 5; watchdog + dead-tail forward paging after)
 
 Tailing is a push stream (StartLiveTail over AWS event-stream framing), not polling, so the
 indicator worth showing is session *health*, not activity: `useLogTailBuffer` exposes
 `status: idle | live | error`, and both tailing surfaces render a wordless dot — green pulse
 while the session is open, red and still when it died without being asked to (emulator restart,
 dropped network), which on a quiet stream is otherwise indistinguishable from healthy. The
-emulator writes an empty `sessionUpdate` every second, a de-facto heartbeat; the client ignores
-it today, so a connection that dies *silently* (no FIN — machine sleep, NAT timeout) still looks
-live. If that case ever matters, the heartbeat makes a staleness watchdog trivial: no frame for
-~10 s ⇒ mark the session dead. Not built — on localhost the error path is what actually fires.
+emulator writes an empty `sessionUpdate` every second, a de-facto heartbeat, and the client now
+consumes it: `tailLogEvents` reports every received frame (`onActivity`, a ref-timestamp write —
+never React state, so the per-second heartbeat costs no re-render), and `useLogTailBuffer` runs
+one O(1)-tick watchdog interval per session that flips `status` to `error` after ~10 s of
+silence, catching the connection that dies *without* an error (no FIN — machine sleep, NAT
+timeout) and would otherwise look live forever. The 10 s threshold is emulator-tuned — ten
+missed beats of *our* 1 s heartbeat — not an AWS contract: real Live Tail documents no fixed
+update cadence.
+
+A dead tail also no longer strands the peek's newest edge (the Phase 4 open item): GetLogEvents
+is natively bidirectional, so `useForwardLogPages` walks `nextForwardToken` from the newest
+fetched page — only while the tail is dead and the user sits at the bottom, chaining page to
+page off state changes (no timer, no polling) until AWS's canonical end signal (the same token
+coming back; an empty page is not the stop condition) latches it off. The walk lives outside the
+backward infinite query deliberately — React Query's bidirectional cache latches "no previous
+page" permanently and deposits an empty probe page per attempt. Forward pages overlap what the
+dead session already delivered; they reconcile through the same count-based
+`dropTailedDuplicates`, against a stream-stamped view of the stored events (GetLogEvents output
+carries no `logStreamName`, tailed events do — without the stamp no pair could ever match).
 
 ## 3c. Anchored search navigation (landed after Phase 5)
 
