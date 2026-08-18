@@ -4960,7 +4960,7 @@
           "operation": "TagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path"
+          "notes": "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path; refuses the keys and values AWS refuses"
         },
         {
           "operation": "UntagResource",

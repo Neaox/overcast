@@ -34,7 +34,7 @@ func init() {
 
 		// Tags
 		capabilities.Capability{Operation: "TagResource", Category: catTags,
-			Status: capabilities.StatusSupported, Notes: "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path"},
+			Status: capabilities.StatusSupported, Notes: "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path; refuses the keys and values AWS refuses"},
 		capabilities.Capability{Operation: "UntagResource", Category: catTags,
 			Status: capabilities.StatusSupported, Notes: "Removes `?TagKeys` from ARN"},
 		capabilities.Capability{Operation: "ListTagsForResource", Category: catTags,

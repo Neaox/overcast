@@ -177,10 +177,10 @@ every target type EventBridge rules reach.
 
 ### Tags
 
-| Operation             | Status       | Notes                                                        | AWS Docs                                                                                       |
-| --------------------- | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `TagResource`         | ✅ Supported | Merges tags on ARN, at the shared `/tags/{ResourceArn}` path | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes `?TagKeys` from ARN                                  | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Returns the modeled `TagList`, ordered by key                | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
+| Operation             | Status       | Notes                                                                                                 | AWS Docs                                                                                       |
+| --------------------- | ------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Merges tags on ARN, at the shared `/tags/{ResourceArn}` path; refuses the keys and values AWS refuses | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes `?TagKeys` from ARN                                                                           | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Returns the modeled `TagList`, ordered by key                                                         | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

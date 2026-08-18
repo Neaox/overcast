@@ -2,8 +2,8 @@ package scheduler
 
 import (
 	"context"
-	"maps"
 
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -69,17 +69,38 @@ func (s *Service) tagStore() *serviceutil.NSStore {
 	return &serviceutil.NSStore{Store: s.store, NS: nsTags}
 }
 
-func (s *Service) saveTagsJSON(ctx context.Context, arn string, tags map[string]string) {
-	if len(tags) == 0 {
-		return
-	}
-	_ = s.tagStore().Save(ctx, arn, tags)
+// schedulerTagCfg tunes the shared tag validation to Scheduler's error shape.
+//
+// ValidationException for both, because that is the code Scheduler returns for
+// every other rejected input — a name that breaks its pattern, an undecodable
+// pagination token — and a caller matching on it should not need a second one
+// for tags.
+var schedulerTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "ValidationException",
+	InvalidCode:     "ValidationException",
+	ExceededMessage: "Exceeded maximum number of tags allowed.",
 }
 
-func (s *Service) mergeTags(ctx context.Context, arn string, tags map[string]string) {
-	existing := s.loadTags(ctx, arn)
-	maps.Copy(existing, tags)
-	_ = s.tagStore().Save(ctx, arn, existing)
+// mergeTags adds tags to whatever the resource already carries, refusing the
+// whole call if the result is something AWS would not store.
+//
+// Validation is on the merged set rather than on the incoming tags alone,
+// which is what makes the count limit mean anything: fifty tags added one call
+// at a time is still fifty-one tags. serviceutil.ApplyStoreTags does that
+// load-merge-validate-save in the order every other service uses it in, so a
+// refused call writes nothing.
+func (s *Service) mergeTags(ctx context.Context, arn string, tags map[string]string) *protocol.AWSError {
+	_, aerr := serviceutil.ApplyStoreTags(ctx, s.tagStore(), arn, tags, schedulerTagCfg)
+	return aerr
+}
+
+// validateTags checks tags without storing them, for the create paths that must
+// know the request is good before they commit a resource.
+func validateTags(tags map[string]string) *protocol.AWSError {
+	if len(tags) == 0 {
+		return nil
+	}
+	return serviceutil.ValidateTags(schedulerTagCfg, tags)
 }
 
 func (s *Service) removeTags(ctx context.Context, arn string, keys []string) {
