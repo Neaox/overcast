@@ -202,6 +202,34 @@ export interface LogEventMeta {
   level: LogLevel | null
   /** A Lambda system log record's summary line, or null when the message is not one. */
   summary: string | null
+  /**
+   * The one request id the line carries, or null. Feeds the viewer's
+   * click-to-filter affordance, which only ever hands the id back as a quoted
+   * FilterLogEvents term — so detection has no server semantics to get wrong,
+   * but must not claim an id a line does not carry.
+   */
+  requestId: string | null
+}
+
+/** A canonical UUID, which is what Lambda request ids are. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Finds the request id a log line carries, in the three places Lambda puts
+ * one: the `RequestId: <id>` label of a Text-format START/END/REPORT line, a
+ * JSON document's `"requestId"` field (platform records and structured
+ * application logs alike), and the tab-separated UUID column the Node runtime
+ * writes between the timestamp and the level. First match wins — one id per
+ * event.
+ */
+export function detectRequestId(plain: string): string | null {
+  const labelled = /\bRequestId:\s*([0-9a-fA-F-]{4,})/.exec(plain)
+  if (labelled) return labelled[1]
+  const field = /"requestId"\s*:\s*"([^"\\]+)"/i.exec(plain)
+  if (field) return field[1]
+  const columns = plain.split("\t")
+  if (columns.length >= 3 && UUID_RE.test(columns[1])) return columns[1]
+  return null
 }
 
 /**
@@ -227,6 +255,7 @@ export function describeLogEvent(event: { message?: string }): LogEventMeta {
     plain,
     level: platform ? platformRecordLevel(platform) : detectLogLevel(plain),
     summary: platform ? formatPlatformRecord(platform) : null,
+    requestId: detectRequestId(plain),
   }
   metaCache.set(event, meta)
   return meta

@@ -8,6 +8,8 @@ import {
   ArrowLeft,
   Eraser,
   FileText,
+  Link2,
+  ListFilter,
   RefreshCw,
   Search,
   Undo2,
@@ -15,6 +17,7 @@ import {
   Zap,
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
+import { useCopyToClipboard } from "@/hooks/use-clipboard"
 import {
   logsFilterInfiniteQueryOptions,
   logsStreamsQueryOptions,
@@ -86,6 +89,26 @@ function sortedPageEvents(page: { events: FilteredLogEvent[] }): FilteredLogEven
   return sorted
 }
 
+/**
+ * Absolute URL that reopens the stream view anchored on exactly this event —
+ * the same `anchorTs` + `anchorSig` contract the search-hit deep links use,
+ * so the link inherits the anchor machinery whole: lead-in window, paging to
+ * the event, centring, the persistent mark. Null when the event names no
+ * stream, since the stream route cannot open without one.
+ */
+function eventDeepLink(groupName: string, evt: FilteredLogEvent): string | null {
+  if (!evt.logStreamName) return null
+  const query = [
+    ["groupName", groupName],
+    ["streamName", evt.logStreamName],
+    ["anchorTs", String(evt.timestamp ?? 0)],
+    ["anchorSig", logEventSignature(evt)],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join("&")
+  return `${window.location.origin}/cloudwatch/logs/stream?${query}`
+}
+
 // â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** An event a deep link wants the view centred on — a search result, usually. */
@@ -127,6 +150,11 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   // the virtualizer uses, so a sort flip or a prepend keeps the expansion on
   // the same event. Session state: a revisit starts collapsed again.
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<number>>(() => new Set())
+  // The keyboard cursor: one `logEventKey`, so it survives sort flips and
+  // prepends the way the expansion set does — and so moving it re-renders
+  // only the row wrappers, never the memoised row content (LogMessage takes
+  // no cursor-related props at all). Session state, like the expansion set.
+  const [focusedKey, setFocusedKey] = useState<number | null>(null)
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
   // query cache, so they are held back by timestamp instead â€” a marker that
@@ -487,16 +515,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
 
   const restoreCleared = useCallback(() => setClearedThrough(null), [])
 
-  // One handler for every row (the key rides the DOM, not a per-row closure):
-  // in collapse mode a click expands just that row to the full current
-  // rendering, and a second click folds it back to its single line.
-  const handleRowToggle = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // A click that was really a text selection, or that landed on the row's
-    // own controls (Copy, links), is not an expand request.
-    if (window.getSelection()?.toString()) return
-    if ((e.target as Element).closest("button, a")) return
-    const key = Number(e.currentTarget.dataset.rowKey)
-    if (!Number.isFinite(key)) return
+  const toggleExpandedKey = useCallback((key: number) => {
     setExpandedKeys((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
@@ -504,6 +523,83 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       return next
     })
   }, [])
+
+  // One handler for every row (the key rides the DOM, not a per-row closure):
+  // in collapse mode a click expands just that row to the full current
+  // rendering, and a second click folds it back to its single line.
+  const handleRowToggle = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // A click that was really a text selection, or that landed on the row's
+      // own controls (Copy, links), is not an expand request.
+      if (window.getSelection()?.toString()) return
+      if ((e.target as Element).closest("button, a")) return
+      const key = Number(e.currentTarget.dataset.rowKey)
+      if (!Number.isFinite(key)) return
+      toggleExpandedKey(key)
+    },
+    [toggleExpandedKey],
+  )
+
+  // Click-to-filter on a request id: the id rides the button's dataset (one
+  // handler, no per-row closures) and lands in the filter QUOTED — the
+  // phrase-match form FilterLogEvents already defines, exactly what typing it
+  // would do. No new query semantics; the server does the matching.
+  const handleRequestIdFilter = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    const id = e.currentTarget.dataset.requestId
+    if (!id) return
+    const quoted = `"${id}"`
+    setFilterInput(quoted)
+    setActiveFilter(quoted)
+  }, [])
+
+  // ── Keyboard navigation ──────────────────────────────────────────────────
+  // Scoped to the scroll container (which is focusable), never the document:
+  // the filter input keeps its keys, and Ctrl/Cmd+F keeps its document-level
+  // shortcut because modified keys pass straight through.
+  const { copy: copyPlainMessage } = useCopyToClipboard()
+  const handleListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    // Typing surfaces own their keys outright, wherever one ends up inside
+    // the list.
+    if ((e.target as Element).closest("input, textarea, select, [contenteditable]")) return
+    if (events.length === 0) return
+
+    const { key } = e
+    if (key === "ArrowDown" || key === "j" || key === "ArrowUp" || key === "k") {
+      e.preventDefault()
+      const delta = key === "ArrowDown" || key === "j" ? 1 : -1
+      const currentIndex =
+        focusedKey == null ? -1 : events.findIndex((evt) => logEventKey(evt) === focusedKey)
+      // No cursor yet (or its event left the list): start at the first
+      // rendered row — what the user is looking at — not at index 0.
+      const nextIndex =
+        currentIndex < 0
+          ? (virtualItems[0]?.index ?? 0)
+          : Math.max(0, Math.min(events.length - 1, currentIndex + delta))
+      setFocusedKey(logEventKey(events[nextIndex]))
+      // A cursor the user is steering must not be yanked away by the next
+      // tail arrival's scroll-to-latest; reaching the newest edge re-pins.
+      pinnedToLatestRef.current = false
+      // `auto`: scroll only if the row is out of view, never a recentring —
+      // and via the virtualizer, so a cursor past the rendered window works.
+      virtualizer.scrollToIndex(nextIndex, { align: "auto" })
+      return
+    }
+    if (key === "Enter") {
+      if (!collapseMode || focusedKey == null) return
+      e.preventDefault()
+      toggleExpandedKey(focusedKey)
+      return
+    }
+    if (key === "c") {
+      if (focusedKey == null) return
+      const evt = events.find((candidate) => logEventKey(candidate) === focusedKey)
+      if (!evt) return
+      // The same value the row's copy button yields — the plain message.
+      copyPlainMessage(describeLogEvent(evt).plain, { noun: "log message" })
+    }
+  }
 
   useLayoutEffect(() => {
     if (events.length <= previousEventCountRef.current) {
@@ -884,10 +980,17 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             </div>
           )}
 
-          {/* Virtualized rows */}
+          {/* Virtualized rows. Focusable for keyboard row navigation; the
+              cursor is announced through aria-activedescendant so focus (and
+              the scroll position) stays on the container itself. */}
           <div
             ref={parentRef}
-            className="min-h-0 flex-1 overflow-auto"
+            tabIndex={0}
+            role="listbox"
+            aria-label="Log events"
+            aria-activedescendant={focusedKey != null ? `log-event-${focusedKey}` : undefined}
+            onKeyDown={handleListKeyDown}
+            className="min-h-0 flex-1 overflow-auto focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset"
             onScroll={handleScrollCheck}
             style={{ height: "calc(100vh - 280px)" }}
           >
@@ -905,7 +1008,10 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                 // Exact matches only: a jump's nearest-match neighbour gets
                 // centred, never marked as the event the link meant.
                 const isAnchor = anchorExact && anchorIndex >= 0 && virtualRow.index === anchorIndex
-                const rowCollapsed = collapseMode && !expandedKeys.has(logEventKey(evt))
+                const rowKey = logEventKey(evt)
+                const rowCollapsed = collapseMode && !expandedKeys.has(rowKey)
+                const isFocused = focusedKey != null && focusedKey === rowKey
+                const deepLink = eventDeepLink(groupName, evt)
                 // The chronological predecessor, by index in the display
                 // order: the row above under Oldest-first, the row below
                 // under Newest-first. O(1) per row, derived from the same
@@ -920,12 +1026,17 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                   <div
                     key={virtualRow.key}
                     data-index={virtualRow.index}
+                    // A stable id per event, for aria-activedescendant.
+                    id={`log-event-${rowKey}`}
+                    role="option"
+                    aria-selected={isFocused}
                     // The event's own key, straight from `logEventKey`:
                     // `virtualRow.key` is the same value in production, but
                     // the expansion set must match what `estimateSize` checks
                     // even where the virtualizer is mocked.
-                    data-row-key={logEventKey(evt)}
+                    data-row-key={rowKey}
                     data-anchored={isAnchor || undefined}
+                    data-focused={isFocused || undefined}
                     // Collapsed rows are fixed-height and never measured —
                     // skipping `measureElement` is what removes the
                     // measurement churn in collapse mode. Expanded rows keep
@@ -934,8 +1045,10 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                     onClick={collapseMode ? handleRowToggle : undefined}
                     className={cn(
                       "group/row absolute top-0 left-0 flex w-full border-b border-l-2 border-border-muted border-l-transparent",
-                      collapseMode && "cursor-pointer",
-                      rowCollapsed && "overflow-hidden",
+                      collapseMode && cn("cursor-pointer", rowCollapsed && "overflow-hidden"),
+                      // The keyboard cursor: an inset ring, distinct from the
+                      // anchor's filled left-edge marking below.
+                      isFocused && "ring-1 ring-accent/70 ring-inset",
                       // The anchored row is the one the deep link came for; its
                       // marking outranks the level tint.
                       isAnchor
@@ -1009,8 +1122,33 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                         />
                       </div>
                     )}
-                    {/* Actions */}
-                    <div className="flex w-8 shrink-0 items-start justify-center pt-1.5">
+                    {/* Actions — hover-revealed, right-aligned so the cluster
+                        sits in the same place whether or not the row carries a
+                        request id. */}
+                    <div className="flex w-16 shrink-0 items-start justify-end gap-0.5 pt-1.5 pr-1">
+                      {meta.requestId != null && (
+                        <button
+                          type="button"
+                          data-request-id={meta.requestId}
+                          onClick={handleRequestIdFilter}
+                          aria-label={`Filter to request ID ${meta.requestId}`}
+                          // What it really does — a quoted-term search, the
+                          // same filter typing the id would run.
+                          title={`Filter to request ID ${meta.requestId} — searches for it as a quoted term`}
+                          className="cursor-pointer p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+                        >
+                          <ListFilter aria-hidden className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {deepLink != null && (
+                        <CopyButton
+                          value={deepLink}
+                          noun="link to this event"
+                          tone="inline"
+                          icon={<Link2 aria-hidden className="h-3.5 w-3.5" />}
+                          className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+                        />
+                      )}
                       <CopyButton
                         value={meta.plain}
                         noun="log message"
