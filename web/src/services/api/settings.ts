@@ -21,6 +21,27 @@ export interface HttpsStatus {
   hostCommand?: string
   /** The restart-with-TLS command; present while mode is "off". */
   restartCommand?: string
+  /**
+   * The https origin SDKs and the CLI must be pointed at once TLS is on.
+   * Always the https spelling, including while mode is still "off" — it is
+   * what the console tells the user to switch their endpoint URL to.
+   */
+  httpsEndpoint: string
+  /**
+   * Daemon-side path of the CA certificate, for AWS_CA_BUNDLE /
+   * NODE_EXTRA_CA_CERTS. Absent for a containerized daemon, where that path
+   * names a file inside the container.
+   */
+  caCertPath?: string
+  /**
+   * This daemon's CA will not survive the container being recreated — it is
+   * containerized and no OVERCAST_CA_DIR points at a host-owned directory.
+   * Trust installs are per-machine and permanent, so a CA that isn't means
+   * re-approving a root certificate on every recreation.
+   */
+  caEphemeral: boolean
+  /** Host-side recipe that gives the daemon a CA outliving it. */
+  caShareCommand?: string
 }
 
 export interface HttpsSetupResult {

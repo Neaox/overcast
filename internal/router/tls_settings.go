@@ -69,6 +69,29 @@ type tlsStatusResponse struct {
 	// a native install: restarting with TLS switched on. Set while Mode is
 	// "off" so the console can show it verbatim.
 	RestartCommand string `json:"restartCommand,omitempty"`
+	// HTTPSEndpoint is the https origin SDKs and the CLI must be pointed at
+	// once TLS is on — always the https spelling, including while Mode is
+	// still "off", because it is what the console tells the user to switch
+	// to. The port is the one a host-side caller dials (see hostTrustCommand).
+	HTTPSEndpoint string `json:"httpsEndpoint"`
+	// CAEphemeral reports that this daemon's CA will not survive the
+	// container being recreated: it is containerized and nobody pointed
+	// OVERCAST_CA_DIR at a directory the host owns, so the CA lives in the
+	// container's own layer (or in a volume it cannot distinguish from one).
+	// Trust installs are per-machine and permanent; a CA that is not is a
+	// re-approval prompt on every recreation, so the console leads with
+	// sharing the host's CA instead.
+	CAEphemeral bool `json:"caEphemeral"`
+	// CAShareCommand is the docker run fragment that mounts a host-owned CA
+	// into this daemon. Set alongside CAEphemeral.
+	CAShareCommand string `json:"caShareCommand,omitempty"`
+	// CACertPath is the daemon-side path of the CA certificate, for the
+	// AWS_CA_BUNDLE / NODE_EXTRA_CA_CERTS variables SDKs need even after the
+	// CA is in the system trust store — botocore and Node ship their own root
+	// bundles and do not consult it. Empty for a containerized daemon, where
+	// the path names a file inside the container and the host must use its own
+	// copy (downloaded, or cached by `overcast https enable --endpoint`).
+	CACertPath string `json:"caCertPath,omitempty"`
 }
 
 type tlsSetupResponse struct {
@@ -113,34 +136,83 @@ func tlsMode(cfg *config.Config) string {
 	}
 }
 
-// hostTrustCommand is the command a HOST-side shell runs to trust a daemon
-// whose trust store it cannot reach (containers, unsupported platforms). The
-// port is the one a host caller actually dials — the published port when the
-// container is remapped (`-p 4580:4566`), cfg.Port otherwise.
-func hostTrustCommand(cfg *config.Config) string {
-	port := cfg.Port
+// hostPort is the API port a host-side caller actually dials — the published
+// port when the container is remapped (`-p 4580:4566`), cfg.Port otherwise.
+func hostPort(cfg *config.Config) int {
 	if cfg.PublishedPort > 0 {
-		port = cfg.PublishedPort
+		return cfg.PublishedPort
 	}
-	return fmt.Sprintf("overcast https enable --endpoint http://localhost:%d", port)
+	return cfg.Port
+}
+
+// hostTrustCommand is the command a HOST-side shell runs to trust a daemon
+// whose trust store it cannot reach (containers, unsupported platforms).
+//
+// The scheme tracks what the listener actually speaks right now, not what it
+// will speak after the restart: run before the restart it dials plain HTTP,
+// run after it dials TLS. Getting that wrong is survivable — FetchRemoteCA
+// retries the https spelling — but it costs the operator a
+// "client sent an HTTP request to an HTTPS server" line in the daemon log and
+// the time spent working out whether it mattered.
+func hostTrustCommand(cfg *config.Config) string {
+	scheme := "http"
+	if cfg.TLSEnabled() {
+		scheme = "https"
+	}
+	return fmt.Sprintf("overcast https enable --endpoint %s://localhost:%d", scheme, hostPort(cfg))
+}
+
+// httpsEndpoint is the origin SDKs and the CLI must target once TLS is on.
+// Always https: it is the post-switch endpoint, and the console shows it while
+// the daemon is still serving plain HTTP.
+func httpsEndpoint(cfg *config.Config) string {
+	return fmt.Sprintf("https://localhost:%d", hostPort(cfg))
 }
 
 const restartCommand = "OVERCAST_TLS=auto overcast serve"
 
+// caShareCommand is the host-side recipe that makes the CA outlive the
+// container: create it once on the host (a trust install is per-machine
+// anyway), then mount it read-only so the daemon mints leaves from an anchor
+// it does not own. This is the mkcert/Caddy/step-ca division — durable layer
+// holds the anchor, ephemeral layer holds the leaves — and it is the only
+// arrangement in which `docker compose down` costs nothing.
+const caShareCommand = `overcast https enable   # once per machine, on the host
+
+docker run -e OVERCAST_TLS=auto \
+  -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
+  -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha`
+
 // tlsStatusHandler serves GET /_overcast/tls/status.
 func tlsStatusHandler(cfg *config.Config, logger *zap.Logger) http.HandlerFunc {
-	caDir := trust.DirFor(cfg.DataDir)
+	caDir := cfg.CACertDir()
 	certPath := filepath.Join(caDir, trust.CACertFile)
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp := tlsStatusResponse{
-			Mode:        tlsMode(cfg),
-			InContainer: runningInContainer(),
+			Mode:          tlsMode(cfg),
+			InContainer:   runningInContainer(),
+			HTTPSEndpoint: httpsEndpoint(cfg),
 		}
 		if _, err := os.Stat(certPath); err == nil {
 			resp.CAExists = true
 		}
 		if resp.Mode == "off" {
 			resp.RestartCommand = restartCommand
+		}
+		if resp.InContainer && !cfg.CADirConfigured {
+			resp.CAEphemeral = true
+			resp.CAShareCommand = caShareCommand
+		}
+		// Only meaningful where the daemon's filesystem is the caller's: in a
+		// container this path names a file the host cannot open. Mode "off"
+		// reports the auto-mode path the CA will live at, since that is the
+		// bundle the user will need once they restart.
+		if !resp.InContainer {
+			if resp.Mode == "explicit" {
+				resp.CACertPath = cfg.TLSCertFile
+			} else {
+				resp.CACertPath = certPath
+			}
 		}
 		switch {
 		case resp.InContainer:
@@ -191,7 +263,7 @@ func tlsStatusHandler(cfg *config.Config, logger *zap.Logger) http.HandlerFunc {
 // and the `--endpoint` one-liner BEFORE the restart, so by the time the user
 // first opens the https console the browser already trusts it.
 func tlsSetupHandler(cfg *config.Config, logger *zap.Logger) http.HandlerFunc {
-	caDir := trust.DirFor(cfg.DataDir)
+	caDir := cfg.CACertDir()
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Installing a root CA on a click must never be reachable from a
 		// hostile web page. The API port's CORS is deliberately wildcard (SDK

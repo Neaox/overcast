@@ -38,6 +38,13 @@ export function Tabs({ selectedKey, onSelectionChange, children, className }: Ta
 interface TabListProps {
   children: ReactNode
   className?: string
+  /**
+   * Accessible name for the tablist. Optional, because a page with one set of
+   * tabs reads fine without it — but required in practice wherever several
+   * tablists share tab labels, since "PowerShell" on its own says nothing
+   * about which group it switches.
+   */
+  "aria-label"?: string
 }
 
 /**
@@ -66,10 +73,11 @@ const ARROW_KEYS = new Map<string, number | "first" | "last">([
   ["End", "last"],
 ])
 
-export function TabList({ children, className }: TabListProps) {
+export function TabList({ children, className, "aria-label": ariaLabel }: TabListProps) {
   return (
     <div
       role="tablist"
+      aria-label={ariaLabel}
       className={cn("flex gap-6 border-b border-border", className)}
       onKeyDown={(event) => {
         const delta = ARROW_KEYS.get(event.key)

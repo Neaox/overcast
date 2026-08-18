@@ -121,7 +121,9 @@ services:
         /home/vscode/bin/overcast serve
       "
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health" ]
+      # https first, http fallback, so an OVERCAST_TLS=auto run stays healthy
+      # and quiet — see the note in docker-compose.yml.
+      test: [ "CMD-SHELL", "wget -qO- --no-check-certificate https://localhost:4566/_overcast/health || wget -qO- http://localhost:4566/_overcast/health" ]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -238,6 +238,32 @@ type Config struct {
 	// on-disk state (analogous to LocalStack's DATA_DIR).
 	DataDir string
 
+	// CADir is where the local overcast CA lives (OVERCAST_CA_DIR),
+	// defaulting to <DataDir>/ca.
+	//
+	// It is separable from DataDir because the two have opposite lifetimes.
+	// State is per-environment and disposable; the CA is a trust anchor, and
+	// installing one into a system trust store is a per-MACHINE act that a
+	// container recreation must not invalidate. Pointing this at a mount the
+	// host owns — a small dedicated volume, or the host's own
+	// ~/.overcast/data/ca — is what lets an ephemeral daemon mint leaves from
+	// a CA that outlives it, which is how mkcert, Caddy and step-ca all treat
+	// the anchor-vs-leaf split. The mount may be read-only: nothing here
+	// writes to it once the CA exists.
+	CADir string
+
+	// CADirConfigured records that OVERCAST_CA_DIR was set explicitly, rather
+	// than CADir being the <DataDir>/ca default. It is the only signal the
+	// daemon has that someone deliberately placed the CA — used to tell a
+	// containerized daemon whose CA will die with it from one sharing a CA the
+	// host owns. A heuristic, not proof: it cannot tell a real mount from a
+	// path that merely happens to be set.
+	//
+	// Read it through CACertDir(), not directly: a Config built by hand rather
+	// than by Load has an empty CADir, and joining paths onto "" silently
+	// yields a relative path in the process's working directory.
+	CADirConfigured bool
+
 	// Region is the default AWS region reported in ARNs and responses.
 	Region string
 
@@ -739,6 +765,19 @@ func (c *Config) Addr() string {
 // order, with Addr() first. A Config assembled in code rather than by Load
 // leaves Hosts nil; that reads as the single Addr(), so a struct literal that
 // only sets Host behaves exactly as it did before OVERCAST_HOST took a list.
+// CACertDir returns the directory holding the local overcast CA — CADir when
+// set, otherwise the historical <DataDir>/ca. The fallback exists because
+// Configs are also constructed literally (tests, embedders) rather than only
+// through Load, and an empty CADir would otherwise resolve to a relative path
+// in the working directory — a CA silently minted somewhere nobody is
+// looking.
+func (c *Config) CACertDir() string {
+	if c.CADir != "" {
+		return c.CADir
+	}
+	return filepath.Join(c.DataDir, "ca")
+}
+
 func (c *Config) Addrs() []string {
 	if len(c.Hosts) == 0 {
 		return []string{c.Addr()}
@@ -1045,6 +1084,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_WAL_FSYNC_INTERVAL        100ms
 //	OVERCAST_WAL_MAX_LOG_BYTES         67108864
 //	OVERCAST_DATA_DIR                  ~/.overcast/data
+//	OVERCAST_CA_DIR                    {DataDir}/ca  (may be a read-only mount)
 //	OVERCAST_DEFAULT_REGION             us-east-1
 //	OVERCAST_ACCOUNT_ID                000000000000
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
@@ -1185,6 +1225,10 @@ func Load() (*Config, error) {
 	dataDirEnvRaw := os.Getenv("OVERCAST_DATA_DIR")
 	dataDirSource := os.Getenv("OVERCAST_DATA_DIR_SOURCE")
 	cfg.DataDir = envOr("OVERCAST_DATA_DIR", defaultDataDir())
+	// Defaults under the data dir, so an unset OVERCAST_CA_DIR keeps the
+	// historical <data dir>/ca layout byte for byte.
+	cfg.CADirConfigured = strings.TrimSpace(os.Getenv("OVERCAST_CA_DIR")) != ""
+	cfg.CADir = envOr("OVERCAST_CA_DIR", filepath.Join(cfg.DataDir, "ca"))
 
 	// State backend — accept "sqlite" as a deprecated alias for "persistent",
 	// and "auto" (also the default when unset) as a request to resolve the

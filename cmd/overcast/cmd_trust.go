@@ -88,7 +88,7 @@ func runTrust(fn func(trust.Store, *cobra.Command, trustTarget) error) func(*cob
 		if err != nil {
 			return err
 		}
-		tt := resolveTrustTarget(cmd, cfg.DataDir)
+		tt := resolveTrustTarget(cmd, cfg)
 		store, err := trust.New(log, tt.caDir)
 		if err != nil {
 			if errors.Is(err, trust.ErrUnsupported) {

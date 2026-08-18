@@ -31,13 +31,19 @@ func (tt trustTarget) remote() bool { return tt.endpoint != "" }
 // The flag is registered persistently on the root command with a default
 // value, so only an explicitly *passed* --endpoint selects the remote flow —
 // `overcast trust install` alone keeps meaning the local CA.
-func resolveTrustTarget(cmd *cobra.Command, dataDir string) trustTarget {
+//
+// The local branch honours OVERCAST_CA_DIR (via cfg.CACertDir()) so that a host
+// which shares its CA with containers installs, inspects and removes exactly
+// the CA those containers serve. The remote cache stays under the data dir:
+// it holds copies of OTHER daemons' CAs, which have no business landing in a
+// directory this machine may be exporting as its own.
+func resolveTrustTarget(cmd *cobra.Command, cfg *config.Config) trustTarget {
 	f := cmd.Flag("endpoint")
 	if f == nil || !f.Changed {
-		return trustTarget{caDir: trust.DirFor(dataDir)}
+		return trustTarget{caDir: cfg.CACertDir()}
 	}
 	ep := strings.TrimRight(f.Value.String(), "/")
-	return trustTarget{caDir: trust.RemoteDirFor(dataDir, ep), endpoint: ep}
+	return trustTarget{caDir: trust.RemoteDirFor(cfg.DataDir, ep), endpoint: ep}
 }
 
 // remoteCAGate is the safety check in front of fetching a trust root:
