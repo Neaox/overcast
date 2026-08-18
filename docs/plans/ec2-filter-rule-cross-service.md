@@ -1,9 +1,10 @@
 # The unrecognised-filter rule, beyond EC2
 
-> Status: survey complete, and the two findings that could produce a wrong
-> answer are **fixed** — `ssm:DescribeParameters` and `autoscaling:DescribeTags`.
-> The third, `secretsmanager`, is a deliberate divergence that fails safe and is
-> left alone; see [What to do](#what-to-do).
+> Status: survey complete and **corrected** — its first pass searched too
+> narrowly and missed three filter APIs; see [Method](#method). Every finding
+> that could produce a wrong answer is **fixed**: `ssm:DescribeParameters` and
+> `autoscaling:DescribeTags`. The rest either fail safe or already refuse; see
+> [What to do](#what-to-do).
 >
 > #1032 settled what an unrecognised filter means and applied it to EC2. This is
 > the answer to the question that issue deliberately left open — whether
@@ -31,13 +32,28 @@ read `Vpcs[0]`, and a find-or-create script adopted the wrong VPC.
 ## Method
 
 Every package under `internal/services/` was searched for a caller-supplied
-named-selector API — `Filters`, `ParameterFilters`, `TagFilters` — and each
-match read to find what it does with a name it has no case for. Handler code is
-the authority, not the capability declarations. Read on the merge base of this
-branch.
+filter parameter, and each match read to find what it does with a value it has
+no case for. Handler code is the authority, not the capability declarations.
 
-Most services have none: they select by ID, by prefix, or not at all. Four have
-one, and they do not agree.
+The first pass of this survey searched only for the `Filters` /
+`ParameterFilters` / `TagFilters` shape and concluded that four services had
+one. That was too narrow, and the conclusion was wrong: a filter does not have
+to be a list of name/value pairs. The search is now over every filter-shaped
+request field — `grep -rn 'json:"[A-Za-z]*Filters\?"' internal/services/*/*.go`
+— which finds three more, and the corrected list is below. The narrow search is
+recorded here rather than quietly replaced because it is the reason findings 4
+to 6 were missed the first time.
+
+Seven services expose a filter, in three shapes:
+
+| Shape | Services | Unrecognised input means |
+| --- | --- | --- |
+| Named selector (`Name`/`Key` → attribute) | ec2, ssm, autoscaling, secretsmanager | findings 1–3, all settled |
+| Query-language string | cognito | finding 4 — already refuses |
+| Enumerated value | stepfunctions, cloudformation | findings 5–6 — match nothing |
+
+Only the first shape produced the wrong-answer failure this document was opened
+about, and all of it is now closed.
 
 ## Findings
 
@@ -119,15 +135,49 @@ divergence (AWS answers `ValidationException` for an invalid filter key) and it
 still costs a caller time, because an empty list looks like an empty account.
 It is the least urgent of the three: it fails safe.
 
-### 4. Everything else — no named-selector API
+### 4. `cognito:ListUsers` — refuses already, and did before any of this
+
+`internal/services/cognito/store.go`, `filterUsers`:
+
+```go
+attr, op, value, ok := parseListUsersFilter(filter)
+if !ok || !listUsersFilterAttribute(attr) {
+    return nil, &protocol.AWSError{Code: "InvalidParameterException", Message: "Invalid search filter.", HTTPStatus: 400}
+}
+```
+
+Cognito's filter is a query-language string (`email ^= "a@b"`), not a
+name/value pair, which is why the first pass of this survey did not find it. It
+is the one place in Overcast that already answered the way #1032 concluded
+everything should: an attribute outside the implemented set is refused, before
+any user is read, with the error AWS uses.
+
+Nothing to do, and worth knowing it exists — it is the precedent the EC2 rule
+turned out to be catching up with. Two open issues, **#100** and **#131**, track
+whether the *message* matches real AWS exactly; that is a parity question about
+wording, not about what an unrecognised filter means.
+
+### 5. `stepfunctions:ListExecutions` — an unknown `statusFilter` matches nothing
+
+`execution_ops.go` compares `req.StatusFilter` to each execution's status
+directly, so a value outside the enum returns an empty list where AWS returns
+`ValidationException` — the enum is a model constraint there. Fail-safe
+direction, no wrong answer.
+
+### 6. `cloudformation:ListStacks` — an unknown `StackStatusFilter` matches nothing
+
+`filterStacksByStatus` is `slices.Contains` over the supplied statuses, so the
+same applies: an invalid status narrows to nothing rather than being refused.
+Fail-safe, and the same class as finding 5.
+
+### 7. Everything else — no filter parameter
 
 `rds`, `elbv2`, `ecs`, `eks`, `dynamodb`, `efs`, `elasticache` and the rest
-either select by identifier, by prefix, or expose no filter parameter at all.
-`lambda`'s `FilterCriteria` and `pipes`' filter patterns are **event-source
-filtering** — a different thing entirely, matching records rather than selecting
-resources, with its own AWS-defined pattern language that is already
-implemented. `cloudformation`'s `TagFilters` are S3 lifecycle-rule properties
-being translated, not a query API.
+select by identifier, by prefix, or not at all. `lambda`'s `FilterCriteria` and
+`pipes`' filter patterns are **event-source filtering** — a different thing
+entirely, matching records rather than selecting resources, with its own
+AWS-defined pattern language that is already implemented. `cloudformation`'s
+`TagFilters` are S3 lifecycle-rule properties being translated, not a query API.
 
 ## What to do
 
@@ -148,11 +198,18 @@ and both are now done.
    `ValidationError`, and every value of `auto-scaling-group` is honoured rather
    than only the first. The single-group case still answers from the tag key's
    prefix scan; several groups fall back to a full scan.
-3. **`secretsmanager`** — **not done, deliberately.** Moving from "matches
+3. **The three that match nothing** — `secretsmanager`, plus
+   `stepfunctions:ListExecutions` and `cloudformation:ListStacks` from the
+   corrected sweep — **not done, deliberately.** Moving each from "matches
    nothing" to `ValidationException` is a fidelity improvement with no wrong
-   answers to prevent: the existing behaviour already refuses to widen a result,
-   it is commented with that reasoning, and it fails safe. It is worth doing the
-   next time someone is in that file, and is not worth a change of its own.
+   answers to prevent: none of them widens a result, and an empty page is a
+   defensible reading of "nothing matched that". Each is worth doing the next
+   time someone is in that file; none is worth a change of its own, and doing
+   all three together would be a sweep for its own sake.
+
+   Note the asymmetry the corrected sweep makes visible: **every** remaining
+   divergence is in the fail-safe direction. The wrong-answer direction — ignore
+   the filter, return everything — now exists nowhere in Overcast.
 
 ### Should `filterSpec` be shared?
 
