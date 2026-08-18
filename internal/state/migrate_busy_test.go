@@ -25,6 +25,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // openRacingSQLite opens path with the DSN sqlite.go uses, including the WAL
@@ -73,6 +75,51 @@ func TestReadUserVersion_survivesConcurrentFreshOpens(t *testing.T) {
 	}
 	if failed > 0 {
 		t.Errorf("%d of %d concurrent opens failed", failed, conns)
+	}
+}
+
+// TestTransientSQLiteCode_coversExtendedResultCodes: the driver enables
+// extended result codes on every connection (modernc.org/sqlite calls
+// sqlite3_extended_result_codes at open), so Error.Code() carries the
+// qualified form when SQLite has one. CI run 32100793725 failed
+// TestReadUserVersion_survivesConcurrentFreshOpens with `database is locked
+// (261)` — SQLITE_BUSY_RECOVERY, the busy a reader gets while another
+// connection recovers the WAL of the same fresh file — because the classifier
+// compared the extended code against the primary constant and missed.
+func TestTransientSQLiteCode_coversExtendedResultCodes(t *testing.T) {
+	transient := []int{
+		sqlite3.SQLITE_BUSY,
+		sqlite3.SQLITE_BUSY_RECOVERY, // 261 — the observed CI failure
+		sqlite3.SQLITE_BUSY_SNAPSHOT,
+		sqlite3.SQLITE_LOCKED,
+		sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+		sqlite3.SQLITE_INTERRUPT,
+	}
+	for _, code := range transient {
+		if !isTransientSQLiteCode(code) {
+			t.Errorf("code %d should classify as transient — it is the busy/locked class "+
+				"with the extended-result-code bits set", code)
+		}
+	}
+	// The permanent class must stay out: the degraded-mode tests
+	// (TestHybridStore_NotReady_FalseWhenDegraded and friends) point the store
+	// at a genuinely unusable path — a directory (SQLITE_CANTOPEN) or a
+	// garbage file (SQLITE_NOTADB) — and rely on migration failing promptly so
+	// the store degrades to memory-only instead of sitting out the retry
+	// budget. Those same two codes are what that deliberate failure injection
+	// prints to CI logs; they are noise near this test's failure, not shapes
+	// of the fresh-open race, which only ever presents as the busy class.
+	genuine := []int{
+		sqlite3.SQLITE_ERROR,
+		sqlite3.SQLITE_CORRUPT,
+		sqlite3.SQLITE_CANTOPEN,
+		sqlite3.SQLITE_NOTADB,
+		sqlite3.SQLITE_OK,
+	}
+	for _, code := range genuine {
+		if isTransientSQLiteCode(code) {
+			t.Errorf("code %d should not classify as transient", code)
+		}
 	}
 }
 
