@@ -2468,8 +2468,7 @@ func isSQLiteTransient(err error) bool {
 	}
 	var sqliteErr *msqlite.Error
 	if errors.As(err, &sqliteErr) {
-		code := sqliteErr.Code()
-		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED || code == sqlite3.SQLITE_INTERRUPT
+		return isTransientSQLiteCode(sqliteErr.Code())
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "database is locked") ||
@@ -2477,6 +2476,25 @@ func isSQLiteTransient(err error) bool {
 		strings.Contains(msg, "sqlite_locked") ||
 		strings.Contains(msg, "interrupted (9)") ||
 		strings.Contains(msg, "sqlite_interrupt")
+}
+
+// isTransientSQLiteCode reports whether a driver result code names the
+// busy/locked/interrupt class isSQLiteTransient retries.
+//
+// The driver enables extended result codes on every connection
+// (modernc.org/sqlite calls sqlite3_extended_result_codes at open), so the
+// code here is the qualified form whenever SQLite has one —
+// SQLITE_BUSY_RECOVERY (261) for a reader waiting on another connection's WAL
+// recovery, SQLITE_BUSY_SNAPSHOT (517), SQLITE_LOCKED_SHAREDCACHE (262) — and
+// an exact comparison against the primary constants misses all of them. The
+// primary code is the low byte.
+func isTransientSQLiteCode(code int) bool {
+	switch code & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *HybridStore) logHybridSQLiteRetry(op string, retryErr error, fields ...zap.Field) {
