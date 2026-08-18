@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
-import { dropTailedDuplicates } from "@/features/cloudwatch/logs/tail"
+import { dropTailedDuplicates, logEventKey } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
@@ -248,27 +248,6 @@ function TabButton({
   )
 }
 
-/**
- * Identity for a log event that survives pagination.
- *
- * Loading an older page prepends events, shifting every index — a key with the
- * index in it remounted the whole list on each backward page, which is a full
- * delete-and-insert storm for React, for layout, and for every extension
- * watching the document with a MutationObserver. The event objects themselves
- * are stable (the query cache and the tail buffer hand out the same objects
- * across renders), so identity can simply be the object.
- */
-const eventKeys = new WeakMap<LogEvent, number>()
-let nextEventKey = 0
-function eventKey(event: LogEvent): number {
-  let key = eventKeys.get(event)
-  if (key === undefined) {
-    key = nextEventKey++
-    eventKeys.set(event, key)
-  }
-  return key
-}
-
 function LogsPane({
   logEvents,
   loading,
@@ -308,7 +287,7 @@ function LogsPane({
     overscan: 20,
     // Keyed by event, not by index, so a measurement made for a row stays
     // with that row when older pages shift every index under it.
-    getItemKey: (index) => eventKey(logEvents[index]),
+    getItemKey: (index) => logEventKey(logEvents[index]),
   })
   const totalSize = virtualizer.getTotalSize()
 

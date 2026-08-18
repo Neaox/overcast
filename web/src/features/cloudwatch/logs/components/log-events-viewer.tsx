@@ -1,5 +1,5 @@
 ﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect, memo } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
-import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
+import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
 import {
   TimeRangeFilter,
   type TimeRange,
@@ -41,6 +41,7 @@ import {
   compareLogEvents,
   compileFilterHighlighter,
   dropTailedDuplicates,
+  logEventKey,
   mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
@@ -110,14 +111,18 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const pinnedToLatestRef = useRef(true)
   const previousEventCountRef = useRef(0)
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    ...logsFilterQueryOptions(groupName, {
-      filterPattern: activeFilter || undefined,
-      startTime: timeRange.startTime,
-      endTime: timeRange.endTime,
-      ...(streamName ? { logStreamNames: [streamName] } : {}),
-    }),
-  })
+  // Paged: FilterLogEvents caps a page at 10,000 events, so one page read as
+  // "the results" silently truncated everything past the cap. Pages advance
+  // forward through the time window; newer events arrive by fetching more.
+  const { data, isLoading, isFetching, refetch, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useInfiniteQuery({
+      ...logsFilterInfiniteQueryOptions(groupName, {
+        filterPattern: activeFilter || undefined,
+        startTime: timeRange.startTime,
+        endTime: timeRange.endTime,
+        ...(streamName ? { logStreamNames: [streamName] } : {}),
+      }),
+    })
 
   // The buffer resets itself when the group, stream or filter changes; the
   // time range is not part of the session's identity, so a range change has to
@@ -134,7 +139,10 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     setClearedThrough(null)
   }, [clearTail, groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
 
-  const fetchedEvents = data?.events ?? NO_EVENTS
+  const fetchedEvents = useMemo(
+    () => (data ? data.pages.flatMap((page) => page.events) : NO_EVENTS),
+    [data],
+  )
   const visibleFetched = useMemo(
     () =>
       clearedThrough == null
@@ -182,7 +190,29 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => estimateRowHeight(describeLogEvent(events[index]).plain, formatted),
     overscan: 15,
+    // Keyed by event, not by index: a sort-order flip or a newly fetched page
+    // shifts every index, and index keys would remount every row with it.
+    getItemKey: (index) => logEventKey(events[index]),
   })
+
+  // Fetch the following page as the user nears the edge where it will attach —
+  // the bottom under Oldest-first, the top under Newest-first. The fetched
+  // pages advance toward newer events either way.
+  //
+  // Keyed on the page token rather than on `hasNextPage`: the boolean holds
+  // steady from one page to the next, and when a response lands fast enough
+  // that no `isFetchingNextPage` render ever commits, an effect keyed on the
+  // booleans sees nothing change and the chain stalls. The token is different
+  // for every page, so each arrival re-arms the effect.
+  const virtualItems = virtualizer.getVirtualItems()
+  const nearNewestEdge = sortAsc
+    ? (virtualItems.at(-1)?.index ?? 0) >= events.length - 25
+    : (virtualItems[0]?.index ?? Number.MAX_SAFE_INTEGER) <= 25
+  const nextPageToken = data?.pages.at(-1)?.nextToken
+  useEffect(() => {
+    if (!nextPageToken || isFetchingNextPage || !nearNewestEdge) return
+    void fetchNextPage()
+  }, [nextPageToken, isFetchingNextPage, nearNewestEdge, fetchNextPage])
 
   /** Compiled once per filter, not once per row per scroll frame. */
   const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
@@ -284,8 +314,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         ? { title: "No matching events", description: "Try a different filter pattern." }
         : { title: "No log events", description: "This stream has no events yet." }
 
-  const virtualItems = virtualizer.getVirtualItems()
-
   return (
     <div className="flex h-full w-full flex-col gap-3">
       <PageHeader
@@ -362,7 +390,8 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           </Button>
           {activeFilter && (
             <span className="ml-1 shrink-0 text-xs text-fg-muted">
-              {events.length} result{events.length !== 1 ? "s" : ""}
+              {events.length}
+              {hasNextPage ? "+" : ""} result{events.length !== 1 || hasNextPage ? "s" : ""}
             </span>
           )}
         </div>
@@ -460,8 +489,18 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <ArrowDownUp className="mr-1 h-3 w-3" />
             {sortAsc ? "Oldest" : "Newest"}
           </Button>
-          <span className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums">
-            {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
+          <span
+            className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums"
+            // "+" while a nextToken remains: the server caps a page at 10,000
+            // events, and a bare count would read as the whole result set.
+            title={
+              hasNextPage
+                ? "More events are available — scroll to the newest to load them"
+                : undefined
+            }
+          >
+            {events.length.toLocaleString()}
+            {hasNextPage ? "+" : ""} event{events.length !== 1 || hasNextPage ? "s" : ""}
           </span>
           {tail.overflowed > 0 && (
             // The AWS console shows "% displayed" when Live Tail samples; the

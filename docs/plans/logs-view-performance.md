@@ -209,8 +209,11 @@ on very wide events, this is the next lever, as an explicit UX change.
 Ordered so each phase is independently shippable and measurable. Failing-test-first where a phase
 changes observable behavior; paced benchmarks before/after each phase (see Phase 0).
 
-**Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`), 2 (peek virtualization)
-and 3 (row render cost) landed. Phases 0, 4, 5 outstanding. Phase 1 shipped without the full
+**Progress:** Phases 1 (tail batching/bounding, as `useLogTailBuffer`), 2 (peek virtualization),
+3 (row render cost) and 4's forward direction (nextToken paging, auto-load at the newest edge,
+"+" count label, monitor-tab refetch made honest) landed. Phase 4's *backward* time-window
+expansion (older-than-the-window events) and the peek's forward paging are still open, as are
+Phases 0 and 5. Phase 1 shipped without the full
 `useLogFeed` extraction — the hook owns the session + buffer + cap and both surfaces consume it;
 the fetched-side merge stayed in the viewers (sorted-merge, no per-batch re-sort), and the
 remaining consolidation is Phase 5's. Phase 2's scroll anchoring cannot be exercised in jsdom
@@ -276,7 +279,7 @@ object's identity index within the feed), never the array index.
 - `data-1p-ignore` + `data-lpignore="true"` on the log filter inputs (see §2b — keeps password
   managers' field analysis away from the page's only fill-candidate elements).
 
-### Phase 4 — Pagination fidelity (M) — fixes F7
+### Phase 4 — Pagination fidelity (M) — fixes F7 — **landed** (forward direction)
 
 - `filterEvents` gains `nextToken`/`limit` passthrough; `LogEventsViewer` moves to
   `useInfiniteQuery` with a bottom sentinel ("load more" as the user nears the end of loaded

@@ -129,6 +129,8 @@ export const logs = {
       endTime?: number
       logStreamNames?: string[]
       logStreamNamePrefix?: string
+      nextToken?: string
+      limit?: number
     } = {},
   ) => {
     const res = await awsClients.logs().send(
@@ -139,11 +141,17 @@ export const logs = {
         ...(opts.endTime != null ? { endTime: opts.endTime } : {}),
         ...(opts.logStreamNames?.length ? { logStreamNames: opts.logStreamNames } : {}),
         ...(opts.logStreamNamePrefix ? { logStreamNamePrefix: opts.logStreamNamePrefix } : {}),
+        ...(opts.nextToken ? { nextToken: opts.nextToken } : {}),
+        ...(opts.limit != null ? { limit: opts.limit } : {}),
       }),
     )
     return {
       events: res.events ?? [],
       searchedLogStreams: res.searchedLogStreams ?? [],
+      // Present exactly when more matching events remain — the server caps a
+      // page at 10,000 events, and ignoring the token silently truncated
+      // anything past it.
+      nextToken: res.nextToken,
     }
   },
 }

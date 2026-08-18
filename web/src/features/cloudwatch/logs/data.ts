@@ -9,7 +9,7 @@
  *   logsKeys.tags(groupName)                -> ["logs", "tags", groupName]
  */
 
-import { queryOptions, mutationOptions } from "@tanstack/react-query"
+import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/react-query"
 import { logs } from "@/services/api"
 import type { CreateLogGroupInput } from "@/services/api/logs"
 import { endpointStore } from "@/services/endpoint-store"
@@ -60,6 +60,32 @@ export function logsFilterQueryOptions(
   return queryOptions({
     queryKey: [...logsKeys.filter(groupName), opts] as const,
     queryFn: () => logs.filterEvents(groupName, opts),
+  })
+}
+
+/**
+ * The paged form of the filter query, for the stream/all-streams viewer.
+ *
+ * FilterLogEvents caps a page at 10,000 events and pages forward through the
+ * time window via `nextToken`; a viewer that reads one page silently truncates
+ * everything past the cap. The key carries a marker so this cache entry never
+ * collides with the single-page query's differently-shaped data.
+ */
+export function logsFilterInfiniteQueryOptions(
+  groupName: string,
+  opts: {
+    filterPattern?: string
+    startTime?: number
+    endTime?: number
+    logStreamNames?: string[]
+  } = {},
+) {
+  return infiniteQueryOptions({
+    queryKey: [...logsKeys.filter(groupName), "infinite", opts] as const,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      logs.filterEvents(groupName, { ...opts, nextToken: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
   })
 }
 

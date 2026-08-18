@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest"
 import { createTestQueryClient, renderWithRouter, screen, userEvent, waitFor } from "@/test/render"
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
+import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
 import type { FilteredLogEvent } from "@/types/logs"
 import { LogEventsViewer } from "./log-events-viewer"
 
@@ -83,10 +83,16 @@ const live = vi.hoisted(() => {
     sessions: [] as InstanceType<typeof Session>[],
     /** What the next FilterLogEvents call returns. */
     stored: [] as { timestamp: number; message: string; logStreamName: string }[],
+    /**
+     * Extra pages, consumed one per FilterLogEvents call after the first: a
+     * response hands out a nextToken whenever pages remain.
+     */
+    pages: [] as { timestamp: number; message: string; logStreamName: string }[][],
     filterCalls: 0,
     reset() {
       this.sessions = []
       this.stored = []
+      this.pages = []
       this.filterCalls = 0
     },
   }
@@ -95,12 +101,14 @@ const live = vi.hoisted(() => {
 vi.mock("@/services/aws-clients", () => ({
   awsClients: {
     logs: () => ({
-      send: (command: { constructor: { name: string } }) => {
+      send: (command: { constructor: { name: string }; input?: { nextToken?: string } }) => {
         if (command.constructor.name === "FilterLogEventsCommand") {
           live.filterCalls++
+          const events = command.input?.nextToken ? (live.pages.shift() ?? []) : live.stored
           return Promise.resolve({
-            events: live.stored.map((e) => ({ ...e })),
+            events: events.map((e) => ({ ...e })),
             searchedLogStreams: [],
+            ...(live.pages.length > 0 ? { nextToken: `page-${live.filterCalls}` } : {}),
           })
         }
         const session = new live.Session()
@@ -129,9 +137,9 @@ function Providers({ children }: { children: React.ReactNode }) {
 function renderViewer(events: FilteredLogEvent[] = EVENTS) {
   live.reset()
   const queryClient = createTestQueryClient()
-  queryClient.setQueryData(logsFilterQueryOptions(GROUP, {}).queryKey, {
-    events,
-    searchedLogStreams: [],
+  queryClient.setQueryData(logsFilterInfiniteQueryOptions(GROUP, {}).queryKey, {
+    pages: [{ events, searchedLogStreams: [], nextToken: undefined }],
+    pageParams: [undefined],
   })
 
   return renderWithRouter(
@@ -192,6 +200,46 @@ describe("LogEventsViewer > clearing the buffer", () => {
     await user.click(await clearButton())
 
     expect(await clearButton()).toBeDisabled()
+  })
+})
+
+/*
+ * FilterLogEvents caps a page at 10,000 events. The viewer used to read one
+ * page and present it as the whole result set; now it pages via nextToken and
+ * says when the count on screen is not everything.
+ */
+describe("LogEventsViewer > pagination", () => {
+  it("fetches the following page when the newest edge is on screen", async () => {
+    // The mocked virtualizer renders every row, so the newest edge counts as
+    // visible and the auto-load drains the remaining pages.
+    const { user } = renderViewer([])
+    await clearButton() // wait for the toolbar to mount
+    live.stored = [{ timestamp: 1_000, message: "page one", logStreamName: "s1" }]
+    live.pages = [[{ timestamp: 2_000, message: "page two", logStreamName: "s1" }]]
+
+    await user.click(refreshButton())
+
+    expect(await screen.findByText(/page one/)).toBeInTheDocument()
+    expect(await screen.findByText(/page two/)).toBeInTheDocument()
+    await waitFor(() => expect(live.filterCalls).toBe(2))
+  })
+
+  it("chains through every page and settles on the full, unqualified count", async () => {
+    const { user } = renderViewer([])
+    await clearButton() // wait for the toolbar to mount
+    live.stored = [{ timestamp: 1_000, message: "page one", logStreamName: "s1" }]
+    live.pages = [
+      [{ timestamp: 2_000, message: "page two", logStreamName: "s1" }],
+      [{ timestamp: 3_000, message: "page three", logStreamName: "s1" }],
+    ]
+
+    await user.click(refreshButton())
+
+    // Three pages, three fetches; once no token remains the count drops its
+    // "+" qualifier and reads as the whole result set — because now it is.
+    expect(await screen.findByText(/page three/)).toBeInTheDocument()
+    await waitFor(() => expect(live.filterCalls).toBe(3))
+    expect(screen.getByText(/^3 events$/)).toBeInTheDocument()
   })
 })
 
@@ -265,9 +313,9 @@ function renderTailViewer() {
 function renderTailViewerUnderStrictMode() {
   live.reset()
   const queryClient = createTestQueryClient()
-  queryClient.setQueryData(logsFilterQueryOptions(GROUP, {}).queryKey, {
-    events: [],
-    searchedLogStreams: [],
+  queryClient.setQueryData(logsFilterInfiniteQueryOptions(GROUP, {}).queryKey, {
+    pages: [{ events: [], searchedLogStreams: [], nextToken: undefined }],
+    pageParams: [undefined],
   })
   const rootRoute = createRootRoute()
   const router = createRouter({

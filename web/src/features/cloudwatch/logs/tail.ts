@@ -77,6 +77,30 @@ export interface MergeableLogEvent {
 }
 
 /**
+ * Identity for a log event that survives pagination and re-sorting.
+ *
+ * Rendering a virtualised list keyed by array index remounts rows whenever a
+ * prepend or a sort-order flip shifts the indexes — a delete-and-insert storm
+ * for React, for layout, and for every extension watching the document with a
+ * MutationObserver. The event *objects* are stable (the query cache and the
+ * tail buffer hand out the same objects across renders), so identity is the
+ * object; a `WeakMap` lets an event that falls out of the buffer take its key
+ * with it. Duplicate lines a function really did log twice get distinct keys,
+ * which content-derived keys cannot promise.
+ */
+const eventKeys = new WeakMap<object, number>()
+let nextEventKey = 0
+
+export function logEventKey(event: object): number {
+  let key = eventKeys.get(event)
+  if (key === undefined) {
+    key = nextEventKey++
+    eventKeys.set(event, key)
+  }
+  return key
+}
+
+/**
  * Chronological order, with the tie-breaks that keep it total: two events in
  * the same millisecond fall back to ingestion order, then to the stream name,
  * so a sort is stable across refetches that shuffle their input.
