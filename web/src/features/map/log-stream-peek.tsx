@@ -4,12 +4,14 @@
  *
  * - Logs tab: loads existing events via GetLogEvents, then opens a
  *   StartLiveTail session on the instance's log group + stream and appends
- *   what it pushes.
+ *   what it pushes. History pages backward through the top sentinel; when the
+ *   live session dies, a forward token walk (see `useForwardLogPages`) takes
+ *   over at the bottom so events written after the death stay reachable.
  * - Trigger Event tab: pretty-prints the JSON payload that triggered the
  *   invocation (as recorded by the instance tracker).
  */
 
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -22,6 +24,7 @@ import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { dropTailedDuplicates, logEventKey } from "@/features/cloudwatch/logs/tail"
+import { useForwardLogPages } from "@/features/cloudwatch/logs/use-forward-log-pages"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
@@ -104,19 +107,41 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     streamName: logStream,
   })
 
+  // The live session covers everything newer than the first fetched page —
+  // until it dies. From then on, a forward token walk off that first page
+  // keeps events written after the death reachable; it only ever fetches
+  // while the tail is dead and the user sits at the bottom (see LogsPane).
+  const tailDead = tail.status === "error"
+  const forward = useForwardLogPages({
+    logGroup,
+    logStream,
+    startToken: logQuery.data?.pages[0]?.nextForwardToken,
+  })
+
   // All historical events: pages are in reverse order (newest first page),
-  // so reverse them to get chronological order, then append live events.
-  const historicalEvents = useMemo(
-    () => [...(logQuery.data?.pages ?? [])].reverse().flatMap((p) => p.events),
-    [logQuery.data],
-  )
-  // A page fetched while the session is open can already hold what the session
-  // has pushed, so the live events are reconciled against it rather than
-  // simply appended.
-  const logEvents = useMemo(
-    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, tail.events)],
-    [historicalEvents, tail.events],
-  )
+  // so reverse them to get chronological order; forward-fetched events are
+  // strictly newer than the first page (the token walk starts at its end).
+  const storedEvents = useMemo(() => {
+    const historical = [...(logQuery.data?.pages ?? [])].reverse().flatMap((p) => p.events)
+    return forward.events.length ? [...historical, ...forward.events] : historical
+  }, [logQuery.data, forward.events])
+
+  // A page fetched while the session was open — a forward page especially,
+  // which covers the very span the dead session was pushing — can already
+  // hold what the session pushed, so the live events are reconciled against
+  // it rather than simply appended. GetLogEvents output events carry no
+  // logStreamName while tailed events name their stream, so the count-based
+  // reconciliation runs against a stream-stamped *view* of the stored events
+  // (the peek is single-stream — every stored event belongs to `logStream`).
+  // Only the view is copied; the rendered objects keep their identity, which
+  // `logEventKey` and the virtualizer's row keys depend on.
+  const logEvents = useMemo(() => {
+    if (tail.events.length === 0) return storedEvents
+    const dedupView = logStream
+      ? storedEvents.map((e) => ({ ...e, logStreamName: logStream }))
+      : storedEvents
+    return [...storedEvents, ...dropTailedDuplicates(dedupView, tail.events)]
+  }, [storedEvents, tail.events, logStream])
 
   return (
     <Dialog.Root
@@ -209,6 +234,9 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
                     loadingMore={logQuery.isFetchingNextPage}
                     onLoadMore={() => logQuery.fetchNextPage()}
                     tailOverflowed={tail.overflowed}
+                    hasNewer={tailDead && !forward.exhausted}
+                    loadingNewer={forward.loading}
+                    onLoadNewer={forward.loadNewer}
                   />
                 )}
                 {activeTab === "trigger" && <TriggerPane triggerEvent={target.triggerEvent} />}
@@ -266,6 +294,9 @@ function LogsPane({
   loadingMore,
   onLoadMore,
   tailOverflowed = 0,
+  hasNewer,
+  loadingNewer,
+  onLoadNewer,
 }: {
   logEvents: LogEvent[]
   loading: boolean
@@ -275,6 +306,10 @@ function LogsPane({
   onLoadMore: () => void
   /** Live events the bounded tail buffer has dropped — shown, never silent. */
   tailOverflowed?: number
+  /** The tail is dead and the forward token walk has more to fetch. */
+  hasNewer: boolean
+  loadingNewer: boolean
+  onLoadNewer: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
@@ -347,13 +382,32 @@ function LogsPane({
     rootMargin: "120px",
   })
 
+  // Load newer logs while the tail is dead (`hasNewer`) and the user sits at
+  // the bottom — a live session owns the newest edge, so this only ever runs
+  // for a dead one. The walk chains without any timer: each appended page
+  // changes `logEvents` and lands back in this effect, so pages keep coming
+  // until AWS's same-token end signal latches `exhausted` (flipping `hasNewer`
+  // off) or the user scrolls away from the bottom. Not a polling loop — every
+  // fetch is caused by a state change, and an idle dead tail costs nothing.
+  useEffect(() => {
+    if (!hasNewer || loadingNewer) return
+    if (logEvents.length > 0 && !pinnedRef.current) return
+    onLoadNewer()
+  }, [hasNewer, loadingNewer, logEvents, onLoadNewer])
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8
     pinnedRef.current = atBottom
-    if (atBottom) setHasUnread(false)
-  }, [])
+    if (atBottom) {
+      setHasUnread(false)
+      // Scrolling back to the bottom of a dead tail re-checks the newest
+      // edge — the user-driven counterpart of the effect above (which cannot
+      // see scrolling: pinnedRef is a ref precisely so scrolls don't render).
+      if (hasNewer && !loadingNewer) onLoadNewer()
+    }
+  }, [hasNewer, loadingNewer, onLoadNewer])
 
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -474,6 +528,9 @@ function LogsPane({
             )
           })}
         </div>
+        {loadingNewer && (
+          <div className="py-2 text-center text-[11px] text-fg-muted">Loading newer logs…</div>
+        )}
       </div>
 
       {/* "New logs" pill — visible when scrolled up and new events arrive */}
