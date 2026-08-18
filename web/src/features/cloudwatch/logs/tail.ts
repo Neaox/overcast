@@ -45,14 +45,101 @@ export function parseLogFilterTerms(pattern: string): string[] {
   return terms
 }
 
+/**
+ * One regex matching any of a filter pattern's terms, or null when the pattern
+ * selects everything.
+ *
+ * Compiled once per pattern rather than per row: the viewers highlight matches
+ * inside every visible row on every scroll frame, and building the same regex
+ * there made the pattern's cost scale with rows rendered instead of with edits
+ * to the filter box.
+ *
+ * The capturing group is what makes `String.split` interleave the matches, so
+ * callers can take the odd indices as the hits. `split` never reads or writes
+ * the regex's `lastIndex` — it clones with a sticky flag internally — so one
+ * compiled instance is safe to share across rows.
+ */
+export function compileFilterHighlighter(pattern: string): RegExp | null {
+  const terms = parseLogFilterTerms(pattern)
+  if (terms.length === 0) return null
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  return new RegExp(`(${escaped.join("|")})`, "gi")
+}
+
 // ── Merging a stored page with a live session ──────────────────────────────
 
 /** The fields a stored and a tailed log event have in common. */
-interface MergeableLogEvent {
+export interface MergeableLogEvent {
   eventId?: string
   timestamp?: number
   logStreamName?: string
   message?: string
+}
+
+/**
+ * Identity for a log event that survives pagination and re-sorting.
+ *
+ * Rendering a virtualised list keyed by array index remounts rows whenever a
+ * prepend or a sort-order flip shifts the indexes — a delete-and-insert storm
+ * for React, for layout, and for every extension watching the document with a
+ * MutationObserver. The event *objects* are stable (the query cache and the
+ * tail buffer hand out the same objects across renders), so identity is the
+ * object; a `WeakMap` lets an event that falls out of the buffer take its key
+ * with it. Duplicate lines a function really did log twice get distinct keys,
+ * which content-derived keys cannot promise.
+ */
+const eventKeys = new WeakMap<object, number>()
+let nextEventKey = 0
+
+export function logEventKey(event: object): number {
+  let key = eventKeys.get(event)
+  if (key === undefined) {
+    key = nextEventKey++
+    eventKeys.set(event, key)
+  }
+  return key
+}
+
+/**
+ * Chronological order, with the tie-breaks that keep it total: two events in
+ * the same millisecond fall back to ingestion order, then to the stream name,
+ * so a sort is stable across refetches that shuffle their input.
+ */
+export function compareLogEvents(
+  a: MergeableLogEvent & { ingestionTime?: number },
+  b: MergeableLogEvent & { ingestionTime?: number },
+): number {
+  const timeDelta = (a.timestamp ?? 0) - (b.timestamp ?? 0)
+  if (timeDelta !== 0) return timeDelta
+  const ingestDelta = (a.ingestionTime ?? 0) - (b.ingestionTime ?? 0)
+  if (ingestDelta !== 0) return ingestDelta
+  return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "")
+}
+
+/**
+ * Merges two already-sorted event lists into one sorted list.
+ *
+ * This is what keeps the viewer's "everything on screen" array cheap to
+ * rebuild: the fetched page is sorted once when it arrives and the tail buffer
+ * maintains its own order, so combining them is a linear walk rather than a
+ * fresh sort of the world on every batch of live events.
+ */
+export function mergeSortedEvents<T extends MergeableLogEvent & { ingestionTime?: number }>(
+  a: readonly T[],
+  b: readonly T[],
+): T[] {
+  if (a.length === 0) return [...b]
+  if (b.length === 0) return [...a]
+  const merged: T[] = new Array<T>(a.length + b.length)
+  let ai = 0
+  let bi = 0
+  let out = 0
+  while (ai < a.length && bi < b.length) {
+    merged[out++] = compareLogEvents(a[ai], b[bi]) <= 0 ? a[ai++] : b[bi++]
+  }
+  while (ai < a.length) merged[out++] = a[ai++]
+  while (bi < b.length) merged[out++] = b[bi++]
+  return merged
 }
 
 function mergeKey(event: MergeableLogEvent): string {

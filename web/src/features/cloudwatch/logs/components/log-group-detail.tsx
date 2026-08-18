@@ -244,6 +244,9 @@ export function LogGroupDetail({ groupName }: Props) {
       <div className="flex items-center gap-2 rounded-md border border-border bg-bg-muted px-3 py-2.5">
         <Search className="h-4 w-4 shrink-0 text-fg-muted" />
         <Input
+          // Never a credential field — see the note in log-events-viewer.tsx.
+          data-1p-ignore
+          data-lpignore="true"
           className="h-7 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
           placeholder='Search across all streams — e.g. ERROR, "request failed", ERROR timeout'
           value={filterInput}

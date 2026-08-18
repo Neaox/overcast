@@ -1,5 +1,5 @@
-﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
-import { useQuery } from "@tanstack/react-query"
+﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect, memo } from "react"
+import { useInfiniteQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
-import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
+import { logsFilterInfiniteQueryOptions } from "@/features/cloudwatch/logs/data"
 import {
   TimeRangeFilter,
   type TimeRange,
@@ -26,13 +26,11 @@ import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
 import {
-  detectLogLevel,
+  describeLogEvent,
   formatLogTime,
-  formatPlatformRecord,
   highlightJSON,
   logLevelBadgeClass,
   logLevelRowClass,
-  parsePlatformRecord,
   stringifyJSON,
   tryParseJSON,
   type LogLevel,
@@ -40,20 +38,21 @@ import {
 import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
 import {
+  compareLogEvents,
+  compileFilterHighlighter,
   dropTailedDuplicates,
-  parseLogFilterTerms,
-  tailLogEvents,
+  logEventKey,
+  mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
+import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/** Highlight matching filter terms in a message string. */
-function highlightMatches(message: string, filterPattern: string): React.ReactNode {
-  if (!filterPattern) return message
-  const terms = parseLogFilterTerms(filterPattern)
-  if (terms.length === 0) return message
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-  const parts = message.split(new RegExp(`(${escaped.join("|")})`, "gi"))
+/** Highlight a filter's matches in a message string, using a pre-compiled matcher. */
+function highlightMatches(message: string, matcher: RegExp | null): React.ReactNode {
+  if (!matcher) return message
+  const parts = message.split(matcher)
+  if (parts.length === 1) return message
   // `split` with a capturing group interleaves the captures, so the matches are
   // exactly the odd indices. Re-testing each part against the pattern would
   // read a global regex's `lastIndex` between calls and skip every other match.
@@ -84,16 +83,6 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
 /** Stable empty fallback â€” a fresh `[]` would re-run every memo keyed on it. */
 const NO_EVENTS: FilteredLogEvent[] = []
 
-function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[] {
-  return [...events].sort((a, b) => {
-    const timeDelta = (a.timestamp ?? 0) - (b.timestamp ?? 0)
-    if (timeDelta !== 0) return asc ? timeDelta : -timeDelta
-    const ingestDelta = (a.ingestionTime ?? 0) - (b.ingestionTime ?? 0)
-    if (ingestDelta !== 0) return asc ? ingestDelta : -ingestDelta
-    return (a.logStreamName ?? "").localeCompare(b.logStreamName ?? "") * (asc ? 1 : -1)
-  })
-}
-
 // â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Props {
@@ -112,7 +101,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [wrapLines, setWrapLines] = useState(true)
   const [tailMode, setTailMode] = useState(false)
   const [sortAsc, setSortAsc] = useState(true)
-  const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
   // query cache, so they are held back by timestamp instead â€” a marker that
@@ -123,39 +111,38 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const pinnedToLatestRef = useRef(true)
   const previousEventCountRef = useRef(0)
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    ...logsFilterQueryOptions(groupName, {
-      filterPattern: activeFilter || undefined,
-      startTime: timeRange.startTime,
-      endTime: timeRange.endTime,
-      ...(streamName ? { logStreamNames: [streamName] } : {}),
-    }),
+  // Paged: FilterLogEvents caps a page at 10,000 events, so one page read as
+  // "the results" silently truncated everything past the cap. Pages advance
+  // forward through the time window; newer events arrive by fetching more.
+  const { data, isLoading, isFetching, refetch, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useInfiniteQuery({
+      ...logsFilterInfiniteQueryOptions(groupName, {
+        filterPattern: activeFilter || undefined,
+        startTime: timeRange.startTime,
+        endTime: timeRange.endTime,
+        ...(streamName ? { logStreamNames: [streamName] } : {}),
+      }),
+    })
+
+  // The buffer resets itself when the group, stream or filter changes; the
+  // time range is not part of the session's identity, so a range change has to
+  // reset by hand along with the cleared-through cut.
+  const tail = useLogTailBuffer({
+    enabled: tailMode,
+    groupIdentifier: groupName,
+    streamName,
+    filterPattern: activeFilter,
   })
-
+  const clearTail = tail.clear
   useEffect(() => {
-    setTailEvents([])
+    clearTail()
     setClearedThrough(null)
-  }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
+  }, [clearTail, groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
 
-  useEffect(() => {
-    if (!tailMode) return
-
-    const controller = new AbortController()
-    void (async () => {
-      for await (const event of tailLogEvents({
-        groupIdentifier: groupName,
-        streamName,
-        filterPattern: activeFilter,
-        signal: controller.signal,
-      })) {
-        setTailEvents((prev) => [...prev, event])
-      }
-    })()
-
-    return () => controller.abort()
-  }, [activeFilter, groupName, streamName, tailMode])
-
-  const fetchedEvents = data?.events ?? NO_EVENTS
+  const fetchedEvents = useMemo(
+    () => (data ? data.pages.flatMap((page) => page.events) : NO_EVENTS),
+    [data],
+  )
   const visibleFetched = useMemo(
     () =>
       clearedThrough == null
@@ -174,43 +161,61 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   // screen is what was counted. Clear empties the tail buffer as it hides the
   // fetched rows, so the two lists never disagree about an event it hid.
   const visibleTailed = useMemo(
-    () => dropTailedDuplicates(visibleFetched, tailEvents),
-    [visibleFetched, tailEvents],
+    () => dropTailedDuplicates(visibleFetched, tail.events),
+    [visibleFetched, tail.events],
   )
 
+  // Ascending is the canonical order and the other direction is its mirror:
+  // the fetched page sorts once per fetch, the tail buffer maintains its own
+  // order, and combining them is a linear merge â€” never a fresh sort of
+  // everything per batch of live events, which is what this replaced.
+  const ascendingFetched = useMemo(
+    () => [...visibleFetched].sort(compareLogEvents),
+    [visibleFetched],
+  )
+  const ascending = useMemo(
+    () => mergeSortedEvents(ascendingFetched, visibleTailed),
+    [ascendingFetched, visibleTailed],
+  )
   const events = useMemo(
-    () => sortEvents([...visibleFetched, ...visibleTailed], sortAsc),
-    [visibleFetched, visibleTailed, sortAsc],
+    () => (sortAsc ? ascending : [...ascending].reverse()),
+    [ascending, sortAsc],
   )
 
-  // Pre-compute cheap row metadata once per data change. JSON parsing/highlighting stays row-local.
-  const rowMeta = useMemo(
-    () =>
-      events.map((evt) => {
-        const msg = evt.message ?? ""
-        // `plain` is the message without its escape sequences â€” what the level
-        // detector reads, what the row height is estimated from, and what the
-        // copy button puts on the clipboard.
-        const plain = stripAnsi(msg)
-        // A Lambda system log record reads as the START / END / REPORT line it
-        // replaced; ticking Format swaps in the record itself.
-        const platform = parsePlatformRecord(plain)
-        return {
-          msg,
-          plain,
-          level: detectLogLevel(plain),
-          summary: platform ? formatPlatformRecord(platform) : null,
-        }
-      }),
-    [events],
-  )
-
+  // Row metadata is derived per event and cached on the event itself, so a
+  // tail that has accumulated history never re-reads it: only the event that
+  // just arrived is new work. See `describeLogEvent`.
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (index) => estimateRowHeight(rowMeta[index]?.plain ?? "", formatted),
+    estimateSize: (index) => estimateRowHeight(describeLogEvent(events[index]).plain, formatted),
     overscan: 15,
+    // Keyed by event, not by index: a sort-order flip or a newly fetched page
+    // shifts every index, and index keys would remount every row with it.
+    getItemKey: (index) => logEventKey(events[index]),
   })
+
+  // Fetch the following page as the user nears the edge where it will attach —
+  // the bottom under Oldest-first, the top under Newest-first. The fetched
+  // pages advance toward newer events either way.
+  //
+  // Keyed on the page token rather than on `hasNextPage`: the boolean holds
+  // steady from one page to the next, and when a response lands fast enough
+  // that no `isFetchingNextPage` render ever commits, an effect keyed on the
+  // booleans sees nothing change and the chain stalls. The token is different
+  // for every page, so each arrival re-arms the effect.
+  const virtualItems = virtualizer.getVirtualItems()
+  const nearNewestEdge = sortAsc
+    ? (virtualItems.at(-1)?.index ?? 0) >= events.length - 25
+    : (virtualItems[0]?.index ?? Number.MAX_SAFE_INTEGER) <= 25
+  const nextPageToken = data?.pages.at(-1)?.nextToken
+  useEffect(() => {
+    if (!nextPageToken || isFetchingNextPage || !nearNewestEdge) return
+    void fetchNextPage()
+  }, [nextPageToken, isFetchingNextPage, nearNewestEdge, fetchNextPage])
+
+  /** Compiled once per filter, not once per row per scroll frame. */
+  const filterMatcher = useMemo(() => compileFilterHighlighter(activeFilter), [activeFilter])
 
   // Scroll-to-bottom
   const [showScrollBottom, setShowScrollBottom] = useState(false)
@@ -241,10 +246,10 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     setClearedThrough(
       events.reduce((newest, evt) => Math.max(newest, evt.timestamp ?? 0), clearedThrough ?? 0),
     )
-    setTailEvents([])
+    clearTail()
     pinnedToLatestRef.current = true
     setShowScrollBottom(false)
-  }, [events, clearedThrough])
+  }, [events, clearedThrough, clearTail])
 
   const restoreCleared = useCallback(() => setClearedThrough(null), [])
 
@@ -309,12 +314,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         ? { title: "No matching events", description: "Try a different filter pattern." }
         : { title: "No log events", description: "This stream has no events yet." }
 
-  const virtualItems = virtualizer.getVirtualItems()
-  const scrollOffset = virtualizer.scrollOffset ?? 0
-  const viewportHeight = parentRef.current?.clientHeight ?? 0
-  const highlightStart = Math.max(0, scrollOffset - viewportHeight)
-  const highlightEnd = scrollOffset + viewportHeight * 2
-
   return (
     <div className="flex h-full w-full flex-col gap-3">
       <PageHeader
@@ -359,6 +358,11 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           <Search className="h-4 w-4 shrink-0 text-fg-muted" />
           <Input
             data-log-filter
+            // A log filter is never a credential field. Password managers scan
+            // the page's inputs on every DOM change, and this view mutates a
+            // lot; opting out keeps their field analysis off the hot path.
+            data-1p-ignore
+            data-lpignore="true"
             className="h-7 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
             placeholder='Filter â€” e.g. ERROR, "request failed", ERROR timeout'
             value={filterInput}
@@ -386,7 +390,8 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           </Button>
           {activeFilter && (
             <span className="ml-1 shrink-0 text-xs text-fg-muted">
-              {events.length} result{events.length !== 1 ? "s" : ""}
+              {events.length}
+              {hasNextPage ? "+" : ""} result{events.length !== 1 || hasNextPage ? "s" : ""}
             </span>
           )}
         </div>
@@ -484,9 +489,30 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <ArrowDownUp className="mr-1 h-3 w-3" />
             {sortAsc ? "Oldest" : "Newest"}
           </Button>
-          <span className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums">
-            {events.length.toLocaleString()} event{events.length !== 1 ? "s" : ""}
+          <span
+            className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums"
+            // "+" while a nextToken remains: the server caps a page at 10,000
+            // events, and a bare count would read as the whole result set.
+            title={
+              hasNextPage
+                ? "More events are available — scroll to the newest to load them"
+                : undefined
+            }
+          >
+            {events.length.toLocaleString()}
+            {hasNextPage ? "+" : ""} event{events.length !== 1 || hasNextPage ? "s" : ""}
           </span>
+          {tail.overflowed > 0 && (
+            // The AWS console shows "% displayed" when Live Tail samples; the
+            // same honesty here â€” a capped buffer must say it dropped, not
+            // quietly show a window and let it read as everything.
+            <span
+              className="font-mono text-[10px] text-yellow-600 tabular-nums dark:text-yellow-400"
+              title="The live tail buffer is full, so the oldest events were dropped from view. Narrow the filter to keep up with the stream."
+            >
+              {tail.overflowed.toLocaleString()} dropped
+            </span>
+          )}
         </div>
       </div>
 
@@ -528,11 +554,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             >
               {virtualItems.map((virtualRow) => {
                 const evt = events[virtualRow.index]
-                const meta = rowMeta[virtualRow.index]
-                const enableSyntax =
-                  syntaxHighlight &&
-                  virtualRow.end >= highlightStart &&
-                  virtualRow.start <= highlightEnd
+                const meta = describeLogEvent(evt)
                 return (
                   <div
                     key={virtualRow.key}
@@ -568,12 +590,12 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                         )}
                         <div className="min-w-0 flex-1 px-1 py-1.5">
                           <LogMessage
-                            message={meta.msg}
+                            message={evt.message ?? ""}
                             summary={meta.summary}
                             formatted={formatted}
-                            syntaxHighlight={enableSyntax}
+                            syntaxHighlight={syntaxHighlight}
                             wrapLines={wrapLines}
-                            filterPattern={activeFilter}
+                            filterMatcher={filterMatcher}
                             level={meta.level}
                           />
                         </div>
@@ -582,12 +604,12 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                       <div className="min-w-0 flex-1 px-2 py-1.5">
                         <LogMessage
                           prefix={`${formatLogTime(evt.timestamp)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
-                          message={meta.msg}
+                          message={evt.message ?? ""}
                           summary={meta.summary}
                           formatted={formatted}
-                          syntaxHighlight={enableSyntax}
+                          syntaxHighlight={syntaxHighlight}
                           wrapLines={wrapLines}
-                          filterPattern={activeFilter}
+                          filterMatcher={filterMatcher}
                           level={meta.level}
                           hideLevel
                         />
@@ -654,14 +676,22 @@ function LevelBadge({ level }: { level: LogLevel }) {
   )
 }
 
-function LogMessage({
+/**
+ * Memoised on purpose: the virtualizer flush-syncs a render on every scroll
+ * event, so without this every toolbar keystroke and every scroll tick re-ran
+ * the whole message pipeline for every visible row. Each prop is a primitive or
+ * a value the viewer holds stable across renders (`filterMatcher` is compiled
+ * per filter), so a row that has not changed re-renders to the identical output
+ * and touches no DOM.
+ */
+const LogMessage = memo(function LogMessage({
   prefix,
   message,
   summary = null,
   formatted,
   syntaxHighlight,
   wrapLines,
-  filterPattern,
+  filterMatcher,
   level,
   hideLevel = false,
 }: {
@@ -672,7 +702,8 @@ function LogMessage({
   formatted: boolean
   syntaxHighlight: boolean
   wrapLines: boolean
-  filterPattern: string
+  /** Pre-compiled filter matcher, or null when nothing is filtered. */
+  filterMatcher: RegExp | null
   level: LogLevel | null
   hideLevel?: boolean
 }) {
@@ -728,9 +759,9 @@ function LogMessage({
       >
         <AnsiText
           text={displayText}
-          renderText={(chunk) => highlightMatches(chunk, filterPattern)}
+          renderText={filterMatcher ? (chunk) => highlightMatches(chunk, filterMatcher) : undefined}
         />
       </pre>
     </div>
   )
-}
+})
