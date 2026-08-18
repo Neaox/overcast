@@ -1,4 +1,4 @@
-import Prism from "@/lib/prism"
+import { highlightCode } from "@/lib/highlight-code"
 import { highlightGoStack } from "@/lib/go-stack-prism"
 
 export type BodyLanguage = "json" | "xml" | "text"
@@ -37,14 +37,16 @@ export function formatBodyForDisplay(
   if (hint === "json" || (hint === "text" && looksLikeJSON(raw))) {
     try {
       const formatted = JSON.stringify(JSON.parse(raw), null, 2)
-      return { text: formatted, html: Prism.highlight(formatted, Prism.languages.json, "json") }
+      // Cached (`highlightCode`), so pages that re-render while a body stays
+      // on screen re-use the tokenisation instead of paying Prism each time.
+      return { text: formatted, html: highlightCode(formatted, "json") }
     } catch {
       return { text: raw }
     }
   }
   if (hint === "xml") {
     const formatted = formatXML(raw, opts?.htmlVoidTags ?? isHtmlContentType(contentType))
-    return { text: formatted, html: Prism.highlight(formatted, Prism.languages.markup, "markup") }
+    return { text: formatted, html: highlightCode(formatted, "markup") }
   }
   return { text: raw }
 }
@@ -66,14 +68,28 @@ export function contentTypeToHint(contentType: string): BodyLanguage {
 }
 
 export function bodyHintFromHeaders(headers: Record<string, string[]>): BodyLanguage {
-  const ct = (headers["Content-Type"] ?? headers["content-type"] ?? headers["content_type"] ?? [""])[0]
+  const ct = (headers["Content-Type"] ??
+    headers["content-type"] ??
+    headers["content_type"] ?? [""])[0]
   return contentTypeToHint(ct)
 }
 
 /** HTML tags that never take a closing tag — they must not increase indentation. */
 const HTML_VOID_TAGS = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input",
-  "link", "meta", "param", "source", "track", "wbr",
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
 ])
 
 function isHtmlContentType(contentType?: string): boolean {
@@ -154,12 +170,13 @@ function formatFormBody(raw: string): FormattedBody {
   const params = new URLSearchParams(raw)
   if (Array.from(params.entries()).length === 0) return { text: raw }
   let html = '<table class="w-full text-sm">'
-  html += '<thead><tr class="border-b border-border text-fg-muted text-left"><th class="px-3 py-2 font-medium text-xs">Name</th><th class="px-3 py-2 font-medium text-xs">Value</th></tr></thead>'
-  html += '<tbody>'
+  html +=
+    '<thead><tr class="border-b border-border text-fg-muted text-left"><th class="px-3 py-2 font-medium text-xs">Name</th><th class="px-3 py-2 font-medium text-xs">Value</th></tr></thead>'
+  html += "<tbody>"
   for (const [k, v] of params.entries()) {
     html += `<tr class="border-b border-border"><td class="px-3 py-2 font-mono text-xs text-accent whitespace-nowrap">${escapeHTML(k)}</td><td class="px-3 py-2 font-mono text-xs break-all">${escapeHTML(v)}</td></tr>`
   }
-  html += '</tbody></table>'
+  html += "</tbody></table>"
   return { text: raw, html }
 }
 
@@ -176,7 +193,10 @@ function stripTracingFrames(s: string): string {
   const lines = s.split("\n")
   const out = [lines[0]] // goroutine header
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i].includes("internal/trace.CaptureStack") || lines[i].includes("internal/trace.(*Recorder).AddHop")) {
+    if (
+      lines[i].includes("internal/trace.CaptureStack") ||
+      lines[i].includes("internal/trace.(*Recorder).AddHop")
+    ) {
       i += 1 // file:line
       i += 1 // caller func
       i += 1 // caller file:line

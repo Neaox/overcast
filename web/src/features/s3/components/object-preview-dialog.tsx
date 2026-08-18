@@ -82,7 +82,10 @@ export function ObjectPreviewDialog({
     <Dialog open={!!objectKey} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 truncate font-mono text-sm" title={objectKey}>
+          <DialogTitle
+            className="flex items-center gap-2 truncate font-mono text-sm"
+            title={objectKey}
+          >
             <span className="truncate">{objectKey}</span>
             {objectKey && (
               <CopyUrlButton
@@ -135,6 +138,9 @@ export function ObjectPreviewDialog({
               <div className="min-h-0 overflow-hidden rounded-lg border border-border bg-bg-muted">
                 <div className="border-b border-border px-3 py-2 text-xs font-medium text-fg-muted">
                   Preview{previewText?.truncated ? " (first 1 MiB)" : ""}
+                  {formattedPreview?.highlightSkipped
+                    ? " — shown as plain text; too large to format"
+                    : ""}
                 </div>
                 {previewLoading ? (
                   <div className="flex justify-center py-8">
