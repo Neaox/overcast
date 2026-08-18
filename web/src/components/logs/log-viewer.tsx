@@ -2,15 +2,8 @@ import { memo, useState, useRef } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
-import {
-  describeLogEvent,
-  formatLogTime,
-  highlightJSON,
-  logLevelRowClass,
-  stringifyJSON,
-  tryParseJSON,
-} from "@/lib/log-format"
-import { AnsiText } from "./ansi-text"
+import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { LogMessage } from "./log-message"
 
 export interface LogViewerEvent {
   timestamp?: number
@@ -179,33 +172,24 @@ const LogViewerRow = memo(function LogViewerRow({
   mode: "table" | "plain"
   formatted: boolean
 }) {
-  const { level, plain, summary } = describeLogEvent(event)
+  const { level, summary } = describeLogEvent(event)
 
-  // Only the row on screen pays for a parse, and only while Format is ticked.
-  // No `useMemo`: the React Compiler memoises this body, and `highlightJSON`
-  // is itself cached, so a repeat render costs a map lookup either way.
-  const json = formatted ? tryParseJSON(plain) : null
-  const highlighted = json ? highlightJSON(stringifyJSON(json, true)) : null
-  // A Lambda system log record reads as the START / END / REPORT line it
-  // replaced; ticking Format swaps in the record itself.
-  const text = summary ?? String(event.message ?? "")
-
-  const body = highlighted ? (
-    <pre
-      className={cn(
-        "min-w-0 leading-relaxed wrap-break-word whitespace-pre-wrap text-fg",
-        mode === "table" && "font-mono text-[10px]",
-      )}
-      dangerouslySetInnerHTML={{ __html: highlighted }}
+  // The shared message pipeline, with this surface's choices: pretty JSON and
+  // its highlighting arrive together behind the one Format toggle, the level
+  // shows as the row tint below rather than as a badge, and nothing here
+  // filters, so there is no matcher.
+  const body = (
+    <LogMessage
+      message={String(event.message ?? "")}
+      summary={summary}
+      formatted={formatted}
+      syntaxHighlight={formatted}
+      wrapLines
+      filterMatcher={null}
+      level={level}
+      hideLevel
+      sizeClassName="text-[10px]"
     />
-  ) : mode === "plain" ? (
-    <span className="min-w-0 wrap-break-word whitespace-pre-wrap text-fg">
-      <AnsiText text={text} />
-    </span>
-  ) : (
-    <pre className="font-mono text-[10px] leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
-      <AnsiText text={text} />
-    </pre>
   )
 
   return (

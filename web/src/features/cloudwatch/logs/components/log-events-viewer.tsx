@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect, memo } from "react"
+﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -24,18 +24,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
-import { stripAnsi } from "@/lib/ansi"
-import {
-  describeLogEvent,
-  formatLogTime,
-  highlightJSON,
-  logLevelBadgeClass,
-  logLevelRowClass,
-  stringifyJSON,
-  tryParseJSON,
-  type LogLevel,
-} from "@/lib/log-format"
-import { AnsiText } from "@/components/logs/ansi-text"
+import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { LogMessage } from "@/components/logs/log-message"
 import type { FilteredLogEvent } from "@/types/logs"
 import {
   compareLogEvents,
@@ -45,27 +35,6 @@ import {
   mergeSortedEvents,
 } from "@/features/cloudwatch/logs/tail"
 import { useLogTailBuffer } from "@/features/cloudwatch/logs/use-log-tail-buffer"
-
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-/** Highlight a filter's matches in a message string, using a pre-compiled matcher. */
-function highlightMatches(message: string, matcher: RegExp | null): React.ReactNode {
-  if (!matcher) return message
-  const parts = message.split(matcher)
-  if (parts.length === 1) return message
-  // `split` with a capturing group interleaves the captures, so the matches are
-  // exactly the odd indices. Re-testing each part against the pattern would
-  // read a global regex's `lastIndex` between calls and skip every other match.
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <mark key={i} className="rounded-sm bg-yellow-400/30 px-0.5 text-inherit">
-        {part}
-      </mark>
-    ) : (
-      part
-    ),
-  )
-}
 
 // â”€â”€ Row height estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -649,119 +618,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 
 // â”€â”€ Log message cell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/**
- * The chip that names a row's level.
- *
- * Every row the tint applies to gets one, whatever the message looks like. The
- * badge used to render only for a syntax-highlighted document, or for a plain
- * line once Format was ticked â€” so a `console.warn` from a Node runtime, whose
- * level AWS writes as a tab-separated column
- *
- *   2026-08-10T02:34:39.674Z\t<request id>\tWARN\tCannot push ratesâ€¦
- *
- * arrived tinted but unlabelled, and the label was the part that read at a
- * glance. Nothing about that line is less worth labelling than a Powertools
- * document carrying the same level in a `"level"` field.
- */
-function LevelBadge({ level }: { level: LogLevel }) {
-  return (
-    <span
-      className={cn(
-        "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
-        logLevelBadgeClass[level],
-      )}
-    >
-      {level}
-    </span>
-  )
-}
-
-/**
- * Memoised on purpose: the virtualizer flush-syncs a render on every scroll
- * event, so without this every toolbar keystroke and every scroll tick re-ran
- * the whole message pipeline for every visible row. Each prop is a primitive or
- * a value the viewer holds stable across renders (`filterMatcher` is compiled
- * per filter), so a row that has not changed re-renders to the identical output
- * and touches no DOM.
- */
-const LogMessage = memo(function LogMessage({
-  prefix,
-  message,
-  summary = null,
-  formatted,
-  syntaxHighlight,
-  wrapLines,
-  filterMatcher,
-  level,
-  hideLevel = false,
-}: {
-  prefix?: string
-  message: string
-  /** A Lambda system log record's summary line, when the message is one. */
-  summary?: string | null
-  formatted: boolean
-  syntaxHighlight: boolean
-  wrapLines: boolean
-  /** Pre-compiled filter matcher, or null when nothing is filtered. */
-  filterMatcher: RegExp | null
-  level: LogLevel | null
-  hideLevel?: boolean
-}) {
-  const jsonText = useMemo(() => {
-    if (!formatted && !syntaxHighlight) return null
-    // A colourised JSON line is still JSON; the escape sequences around it are
-    // not, so they come off before the parse attempt.
-    const json = tryParseJSON(stripAnsi(message))
-    if (!json) return null
-    return stringifyJSON(json, formatted)
-  }, [formatted, message, syntaxHighlight])
-  // A system log record would otherwise render as a JSON blob among the
-  // function's own output, so the summary is what shows until Format is ticked
-  // â€” which is the toggle that means "show me the document".
-  const asSummary = summary != null && !formatted
-  const withPrefix = (text: string) => `${prefix ? `${prefix} ` : ""}${text}`
-  const displayText = asSummary
-    ? withPrefix(summary)
-    : formatted && jsonText
-      ? jsonText
-      : withPrefix(message)
-  const showSyntax = !asSummary && syntaxHighlight && jsonText
-
-  if (showSyntax) {
-    return (
-      <div className="flex items-start gap-1.5">
-        {level && !hideLevel && <LevelBadge level={level} />}
-        {prefix && !formatted && (
-          <span className="shrink-0 pt-0.5 font-mono text-[11px] leading-relaxed text-fg-muted tabular-nums">
-            {prefix}
-          </span>
-        )}
-        <pre
-          className={cn(
-            "font-mono text-[11px] leading-relaxed",
-            wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
-          )}
-          dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
-        />
-      </div>
-    )
-  }
-
-  // Plain message â€” with optional filter highlighting
-  return (
-    <div className="flex items-start gap-1.5">
-      {level && !hideLevel && <LevelBadge level={level} />}
-      <pre
-        className={cn(
-          "font-mono text-[11px] leading-relaxed text-fg",
-          wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
-        )}
-      >
-        <AnsiText
-          text={displayText}
-          renderText={filterMatcher ? (chunk) => highlightMatches(chunk, filterMatcher) : undefined}
-        />
-      </pre>
-    </div>
-  )
-})
+// `LogMessage` and `LevelBadge` live in @/components/logs/log-message — the
+// same pipeline renders the generic LogViewer's rows and the log-group search
+// results, and copies of it had already started to drift once before.
