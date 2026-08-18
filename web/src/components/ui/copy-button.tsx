@@ -35,6 +35,13 @@ export interface CopyButtonProps extends Omit<ButtonProps, "value" | "onClick" |
    */
   noun?: string
   tone?: "control" | "inline"
+  /**
+   * Replaces the default Copy glyph — for a second copy control beside the
+   * first, where two identical icons would leave the pair unreadable (the log
+   * rows' copy-message and copy-link, say). The acknowledgement tick still
+   * takes over after a copy lands.
+   */
+  icon?: React.ReactNode
 }
 
 /**
@@ -51,7 +58,7 @@ export interface CopyButtonProps extends Omit<ButtonProps, "value" | "onClick" |
  * <CopyButton value={arn} noun="ARN" tone="inline" />
  */
 export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
-  ({ value, noun, tone, className, variant = "ghost", size = "icon-sm", ...props }, ref) => {
+  ({ value, noun, tone, icon, className, variant = "ghost", size = "icon-sm", ...props }, ref) => {
     const { copy, copied } = useCopyToClipboard()
     const label = noun ? `Copy ${noun}` : "Copy"
 
@@ -75,7 +82,7 @@ export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
         {copied ? (
           <Check aria-hidden className="h-3.5 w-3.5 text-success" />
         ) : (
-          <Copy aria-hidden className="h-3.5 w-3.5" />
+          (icon ?? <Copy aria-hidden className="h-3.5 w-3.5" />)
         )}
       </Button>
     )

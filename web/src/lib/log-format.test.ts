@@ -389,5 +389,62 @@ describe("describeLogEvent", () => {
     expect(meta.plain).toBe("")
     expect(meta.level).toBeNull()
     expect(meta.summary).toBeNull()
+    expect(meta.requestId).toBeNull()
+  })
+})
+
+/*
+ * Request-id detection, for the viewer's click-to-filter affordance. One id
+ * per event, derived once with the rest of the metadata — never per render.
+ * The affordance only ever feeds the id back as a quoted FilterLogEvents
+ * term, so detection has no server-side semantics to get wrong; what it must
+ * not do is claim an id a line does not carry.
+ */
+describe("describeLogEvent > request ids", () => {
+  const UUID = "13aa488f-ea9e-4d38-bdfe-74ad3d71e708"
+
+  it("reads the id from a Text-format platform line", () => {
+    const meta = describeLogEvent({ message: `START RequestId: ${UUID} Version: $LATEST` })
+
+    expect(meta.requestId).toBe(UUID)
+  })
+
+  it("reads the id from a JSON platform record's requestId field", () => {
+    expect(describeLogEvent({ message: reportRecord }).requestId).toBe("8f1c")
+  })
+
+  it("reads a structured application log's requestId field", () => {
+    const meta = describeLogEvent({
+      message: `{"level":"info","requestId":"${UUID}","msg":"handled"}`,
+    })
+
+    expect(meta.requestId).toBe(UUID)
+  })
+
+  it("reads the UUID column of a Node runtime console line", () => {
+    // Where AWS puts it: after the timestamp, tab separated, before the level.
+    const meta = describeLogEvent({
+      message: `2026-08-10T02:34:39.674Z\t${UUID}\tWARN\tCannot push rates`,
+    })
+
+    expect(meta.requestId).toBe(UUID)
+  })
+
+  it("finds no id in an ordinary line", () => {
+    expect(
+      describeLogEvent({ message: "Certificate request self-signature ok" }).requestId,
+    ).toBeNull()
+  })
+
+  it("does not mistake a non-UUID tab column for an id", () => {
+    expect(describeLogEvent({ message: "alpha\tbeta\tgamma" }).requestId).toBeNull()
+  })
+
+  it("detects exactly one id per event — the labelled form wins", () => {
+    const meta = describeLogEvent({
+      message: `END RequestId: ${UUID} {"requestId":"not-this-one"}`,
+    })
+
+    expect(meta.requestId).toBe(UUID)
   })
 })

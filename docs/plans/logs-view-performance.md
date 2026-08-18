@@ -435,11 +435,31 @@ Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes. **L
   raw fields. When more events remain server-side the control says the export excludes them,
   never implying full history.
 
-Still open: copy-deep-link on any row (the anchor URL machinery already exists); keyboard row
-navigation (j/k, Enter to expand, c to copy); click a Lambda requestId to filter to that
-invocation's lines; "filter for selection". Jump-to-timestamp landed with Phase 4's backward half
-(it reuses the anchor flow, as planned). Highest leverage for Lambda debugging: requestId
-click-to-filter and copy-deep-link.
+**Landed 2026-08-18, second batch** (the three interaction items):
+
+- **RequestId click-to-filter** — `describeLogEvent` derives one `requestId` per event with the
+  rest of the WeakMap-cached metadata (never per render), from the three places Lambda writes
+  one: the `RequestId: <id>` label of Text-format platform lines and rendered summaries, a JSON
+  document's `"requestId"` field, and the Node runtime's tab-separated UUID column. Rows carrying
+  one get a hover filter affordance (beside the copy button — text spans stay out of the
+  memoized ANSI/highlight pipeline) that fills the filter with the QUOTED id: a plain
+  FilterLogEvents quoted-term search, exactly what typing it would do, no invented semantics.
+- **Copy-deep-link on any row** — a second hover icon (the `CopyButton` grew an optional `icon`
+  glyph so the pair stays readable) copying an absolute URL to the stream route with the event's
+  `anchorTs` + `anchorSig`; the link inherits the anchor machinery whole. Built off
+  `window.location.origin` in the row — cheap, and the row wrapper is per-frame territory anyway.
+- **Keyboard row navigation** — the scroll container is focusable (visible inset focus ring);
+  ArrowDown/ArrowUp and j/k move a `logEventKey`-keyed cursor (inset-ring marking, distinct from
+  the anchor's), Enter toggles the focused row's expansion in Collapse mode, `c` copies the
+  focused row's `meta.plain`. Announced with `aria-activedescendant` on the container over stable
+  per-event row ids. Keys typed into inputs pass through untouched, Ctrl/Cmd+F keeps its
+  document-level shortcut (modified keys are ignored), and cursor moves scroll via
+  `scrollToIndex(…, { align: "auto" })` — no scroll-jacking. The cursor lives on the row
+  wrappers; `LogMessage` receives no cursor-related props, pinned by a render-count test that a
+  cursor move re-renders zero rows' memoised content.
+
+Still open: "filter for selection". Jump-to-timestamp landed with Phase 4's backward half
+(it reuses the anchor flow, as planned).
 
 ## 4. Explicit non-goals
 
