@@ -312,6 +312,40 @@ implementation, `dev` swaps the capability registry. Reducing these to
 vet-only would keep the compile check and lose the behavioural one. Finding 7
 is direct evidence that tag-gated code breaks independently of everything else.
 
+**Scoping the tag matrix to the packages a tag can change.** Implemented,
+measured, and discarded — recorded here because it is an obvious idea and the
+reason it fails is structural rather than fixable by tuning.
+
+The matrix compiles the whole module once per tag set. Only a minority of
+packages can actually differ under a tag, so restricting each non-baseline set
+to the packages that can differ looks like free money: same coverage, less
+compiling. It is not, because the tag-gated code sits at the *bottom* of the
+dependency graph. `internal/state` and `internal/config` carry the `nosqlite`
+constraints; `internal/capabilities` carries the `dev` ones. Almost everything
+depends on them transitively, so the conservative closure — the only closure
+that preserves coverage — barely shrinks:
+
+| tag set | packages in scope |
+| --- | --- |
+| `-tags slim,nosqlite` | 121 of 141 (86%) |
+| `-tags slim,dev` | 111 of 141 (79%) |
+
+Measured at `GOMAXPROCS=12 -p 6`, idle machine, equal cache state:
+
+| | s |
+| --- | --- |
+| full matrix | 227.4 |
+| scoped matrix (85.1 + 73.6 + 73.8 + 10) | 242.5 |
+
+15 s *slower*. The compile saving is real but small, and deriving the scope with
+`go list -test` costs 10 s of it back. Scoping wins when the affected code is a
+leaf; here it is a root.
+
+An earlier prototype suggested 75 and 59 packages and a 26% saving. It derived
+the closure from non-transitive test imports and was simply wrong — it would
+have dropped packages that can genuinely fail to compile under the tag. The
+121/111 figures come from `go list -test`, whose closure is transitive.
+
 **Compat's zero-failure gate.** The baseline is at zero and CI enforces it
 absolutely. Its value is precisely that it does not negotiate.
 
