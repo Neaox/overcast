@@ -45,6 +45,16 @@ const compatSubsetMaxSuites = 3
 // success or failure alike.
 const maxJSONRPCResponseSize = 10 * 1024 * 1024 // 10 MiB
 
+// How the workspace probe identifies itself to the server it is probing, and
+// the method it opens with. clientInfo is advisory — the spec is explicit that
+// it is self-reported and must not change behaviour — but a server's logs are
+// easier to read when the caller says who it is.
+const (
+	discoverMethodName    = "server/discover"
+	workspaceProbeName    = "overcast-repo-workspace-probe"
+	workspaceProbeVersion = "1.0.0"
+)
+
 var compatSuiteNamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 type discoveredRuntimeEndpoint struct {
@@ -1749,14 +1759,20 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 		_ = healthResp.Body.Close()
 	}
 
-	// server/discover is what a 2026-07-28 client sends when it does not yet know
-	// what a server is — it replaces `initialize` as the probe, and unlike
-	// `initialize` it establishes nothing, which is the point. There is no
-	// handshake to complete afterwards.
+	// server/discover replaces `initialize` as the way to ask what a server is,
+	// and unlike `initialize` it establishes nothing, which is the point: there
+	// is no handshake to complete afterwards.
+	//
+	// It is an ordinary request for all that. 2026-07-28 requires the protocol
+	// version and client capabilities in `_meta` on *every* request and exempts
+	// nothing, so a probe that sends neither is malformed and is answered -32602
+	// — which is what this one did, making `mcp_available` unreachable against
+	// any conforming server (#1035).
 	discoverBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "probe-discover",
-		"method":  "server/discover",
+		"method":  discoverMethodName,
+		"params":  map[string]any{"_meta": mcp.ClientRequestMeta(workspaceProbeName, workspaceProbeVersion)},
 	}
 	initResp, initErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), discoverBody)
 	if initErr != nil {
@@ -1771,7 +1787,12 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 				out["mcp_protocol_version"] = versions[0]
 			}
 		}
-		toolsBody := map[string]any{"jsonrpc": "2.0", "id": "probe-tools", "method": "tools/list"}
+		toolsBody := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "probe-tools",
+			"method":  "tools/list",
+			"params":  map[string]any{"_meta": mcp.ClientRequestMeta(workspaceProbeName, workspaceProbeVersion)},
+		}
 		toolsResp, toolsErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), toolsBody)
 		if toolsErr != nil {
 			errors = append(errors, "mcp tools/list failed: "+toolsErr.Error())

@@ -544,7 +544,7 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 	defer s.unregisterInFlight(reqIDKey)
 
 	switch req.Method {
-	case "server/discover":
+	case discoverMethod:
 		s.handleDiscover(w, req, r)
 	case subscriptionsListenMethod:
 		s.handleSubscriptionsListen(w, req, r)

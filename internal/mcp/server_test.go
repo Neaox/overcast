@@ -47,6 +47,19 @@ func newTestHTTPServerPair(t *testing.T, providers ...ToolProvider) (*Server, *h
 func mcpPost(t *testing.T, srv *httptest.Server, body any, headers map[string]string) *http.Response {
 	t.Helper()
 	body, headers = asModernRequest(body, headers)
+	return mcpPostRaw(t, srv, body, headers)
+}
+
+// mcpPostRaw sends exactly what it is given — no `_meta`, no mirrored headers,
+// nothing filled in.
+//
+// Use it only where the absence *is* the subject. `mcpPost` makes every request
+// conforming on the way out, which is right for the hundred-odd tests whose
+// subject is something else, and wrong for the handful asserting what happens to
+// a request that declares nothing: those got their `_meta` back from the helper
+// and passed while testing the opposite of their name (#1035).
+func mcpPostRaw(t *testing.T, srv *httptest.Server, body any, headers map[string]string) *http.Response {
+	t.Helper()
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)

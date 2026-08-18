@@ -216,6 +216,42 @@ func TestPerRequestMeta_matchingHeaderIsAccepted(t *testing.T) {
 	}
 }
 
+// A request that names no protocol version is malformed, and the refusal has to
+// be a 400 as well as a -32602: "A request missing any required field is
+// malformed; the server MUST reject it with JSON-RPC error code -32602 (Invalid
+// params). On HTTP, the response status MUST be 400 Bad Request."
+//
+// This branch had no test at all, which is how it kept the wrong status while
+// its sibling — the missing-clientCapabilities refusal below — always set 400.
+// Nothing covered it because every other test reaches the server through
+// mcpPost, which fills `_meta` in. Sent raw, deliberately (#1035).
+func TestPerRequestMeta_unversionedRequestIsRefusedWith400(t *testing.T) {
+	srv := newTestHTTPServer(t)
+	defer srv.Close()
+
+	resp := mcpPostRaw(t, srv, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+	}, nil)
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+	_, rpcErr := decodeRPC(t, resp)
+	if rpcErr == nil {
+		t.Fatal("an unversioned tools/list was served")
+	}
+	if code, _ := rpcErr["code"].(float64); int(code) != RPCInvalidParams {
+		t.Errorf("code = %v, want %d (InvalidParams)", rpcErr["code"], RPCInvalidParams)
+	}
+	data, _ := rpcErr["data"].(map[string]any)
+	supported, _ := data["supported"].([]any)
+	if len(supported) != 1 || supported[0] != ProtocolVersion {
+		t.Errorf("supported = %v, want [%q] — the refusal has to say what to retry with",
+			supported, ProtocolVersion)
+	}
+}
+
 // `_meta` that names a version the server speaks but omits the capabilities the
 // revision requires is malformed, and malformed params are -32602.
 func TestPerRequestMeta_missingClientCapabilitiesIsInvalidParams(t *testing.T) {
