@@ -429,6 +429,11 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		stream := &requestStream{out: sseWriter{w: w, flusher: flusher}, http: w}
+		// After handleRPC returns, net/http reclaims w; nothing may write to
+		// the stream past that point. Deferred here so every exit — the
+		// finished stream, the non-OK refusal below, a panicking handler — is
+		// covered.
+		defer stream.close()
 		capture := &captureResponseWriter{headers: make(http.Header), statusCode: http.StatusOK}
 		s.handleRPCInternal(capture, r.WithContext(withRequestStream(r.Context(), stream)))
 
@@ -1774,7 +1779,6 @@ func (s *Server) unregisterInFlight(requestIDKey string) {
 }
 
 func (s *Server) cancelInFlight(requestIDKey, reason string) {
-	var requestID any
 	s.mu.Lock()
 	request, ok := s.inFlight[requestIDKey]
 	if !ok {
@@ -1786,11 +1790,21 @@ func (s *Server) cancelInFlight(requestIDKey, reason string) {
 		return
 	}
 	request.cancelled = true
-	requestID = request.rawRequestID
+	requestID := request.rawRequestID
 	stream := request.stream
-	request.cancel()
+	cancel := request.cancel
 	s.mu.Unlock()
+	// The notification goes out before the request is released. This runs on
+	// the cancelling request's goroutine; the moment cancel fires, the
+	// cancelled request's handler may return, its response finish, and
+	// net/http reclaim the connection — at which point the stream writes into
+	// a recycled ResponseWriter and panics the serving goroutine. While the
+	// handler is still running the response cannot end, so writing first makes
+	// the write safe and the delivery certain. A request that finishes of its
+	// own accord in this window is the one case ordering cannot cover, and the
+	// stream's closed flag absorbs it: see requestStream.close.
 	s.emitCancelled(stream, requestID, reason)
+	cancel()
 }
 
 func (s *Server) isInFlightCancelled(requestIDKey string) bool {
