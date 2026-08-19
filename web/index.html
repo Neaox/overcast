@@ -6,13 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Overcast</title>
   </head>
-  <!-- data-1p-ignore on <body> is 1Password's documented page-wide opt-out
-       (https://www.1password.dev/web/compatible-website-design), and
-       data-lpignore is LastPass's equivalent. Nothing in an emulator console
-       is a real credential to fill, and password-manager content scripts
-       walking our DOM churn cost 43% of a profiled main thread (see
-       docs/plans/logs-view-performance.md §3e). -->
-  <body data-1p-ignore data-lpignore="true">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
