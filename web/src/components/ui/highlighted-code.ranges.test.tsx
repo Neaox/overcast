@@ -10,6 +10,7 @@
  * highlighted-code.test.tsx exercises the unstubbed jsdom state, which is
  * exactly the markup fallback.
  */
+import { act } from "react"
 import { cleanup, render } from "@/test/render"
 import { tokenizeToRanges } from "@/lib/prism-ranges"
 import { resolveTokenColorClass } from "@/lib/highlight-registry"
@@ -28,8 +29,12 @@ class HighlightStub {
 
 const registry = () => (CSS as unknown as { highlights: Map<string, HighlightStub> }).highlights
 
-const liveRangeCount = () =>
-  [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+// The registry rebuild is a coalesced microtask (see highlight-registry.ts),
+// so counting flushes it first: paint-visible state is post-flush state.
+const settledRangeCount = async () => {
+  await act(async () => {})
+  return [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+}
 
 /** How many ranges the registry should hold for one block showing `text`. */
 const expectedRangeCount = (text: string, language: string) =>
@@ -52,17 +57,17 @@ afterEach(() => {
 })
 
 describe("HighlightedCode under the ranges presentation", () => {
-  it("renders one text node with zero token spans, ranges in the registry", () => {
+  it("renders one text node with zero token spans, ranges in the registry", async () => {
     const { container } = render(<HighlightedCode text={JSON_TEXT} language="json" />)
     const pre = container.querySelector("pre")
     expect(pre).not.toBeNull()
     expect(pre!.childNodes).toHaveLength(1)
     expect(pre!.firstChild!.nodeType).toBe(Node.TEXT_NODE)
     expect(container.querySelectorAll("span.token")).toHaveLength(0)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_TEXT, "json"))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_TEXT, "json"))
   })
 
-  it("paints the S3 preview's other languages — markup, css, javascript — as ranges", () => {
+  it("paints the S3 preview's other languages — markup, css, javascript — as ranges", async () => {
     // The adoption this component exists for: languages beyond json ride the
     // same kernel. Each is a fresh mount so the counts add up one at a time.
     for (const [language, text] of [
@@ -74,22 +79,22 @@ describe("HighlightedCode under the ranges presentation", () => {
       expect(expected).toBeGreaterThan(0)
       const view = render(<HighlightedCode text={text} language={language} />)
       expect(view.container.querySelectorAll("span.token")).toHaveLength(0)
-      expect(liveRangeCount()).toBe(expected)
+      expect(await settledRangeCount()).toBe(expected)
       view.unmount()
-      expect(liveRangeCount()).toBe(0)
+      expect(await settledRangeCount()).toBe(0)
     }
   })
 
-  it("applies no ranges for language null — plain policy stays plain", () => {
+  it("applies no ranges for language null — plain policy stays plain", async () => {
     const { container } = render(<HighlightedCode text={JSON_TEXT} language={null} />)
     expect(container.querySelector("pre")!.textContent).toBe(JSON_TEXT)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
   })
 
-  it("applies no ranges to a deferred block, then paints on settle without touching the DOM", () => {
+  it("applies no ranges to a deferred block, then paints on settle without touching the DOM", async () => {
     const view = render(<HighlightedCode text={JSON_TEXT} language="json" defer />)
     expect(view.container.querySelector("pre")!.textContent).toBe(JSON_TEXT)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
 
     const observer = new MutationObserver(() => {})
     observer.observe(view.container, {
@@ -99,27 +104,27 @@ describe("HighlightedCode under the ranges presentation", () => {
       characterData: true,
     })
     view.rerender(<HighlightedCode text={JSON_TEXT} language="json" defer={false} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_TEXT, "json"))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_TEXT, "json"))
     // The settle that painted the colour produced not one mutation record —
     // the whole point of the ranges backend.
     expect(observer.takeRecords()).toEqual([])
     observer.disconnect()
   })
 
-  it("swaps ranges when the text changes, and removes its own on unmount", () => {
+  it("swaps ranges when the text changes, and removes its own on unmount", async () => {
     const other = render(<HighlightedCode text='{"other": true}' language="json" />)
     const view = render(<HighlightedCode text={JSON_TEXT} language="json" />)
-    expect(liveRangeCount()).toBe(
+    expect(await settledRangeCount()).toBe(
       expectedRangeCount(JSON_TEXT, "json") + expectedRangeCount('{"other": true}', "json"),
     )
     const pretty = JSON.stringify(JSON.parse(JSON_TEXT), null, 2)
     view.rerender(<HighlightedCode text={pretty} language="json" />)
-    expect(liveRangeCount()).toBe(
+    expect(await settledRangeCount()).toBe(
       expectedRangeCount(pretty, "json") + expectedRangeCount('{"other": true}', "json"),
     )
     view.unmount()
-    expect(liveRangeCount()).toBe(expectedRangeCount('{"other": true}', "json"))
+    expect(await settledRangeCount()).toBe(expectedRangeCount('{"other": true}', "json"))
     other.unmount()
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
   })
 })

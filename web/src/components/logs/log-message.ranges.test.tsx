@@ -28,8 +28,12 @@ class HighlightStub {
 
 const registry = () => (CSS as unknown as { highlights: Map<string, HighlightStub> }).highlights
 
-const liveRangeCount = () =>
-  [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+// The registry rebuild is a coalesced microtask (see highlight-registry.ts),
+// so counting flushes it first: paint-visible state is post-flush state.
+const settledRangeCount = async () => {
+  await act(async () => {})
+  return [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+}
 
 /** How many ranges the registry should hold for one row showing `text`. */
 const expectedRangeCount = (text: string) =>
@@ -66,22 +70,22 @@ function messageProps(overrides: Partial<Parameters<LogMessageComponent>[0]> = {
 }
 
 describe("LogMessage under the ranges presentation", () => {
-  it("renders a highlighted row as one text node with zero token spans, ranges in the registry", () => {
+  it("renders a highlighted row as one text node with zero token spans, ranges in the registry", async () => {
     const { container } = render(<LogMessage {...messageProps()} />)
     const pre = container.querySelector("pre")
     expect(pre).not.toBeNull()
     expect(pre!.childNodes).toHaveLength(1)
     expect(pre!.firstChild!.nodeType).toBe(Node.TEXT_NODE)
     expect(container.querySelectorAll("span.token")).toHaveLength(0)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("applies no ranges to a deferred row, then paints on settle without touching the DOM", () => {
+  it("applies no ranges to a deferred row, then paints on settle without touching the DOM", async () => {
     const view = render(<LogMessage {...messageProps({ defer: true })} />)
     // Deferred: the text is already there (mounting is cheap either way),
     // colour is not.
     expect(view.container.querySelector("pre")!.textContent).toBe(JSON_MESSAGE)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
 
     const observer = new MutationObserver(() => {})
     observer.observe(view.container, {
@@ -91,44 +95,44 @@ describe("LogMessage under the ranges presentation", () => {
       characterData: true,
     })
     view.rerender(<LogMessage {...messageProps({ defer: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
     // The settle that painted the colour produced not one mutation record —
     // the whole point of the ranges backend.
     expect(observer.takeRecords()).toEqual([])
     observer.disconnect()
   })
 
-  it("round-trips Format on/off: the swapped text's ranges replace the old ones exactly", () => {
+  it("round-trips Format on/off: the swapped text's ranges replace the old ones exactly", async () => {
     const view = render(<LogMessage {...messageProps()} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
 
     const pretty = JSON.stringify(JSON.parse(JSON_MESSAGE), null, 2)
     view.rerender(<LogMessage {...messageProps({ formatted: true })} />)
     expect(view.container.querySelector("pre")!.textContent).toBe(pretty)
-    expect(liveRangeCount()).toBe(expectedRangeCount(pretty))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(pretty))
 
     view.rerender(<LogMessage {...messageProps({ formatted: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("round-trips collapse: a collapsed row's ranges leave the registry, expansion restores them", () => {
+  it("round-trips collapse: a collapsed row's ranges leave the registry, expansion restores them", async () => {
     const view = render(<LogMessage {...messageProps()} />)
     view.rerender(<LogMessage {...messageProps({ collapsed: true })} />)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
     view.rerender(<LogMessage {...messageProps({ collapsed: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("removes exactly its own ranges on unmount, leaving other rows' intact", () => {
+  it("removes exactly its own ranges on unmount, leaving other rows' intact", async () => {
     const other = render(<LogMessage {...messageProps({ message: '{"other": true}' })} />)
     const view = render(<LogMessage {...messageProps()} />)
-    expect(liveRangeCount()).toBe(
+    expect(await settledRangeCount()).toBe(
       expectedRangeCount(JSON_MESSAGE) + expectedRangeCount('{"other": true}'),
     )
     view.unmount()
-    expect(liveRangeCount()).toBe(expectedRangeCount('{"other": true}'))
+    expect(await settledRangeCount()).toBe(expectedRangeCount('{"other": true}'))
     other.unmount()
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
   })
 
   it("paints an async (worker) result imperatively when the reply lands", async () => {
@@ -161,7 +165,7 @@ describe("LogMessage under the ranges presentation", () => {
     const { container } = render(<LogMessage {...messageProps({ message: bigDoc })} />)
     // Mounted, text visible, reply not yet delivered: no colour yet.
     expect(container.querySelector("pre")!.textContent).toBe(bigDoc)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
 
     await act(async () => {
       deliver!()
@@ -169,6 +173,6 @@ describe("LogMessage under the ranges presentation", () => {
       // hook's apply); a macrotask hop outlasts the whole microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
-    expect(liveRangeCount()).toBe(expectedRangeCount(bigDoc))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(bigDoc))
   })
 })

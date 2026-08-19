@@ -126,26 +126,19 @@ export function resolveTokenColorClass(type: string): string | null {
 
 let registered = false
 
-// Class → Highlight, filled at registration: the per-token hot loop below
-// does one bounded-map lookup instead of a string concat plus a
-// `CSS.highlights.get` per token.
-const highlightByClass = new Map<string, Highlight>()
-
 /**
- * Puts one named `Highlight` per themed token class into `CSS.highlights`.
- * Idempotent; the facade calls it once at module init when the API exists.
+ * Puts one named `Highlight` per themed token class into `CSS.highlights`,
+ * so every `::highlight()` name exists from the start. Idempotent; the
+ * facade calls it once at module init when the API exists. The named sets
+ * are subsequently REPLACED wholesale by `rebuildHighlights`, never mutated
+ * range-by-range — see the note on `applyTokenRanges`.
  */
 export function registerTokenHighlights(): void {
   if (registered) return
   registered = true
   for (const cls of TOKEN_COLOR_CLASSES) {
     const name = TOKEN_HIGHLIGHT_PREFIX + cls
-    let highlight = CSS.highlights.get(name)
-    if (!highlight) {
-      highlight = new Highlight()
-      CSS.highlights.set(name, highlight)
-    }
-    highlightByClass.set(cls, highlight)
+    if (!CSS.highlights.has(name)) CSS.highlights.set(name, new Highlight())
   }
 }
 
@@ -182,9 +175,73 @@ function createTokenRange(node: Text, start: number, end: number): AbstractRange
   return range
 }
 
+/** One row's registered contribution: its text node and its token spans. */
+interface RangeApplication {
+  node: Text
+  ranges: TokenRange[]
+}
+
+const liveApplications = new Set<RangeApplication>()
+let rebuildQueued = false
+
 /**
- * Adds `tokenRanges` over `textNode` to the global highlights and returns the
- * disposer that removes exactly those ranges.
+ * Rebuilds every named highlight from the live applications and swaps the
+ * fresh sets into `CSS.highlights` — the old sets are discarded wholesale.
+ *
+ * This swap-rebuild model exists because per-range mutation of a REGISTERED
+ * highlight is what a 31-second Firefox trace showed locking the page up:
+ * every `Highlight.delete` against the page-global sets cost work scaling
+ * with the set's size (each mutation also invalidates the highlight's
+ * paint), so a continuously scrolled stream — hydrated rows unmounting,
+ * hundreds of ranges each, sets tens of thousands strong — spent 15 of the
+ * 31 seconds inside the dispose loop, degrading with depth. Building fresh,
+ * UNREGISTERED sets and swapping them in pays one invalidation per class per
+ * flush and issues zero deletes, and the cost is O(live ranges) — bounded by
+ * the hydrated viewport, not by how far the user has scrolled.
+ *
+ * Range objects are recreated per rebuild on purpose: constructing a
+ * `StaticRange` measured ~2% of the old per-range cost, and reusing them
+ * would mean tracking which survive — bookkeeping whose only beneficiary
+ * would be the garbage collector.
+ */
+function rebuildHighlights(): void {
+  const fresh = new Map<string, Highlight>()
+  for (const application of liveApplications) {
+    const { node, ranges } = application
+    for (const token of ranges) {
+      const cls = resolveTokenColorClass(token.type)
+      if (cls === null) continue
+      let highlight = fresh.get(cls)
+      if (!highlight) {
+        highlight = new Highlight()
+        fresh.set(cls, highlight)
+      }
+      highlight.add(createTokenRange(node, token.start, token.end))
+    }
+  }
+  for (const cls of TOKEN_COLOR_CLASSES) {
+    CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, fresh.get(cls) ?? new Highlight())
+  }
+}
+
+/**
+ * One rebuild per microtask flush, however many rows mounted, unmounted, or
+ * swapped text in the commit that scheduled it. Microtasks run before the
+ * next paint, so a settle that hydrates a whole viewport still colours in
+ * the same frame — no colourless flash.
+ */
+function scheduleRebuild(): void {
+  if (rebuildQueued) return
+  rebuildQueued = true
+  queueMicrotask(() => {
+    rebuildQueued = false
+    rebuildHighlights()
+  })
+}
+
+/**
+ * Registers `tokenRanges` over `textNode` for painting and returns the
+ * disposer that withdraws exactly this registration.
  *
  * `text` is the source the ranges were tokenized from, and the guard is
  * all-or-nothing: a node whose data is not exactly that text gets NO colour,
@@ -192,6 +249,9 @@ function createTokenRange(node: Text, start: number, end: number): AbstractRange
  * lives here — not in the calling hook — so every consumer of the kernel
  * inherits it. The caller re-applies (dispose, then apply) whenever the
  * node's text changes.
+ *
+ * Registration and disposal are O(1) set operations; the painting itself is
+ * the coalesced swap-rebuild above.
  */
 export function applyTokenRanges(
   textNode: Text,
@@ -199,19 +259,10 @@ export function applyTokenRanges(
   tokenRanges: TokenRange[],
 ): () => void {
   if (textNode.data !== text) return noopDispose
-  const appliedRanges: AbstractRange[] = []
-  const appliedHighlights: Highlight[] = []
-  for (const token of tokenRanges) {
-    const cls = resolveTokenColorClass(token.type)
-    if (cls === null) continue
-    const highlight = highlightByClass.get(cls)
-    if (!highlight) continue
-    const range = createTokenRange(textNode, token.start, token.end)
-    highlight.add(range)
-    appliedRanges.push(range)
-    appliedHighlights.push(highlight)
-  }
+  const application: RangeApplication = { node: textNode, ranges: tokenRanges }
+  liveApplications.add(application)
+  scheduleRebuild()
   return () => {
-    for (let i = 0; i < appliedRanges.length; i++) appliedHighlights[i].delete(appliedRanges[i])
+    if (liveApplications.delete(application)) scheduleRebuild()
   }
 }

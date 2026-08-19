@@ -698,6 +698,29 @@ Known-and-accepted from the same review — all three since landed:
   every registered range a `StaticRange`); the Firefox paint check was
   deliberately left to a human eye before merge — the one step this work
   could not automate.
+
+  **And a third Firefox trace (2026-08-20, 31 s) forced a registry redesign
+  in the same branch.** "Page locks up after scrolling down pretty far":
+  48.4% of the whole trace — 15,109 self-samples, eventDelay max 14.9 s —
+  sat inside ONE closure, which the built bundle de-minifies to the
+  *dispose loop*: per-range `Highlight.delete` against the page-global
+  per-class sets. Firefox charges each mutation of a registered highlight
+  with work scaling on the set's size (every mutation also invalidates its
+  paint), so a continuously scrolled stream — hydrated rows unmounting at
+  hundreds of ranges each, sets tens of thousands strong — degraded
+  quadratically with depth. Chrome does not exhibit it: a 36-cycle
+  deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
+  flat at 16–19 ms per scroll frame on the *buggy* build. The fix removes
+  the delete path entirely: registration/disposal are O(1) set ops on a
+  `liveApplications` registry, and one coalesced microtask rebuild
+  constructs fresh, unregistered `Highlight`s from the live rows and swaps
+  them into `CSS.highlights` wholesale — zero `Highlight.delete` calls
+  ever, one invalidation per class per flush, cost bounded by the hydrated
+  viewport instead of scroll history. Same protocol on the fixed build:
+  17–18 ms flat, settle ≤ 1 ms, and exactly the hydrated viewport's ranges
+  (915) live after 36 churn cycles — the swap bookkeeping is exact.
+  Microtasks run before paint, so settle-hydration still colours in the
+  same frame. Firefox confirmation comes from the reporter's re-trace.
 - ~~The S3 preview's adoption needs a `FormattedPreview` shape change plus a
   shared rendering component before the "kernel adopts unchanged" promise is
   real~~ — **landed 2026-08-20** (#1074): `HighlightedCode`
