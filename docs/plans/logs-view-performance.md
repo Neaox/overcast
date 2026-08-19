@@ -493,6 +493,67 @@ Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes. **L
 Still open: "filter for selection". Jump-to-timestamp landed with Phase 4's backward half
 (it reuses the anchor flow, as planned).
 
+## 3e. Trace 2 (2026-08-19) — scroll-time DOM weight — **landed**
+
+A second Firefox profile (stream view, all phases above shipped) still showed lock-ups and
+blank regions while scrolling. The 10.3 s capture, same offline rollup as §2b:
+
+- **37.1% of the tab's main thread inside 1Password's `injected.js`** (MutationObserver
+  processRecords/acceptNode; single tasks of 2.0 s and 1.2 s) and **6.3% in Firefox's own
+  `FormAutofillHandler.sys.mjs`** — two form-detection walkers, both fed by us.
+- **~148k accessibility-tree node removals** (`DocAccessible::ContentRemovedNode` n=148,392;
+  `ShutdownChildrenInSubtree` 1.67 s) — the count that names the real defect: each virtualized
+  row was a large element subtree, so every scroll frame's mount/unmount churned thousands of
+  nodes, and every document observer pays per node whether or not it cares about the content.
+- App JS itself: **6.2%** (react-virtual 4.7% + bundle 1.5%), plus 628/431 ms tasks under the
+  virtualizer's `flushSync`/`resizeItem` — mostly style/layout of the same heavy subtrees.
+- `eventDelay` >100 ms for 48.5% of samples, >1 s for 18.6%, max 2.3 s.
+
+Two per-row weights, both deferred rather than removed (`useScrollSettled`, a render-phase
+latch: seeded false when the row mounts mid-`virtualizer.isScrolling`, flipped on the first
+idle render, never flipped back):
+
+- **Syntax-highlight spans** (`LogMessage`): a row mounted mid-scroll renders its JSON as one
+  text node in the same `<pre>`, and hydrates the Prism markup when the scroll settles. The
+  §4 worker analysis already established this swap is layout-stable — identical text, identical
+  classes — so `measureElement` never re-fires and the prepend anchor never moves.
+- **The hover-action buttons** (`RowActions`, extracted from inline JSX): buttons are exactly
+  what form-detection walkers inspect, and the cluster is `opacity-0` until hover anyway. The
+  `w-16` wrapper always renders (layout never depends on settling); the buttons mount on the
+  first idle frame and stay.
+
+The peek's `LogViewerRow` threads the same flag through to `LogMessage` for its Format mode.
+Steady-state rendering is byte-identical to before — the deferral only exists in the frames
+where rows are being churned. Pinned by `log-message.test.tsx`: no token spans mid-scroll,
+same text/classes, hydrate on settle, markup survives the next scroll.
+
+Verified against the reporting user's real database (207 events, ~460 highlight spans per
+row at rest): mid-scroll a fling mounted 125 fresh rows with **zero spans, zero buttons, max
+7 elements each**; 400 ms after settling, every mounted row had its buttons and every JSON
+row its highlight. Two follow-ups came out of that session:
+
+- **Hydration is gated by viewport proximity, not just settling** (`nearViewport`, same
+  module). The settle latch alone hydrates every *mounted* row in one commit — and with
+  Format on, this stream's rows pretty-print to thousands of spans each, so a 30-row
+  overscan window hydrating at once was a six-figure node insertion that froze the tab.
+  Rows hydrate when the scroll is idle AND they sit within about two viewports; the latch
+  still keeps them hydrated afterwards. (`LogMessage`'s prop is `defer` — the caller passes
+  `isScrolling || !nearViewport(...)`.) Overscan rose 15 → 30 in the same change: mounts
+  are ~7 nodes now, so the headroom that kills blank track during flings is nearly free.
+- **Wrap mode gained `min-w-0` on the message `<pre>`** (a flex item): min-width:auto pins
+  a flex item to min-content width and break-word does not lower min-content, so one
+  whitespace-free Powertools error dump forced a ~42,000px scroller under a 2,700px
+  viewport. Live-patching confirmed exactly-viewport width after; no-wrap mode keeps the
+  wide scroller deliberately.
+
+Answer to "is React the hindrance?": no — measured. App JS was ~6% of the main thread; the
+cost was DOM node volume, which a vanilla or canvas rewrite would pay differently but a
+framework swap would not remove (a hand-rolled list inserting the same 300-span rows feeds
+the same walkers). The escalation ladder if churn ever dominates again: default to collapse
+mode (fixed 30 px rows, no measurement — AWS's own default), then DOM row recycling for the
+fixed-height mode, then canvas — each step buys throughput by giving up DOM affordances
+(find-in-page, selection, a11y for free), which is why none is taken pre-emptively.
+
 ## 4. Explicit non-goals
 
 - No web worker for the standard row path. A worker's price is the string round-trip plus a

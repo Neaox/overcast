@@ -12,6 +12,7 @@
 import { memo, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
+import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   highlightJSON,
   logLevelBadgeClass,
@@ -20,6 +21,23 @@ import {
   type LogLevel,
 } from "@/lib/log-format"
 import { AnsiText } from "./ansi-text"
+
+/**
+ * Wrap classes for a message `<pre>`, which is a flex item.
+ *
+ * The `min-w-0` is the wrap mode's load-bearing half: flex items default to
+ * `min-width: auto`, and `overflow-wrap: break-word` does not lower a line's
+ * min-content width — so a single-token error line (a Lambda "Uncaught error"
+ * dump with no whitespace) forced the row, and with it the whole scroller,
+ * to the token's full width: a ~42,000px horizontal scrollbar over a 2,700px
+ * viewport, with the header row (outside the scroller, deliberately) refusing
+ * to follow. Letting the item shrink is what gives break-word something to
+ * break against. No-wrap mode keeps `min-width: auto` on purpose — there the
+ * wide scroller IS the feature.
+ */
+function messageWrapClass(wrapLines: boolean): string {
+  return wrapLines ? "min-w-0 wrap-break-word whitespace-pre-wrap" : "whitespace-pre"
+}
 
 /** Highlight a filter's matches in a message string, using a pre-compiled matcher. */
 function highlightMatches(message: string, matcher: RegExp): React.ReactNode {
@@ -85,6 +103,7 @@ export const LogMessage = memo(function LogMessage({
   level,
   hideLevel = false,
   collapsed = false,
+  defer = false,
   sizeClassName = "text-[11px]",
 }: {
   prefix?: string
@@ -105,9 +124,20 @@ export const LogMessage = memo(function LogMessage({
    * (along with their JSON parse — collapsed rows are the cheap ones).
    */
   collapsed?: boolean
+  /**
+   * Defer the expensive rendering: while true, a syntax-highlighted message
+   * renders its text plain — one text node instead of hundreds of spans —
+   * and hydrates the markup on the first render where `defer` is false,
+   * never shedding it again. The text is identical either way, so the swap
+   * changes colour, never layout. Callers pass `scrolling || !nearViewport`:
+   * mid-scroll mounts stay cheap, and far-overscan rows wait until they
+   * approach the viewport. See `useScrollSettled` for the numbers.
+   */
+  defer?: boolean
   /** Font-size class; the surfaces render at different densities. */
   sizeClassName?: string
 }) {
+  const settled = useScrollSettled(defer)
   const jsonText = useMemo(() => {
     if (collapsed) return null
     if (!formatted && !syntaxHighlight) return null
@@ -161,14 +191,21 @@ export const LogMessage = memo(function LogMessage({
             {prefix}
           </span>
         )}
-        <pre
-          className={cn(
-            "font-mono leading-relaxed",
-            sizeClassName,
-            wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
-          )}
-          dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
-        />
+        {settled ? (
+          <pre
+            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
+          />
+        ) : (
+          // Same element, same classes, same text — the un-highlighted stand-in
+          // occupies exactly the pixels the highlighted version will, so the
+          // hydration swap never moves a measured row.
+          <pre
+            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+          >
+            {jsonText}
+          </pre>
+        )}
       </div>
     )
   }
@@ -181,7 +218,7 @@ export const LogMessage = memo(function LogMessage({
         className={cn(
           "font-mono leading-relaxed text-fg",
           sizeClassName,
-          wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
+          messageWrapClass(wrapLines),
         )}
       >
         <AnsiText
