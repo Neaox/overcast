@@ -10,6 +10,7 @@ import {
   formatLogDelta,
   formatLogTime,
   formatPlatformRecord,
+  jsonDocumentText,
   highlightJSON,
   logLevelBadgeClass,
   logLevelRowClass,
@@ -190,6 +191,31 @@ describe("stringifyJSON", () => {
   it("indents when asked and stays on one line when not", () => {
     expect(stringifyJSON({ a: 1 }, true)).toBe('{\n  "a": 1\n}')
     expect(stringifyJSON({ a: 1 }, false)).toBe('{"a":1}')
+  })
+})
+
+describe("jsonDocumentText", () => {
+  it("re-serialises a JSON message in the asked-for form", () => {
+    expect(jsonDocumentText('{"a":1}', true)).toBe('{\n  "a": 1\n}')
+    expect(jsonDocumentText('{"a":1}', false)).toBe('{"a":1}')
+  })
+
+  it("returns the identical string on a repeat ask — the memo the row mounts lean on", () => {
+    // Identity, not equality: a stable string is what lets React skip the DOM
+    // write and an effect keyed on it skip re-application.
+    const msg = `{"repeat": ${Math.PI}, "items": [1, 2, 3]}`
+    expect(jsonDocumentText(msg, true)).toBe(jsonDocumentText(msg, true))
+    expect(jsonDocumentText(msg, false)).toBe(jsonDocumentText(msg, false))
+  })
+
+  it("strips ANSI before deciding a colourised line is JSON", () => {
+    const esc = String.fromCharCode(27)
+    expect(jsonDocumentText(`${esc}[32m{"ok":true}${esc}[0m`, false)).toBe('{"ok":true}')
+  })
+
+  it("answers null for non-JSON, and caches that answer too", () => {
+    expect(jsonDocumentText("plain line", true)).toBeNull()
+    expect(jsonDocumentText("plain line", true)).toBeNull()
   })
 })
 
