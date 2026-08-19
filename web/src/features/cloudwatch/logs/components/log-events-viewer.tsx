@@ -1001,6 +1001,14 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             role="listbox"
             aria-label="Log events"
             aria-activedescendant={focusedKey != null ? `log-event-${focusedKey}` : undefined}
+            // Advisory opt-outs for password managers and autofill scanners,
+            // on the whole scroller: log rows are never fillable, and these
+            // walkers were 43% of a profiled main thread (§3e of the plan
+            // doc). Documented per-field; whether a given walker prunes the
+            // subtree is its call — free to declare, measured by re-tracing.
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-form-type="other"
             onKeyDown={handleListKeyDown}
             className="min-h-0 flex-1 overflow-auto focus-visible:ring-1 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset"
             onScroll={handleScrollCheck}
