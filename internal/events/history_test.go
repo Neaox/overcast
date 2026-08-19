@@ -190,3 +190,56 @@ func assertTagsEqual(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+// --- request attribution ---------------------------------------------------
+
+// TestHistory_FindByRequestID_ReturnsEverythingTheRequestCaused is the whole
+// point of the envelope-level RequestID: one PutObject answers with the S3
+// write, the notification it fired and the queue send behind it — not just the
+// request:Received row summarising the call. Before the envelope carried the
+// ID, only that one row matched, and a trace's Events tab showed a request
+// that apparently did nothing.
+func TestHistory_FindByRequestID_ReturnsEverythingTheRequestCaused(t *testing.T) {
+	h := NewHistory(50)
+	const target = "req-target"
+
+	h.Append(Event{Type: RequestReceived, Source: "request", RequestID: target,
+		Payload: RequestPayload{Method: "PUT", Path: "/bucket/key", RequestID: target}})
+	h.Append(Event{Type: S3ObjectCreated, Source: "s3", RequestID: target,
+		Payload: S3ObjectPayload{Bucket: "bucket", Key: "key"}})
+	h.Append(Event{Type: SQSMessageSent, Source: "sqs", RequestID: target,
+		Payload: ResourcePayload{Name: "q"}})
+	// Another request's work, and background work with no request at all.
+	h.Append(Event{Type: S3ObjectCreated, Source: "s3", RequestID: "req-other",
+		Payload: S3ObjectPayload{Bucket: "other", Key: "k"}})
+	h.Append(Event{Type: DockerContainerDied, Source: "docker",
+		Payload: DockerContainerPayload{ContainerID: "abc"}})
+
+	got := h.FindByRequestID(target)
+	if len(got) != 3 {
+		t.Fatalf("FindByRequestID returned %d events, want 3", len(got))
+	}
+	wantTypes := []Type{RequestReceived, S3ObjectCreated, SQSMessageSent}
+	for i, want := range wantTypes {
+		if got[i].Type != want {
+			t.Errorf("event %d type = %q, want %q (chronological order)", i, got[i].Type, want)
+		}
+		if got[i].RequestID != target {
+			t.Errorf("event %d RequestID = %q, want %q", i, got[i].RequestID, target)
+		}
+	}
+}
+
+// TestHistory_FindByRequestID_EmptyMatchesNothing verifies the empty id is not
+// treated as a wildcard. Every background event carries no request ID, so
+// matching on "" would return most of the buffer — the opposite of a filter,
+// and reachable from a URL (/_overcast/events/request/) if the guard is lost.
+func TestHistory_FindByRequestID_EmptyMatchesNothing(t *testing.T) {
+	h := NewHistory(10)
+	h.Append(Event{Type: S3ObjectCreated, Source: "s3"})
+	h.Append(Event{Type: SQSMessageSent, Source: "sqs"})
+
+	if got := h.FindByRequestID(""); len(got) != 0 {
+		t.Errorf("FindByRequestID(\"\") returned %d events, want 0", len(got))
+	}
+}

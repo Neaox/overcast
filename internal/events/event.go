@@ -888,6 +888,25 @@ type Event struct {
 	// ARN auto-linking) must treat it as optional.
 	ResourceARN string `json:"resourceArn,omitempty"`
 
+	// RequestID is the AWS request ID of the API call this event was published
+	// under. Bus.Publish populates it automatically from the publishing
+	// context whenever the caller leaves it unset, so a publish site only has
+	// to pass the request's context — which nearly all of them already do.
+	//
+	// It is what turns the event stream from a list of things that happened
+	// into something you can follow back to its cause: every event a single
+	// PutObject set off — the S3 write, the notification, the SQS send, the
+	// Lambda invoke — carries that request's ID, so the Events page can link
+	// each one to its trace (with OVERCAST_DEBUG on) and the trace's own
+	// Events tab can list them all.
+	//
+	// Best-effort, not universal, and consumers must treat it as optional.
+	// Work that outlives its request runs on a detached context, and a
+	// background goroutine — a poller, a timer, a Docker event subscription —
+	// was never caused by an API call in the first place. Those publish with
+	// no ID rather than a fabricated one; see protocol.LookupRequestID.
+	RequestID string `json:"requestId,omitempty"`
+
 	// Seq is this event's position in the bus's publication order, assigned
 	// by Bus.Publish. It starts at 1, so a zero value means "never published"
 	// and can never be mistaken for a valid resume point.

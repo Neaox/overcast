@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 const (
@@ -246,6 +247,23 @@ func (b *Bus) Publish(ctx context.Context, e Event) {
 	if e.ResourceARN == "" {
 		if carrier, ok := e.Payload.(arnCarrier); ok {
 			e.ResourceARN = carrier.arnFromPayload()
+		}
+	}
+	// Best-effort RequestID guard, the same shape as the two above: attribute
+	// the event to the API call it was published under, taken from the context
+	// the publisher already had to pass. Doing it here rather than at ~160
+	// publish sites is what makes the attribution near-universal instead of
+	// wherever someone remembered — and what makes it stay that way as sites
+	// are added.
+	//
+	// LookupRequestID, not RequestIDFromContext: a context with no request ID
+	// must yield no request ID. The generating form would stamp every
+	// background publish with a plausible-looking ID that resolves to no
+	// trace, which is worse than an empty field because it looks like a
+	// working link. See Event.RequestID.
+	if e.RequestID == "" {
+		if id, ok := protocol.LookupRequestID(ctx); ok {
+			e.RequestID = id
 		}
 	}
 	b.mu.Lock()
