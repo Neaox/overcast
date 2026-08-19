@@ -132,7 +132,12 @@ export function LogViewer({
                 className="absolute top-0 left-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
-                <LogViewerRow event={events[virtualRow.index]} mode={mode} formatted={formatted} />
+                <LogViewerRow
+                  event={events[virtualRow.index]}
+                  mode={mode}
+                  formatted={formatted}
+                  scrolling={virtualizer.isScrolling}
+                />
               </div>
             ))}
           </div>
@@ -167,10 +172,13 @@ const LogViewerRow = memo(function LogViewerRow({
   event,
   mode,
   formatted,
+  scrolling,
 }: {
   event: LogViewerEvent
   mode: "table" | "plain"
   formatted: boolean
+  /** Mid-scroll rows defer their highlight spans — see `LogMessage`. */
+  scrolling: boolean
 }) {
   const { level, summary } = describeLogEvent(event)
 
@@ -188,6 +196,7 @@ const LogViewerRow = memo(function LogViewerRow({
       filterMatcher={null}
       level={level}
       hideLevel
+      scrolling={scrolling}
       sizeClassName="text-[10px]"
     />
   )

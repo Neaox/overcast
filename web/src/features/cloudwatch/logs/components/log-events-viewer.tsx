@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
+import { memo, useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
+import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   logsFilterInfiniteQueryOptions,
   logsStreamsQueryOptions,
@@ -311,6 +312,13 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
     // shifts every index, and index keys would remount every row with it.
     getItemKey: (index) => logEventKey(events[index]),
   })
+
+  // Mid-scroll, rows mount light: no syntax-highlight spans, no action
+  // buttons — the things every document observer (extension form-walkers,
+  // the accessibility tree) pays for per node. Each row hydrates itself when
+  // this settles; see `useScrollSettled`. The flag's flips already re-render
+  // this component via the virtualizer's onChange.
+  const scrolling = virtualizer.isScrolling
 
   // Entering or leaving collapse mode — and expanding or collapsing one row —
   // invalidates sizes the virtualizer measured under the previous rendering,
@@ -1107,6 +1115,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                             filterMatcher={filterMatcher}
                             level={meta.level}
                             collapsed={rowCollapsed}
+                            scrolling={scrolling}
                           />
                         </div>
                       </>
@@ -1123,43 +1132,17 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                           level={meta.level}
                           hideLevel
                           collapsed={rowCollapsed}
+                          scrolling={scrolling}
                         />
                       </div>
                     )}
-                    {/* Actions — hover-revealed, right-aligned so the cluster
-                        sits in the same place whether or not the row carries a
-                        request id. */}
-                    <div className="flex w-16 shrink-0 items-start justify-end gap-0.5 pt-1.5 pr-1">
-                      {meta.requestId != null && (
-                        <button
-                          type="button"
-                          data-request-id={meta.requestId}
-                          onClick={handleRequestIdFilter}
-                          aria-label={`Filter to request ID ${meta.requestId}`}
-                          // What it really does — a quoted-term search, the
-                          // same filter typing the id would run.
-                          title={`Filter to request ID ${meta.requestId} — searches for it as a quoted term`}
-                          className="cursor-pointer p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
-                        >
-                          <ListFilter aria-hidden className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {deepLink != null && (
-                        <CopyButton
-                          value={deepLink}
-                          noun="link to this event"
-                          tone="inline"
-                          icon={<Link2 aria-hidden className="h-3.5 w-3.5" />}
-                          className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
-                        />
-                      )}
-                      <CopyButton
-                        value={meta.plain}
-                        noun="log message"
-                        tone="inline"
-                        className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
-                      />
-                    </div>
+                    <RowActions
+                      requestId={meta.requestId}
+                      deepLink={deepLink}
+                      plain={meta.plain}
+                      onRequestIdFilter={handleRequestIdFilter}
+                      scrolling={scrolling}
+                    />
                   </div>
                 )
               })}
@@ -1204,6 +1187,76 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
     </div>
   )
 }
+
+// ── Row actions ──────────────────────────────────────────────────────────────
+
+/**
+ * The hover-revealed cluster on a row's right edge — request-id filter, copy
+ * link, copy message.
+ *
+ * A component, not inline JSX, because the buttons are deliberately absent
+ * from rows mounted mid-scroll: buttons are precisely what form-detection
+ * walkers inspect (the Firefox trace behind this put 37% of the main thread
+ * in 1Password's MutationObserver and 6% in Firefox's own autofill scanner,
+ * fed by row churn), and the cluster is invisible until hover anyway. The
+ * wrapper always renders so the row's layout never depends on settling; the
+ * buttons hydrate on the first idle frame and then stay for the row's life.
+ *
+ * Memoised so scroll-flag flips re-render it to identical output: every prop
+ * is a primitive or a `useCallback` handler.
+ */
+const RowActions = memo(function RowActions({
+  requestId,
+  deepLink,
+  plain,
+  onRequestIdFilter,
+  scrolling,
+}: {
+  requestId: string | null
+  deepLink: string | null
+  plain: string
+  onRequestIdFilter: (e: React.MouseEvent<HTMLButtonElement>) => void
+  scrolling: boolean
+}) {
+  const settled = useScrollSettled(scrolling)
+  return (
+    <div className="flex w-16 shrink-0 items-start justify-end gap-0.5 pt-1.5 pr-1">
+      {settled && (
+        <>
+          {requestId != null && (
+            <button
+              type="button"
+              data-request-id={requestId}
+              onClick={onRequestIdFilter}
+              aria-label={`Filter to request ID ${requestId}`}
+              // What it really does — a quoted-term search, the
+              // same filter typing the id would run.
+              title={`Filter to request ID ${requestId} — searches for it as a quoted term`}
+              className="cursor-pointer p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+            >
+              <ListFilter aria-hidden className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {deepLink != null && (
+            <CopyButton
+              value={deepLink}
+              noun="link to this event"
+              tone="inline"
+              icon={<Link2 aria-hidden className="h-3.5 w-3.5" />}
+              className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+            />
+          )}
+          <CopyButton
+            value={plain}
+            noun="log message"
+            tone="inline"
+            className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
+          />
+        </>
+      )}
+    </div>
+  )
+})
 
 // ── Log message cell ───────────────────────────────────────────────────────
 

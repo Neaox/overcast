@@ -12,6 +12,7 @@
 import { memo, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
+import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   highlightJSON,
   logLevelBadgeClass,
@@ -85,6 +86,7 @@ export const LogMessage = memo(function LogMessage({
   level,
   hideLevel = false,
   collapsed = false,
+  scrolling = false,
   sizeClassName = "text-[11px]",
 }: {
   prefix?: string
@@ -105,9 +107,18 @@ export const LogMessage = memo(function LogMessage({
    * (along with their JSON parse — collapsed rows are the cheap ones).
    */
   collapsed?: boolean
+  /**
+   * The owning virtualizer is mid-scroll. A row mounted now defers its
+   * syntax-highlight markup — hundreds of spans per JSON document — and
+   * renders the same text plain until the scroll settles; the text is
+   * identical, so the swap changes colour, never layout. See
+   * `useScrollSettled` for why.
+   */
+  scrolling?: boolean
   /** Font-size class; the surfaces render at different densities. */
   sizeClassName?: string
 }) {
+  const settled = useScrollSettled(scrolling)
   const jsonText = useMemo(() => {
     if (collapsed) return null
     if (!formatted && !syntaxHighlight) return null
@@ -161,14 +172,29 @@ export const LogMessage = memo(function LogMessage({
             {prefix}
           </span>
         )}
-        <pre
-          className={cn(
-            "font-mono leading-relaxed",
-            sizeClassName,
-            wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
-          )}
-          dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
-        />
+        {settled ? (
+          <pre
+            className={cn(
+              "font-mono leading-relaxed",
+              sizeClassName,
+              wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
+            )}
+            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
+          />
+        ) : (
+          // Same element, same classes, same text — the un-highlighted stand-in
+          // occupies exactly the pixels the highlighted version will, so the
+          // hydration swap never moves a measured row.
+          <pre
+            className={cn(
+              "font-mono leading-relaxed",
+              sizeClassName,
+              wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
+            )}
+          >
+            {jsonText}
+          </pre>
+        )}
       </div>
     )
   }
