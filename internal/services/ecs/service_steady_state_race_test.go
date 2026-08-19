@@ -1,9 +1,9 @@
 package ecs
 
-// service_steady_state_race_test.go â€” a service announces its steady state
+// service_steady_state_race_test.go — a service announces its steady state
 // whichever order its tasks happen to start in.
 //
-// A service is reconciled from each of its tasks: every task's PROVISIONING â†’
+// A service is reconciled from each of its tasks: every task's PROVISIONING →
 // RUNNING transition runs on its own scheduler goroutine and calls reconcile,
 // which reads the whole service record, recounts, and writes the whole record
 // back. Two tasks of one service starting together therefore both read before
@@ -12,13 +12,13 @@ package ecs
 // What that loses is the steady-state event. It is emitted on the edge into
 // steady state and never again, so a stale write that puts the service back
 // short of its desired count leaves it running at that count having never said
-// so â€” and a caller waiting on the event waiting forever. The persisted running
+// so — and a caller waiting on the event waiting forever. The persisted running
 // count goes stale with it; only the read path hides that, because
 // DescribeServices recomputes counts on its own copy.
 //
 // lockService is what holds this closed. deployment_failure_race_test.go covers
 // the same lock from the failure-count side; this covers the steady-state edge,
-// which is a separate victim of the same lost update â€” remove the lock and this
+// which is a separate victim of the same lost update — remove the lock and this
 // test fails while that one still needs its own reconcile loop to trip.
 //
 // This is the one ECS test that runs on a real clock, so it pays real time for
@@ -74,7 +74,7 @@ func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := svc.handler
 	// Tasks only transition, and so only reconcile their service, when Docker
-	// is ready â€” without it no service ever reaches a steady state to race.
+	// is ready — without it no service ever reaches a steady state to race.
 	wireFakeDocker(t, h)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -119,7 +119,7 @@ func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
 	// Then: each service recorded reaching its desired count. Read the stored
 	// record rather than DescribeServices: the read path recomputes counts and
 	// rollout state on its own copy, so it reports a steady state the service
-	// never persisted â€” the event is the only durable evidence.
+	// never persisted — the event is the only durable evidence.
 	for i := 0; i < steadyStateServices; i++ {
 		name := fmt.Sprintf("s%d", i)
 		stored, aerr := h.store.getService(ctx, "c1", name)
