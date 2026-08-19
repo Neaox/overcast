@@ -694,6 +694,23 @@ rendering component before the "kernel adopts unchanged" promise is real; and
 three modules now hand-roll the persistent-worker-client shape
 (docs search, map layout, highlighting) that deserves one shared helper.
 
+## 3g. The formatting pass (2026-08-20) — memoised, deliberately synchronous — **landed**
+
+`LogMessage`'s parse + re-serialise (`tryParseJSON` + `stringifyJSON`) ran per row *mount* —
+so virtualizer churn re-paid it continuously for the same messages, and a Format toggle
+re-paid it for every mounted row at once (~1–3 ms per 100 KB-class document). It is now
+`jsonDocumentText(message, pretty)` in log-format: an LRU keyed by (form, message), computed
+once per distinct message and form, identity-stable on hits. The `LruCache` behind it moved
+to `lib/lru-cache.ts` — the highlight kernel's markup and ranges caches are the other two
+consumers.
+
+Considered and declined, same reasoning as §4's worker analysis but stronger: a worker or
+rAF/idle deferral cannot carry the formatting pass at all, because the formatted text is the
+row's *content* — it must exist at render time, and text that arrives late changes the row's
+height after measurement (compact→pretty pop-in plus measure churn plus anchor drift). What
+remains after the memo is layout of the pretty-printed blocks themselves, which is the
+irreducible cost of showing them; the ranges backend already keeps colour out of that path.
+
 ## 4. Explicit non-goals
 
 - ~~No web worker for the standard row path~~ — superseded by §3f, which landed the size

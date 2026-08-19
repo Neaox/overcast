@@ -9,17 +9,15 @@
  * tells that story for the helpers); this is the component-level counterpart.
  */
 
-import { memo, useMemo, useRef } from "react"
+import { memo, useRef } from "react"
 import { cn } from "@/lib/utils"
-import { stripAnsi } from "@/lib/ansi"
 import { HIGHLIGHT_PRESENTATION } from "@/lib/highlight-code"
 import { useHighlightRanges } from "@/hooks/use-highlight-ranges"
 import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   highlightJSON,
+  jsonDocumentText,
   logLevelBadgeClass,
-  stringifyJSON,
-  tryParseJSON,
   type LogLevel,
 } from "@/lib/log-format"
 import { AnsiText } from "./ansi-text"
@@ -140,15 +138,12 @@ export const LogMessage = memo(function LogMessage({
   sizeClassName?: string
 }) {
   const settled = useScrollSettled(defer)
-  const jsonText = useMemo(() => {
-    if (collapsed) return null
-    if (!formatted && !syntaxHighlight) return null
-    // A colourised JSON line is still JSON; the escape sequences around it are
-    // not, so they come off before the parse attempt.
-    const json = tryParseJSON(stripAnsi(message))
-    if (!json) return null
-    return stringifyJSON(json, formatted)
-  }, [collapsed, formatted, message, syntaxHighlight])
+  // The formatting pass, memoised across mounts and toggles by log-format's
+  // LRU (see `jsonDocumentText`) — a remounted row or a Format flip-back is a
+  // map hit, not a parse. ANSI stripping and the "is this one JSON document"
+  // decision live inside it.
+  const jsonText =
+    collapsed || (!formatted && !syntaxHighlight) ? null : jsonDocumentText(message, formatted)
   // A system log record would otherwise render as a JSON blob among the
   // function's own output, so the summary is what shows until Format is ticked
   // — which is the toggle that means "show me the document".
