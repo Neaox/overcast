@@ -60,7 +60,10 @@ export function LogViewer({
     count: events.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
-    overscan: 15,
+    // Cheap mid-scroll mounts (see `useScrollSettled`) make wide overscan
+    // nearly free, and it is the difference between a fast fling showing rows
+    // and showing blank track.
+    overscan: 30,
   })
 
   return (

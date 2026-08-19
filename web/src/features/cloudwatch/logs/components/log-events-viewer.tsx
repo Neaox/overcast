@@ -307,7 +307,10 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       if (collapseMode && !expandedKeys.has(logEventKey(evt))) return COLLAPSED_ROW_HEIGHT
       return estimateRowHeight(describeLogEvent(evt).plain, formatted)
     },
-    overscan: 15,
+    // Wider than the old 15 on purpose: rows mount as a handful of nodes while
+    // scrolling (see `useScrollSettled`), so overscan headroom is nearly free
+    // and it is what keeps fast flings showing rows instead of blank track.
+    overscan: 30,
     // Keyed by event, not by index: a sort-order flip or a newly fetched page
     // shifts every index, and index keys would remount every row with it.
     getItemKey: (index) => logEventKey(events[index]),

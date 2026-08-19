@@ -80,6 +80,26 @@ describe("LogMessage scroll-time highlight deferral", () => {
     expect(tokenCount(view.container)).toBe(hydrated)
   })
 
+  it("lets a wrapped message pre shrink below its content (min-w-0), but not in no-wrap mode", () => {
+    // A flex item's min-width:auto pins it to min-content width, and
+    // break-word does not lower min-content — a single-token error line once
+    // forced a ~42,000px scroller. Wrap mode must carry min-w-0; no-wrap mode
+    // must not (the wide scroller is no-wrap's whole point).
+    const wrapped = render(
+      <LogMessage
+        message={JSON_MESSAGE}
+        formatted={false}
+        syntaxHighlight
+        wrapLines
+        filterMatcher={null}
+        level="error"
+      />,
+    )
+    expect(wrapped.container.querySelector("pre")?.className).toContain("min-w-0")
+    const noWrap = renderMessage(false)
+    expect(noWrap.container.querySelector("pre")?.className).not.toContain("min-w-0")
+  })
+
   it("defers nothing for plain (non-JSON) messages — they were already cheap", () => {
     const { container } = render(
       <LogMessage
