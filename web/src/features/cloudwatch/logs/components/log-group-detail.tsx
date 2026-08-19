@@ -4,7 +4,17 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { ArrowLeft, Plus, Trash2, RefreshCw, FileText, Search, X, ListFilter } from "lucide-react"
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Plus,
+  Trash2,
+  RefreshCw,
+  FileText,
+  Search,
+  X,
+  ListFilter,
+} from "lucide-react"
 import {
   logsGroupsQueryOptions,
   logsGroupTagsQueryOptions,
@@ -45,6 +55,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useToast } from "@/components/ui/toast"
+import { useEndpoint } from "@/hooks/use-endpoint"
+import { isResourceNotFound } from "@/lib/aws-error"
 import { formatLogDate } from "@/lib/log-format"
 import { cn } from "@/lib/utils"
 
@@ -56,6 +68,7 @@ export function LogGroupDetail({ groupName }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
+  const { region } = useEndpoint()
 
   const [showCreateStream, setShowCreateStream] = useState(false)
   const [deleteStreamTarget, setDeleteStreamTarget] = useState<string>()
@@ -71,6 +84,7 @@ export function LogGroupDetail({ groupName }: Props) {
 
   const {
     data: streams = [],
+    error: streamsError,
     isLoading,
     isFetching,
     refetch,
@@ -96,6 +110,7 @@ export function LogGroupDetail({ groupName }: Props) {
   // Cross-stream search query — only runs when user has an active filter.
   const {
     data: filterResult,
+    error: filterError,
     isLoading: isFilterLoading,
     isFetching: isFilterFetching,
   } = useQuery({
@@ -159,6 +174,27 @@ export function LogGroupDetail({ groupName }: Props) {
     onError: (err: Error) =>
       toast({ title: "Bulk delete failed", description: err.message, variant: "danger" }),
   })
+
+  // DescribeLogStreams answering ResourceNotFoundException means the group
+  // itself is missing from the selected region — say so, rather than render
+  // the "No log streams" empty state that reads as an application that never
+  // logged. The usual cause is the region selector pointing away from where
+  // the group lives.
+  if (isResourceNotFound(streamsError)) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle className="h-10 w-10" />}
+        title="Log group not found"
+        description={`No log group named "${groupName}" exists in ${region} — it may live in a different region. Check the region selector.`}
+        action={
+          <Button onClick={() => navigate({ to: "/cloudwatch/logs" })}>
+            <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+            All Groups
+          </Button>
+        }
+      />
+    )
+  }
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -283,7 +319,7 @@ export function LogGroupDetail({ groupName }: Props) {
           {isFilterFetching ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : null}
           Search
         </Button>
-        {activeFilter && !isFilterLoading && (
+        {activeFilter && !isFilterLoading && !filterError && (
           <span className="ml-1 shrink-0 text-xs text-fg-muted">
             {filteredEvents.length} result{filteredEvents.length !== 1 ? "s" : ""}
           </span>
@@ -297,6 +333,15 @@ export function LogGroupDetail({ groupName }: Props) {
             <div className="flex justify-center py-8">
               <Spinner className="h-5 w-5" />
             </div>
+          ) : filterError ? (
+            // A failed search is not "no matches" — an invalid filter pattern
+            // (InvalidParameterException) used to render exactly that, and the
+            // server's message says what to fix.
+            <EmptyState
+              icon={<AlertTriangle className="h-8 w-8" />}
+              title="Search failed"
+              description={filterError instanceof Error ? filterError.message : String(filterError)}
+            />
           ) : filteredEvents.length === 0 ? (
             <EmptyState
               icon={<Search className="h-8 w-8" />}
