@@ -43,7 +43,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
+        bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
         generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
@@ -168,7 +168,11 @@ bench-startup:
 	$(GO) run ./scripts/bench-startup.go
 
 ## lint: run all linters (Go/emulation, web UI, GitHub Actions)
-lint: lint-go lint-web lint-actions
+lint: lint-go lint-web lint-actions lint-encoding
+
+## lint-encoding: scan tracked text files for mojibake, stray BOMs, and U+FFFD (see scripts/check_encoding.py)
+lint-encoding:
+	python3 scripts/check_encoding.py
 
 ## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
