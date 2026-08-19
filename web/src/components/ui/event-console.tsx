@@ -11,13 +11,19 @@
  *
  * Generic — works for any event source. Per-source payload summaries are
  * provided by the renderSummary prop; a sensible default is used if omitted.
+ *
+ * Rows carrying a request id (see internal/events.Event.RequestID) get a
+ * hover-revealed link to that request's trace, when the server is recording
+ * traces at all — see traceLinkFor.
  */
 import { useRef, useEffect, useState, useCallback } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Code2, X, Wifi, WifiOff } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { Code2, X, Wifi, WifiOff, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
+import { useDebugEnabled } from "@/hooks/use-server-info"
 import type { StreamEvent } from "@/hooks/use-event-stream"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
@@ -372,8 +378,51 @@ function eventEnvelope(event: StreamEvent): Record<string, unknown> {
     // internal/events.Event.ResourceARN — still get an auto-linked ARN even
     // when the payload itself has no ARN field.
     ...(event.resourceArn ? { resourceArn: event.resourceArn } : {}),
+    // Same reasoning as resourceArn: it lives on the envelope, so copying the
+    // payload alone would lose the one field that says which call caused this.
+    ...(event.requestId ? { requestId: event.requestId } : {}),
     payload: event.payload,
   }
+}
+
+/**
+ * The "open the trace behind this event" affordance, or nothing.
+ *
+ * Two conditions, for two different reasons. No requestId means the event was
+ * not caused by an API call at all — a poller, a timer, a container dying —
+ * and there is no trace to open. Debug off means traces are not being
+ * recorded: internal/middleware.DebugTrace is an identity function unless
+ * OVERCAST_DEBUG is set, so the link would resolve to a "trace not found"
+ * page for every event on the console. The id itself still travels with the
+ * event either way — it is in the expanded envelope, in what the copy button
+ * writes, and in what the search box matches.
+ *
+ * A plain function rather than a component because it holds no state and
+ * calls no hooks — the debug answer is read once for the whole console, not
+ * per row (a hook could not be called per row in any case).
+ */
+function traceLinkFor(event: StreamEvent, enabled: boolean) {
+  if (!enabled || !event.requestId) return null
+  const requestId = event.requestId
+  return (
+    <Link
+      to="/debug/traces/$requestId"
+      params={{ requestId }}
+      aria-label={`Open trace for request ${requestId}`}
+      title={`Open trace ${requestId}`}
+      // stopPropagation: the row itself toggles the expanded payload, and a
+      // click meant for the link should navigate rather than also leaving an
+      // expanded row behind on a page the reader is walking away from.
+      onClick={(e) => e.stopPropagation()}
+      // Weighted to match the copy control beside it — text-fg-subtle, not a
+      // dimmed variant. The two share a cluster, so a difference in weight
+      // reads as one of them being disabled, and 40% alpha over the light
+      // theme's hover tint is the pairing that fails contrast first.
+      className="text-fg-subtle opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg focus-visible:opacity-100"
+    >
+      <Workflow aria-hidden className="h-3.5 w-3.5" />
+    </Link>
+  )
 }
 
 function EventPayloadDetails({ event }: { event: StreamEvent }) {
@@ -401,6 +450,9 @@ export function EventConsole({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [pinned, setPinned] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
+  // One read for the whole console: the answer is the same for every row, and
+  // the rows are rendered in a loop where a hook could not go anyway.
+  const traceLinksEnabled = useDebugEnabled()
 
   const virtualizer = useVirtualizer({
     count: events.length,
@@ -507,15 +559,20 @@ export function EventConsole({
                       {label}
                     </Badge>
                     <span className="min-w-0 truncate text-sm text-fg-muted">{summary}</span>
-                    {/* Stays out of the way until the row is hovered — the console
-                        is dense, and a permanent glyph on every row would compete
-                        with the summary text for the eye. */}
-                    <CopyButton
-                      value={JSON.stringify(eventEnvelope(ev), null, 2)}
-                      noun="event"
-                      tone="inline"
-                      className="ml-auto self-center opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100"
-                    />
+                    {/* Actions — right-aligned as one cluster so it sits in the
+                        same place whether or not the row carries a request id,
+                        and stays out of the way until the row is hovered: the
+                        console is dense, and permanent glyphs on every row
+                        would compete with the summary text for the eye. */}
+                    <div className="ml-auto flex shrink-0 items-center gap-0.5 self-center">
+                      {traceLinkFor(ev, traceLinksEnabled)}
+                      <CopyButton
+                        value={JSON.stringify(eventEnvelope(ev), null, 2)}
+                        noun="event"
+                        tone="inline"
+                        className="opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100"
+                      />
+                    </div>
                   </div>
                   {isExpanded && <EventPayloadDetails event={ev} />}
                 </div>
