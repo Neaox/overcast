@@ -46,6 +46,10 @@ func RequestEvents(busPtr **events.Bus, clk clock.Clock) func(http.Handler) http
 				Type:   events.RequestReceived,
 				Time:   start,
 				Source: "request",
+				// Set explicitly rather than left to Bus.Publish's guard:
+				// this publishes on context.Background() (see below), so
+				// there is no request ID on the publishing context to find.
+				RequestID: reqID,
 				Payload: events.RequestPayload{
 					Method:        r.Method,
 					Path:          r.URL.Path,

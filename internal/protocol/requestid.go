@@ -30,8 +30,22 @@ func ContextWithRequestID(ctx context.Context, id string) context.Context {
 // Returns a freshly generated ID if none was set — this is a safety net and
 // should not happen in normal operation (the middleware always sets one).
 func RequestIDFromContext(ctx context.Context) string {
-	if id, ok := ctx.Value(requestIDKey).(string); ok && id != "" {
+	if id, ok := LookupRequestID(ctx); ok {
 		return id
 	}
 	return NewRequestID()
+}
+
+// LookupRequestID retrieves the request ID stored in ctx, reporting whether
+// there was one. Unlike RequestIDFromContext it never invents an ID.
+//
+// The distinction matters for anything that annotates a value with the request
+// behind it rather than answering a caller: a background goroutine's context
+// carries no request ID, and a generated one there would look exactly like a
+// real one while pointing at a trace that does not exist. Callers that must
+// produce an ID (protocol error bodies, response metadata) want the generating
+// form; callers that would rather record nothing want this one.
+func LookupRequestID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(requestIDKey).(string)
+	return id, ok && id != ""
 }

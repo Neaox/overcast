@@ -122,16 +122,32 @@ func (h *History) Len() int {
 	return h.order.Len()
 }
 
-// FindByRequestID returns all buffered events whose RequestReceived
-// payload carries the given request ID, in chronological order.
+// FindByRequestID returns all buffered events attributed to the given request
+// ID, in chronological order.
+//
+// That is every event the request caused, not just the request:Received entry
+// summarising the call itself: Bus.Publish stamps each event with the request
+// on whose context it was published (see Event.RequestID), so one PutObject
+// answers here with its S3 write, the notification it fired, the SQS send and
+// the Lambda invoke behind it.
+//
+// The envelope is the only thing consulted. RequestPayload carries a RequestID
+// of its own, but that is the payload describing itself for display — matching
+// on it too would make "which request is this" two facts that can disagree,
+// and the middleware that publishes it sets the envelope from the same value
+// anyway. An empty requestID matches nothing: background events carry no ID,
+// so treating "" as a value would return most of the buffer.
 func (h *History) FindByRequestID(requestID string) []Event {
+	if requestID == "" {
+		return nil
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	var out []Event
 	for el := h.order.Front(); el != nil; el = el.Next() {
-		e := el.Value.(*historyEntry).event
-		if p, ok := e.Payload.(RequestPayload); ok && p.RequestID == requestID {
+		if e := el.Value.(*historyEntry).event; e.RequestID == requestID {
 			out = append(out, e)
 		}
 	}

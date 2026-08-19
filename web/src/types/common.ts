@@ -10,6 +10,16 @@ export interface StreamEvent {
    * ARN in this emulator's model, and omit this field entirely.
    */
   resourceArn?: string
+  /**
+   * The API call this event was published under, when known (mirrors
+   * internal/events.Event.RequestID on the Go side). Every event one request
+   * set off carries the same id, which is what lets the Events page link a
+   * row to its trace at /debug/traces/$requestId.
+   *
+   * Best-effort — background work (pollers, timers, container events) has no
+   * request behind it and omits this field entirely.
+   */
+  requestId?: string
   payload: unknown
 }
 

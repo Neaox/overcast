@@ -42,7 +42,10 @@ package router
 //     never lose one.
 //
 // resourceArn is omitted whenever the event has no known/cheap-to-construct
-// ARN for its primary resource (see events.Event.ResourceARN).
+// ARN for its primary resource (see events.Event.ResourceARN). requestId is
+// omitted whenever the event was not published under an API call — background
+// work has no request behind it (see events.Event.RequestID). Both are
+// best-effort: a consumer must handle their absence.
 //
 // An initial ": connected\n\n" comment is flushed immediately so the client
 // can distinguish "connected but no events yet" from "not connected at all".
@@ -79,8 +82,36 @@ type sseEnvelope struct {
 	// ResourceARN is the ARN of the event's primary resource, when known —
 	// see events.Event.ResourceARN. Omitted when empty so older/simpler
 	// consumers see no shape change.
-	ResourceARN string          `json:"resourceArn,omitempty"`
-	Payload     json.RawMessage `json:"payload"`
+	ResourceARN string `json:"resourceArn,omitempty"`
+	// RequestID is the API call this event was published under, when known —
+	// see events.Event.RequestID. Omitted when empty, both so older consumers
+	// see no shape change and so a client can tell "not caused by a request"
+	// from "caused by a request we could not name".
+	RequestID string          `json:"requestId,omitempty"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+// newSSEEnvelope converts a bus event into the wire shape.
+//
+// Every path that serves events — the live stream, the history replay and the
+// by-request lookup — goes through here, so the shape they emit cannot drift:
+// a field added to the envelope reaches all three or none. On a payload that
+// will not marshal it returns the envelope with a nil Payload (JSON `null`)
+// alongside the error, leaving the caller to choose between dropping the
+// event and serving it without its payload.
+func newSSEEnvelope(e events.Event) (sseEnvelope, error) {
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		payload = nil
+	}
+	return sseEnvelope{
+		Type:        string(e.Type),
+		Time:        e.Time.UTC().Format(time.RFC3339Nano),
+		Source:      e.Source,
+		ResourceARN: e.ResourceARN,
+		RequestID:   e.RequestID,
+		Payload:     payload,
+	}, err
 }
 
 // eventsHandler returns an http.HandlerFunc that fans out all bus events as SSE.
@@ -198,18 +229,10 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e events.Event, 
 		}
 	}
 
-	payload, err := json.Marshal(e.Payload)
+	env, err := newSSEEnvelope(e)
 	if err != nil {
 		logger.Error("events: marshal payload", zap.Error(err))
 		return
-	}
-
-	env := sseEnvelope{
-		Type:        string(e.Type),
-		Time:        e.Time.UTC().Format(time.RFC3339Nano),
-		Source:      e.Source,
-		ResourceARN: e.ResourceARN,
-		Payload:     payload,
 	}
 
 	data, err := json.Marshal(env)
@@ -360,14 +383,11 @@ func eventsByRequestHandler(bus *events.Bus) http.HandlerFunc {
 		}
 		sseEvents := make([]sseEnvelope, len(evs))
 		for i, e := range evs {
-			payload, _ := json.Marshal(e.Payload)
-			sseEvents[i] = sseEnvelope{
-				Type:        string(e.Type),
-				Time:        e.Time.Format(time.RFC3339Nano),
-				Source:      e.Source,
-				ResourceARN: e.ResourceARN,
-				Payload:     payload,
-			}
+			// A payload that will not marshal is dropped to null rather than
+			// failing the whole response: the reader came for the list of what
+			// this request did, and one unrenderable payload should not hide
+			// the rest of it.
+			sseEvents[i], _ = newSSEEnvelope(e)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(sseEvents)
