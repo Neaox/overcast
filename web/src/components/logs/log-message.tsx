@@ -9,9 +9,11 @@
  * tells that story for the helpers); this is the component-level counterpart.
  */
 
-import { memo, useMemo } from "react"
+import { memo, useMemo, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
+import { HIGHLIGHT_PRESENTATION } from "@/lib/highlight-code"
+import { useHighlightRanges } from "@/hooks/use-highlight-ranges"
 import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   highlightJSON,
@@ -158,6 +160,14 @@ export const LogMessage = memo(function LogMessage({
       ? jsonText
       : withPrefix(message)
   const showSyntax = !asSummary && syntaxHighlight && jsonText
+  // Where the browser has the CSS Custom Highlight API, a highlighted row is
+  // ONE text node and token colour arrives as ranges — no spans to mount, so
+  // the `defer` latch gates only the (mutation-free) range application, not
+  // the DOM. Elsewhere the markup path below renders exactly what it always
+  // has.
+  const ranges = HIGHLIGHT_PRESENTATION === "ranges"
+  const preRef = useRef<HTMLPreElement>(null)
+  useHighlightRanges(preRef, ranges && settled && showSyntax ? jsonText : null, "json")
 
   if (collapsed) {
     // `truncate` is what enforces the single line: nowrap turns any embedded
@@ -191,20 +201,24 @@ export const LogMessage = memo(function LogMessage({
             {prefix}
           </span>
         )}
-        {settled ? (
+        {ranges || !settled ? (
+          // One text node, whichever reason: under the ranges presentation
+          // the text node IS the rendering (settled or not — colour arrives
+          // as ranges via `useHighlightRanges`, zero DOM mutation), and under
+          // markup a deferred row renders the same pixels un-highlighted
+          // until it settles. Identical element and classes either way, so
+          // no swap can move a measured row.
           <pre
-            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
-            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
-          />
-        ) : (
-          // Same element, same classes, same text — the un-highlighted stand-in
-          // occupies exactly the pixels the highlighted version will, so the
-          // hydration swap never moves a measured row.
-          <pre
+            ref={ranges ? preRef : undefined}
             className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
           >
             {jsonText}
           </pre>
+        ) : (
+          <pre
+            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
+          />
         )}
       </div>
     )

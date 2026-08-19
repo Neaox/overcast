@@ -5,6 +5,9 @@
    additional @imports after "tailwindcss" (Vite resolves the bare specifiers). */
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/700.css";
+/* Syntax token colours — both highlight backends' palette + rules, extracted
+   whole so the theming contract lives in one file (its header explains). */
+@import "./syntax-tokens.css";
 @plugin "@tailwindcss/typography";
 
 /* ─── Semantic colour tokens ───────────────────────────────────────────────
@@ -200,6 +203,10 @@
   /* Dimming on a light surface means washing out, not blacking over. */
   --scrim-dim: rgb(255 255 255 / 0.62);
 }
+
+/* Syntax token colours (--token-*) live in syntax-tokens.css — a
+   self-contained module holding both palettes, the theme wiring, and the
+   `.token.*` + `::highlight()` rules that consume them. */
 
 /* ─── Dark palette — defined once, applied by both dark selectors below ── */
 :root {
@@ -509,102 +516,6 @@
     color: var(--fg-subtle);
     pointer-events: none;
     user-select: none;
-  }
-  /* Prism token colours — designed for both light and dark modes via CSS vars.
-     Deliberately unscoped: the event console's hand-rolled JSON tree applies
-     these same class names (see event-console.tsx) so a string, key or number
-     looks identical whether Prism produced the markup or React did. Keep them
-     out of a `.json-editor-wrap` selector. */
-  .token.punctuation {
-    color: var(--fg-muted);
-  }
-  .token.property {
-    color: var(--accent);
-  }
-  .token.tag,
-  .token.doctype,
-  .token.doctype-tag,
-  .token.selector {
-    color: oklch(0.5 0.16 255);
-  } /* blue */
-  .token.attr-name,
-  .token.name,
-  .token.parameter {
-    color: oklch(0.48 0.14 285);
-  } /* violet */
-  .token.string {
-    color: oklch(0.52 0.14 145);
-  } /* green-ish */
-  .token.attr-value,
-  .token.template-string,
-  .token.interpolation {
-    color: oklch(0.52 0.14 145);
-  }
-  .token.number {
-    color: oklch(0.58 0.16 35);
-  } /* orange */
-  .token.keyword,
-  .token.operator {
-    color: oklch(0.55 0.16 290);
-  }
-  .token.function {
-    color: oklch(0.55 0.15 210);
-  }
-  .token.boolean,
-  .token.null.keyword {
-    color: oklch(0.55 0.16 290);
-  } /* purple */
-
-  /* Dark overrides */
-  .dark .token.tag,
-  .dark .token.doctype,
-  .dark .token.doctype-tag,
-  .dark .token.selector,
-  [data-theme="dark"] .token.tag,
-  [data-theme="dark"] .token.doctype,
-  [data-theme="dark"] .token.doctype-tag,
-  [data-theme="dark"] .token.selector {
-    color: oklch(0.76 0.13 255);
-  }
-  .dark .token.attr-name,
-  .dark .token.name,
-  .dark .token.parameter,
-  [data-theme="dark"] .token.attr-name,
-  [data-theme="dark"] .token.name,
-  [data-theme="dark"] .token.parameter {
-    color: oklch(0.78 0.13 285);
-  }
-  .dark .token.string {
-    color: oklch(0.72 0.14 145);
-  }
-  .dark .token.attr-value,
-  .dark .token.template-string,
-  .dark .token.interpolation,
-  [data-theme="dark"] .token.string,
-  [data-theme="dark"] .token.attr-value,
-  [data-theme="dark"] .token.template-string,
-  [data-theme="dark"] .token.interpolation {
-    color: oklch(0.72 0.14 145);
-  }
-  .dark .token.number,
-  [data-theme="dark"] .token.number {
-    color: oklch(0.75 0.14 55);
-  }
-  .dark .token.keyword,
-  .dark .token.operator,
-  [data-theme="dark"] .token.keyword,
-  [data-theme="dark"] .token.operator {
-    color: oklch(0.72 0.15 290);
-  }
-  .dark .token.function,
-  [data-theme="dark"] .token.function {
-    color: oklch(0.75 0.13 210);
-  }
-  .dark .token.boolean,
-  .dark .token.null.keyword,
-  [data-theme="dark"] .token.boolean,
-  [data-theme="dark"] .token.null.keyword {
-    color: oklch(0.72 0.15 290);
   }
 }
 
