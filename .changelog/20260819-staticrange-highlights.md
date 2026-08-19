@@ -1,0 +1,1 @@
+* [cloudwatch/web] token highlight ranges are now static rather than live, so a busy tail no longer pays range-bookkeeping on every row the virtualizer mounts or removes — the engine stops fixing up tens of thousands of live range boundaries per DOM change

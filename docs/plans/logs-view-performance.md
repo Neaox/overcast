@@ -687,33 +687,41 @@ severity:
   markup surface) — kept as an improvement and disclosed in the changelog
   rather than shipped silently.
 
-Known-and-accepted from the same review: live `Range` objects carry per-DOM-
-mutation fix-up cost while rows are mounted (a `StaticRange` swap needs
-cross-browser paint verification before it can be trusted — follow-up, not a
-silent change); ~~the S3 preview's adoption needs a `FormattedPreview` shape
-change (`{text, language}` policy instead of pre-rendered html) plus a shared
-rendering component before the "kernel adopts unchanged" promise is real~~ —
-done (2026-08-20): `HighlightedCode`
-(web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
-owning the whole presentation fork (ranges pre + hook | settled markup
-innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
-preview both consume it, `FormattedPreview` returns `{text, language,
-skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
-preview's wrap-class split stays deliberate — a language-chosen document
-scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
-preview's grammars (markup/css/javascript) takes the *markup-parity* form
-this review recommended — every token class themed in both backends or in
-neither, pinned per grammar and globally in token-theme-coverage.test.ts —
-while json keeps its stricter total-coverage test. And
-~~three modules now hand-roll the persistent-worker-client shape
-(docs search, map layout, highlighting) that deserves one shared helper~~ —
-done: `web/src/lib/worker-client.ts` now owns the correlation/lifecycle
-machinery (lazy factory construction, request-id correlation, pending-map
-hygiene, onerror/onmessageerror recovery via caller-supplied synchronous
-fallbacks, guarded postMessage, respawn-limited retry), and the three call
-sites keep their distinct semantics as parameters: highlight keeps its
-never-rejecting promises and retry-once ladder, docs search keeps its
-abort/cancel path, map layout keeps its stale-reply guard.
+Known-and-accepted from the same review — all three since landed:
+
+- ~~Live `Range` objects carry per-DOM-mutation fix-up cost while mounted~~ —
+  **landed 2026-08-20**: `applyTokenRanges` now mints `StaticRange`s (with a
+  live-`Range` fallback for a hypothetical engine shipping highlights without
+  them). Staleness was already a non-issue by construction — ranges are
+  disposed and re-applied on any text change and refused on mismatched text.
+  Chrome paint verified against a built image (full token colour, zero spans,
+  every registered range a `StaticRange`); the Firefox paint check was
+  deliberately left to a human eye before merge — the one step this work
+  could not automate.
+- ~~The S3 preview's adoption needs a `FormattedPreview` shape change plus a
+  shared rendering component before the "kernel adopts unchanged" promise is
+  real~~ — **landed 2026-08-20** (#1074): `HighlightedCode`
+  (web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
+  owning the whole presentation fork (ranges pre + hook | settled markup
+  innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
+  preview both consume it, `FormattedPreview` returns `{text, language,
+  skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
+  preview's wrap-class split stays deliberate — a language-chosen document
+  scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
+  preview's grammars (markup/css/javascript) takes the *markup-parity* form
+  this review recommended — every token class themed in both backends or in
+  neither, pinned per grammar and globally in token-theme-coverage.test.ts —
+  while json keeps its stricter total-coverage test.
+- ~~Three modules hand-roll the persistent-worker-client shape (docs search,
+  map layout, highlighting) that deserves one shared helper~~ — **landed
+  2026-08-20** (#1073): `web/src/lib/worker-client.ts` owns the
+  correlation/lifecycle machinery (lazy factory construction, request-id
+  correlation, pending-map hygiene, onerror/onmessageerror recovery via
+  caller-supplied synchronous fallbacks, guarded postMessage,
+  respawn-limited retry), and the three call sites keep their distinct
+  semantics as parameters: highlight keeps its never-rejecting promises and
+  retry-once ladder, docs search keeps its abort/cancel path, map layout
+  keeps its stale-reply guard.
 
 ## 3g. The formatting pass (2026-08-20) — memoised, deliberately synchronous — **landed**
 

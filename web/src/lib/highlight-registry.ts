@@ -152,6 +152,37 @@ export function registerTokenHighlights(): void {
 const noopDispose = () => {}
 
 /**
+ * One token's range, static where the platform allows.
+ *
+ * A live `Range` obliges the engine to fix up its boundary points on every
+ * DOM mutation in the document — and a virtualized log view mutates
+ * continuously, with tens of thousands of token ranges mounted, so that
+ * bookkeeping scales with exactly the product this backend exists to shrink.
+ * The CSS Highlight API spec recommends `StaticRange` for highlights for
+ * this reason, and staleness is a non-issue here by construction: ranges are
+ * disposed and re-applied whenever the node's text changes, and
+ * `applyTokenRanges` refuses mismatched text outright. Liveness buys nothing.
+ *
+ * `Highlight` is setlike over `AbstractRange`, so browsers that paint the
+ * API accept both forms; the constructor check only covers a hypothetical
+ * engine shipping highlights without `StaticRange`.
+ */
+function createTokenRange(node: Text, start: number, end: number): AbstractRange {
+  if (typeof StaticRange !== "undefined") {
+    return new StaticRange({
+      startContainer: node,
+      startOffset: start,
+      endContainer: node,
+      endOffset: end,
+    })
+  }
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, end)
+  return range
+}
+
+/**
  * Adds `tokenRanges` over `textNode` to the global highlights and returns the
  * disposer that removes exactly those ranges.
  *
@@ -168,16 +199,14 @@ export function applyTokenRanges(
   tokenRanges: TokenRange[],
 ): () => void {
   if (textNode.data !== text) return noopDispose
-  const appliedRanges: Range[] = []
+  const appliedRanges: AbstractRange[] = []
   const appliedHighlights: Highlight[] = []
   for (const token of tokenRanges) {
     const cls = resolveTokenColorClass(token.type)
     if (cls === null) continue
     const highlight = highlightByClass.get(cls)
     if (!highlight) continue
-    const range = document.createRange()
-    range.setStart(textNode, token.start)
-    range.setEnd(textNode, token.end)
+    const range = createTokenRange(textNode, token.start, token.end)
     highlight.add(range)
     appliedRanges.push(range)
     appliedHighlights.push(highlight)
