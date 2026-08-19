@@ -712,7 +712,7 @@ Known-and-accepted from the same review — all three since landed:
   deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
   flat at 16–19 ms per scroll frame on the *buggy* build.
 
-  The fix took two iterations, each indicted by its own trace:
+  The fix took three iterations, each indicted by its own trace:
 
   1. *Swap-rebuild on every change* (zero deletes: fresh sets rebuilt from
      live rows per coalesced microtask) fixed the lockup — max eventDelay
@@ -720,16 +720,28 @@ Known-and-accepted from the same review — all three since landed:
      inside the rebuild itself: disposals scheduled it, so continuous
      scrolling re-`add`ed the whole hydrated viewport nearly every frame,
      and Firefox's `Highlight.add` is not free either.
-  2. *The landed model:* **scrolling mutates the highlight sets not at
-     all.** Hydration adds in place (O(new rows) — the one mutation shape
-     no trace ever showed dominating); a row unmounting just counts its
-     ranges as garbage, because a disconnected static range is invalid and
-     paints nothing; a text swap on a still-connected node (Format rewrites
-     the Text node's data in place) is the only synchronous delete, bounded
-     by that row; and garbage is collected by one swap-rebuild (reusing the
-     live rows' existing range objects) after a quiet second, or
-     opportunistically at the next hydration once garbage outweighs live
-     ranges.
+  2. *Additive-with-garbage, first cut:* scrolling mutates nothing;
+     unmounting rows leave visually-inert garbage (a disconnected static
+     range does not paint) for a lazy sweep; only a text swap on a
+     still-connected node deletes synchronously. Right policy — wrong
+     moment to ask: the disposer tested `node.isConnected` synchronously,
+     and **React runs effect cleanups before detaching host nodes**, so
+     every unmounting row answered `true`, took the synchronous-delete
+     branch, and a sixth trace showed the original lockup resurrected
+     wholesale (100% of 91k samples back in the dispose closure).
+  3. *The landed model:* disposers only enqueue; a post-commit microtask
+     triages — by then connectivity means what it says — routing
+     disconnected nodes to the garbage counter (zero deletes; the path
+     every scrolled-away row takes) and only genuinely still-connected
+     rows (Syntax toggled off in place; a text swap whose re-apply already
+     painted) through a bounded per-row delete. Hydration adds in place
+     (O(newly settled rows) — the one mutation shape no trace ever showed
+     dominating); garbage collects via one swap-rebuild (reusing live
+     rows' range objects, triaging first so fates are never double
+     counted) after a quiet second, or opportunistically at the next
+     hydration once garbage outweighs live ranges. Pinned by a regression
+     test: an unmounting row produces zero `Highlight.delete` calls
+     through disposal, triage, and sweep.
 
   Chrome protocol on the final model: flat, settle ≤ 1 ms, bookkeeping
   exact post-sweep. Firefox confirmation comes from the reporter's
