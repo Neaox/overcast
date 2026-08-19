@@ -691,8 +691,15 @@ cross-browser paint verification before it can be trusted — follow-up, not a
 silent change); the S3 preview's adoption needs a `FormattedPreview` shape
 change (`{text, language}` policy instead of pre-rendered html) plus a shared
 rendering component before the "kernel adopts unchanged" promise is real; and
-three modules now hand-roll the persistent-worker-client shape
-(docs search, map layout, highlighting) that deserves one shared helper.
+~~three modules now hand-roll the persistent-worker-client shape
+(docs search, map layout, highlighting) that deserves one shared helper~~ —
+done: `web/src/lib/worker-client.ts` now owns the correlation/lifecycle
+machinery (lazy factory construction, request-id correlation, pending-map
+hygiene, onerror/onmessageerror recovery via caller-supplied synchronous
+fallbacks, guarded postMessage, respawn-limited retry), and the three call
+sites keep their distinct semantics as parameters: highlight keeps its
+never-rejecting promises and retry-once ladder, docs search keeps its
+abort/cancel path, map layout keeps its stale-reply guard.
 
 ## 3g. The formatting pass (2026-08-20) — memoised, deliberately synchronous — **landed**
 
