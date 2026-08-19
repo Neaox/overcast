@@ -14,9 +14,9 @@ tags:
 
 Lambda emulation has two distinct concerns:
 
-1. **Control plane** â€” the management API (create/update/invoke functions, manage
+1. **Control plane** — the management API (create/update/invoke functions, manage
    event source mappings). This is straightforward HTTP.
-2. **Data plane** â€” actually executing function code. This requires running
+2. **Data plane** — actually executing function code. This requires running
    arbitrary user code, which has significant security and complexity implications.
 
 For v1, the data plane supports **container-based execution** via Docker: `Invoke` calls
@@ -26,7 +26,7 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 > [!NOTE]
 > **Real function execution requires Docker.** Without it, `Invoke` returns a stub response
 > and does not execute your function code. The Docker socket must be bind-mounted when
-> running Overcast in a container â€” see the [README](../../README.md#docker-compose-recommended-for-local-dev)
+> running Overcast in a container — see the [README](../../README.md#docker-compose-recommended-for-local-dev)
 > for DinD configuration in CI environments where socket mounting is restricted.
 
 ---
@@ -72,7 +72,7 @@ containers, communicate with the Lambda Runtime API, and return real response pa
   returned by `GetFunction`, `GetFunctionConfiguration`, `CreateFunction` and
   `UpdateFunctionConfiguration`, so a template or SDK client reads back exactly
   what it set. None of them changes what the function does:
-  - **X-Ray tracing is not emulated at all** â€” there is no X-Ray service in
+  - **X-Ray tracing is not emulated at all** — there is no X-Ray service in
     Overcast, so no segment is recorded and no trace is available to look at,
     whichever `Mode` is set. `Active` and `PassThrough` behave identically.
   - **The ephemeral storage size is not enforced on the container.** A function
@@ -96,15 +96,15 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 - `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}`
   object returns `501`. AWS's semantics for that shape have not been captured,
   and guessing between "no-op" and "reset to defaults" would mutate the function
-  either way. `LoggingConfig` with explicit members â€” including
-  `LogFormat: JSON` â€” applies normally.
+  either way. `LoggingConfig` with explicit members — including
+  `LogFormat: JSON` — applies normally.
 - An unqualified `DeleteFunction` removes the function record, its deployment
   package and its resource policies, but published versions, aliases and
   version counters for that name are left behind. Recreating a function under
   the same name therefore inherits them.
 - Tags are stored for functions and event source mappings only. The other
-  taggable Lambda resources â€” code signing configurations, capacity providers
-  and network connectors â€” return `501` from the tag operations.
+  taggable Lambda resources — code signing configurations, capacity providers
+  and network connectors — return `501` from the tag operations.
 - A function whose code names a `Code.S3ObjectVersion` is pinned to that
   version, so it is excluded from the reactive S3 code sync that refreshes an
   unpinned function when a new object lands at its `S3Bucket`/`S3Key`. That
@@ -161,7 +161,7 @@ Two upstream sources feed that table:
 | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | Not a value of the modeled `Runtime` enum, and not a runtime-version ARN  | `400 InvalidParameterValueException` with AWS's enum-validation message listing every modeled value |
 | Modeled, but past AWS's deprecation phase for the operation              | `400 InvalidParameterValueException` with AWS's message naming the recommended successor            |
-| Modeled and accepted by AWS, but Overcast has no execution image for it  | `501 NotImplemented` â€” an honest emulator gap; nothing is persisted                                 |
+| Modeled and accepted by AWS, but Overcast has no execution image for it  | `501 NotImplemented` — an honest emulator gap; nothing is persisted                                 |
 
 The third case is the important one: a missing execution image is **not** a bad
 request. Overcast never invents a `400` for it, because that would report a
@@ -172,26 +172,26 @@ request AWS accepts as invalid.
 AWS retires a runtime in three steps, and Overcast observes each of them against
 the current date:
 
-1. **Deprecation date** â€” end of support. The runtime still deploys and still
+1. **Deprecation date** — end of support. The runtime still deploys and still
    invokes. Overcast marks it deprecated in the runtime catalog and the web UI
    labels it, but `CreateFunction` keeps working.
-2. **Block function create** â€” `CreateFunction` starts returning
+2. **Block function create** — `CreateFunction` starts returning
    `InvalidParameterValueException`. Existing functions are untouched.
-3. **Block function update** â€” `UpdateFunctionConfiguration` starts returning the
+3. **Block function update** — `UpdateFunctionConfiguration` starts returning the
    same error, so a function can no longer be moved onto that runtime.
 
 A deprecated runtime is therefore not automatically refused. `python3.9`, for
-example, lost support in December 2025 but stays deployable on AWS â€” and on
-Overcast â€” until its block-create date.
+example, lost support in December 2025 but stays deployable on AWS — and on
+Overcast — until its block-create date.
 
 ### Execution coverage
 
-Overcast maps an official Lambda base image (`public.ecr.aws/lambda/â€¦`) to every
+Overcast maps an official Lambda base image (`public.ecr.aws/lambda/…`) to every
 runtime AWS still accepts for `CreateFunction`, across Node.js, Python, Java
 (including the Amazon Linux 2023 variants), .NET, Ruby and the `provided` custom
-runtimes. Runtimes AWS has already blocked from `CreateFunction` â€” `go1.x`,
+runtimes. Runtimes AWS has already blocked from `CreateFunction` — `go1.x`,
 `java8`, `python3.7` and older, `nodejs14.x` and older, the `dotnetcore` family,
-`ruby2.x`, and `provided` â€” carry no image: Overcast will never create a
+`ruby2.x`, and `provided` — carry no image: Overcast will never create a
 function on one, so the `400` above is the only response they can produce.
 
 `LAMBDA_SEED_RUNTIME_IMAGES=true` pre-pulls only the images for runtimes AWS
@@ -238,33 +238,33 @@ the 15-minute idle sweep.
 
 | Limit | Env var | Default | Behaviour when reached |
 | --- | --- | --- | --- |
-| Containers across all functions | `LAMBDA_MAX_INSTANCES` | auto (host-derived; 25 fallback) | Reclaim an idle container â†’ queue â†’ throttle |
-| Containers for one function | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | auto (host-derived; 10 fallback) | Queue â†’ throttle |
-| Aggregate container memory (Î£ `MemorySize`, MB) | `LAMBDA_MAX_MEMORY_MB` | auto (host-derived; unlimited fallback) | Reclaim an idle container â†’ queue â†’ throttle |
+| Containers across all functions | `LAMBDA_MAX_INSTANCES` | auto (host-derived; 25 fallback) | Reclaim an idle container → queue → throttle |
+| Containers for one function | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | auto (host-derived; 10 fallback) | Queue → throttle |
+| Aggregate container memory (Σ `MemorySize`, MB) | `LAMBDA_MAX_MEMORY_MB` | auto (host-derived; unlimited fallback) | Reclaim an idle container → queue → throttle |
 | Idle containers kept per function | `LAMBDA_MAX_WARM_INSTANCES` | 10 | Surplus destroyed on release |
 | Concurrent container starts | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | auto (host-derived; 4 fallback) | Starts queue behind the semaphore |
 | `ReservedConcurrentExecutions` | (per function, AWS API) | unset | Throttle immediately |
 
 The instance limits protect your machine; they are not an emulation of AWS's
 account quota. An invocation that cannot get a container first reclaims the
-least-recently-used idle one (never a provisioned one), then waits â€” and **if it
+least-recently-used idle one (never a provisioned one), then waits — and **if it
 is still waiting when the function's timeout expires it is throttled**, with
 AWS's 429 `TooManyRequestsException` and `Reason: ConcurrentInvocationLimitExceeded`.
 If you hit this in normal use, raise the limit rather than treating it as AWS
 behaviour.
 
 When an env var above is unset, the limit is sized to the machine that actually
-runs the containers â€” Docker's own host, read from `GET /info` (`NCPU`,
+runs the containers — Docker's own host, read from `GET /info` (`NCPU`,
 `MemTotal`), which is the Docker Desktop VM or the remote daemon, not
 necessarily where the Overcast process runs:
 
-- `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` = `clamp(NCPU/2, 2, 8)` â€” every cold
+- `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` = `clamp(NCPU/2, 2, 8)` — every cold
   start bursts to ~2 CPUs during INIT, so this is the point where INIT alone
   could claim every core.
-- `LAMBDA_MAX_INSTANCES` = `clamp(MemTotalÃ—0.65 / 256 MiB, 4, 32)` â€” 65% of
+- `LAMBDA_MAX_INSTANCES` = `clamp(MemTotal×0.65 / 256 MiB, 4, 32)` — 65% of
   host memory at an assumed ~256 MiB per container.
 - `LAMBDA_MAX_INSTANCES_PER_FUNCTION` = `clamp(maxInstances/2, 2, maxInstances)`.
-- `LAMBDA_MAX_MEMORY_MB` = `MemTotalÃ—0.65`, in MB.
+- `LAMBDA_MAX_MEMORY_MB` = `MemTotal×0.65`, in MB.
 
 The derived values are logged at startup
 (`lambda: derived instance limits from the Docker host`). Setting an env var
@@ -272,12 +272,12 @@ pins that limit exactly as before; if `GET /info` fails, the previous fixed
 defaults (25 / 10 / 4) apply and the memory budget is unlimited.
 
 The memory budget counts bytes, not just containers: a new container is
-admitted only while `Î£ MemorySize` of live containers (warm and executing)
+admitted only while `Σ MemorySize` of live containers (warm and executing)
 plus its own `MemorySize` stays inside the budget. Each container is
 hard-capped at its function's `MemorySize` with swap disabled, so the sum is
 a real bound on host memory, not an estimate. Exhausting the budget follows
-the same ladder as the instance limits â€” reclaim the least-recently-used idle
-container, queue, throttle at the function's timeout â€” and logs one warning
+the same ladder as the instance limits — reclaim the least-recently-used idle
+container, queue, throttle at the function's timeout — and logs one warning
 (naming `LAMBDA_MAX_MEMORY_MB`) the first time it forces an invocation to
 queue. A reclaim forced by the memory budget is logged at `WARN` (the routine
 instance-count reclaim stays `INFO`). While the pool sits above ~90% of the
@@ -285,7 +285,7 @@ budget, a container whose invocation just finished is destroyed instead of
 kept warm, so queued work regains budget without waiting for the idle sweep;
 provisioned environments are always kept, and a running invocation is never
 interrupted. Entering that regime is logged once at `WARN` (budget, reserved
-memory, and the high-water threshold â€” expect cold starts while it lasts) and
+memory, and the high-water threshold — expect cold starts while it lasts) and
 leaving it once at `INFO` with how many containers were shed and for how
 long, rather than one line per destroyed container.
 
@@ -296,7 +296,7 @@ disables the function, the same idiom that works on AWS. Overcast does not
 emulate the account-wide unreserved pool.
 
 Asynchronous invocations (`InvocationType: Event`) are never throttled back to
-the caller â€” they were already answered 202. A throttled async invocation is
+the caller — they were already answered 202. A throttled async invocation is
 retried internally, as on AWS, though on a much shorter budget than AWS's six
 hours. Event source mappings behave the same way: a throttled batch is left in
 flight so the messages return to the queue on the visibility timeout.
@@ -304,7 +304,7 @@ flight so the messages return to the queue on the visibility timeout.
 This holds however the event was raised. An S3 notification, an EventBridge or
 Scheduler target, and an SNS `lambda` subscription all enter the same async path
 as an HTTP `InvocationType: Event` invoke, so none of them sees a throttle
-either â€” the event source is told only whether Lambda accepted the event.
+either — the event source is told only whether Lambda accepted the event.
 
 ### Provisioned concurrency
 
@@ -317,7 +317,7 @@ Powertools and similar libraries read to classify a cold start.
 
 Provisioned concurrency is a **floor, not a ceiling**: when all reserved
 environments are busy, further invocations spill over into on-demand capacity
-with a cold start rather than being throttled â€” matching AWS, where only
+with a cold start rather than being throttled — matching AWS, where only
 reserved concurrency caps a function. A reservation is never reclaimed to make
 room for another function, and `Allocated`/`Available` are reported from the
 environments that actually exist.
@@ -333,7 +333,7 @@ Overcast keeps warm containers per function and reuses them for sequential
 invocations, the same way Lambda reuses execution environments.
 
 A container is created with the function's code, environment variables, memory
-limit, timeout, handler, layers and VPC attachment fixed at start â€” a running
+limit, timeout, handler, layers and VPC attachment fixed at start — a running
 container can never observe a change to any of them. So when `UpdateFunctionCode`
 or `UpdateFunctionConfiguration` changes any of those, the environment is
 **retired immediately**:
@@ -346,16 +346,16 @@ or `UpdateFunctionConfiguration` changes any of those, the environment is
   invocation cold starts one. A provisioned concurrency reservation *is* rebuilt
   in the background, against the new configuration.
 
-Updates that change nothing the container can observe â€” the description or the
-role, for example â€” leave the warm container in place, so cosmetic edits do not
+Updates that change nothing the container can observe — the description or the
+role, for example — leave the warm container in place, so cosmetic edits do not
 cost a cold start.
 
 Deleting a function destroys its containers immediately. Otherwise, a container
-left idle for 15 minutes is reaped by the background sweeper â€” unless it holds a
+left idle for 15 minutes is reaped by the background sweeper — unless it holds a
 provisioned concurrency reservation, which is exempt.
 
-If a warm container disappears without Overcast asking â€” you removed it with
-`docker rm -f`, it was OOM-killed, or Docker restarted â€” the Docker event stream
+If a warm container disappears without Overcast asking — you removed it with
+`docker rm -f`, it was OOM-killed, or Docker restarted — the Docker event stream
 reports it and the environment is dropped from the warm set right away, so the
 next invocation is an ordinary cold start.
 
@@ -380,7 +380,7 @@ there, and the group is created on `CreateFunction` like the default
 
 The default, and unchanged: the plain-text `START`, `END` and `REPORT` lines
 real Lambda writes, byte for byte. `ApplicationLogLevel` and `SystemLogLevel`
-do not apply to Text on AWS, so Overcast filters nothing in this mode â€” every
+do not apply to Text on AWS, so Overcast filters nothing in this mode — every
 line the function writes reaches CloudWatch Logs.
 
 ### JSON
@@ -406,12 +406,12 @@ populated, because nothing in the emulator knows an AWS error type to put
 there.
 
 At the default `SystemLogLevel` of `INFO`, a successful invocation therefore
-logs two records â€” `platform.runtimeDone` is `DEBUG` and only appears once you
+logs two records — `platform.runtimeDone` is `DEBUG` and only appears once you
 lower the level:
 
 ```json
-{"time":"2026-08-09T04:21:07.512Z","type":"platform.start","record":{"requestId":"8f2a1c3e-â€¦","version":"$LATEST"}}
-{"time":"2026-08-09T04:21:07.884Z","type":"platform.report","record":{"requestId":"8f2a1c3e-â€¦","status":"success","metrics":{"durationMs":371.42,"billedDurationMs":372,"memorySizeMB":512,"maxMemoryUsedMB":78,"initDurationMs":214.88}}}
+{"time":"2026-08-09T04:21:07.512Z","type":"platform.start","record":{"requestId":"8f2a1c3e-…","version":"$LATEST"}}
+{"time":"2026-08-09T04:21:07.884Z","type":"platform.report","record":{"requestId":"8f2a1c3e-…","status":"success","metrics":{"durationMs":371.42,"billedDurationMs":372,"memorySizeMB":512,"maxMemoryUsedMB":78,"initDurationMs":214.88}}}
 ```
 
 The **init-phase** records, `platform.initStart` and `platform.initReport`, are
@@ -429,15 +429,15 @@ record is kept when its own level is at or above the configured one.
   table.
 - **`ApplicationLogLevel`** filters the function's own stdout and stderr, by the
   `"level"` member of each record. A line that parses as a JSON object with a
-  recognised level is filtered on it; everything else â€” unstructured text,
-  malformed JSON, a missing or unknown `"level"` â€” is treated as `INFO`, which
+  recognised level is filtered on it; everything else — unstructured text,
+  malformed JSON, a missing or unknown `"level"` — is treated as `INFO`, which
   is what AWS documents. Level names are matched case-insensitively, because a
   runtime's logger picks its own casing.
 
 Filtering decides what reaches **CloudWatch Logs and the `X-Amz-Log-Result`
 tail** (the invoke response's log tail, and the web UI's test tab) only.
 Telemetry and Logs API subscribers receive the complete set of records either
-way â€” AWS is explicit that the CloudWatch system log level does not affect
+way — AWS is explicit that the CloudWatch system log level does not affect
 Telemetry API behaviour.
 
 ### What the container sees
@@ -451,7 +451,7 @@ output:
 | `AWS_LAMBDA_LOG_FORMAT` | always                | `Text` or `JSON`                           |
 | `AWS_LAMBDA_LOG_LEVEL`  | `LogFormat` is `JSON` | the function's effective `ApplicationLogLevel` |
 
-In Text mode `AWS_LAMBDA_LOG_LEVEL` is not set, matching AWS â€” setting it would
+In Text mode `AWS_LAMBDA_LOG_LEVEL` is not set, matching AWS — setting it would
 tell a runtime to filter output Lambda has not asked it to filter.
 
 Because those values are baked into a container at start, the logging
@@ -465,7 +465,7 @@ or environment-variable change does. See
 ## Lambda Layers
 
 When a function specifies layer ARNs (e.g. from CDK or CloudFormation), Overcast
-injects each layer into `/opt` in the Lambda container before startup â€” matching
+injects each layer into `/opt` in the Lambda container before startup — matching
 real Lambda behavior. Layers published locally via `PublishLayerVersion` are
 resolved automatically; external layers (AWS-managed or third-party) require
 additional configuration.
@@ -487,10 +487,10 @@ cache or remote-fetch path described below.
 
 Download the layer once using the AWS CLI and place the zip in the layer cache
 directory that Overcast checks at invocation time. By default this is
-`/data/layers` inside the container â€” mount your local directory there and
+`/data/layers` inside the container — mount your local directory there and
 you're done.
 
-**Step 1 â€” Download the layer zip:**
+**Step 1 — Download the layer zip:**
 
 ```bash
 # Get the presigned download URL
@@ -502,14 +502,14 @@ LAYER_URL=$(aws lambda get-layer-version-by-arn \
 curl -o AWSLambdaPowertoolsTypeScriptV2_22.zip "$LAYER_URL"
 ```
 
-**Step 2 â€” Place it in the cache directory:**
+**Step 2 — Place it in the cache directory:**
 
 ```bash
 mkdir -p .overcast/layers
 mv AWSLambdaPowertoolsTypeScriptV2_22.zip .overcast/layers/
 ```
 
-The filename convention is `{LayerName}_{Version}.zip` â€” derived directly from
+The filename convention is `{LayerName}_{Version}.zip` — derived directly from
 the ARN. For example:
 
 | Layer ARN                                                                                         | Expected filename                                    |
@@ -517,13 +517,13 @@ the ARN. For example:
 | `arn:aws:lambda:ap-southeast-2:094274105915:layer:AWSLambdaPowertoolsTypeScriptV2:22`             | `AWSLambdaPowertoolsTypeScriptV2_22.zip`             |
 | `arn:aws:lambda:ap-southeast-2:665172237481:layer:AWS-Parameters-and-Secrets-Lambda-Extension:11` | `AWS-Parameters-and-Secrets-Lambda-Extension_11.zip` |
 
-**Step 3 â€” Mount the directory into the container:**
+**Step 3 — Mount the directory into the container:**
 
-You have two options â€” mount only the layers directory, or mount the whole
+You have two options — mount only the layers directory, or mount the whole
 data directory (which also persists SQLite state across restarts):
 
 ```yaml
-# docker-compose.yml â€” Option A: mount just the layers directory
+# docker-compose.yml — Option A: mount just the layers directory
 services:
   overcast:
     image: overcast:dev
@@ -533,7 +533,7 @@ services:
 ```
 
 ```yaml
-# docker-compose.yml â€” Option B: mount the whole data directory
+# docker-compose.yml — Option B: mount the whole data directory
 services:
   overcast:
     image: overcast:dev
@@ -547,7 +547,7 @@ appear at `/data/layers/` inside the container. As a bonus, persistent state
 (SQLite) also survives container restarts.
 
 On the next invocation, Overcast finds the layer in the cache and injects it
-into `/opt` â€” no AWS credentials required, no env var to set.
+into `/opt` — no AWS credentials required, no env var to set.
 
 For foreign-account layer ARNs, the same cache lookup also satisfies Overcast's
 invoke-time layer existence check. You do not need to publish a local replacement
@@ -575,7 +575,7 @@ services:
 ```
 
 These are **separate** from the `AWS_ACCESS_KEY_ID=test` credentials used by
-Overcast's own APIs â€” they are only used for layer downloads and never leak to
+Overcast's own APIs — they are only used for layer downloads and never leak to
 Lambda containers.
 
 Once fetched, layers are cached on disk (in `LAMBDA_LAYER_CACHE_DIR` or the
@@ -609,7 +609,7 @@ warm container.
 Logs API subscriptions support HTTP destinations for `platform`, `function`,
 and `extension` log types. Function stdout/stderr is delivered as `function`
 records; the synthesized invocation records are delivered as `platform`
-records â€” the START/END/REPORT lines under the Text log format, the JSON
+records — the START/END/REPORT lines under the Text log format, the JSON
 events under JSON. Subscribers receive **every** record regardless of
 `ApplicationLogLevel` and `SystemLogLevel`, which only filter CloudWatch Logs
 and the invoke tail; see [Log format and log levels](#log-format-and-log-levels).
@@ -625,13 +625,13 @@ SDK calls that address resources by name.
 
 It is **not** enough for SQS. AWS SDKs resolve the SQS endpoint from the
 `QueueUrl` rather than from client configuration, and `AWS_ENDPOINT_URL` loses
-to it â€” see [SQS: queue URLs and endpoint resolution](sqs.md#queue-urls-and-endpoint-resolution).
+to it — see [SQS: queue URLs and endpoint resolution](sqs.md#queue-urls-and-endpoint-resolution).
 A queue URL minted on the host and passed into a function (a CDK stack writing
 `queue.queueUrl` into function environment) would send the function's SQS client
 to its own loopback. Three things keep that working:
 
-1. **URLs the function requests itself** â€” `CreateQueue`, `GetQueueUrl`,
-   `ListQueues` â€” come back on the origin the function called in on, so they are
+1. **URLs the function requests itself** — `CreateQueue`, `GetQueueUrl`,
+   `ListQueues` — come back on the origin the function called in on, so they are
    dialable by definition.
 2. **Loopback URLs in function environment** are rewritten at container start:
    any `http://localhost:<overcast-port>` or `http://127.0.0.1:<overcast-port>`
@@ -855,20 +855,20 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_\*\*     | Max concurrent Docker-backed Lambda container starts    |
 | `LAMBDA_MAX_INSTANCES`                | _(auto)_\*\*     | Max containers across all functions                     |
 | `LAMBDA_MAX_INSTANCES_PER_FUNCTION`   | _(auto)_\*\*     | Max concurrent containers for one function              |
-| `LAMBDA_MAX_MEMORY_MB`                | _(auto)_\*\*     | Aggregate Î£ `MemorySize` budget for live containers, MB |
+| `LAMBDA_MAX_MEMORY_MB`                | _(auto)_\*\*     | Aggregate Σ `MemorySize` budget for live containers, MB |
 | `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
 | `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every currently-supported runtime image at startup |
 | `LAMBDA_TAR_CACHE_MB`                 | `256`            | In-memory cache of pre-built code/layer tars (0 = off)  |
 | `LAMBDA_PROACTIVE_INIT`               | `false`          | Pre-initialize an environment after config settles      |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
-| `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | â€”                | AWS access key for remote layer downloads               |
-| `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | â€”                | AWS secret key for remote layer downloads               |
-| `LAMBDA_REMOTE_AWS_SESSION_TOKEN`     | â€”                | AWS session token for remote layer downloads (optional) |
+| `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | —                | AWS access key for remote layer downloads               |
+| `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | —                | AWS secret key for remote layer downloads               |
+| `LAMBDA_REMOTE_AWS_SESSION_TOKEN`     | —                | AWS session token for remote layer downloads (optional) |
 
 \* Resolves to `{OVERCAST_DATA_DIR}/layers`. In the standard Docker image
 `OVERCAST_DATA_DIR=/data`, so layers are read from `/data/layers`.
 
-\*\* Derived from the Docker host when unset â€” see
+\*\* Derived from the Docker host when unset — see
 [Limits](#limits) for the formulas and fixed fallbacks.
 
 ### Proactive initialization
@@ -877,9 +877,9 @@ AWS documents that Lambda "may proactively initialize execution
 environments" ahead of traffic; with `LAMBDA_PROACTIVE_INIT=true` Overcast
 mirrors that. Ten seconds after a function's code or configuration stops
 changing (so a CDK deploy's create-then-update burst collapses into one
-attempt), one execution environment is created in the background â€” for
+attempt), one execution environment is created in the background — for
 functions that have been invoked this session or have a function URL or
-event source mapping â€” so the next request lands warm. The environment
+event source mapping — so the next request lands warm. The environment
 reports `AWS_LAMBDA_INITIALIZATION_TYPE=on-demand` and its first REPORT line
 carries no `Init Duration`, exactly like a proactively initialized
 environment on AWS. Creation only proceeds when capacity is idle: it never
@@ -891,21 +891,21 @@ and the environment ages out through the normal idle sweep.
 ## Deleting a version, and where tags live
 
 `DeleteFunction` means two different things depending on whether you pass a
-qualifier â€” either as `?Qualifier=` or inside the function name itself
+qualifier — either as `?Qualifier=` or inside the function name itself
 (`my-function:2`):
 
 | Request                                            | Effect                                                                        |
 | -------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `DELETE /functions/my-function`                     | Deletes the function, its package and its resource policies                    |
 | `DELETE /functions/my-function?Qualifier=2`         | Deletes **only** published version 2, its qualified policy and its provisioned concurrency |
-| `DELETE /functions/my-function?Qualifier=$LATEST`   | `400 InvalidParameterValueException` â€” `$LATEST` only goes with the function   |
+| `DELETE /functions/my-function?Qualifier=$LATEST`   | `400 InvalidParameterValueException` — `$LATEST` only goes with the function   |
 | Qualifier naming a version an alias points at       | `409 ResourceConflictException` naming the aliases                             |
-| Qualifier naming an alias                           | `409 ResourceConflictException` â€” `DeleteFunction` never deletes an alias      |
+| Qualifier naming an alias                           | `409 ResourceConflictException` — `DeleteFunction` never deletes an alias      |
 | Qualifier naming neither                            | `404 ResourceNotFoundException`                                                |
 
 A qualified delete never touches `$LATEST`, the function record, other
 versions, aliases or unqualified policies, and it does not rewind the version
-counter â€” AWS never reuses a version number.
+counter — AWS never reuses a version number.
 
 Tags are attached to the **unqualified** function ARN, never to a version or an
 alias, so `TagResource`, `UntagResource` and `ListTags` reject a qualified ARN
@@ -913,7 +913,7 @@ with `InvalidParameterValueException`. They take an ARN, not a bare function
 name: a name that is not a Lambda ARN fails the `TaggableResource` pattern.
 Event source mappings are taggable through the same three operations, and
 `CreateEventSourceMapping` accepts a `Tags` map so a mapping can be created
-already tagged â€” which is what CloudFormation does on every deploy that carries
+already tagged — which is what CloudFormation does on every deploy that carries
 stack tags. Their tags are stored separately and never appear in
 `EventSourceMappingConfiguration`, which has no `Tags` member, so `ListTags` is
 the only way to read them back.

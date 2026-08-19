@@ -3731,13 +3731,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 1,
-        "text": "docker-compose.yml â€” Option A: mount just the layers directory",
-        "id": "docker-compose-yml-â-option-a-mount-just-the-layers-directory"
+        "text": "docker-compose.yml — Option A: mount just the layers directory",
+        "id": "docker-compose-yml-option-a-mount-just-the-layers-directory"
       },
       {
         "depth": 1,
-        "text": "docker-compose.yml â€” Option B: mount the whole data directory",
-        "id": "docker-compose-yml-â-option-b-mount-the-whole-data-directory"
+        "text": "docker-compose.yml — Option B: mount the whole data directory",
+        "id": "docker-compose-yml-option-b-mount-the-whole-data-directory"
       },
       {
         "depth": 3,
