@@ -55,6 +55,7 @@ import Prism from "@/lib/prism"
 import { LruCache } from "@/lib/lru-cache"
 import { tokenizeToRanges, unpackTokenRanges, type TokenRange } from "@/lib/prism-ranges"
 import { registerTokenHighlights } from "@/lib/highlight-registry"
+import { createWorkerClient } from "@/lib/worker-client"
 import type { HighlightWorkRequest, HighlightWorkResponse } from "@/lib/highlight-worker"
 
 export { applyTokenRanges } from "@/lib/highlight-registry"
@@ -148,60 +149,15 @@ export const SYNC_TOKENIZE_MAX_CHARS = 8_192
 const rangeCache = new LruCache<TokenRange[]>(600_000)
 const inFlightRanges = new Map<string, Promise<TokenRange[]>>()
 
-interface PendingWork {
-  /** Settles the caller's promise AND does the cache/in-flight bookkeeping. */
-  resolve: (ranges: TokenRange[]) => void
-  text: string
-  language: string
-}
-
-// undefined = may (re)spawn; null = unavailable or given up for the session.
-let worker: Worker | null | undefined
-let workerFailures = 0
-// One respawn: a single error (a pathological document, a transient load
+// The correlation/lifecycle machinery lives in the shared kernel
+// (lib/worker-client.ts); this module supplies the semantics. failureLimit 2
+// = one respawn: a single error (a pathological document, a transient load
 // failure) should not cost the whole session its off-thread path, but a
 // worker that fails twice is broken in a way retrying won't fix.
-const WORKER_FAILURE_LIMIT = 2
-const pendingWork = new Map<number, PendingWork>()
-let nextWorkId = 1
-
-function tokenWorker(): Worker | null {
-  if (worker !== undefined) return worker
-  if (typeof Worker === "undefined") {
-    worker = null
-    return worker
-  }
-  // Any failure shape — an uncaught error in the worker, an undeliverable
-  // message either way — retires this worker and resolves whatever was
-  // waiting on it synchronously: nothing may be left hanging un-highlighted,
-  // and the resolve closures carry the bookkeeping so even stranded results
-  // land in the cache.
-  const retire = (created: Worker) => {
-    workerFailures++
-    worker = workerFailures >= WORKER_FAILURE_LIMIT ? null : undefined
-    created.terminate()
-    const stranded = [...pendingWork.values()]
-    pendingWork.clear()
-    for (const work of stranded) work.resolve(tokenizeToRanges(work.text, work.language))
-  }
-  try {
-    const created = new Worker(new URL("./highlight-worker.ts", import.meta.url), {
-      type: "module",
-    })
-    created.onmessage = (event: MessageEvent<HighlightWorkResponse>) => {
-      const work = pendingWork.get(event.data.id)
-      if (!work) return
-      pendingWork.delete(event.data.id)
-      work.resolve(unpackTokenRanges(event.data))
-    }
-    created.onerror = () => retire(created)
-    created.onmessageerror = () => retire(created)
-    worker = created
-  } catch {
-    worker = null
-  }
-  return worker
-}
+const highlightWorker = createWorkerClient<HighlightWorkResponse>({
+  create: () => new Worker(new URL("./highlight-worker.ts", import.meta.url), { type: "module" }),
+  failureLimit: 2,
+})
 
 /**
  * Token spans for `text` under `language`, for `applyTokenRanges`.
@@ -226,27 +182,20 @@ export function requestTokenRanges(
     rangeCache.put(key, ranges, ranges.length)
     return ranges
   }
-  const w = text.length > SYNC_TOKENIZE_MAX_CHARS ? tokenWorker() : null
-  if (w === null) return finish(tokenizeToRanges(text, language))
+  if (text.length <= SYNC_TOKENIZE_MAX_CHARS) return finish(tokenizeToRanges(text, language))
   // The promise NEVER rejects — that is this function's contract, and what
-  // lets callers apply a reply without a rejection path of their own. The
-  // one bookkeeping point is the pendingWork resolve closure: worker replies,
-  // stranded-work recovery, and the cache all flow through `finish`, so an
-  // entry can never stay poisoned in `inFlightRanges`.
-  const id = nextWorkId++
-  let settle!: (ranges: TokenRange[]) => void
-  const work = new Promise<TokenRange[]>((resolve) => {
-    settle = resolve
+  // the kernel guarantees: worker replies, stranded-work recovery (the
+  // fallback below), and failed posts all resolve. Every resolution path
+  // flows through `finish`, so an entry can never stay poisoned in
+  // `inFlightRanges` — and the kernel answers synchronously (no worker,
+  // postMessage threw) exactly where the old code tokenized inline.
+  const outcome = highlightWorker.request<TokenRange[]>({
+    message: (id) => ({ id, text, language }) satisfies HighlightWorkRequest,
+    decode: (reply) => unpackTokenRanges(reply),
+    fallback: () => tokenizeToRanges(text, language),
   })
-  pendingWork.set(id, { resolve: (ranges) => settle(finish(ranges)), text, language })
+  if (!outcome.async) return finish(outcome.value)
+  const work = outcome.promise.then(finish)
   inFlightRanges.set(key, work)
-  try {
-    w.postMessage({ id, text, language } satisfies HighlightWorkRequest)
-  } catch {
-    // A terminated or unusable worker throws synchronously: unwind this
-    // request's bookkeeping and answer on the main thread instead.
-    pendingWork.delete(id)
-    return finish(tokenizeToRanges(text, language))
-  }
   return work
 }
