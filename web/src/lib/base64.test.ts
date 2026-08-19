@@ -35,6 +35,6 @@ describe("decodeBase64Text", () => {
     // `hi`, an unpaired continuation byte, `there` — one bad byte in the middle.
     const bytes = new Uint8Array([0x68, 0x69, 0xff, 0x74, 0x68, 0x65, 0x72, 0x65])
     const encoded = btoa(String.fromCharCode(...bytes))
-    expect(decodeBase64Text(encoded)).toBe("hi�there")
+    expect(decodeBase64Text(encoded)).toBe("hi�there") // encoding-check:allow
   })
 })

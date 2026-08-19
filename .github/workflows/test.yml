@@ -473,6 +473,12 @@ jobs:
             python3 "$t" || status=1
           done
           exit "$status"
+      # Mojibake, stray BOMs, and U+FFFD in tracked text files — the class of
+      # damage a CP1252 write leaves behind (PR #1065 removed 219 instances
+      # that had reached shipped UI strings). Fails on any new instance;
+      # `--fix` repairs locally.
+      - name: Encoding lint
+        run: python3 scripts/check_encoding.py
 
   # The compat suites carry unit tests, and until this job nothing ran them.
   #
