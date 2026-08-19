@@ -527,6 +527,25 @@ Steady-state rendering is byte-identical to before — the deferral only exists 
 where rows are being churned. Pinned by `log-message.test.tsx`: no token spans mid-scroll,
 same text/classes, hydrate on settle, markup survives the next scroll.
 
+Verified against the reporting user's real database (207 events, ~460 highlight spans per
+row at rest): mid-scroll a fling mounted 125 fresh rows with **zero spans, zero buttons, max
+7 elements each**; 400 ms after settling, every mounted row had its buttons and every JSON
+row its highlight. Two follow-ups came out of that session:
+
+- **Hydration is gated by viewport proximity, not just settling** (`nearViewport`, same
+  module). The settle latch alone hydrates every *mounted* row in one commit — and with
+  Format on, this stream's rows pretty-print to thousands of spans each, so a 30-row
+  overscan window hydrating at once was a six-figure node insertion that froze the tab.
+  Rows hydrate when the scroll is idle AND they sit within about two viewports; the latch
+  still keeps them hydrated afterwards. (`LogMessage`'s prop is `defer` — the caller passes
+  `isScrolling || !nearViewport(...)`.) Overscan rose 15 → 30 in the same change: mounts
+  are ~7 nodes now, so the headroom that kills blank track during flings is nearly free.
+- **Wrap mode gained `min-w-0` on the message `<pre>`** (a flex item): min-width:auto pins
+  a flex item to min-content width and break-word does not lower min-content, so one
+  whitespace-free Powertools error dump forced a ~42,000px scroller under a 2,700px
+  viewport. Live-patching confirmed exactly-viewport width after; no-wrap mode keeps the
+  wide scroller deliberately.
+
 Answer to "is React the hindrance?": no — measured. App JS was ~6% of the main thread; the
 cost was DOM node volume, which a vanilla or canvas rewrite would pay differently but a
 framework swap would not remove (a hand-rolled list inserting the same 300-span rows feeds

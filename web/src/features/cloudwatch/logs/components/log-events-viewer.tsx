@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 import { CopyButton } from "@/components/ui/copy-button"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
-import { useScrollSettled } from "@/hooks/use-scroll-settled"
+import { nearViewport, useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   logsFilterInfiniteQueryOptions,
   logsStreamsQueryOptions,
@@ -318,9 +318,11 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
 
   // Mid-scroll, rows mount light: no syntax-highlight spans, no action
   // buttons — the things every document observer (extension form-walkers,
-  // the accessibility tree) pays for per node. Each row hydrates itself when
-  // this settles; see `useScrollSettled`. The flag's flips already re-render
-  // this component via the virtualizer's onChange.
+  // the accessibility tree) pays for per node. Each row hydrates itself once
+  // the scroll settles AND it sits near the viewport (`nearViewport` — far
+  // overscan rows hydrating all at once is what froze a Format-mode stream
+  // of pretty-printed documents). The flag's flips already re-render this
+  // component via the virtualizer's onChange.
   const scrolling = virtualizer.isScrolling
 
   // Entering or leaving collapse mode — and expanding or collapsing one row —
@@ -1033,6 +1035,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                 const isAnchor = anchorExact && anchorIndex >= 0 && virtualRow.index === anchorIndex
                 const rowKey = logEventKey(evt)
                 const rowCollapsed = collapseMode && !expandedKeys.has(rowKey)
+                const rowDefer = scrolling || !nearViewport(virtualRow, virtualizer)
                 const isFocused = focusedKey != null && focusedKey === rowKey
                 const deepLink = eventDeepLink(groupName, evt)
                 // The chronological predecessor, by index in the display
@@ -1126,7 +1129,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                             filterMatcher={filterMatcher}
                             level={meta.level}
                             collapsed={rowCollapsed}
-                            scrolling={scrolling}
+                            defer={rowDefer}
                           />
                         </div>
                       </>
@@ -1143,7 +1146,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                           level={meta.level}
                           hideLevel
                           collapsed={rowCollapsed}
-                          scrolling={scrolling}
+                          defer={rowDefer}
                         />
                       </div>
                     )}
@@ -1152,7 +1155,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                       deepLink={deepLink}
                       plain={meta.plain}
                       onRequestIdFilter={handleRequestIdFilter}
-                      scrolling={scrolling}
+                      defer={rowDefer}
                     />
                   </div>
                 )
@@ -1221,15 +1224,15 @@ const RowActions = memo(function RowActions({
   deepLink,
   plain,
   onRequestIdFilter,
-  scrolling,
+  defer,
 }: {
   requestId: string | null
   deepLink: string | null
   plain: string
   onRequestIdFilter: (e: React.MouseEvent<HTMLButtonElement>) => void
-  scrolling: boolean
+  defer: boolean
 }) {
-  const settled = useScrollSettled(scrolling)
+  const settled = useScrollSettled(defer)
   return (
     <div className="flex w-16 shrink-0 items-start justify-end gap-0.5 pt-1.5 pr-1">
       {settled && (

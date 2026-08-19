@@ -103,7 +103,7 @@ export const LogMessage = memo(function LogMessage({
   level,
   hideLevel = false,
   collapsed = false,
-  scrolling = false,
+  defer = false,
   sizeClassName = "text-[11px]",
 }: {
   prefix?: string
@@ -125,17 +125,19 @@ export const LogMessage = memo(function LogMessage({
    */
   collapsed?: boolean
   /**
-   * The owning virtualizer is mid-scroll. A row mounted now defers its
-   * syntax-highlight markup — hundreds of spans per JSON document — and
-   * renders the same text plain until the scroll settles; the text is
-   * identical, so the swap changes colour, never layout. See
-   * `useScrollSettled` for why.
+   * Defer the expensive rendering: while true, a syntax-highlighted message
+   * renders its text plain — one text node instead of hundreds of spans —
+   * and hydrates the markup on the first render where `defer` is false,
+   * never shedding it again. The text is identical either way, so the swap
+   * changes colour, never layout. Callers pass `scrolling || !nearViewport`:
+   * mid-scroll mounts stay cheap, and far-overscan rows wait until they
+   * approach the viewport. See `useScrollSettled` for the numbers.
    */
-  scrolling?: boolean
+  defer?: boolean
   /** Font-size class; the surfaces render at different densities. */
   sizeClassName?: string
 }) {
-  const settled = useScrollSettled(scrolling)
+  const settled = useScrollSettled(defer)
   const jsonText = useMemo(() => {
     if (collapsed) return null
     if (!formatted && !syntaxHighlight) return null
@@ -198,7 +200,9 @@ export const LogMessage = memo(function LogMessage({
           // Same element, same classes, same text — the un-highlighted stand-in
           // occupies exactly the pixels the highlighted version will, so the
           // hydration swap never moves a measured row.
-          <pre className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}>
+          <pre
+            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+          >
             {jsonText}
           </pre>
         )}
@@ -211,7 +215,11 @@ export const LogMessage = memo(function LogMessage({
     <div className="flex items-start gap-1.5">
       {level && !hideLevel && <LevelBadge level={level} />}
       <pre
-        className={cn("font-mono leading-relaxed text-fg", sizeClassName, messageWrapClass(wrapLines))}
+        className={cn(
+          "font-mono leading-relaxed text-fg",
+          sizeClassName,
+          messageWrapClass(wrapLines),
+        )}
       >
         <AnsiText
           text={displayText}

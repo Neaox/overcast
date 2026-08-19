@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
 import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { nearViewport } from "@/hooks/use-scroll-settled"
 import { LogMessage } from "./log-message"
 
 export interface LogViewerEvent {
@@ -139,7 +140,7 @@ export function LogViewer({
                   event={events[virtualRow.index]}
                   mode={mode}
                   formatted={formatted}
-                  scrolling={virtualizer.isScrolling}
+                  defer={virtualizer.isScrolling || !nearViewport(virtualRow, virtualizer)}
                 />
               </div>
             ))}
@@ -175,13 +176,13 @@ const LogViewerRow = memo(function LogViewerRow({
   event,
   mode,
   formatted,
-  scrolling,
+  defer,
 }: {
   event: LogViewerEvent
   mode: "table" | "plain"
   formatted: boolean
-  /** Mid-scroll rows defer their highlight spans — see `LogMessage`. */
-  scrolling: boolean
+  /** Mid-scroll and far-overscan rows defer their highlight spans — see `LogMessage`. */
+  defer: boolean
 }) {
   const { level, summary } = describeLogEvent(event)
 
@@ -199,7 +200,7 @@ const LogViewerRow = memo(function LogViewerRow({
       filterMatcher={null}
       level={level}
       hideLevel
-      scrolling={scrolling}
+      defer={defer}
       sizeClassName="text-[10px]"
     />
   )

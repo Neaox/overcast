@@ -11,7 +11,7 @@ import { LogMessage } from "./log-message"
 
 const JSON_MESSAGE = '{"level":"error","msg":"boom","attempt":3}'
 
-function renderMessage(scrolling: boolean) {
+function renderMessage(defer: boolean) {
   return render(
     <LogMessage
       message={JSON_MESSAGE}
@@ -20,7 +20,7 @@ function renderMessage(scrolling: boolean) {
       wrapLines={false}
       filterMatcher={null}
       level="error"
-      scrolling={scrolling}
+      defer={defer}
     />,
   )
 }
@@ -57,7 +57,7 @@ describe("LogMessage scroll-time highlight deferral", () => {
         wrapLines={false}
         filterMatcher={null}
         level="error"
-        scrolling={false}
+        defer={false}
       />,
     )
     const hydrated = tokenCount(view.container)
@@ -74,7 +74,7 @@ describe("LogMessage scroll-time highlight deferral", () => {
         wrapLines={false}
         filterMatcher={null}
         level="error"
-        scrolling
+        defer
       />,
     )
     expect(tokenCount(view.container)).toBe(hydrated)
@@ -109,7 +109,7 @@ describe("LogMessage scroll-time highlight deferral", () => {
         wrapLines={false}
         filterMatcher={null}
         level={null}
-        scrolling
+        defer
       />,
     )
     expect(container.textContent).toContain("plain text line")
