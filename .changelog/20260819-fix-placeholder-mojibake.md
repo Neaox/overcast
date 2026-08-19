@@ -1,1 +1,0 @@
-* [cloudwatch/web] the log viewer's filter placeholder and footer notices no longer show mojibake (`â€”` for an em dash) — the strings, along with comments in the Lambda service doc and two test files, had been double-encoded by a bad write; the doc's navigation anchors regenerate cleanly as a side effect
