@@ -116,6 +116,8 @@ const live = vi.hoisted(() => {
     streams: [] as { logStreamName: string; firstEventTimestamp?: number }[],
     /** When set, time-bounded FilterLogEvents calls wait on it before replying. */
     gate: null as Promise<void> | null,
+    /** When set, every FilterLogEvents call rejects with it. */
+    filterError: null as Error | null,
     filterCalls: 0,
     /** Every FilterLogEvents input, for asserting on window boundaries. */
     filterInputs: [] as { nextToken?: string; startTime?: number; endTime?: number }[],
@@ -125,6 +127,7 @@ const live = vi.hoisted(() => {
       this.pages = []
       this.streams = []
       this.gate = null
+      this.filterError = null
       this.filterCalls = 0
       this.filterInputs = []
     },
@@ -142,6 +145,7 @@ vi.mock("@/services/aws-clients", () => ({
           live.filterCalls++
           const input = command.input ?? {}
           live.filterInputs.push({ ...input })
+          if (live.filterError) return Promise.reject(live.filterError)
           const respond = () => {
             const events = input.nextToken
               ? (live.pages.shift() ?? [])
@@ -320,6 +324,73 @@ describe("LogEventsViewer > pagination", () => {
     expect(await screen.findByText(/page three/)).toBeInTheDocument()
     await waitFor(() => expect(live.filterCalls).toBe(3))
     expect(screen.getByText(/^3 events$/)).toBeInTheDocument()
+  })
+})
+
+/*
+ * A ResourceNotFoundException is an answer, not an absence: the group (or
+ * stream) does not exist in the region the console points at. These used to
+ * render the ordinary "No log events" empty state, so opening a stream URL
+ * with the region selector on the wrong region read as "your app never
+ * logged" instead of "look at the region selector".
+ */
+describe("LogEventsViewer > load failures", () => {
+  function awsError(name: string, message: string): Error {
+    const error = new Error(message)
+    error.name = name
+    return error
+  }
+
+  function renderFailing(streamName?: string) {
+    return renderWithRouter(
+      () => (
+        <Providers>
+          <LogEventsViewer groupName={GROUP} streamName={streamName} />
+        </Providers>
+      ),
+      { queryClient: createTestQueryClient() },
+    )
+  }
+
+  it("shows a not-found state naming the group and region, never the empty-stream state", async () => {
+    live.reset()
+    live.filterError = awsError(
+      "ResourceNotFoundException",
+      `The specified log group does not exist: ${GROUP}`,
+    )
+
+    renderFailing("s1")
+
+    expect(await screen.findByText("Log group not found")).toBeInTheDocument()
+    expect(
+      screen.getByText(/No log group named .*checkout.* exists in us-east-1/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("No log events")).not.toBeInTheDocument()
+  })
+
+  it("names the stream instead when the group exists and the stream is what is missing", async () => {
+    live.reset()
+    live.filterError = awsError(
+      "ResourceNotFoundException",
+      "The specified log stream does not exist: s1",
+    )
+
+    renderFailing("s1")
+
+    expect(await screen.findByText("Log stream not found")).toBeInTheDocument()
+    expect(screen.getByText(/no stream named .*s1.* in us-east-1/i)).toBeInTheDocument()
+    expect(screen.queryByText("No log events")).not.toBeInTheDocument()
+  })
+
+  it("surfaces any other query failure rather than reading as an empty stream", async () => {
+    live.reset()
+    live.filterError = new Error("connection reset by peer")
+
+    renderFailing()
+
+    expect(await screen.findByText("Failed to load log events")).toBeInTheDocument()
+    expect(screen.getByText("connection reset by peer")).toBeInTheDocument()
+    expect(screen.queryByText("No log events")).not.toBeInTheDocument()
   })
 })
 

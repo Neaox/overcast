@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowDownUp,
   ArrowLeft,
@@ -30,6 +31,8 @@ import { JumpToTimestamp } from "@/features/cloudwatch/logs/components/jump-to-t
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { useEndpoint } from "@/hooks/use-endpoint"
+import { isResourceNotFound } from "@/lib/aws-error"
 import { cn } from "@/lib/utils"
 import { describeLogEvent, formatLogDelta, formatLogTime, logLevelRowClass } from "@/lib/log-format"
 import { LiveTailIndicator } from "@/components/logs/live-tail-indicator"
@@ -215,6 +218,8 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   // "older" means widening the window's start).
   const {
     data,
+    error,
+    isError,
     isLoading,
     isFetching,
     refetch,
@@ -670,6 +675,26 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   ) : (
     "All streams in this log group"
   )
+  // A ResourceNotFoundException is an answer, not an absence: the group (or
+  // stream) does not exist in the region the console points at. Real AWS's
+  // console shows a not-found error here, and rendering the "no events yet"
+  // empty state instead reads as "your app never logged" — the wrong-region
+  // trap. Which resource is missing comes from the server's message, because
+  // a stream URL can 404 on either: the group as a whole, or just the stream.
+  const { region } = useEndpoint()
+  const errorMessage = error instanceof Error ? error.message : undefined
+  const notFound = isResourceNotFound(error)
+  const notFoundState =
+    streamName != null && /log stream/i.test(errorMessage ?? "")
+      ? {
+          title: "Log stream not found",
+          description: `Log group "${groupName}" has no stream named "${streamName}" in ${region}.`,
+        }
+      : {
+          title: "Log group not found",
+          description: `No log group named "${groupName}" exists in ${region} — it may live in a different region. Check the region selector.`,
+        }
+
   // An emptied buffer is not an empty log group, and saying so would read as a
   // bug in whatever the user is debugging.
   const emptyState =
@@ -967,6 +992,22 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
         <div className="flex justify-center py-16">
           <Spinner className="h-6 w-6" />
         </div>
+      ) : notFound ? (
+        <EmptyState
+          icon={<AlertTriangle className="h-10 w-10" />}
+          title={notFoundState.title}
+          description={notFoundState.description}
+        />
+      ) : isError && events.length === 0 ? (
+        // Any other failure with nothing on screen: an error rendered as the
+        // ordinary empty state would read as an empty stream. With rows
+        // already loaded the rows stay — a failed refetch is a toolbar
+        // concern, not a reason to blank the screen.
+        <EmptyState
+          icon={<AlertTriangle className="h-10 w-10" />}
+          title="Failed to load log events"
+          description={errorMessage ?? "Please try again."}
+        />
       ) : events.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
