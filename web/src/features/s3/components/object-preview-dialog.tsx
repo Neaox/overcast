@@ -15,7 +15,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { HighlightedCode } from "@/components/ui/highlighted-code"
 import { Spinner, CodeBlock } from "@/components/ui/primitives"
+import { cn } from "@/lib/utils"
 import { formatBytes, formatDate } from "@/lib/format"
 import { describeObjectReadError } from "@/features/s3/object-read-error"
 import { formatPreviewText, isImagePreviewable, isTextPreviewable } from "./object-preview-format"
@@ -138,23 +140,29 @@ export function ObjectPreviewDialog({
               <div className="min-h-0 overflow-hidden rounded-lg border border-border bg-bg-muted">
                 <div className="border-b border-border px-3 py-2 text-xs font-medium text-fg-muted">
                   Preview{previewText?.truncated ? " (first 1 MiB)" : ""}
-                  {formattedPreview?.highlightSkipped
-                    ? " — shown as plain text; too large to format"
-                    : ""}
+                  {formattedPreview?.skipped ? " — shown as plain text; too large to format" : ""}
                 </div>
                 {previewLoading ? (
                   <div className="flex justify-center py-8">
                     <Spinner />
                   </div>
-                ) : formattedPreview?.html ? (
-                  <pre
-                    className="max-h-[55vh] overflow-auto p-3 font-mono text-xs leading-relaxed whitespace-pre text-fg"
-                    dangerouslySetInnerHTML={{ __html: formattedPreview.html }}
-                  />
                 ) : (
-                  <pre className="max-h-[55vh] overflow-auto p-3 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-fg">
-                    {formattedPreview?.text ?? ""}
-                  </pre>
+                  <HighlightedCode
+                    text={formattedPreview?.text ?? ""}
+                    language={formattedPreview?.language ?? null}
+                    className={cn(
+                      "max-h-[55vh] overflow-auto p-3 font-mono text-xs leading-relaxed text-fg",
+                      // Policy, not accident (kept from the dialog's first
+                      // commit): a document we chose a language for is code —
+                      // it keeps its line shape and scrolls horizontally —
+                      // while arbitrary plain text wraps. The skipped case
+                      // (a 1 MiB minified bundle) lands in the wrapped branch,
+                      // where it would otherwise be one mile-wide line.
+                      formattedPreview?.language != null
+                        ? "whitespace-pre"
+                        : "wrap-break-word whitespace-pre-wrap",
+                    )}
+                  />
                 )}
               </div>
             )}

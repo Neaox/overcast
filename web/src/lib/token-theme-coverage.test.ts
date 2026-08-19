@@ -18,12 +18,25 @@ import { readFileSync } from "node:fs"
 import { grammarTokenClasses } from "./prism-ranges"
 import {
   COVERED_TOKEN_LANGUAGES,
+  PARITY_TOKEN_LANGUAGES,
   TOKEN_COLOR_CLASSES,
   TOKEN_HIGHLIGHT_PREFIX,
   resolveTokenColorClass,
 } from "./highlight-registry"
 
 const css = readFileSync("src/styles/syntax-tokens.css", "utf8")
+
+/** Every class syntax-tokens.css gives a `.token.*` colour rule. */
+const markupThemedClasses = new Set(
+  [...css.matchAll(/^\s*\.token\.([a-z-]+) \{/gm)].map((m) => m[1]),
+)
+
+/** Every class syntax-tokens.css gives a `::highlight()` colour rule. */
+const rangesThemedClasses = new Set(
+  [...css.matchAll(new RegExp(`::highlight\\(${TOKEN_HIGHLIGHT_PREFIX}([a-z-]+)\\)`, "g"))].map(
+    (m) => m[1],
+  ),
+)
 
 describe("grammar coverage", () => {
   for (const language of COVERED_TOKEN_LANGUAGES) {
@@ -38,6 +51,39 @@ describe("grammar coverage", () => {
       ).toEqual([])
     })
   }
+})
+
+describe("grammar parity (S3 preview languages)", () => {
+  // These grammars ship under the weaker contract (see PARITY_TOKEN_LANGUAGES):
+  // a class themed in neither backend renders uncoloured identically in both,
+  // which is exactly what it did under the markup backend before the S3
+  // preview adopted the kernel — but a class themed in only ONE backend would
+  // make switching backends change colours, which is the bug this pins out.
+  for (const language of PARITY_TOKEN_LANGUAGES) {
+    it(`colours every ${language} token class identically in both backends`, () => {
+      const classes = grammarTokenClasses(language)
+      expect(classes.size).toBeGreaterThan(0)
+      const divergent = [...classes].filter(
+        (cls) => markupThemedClasses.has(cls) !== rangesThemedClasses.has(cls),
+      )
+      expect(
+        divergent,
+        `token classes themed in one backend but not the other: ${divergent.join(", ")} — ` +
+          "a .token.* rule and a ::highlight() rule must come and go together",
+      ).toEqual([])
+      // And the ranges backend's resolver agrees with the stylesheet about
+      // which classes are themed at all — a rule without list membership (or
+      // the reverse) would colour markup but never ranges.
+      const resolverDivergent = [...classes].filter(
+        (cls) => markupThemedClasses.has(cls) !== (resolveTokenColorClass(cls) !== null),
+      )
+      expect(resolverDivergent, "stylesheet and TOKEN_COLOR_CLASSES disagree").toEqual([])
+    })
+  }
+
+  it("pairs every .token.* rule with a ::highlight() rule and vice versa, globally", () => {
+    expect([...markupThemedClasses].sort()).toEqual([...rangesThemedClasses].sort())
+  })
 })
 
 describe("token colour classes in syntax-tokens.css", () => {

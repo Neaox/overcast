@@ -9,17 +9,10 @@
  * tells that story for the helpers); this is the component-level counterpart.
  */
 
-import { memo, useRef } from "react"
+import { memo } from "react"
 import { cn } from "@/lib/utils"
-import { HIGHLIGHT_PRESENTATION } from "@/lib/highlight-code"
-import { useHighlightRanges } from "@/hooks/use-highlight-ranges"
-import { useScrollSettled } from "@/hooks/use-scroll-settled"
-import {
-  highlightJSON,
-  jsonDocumentText,
-  logLevelBadgeClass,
-  type LogLevel,
-} from "@/lib/log-format"
+import { HighlightedCode } from "@/components/ui/highlighted-code"
+import { jsonDocumentText, logLevelBadgeClass, type LogLevel } from "@/lib/log-format"
 import { AnsiText } from "./ansi-text"
 
 /**
@@ -137,7 +130,6 @@ export const LogMessage = memo(function LogMessage({
   /** Font-size class; the surfaces render at different densities. */
   sizeClassName?: string
 }) {
-  const settled = useScrollSettled(defer)
   // The formatting pass, memoised across mounts and toggles by log-format's
   // LRU (see `jsonDocumentText`) — a remounted row or a Format flip-back is a
   // map hit, not a parse. ANSI stripping and the "is this one JSON document"
@@ -155,14 +147,6 @@ export const LogMessage = memo(function LogMessage({
       ? jsonText
       : withPrefix(message)
   const showSyntax = !asSummary && syntaxHighlight && jsonText
-  // Where the browser has the CSS Custom Highlight API, a highlighted row is
-  // ONE text node and token colour arrives as ranges — no spans to mount, so
-  // the `defer` latch gates only the (mutation-free) range application, not
-  // the DOM. Elsewhere the markup path below renders exactly what it always
-  // has.
-  const ranges = HIGHLIGHT_PRESENTATION === "ranges"
-  const preRef = useRef<HTMLPreElement>(null)
-  useHighlightRanges(preRef, ranges && settled && showSyntax ? jsonText : null, "json")
 
   if (collapsed) {
     // `truncate` is what enforces the single line: nowrap turns any embedded
@@ -196,25 +180,12 @@ export const LogMessage = memo(function LogMessage({
             {prefix}
           </span>
         )}
-        {ranges || !settled ? (
-          // One text node, whichever reason: under the ranges presentation
-          // the text node IS the rendering (settled or not — colour arrives
-          // as ranges via `useHighlightRanges`, zero DOM mutation), and under
-          // markup a deferred row renders the same pixels un-highlighted
-          // until it settles. Identical element and classes either way, so
-          // no swap can move a measured row.
-          <pre
-            ref={ranges ? preRef : undefined}
-            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
-          >
-            {jsonText}
-          </pre>
-        ) : (
-          <pre
-            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
-            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}
-          />
-        )}
+        <HighlightedCode
+          text={jsonText}
+          language="json"
+          defer={defer}
+          className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+        />
       </div>
     )
   }
