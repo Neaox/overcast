@@ -75,6 +75,19 @@ export const TOKEN_COLOR_CLASSES = [
  */
 export const COVERED_TOKEN_LANGUAGES = ["json"] as const
 
+/**
+ * Languages the ranges backend serves under the weaker *markup-parity*
+ * contract instead: every token class the grammar can emit must colour
+ * identically in both backends — themed in both or themed in neither — but
+ * need not be themed at all. These grammars (the S3 object preview's) emit
+ * dozens of classes the theme never coloured under the markup backend
+ * either; demanding total coverage would force inventing a palette for
+ * classes no surface has ever painted, while parity keeps the true promise:
+ * switching backends changes zero colours. Promote a language to
+ * `COVERED_TOKEN_LANGUAGES` when its theming is meant to be exhaustive.
+ */
+export const PARITY_TOKEN_LANGUAGES = ["markup", "css", "javascript"] as const
+
 const colorClassIndex: ReadonlyMap<string, number> = new Map(
   TOKEN_COLOR_CLASSES.map((cls, index) => [cls, index]),
 )

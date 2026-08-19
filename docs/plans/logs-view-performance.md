@@ -564,7 +564,9 @@ session's real stream) become zero, for every document observer that §2b/§3e
 showed charging per node. Where the API is missing, the cached Prism markup
 path renders byte-identically to before.
 
-Shape (a kernel, not a logs feature — the S3 preview can adopt it unchanged):
+Shape (a kernel, not a logs feature — the S3 preview adopted it 2026-08-20
+through the shared `HighlightedCode` component; see the known-and-accepted
+list below):
 
 - **Facade** `web/src/lib/highlight-code.ts`: the whole detection matrix, the
   markup backend (unchanged LRU: 400 entries / 100 KB cap), and the ranges
@@ -688,9 +690,21 @@ severity:
 Known-and-accepted from the same review: live `Range` objects carry per-DOM-
 mutation fix-up cost while rows are mounted (a `StaticRange` swap needs
 cross-browser paint verification before it can be trusted — follow-up, not a
-silent change); the S3 preview's adoption needs a `FormattedPreview` shape
+silent change); ~~the S3 preview's adoption needs a `FormattedPreview` shape
 change (`{text, language}` policy instead of pre-rendered html) plus a shared
-rendering component before the "kernel adopts unchanged" promise is real; and
+rendering component before the "kernel adopts unchanged" promise is real~~ —
+done (2026-08-20): `HighlightedCode`
+(web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
+owning the whole presentation fork (ranges pre + hook | settled markup
+innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
+preview both consume it, `FormattedPreview` returns `{text, language,
+skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
+preview's wrap-class split stays deliberate — a language-chosen document
+scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
+preview's grammars (markup/css/javascript) takes the *markup-parity* form
+this review recommended — every token class themed in both backends or in
+neither, pinned per grammar and globally in token-theme-coverage.test.ts —
+while json keeps its stricter total-coverage test. And
 ~~three modules now hand-roll the persistent-worker-client shape
 (docs search, map layout, highlighting) that deserves one shared helper~~ —
 done: `web/src/lib/worker-client.ts` now owns the correlation/lifecycle

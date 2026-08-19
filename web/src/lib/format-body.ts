@@ -34,21 +34,43 @@ export function formatBodyForDisplay(
   if (isFormEncoded(contentType) || (hint === "text" && looksLikeFormEncoded(raw))) {
     return formatFormBody(raw)
   }
+  const { text, language } = formatBodyText(raw, hint, contentType, opts)
+  // Cached (`highlightCode`), so pages that re-render while a body stays
+  // on screen re-use the tokenisation instead of paying Prism each time.
+  if (language !== null) return { text, html: highlightCode(text, language) }
+  return { text }
+}
+
+/**
+ * The pretty-printing half of `formatBodyForDisplay`, as *policy*: the
+ * formatted text plus the Prism language it should highlight as, or null for
+ * text that renders plain (unparseable JSON, an un-hinted body). No HTML is
+ * produced — a consumer rendering through the highlight kernel's shared
+ * component (`HighlightedCode`) hands it the language and lets the kernel
+ * pick a backend, instead of being handed markup it may never use.
+ *
+ * The `MAX_FORMAT_BYTES` gate stays with the callers — they differ on what a
+ * refusal means (`formatBodyForDisplay` renders plain silently, the S3
+ * preview says so).
+ */
+export function formatBodyText(
+  raw: string,
+  hint: BodyLanguage,
+  contentType?: string,
+  opts?: FormatBodyOptions,
+): { text: string; language: "json" | "markup" | null } {
   if (hint === "json" || (hint === "text" && looksLikeJSON(raw))) {
     try {
-      const formatted = JSON.stringify(JSON.parse(raw), null, 2)
-      // Cached (`highlightCode`), so pages that re-render while a body stays
-      // on screen re-use the tokenisation instead of paying Prism each time.
-      return { text: formatted, html: highlightCode(formatted, "json") }
+      return { text: JSON.stringify(JSON.parse(raw), null, 2), language: "json" }
     } catch {
-      return { text: raw }
+      return { text: raw, language: null }
     }
   }
   if (hint === "xml") {
     const formatted = formatXML(raw, opts?.htmlVoidTags ?? isHtmlContentType(contentType))
-    return { text: formatted, html: highlightCode(formatted, "markup") }
+    return { text: formatted, language: "markup" }
   }
-  return { text: raw }
+  return { text: raw, language: null }
 }
 
 function looksLikeJSON(s: string): boolean {
