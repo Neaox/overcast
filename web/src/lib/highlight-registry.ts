@@ -126,19 +126,25 @@ export function resolveTokenColorClass(type: string): string | null {
 
 let registered = false
 
+// Class → the REGISTERED Highlight object, for in-place additions at settle.
+const highlightByClass = new Map<string, Highlight>()
+
 /**
  * Puts one named `Highlight` per themed token class into `CSS.highlights`,
  * so every `::highlight()` name exists from the start. Idempotent; the
- * facade calls it once at module init when the API exists. The named sets
- * are subsequently REPLACED wholesale by `rebuildHighlights`, never mutated
- * range-by-range — see the note on `applyTokenRanges`.
+ * facade calls it once at module init when the API exists.
  */
 export function registerTokenHighlights(): void {
   if (registered) return
   registered = true
   for (const cls of TOKEN_COLOR_CLASSES) {
     const name = TOKEN_HIGHLIGHT_PREFIX + cls
-    if (!CSS.highlights.has(name)) CSS.highlights.set(name, new Highlight())
+    let highlight = CSS.highlights.get(name)
+    if (!highlight) {
+      highlight = new Highlight()
+      CSS.highlights.set(name, highlight)
+    }
+    highlightByClass.set(cls, highlight)
   }
 }
 
@@ -152,9 +158,9 @@ const noopDispose = () => {}
  * continuously, with tens of thousands of token ranges mounted, so that
  * bookkeeping scales with exactly the product this backend exists to shrink.
  * The CSS Highlight API spec recommends `StaticRange` for highlights for
- * this reason, and staleness is a non-issue here by construction: ranges are
- * disposed and re-applied whenever the node's text changes, and
- * `applyTokenRanges` refuses mismatched text outright. Liveness buys nothing.
+ * this reason — and an invalid static range (one whose node has left the
+ * tree) simply does not paint, which the garbage model below leans on
+ * directly.
  *
  * `Highlight` is setlike over `AbstractRange`, so browsers that paint the
  * API accept both forms; the constructor check only covers a hypothetical
@@ -175,68 +181,86 @@ function createTokenRange(node: Text, start: number, end: number): AbstractRange
   return range
 }
 
-/** One row's registered contribution: its text node and its token spans. */
+/** One row's registered contribution, with the range objects it painted. */
 interface RangeApplication {
   node: Text
-  ranges: TokenRange[]
+  /** Parallel arrays: the painted range and the class it resolved to. */
+  appliedRanges: AbstractRange[]
+  appliedClasses: string[]
 }
 
 const liveApplications = new Set<RangeApplication>()
-let rebuildQueued = false
+/** Ranges left behind by disconnected rows, awaiting one lazy sweep. */
+let garbageRanges = 0
+let liveRanges = 0
+let sweepTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
- * Rebuilds every named highlight from the live applications and swaps the
- * fresh sets into `CSS.highlights` — the old sets are discarded wholesale.
+ * Mutation policy, distilled from three Firefox traces of the log stream
+ * viewer (plan doc §3f):
  *
- * This swap-rebuild model exists because per-range mutation of a REGISTERED
- * highlight is what a 31-second Firefox trace showed locking the page up:
- * every `Highlight.delete` against the page-global sets cost work scaling
- * with the set's size (each mutation also invalidates the highlight's
- * paint), so a continuously scrolled stream — hydrated rows unmounting,
- * hundreds of ranges each, sets tens of thousands strong — spent 15 of the
- * 31 seconds inside the dispose loop, degrading with depth. Building fresh,
- * UNREGISTERED sets and swapping them in pays one invalidation per class per
- * flush and issues zero deletes, and the cost is O(live ranges) — bounded by
- * the hydrated viewport, not by how far the user has scrolled.
+ * - Per-range `Highlight.delete` against the page-global sets locked the
+ *   page up — 15 s of a 31 s trace inside the dispose loop, cost scaling
+ *   with set size, quadratic with scroll depth.
+ * - Rebuild-and-swap on every change fixed the deletes but moved the cost
+ *   into `Highlight.add`: a rebuild per scroll commit re-added the whole
+ *   hydrated viewport (~14k ranges) almost every frame — 12.5 s of a 17 s
+ *   trace inside the rebuild.
+ * - What every trace showed Firefox tolerating is *bounded, additive*
+ *   mutation: settle-hydration's in-place adds never dominated.
  *
- * Range objects are recreated per rebuild on purpose: constructing a
- * `StaticRange` measured ~2% of the old per-range cost, and reusing them
- * would mean tracking which survive — bookkeeping whose only beneficiary
- * would be the garbage collector.
+ * So: SCROLLING MUTATES NOTHING. A row that unmounts leaves its ranges in
+ * the registered sets as garbage — its text node is disconnected, and an
+ * invalid static range does not paint, so the garbage is visually inert.
+ * Hydration adds in place, O(the newly settled rows). The one case where a
+ * stale range could paint wrong — a text swap on a node still in the tree
+ * (Format toggles rewrite the same Text node's data in place) — deletes
+ * synchronously, bounded by that one row. Garbage is collected by a single
+ * swap-rebuild (fresh sets from the live rows' existing range objects, no
+ * deletes) after a quiet moment, or opportunistically at the next hydration
+ * once garbage outweighs live ranges.
  */
-function rebuildHighlights(): void {
+const SWEEP_QUIET_MS = 1_000
+
+function sweepGarbage(): void {
+  if (sweepTimer !== null) {
+    clearTimeout(sweepTimer)
+    sweepTimer = null
+  }
+  if (garbageRanges === 0) return
   const fresh = new Map<string, Highlight>()
   for (const application of liveApplications) {
-    const { node, ranges } = application
-    for (const token of ranges) {
-      const cls = resolveTokenColorClass(token.type)
-      if (cls === null) continue
-      let highlight = fresh.get(cls)
+    const { appliedRanges, appliedClasses } = application
+    for (let i = 0; i < appliedRanges.length; i++) {
+      let highlight = fresh.get(appliedClasses[i])
       if (!highlight) {
         highlight = new Highlight()
-        fresh.set(cls, highlight)
+        fresh.set(appliedClasses[i], highlight)
       }
-      highlight.add(createTokenRange(node, token.start, token.end))
+      // Same range object, fresh set — the sweep allocates highlights and
+      // nothing else.
+      highlight.add(appliedRanges[i])
     }
   }
   for (const cls of TOKEN_COLOR_CLASSES) {
-    CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, fresh.get(cls) ?? new Highlight())
+    const highlight = fresh.get(cls) ?? new Highlight()
+    CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, highlight)
+    highlightByClass.set(cls, highlight)
   }
+  garbageRanges = 0
 }
 
-/**
- * One rebuild per microtask flush, however many rows mounted, unmounted, or
- * swapped text in the commit that scheduled it. Microtasks run before the
- * next paint, so a settle that hydrates a whole viewport still colours in
- * the same frame — no colourless flash.
- */
-function scheduleRebuild(): void {
-  if (rebuildQueued) return
-  rebuildQueued = true
-  queueMicrotask(() => {
-    rebuildQueued = false
-    rebuildHighlights()
-  })
+function scheduleSweep(): void {
+  if (sweepTimer !== null) return
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null
+    sweepGarbage()
+  }, SWEEP_QUIET_MS)
+}
+
+/** Test seam: run the lazy sweep now instead of waiting out the quiet timer. */
+export function sweepHighlightGarbageForTests(): void {
+  sweepGarbage()
 }
 
 /**
@@ -247,11 +271,10 @@ function scheduleRebuild(): void {
  * all-or-nothing: a node whose data is not exactly that text gets NO colour,
  * because partially- or mis-aligned colour is worse than none. The guard
  * lives here — not in the calling hook — so every consumer of the kernel
- * inherits it. The caller re-applies (dispose, then apply) whenever the
- * node's text changes.
+ * inherits it.
  *
- * Registration and disposal are O(1) set operations; the painting itself is
- * the coalesced swap-rebuild above.
+ * Painting is additive and immediate (same commit as the text — no
+ * colourless flash); disposal follows the mutation policy above.
  */
 export function applyTokenRanges(
   textNode: Text,
@@ -259,10 +282,39 @@ export function applyTokenRanges(
   tokenRanges: TokenRange[],
 ): () => void {
   if (textNode.data !== text) return noopDispose
-  const application: RangeApplication = { node: textNode, ranges: tokenRanges }
+  // Hydration is the opportunistic sweep point: if scrolling has stranded
+  // more garbage than there are live ranges, collect before adding more.
+  if (garbageRanges > liveRanges) sweepGarbage()
+  const appliedRanges: AbstractRange[] = []
+  const appliedClasses: string[] = []
+  for (const token of tokenRanges) {
+    const cls = resolveTokenColorClass(token.type)
+    if (cls === null) continue
+    const highlight = highlightByClass.get(cls)
+    if (!highlight) continue
+    const range = createTokenRange(textNode, token.start, token.end)
+    highlight.add(range)
+    appliedRanges.push(range)
+    appliedClasses.push(cls)
+  }
+  const application: RangeApplication = { node: textNode, appliedRanges, appliedClasses }
   liveApplications.add(application)
-  scheduleRebuild()
+  liveRanges += appliedRanges.length
   return () => {
-    if (liveApplications.delete(application)) scheduleRebuild()
+    if (!liveApplications.delete(application)) return
+    liveRanges -= application.appliedRanges.length
+    if (application.node.isConnected) {
+      // Still painting (a Format toggle rewrote this node's data in place):
+      // stale ranges here would be valid-but-wrong, so this one row's ranges
+      // come out synchronously — bounded by the row, never by the set.
+      for (let i = 0; i < application.appliedRanges.length; i++) {
+        highlightByClass.get(application.appliedClasses[i])?.delete(application.appliedRanges[i])
+      }
+    } else {
+      // Unmounted with its row: the ranges are invalid, paint nothing, and
+      // wait for one quiet-moment sweep.
+      garbageRanges += application.appliedRanges.length
+      scheduleSweep()
+    }
   }
 }

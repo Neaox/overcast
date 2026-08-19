@@ -33,6 +33,11 @@ const registry = () => (CSS as unknown as { highlights: Map<string, HighlightStu
 // so counting flushes it first: paint-visible state is post-flush state.
 const settledRangeCount = async () => {
   await act(async () => {})
+  // Disposal leaves visually-inert garbage for a lazy sweep (see the registry's
+  // mutation policy); the painted truth is the post-sweep state. Imported
+  // dynamically so it targets the same fresh module instance as the component.
+  const { sweepHighlightGarbageForTests } = await import("@/lib/highlight-registry")
+  sweepHighlightGarbageForTests()
   return [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
 }
 

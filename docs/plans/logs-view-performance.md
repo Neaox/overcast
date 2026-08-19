@@ -710,17 +710,30 @@ Known-and-accepted from the same review — all three since landed:
   hundreds of ranges each, sets tens of thousands strong — degraded
   quadratically with depth. Chrome does not exhibit it: a 36-cycle
   deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
-  flat at 16–19 ms per scroll frame on the *buggy* build. The fix removes
-  the delete path entirely: registration/disposal are O(1) set ops on a
-  `liveApplications` registry, and one coalesced microtask rebuild
-  constructs fresh, unregistered `Highlight`s from the live rows and swaps
-  them into `CSS.highlights` wholesale — zero `Highlight.delete` calls
-  ever, one invalidation per class per flush, cost bounded by the hydrated
-  viewport instead of scroll history. Same protocol on the fixed build:
-  17–18 ms flat, settle ≤ 1 ms, and exactly the hydrated viewport's ranges
-  (915) live after 36 churn cycles — the swap bookkeeping is exact.
-  Microtasks run before paint, so settle-hydration still colours in the
-  same frame. Firefox confirmation comes from the reporter's re-trace.
+  flat at 16–19 ms per scroll frame on the *buggy* build.
+
+  The fix took two iterations, each indicted by its own trace:
+
+  1. *Swap-rebuild on every change* (zero deletes: fresh sets rebuilt from
+     live rows per coalesced microtask) fixed the lockup — max eventDelay
+     fell 14.9 s → 1.6 s — but a fourth trace put 73.7% (12.5 s of 17 s)
+     inside the rebuild itself: disposals scheduled it, so continuous
+     scrolling re-`add`ed the whole hydrated viewport nearly every frame,
+     and Firefox's `Highlight.add` is not free either.
+  2. *The landed model:* **scrolling mutates the highlight sets not at
+     all.** Hydration adds in place (O(new rows) — the one mutation shape
+     no trace ever showed dominating); a row unmounting just counts its
+     ranges as garbage, because a disconnected static range is invalid and
+     paints nothing; a text swap on a still-connected node (Format rewrites
+     the Text node's data in place) is the only synchronous delete, bounded
+     by that row; and garbage is collected by one swap-rebuild (reusing the
+     live rows' existing range objects) after a quiet second, or
+     opportunistically at the next hydration once garbage outweighs live
+     ranges.
+
+  Chrome protocol on the final model: flat, settle ≤ 1 ms, bookkeeping
+  exact post-sweep. Firefox confirmation comes from the reporter's
+  re-trace against the republished dev image.
 - ~~The S3 preview's adoption needs a `FormattedPreview` shape change plus a
   shared rendering component before the "kernel adopts unchanged" promise is
   real~~ — **landed 2026-08-20** (#1074): `HighlightedCode`
