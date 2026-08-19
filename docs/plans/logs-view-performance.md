@@ -554,9 +554,103 @@ mode (fixed 30 px rows, no measurement — AWS's own default), then DOM row recy
 fixed-height mode, then canvas — each step buys throughput by giving up DOM affordances
 (find-in-page, selection, a11y for free), which is why none is taken pre-emptively.
 
+## 3f. Zero-DOM syntax highlighting (2026-08-19) — CSS Custom Highlight API — **landed**
+
+§3e deferred the highlight spans; this removes them. Where the browser has the
+CSS Custom Highlight API (Chrome 105+, Safari 17.2+, Firefox 140+), a
+syntax-highlighted log row renders as ONE text node and token colours paint as
+registered `Highlight` ranges — ~460 span elements per settled row (that
+session's real stream) become zero, for every document observer that §2b/§3e
+showed charging per node. Where the API is missing, the cached Prism markup
+path renders byte-identically to before.
+
+Shape (a kernel, not a logs feature — the S3 preview can adopt it unchanged):
+
+- **Facade** `web/src/lib/highlight-code.ts`: the whole detection matrix, the
+  markup backend (unchanged LRU: 400 entries / 100 KB cap), and the ranges
+  backend — `requestTokenRanges` (own LRU, same policy) returning an array
+  synchronously on cache hit / small doc / no worker, a promise only when the
+  tokenize is genuinely off-thread. Components ask `highlightPresentation()`
+  and never feature-detect.
+- **Offset tokenizer** `prism-ranges.ts`: `Prism.tokenize` walked into
+  `{start, end, type}` leaf spans that tile the text (pinned against the
+  markup backend token-for-token), plus the packed wire form.
+- **One persistent worker** `highlight-worker.ts` (Prism's own async mode
+  stays off — its FAQ's worker-per-call overhead is exactly what this
+  design amortizes away): in-flight coalescing means fifty rows of one
+  document tokenize once; cache hits never message at all.
+- **Registry + hook** `highlight-registry.ts` / `use-highlight-ranges.ts`:
+  one global `Highlight` per themed token class (`overcast-token-string`, …)
+  registered at module init; rows apply ranges in a layout effect keyed on
+  (text, node) whose cleanup removes exactly that row's ranges — Format
+  toggles, collapse/expand and unmount round-trip leaving only live rows'
+  ranges (pinned by `log-message.ranges.test.tsx`, including a
+  MutationObserver probe asserting range application produces zero records).
+- **Theme** `web/src/styles/syntax-tokens.css` (extracted whole from
+  global.css): `--token-*` variables per class in both palettes, consumed by
+  BOTH selector families — `.token.<class>` for markup, and
+  `::highlight(overcast-token-<class>)` as deliberately *separate* rules,
+  because a browser without the API drops any selector list containing an
+  unknown pseudo-element, which would have uncoloured the markup fallback in
+  exactly the browsers that need it. Theme switches recolour ranges via CSS
+  alone. The grammar-coverage test enumerates every class the registered
+  grammars can emit and fails on any class missing a variable, a `.token`
+  rule or a `::highlight` rule. (Incidental fix: the old literal dark token
+  rules only matched explicit `[data-theme="dark"]`, so system-dark sessions
+  read light token colours; the variables wire both dark scopes.)
+  `::highlight()` can only express color / background-color / text-decoration
+  / text-shadow — this theme is colour-only, so nothing is lost.
+
+**Sync-vs-worker threshold, measured** (Node 24 worker_threads as the
+messaging stand-in, this dev box, realistic nested JSON, median of 30):
+
+| doc size | tokens | sync tokenize | worker round-trip (object clone) | echo (clone only) | packed round-trip |
+| --- | --- | --- | --- | --- | --- |
+| 2.1 KB | 275 | 0.05 ms | 0.27 ms | 0.36 ms | 0.12 ms |
+| 8.5 KB | 1,085 | 0.21 ms | 0.84 ms | 1.31 ms | 0.28 ms |
+| 33 KB | 4,217 | 0.95 ms | 3.46 ms | 5.16 ms | 1.01 ms |
+| 131 KB | 16,745 | 4.10 ms | 12.9 ms | 20.1 ms | 4.79 ms |
+
+The object-form numbers vindicate Prism's FAQ from an unexpected angle:
+structured-cloning one `{start,end,type}` object per token costs more than
+the tokenize at *every* size — a worker replying in object form is a strict
+loss. The reply therefore travels as a transferable `Uint32Array` of
+(start, end, type-index) triples over a small cloned type table: transfer is
+a pointer handoff, so the main thread pays only the request clone
+(0.001–0.03 ms) plus the unpack, and the packed round-trip tracks the
+worker-side tokenize almost exactly. Requests stay plain clones (strings
+cannot transfer; pre-encoding would cost more than the clone), and
+`SharedArrayBuffer` is declined outright — it needs cross-origin isolation
+headers the console does not ship and cannot beat a transfer for one-shot
+request/reply. **Threshold: `SYNC_TOKENIZE_MAX_CHARS = 8192`** — below it
+sync tokenize is ≤0.2 ms (comparable to the messaging's own main-thread
+share, without the async second pass), and typical log lines sit far below
+that, so most rows never message at all; above it the worker keeps the main
+thread's cost at send + unpack instead of the full tokenize (4 ms saved at
+131 KB; CloudWatch's 256 KB event cap bounds the worst legal case).
+`requestIdleCallback` is deliberately not used anywhere in the path: range
+application mutates nothing and is already idle-gated by `useScrollSettled`,
+so idle-scheduling it would only delay colour.
+
+Degradation is per-feature and tested: no Highlight API → markup backend
+byte-identical to today; no Worker / constructor throws / later error → the
+same facade call tokenizes synchronously (a dying worker resolves its
+stranded requests synchronously before being dropped for the session). The
+`defer` gating from §3e still applies — deferred rows get no ranges until
+they settle near the viewport, and under the ranges backend the deferred and
+settled DOM are *the same DOM*, so hydration stops being a DOM event
+entirely.
+
 ## 4. Explicit non-goals
 
-- No web worker for the standard row path. A worker's price is the string round-trip plus a
+- ~~No web worker for the standard row path~~ — superseded by §3f, which landed the size
+  threshold this bullet itself predicted ("if real streams hit that case"), measured at 8 KiB
+  rather than the ~50 KiB estimated here, and only after the packed-transfer protocol removed
+  the round-trip's dominant cost (the reply clone; see §3f's table — in object form the worker
+  was indeed the loss this bullet called it). The reasoning below stands for the *markup*
+  backend, where the worker's reply would be an HTML string and the upgrade a DOM swap; under
+  the ranges backend the upgrade is imperative range application — no second commit, no
+  mutation batch. A worker's price is the string round-trip plus a
   second render when the result lands — an extra commit and mutation batch per row, a step
   backwards for rows whose synchronous highlight is sub-millisecond (nearly all of them, and a
   repeat highlight is a cache hit since Phase 3). Measured (Node 24, this dev machine,

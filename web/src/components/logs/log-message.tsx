@@ -9,9 +9,11 @@
  * tells that story for the helpers); this is the component-level counterpart.
  */
 
-import { memo, useMemo } from "react"
+import { memo, useMemo, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { stripAnsi } from "@/lib/ansi"
+import { highlightPresentation } from "@/lib/highlight-code"
+import { useHighlightRanges } from "@/hooks/use-highlight-ranges"
 import { useScrollSettled } from "@/hooks/use-scroll-settled"
 import {
   highlightJSON,
@@ -158,6 +160,14 @@ export const LogMessage = memo(function LogMessage({
       ? jsonText
       : withPrefix(message)
   const showSyntax = !asSummary && syntaxHighlight && jsonText
+  // Where the browser has the CSS Custom Highlight API, a highlighted row is
+  // ONE text node and token colour arrives as ranges — no spans to mount, so
+  // the `defer` latch gates only the (mutation-free) range application, not
+  // the DOM. Elsewhere the markup path below renders exactly what it always
+  // has.
+  const ranges = highlightPresentation() === "ranges"
+  const preRef = useRef<HTMLPreElement>(null)
+  useHighlightRanges(preRef, ranges && settled && showSyntax ? jsonText : null, "json")
 
   if (collapsed) {
     // `truncate` is what enforces the single line: nowrap turns any embedded
@@ -191,7 +201,17 @@ export const LogMessage = memo(function LogMessage({
             {prefix}
           </span>
         )}
-        {settled ? (
+        {ranges ? (
+          // The ranges presentation: the text node IS the rendering, settled
+          // or not — colour is painted over it by `useHighlightRanges` above,
+          // with zero DOM mutation and zero extra renders.
+          <pre
+            ref={preRef}
+            className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
+          >
+            {jsonText}
+          </pre>
+        ) : settled ? (
           <pre
             className={cn("font-mono leading-relaxed", sizeClassName, messageWrapClass(wrapLines))}
             dangerouslySetInnerHTML={{ __html: highlightJSON(jsonText) }}

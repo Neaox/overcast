@@ -1,0 +1,1 @@
+* [web] syntax-highlighted log rows render as a single text node where the CSS Custom Highlight API exists — token colours paint as ranges (no per-token spans for extensions and the accessibility tree to walk), with large documents tokenized in a persistent worker and the cached Prism markup unchanged elsewhere

@@ -38,7 +38,7 @@ function declaredThemeColours(css: string): Set<string> {
 
 describe("Prism token theme", () => {
   it("defines colours for HTML, XML, CSS, and JavaScript token classes", () => {
-    const css = readFileSync("src/styles/global.css", "utf8")
+    const css = readFileSync("src/styles/syntax-tokens.css", "utf8")
     const requiredTokenSelectors = [
       ".token.tag",
       ".token.attr-name",
@@ -60,15 +60,17 @@ describe("Prism token theme", () => {
     }
   })
 
-  it("keeps explicit dark-mode number tokens orange", () => {
-    const css = readFileSync("src/styles/global.css", "utf8")
+  it("keeps dark-mode number tokens orange", () => {
+    const css = readFileSync("src/styles/syntax-tokens.css", "utf8")
 
-    expect(css).toMatch(
-      /\.dark \.token\.number,\s*\[data-theme="dark"\] \.token\.number \{\s*color: oklch\(0\.75 0\.14 55\);\s*\}/,
-    )
-    expect(css).not.toMatch(
-      /\[data-theme="dark"\] \.token\.number,[^{]+\{\s*color: oklch\(0\.72 0\.15 290\);/,
-    )
+    // The dark palette's number value stays the orange it has always been —
+    // and is not the keyword purple, which is the regression this test was
+    // written against.
+    expect(css).toMatch(/--_dark-token-number: oklch\(0\.75 0\.14 55\);/)
+    expect(css).not.toMatch(/--_dark-token-number: oklch\(0\.72 0\.15 290\);/)
+    // Both dark scopes (explicit choice and system preference) wire the
+    // variable to that palette value.
+    expect([...css.matchAll(/--token-number: var\(--_dark-token-number\);/g)]).toHaveLength(2)
   })
 })
 
