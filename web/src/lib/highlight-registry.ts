@@ -227,6 +227,10 @@ function sweepGarbage(): void {
     clearTimeout(sweepTimer)
     sweepTimer = null
   }
+  // Disposals awaiting their post-commit triage must resolve first, or the
+  // sweep would rebuild around ranges whose fate (garbage vs live-node
+  // delete) is not yet decided — and the triage would then double-count them.
+  triageDisposals()
   if (garbageRanges === 0) return
   const fresh = new Map<string, Highlight>()
   for (const application of liveApplications) {
@@ -303,18 +307,53 @@ export function applyTokenRanges(
   return () => {
     if (!liveApplications.delete(application)) return
     liveRanges -= application.appliedRanges.length
+    // Never inspect the node HERE: React runs effect cleanups during the
+    // commit BEFORE detaching host nodes, so an unmounting row still reads
+    // `isConnected === true` at this moment — asking now sent every
+    // unmounting row down a synchronous delete path and resurrected the
+    // trace-3 lockup wholesale. The question is answerable one microtask
+    // later, once the commit has finished detaching.
+    pendingDisposals.push(application)
+    scheduleDisposalTriage()
+  }
+}
+
+const pendingDisposals: RangeApplication[] = []
+let triageQueued = false
+
+/**
+ * Post-commit triage of disposed applications. By the time this microtask
+ * runs, the commit that disposed them has finished mutating the DOM, so
+ * connectivity finally means what it says:
+ *
+ * - Disconnected node → the row unmounted; its ranges are invalid, paint
+ *   nothing, and wait for the quiet-moment sweep. No deletes — this is the
+ *   path every scrolled-away row takes, and it must stay mutation-free.
+ * - Still-connected node → the row is alive but withdrew its highlight
+ *   (Syntax toggled off, or a text swap whose re-apply already painted the
+ *   new ranges): stale ranges here are valid-but-wrong, so this one row's
+ *   ranges come out synchronously — bounded by the row, never by the set,
+ *   and only ever on rare user-initiated paths.
+ */
+function triageDisposals(): void {
+  for (const application of pendingDisposals) {
     if (application.node.isConnected) {
-      // Still painting (a Format toggle rewrote this node's data in place):
-      // stale ranges here would be valid-but-wrong, so this one row's ranges
-      // come out synchronously — bounded by the row, never by the set.
       for (let i = 0; i < application.appliedRanges.length; i++) {
         highlightByClass.get(application.appliedClasses[i])?.delete(application.appliedRanges[i])
       }
     } else {
-      // Unmounted with its row: the ranges are invalid, paint nothing, and
-      // wait for one quiet-moment sweep.
       garbageRanges += application.appliedRanges.length
       scheduleSweep()
     }
   }
+  pendingDisposals.length = 0
+}
+
+function scheduleDisposalTriage(): void {
+  if (triageQueued) return
+  triageQueued = true
+  queueMicrotask(() => {
+    triageQueued = false
+    triageDisposals()
+  })
 }

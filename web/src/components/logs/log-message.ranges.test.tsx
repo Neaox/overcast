@@ -17,11 +17,13 @@ import { resolveTokenColorClass } from "@/lib/highlight-registry"
 import type { LogMessage as LogMessageStatic } from "./log-message"
 
 class HighlightStub {
+  static deleteCalls = 0
   ranges = new Set<Range>()
   add(range: Range) {
     this.ranges.add(range)
   }
   delete(range: Range) {
+    HighlightStub.deleteCalls++
     this.ranges.delete(range)
   }
 }
@@ -52,6 +54,7 @@ let LogMessage: LogMessageComponent
 
 beforeEach(async () => {
   vi.resetModules()
+  HighlightStub.deleteCalls = 0
   vi.stubGlobal("Highlight", HighlightStub)
   vi.stubGlobal("CSS", { highlights: new Map<string, HighlightStub>() })
   LogMessage = (await import("./log-message")).LogMessage
@@ -137,6 +140,26 @@ describe("LogMessage under the ranges presentation", () => {
     view.unmount()
     expect(await settledRangeCount()).toBe(expectedRangeCount('{"other": true}'))
     other.unmount()
+    expect(await settledRangeCount()).toBe(0)
+  })
+
+  it("never calls Highlight.delete for an unmounting row — the scroll path stays mutation-free", async () => {
+    // The regression that resurrected the Firefox lockup: React runs effect
+    // cleanups BEFORE detaching host nodes, so a disposer that asks
+    // `isConnected` synchronously sees `true` for an unmounting row and takes
+    // the per-range delete path. The registry must defer the question one
+    // microtask (post-commit) and route unmounts through garbage + sweep —
+    // which swaps fresh sets and never deletes.
+    const view = render(<LogMessage {...messageProps()} />)
+    await act(async () => {})
+    const deletesAfterMount = HighlightStub.deleteCalls
+    view.unmount()
+    await act(async () => {}) // flush the disposal triage microtask
+    expect(HighlightStub.deleteCalls).toBe(deletesAfterMount)
+    // The sweep clears the garbage by swapping, still without deletes.
+    const { sweepHighlightGarbageForTests } = await import("@/lib/highlight-registry")
+    sweepHighlightGarbageForTests()
+    expect(HighlightStub.deleteCalls).toBe(deletesAfterMount)
     expect(await settledRangeCount()).toBe(0)
   })
 
