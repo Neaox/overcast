@@ -152,25 +152,65 @@ describe("requestTokenRanges", () => {
     expect(WorkerStub.instances).toHaveLength(0)
   })
 
-  it("falls back to synchronous tokenization when the worker errors, resolving whatever was pending", async () => {
+  it("recovers from one worker error with a respawn, and gives up after a second", async () => {
     vi.stubGlobal("Worker", WorkerStub)
     const facade = await importFacade()
     const text = largeJson("error-path")
 
     const pending = facade.requestTokenRanges(text, "json")
     expect(pending).toBeInstanceOf(Promise)
-    const worker = WorkerStub.instances[0]
-    worker.onerror?.({ message: "worker exploded" })
+    const first = WorkerStub.instances[0]
+    first.onerror?.({ message: "worker exploded" })
 
-    // The stranded request resolves correctly anyway…
-    expect(await pending).toEqual(tokenizeToRanges(text, "json"))
-    expect(worker.terminated).toBe(true)
+    // The stranded request resolves correctly anyway — and through the same
+    // bookkeeping as a reply, so the recovery result is cached too.
+    const resolved = await pending
+    expect(resolved).toEqual(tokenizeToRanges(text, "json"))
+    expect(first.terminated).toBe(true)
+    expect(facade.requestTokenRanges(text, "json")).toBe(resolved)
 
-    // …and the session stops using workers: the next large ask is synchronous
-    // on the same (dead) session, with no new worker constructed.
-    const after = facade.requestTokenRanges(largeJson("after-error"), "json")
+    // One failure is not terminal: the next large ask gets a fresh worker.
+    const retried = facade.requestTokenRanges(largeJson("retry"), "json")
+    expect(retried).toBeInstanceOf(Promise)
+    expect(WorkerStub.instances).toHaveLength(2)
+    const second = WorkerStub.instances[1]
+    second.onerror?.({ message: "still exploding" })
+    await retried
+
+    // A second failure is: from here the session stays synchronous.
+    const after = facade.requestTokenRanges(largeJson("after-two-errors"), "json")
     expect(Array.isArray(after)).toBe(true)
-    expect(WorkerStub.instances).toHaveLength(1)
+    expect(WorkerStub.instances).toHaveLength(2)
+  })
+
+  it("caches documents above the old 100KB refusal — the worker-routed sizes need the cache most", async () => {
+    const facade = await importFacade()
+    // ~55 chars per item ⇒ comfortably over 100_000 chars.
+    const items = Array.from({ length: 2500 }, (_, i) => ({ index: i, payload: "x".repeat(24) }))
+    const text = JSON.stringify({ items }, null, 2)
+    expect(text.length).toBeGreaterThan(100_000)
+    const first = facade.requestTokenRanges(text, "json")
+    expect(Array.isArray(first)).toBe(true)
+    // Identity on the second ask — the array was cached, not re-tokenized.
+    expect(facade.requestTokenRanges(text, "json")).toBe(first)
+  })
+
+  it("answers synchronously when postMessage throws, leaving no poisoned in-flight entry", async () => {
+    vi.stubGlobal(
+      "Worker",
+      class extends WorkerStub {
+        postMessage(): void {
+          throw new Error("worker already terminated")
+        }
+      },
+    )
+    const facade = await importFacade()
+    const text = largeJson("post-throw")
+    const result = facade.requestTokenRanges(text, "json")
+    expect(Array.isArray(result)).toBe(true)
+    // The failed attempt must not leave a dead promise behind: the next ask
+    // is a cache hit on the synchronous result, not a stuck in-flight entry.
+    expect(facade.requestTokenRanges(text, "json")).toBe(result)
   })
 
   it("declines to construct a worker whose constructor throws, without losing the result", async () => {

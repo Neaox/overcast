@@ -10,7 +10,7 @@
  * state, which is exactly the markup fallback.
  */
 import { act } from "react"
-import { cleanup, render } from "@testing-library/react"
+import { cleanup, render } from "@/test/render"
 import { tokenizeToRanges } from "@/lib/prism-ranges"
 import { resolveTokenColorClass } from "@/lib/highlight-registry"
 // Type-only: the component itself is imported fresh per test, after stubbing.

@@ -62,6 +62,13 @@ export default defineConfig(async () => {
   )
   return {
     plugins,
+    // The highlight tokenize worker is constructed with { type: "module" };
+    // build it as one too, so dev (native ESM) and production run the same
+    // module graph and Rollup can split shared chunks instead of inlining a
+    // second copy of Prism into an IIFE worker bundle.
+    worker: {
+      format: "es" as const,
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

@@ -59,28 +59,50 @@ import type { HighlightWorkRequest, HighlightWorkResponse } from "@/lib/highligh
 export { applyTokenRanges } from "@/lib/highlight-registry"
 export type { TokenRange } from "@/lib/prism-ranges"
 
-const CACHE_LIMIT = 400
-/** Above this, a document is cheaper to re-highlight than to hold onto. */
-const CACHE_MAX_CHARS = 100_000
-
-/** Insertion-ordered LRU put, shared by both backends' caches. */
-function cachePut<V>(cache: Map<string, V>, key: string, textLength: number, value: V): void {
-  if (textLength > CACHE_MAX_CHARS) return
-  if (cache.size >= CACHE_LIMIT) {
-    const oldest = cache.keys().next().value
-    if (oldest !== undefined) cache.delete(oldest)
+/**
+ * Insertion-ordered LRU bounded by *cost*, not entry count — because the two
+ * backends' values have wildly different weights per entry. The markup cache
+ * holds HTML strings (cost: characters), the ranges cache holds token arrays
+ * (cost: token count; a 131 KB document is ~16.7k tokens, §3f). An
+ * entry-count bound sized for one is either useless or ruinous for the
+ * other, and a text-length refusal would deny caching to exactly the large
+ * documents whose re-tokenize is most expensive — the ones routed to the
+ * worker. One entry may take at most a quarter of the budget, so a single
+ * pathological document cannot evict everything else.
+ */
+class LruCache<V> {
+  private readonly entries = new Map<string, { value: V; cost: number }>()
+  private total = 0
+  private readonly budget: number
+  constructor(budget: number) {
+    this.budget = budget
   }
-  cache.set(key, value)
-}
 
-/** LRU get: re-insert so the map's insertion order is least-recently-used first. */
-function cacheGet<V>(cache: Map<string, V>, key: string): V | undefined {
-  const value = cache.get(key)
-  if (value !== undefined) {
-    cache.delete(key)
-    cache.set(key, value)
+  /** Re-inserts on hit so the map's insertion order is least-recent first. */
+  get(key: string): V | undefined {
+    const entry = this.entries.get(key)
+    if (entry === undefined) return undefined
+    this.entries.delete(key)
+    this.entries.set(key, entry)
+    return entry.value
   }
-  return value
+
+  put(key: string, value: V, cost: number): void {
+    if (cost > this.budget / 4) return
+    const prior = this.entries.get(key)
+    if (prior !== undefined) {
+      this.entries.delete(key)
+      this.total -= prior.cost
+    }
+    while (this.total + cost > this.budget) {
+      const oldest = this.entries.entries().next().value
+      if (oldest === undefined) break
+      this.entries.delete(oldest[0])
+      this.total -= oldest[1].cost
+    }
+    this.entries.set(key, { value, cost })
+    this.total += cost
+  }
 }
 
 // Prism language names never contain a space, so the first space delimits
@@ -90,7 +112,9 @@ const cacheKey = (text: string, language: string) => `${language} ${text}`
 
 // ─── Markup backend ────────────────────────────────────────────────────────
 
-const markupCache = new Map<string, string>()
+// ~8M characters of HTML — the same order of retention the old 400-entry ×
+// ≤100 KB policy allowed in practice, without refusing any document size.
+const markupCache = new LruCache<string>(8_000_000)
 
 /** Prism-neutral fallback for a language whose grammar is not loaded. */
 function escapeHTML(text: string): string {
@@ -107,13 +131,13 @@ function escapeHTML(text: string): string {
  */
 export function highlightCode(text: string, language: string): string {
   const key = cacheKey(text, language)
-  const cached = cacheGet(markupCache, key)
+  const cached = markupCache.get(key)
   if (cached !== undefined) return cached
   // The grammar record's typing claims every key exists; missing languages
   // are real at runtime, hence the assertion.
   const grammar = Prism.languages[language] as Prism.Grammar | undefined
   const html = grammar ? Prism.highlight(text, grammar, language) : escapeHTML(text)
-  cachePut(markupCache, key, text.length, html)
+  markupCache.put(key, html, html.length)
   return html
 }
 
@@ -132,14 +156,21 @@ export function supportsHighlightRanges(): boolean {
 
 /**
  * Which presentation a component should render: a plain text node it lets
- * the ranges backend colour, or the markup backend's HTML. Constant for the
- * life of the page.
+ * the ranges backend colour, or the markup backend's HTML. Resolved once at
+ * module load — the answer is constant for the life of the page, and the hot
+ * callers are virtualized rows rendering on every scroll frame, so they read
+ * a constant rather than re-running the probes.
  */
+export const HIGHLIGHT_PRESENTATION: HighlightPresentation = supportsHighlightRanges()
+  ? "ranges"
+  : "markup"
+
+/** Function form of `HIGHLIGHT_PRESENTATION`, for call sites that prefer it. */
 export function highlightPresentation(): HighlightPresentation {
-  return supportsHighlightRanges() ? "ranges" : "markup"
+  return HIGHLIGHT_PRESENTATION
 }
 
-if (supportsHighlightRanges()) registerTokenHighlights()
+if (HIGHLIGHT_PRESENTATION === "ranges") registerTokenHighlights()
 
 // ─── Ranges backend ────────────────────────────────────────────────────────
 
@@ -155,17 +186,27 @@ if (supportsHighlightRanges()) registerTokenHighlights()
  */
 export const SYNC_TOKENIZE_MAX_CHARS = 8_192
 
-const rangeCache = new Map<string, TokenRange[]>()
+// ~600k tokens of range arrays (~30 MB of small objects at the worst) —
+// token count is the honest cost unit here, and the budget admits even a
+// 256 KB CloudWatch-cap document (~34k tokens) without letting large
+// documents crowd out everything else.
+const rangeCache = new LruCache<TokenRange[]>(600_000)
 const inFlightRanges = new Map<string, Promise<TokenRange[]>>()
 
 interface PendingWork {
+  /** Settles the caller's promise AND does the cache/in-flight bookkeeping. */
   resolve: (ranges: TokenRange[]) => void
   text: string
   language: string
 }
 
-// undefined = not yet attempted; null = unavailable or dead for the session.
+// undefined = may (re)spawn; null = unavailable or given up for the session.
 let worker: Worker | null | undefined
+let workerFailures = 0
+// One respawn: a single error (a pathological document, a transient load
+// failure) should not cost the whole session its off-thread path, but a
+// worker that fails twice is broken in a way retrying won't fix.
+const WORKER_FAILURE_LIMIT = 2
 const pendingWork = new Map<number, PendingWork>()
 let nextWorkId = 1
 
@@ -174,6 +215,19 @@ function tokenWorker(): Worker | null {
   if (typeof Worker === "undefined") {
     worker = null
     return worker
+  }
+  // Any failure shape — an uncaught error in the worker, an undeliverable
+  // message either way — retires this worker and resolves whatever was
+  // waiting on it synchronously: nothing may be left hanging un-highlighted,
+  // and the resolve closures carry the bookkeeping so even stranded results
+  // land in the cache.
+  const retire = (created: Worker) => {
+    workerFailures++
+    worker = workerFailures >= WORKER_FAILURE_LIMIT ? null : undefined
+    created.terminate()
+    const stranded = [...pendingWork.values()]
+    pendingWork.clear()
+    for (const work of stranded) work.resolve(tokenizeToRanges(work.text, work.language))
   }
   try {
     const created = new Worker(new URL("./highlight-worker.ts", import.meta.url), {
@@ -185,16 +239,8 @@ function tokenWorker(): Worker | null {
       pendingWork.delete(event.data.id)
       work.resolve(unpackTokenRanges(event.data))
     }
-    created.onerror = () => {
-      // A worker that errors (load failure, crash) is done for the session:
-      // fall back to synchronous tokenization, starting with whatever was
-      // waiting on it — nothing may be left hanging un-highlighted.
-      worker = null
-      created.terminate()
-      const stranded = [...pendingWork.values()]
-      pendingWork.clear()
-      for (const work of stranded) work.resolve(tokenizeToRanges(work.text, work.language))
-    }
+    created.onerror = () => retire(created)
+    created.onmessageerror = () => retire(created)
     worker = created
   } catch {
     worker = null
@@ -216,25 +262,36 @@ export function requestTokenRanges(
   language: string,
 ): TokenRange[] | Promise<TokenRange[]> {
   const key = cacheKey(text, language)
-  const cached = cacheGet(rangeCache, key)
+  const cached = rangeCache.get(key)
   if (cached !== undefined) return cached
   const inFlight = inFlightRanges.get(key)
   if (inFlight !== undefined) return inFlight
-  const w = text.length > SYNC_TOKENIZE_MAX_CHARS ? tokenWorker() : null
-  if (w === null) {
-    const ranges = tokenizeToRanges(text, language)
-    cachePut(rangeCache, key, text.length, ranges)
+  const finish = (ranges: TokenRange[]): TokenRange[] => {
+    inFlightRanges.delete(key)
+    rangeCache.put(key, ranges, ranges.length)
     return ranges
   }
+  const w = text.length > SYNC_TOKENIZE_MAX_CHARS ? tokenWorker() : null
+  if (w === null) return finish(tokenizeToRanges(text, language))
+  // The promise NEVER rejects — that is this function's contract, and what
+  // lets callers apply a reply without a rejection path of their own. The
+  // one bookkeeping point is the pendingWork resolve closure: worker replies,
+  // stranded-work recovery, and the cache all flow through `finish`, so an
+  // entry can never stay poisoned in `inFlightRanges`.
+  const id = nextWorkId++
+  let settle!: (ranges: TokenRange[]) => void
   const work = new Promise<TokenRange[]>((resolve) => {
-    const id = nextWorkId++
-    pendingWork.set(id, { resolve, text, language })
-    w.postMessage({ id, text, language } satisfies HighlightWorkRequest)
-  }).then((ranges) => {
-    inFlightRanges.delete(key)
-    cachePut(rangeCache, key, text.length, ranges)
-    return ranges
+    settle = resolve
   })
+  pendingWork.set(id, { resolve: (ranges) => settle(finish(ranges)), text, language })
   inFlightRanges.set(key, work)
+  try {
+    w.postMessage({ id, text, language } satisfies HighlightWorkRequest)
+  } catch {
+    // A terminated or unusable worker throws synchronously: unwind this
+    // request's bookkeeping and answer on the main thread instead.
+    pendingWork.delete(id)
+    return finish(tokenizeToRanges(text, language))
+  }
   return work
 }

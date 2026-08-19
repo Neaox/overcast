@@ -34,7 +34,7 @@ describe("grammar coverage", () => {
       expect(
         uncovered,
         `token classes with no colour: ${uncovered.join(", ")} — add them to ` +
-          "TOKEN_COLOR_CLASSES and give each a --token-* variable + rules in global.css",
+          "TOKEN_COLOR_CLASSES and give each a --token-* variable + rules in syntax-tokens.css",
       ).toEqual([])
     })
   }
@@ -61,6 +61,20 @@ describe("token colour classes in syntax-tokens.css", () => {
         `::highlight\\(${TOKEN_HIGHLIGHT_PREFIX}${cls}\\) \\{\\s*color: var\\(--token-${cls}\\);`,
       ),
     )
+  })
+
+  it("declares .token rules in TOKEN_COLOR_CLASSES order, so cascade and resolver agree", () => {
+    // The two backends colour a multi-class token ("null keyword") through
+    // different mechanisms: markup takes the LAST matching equal-specificity
+    // rule in the stylesheet, ranges take the highest-indexed class in
+    // TOKEN_COLOR_CLASSES (resolveTokenColorClass). They agree exactly when
+    // the stylesheet declares rules in list order — this is that contract.
+    const ruleOrder = [...css.matchAll(/^\s*\.token\.([a-z-]+) \{/gm)].map((m) => m[1])
+    expect(ruleOrder).toEqual([...TOKEN_COLOR_CLASSES])
+    // And the resolver honours the cascade for the one aliased pair the JSON
+    // grammar actually emits.
+    expect(resolveTokenColorClass("null keyword")).toBe("null")
+    expect(resolveTokenColorClass("keyword null")).toBe("null")
   })
 
   it("keeps every ::highlight rule out of selector lists", () => {

@@ -37,28 +37,9 @@ function declaredThemeColours(css: string): Set<string> {
 }
 
 describe("Prism token theme", () => {
-  it("defines colours for HTML, XML, CSS, and JavaScript token classes", () => {
-    const css = readFileSync("src/styles/syntax-tokens.css", "utf8")
-    const requiredTokenSelectors = [
-      ".token.tag",
-      ".token.attr-name",
-      ".token.attr-value",
-      ".token.doctype",
-      ".token.doctype-tag",
-      ".token.name",
-      ".token.selector",
-      ".token.keyword",
-      ".token.function",
-      ".token.parameter",
-      ".token.operator",
-      ".token.template-string",
-      ".token.interpolation",
-    ]
-
-    for (const selector of requiredTokenSelectors) {
-      expect(css).toContain(selector)
-    }
-  })
+  // Which selectors exist is pinned by token-theme-coverage.test.ts, derived
+  // from TOKEN_COLOR_CLASSES rather than restated here — a hand-kept mirror
+  // of that list is exactly the copy-drift log-format.ts documents.
 
   it("keeps dark-mode number tokens orange", () => {
     const css = readFileSync("src/styles/syntax-tokens.css", "utf8")

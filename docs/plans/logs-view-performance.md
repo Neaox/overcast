@@ -641,6 +641,59 @@ they settle near the viewport, and under the ranges backend the deferred and
 settled DOM are *the same DOM*, so hydration stops being a DOM event
 entirely.
 
+### Review findings folded in (2026-08-19, PR #1070 review)
+
+An eight-angle review of the first cut surfaced and fixed, in order of
+severity:
+
+- **Prism's own worker message handler was killing the worker on its first
+  request.** prismjs registers a `JSON.parse`-ing `message` listener at its
+  module init inside any scope with no `document`, unless
+  `disableWorkerMessageHandler` was set *before* it loaded — and our protocol
+  is a structured-cloned object. The first >8 KiB document threw in the
+  worker, fired `onerror`, and silently retired the worker for the session:
+  every visual check passed (the sync fallback paints identical colours),
+  which is precisely how it slipped through. `prism-global-config.ts` now
+  sets the flag in an import that executes first, pinned by a test on the
+  flag Prism copies in.
+- **A rejected or undeliverable request could poison its cache key forever.**
+  `requestTokenRanges` now guarantees a never-rejecting, always-settling
+  promise: one bookkeeping closure (cache put + in-flight delete) sits behind
+  worker replies, stranded-work recovery, and a guarded `postMessage` whose
+  synchronous failure answers on the main thread.
+- **The worker gets one respawn** (`WORKER_FAILURE_LIMIT = 2`) instead of
+  dying to the session on a single error, and `onmessageerror` recovers the
+  same way `onerror` does.
+- **The caches are bounded by cost, not entry count**: the markup cache by
+  characters of HTML, the ranges cache by token count — which also removes
+  the old 100 KB text refusal that denied caching to exactly the documents
+  the worker serves. One entry may take at most a quarter of its budget.
+- **Alias resolution is now cascade-faithful and contractual**:
+  `TOKEN_COLOR_CLASSES` order == stylesheet rule order (a coverage test pins
+  it), and `resolveTokenColorClass` (memoized) picks the highest-indexed
+  class — the same winner the CSS cascade gives the markup backend, so the
+  backends cannot colour an aliased token differently.
+- **`applyTokenRanges` is all-or-nothing on its source text** — the staleness
+  guard moved into the kernel (`applyTokenRanges(node, text, ranges)`), so a
+  consumer other than the hook cannot paint misaligned colour partially.
+- The detection matrix collapsed to one module-load constant
+  (`HIGHLIGHT_PRESENTATION`) read everywhere; the hook's only gate is its
+  null-text contract. The worker chunk now builds as `format: "es"` to match
+  its `type: "module"` construction. The markup backend is *not* quite
+  byte-identical after all: the theme gained a `.token.comment` colour that
+  never existed before (comments were full-strength foreground on every
+  markup surface) — kept as an improvement and disclosed in the changelog
+  rather than shipped silently.
+
+Known-and-accepted from the same review: live `Range` objects carry per-DOM-
+mutation fix-up cost while rows are mounted (a `StaticRange` swap needs
+cross-browser paint verification before it can be trusted — follow-up, not a
+silent change); the S3 preview's adoption needs a `FormattedPreview` shape
+change (`{text, language}` policy instead of pre-rendered html) plus a shared
+rendering component before the "kernel adopts unchanged" promise is real; and
+three modules now hand-roll the persistent-worker-client shape
+(docs search, map layout, highlighting) that deserves one shared helper.
+
 ## 4. Explicit non-goals
 
 - ~~No web worker for the standard row path~~ — superseded by §3f, which landed the size

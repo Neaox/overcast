@@ -13,6 +13,9 @@
  * global explicitly, then register the JSON grammar inline — no side-effect
  * import needed.
  */
+// Order matters: the config module must run before prismjs's body, which
+// reads the flag it sets — see prism-global-config.ts for the worker story.
+import "./prism-global-config"
 import Prism from "prismjs"
 
 // Ensure Prism is on the global scope (redundant in dev, required in prod).

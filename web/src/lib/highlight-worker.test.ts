@@ -5,6 +5,31 @@
 import { handleHighlightRequest } from "./highlight-worker"
 import { tokenizeToRanges, unpackTokenRanges } from "./prism-ranges"
 
+describe("Prism worker-scope config", () => {
+  it("disables Prism's own worker message handler before prismjs loads", async () => {
+    // Prism core reads this flag at ITS module init: in a scope with no
+    // `document` and the flag unset it registers a message listener that
+    // JSON.parses every event — which throws on our structured-cloned
+    // protocol, fires the Worker's error event, and retires the worker for
+    // the session. The barrel must therefore set the flag in an import that
+    // executes first; the regression only bites in a real browser (jsdom has
+    // a document), so this pins the mechanism it depends on.
+    vi.resetModules()
+    const globalScope = globalThis as { Prism?: unknown }
+    const original = globalScope.Prism
+    delete globalScope.Prism
+    try {
+      const { default: freshPrism } = await import("./prism")
+      expect(
+        (freshPrism as { disableWorkerMessageHandler?: boolean }).disableWorkerMessageHandler,
+      ).toBe(true)
+    } finally {
+      globalScope.Prism = original
+      vi.resetModules()
+    }
+  })
+})
+
 describe("handleHighlightRequest", () => {
   it("answers a request with the same id and the packed tokenization", () => {
     const text = '{"level": "warn", "attempt": 2, "ok": false}'
