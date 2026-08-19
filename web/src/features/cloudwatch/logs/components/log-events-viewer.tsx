@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
+import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -48,7 +48,7 @@ import { useLoadMoreAtEdge } from "@/hooks/use-load-more-at-edge"
 import { useLogViewPrefs } from "@/features/cloudwatch/logs/use-log-view-prefs"
 import { ExportMenu } from "@/features/cloudwatch/logs/components/export-menu"
 
-// â”€â”€ Row height estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Row height estimation ──────────────────────────────────────────────────
 
 /**
  * A collapsed row's height, exactly: `py-1.5` (12px) around one
@@ -69,7 +69,7 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
   return baseHeight + (lines - 1) * 18
 }
 
-/** Stable empty fallback â€” a fresh `[]` would re-run every memo keyed on it. */
+/** Stable empty fallback — a fresh `[]` would re-run every memo keyed on it. */
 const NO_EVENTS: FilteredLogEvent[] = []
 
 /**
@@ -110,7 +110,7 @@ function eventDeepLink(groupName: string, evt: FilteredLogEvent): string | null 
   return `${window.location.origin}/cloudwatch/logs/stream?${query}`
 }
 
-// â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main component ─────────────────────────────────────────────────────────
 
 /** An event a deep link wants the view centred on — a search result, usually. */
 export interface LogEventAnchor {
@@ -158,7 +158,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   const [focusedKey, setFocusedKey] = useState<number | null>(null)
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
-  // query cache, so they are held back by timestamp instead â€” a marker that
+  // query cache, so they are held back by timestamp instead — a marker that
   // survives the refetches that would otherwise put them straight back.
   const [clearedThrough, setClearedThrough] = useState<number | null>(null)
 
@@ -505,7 +505,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
    * Empty the view, leaving the tail running so only events from here on show.
    *
    * The cut is taken from the newest timestamp on screen rather than the wall
-   * clock â€” the emulator stamps the events, and its clock is the only one that
+   * clock — the emulator stamps the events, and its clock is the only one that
    * decides which side of the line a record falls on.
    */
   const clearBuffer = useCallback(() => {
@@ -677,7 +677,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       ? {
           title: "Buffer cleared",
           description: tailMode
-            ? "Waiting for new events â€” anything from before the clear is hidden."
+            ? "Waiting for new events — anything from before the clear is hidden."
             : clearedCount > 0
               ? "Turn on Tail to watch for new events, or show the earlier ones again."
               : "Turn on Tail to watch for new events.",
@@ -728,7 +728,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             <Button
               variant="ghost"
               size="sm"
-              // Refresh means "reload this window of logs" â€” honouring a cut
+              // Refresh means "reload this window of logs" — honouring a cut
               // taken before it would hand back an empty screen.
               onClick={() => {
                 restoreCleared()
@@ -755,7 +755,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             data-1p-ignore
             data-lpignore="true"
             className="h-7 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-            placeholder='Filter â€” e.g. ERROR, "request failed", ERROR timeout'
+            placeholder='Filter — e.g. ERROR, "request failed", ERROR timeout'
             value={filterInput}
             onChange={(e) => setFilterInput(e.target.value)}
             onKeyDown={(e) => {
@@ -906,7 +906,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             onClick={clearBuffer}
             disabled={events.length === 0}
             className="h-7 px-2 text-[10px] uppercase"
-            title="Clear the events on screen â€” the tail keeps running, so only newer events appear"
+            title="Clear the events on screen — the tail keeps running, so only newer events appear"
           >
             <Eraser className="mr-1 h-3 w-3" />
             Clear
@@ -950,7 +950,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
           </span>
           {tail.overflowed > 0 && (
             // The AWS console shows "% displayed" when Live Tail samples; the
-            // same honesty here â€” a capped buffer must say it dropped, not
+            // same honesty here — a capped buffer must say it dropped, not
             // quietly show a window and let it read as everything.
             <span
               className="font-mono text-[10px] text-yellow-600 tabular-nums dark:text-yellow-400"
@@ -1089,7 +1089,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                           // Truncated, not just narrow: a Lambda stream name is
                           // wider than `w-44` at this size and the column has no
                           // overflow of its own, so it used to spill across the
-                          // message â€” over the level badge first.
+                          // message — over the level badge first.
                           <div
                             className="w-44 shrink-0 truncate px-1 pt-1.5 font-mono text-[10px] text-fg-muted"
                             title={evt.logStreamName}
@@ -1205,7 +1205,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   )
 }
 
-// â”€â”€ Log message cell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Log message cell ───────────────────────────────────────────────────────
 
 // `LogMessage` and `LevelBadge` live in @/components/logs/log-message — the
 // same pipeline renders the generic LogViewer's rows and the log-group search

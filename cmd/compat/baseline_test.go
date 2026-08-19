@@ -104,7 +104,7 @@ func TestLintBaselineChange_removal(t *testing.T) {
 }
 
 func TestCompareBaseline_newFailureNotInBaseline(t *testing.T) {
-	// Given: a baseline that says nothing about a test â€” it did not exist when
+	// Given: a baseline that says nothing about a test — it did not exist when
 	// the baseline was taken.
 	baseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{{
 		Suite:  "node-js-sdk",
@@ -143,7 +143,7 @@ func TestCompareBaseline_newPassingTestIsNotARegression(t *testing.T) {
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "PutObject", status: compat.StatusSkip},
 		resultSpec{suite: "go-sdk", service: "s3", group: "s3-crud", test: "GetObject", status: compat.StatusNA},
 	)
-	// Then: adding tests never blocks a PR on its own â€” only failures do.
+	// Then: adding tests never blocks a PR on its own — only failures do.
 	if regressions := compareBaseline(baseline, report); len(regressions) != 0 {
 		t.Fatalf("regressions = %#v, want none", regressions)
 	}
@@ -159,7 +159,7 @@ func TestCompareBaseline_grandfatheredFailureIsAllowed(t *testing.T) {
 	}}}
 	report := reportWithResults(resultSpec{suite: "rust-sdk", service: "s3", group: "s3-copy", test: "CreateSourceBucket", status: compat.StatusFail})
 
-	// Then: it is not a regression â€” the ratchet only forbids getting worse.
+	// Then: it is not a regression — the ratchet only forbids getting worse.
 	if regressions := compareBaseline(baseline, report); len(regressions) != 0 {
 		t.Fatalf("regressions = %#v, want none for a grandfathered failure", regressions)
 	}
@@ -191,7 +191,7 @@ func TestLintBaselineChange_newFailEntryRejected(t *testing.T) {
 
 func TestLintBaselineChange_seedingAnEmptyBaselineIsAllowed(t *testing.T) {
 	// Given: an empty baseline being populated for the first time, recording
-	// reality â€” which includes failures that already exist
+	// reality — which includes failures that already exist
 	oldBaseline := &compatBaseline{Version: baselineVersion}
 	newBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
 		{Suite: "cli", Group: "lambda-invoke", Test: "InvokeDryRun", Status: compat.StatusFail},
@@ -209,7 +209,7 @@ func TestLintBaselineChange_seedingAnEmptyBaselineIsAllowed(t *testing.T) {
 }
 
 func TestLintBaselineChange_emptyingAPopulatedBaselineIsRejected(t *testing.T) {
-	// Given: someone empties a populated baseline â€” the move that would
+	// Given: someone empties a populated baseline — the move that would
 	// otherwise let the next PR re-seed failures freely
 	oldBaseline := &compatBaseline{Version: baselineVersion, Entries: []baselineEntry{
 		{Suite: "cli", Group: "s3-crud", Test: "CreateBucket", Status: compat.StatusPass},
@@ -242,7 +242,7 @@ func TestLintFlakyChange_newQuarantineRejected(t *testing.T) {
 	// When: the change is linted
 	issues := lintFlakyChange(oldFlaky, newFlaky, refTime(), false)
 
-	// Then: it is rejected. Without this the flaky list is an amnesty file â€”
+	// Then: it is rejected. Without this the flaky list is an amnesty file —
 	// any failing test can be silenced by adding a line to it, and the baseline
 	// gate quietly stops covering it.
 	if len(issues) != 1 {
@@ -254,7 +254,7 @@ func TestLintFlakyChange_newQuarantineRejected(t *testing.T) {
 }
 
 func TestLintFlakyChange_removingAQuarantineIsTheGoal(t *testing.T) {
-	// Given: a change that deletes an entry â€” the test was fixed
+	// Given: a change that deletes an entry — the test was fixed
 	fixed := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
 		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
@@ -268,7 +268,7 @@ func TestLintFlakyChange_removingAQuarantineIsTheGoal(t *testing.T) {
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{fixed, kept}}
 	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{kept}}
 
-	// When/Then: shrinking is always allowed â€” that is the whole point
+	// When/Then: shrinking is always allowed — that is the whole point
 	if issues := lintFlakyChange(oldFlaky, newFlaky, refTime(), false); len(issues) != 0 {
 		t.Fatalf("issues = %#v, want none when the list shrinks", issues)
 	}
@@ -304,7 +304,7 @@ func TestLintFlakyChange_entryNeedsATrackingIssueAndDate(t *testing.T) {
 	}}
 
 	// When/Then: both are required. Without a date the entry cannot age out,
-	// and without an issue nobody is investigating â€” which is how a stop-gap
+	// and without an issue nobody is investigating — which is how a stop-gap
 	// quietly becomes the permanent state.
 	issues := lintFlakyChange(oldFlaky, newFlaky, refTime(), false)
 	joined := strings.Join(issues, "\n")
@@ -374,7 +374,7 @@ func refTime() time.Time {
 func TestLintFlakyChange_seedingAnEmptyListIsAllowed(t *testing.T) {
 	// Given: the first population of the list, mirroring the baseline's
 	// seeding exemption. The entry still carries a reason, a date and a
-	// tracking issue â€” seeding exempts growth, not accountability.
+	// tracking issue — seeding exempts growth, not accountability.
 	oldFlaky := &flakyFile{Version: flakyVersion}
 	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
@@ -506,7 +506,7 @@ func TestUpdateBaseline_doesNotPromoteFlakyTests(t *testing.T) {
 	updated := updateBaselineWith(baseline, report, flaky)
 	entries := baselineEntryMap(updated.Entries)
 
-	// Then: the flaky test keeps its floor â€” promoting it would make the very
+	// Then: the flaky test keeps its floor — promoting it would make the very
 	// next intermittent failure a red build. A genuine fix is promoted by
 	// removing it from the flaky list.
 	if got := entries["dotnet-sdk/sns-subscriptions/PublishDeliveredToSQS"].Status; got != compat.StatusFail {
@@ -529,7 +529,7 @@ func TestBaselineAnnotations_renderGitHubErrorCommands(t *testing.T) {
 	out := baselineAnnotations(regressions)
 
 	// Then: each becomes an ::error line so it lands on the PR checks tab, with
-	// newlines escaped â€” a raw newline would truncate the annotation.
+	// newlines escaped — a raw newline would truncate the annotation.
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("got %d annotation lines, want 2: %q", len(lines), out)
