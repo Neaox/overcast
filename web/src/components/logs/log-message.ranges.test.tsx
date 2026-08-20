@@ -17,19 +17,30 @@ import { resolveTokenColorClass } from "@/lib/highlight-registry"
 import type { LogMessage as LogMessageStatic } from "./log-message"
 
 class HighlightStub {
+  static deleteCalls = 0
   ranges = new Set<Range>()
   add(range: Range) {
     this.ranges.add(range)
   }
   delete(range: Range) {
+    HighlightStub.deleteCalls++
     this.ranges.delete(range)
   }
 }
 
 const registry = () => (CSS as unknown as { highlights: Map<string, HighlightStub> }).highlights
 
-const liveRangeCount = () =>
-  [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+// The registry rebuild is a coalesced microtask (see highlight-registry.ts),
+// so counting flushes it first: paint-visible state is post-flush state.
+const settledRangeCount = async () => {
+  await act(async () => {})
+  // Disposal leaves visually-inert garbage for a lazy sweep (see the registry's
+  // mutation policy); the painted truth is the post-sweep state. Imported
+  // dynamically so it targets the same fresh module instance as the component.
+  const { sweepHighlightGarbageForTests } = await import("@/lib/highlight-registry")
+  sweepHighlightGarbageForTests()
+  return [...registry().values()].reduce((total, highlight) => total + highlight.ranges.size, 0)
+}
 
 /** How many ranges the registry should hold for one row showing `text`. */
 const expectedRangeCount = (text: string) =>
@@ -43,6 +54,7 @@ let LogMessage: LogMessageComponent
 
 beforeEach(async () => {
   vi.resetModules()
+  HighlightStub.deleteCalls = 0
   vi.stubGlobal("Highlight", HighlightStub)
   vi.stubGlobal("CSS", { highlights: new Map<string, HighlightStub>() })
   LogMessage = (await import("./log-message")).LogMessage
@@ -66,22 +78,22 @@ function messageProps(overrides: Partial<Parameters<LogMessageComponent>[0]> = {
 }
 
 describe("LogMessage under the ranges presentation", () => {
-  it("renders a highlighted row as one text node with zero token spans, ranges in the registry", () => {
+  it("renders a highlighted row as one text node with zero token spans, ranges in the registry", async () => {
     const { container } = render(<LogMessage {...messageProps()} />)
     const pre = container.querySelector("pre")
     expect(pre).not.toBeNull()
     expect(pre!.childNodes).toHaveLength(1)
     expect(pre!.firstChild!.nodeType).toBe(Node.TEXT_NODE)
     expect(container.querySelectorAll("span.token")).toHaveLength(0)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("applies no ranges to a deferred row, then paints on settle without touching the DOM", () => {
+  it("applies no ranges to a deferred row, then paints on settle without touching the DOM", async () => {
     const view = render(<LogMessage {...messageProps({ defer: true })} />)
     // Deferred: the text is already there (mounting is cheap either way),
     // colour is not.
     expect(view.container.querySelector("pre")!.textContent).toBe(JSON_MESSAGE)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
 
     const observer = new MutationObserver(() => {})
     observer.observe(view.container, {
@@ -91,44 +103,64 @@ describe("LogMessage under the ranges presentation", () => {
       characterData: true,
     })
     view.rerender(<LogMessage {...messageProps({ defer: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
     // The settle that painted the colour produced not one mutation record —
     // the whole point of the ranges backend.
     expect(observer.takeRecords()).toEqual([])
     observer.disconnect()
   })
 
-  it("round-trips Format on/off: the swapped text's ranges replace the old ones exactly", () => {
+  it("round-trips Format on/off: the swapped text's ranges replace the old ones exactly", async () => {
     const view = render(<LogMessage {...messageProps()} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
 
     const pretty = JSON.stringify(JSON.parse(JSON_MESSAGE), null, 2)
     view.rerender(<LogMessage {...messageProps({ formatted: true })} />)
     expect(view.container.querySelector("pre")!.textContent).toBe(pretty)
-    expect(liveRangeCount()).toBe(expectedRangeCount(pretty))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(pretty))
 
     view.rerender(<LogMessage {...messageProps({ formatted: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("round-trips collapse: a collapsed row's ranges leave the registry, expansion restores them", () => {
+  it("round-trips collapse: a collapsed row's ranges leave the registry, expansion restores them", async () => {
     const view = render(<LogMessage {...messageProps()} />)
     view.rerender(<LogMessage {...messageProps({ collapsed: true })} />)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
     view.rerender(<LogMessage {...messageProps({ collapsed: false })} />)
-    expect(liveRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(JSON_MESSAGE))
   })
 
-  it("removes exactly its own ranges on unmount, leaving other rows' intact", () => {
+  it("removes exactly its own ranges on unmount, leaving other rows' intact", async () => {
     const other = render(<LogMessage {...messageProps({ message: '{"other": true}' })} />)
     const view = render(<LogMessage {...messageProps()} />)
-    expect(liveRangeCount()).toBe(
+    expect(await settledRangeCount()).toBe(
       expectedRangeCount(JSON_MESSAGE) + expectedRangeCount('{"other": true}'),
     )
     view.unmount()
-    expect(liveRangeCount()).toBe(expectedRangeCount('{"other": true}'))
+    expect(await settledRangeCount()).toBe(expectedRangeCount('{"other": true}'))
     other.unmount()
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
+  })
+
+  it("never calls Highlight.delete for an unmounting row — the scroll path stays mutation-free", async () => {
+    // The regression that resurrected the Firefox lockup: React runs effect
+    // cleanups BEFORE detaching host nodes, so a disposer that asks
+    // `isConnected` synchronously sees `true` for an unmounting row and takes
+    // the per-range delete path. The registry must defer the question one
+    // microtask (post-commit) and route unmounts through garbage + sweep —
+    // which swaps fresh sets and never deletes.
+    const view = render(<LogMessage {...messageProps()} />)
+    await act(async () => {})
+    const deletesAfterMount = HighlightStub.deleteCalls
+    view.unmount()
+    await act(async () => {}) // flush the disposal triage microtask
+    expect(HighlightStub.deleteCalls).toBe(deletesAfterMount)
+    // The sweep clears the garbage by swapping, still without deletes.
+    const { sweepHighlightGarbageForTests } = await import("@/lib/highlight-registry")
+    sweepHighlightGarbageForTests()
+    expect(HighlightStub.deleteCalls).toBe(deletesAfterMount)
+    expect(await settledRangeCount()).toBe(0)
   })
 
   it("paints an async (worker) result imperatively when the reply lands", async () => {
@@ -161,7 +193,7 @@ describe("LogMessage under the ranges presentation", () => {
     const { container } = render(<LogMessage {...messageProps({ message: bigDoc })} />)
     // Mounted, text visible, reply not yet delivered: no colour yet.
     expect(container.querySelector("pre")!.textContent).toBe(bigDoc)
-    expect(liveRangeCount()).toBe(0)
+    expect(await settledRangeCount()).toBe(0)
 
     await act(async () => {
       deliver!()
@@ -169,6 +201,6 @@ describe("LogMessage under the ranges presentation", () => {
       // hook's apply); a macrotask hop outlasts the whole microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
-    expect(liveRangeCount()).toBe(expectedRangeCount(bigDoc))
+    expect(await settledRangeCount()).toBe(expectedRangeCount(bigDoc))
   })
 })

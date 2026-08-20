@@ -687,33 +687,97 @@ severity:
   markup surface) — kept as an improvement and disclosed in the changelog
   rather than shipped silently.
 
-Known-and-accepted from the same review: live `Range` objects carry per-DOM-
-mutation fix-up cost while rows are mounted (a `StaticRange` swap needs
-cross-browser paint verification before it can be trusted — follow-up, not a
-silent change); ~~the S3 preview's adoption needs a `FormattedPreview` shape
-change (`{text, language}` policy instead of pre-rendered html) plus a shared
-rendering component before the "kernel adopts unchanged" promise is real~~ —
-done (2026-08-20): `HighlightedCode`
-(web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
-owning the whole presentation fork (ranges pre + hook | settled markup
-innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
-preview both consume it, `FormattedPreview` returns `{text, language,
-skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
-preview's wrap-class split stays deliberate — a language-chosen document
-scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
-preview's grammars (markup/css/javascript) takes the *markup-parity* form
-this review recommended — every token class themed in both backends or in
-neither, pinned per grammar and globally in token-theme-coverage.test.ts —
-while json keeps its stricter total-coverage test. And
-~~three modules now hand-roll the persistent-worker-client shape
-(docs search, map layout, highlighting) that deserves one shared helper~~ —
-done: `web/src/lib/worker-client.ts` now owns the correlation/lifecycle
-machinery (lazy factory construction, request-id correlation, pending-map
-hygiene, onerror/onmessageerror recovery via caller-supplied synchronous
-fallbacks, guarded postMessage, respawn-limited retry), and the three call
-sites keep their distinct semantics as parameters: highlight keeps its
-never-rejecting promises and retry-once ladder, docs search keeps its
-abort/cancel path, map layout keeps its stale-reply guard.
+Known-and-accepted from the same review — all three since landed:
+
+- ~~Live `Range` objects carry per-DOM-mutation fix-up cost while mounted~~ —
+  **landed 2026-08-20**: `applyTokenRanges` now mints `StaticRange`s (with a
+  live-`Range` fallback for a hypothetical engine shipping highlights without
+  them). Staleness was already a non-issue by construction — ranges are
+  disposed and re-applied on any text change and refused on mismatched text.
+  Chrome paint verified against a built image (full token colour, zero spans,
+  every registered range a `StaticRange`); the Firefox paint check was
+  deliberately left to a human eye before merge — the one step this work
+  could not automate.
+
+  **And a third Firefox trace (2026-08-20, 31 s) forced a registry redesign
+  in the same branch.** "Page locks up after scrolling down pretty far":
+  48.4% of the whole trace — 15,109 self-samples, eventDelay max 14.9 s —
+  sat inside ONE closure, which the built bundle de-minifies to the
+  *dispose loop*: per-range `Highlight.delete` against the page-global
+  per-class sets. Firefox charges each mutation of a registered highlight
+  with work scaling on the set's size (every mutation also invalidates its
+  paint), so a continuously scrolled stream — hydrated rows unmounting at
+  hundreds of ranges each, sets tens of thousands strong — degraded
+  quadratically with depth. Chrome does not exhibit it: a 36-cycle
+  deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
+  flat at 16–19 ms per scroll frame on the *buggy* build.
+
+  The fix took four iterations, each indicted by its own trace:
+
+  1. *Swap-rebuild on every change* (zero deletes: fresh sets rebuilt from
+     live rows per coalesced microtask) fixed the lockup — max eventDelay
+     fell 14.9 s → 1.6 s — but a fourth trace put 73.7% (12.5 s of 17 s)
+     inside the rebuild itself: disposals scheduled it, so continuous
+     scrolling re-`add`ed the whole hydrated viewport nearly every frame,
+     and Firefox's `Highlight.add` is not free either.
+  2. *Additive-with-garbage, first cut:* scrolling mutates nothing;
+     unmounting rows leave visually-inert garbage (a disconnected static
+     range does not paint) for a lazy sweep; only a text swap on a
+     still-connected node deletes synchronously. Right policy — wrong
+     moment to ask: the disposer tested `node.isConnected` synchronously,
+     and **React runs effect cleanups before detaching host nodes**, so
+     every unmounting row answered `true`, took the synchronous-delete
+     branch, and a sixth trace showed the original lockup resurrected
+     wholesale (100% of 91k samples back in the dispose closure).
+  3. *Post-commit triage + in-place adds:* disposers enqueue; a microtask
+     later — after the commit has finished detaching, which is when
+     connectivity finally means what it says — unmounts become inert
+     garbage and only in-place withdrawals delete. Right about deletes,
+     wrong about adds: a bottom→top jump settled one large window and
+     `Highlight.add` into the REGISTERED sets measured ~1 ms per range —
+     one 21-second task, 24 s of a 55 s trace inside the apply loop.
+     (Adds into fresh, unregistered sets measure ~11 µs — the sweep in the
+     same trace.)
+  4. *The landed model — one mutation primitive:* nothing ever mutates a
+     registered set. `swapHighlights` builds fresh unregistered
+     `Highlight`s from the live applications' existing range objects and
+     swaps them in wholesale (linear, one invalidation per class); all
+     other code merely picks the swap's frequency — a settle commit's
+     hydrations coalesce into one pre-paint microtask swap, a
+     still-connected withdrawal queues the same swap, and disconnected
+     disposals (the scroll path, triaged post-commit) just count garbage
+     for a quiet-second sweep. Scrolling performs zero registered-set
+     mutations in either direction at any depth. Pinned by the
+     zero-`Highlight.delete` regression test; the bottom→top scenario
+     becomes one linear swap per settle.
+
+  Chrome protocol on the final model: flat, settle ≤ 1 ms, bookkeeping
+  exact post-sweep. Firefox confirmation comes from the reporter's
+  re-trace against the republished dev image.
+- ~~The S3 preview's adoption needs a `FormattedPreview` shape change plus a
+  shared rendering component before the "kernel adopts unchanged" promise is
+  real~~ — **landed 2026-08-20** (#1074): `HighlightedCode`
+  (web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
+  owning the whole presentation fork (ranges pre + hook | settled markup
+  innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
+  preview both consume it, `FormattedPreview` returns `{text, language,
+  skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
+  preview's wrap-class split stays deliberate — a language-chosen document
+  scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
+  preview's grammars (markup/css/javascript) takes the *markup-parity* form
+  this review recommended — every token class themed in both backends or in
+  neither, pinned per grammar and globally in token-theme-coverage.test.ts —
+  while json keeps its stricter total-coverage test.
+- ~~Three modules hand-roll the persistent-worker-client shape (docs search,
+  map layout, highlighting) that deserves one shared helper~~ — **landed
+  2026-08-20** (#1073): `web/src/lib/worker-client.ts` owns the
+  correlation/lifecycle machinery (lazy factory construction, request-id
+  correlation, pending-map hygiene, onerror/onmessageerror recovery via
+  caller-supplied synchronous fallbacks, guarded postMessage,
+  respawn-limited retry), and the three call sites keep their distinct
+  semantics as parameters: highlight keeps its never-rejecting promises and
+  retry-once ladder, docs search keeps its abort/cancel path, map layout
+  keeps its stale-reply guard.
 
 ## 3g. The formatting pass (2026-08-20) — memoised, deliberately synchronous — **landed**
 
