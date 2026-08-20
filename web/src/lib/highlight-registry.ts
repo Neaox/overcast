@@ -246,12 +246,34 @@ function swapHighlights(): void {
     CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, fresh.get(cls) ?? new Highlight())
   }
   garbageRanges = 0
+  lastSwapAt = Date.now()
 }
+
+/**
+ * Floor between consecutive swaps. One swap is linear in the hydrated
+ * viewport (~11 µs/range in Firefox — plan doc §3f), which is fine per
+ * settle but not per frame: a pinned live tail hydrates every append batch,
+ * and without a floor that is a swap per commit. The first swap after quiet
+ * runs in the same commit's microtask (colour lands pre-paint, no flash);
+ * rapid successors trail on a timer, so a busy tail's newest rows wear
+ * colour at most this much later — imperceptible against the stream's own
+ * motion.
+ */
+const SWAP_MIN_INTERVAL_MS = 150
+let lastSwapAt = 0
 
 /** One swap per microtask flush, however many rows applied or withdrew. */
 function queueSwap(): void {
   if (swapQueued) return
   swapQueued = true
+  const elapsed = Date.now() - lastSwapAt
+  if (elapsed < SWAP_MIN_INTERVAL_MS) {
+    setTimeout(() => {
+      swapQueued = false
+      swapHighlights()
+    }, SWAP_MIN_INTERVAL_MS - elapsed)
+    return
+  }
   queueMicrotask(() => {
     swapQueued = false
     swapHighlights()
