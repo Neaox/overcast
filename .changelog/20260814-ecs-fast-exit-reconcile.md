@@ -1,1 +1,0 @@
-* [docker/ecs/ecr/efs/eks/elasticache/msk/rds] Docker-backed services reconcile one shared daemon snapshot at startup and after event-stream reconnects, immediately replace failed managed runtimes, and avoid retaining stale container state; ECS also preserves a missed container's exit code and Docker stop time before replacing the task with current launch-time secrets

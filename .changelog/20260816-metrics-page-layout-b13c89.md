@@ -1,1 +1,0 @@
-~ [web] the Metrics & Health page is reordered — health and runtime facts in one summary band, then a uniform runtime card grid, then advisories and per-subsystem diagnostics; the advisories section collapses to a single line when there is nothing to report, and the Docker table moved to the foot of the page and now shows each service its own socket

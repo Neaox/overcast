@@ -1,2 +1,0 @@
-* [web] syntax-highlighted log rows render as a single text node where the CSS Custom Highlight API exists — token colours paint as ranges (no per-token spans for extensions and the accessibility tree to walk), with large documents tokenized in a persistent worker and the cached Prism markup unchanged elsewhere
-* [web] code comments in syntax-highlighted previews (S3 objects, HTTP bodies, the code browser) now render muted instead of full-strength foreground — the token theme gained a comment colour it never had

@@ -1,1 +1,0 @@
-* [cloudwatch/web] the Format pass is memoised: pretty-printing a log document now happens once per distinct message instead of on every row mount and every Format toggle, so scrolling back over heavy documents and flipping Format stop re-paying multi-millisecond parses per row
