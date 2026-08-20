@@ -14,6 +14,7 @@
  * `{` or `ERROR`.
  */
 import { highlightCode } from "@/lib/highlight-code"
+import { LruCache } from "@/lib/lru-cache"
 import { stripAnsi } from "@/lib/ansi"
 
 export type LogLevel = "error" | "warn" | "info" | "debug"
@@ -151,6 +152,37 @@ export function tryParseJSON(msg: string): object | null {
 /** Serialises a parsed message back out, indented or on one line. */
 export function stringifyJSON(obj: object, pretty: boolean): string {
   return JSON.stringify(obj, null, pretty ? 2 : 0)
+}
+
+// One entry per (form, message); cost is what the entry actually retains.
+// ~8M characters ≈ a few hundred typical documents in both forms, or a
+// handful of 256 KB monsters — either way the formatting pass for a mounted
+// window is map hits, not parses.
+const jsonTextCache = new LruCache<string | null>(8_000_000)
+
+/**
+ * The message as a re-serialised JSON document — pretty or single-line — or
+ * null when it is not one JSON document.
+ *
+ * This is the formatting pass, memoised. The virtualizer mounts and unmounts
+ * rows continuously, and `LogMessage` needs this text at render time (it IS
+ * the row's content, and its height), so the parse + stringify used to run
+ * per mount per row: scrolling back and forth over the same heavy documents
+ * re-paid ~1–3 ms each at CloudWatch's largest sizes, and a Format toggle
+ * re-paid it for every mounted row at once. Per distinct message and form it
+ * is now computed exactly once. Deliberately synchronous — a worker or
+ * rAF/idle deferral cannot help here, because text that arrives late changes
+ * the row's height after measurement (the same reason plan §4 keeps
+ * Format-mode pretty-printing out of async upgrades).
+ */
+export function jsonDocumentText(message: string, pretty: boolean): string | null {
+  const key = (pretty ? "p " : "c ") + message
+  const cached = jsonTextCache.get(key)
+  if (cached !== undefined) return cached
+  const json = tryParseJSON(stripAnsi(message))
+  const text = json === null ? null : stringifyJSON(json, pretty)
+  jsonTextCache.put(key, text, message.length + (text?.length ?? 0))
+  return text
 }
 
 /**

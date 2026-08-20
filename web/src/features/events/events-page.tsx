@@ -100,6 +100,10 @@ function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 function eventMatchesText(ev: StreamEvent, lower: string): boolean {
   if (ev.type.toLowerCase().includes(lower)) return true
   if (ev.source.toLowerCase().includes(lower)) return true
+  // Envelope-level, so pasting a request id narrows the console to everything
+  // that one API call set off — the S3 write, the notification, the queue
+  // send, the invoke — not just the request:Received row summarising the call.
+  if (ev.requestId?.toLowerCase().includes(lower)) return true
   if (ev.type === "request:Received") {
     const p = ev.payload as Record<string, unknown> | null
     if (p) {

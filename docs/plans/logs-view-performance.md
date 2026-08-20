@@ -493,9 +493,319 @@ Ideas gathered 2026-08-18, all display-layer only, no API behaviour changes. **L
 Still open: "filter for selection". Jump-to-timestamp landed with Phase 4's backward half
 (it reuses the anchor flow, as planned).
 
+## 3e. Trace 2 (2026-08-19) — scroll-time DOM weight — **landed**
+
+A second Firefox profile (stream view, all phases above shipped) still showed lock-ups and
+blank regions while scrolling. The 10.3 s capture, same offline rollup as §2b:
+
+- **37.1% of the tab's main thread inside 1Password's `injected.js`** (MutationObserver
+  processRecords/acceptNode; single tasks of 2.0 s and 1.2 s) and **6.3% in Firefox's own
+  `FormAutofillHandler.sys.mjs`** — two form-detection walkers, both fed by us.
+- **~148k accessibility-tree node removals** (`DocAccessible::ContentRemovedNode` n=148,392;
+  `ShutdownChildrenInSubtree` 1.67 s) — the count that names the real defect: each virtualized
+  row was a large element subtree, so every scroll frame's mount/unmount churned thousands of
+  nodes, and every document observer pays per node whether or not it cares about the content.
+- App JS itself: **6.2%** (react-virtual 4.7% + bundle 1.5%), plus 628/431 ms tasks under the
+  virtualizer's `flushSync`/`resizeItem` — mostly style/layout of the same heavy subtrees.
+- `eventDelay` >100 ms for 48.5% of samples, >1 s for 18.6%, max 2.3 s.
+
+Two per-row weights, both deferred rather than removed (`useScrollSettled`, a render-phase
+latch: seeded false when the row mounts mid-`virtualizer.isScrolling`, flipped on the first
+idle render, never flipped back):
+
+- **Syntax-highlight spans** (`LogMessage`): a row mounted mid-scroll renders its JSON as one
+  text node in the same `<pre>`, and hydrates the Prism markup when the scroll settles. The
+  §4 worker analysis already established this swap is layout-stable — identical text, identical
+  classes — so `measureElement` never re-fires and the prepend anchor never moves.
+- **The hover-action buttons** (`RowActions`, extracted from inline JSX): buttons are exactly
+  what form-detection walkers inspect, and the cluster is `opacity-0` until hover anyway. The
+  `w-16` wrapper always renders (layout never depends on settling); the buttons mount on the
+  first idle frame and stay.
+
+The peek's `LogViewerRow` threads the same flag through to `LogMessage` for its Format mode.
+Steady-state rendering is byte-identical to before — the deferral only exists in the frames
+where rows are being churned. Pinned by `log-message.test.tsx`: no token spans mid-scroll,
+same text/classes, hydrate on settle, markup survives the next scroll.
+
+Verified against the reporting user's real database (207 events, ~460 highlight spans per
+row at rest): mid-scroll a fling mounted 125 fresh rows with **zero spans, zero buttons, max
+7 elements each**; 400 ms after settling, every mounted row had its buttons and every JSON
+row its highlight. Two follow-ups came out of that session:
+
+- **Hydration is gated by viewport proximity, not just settling** (`nearViewport`, same
+  module). The settle latch alone hydrates every *mounted* row in one commit — and with
+  Format on, this stream's rows pretty-print to thousands of spans each, so a 30-row
+  overscan window hydrating at once was a six-figure node insertion that froze the tab.
+  Rows hydrate when the scroll is idle AND they sit within about two viewports; the latch
+  still keeps them hydrated afterwards. (`LogMessage`'s prop is `defer` — the caller passes
+  `isScrolling || !nearViewport(...)`.) Overscan rose 15 → 30 in the same change: mounts
+  are ~7 nodes now, so the headroom that kills blank track during flings is nearly free.
+- **Wrap mode gained `min-w-0` on the message `<pre>`** (a flex item): min-width:auto pins
+  a flex item to min-content width and break-word does not lower min-content, so one
+  whitespace-free Powertools error dump forced a ~42,000px scroller under a 2,700px
+  viewport. Live-patching confirmed exactly-viewport width after; no-wrap mode keeps the
+  wide scroller deliberately.
+
+Answer to "is React the hindrance?": no — measured. App JS was ~6% of the main thread; the
+cost was DOM node volume, which a vanilla or canvas rewrite would pay differently but a
+framework swap would not remove (a hand-rolled list inserting the same 300-span rows feeds
+the same walkers). The escalation ladder if churn ever dominates again: default to collapse
+mode (fixed 30 px rows, no measurement — AWS's own default), then DOM row recycling for the
+fixed-height mode, then canvas — each step buys throughput by giving up DOM affordances
+(find-in-page, selection, a11y for free), which is why none is taken pre-emptively.
+
+## 3f. Zero-DOM syntax highlighting (2026-08-19) — CSS Custom Highlight API — **landed**
+
+§3e deferred the highlight spans; this removes them. Where the browser has the
+CSS Custom Highlight API (Chrome 105+, Safari 17.2+, Firefox 140+), a
+syntax-highlighted log row renders as ONE text node and token colours paint as
+registered `Highlight` ranges — ~460 span elements per settled row (that
+session's real stream) become zero, for every document observer that §2b/§3e
+showed charging per node. Where the API is missing, the cached Prism markup
+path renders byte-identically to before.
+
+Shape (a kernel, not a logs feature — the S3 preview adopted it 2026-08-20
+through the shared `HighlightedCode` component; see the known-and-accepted
+list below):
+
+- **Facade** `web/src/lib/highlight-code.ts`: the whole detection matrix, the
+  markup backend (unchanged LRU: 400 entries / 100 KB cap), and the ranges
+  backend — `requestTokenRanges` (own LRU, same policy) returning an array
+  synchronously on cache hit / small doc / no worker, a promise only when the
+  tokenize is genuinely off-thread. Components ask `highlightPresentation()`
+  and never feature-detect.
+- **Offset tokenizer** `prism-ranges.ts`: `Prism.tokenize` walked into
+  `{start, end, type}` leaf spans that tile the text (pinned against the
+  markup backend token-for-token), plus the packed wire form.
+- **One persistent worker** `highlight-worker.ts` (Prism's own async mode
+  stays off — its FAQ's worker-per-call overhead is exactly what this
+  design amortizes away): in-flight coalescing means fifty rows of one
+  document tokenize once; cache hits never message at all.
+- **Registry + hook** `highlight-registry.ts` / `use-highlight-ranges.ts`:
+  one global `Highlight` per themed token class (`overcast-token-string`, …)
+  registered at module init; rows apply ranges in a layout effect keyed on
+  (text, node) whose cleanup removes exactly that row's ranges — Format
+  toggles, collapse/expand and unmount round-trip leaving only live rows'
+  ranges (pinned by `log-message.ranges.test.tsx`, including a
+  MutationObserver probe asserting range application produces zero records).
+- **Theme** `web/src/styles/syntax-tokens.css` (extracted whole from
+  global.css): `--token-*` variables per class in both palettes, consumed by
+  BOTH selector families — `.token.<class>` for markup, and
+  `::highlight(overcast-token-<class>)` as deliberately *separate* rules,
+  because a browser without the API drops any selector list containing an
+  unknown pseudo-element, which would have uncoloured the markup fallback in
+  exactly the browsers that need it. Theme switches recolour ranges via CSS
+  alone. The grammar-coverage test enumerates every class the registered
+  grammars can emit and fails on any class missing a variable, a `.token`
+  rule or a `::highlight` rule. (Incidental fix: the old literal dark token
+  rules only matched explicit `[data-theme="dark"]`, so system-dark sessions
+  read light token colours; the variables wire both dark scopes.)
+  `::highlight()` can only express color / background-color / text-decoration
+  / text-shadow — this theme is colour-only, so nothing is lost.
+
+**Sync-vs-worker threshold, measured** (Node 24 worker_threads as the
+messaging stand-in, this dev box, realistic nested JSON, median of 30):
+
+| doc size | tokens | sync tokenize | worker round-trip (object clone) | echo (clone only) | packed round-trip |
+| --- | --- | --- | --- | --- | --- |
+| 2.1 KB | 275 | 0.05 ms | 0.27 ms | 0.36 ms | 0.12 ms |
+| 8.5 KB | 1,085 | 0.21 ms | 0.84 ms | 1.31 ms | 0.28 ms |
+| 33 KB | 4,217 | 0.95 ms | 3.46 ms | 5.16 ms | 1.01 ms |
+| 131 KB | 16,745 | 4.10 ms | 12.9 ms | 20.1 ms | 4.79 ms |
+
+The object-form numbers vindicate Prism's FAQ from an unexpected angle:
+structured-cloning one `{start,end,type}` object per token costs more than
+the tokenize at *every* size — a worker replying in object form is a strict
+loss. The reply therefore travels as a transferable `Uint32Array` of
+(start, end, type-index) triples over a small cloned type table: transfer is
+a pointer handoff, so the main thread pays only the request clone
+(0.001–0.03 ms) plus the unpack, and the packed round-trip tracks the
+worker-side tokenize almost exactly. Requests stay plain clones (strings
+cannot transfer; pre-encoding would cost more than the clone), and
+`SharedArrayBuffer` is declined outright — it needs cross-origin isolation
+headers the console does not ship and cannot beat a transfer for one-shot
+request/reply. **Threshold: `SYNC_TOKENIZE_MAX_CHARS = 8192`** — below it
+sync tokenize is ≤0.2 ms (comparable to the messaging's own main-thread
+share, without the async second pass), and typical log lines sit far below
+that, so most rows never message at all; above it the worker keeps the main
+thread's cost at send + unpack instead of the full tokenize (4 ms saved at
+131 KB; CloudWatch's 256 KB event cap bounds the worst legal case).
+`requestIdleCallback` is deliberately not used anywhere in the path: range
+application mutates nothing and is already idle-gated by `useScrollSettled`,
+so idle-scheduling it would only delay colour.
+
+Degradation is per-feature and tested: no Highlight API → markup backend
+byte-identical to today; no Worker / constructor throws / later error → the
+same facade call tokenizes synchronously (a dying worker resolves its
+stranded requests synchronously before being dropped for the session). The
+`defer` gating from §3e still applies — deferred rows get no ranges until
+they settle near the viewport, and under the ranges backend the deferred and
+settled DOM are *the same DOM*, so hydration stops being a DOM event
+entirely.
+
+### Review findings folded in (2026-08-19, PR #1070 review)
+
+An eight-angle review of the first cut surfaced and fixed, in order of
+severity:
+
+- **Prism's own worker message handler was killing the worker on its first
+  request.** prismjs registers a `JSON.parse`-ing `message` listener at its
+  module init inside any scope with no `document`, unless
+  `disableWorkerMessageHandler` was set *before* it loaded — and our protocol
+  is a structured-cloned object. The first >8 KiB document threw in the
+  worker, fired `onerror`, and silently retired the worker for the session:
+  every visual check passed (the sync fallback paints identical colours),
+  which is precisely how it slipped through. `prism-global-config.ts` now
+  sets the flag in an import that executes first, pinned by a test on the
+  flag Prism copies in.
+- **A rejected or undeliverable request could poison its cache key forever.**
+  `requestTokenRanges` now guarantees a never-rejecting, always-settling
+  promise: one bookkeeping closure (cache put + in-flight delete) sits behind
+  worker replies, stranded-work recovery, and a guarded `postMessage` whose
+  synchronous failure answers on the main thread.
+- **The worker gets one respawn** (`WORKER_FAILURE_LIMIT = 2`) instead of
+  dying to the session on a single error, and `onmessageerror` recovers the
+  same way `onerror` does.
+- **The caches are bounded by cost, not entry count**: the markup cache by
+  characters of HTML, the ranges cache by token count — which also removes
+  the old 100 KB text refusal that denied caching to exactly the documents
+  the worker serves. One entry may take at most a quarter of its budget.
+- **Alias resolution is now cascade-faithful and contractual**:
+  `TOKEN_COLOR_CLASSES` order == stylesheet rule order (a coverage test pins
+  it), and `resolveTokenColorClass` (memoized) picks the highest-indexed
+  class — the same winner the CSS cascade gives the markup backend, so the
+  backends cannot colour an aliased token differently.
+- **`applyTokenRanges` is all-or-nothing on its source text** — the staleness
+  guard moved into the kernel (`applyTokenRanges(node, text, ranges)`), so a
+  consumer other than the hook cannot paint misaligned colour partially.
+- The detection matrix collapsed to one module-load constant
+  (`HIGHLIGHT_PRESENTATION`) read everywhere; the hook's only gate is its
+  null-text contract. The worker chunk now builds as `format: "es"` to match
+  its `type: "module"` construction. The markup backend is *not* quite
+  byte-identical after all: the theme gained a `.token.comment` colour that
+  never existed before (comments were full-strength foreground on every
+  markup surface) — kept as an improvement and disclosed in the changelog
+  rather than shipped silently.
+
+Known-and-accepted from the same review — all three since landed:
+
+- ~~Live `Range` objects carry per-DOM-mutation fix-up cost while mounted~~ —
+  **landed 2026-08-20**: `applyTokenRanges` now mints `StaticRange`s (with a
+  live-`Range` fallback for a hypothetical engine shipping highlights without
+  them). Staleness was already a non-issue by construction — ranges are
+  disposed and re-applied on any text change and refused on mismatched text.
+  Chrome paint verified against a built image (full token colour, zero spans,
+  every registered range a `StaticRange`); the Firefox paint check was
+  deliberately left to a human eye before merge — the one step this work
+  could not automate.
+
+  **And a third Firefox trace (2026-08-20, 31 s) forced a registry redesign
+  in the same branch.** "Page locks up after scrolling down pretty far":
+  48.4% of the whole trace — 15,109 self-samples, eventDelay max 14.9 s —
+  sat inside ONE closure, which the built bundle de-minifies to the
+  *dispose loop*: per-range `Highlight.delete` against the page-global
+  per-class sets. Firefox charges each mutation of a registered highlight
+  with work scaling on the set's size (every mutation also invalidates its
+  paint), so a continuously scrolled stream — hydrated rows unmounting at
+  hundreds of ranges each, sets tens of thousands strong — degraded
+  quadratically with depth. Chrome does not exhibit it: a 36-cycle
+  deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
+  flat at 16–19 ms per scroll frame on the *buggy* build.
+
+  The fix took four iterations, each indicted by its own trace:
+
+  1. *Swap-rebuild on every change* (zero deletes: fresh sets rebuilt from
+     live rows per coalesced microtask) fixed the lockup — max eventDelay
+     fell 14.9 s → 1.6 s — but a fourth trace put 73.7% (12.5 s of 17 s)
+     inside the rebuild itself: disposals scheduled it, so continuous
+     scrolling re-`add`ed the whole hydrated viewport nearly every frame,
+     and Firefox's `Highlight.add` is not free either.
+  2. *Additive-with-garbage, first cut:* scrolling mutates nothing;
+     unmounting rows leave visually-inert garbage (a disconnected static
+     range does not paint) for a lazy sweep; only a text swap on a
+     still-connected node deletes synchronously. Right policy — wrong
+     moment to ask: the disposer tested `node.isConnected` synchronously,
+     and **React runs effect cleanups before detaching host nodes**, so
+     every unmounting row answered `true`, took the synchronous-delete
+     branch, and a sixth trace showed the original lockup resurrected
+     wholesale (100% of 91k samples back in the dispose closure).
+  3. *Post-commit triage + in-place adds:* disposers enqueue; a microtask
+     later — after the commit has finished detaching, which is when
+     connectivity finally means what it says — unmounts become inert
+     garbage and only in-place withdrawals delete. Right about deletes,
+     wrong about adds: a bottom→top jump settled one large window and
+     `Highlight.add` into the REGISTERED sets measured ~1 ms per range —
+     one 21-second task, 24 s of a 55 s trace inside the apply loop.
+     (Adds into fresh, unregistered sets measure ~11 µs — the sweep in the
+     same trace.)
+  4. *The landed model — one mutation primitive:* nothing ever mutates a
+     registered set. `swapHighlights` builds fresh unregistered
+     `Highlight`s from the live applications' existing range objects and
+     swaps them in wholesale (linear, one invalidation per class); all
+     other code merely picks the swap's frequency — a settle commit's
+     hydrations coalesce into one pre-paint microtask swap, a
+     still-connected withdrawal queues the same swap, and disconnected
+     disposals (the scroll path, triaged post-commit) just count garbage
+     for a quiet-second sweep. Scrolling performs zero registered-set
+     mutations in either direction at any depth. Pinned by the
+     zero-`Highlight.delete` regression test; the bottom→top scenario
+     becomes one linear swap per settle.
+
+  Chrome protocol on the final model: flat, settle ≤ 1 ms, bookkeeping
+  exact post-sweep. Firefox confirmation comes from the reporter's
+  re-trace against the republished dev image.
+- ~~The S3 preview's adoption needs a `FormattedPreview` shape change plus a
+  shared rendering component before the "kernel adopts unchanged" promise is
+  real~~ — **landed 2026-08-20** (#1074): `HighlightedCode`
+  (web/src/components/ui/highlighted-code.tsx) is the shared renderable unit
+  owning the whole presentation fork (ranges pre + hook | settled markup
+  innerHTML | deferred plain) plus the settle latch; `LogMessage` and the S3
+  preview both consume it, `FormattedPreview` returns `{text, language,
+  skipped}` policy (the >256 KiB plain-text cap and its notice kept), and the
+  preview's wrap-class split stays deliberate — a language-chosen document
+  scrolls as code (`whitespace-pre`), plain text wraps. Coverage for the
+  preview's grammars (markup/css/javascript) takes the *markup-parity* form
+  this review recommended — every token class themed in both backends or in
+  neither, pinned per grammar and globally in token-theme-coverage.test.ts —
+  while json keeps its stricter total-coverage test.
+- ~~Three modules hand-roll the persistent-worker-client shape (docs search,
+  map layout, highlighting) that deserves one shared helper~~ — **landed
+  2026-08-20** (#1073): `web/src/lib/worker-client.ts` owns the
+  correlation/lifecycle machinery (lazy factory construction, request-id
+  correlation, pending-map hygiene, onerror/onmessageerror recovery via
+  caller-supplied synchronous fallbacks, guarded postMessage,
+  respawn-limited retry), and the three call sites keep their distinct
+  semantics as parameters: highlight keeps its never-rejecting promises and
+  retry-once ladder, docs search keeps its abort/cancel path, map layout
+  keeps its stale-reply guard.
+
+## 3g. The formatting pass (2026-08-20) — memoised, deliberately synchronous — **landed**
+
+`LogMessage`'s parse + re-serialise (`tryParseJSON` + `stringifyJSON`) ran per row *mount* —
+so virtualizer churn re-paid it continuously for the same messages, and a Format toggle
+re-paid it for every mounted row at once (~1–3 ms per 100 KB-class document). It is now
+`jsonDocumentText(message, pretty)` in log-format: an LRU keyed by (form, message), computed
+once per distinct message and form, identity-stable on hits. The `LruCache` behind it moved
+to `lib/lru-cache.ts` — the highlight kernel's markup and ranges caches are the other two
+consumers.
+
+Considered and declined, same reasoning as §4's worker analysis but stronger: a worker or
+rAF/idle deferral cannot carry the formatting pass at all, because the formatted text is the
+row's *content* — it must exist at render time, and text that arrives late changes the row's
+height after measurement (compact→pretty pop-in plus measure churn plus anchor drift). What
+remains after the memo is layout of the pretty-printed blocks themselves, which is the
+irreducible cost of showing them; the ranges backend already keeps colour out of that path.
+
 ## 4. Explicit non-goals
 
-- No web worker for the standard row path. A worker's price is the string round-trip plus a
+- ~~No web worker for the standard row path~~ — superseded by §3f, which landed the size
+  threshold this bullet itself predicted ("if real streams hit that case"), measured at 8 KiB
+  rather than the ~50 KiB estimated here, and only after the packed-transfer protocol removed
+  the round-trip's dominant cost (the reply clone; see §3f's table — in object form the worker
+  was indeed the loss this bullet called it). The reasoning below stands for the *markup*
+  backend, where the worker's reply would be an HTML string and the upgrade a DOM swap; under
+  the ranges backend the upgrade is imperative range application — no second commit, no
+  mutation batch. A worker's price is the string round-trip plus a
   second render when the result lands — an extra commit and mutation batch per row, a step
   backwards for rows whose synchronous highlight is sub-millisecond (nearly all of them, and a
   repeat highlight is a cache hit since Phase 3). Measured (Node 24, this dev machine,

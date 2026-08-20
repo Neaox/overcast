@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // flushRecorder is a ResponseRecorder that also implements http.Flusher,
@@ -184,27 +185,7 @@ func TestEventsHandler_DeliversEventAsSSEData(t *testing.T) {
 	}, 20*time.Millisecond)
 
 	// Drain the event flush.
-	body := rec.waitFlush(t, 2*time.Second)
-
-	var found *sseEnvelope
-	for _, line := range readSSELines(body) {
-		prefix := "data: "
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		var env sseEnvelope
-		if err := json.Unmarshal([]byte(line[len(prefix):]), &env); err != nil {
-			continue
-		}
-		if env.Type == string(events.S3ObjectCreated) {
-			found = &env
-			break
-		}
-	}
-
-	if found == nil {
-		t.Fatalf("expected SSE data line with type %q; body so far:\n%s", events.S3ObjectCreated, body)
-	}
+	found := findSSEEnvelope(t, rec.waitFlush(t, 2*time.Second), events.S3ObjectCreated)
 	if found.Source != "s3" {
 		t.Errorf("Source = %q, want s3", found.Source)
 	}
@@ -377,29 +358,14 @@ func TestEventsHandler_EnvelopeTimeIsRFC3339Nano(t *testing.T) {
 		Time:   ts,
 	}, 20*time.Millisecond)
 
-	body := rec.waitFlush(t, 2*time.Second)
-
-	for _, line := range readSSELines(body) {
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		var env sseEnvelope
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &env); err != nil {
-			continue
-		}
-		if env.Type != string(events.S3ObjectCreated) {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, env.Time)
-		if err != nil {
-			t.Errorf("Time field %q is not RFC3339Nano: %v", env.Time, err)
-		}
-		if !parsed.UTC().Equal(ts.UTC()) {
-			t.Errorf("Time = %v, want %v", parsed.UTC(), ts.UTC())
-		}
-		return
+	env := findSSEEnvelope(t, rec.waitFlush(t, 2*time.Second), events.S3ObjectCreated)
+	parsed, err := time.Parse(time.RFC3339Nano, env.Time)
+	if err != nil {
+		t.Fatalf("Time field %q is not RFC3339Nano: %v", env.Time, err)
 	}
-	t.Fatal("did not find expected data line")
+	if !parsed.UTC().Equal(ts.UTC()) {
+		t.Errorf("Time = %v, want %v", parsed.UTC(), ts.UTC())
+	}
 }
 
 // --- history replay ----------------------------------------------------------
@@ -694,4 +660,82 @@ func TestEventsHandler_ResumeIDSurvivesAnEvictedGap(t *testing.T) {
 	if !strings.Contains(body, want) {
 		t.Errorf("expected the resume point to reach %q after a filtered replay; got:\n%s", want, body)
 	}
+}
+
+// TestEventsHandler_CarriesRequestIDOnTheWire verifies the SSE envelope
+// carries the request that caused the event, so the Events page can link a
+// row to its trace. The id is stamped by Bus.Publish from the publishing
+// context, which is what publishAfter passes through.
+func TestEventsHandler_CarriesRequestIDOnTheWire(t *testing.T) {
+	bus := newTestBus()
+	shutdownCh := newTestShutdown()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
+
+	rec, cancel := doSSERequest(handler, "")
+	defer cancel()
+	rec.waitFlush(t, time.Second)
+
+	const wantID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	time.AfterFunc(20*time.Millisecond, func() {
+		bus.Publish(protocol.ContextWithRequestID(context.Background(), wantID), events.Event{
+			Type:    events.S3ObjectCreated,
+			Source:  "s3",
+			Time:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			Payload: map[string]string{"key": "myfile.txt"},
+		})
+	})
+
+	env := findSSEEnvelope(t, rec.waitFlush(t, 2*time.Second), events.S3ObjectCreated)
+	if env.RequestID != wantID {
+		t.Errorf("RequestID = %q, want %q", env.RequestID, wantID)
+	}
+}
+
+// TestEventsHandler_OmitsRequestIDWhenAbsent verifies an event with no request
+// behind it omits the field entirely rather than sending an empty string — a
+// client has to be able to tell "no request caused this" from "a request
+// caused this and we could not name it".
+func TestEventsHandler_OmitsRequestIDWhenAbsent(t *testing.T) {
+	bus := newTestBus()
+	shutdownCh := newTestShutdown()
+	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
+
+	rec, cancel := doSSERequest(handler, "")
+	defer cancel()
+	rec.waitFlush(t, time.Second)
+
+	publishAfter(bus, events.Event{
+		Type:   events.DockerContainerDied,
+		Source: "docker",
+		Time:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}, 20*time.Millisecond)
+
+	body := rec.waitFlush(t, 2*time.Second)
+	if env := findSSEEnvelope(t, body, events.DockerContainerDied); env.RequestID != "" {
+		t.Errorf("RequestID = %q, want empty", env.RequestID)
+	}
+	if strings.Contains(body, "requestId") {
+		t.Errorf("frame carries a requestId key for an event with no request:\n%s", body)
+	}
+}
+
+// findSSEEnvelope returns the first data frame in body with the given type,
+// failing the test if there is none.
+func findSSEEnvelope(t *testing.T, body string, want events.Type) sseEnvelope {
+	t.Helper()
+	for _, line := range readSSELines(body) {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var env sseEnvelope
+		if err := json.Unmarshal([]byte(data), &env); err != nil {
+			continue
+		}
+		if env.Type == string(want) {
+			return env
+		}
+	}
+	t.Fatalf("no SSE data frame with type %q; body:\n%s", want, body)
+	return sseEnvelope{}
 }

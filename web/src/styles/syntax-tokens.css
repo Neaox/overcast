@@ -1,0 +1,266 @@
+/* ─── Syntax token colours ─────────────────────────────────────────────────
+   The single source of truth both highlight backends read, self-contained:
+   variables for both palettes, the theme wiring, and the two selector
+   families that consume them. Pinned class-by-class by the grammar-coverage
+   test (src/lib/token-theme-coverage.test.ts), which enumerates what the
+   registered Prism grammars can emit — a grammar addition that isn't themed
+   here fails the build, not the reader's eyes.
+
+   Two selector families resolve to the same --token-* variables, so the
+   backends cannot drift and a theme switch recolours both via CSS alone —
+   zero range work, zero re-render:
+
+   - `.token.<class>` — Prism markup spans, and deliberately unscoped: the
+     event console's hand-rolled JSON tree applies these same class names
+     (see event-console.tsx) so a string, key or number looks identical
+     whether Prism produced the markup or React did. Keep them out of a
+     `.json-editor-wrap` selector.
+   - `::highlight(overcast-token-<class>)` — the CSS Custom Highlight API
+     ranges the zero-DOM log rows paint (see lib/highlight-registry.ts).
+     Kept as SEPARATE rules, never comma-joined with the class selectors: a
+     browser without the Highlight API drops any selector list containing an
+     unrecognised pseudo-element wholesale, which would uncolour the markup
+     fallback in exactly the browsers that depend on it.
+
+   `::highlight()` can only express color, background-color, text-decoration
+   and text-shadow. This theme's tokens are colour-only, so nothing is lost;
+   a future token style beyond those properties would be markup-backend-only
+   and must be flagged at the facade (lib/highlight-code.ts).
+
+   Classes that share a colour alias the one holding it, so each colour is
+   stated once per palette and "these read as the same kind of thing" is
+   encoded rather than repeated.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Light palette (see global.css for the theme-block conventions). */
+:root,
+[data-theme="light"] {
+  --token-punctuation: var(--fg-muted);
+  --token-property: var(--accent);
+  --token-comment: var(--fg-subtle);
+  --token-tag: oklch(0.5 0.16 255); /* blue */
+  --token-doctype: var(--token-tag);
+  --token-doctype-tag: var(--token-tag);
+  --token-selector: var(--token-tag);
+  --token-attr-name: oklch(0.48 0.14 285); /* violet */
+  --token-name: var(--token-attr-name);
+  --token-parameter: var(--token-attr-name);
+  --token-string: oklch(0.52 0.14 145); /* green-ish */
+  --token-attr-value: var(--token-string);
+  --token-template-string: var(--token-string);
+  --token-interpolation: var(--token-string);
+  --token-number: oklch(0.58 0.16 35); /* orange */
+  --token-keyword: oklch(0.55 0.16 290); /* purple */
+  --token-operator: var(--token-keyword);
+  --token-boolean: var(--token-keyword);
+  --token-null: var(--token-keyword);
+  --token-function: oklch(0.55 0.15 210);
+}
+
+/* Dark palette values — defined once, applied by both dark scopes below,
+   the same --_dark-* convention as global.css's theme blocks. The
+   semantic-var entries (--fg-muted, --accent, --fg-subtle) already flip
+   with the theme; they are restated so every class has a value in both
+   palettes, which is what the coverage test can hold the line on. */
+:root {
+  --_dark-token-punctuation: var(--fg-muted);
+  --_dark-token-property: var(--accent);
+  --_dark-token-comment: var(--fg-subtle);
+  --_dark-token-tag: oklch(0.76 0.13 255);
+  --_dark-token-doctype: var(--_dark-token-tag);
+  --_dark-token-doctype-tag: var(--_dark-token-tag);
+  --_dark-token-selector: var(--_dark-token-tag);
+  --_dark-token-attr-name: oklch(0.78 0.13 285);
+  --_dark-token-name: var(--_dark-token-attr-name);
+  --_dark-token-parameter: var(--_dark-token-attr-name);
+  --_dark-token-string: oklch(0.72 0.14 145);
+  --_dark-token-attr-value: var(--_dark-token-string);
+  --_dark-token-template-string: var(--_dark-token-string);
+  --_dark-token-interpolation: var(--_dark-token-string);
+  --_dark-token-number: oklch(0.75 0.14 55);
+  --_dark-token-keyword: oklch(0.72 0.15 290);
+  --_dark-token-operator: var(--_dark-token-keyword);
+  --_dark-token-boolean: var(--_dark-token-keyword);
+  --_dark-token-null: var(--_dark-token-keyword);
+  --_dark-token-function: oklch(0.75 0.13 210);
+}
+
+/* Applied when OS prefers dark and the user hasn't explicitly chosen light.
+   (The pre-variable token rules only themed the explicit dark attribute, so
+   a system-dark session read light token colours on a dark background;
+   wiring both scopes is what fixed that.) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --token-punctuation: var(--_dark-token-punctuation);
+    --token-property: var(--_dark-token-property);
+    --token-comment: var(--_dark-token-comment);
+    --token-tag: var(--_dark-token-tag);
+    --token-doctype: var(--_dark-token-doctype);
+    --token-doctype-tag: var(--_dark-token-doctype-tag);
+    --token-selector: var(--_dark-token-selector);
+    --token-attr-name: var(--_dark-token-attr-name);
+    --token-name: var(--_dark-token-name);
+    --token-parameter: var(--_dark-token-parameter);
+    --token-string: var(--_dark-token-string);
+    --token-attr-value: var(--_dark-token-attr-value);
+    --token-template-string: var(--_dark-token-template-string);
+    --token-interpolation: var(--_dark-token-interpolation);
+    --token-number: var(--_dark-token-number);
+    --token-keyword: var(--_dark-token-keyword);
+    --token-operator: var(--_dark-token-operator);
+    --token-boolean: var(--_dark-token-boolean);
+    --token-null: var(--_dark-token-null);
+    --token-function: var(--_dark-token-function);
+  }
+}
+
+/* Applied when the user explicitly chooses dark via [data-theme="dark"]. */
+[data-theme="dark"] {
+  --token-punctuation: var(--_dark-token-punctuation);
+  --token-property: var(--_dark-token-property);
+  --token-comment: var(--_dark-token-comment);
+  --token-tag: var(--_dark-token-tag);
+  --token-doctype: var(--_dark-token-doctype);
+  --token-doctype-tag: var(--_dark-token-doctype-tag);
+  --token-selector: var(--_dark-token-selector);
+  --token-attr-name: var(--_dark-token-attr-name);
+  --token-name: var(--_dark-token-name);
+  --token-parameter: var(--_dark-token-parameter);
+  --token-string: var(--_dark-token-string);
+  --token-attr-value: var(--_dark-token-attr-value);
+  --token-template-string: var(--_dark-token-template-string);
+  --token-interpolation: var(--_dark-token-interpolation);
+  --token-number: var(--_dark-token-number);
+  --token-keyword: var(--_dark-token-keyword);
+  --token-operator: var(--_dark-token-operator);
+  --token-boolean: var(--_dark-token-boolean);
+  --token-null: var(--_dark-token-null);
+  --token-function: var(--_dark-token-function);
+}
+
+@layer base {
+  /* Markup backend: Prism spans (and the event console's hand-built tree). */
+  .token.punctuation {
+    color: var(--token-punctuation);
+  }
+  .token.property {
+    color: var(--token-property);
+  }
+  .token.comment {
+    color: var(--token-comment);
+  }
+  .token.tag {
+    color: var(--token-tag);
+  }
+  .token.doctype {
+    color: var(--token-doctype);
+  }
+  .token.doctype-tag {
+    color: var(--token-doctype-tag);
+  }
+  .token.selector {
+    color: var(--token-selector);
+  }
+  .token.attr-name {
+    color: var(--token-attr-name);
+  }
+  .token.name {
+    color: var(--token-name);
+  }
+  .token.parameter {
+    color: var(--token-parameter);
+  }
+  .token.string {
+    color: var(--token-string);
+  }
+  .token.attr-value {
+    color: var(--token-attr-value);
+  }
+  .token.template-string {
+    color: var(--token-template-string);
+  }
+  .token.interpolation {
+    color: var(--token-interpolation);
+  }
+  .token.number {
+    color: var(--token-number);
+  }
+  .token.keyword {
+    color: var(--token-keyword);
+  }
+  .token.operator {
+    color: var(--token-operator);
+  }
+  .token.boolean {
+    color: var(--token-boolean);
+  }
+  .token.null {
+    color: var(--token-null);
+  }
+  .token.function {
+    color: var(--token-function);
+  }
+
+  /* Ranges backend: one rule per registered highlight, each a lone selector
+     (see the header note on why these are never comma-joined). */
+  ::highlight(overcast-token-punctuation) {
+    color: var(--token-punctuation);
+  }
+  ::highlight(overcast-token-property) {
+    color: var(--token-property);
+  }
+  ::highlight(overcast-token-comment) {
+    color: var(--token-comment);
+  }
+  ::highlight(overcast-token-tag) {
+    color: var(--token-tag);
+  }
+  ::highlight(overcast-token-doctype) {
+    color: var(--token-doctype);
+  }
+  ::highlight(overcast-token-doctype-tag) {
+    color: var(--token-doctype-tag);
+  }
+  ::highlight(overcast-token-selector) {
+    color: var(--token-selector);
+  }
+  ::highlight(overcast-token-attr-name) {
+    color: var(--token-attr-name);
+  }
+  ::highlight(overcast-token-name) {
+    color: var(--token-name);
+  }
+  ::highlight(overcast-token-parameter) {
+    color: var(--token-parameter);
+  }
+  ::highlight(overcast-token-string) {
+    color: var(--token-string);
+  }
+  ::highlight(overcast-token-attr-value) {
+    color: var(--token-attr-value);
+  }
+  ::highlight(overcast-token-template-string) {
+    color: var(--token-template-string);
+  }
+  ::highlight(overcast-token-interpolation) {
+    color: var(--token-interpolation);
+  }
+  ::highlight(overcast-token-number) {
+    color: var(--token-number);
+  }
+  ::highlight(overcast-token-keyword) {
+    color: var(--token-keyword);
+  }
+  ::highlight(overcast-token-operator) {
+    color: var(--token-operator);
+  }
+  ::highlight(overcast-token-boolean) {
+    color: var(--token-boolean);
+  }
+  ::highlight(overcast-token-null) {
+    color: var(--token-null);
+  }
+  ::highlight(overcast-token-function) {
+    color: var(--token-function);
+  }
+}

@@ -134,4 +134,43 @@ describe("EventsPage", () => {
     expect(screen.getByText("totally-new-service")).toBeInTheDocument()
     expect(screen.getByRole("checkbox", { name: "Totally New Service" })).toBeChecked()
   })
+  // The point of the envelope-level request id: pasting one narrows the
+  // console to everything that call set off, not just the request:Received
+  // row summarising it. Before the id was on the envelope only that one row
+  // matched, which is the least interesting event of the set.
+  it("filters to every event one request caused when its id is searched", async () => {
+    const requestId = "3f2a1c88-0000-4444-8888-abcdefabcdef"
+    const { user } = renderWithData(
+      <EventsPage />,
+      seedEvents([
+        {
+          type: "s3:ObjectCreated:*",
+          source: "s3",
+          time: "2026-07-25T12:00:00Z",
+          requestId,
+          payload: { Bucket: "assets", Key: "logo.svg" },
+        },
+        {
+          type: "sqs:MessageSent",
+          source: "sqs",
+          time: "2026-07-25T12:00:01Z",
+          requestId,
+          payload: { name: "notifications" },
+        },
+        {
+          type: "sqs:MessageSent",
+          source: "sqs",
+          time: "2026-07-25T12:00:02Z",
+          requestId: "a-different-request",
+          payload: { name: "unrelated" },
+        },
+      ]),
+    )
+
+    await user.type(screen.getByPlaceholderText(/filter events/i), requestId)
+
+    expect(screen.getByText("ObjectCreated")).toBeInTheDocument()
+    expect(screen.getByText(/notifications/)).toBeInTheDocument()
+    expect(screen.queryByText(/unrelated/)).not.toBeInTheDocument()
+  })
 })

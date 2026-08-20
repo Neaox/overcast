@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it, vi } from "vitest"
-import { render, screen, within } from "@/test/render"
+import { createTestQueryClient, render, renderWithRouter, screen, within } from "@/test/render"
+import { serverInfoQueryOptions } from "@/hooks/use-server-info"
 import { EventConsole } from "./event-console"
 import { defaultEventSummary } from "./event-summary"
+import type { StreamEvent } from "@/types"
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -101,6 +103,94 @@ describe("EventConsole", () => {
     expect(
       within(screen.getByText("raw").parentElement!).getByText(JSON.stringify(encoded)),
     ).toBeInTheDocument()
+  })
+
+  describe("linking an event to its trace", () => {
+    const REQUEST_ID = "3f2a1c88-0000-4444-8888-abcdefabcdef"
+
+    const caused: StreamEvent = {
+      type: "s3:ObjectCreated:*",
+      source: "s3",
+      time: "2026-07-14T12:00:00Z",
+      requestId: REQUEST_ID,
+      payload: { bucket: "assets-bucket", key: "logo.svg" },
+    }
+
+    const background: StreamEvent = {
+      type: "docker:ContainerDied",
+      source: "docker",
+      time: "2026-07-14T12:00:01Z",
+      payload: { containerId: "abc123" },
+    }
+
+    /**
+     * Mounted at the trace route the link targets: TanStack Router resolves a
+     * `to` against the real route tree, and a single-route memory tree has
+     * nowhere for `/debug/traces/$requestId` to land.
+     */
+    function renderConsole(events: StreamEvent[], debug: boolean) {
+      const queryClient = createTestQueryClient()
+      queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+      return renderWithRouter(() => <EventConsole connected onClear={() => {}} events={events} />, {
+        queryClient,
+        path: "/debug/traces/$requestId",
+        initialEntry: `/debug/traces/${REQUEST_ID}`,
+      })
+    }
+
+    const traceLink = () => screen.queryByRole("link", { name: /Open trace for request/ })
+
+    it("links a row to the trace of the request that caused it", async () => {
+      renderConsole([caused], true)
+
+      const link = await screen.findByRole("link", { name: `Open trace for request ${REQUEST_ID}` })
+      expect(link.getAttribute("href")).toBe(`/debug/traces/${REQUEST_ID}`)
+    })
+
+    it("offers no link when the server is not recording traces", async () => {
+      renderConsole([caused], false)
+
+      // Wait for the row itself, so an absent link is a real absence rather
+      // than an assertion that ran before the router's first commit.
+      expect(await screen.findByText(/logo\.svg/)).toBeInTheDocument()
+      expect(traceLink()).not.toBeInTheDocument()
+    })
+
+    it("offers no link for an event no request caused", async () => {
+      renderConsole([background], true)
+
+      expect(await screen.findByText("docker")).toBeInTheDocument()
+      expect(traceLink()).not.toBeInTheDocument()
+    })
+
+    it("carries the request id in the copied envelope even with debug off", async () => {
+      // The id belongs to the event, not to the link. On a server recording
+      // no traces there is nothing to link to, but the id is still what a
+      // reader pastes into the search box or hands to someone else.
+      const { user } = renderConsole([caused], false)
+      await screen.findByText(/logo\.svg/)
+
+      const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      })
+      await user.click(screen.getByRole("button", { name: "Copy event" }))
+
+      expect(writeText).toHaveBeenCalledWith(
+        JSON.stringify(
+          {
+            type: "s3:ObjectCreated:*",
+            time: "2026-07-14T12:00:00Z",
+            source: "s3",
+            requestId: REQUEST_ID,
+            payload: { bucket: "assets-bucket", key: "logo.svg" },
+          },
+          null,
+          2,
+        ),
+      )
+    })
   })
 })
 

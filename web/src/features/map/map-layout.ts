@@ -13,6 +13,7 @@
 import dagre from "@dagrejs/dagre"
 import type { Node } from "@xyflow/react"
 import type { TopologyNode, TopologyEdge } from "@/types"
+import { createWorkerClient } from "@/lib/worker-client"
 
 export const NODE_WIDTH = 260
 export const NODE_HEIGHT = 100
@@ -780,32 +781,31 @@ function layoutCompactSubgraph(
 
 // ─── Module-level async layout worker ────────────────────────────────────
 
-let _layoutWorker: Worker | null = null
+interface LayoutWorkerReply {
+  id: number
+  nodes: Node[] | null
+  error: string | null
+}
+
+// Only the newest layout request matters: replies for superseded inputs are
+// dropped by comparing this generation counter when a result lands. (The
+// shared kernel resolves every reply it can correlate; staleness is this
+// store's semantics, so the guard lives here.)
 let _layoutId = 0
 const _layoutListeners = new Set<() => void>()
 let _layoutResult = { nodes: [] as Node[] }
 let _layoutLoading = false
 let _lastLayoutHash = ""
 
-function getWorker(): Worker {
-  if (!_layoutWorker) {
-    _layoutWorker = new Worker(new URL("./map-layout.worker.ts", import.meta.url), {
-      type: "module",
-    })
-    _layoutWorker.onmessage = (e: MessageEvent) => {
-      if (e.data.id !== _layoutId) return
-      if (e.data.error) {
-        console.error("Layout worker error:", e.data.error)
-        _layoutLoading = false
-        return
-      }
-      _layoutResult = { nodes: e.data.nodes ?? [] }
-      _layoutLoading = false
-      _layoutListeners.forEach((cb) => cb())
-    }
-  }
-  return _layoutWorker
-}
+// The shared kernel (lib/worker-client.ts) owns the lifecycle: this client
+// used to leave the map loading forever if the worker died. Now a dead or
+// unbuildable worker computes the layout synchronously on the main thread
+// (buildLayoutNodes lives in this module), and one failure gets a respawn
+// before the session gives up.
+const layoutWorker = createWorkerClient<LayoutWorkerReply>({
+  create: () => new Worker(new URL("./map-layout.worker.ts", import.meta.url), { type: "module" }),
+  failureLimit: 2,
+})
 
 function layoutInputHash(
   topologyNodes: TopologyNode[],
@@ -850,16 +850,47 @@ export function requestLayoutAsync(
   _lastLayoutHash = hash
 
   _layoutLoading = true
-  const id = ++_layoutId
-  const worker = getWorker()
-  worker.postMessage({
-    id,
-    topologyNodes,
-    topologyEdges,
-    nodeSizeOverrides,
-    activeRegion,
-    collapsedStacks: collapsedStacks ? [...collapsedStacks] : [],
+  const generation = ++_layoutId
+  const commit = (reply: LayoutWorkerReply) => {
+    if (generation !== _layoutId) return // superseded — a newer request owns the store
+    if (reply.error) {
+      console.error("Layout worker error:", reply.error)
+      _layoutLoading = false
+      return
+    }
+    _layoutResult = { nodes: reply.nodes ?? [] }
+    _layoutLoading = false
+    _layoutListeners.forEach((cb) => cb())
+  }
+  const outcome = layoutWorker.request<LayoutWorkerReply>({
+    message: (id) => ({
+      id,
+      topologyNodes,
+      topologyEdges,
+      nodeSizeOverrides,
+      activeRegion,
+      collapsedStacks: collapsedStacks ? [...collapsedStacks] : [],
+    }),
+    decode: (reply) => reply,
+    // No worker (or a dying one): compute on the main thread — same
+    // inputs, same try/catch shape as map-layout.worker.ts.
+    fallback: () => {
+      try {
+        const nodes = buildLayoutNodes(
+          topologyNodes,
+          topologyEdges,
+          nodeSizeOverrides,
+          activeRegion,
+          collapsedStacks ?? new Set(),
+        )
+        return { id: -1, nodes, error: null }
+      } catch (err) {
+        return { id: -1, nodes: null, error: String(err) }
+      }
+    },
   })
+  if (outcome.async) void outcome.promise.then(commit)
+  else commit(outcome.value)
 }
 
 /** useSyncExternalStore subscribe function — returns unsubscribe. */

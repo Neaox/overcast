@@ -1,7 +1,6 @@
-import { highlightCode } from "@/lib/highlight-code"
-import { formatBodyForDisplay, contentTypeToHint, MAX_FORMAT_BYTES } from "@/lib/format-body"
+import { formatBodyText, contentTypeToHint, MAX_FORMAT_BYTES } from "@/lib/format-body"
 
-type PreviewLanguage = "json" | "markup" | "css" | "javascript"
+export type PreviewLanguage = "json" | "markup" | "css" | "javascript"
 
 const genericMediaTypes = new Set(["", "application/octet-stream", "binary/octet-stream"])
 
@@ -61,15 +60,28 @@ function isHtmlMarkup(contentType: string, key: string): boolean {
   )
 }
 
+/**
+ * The preview's rendering *policy* — what to show and how to highlight it,
+ * never pre-rendered markup. The dialog hands `text` and `language` to the
+ * shared `HighlightedCode` component, which owns the choice between the
+ * highlight kernel's backends (Custom Highlight ranges over one text node
+ * where the browser has the API, cached Prism markup elsewhere).
+ */
 export interface FormattedPreview {
+  /** What to display: pretty-printed where the policy formats, raw otherwise. */
   text: string
-  html?: string
   /**
-   * Set when the document would have been pretty-printed or highlighted but
+   * Prism language to highlight `text` as, or null to render it plain — an
+   * unrecognised type, JSON that failed to parse, or a document past the
+   * size cap.
+   */
+  language: PreviewLanguage | null
+  /**
+   * True when the document would have been pretty-printed or highlighted but
    * was too large for it (see `MAX_FORMAT_BYTES`). The dialog says so rather
    * than letting a plain rendering imply the file was not recognised.
    */
-  highlightSkipped?: boolean
+  skipped: boolean
 }
 
 export function formatPreviewText(
@@ -88,25 +100,22 @@ export function formatPreviewText(
         : language === "markup"
           ? "xml"
           : null
+  // Formatting (and the tokenize behind either highlight backend) is linear
+  // in the text — the logs performance work measured ~19 ms of Prism at
+  // 166 KiB against a 16 ms frame budget (docs/plans/logs-view-performance.md
+  // §4) — and a preview can hold up to 1 MiB. Past the shared cap, plain text
+  // instead of a dialog-open freeze, and the notice says so. Only size gets
+  // the honesty flag: a JSON parse failure below is the document's own doing,
+  // and plain text is the truthful rendering of it.
+  if (bodyHint || language === "css" || language === "javascript") {
+    if (text.length > MAX_FORMAT_BYTES) return { text, language: null, skipped: true }
+  }
   if (bodyHint) {
-    const formatted = formatBodyForDisplay(text, bodyHint, contentType, { htmlVoidTags })
-    // `formatBodyForDisplay` also returns plain text for JSON that failed to
-    // parse; only size gets the honesty flag — a parse failure is the
-    // document's own doing and plain text is the truthful rendering of it.
-    if (!formatted.html && text.length > MAX_FORMAT_BYTES) {
-      return { ...formatted, highlightSkipped: true }
-    }
-    return formatted
+    const formatted = formatBodyText(text, bodyHint, contentType, { htmlVoidTags })
+    return { text: formatted.text, language: formatted.language, skipped: false }
   }
   if (language === "css" || language === "javascript") {
-    // Prism's cost is linear in the text — the logs performance work measured
-    // ~19 ms at 166 KiB and the 16 ms frame budget falling around ~70 KiB
-    // (docs/plans/logs-view-performance.md §4) — and a preview can hold up to
-    // 1 MiB. Past the shared cap, plain text instead of a dialog-open freeze;
-    // under it, the cached highlighter so reopening the same object is a
-    // lookup rather than a re-tokenise.
-    if (text.length > MAX_FORMAT_BYTES) return { text, highlightSkipped: true }
-    return { text, html: highlightCode(text, language) }
+    return { text, language, skipped: false }
   }
-  return { text }
+  return { text, language: null, skipped: false }
 }

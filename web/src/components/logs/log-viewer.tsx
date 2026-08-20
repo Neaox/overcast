@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { cn } from "@/lib/utils"
 import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
+import { nearViewport } from "@/hooks/use-scroll-settled"
 import { LogMessage } from "./log-message"
 
 export interface LogViewerEvent {
@@ -60,7 +61,10 @@ export function LogViewer({
     count: events.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
-    overscan: 15,
+    // Cheap mid-scroll mounts (see `useScrollSettled`) make wide overscan
+    // nearly free, and it is the difference between a fast fling showing rows
+    // and showing blank track.
+    overscan: 30,
   })
 
   return (
@@ -132,7 +136,12 @@ export function LogViewer({
                 className="absolute top-0 left-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
-                <LogViewerRow event={events[virtualRow.index]} mode={mode} formatted={formatted} />
+                <LogViewerRow
+                  event={events[virtualRow.index]}
+                  mode={mode}
+                  formatted={formatted}
+                  defer={virtualizer.isScrolling || !nearViewport(virtualRow, virtualizer)}
+                />
               </div>
             ))}
           </div>
@@ -167,10 +176,13 @@ const LogViewerRow = memo(function LogViewerRow({
   event,
   mode,
   formatted,
+  defer,
 }: {
   event: LogViewerEvent
   mode: "table" | "plain"
   formatted: boolean
+  /** Mid-scroll and far-overscan rows defer their highlight spans — see `LogMessage`. */
+  defer: boolean
 }) {
   const { level, summary } = describeLogEvent(event)
 
@@ -188,6 +200,7 @@ const LogViewerRow = memo(function LogViewerRow({
       filterMatcher={null}
       level={level}
       hideLevel
+      defer={defer}
       sizeClassName="text-[10px]"
     />
   )

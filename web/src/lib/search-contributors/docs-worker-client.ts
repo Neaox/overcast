@@ -1,53 +1,36 @@
 import type { SearchResult } from "@/lib/search"
+import { createWorkerClient } from "@/lib/worker-client"
 
 interface WorkerResponse {
   id: number
   results: SearchResult[]
 }
 
-let worker: Worker | null = null
-let nextID = 0
-const pending = new Map<number, (results: SearchResult[]) => void>()
-
-function getWorker(): Worker {
-  if (!worker) {
-    worker = new Worker(new URL("../../workers/docs-search.worker.ts", import.meta.url), {
+// The shared kernel (lib/worker-client.ts) owns the lifecycle: this client
+// used to hang a search forever if the worker died and to throw from
+// construction where Worker is unavailable — now a dead or unbuildable
+// worker resolves searches with no results instead, and one failure gets a
+// respawn before the session gives up.
+const docsWorker = createWorkerClient<WorkerResponse>({
+  create: () =>
+    new Worker(new URL("../../workers/docs-search.worker.ts", import.meta.url), {
       type: "module",
-    })
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      const resolve = pending.get(event.data.id)
-      if (!resolve) return
-      pending.delete(event.data.id)
-      resolve(event.data.results)
-    }
-  }
-  return worker
-}
+    }),
+  failureLimit: 2,
+})
 
 export function searchDocsInWorker(
   query: string,
   options: { signal?: AbortSignal; limit?: number } = {},
 ): Promise<SearchResult[]> {
-  const id = ++nextID
-  const docsWorker = getWorker()
-  return new Promise((resolve) => {
-    const finish = (results: SearchResult[]) => {
-      pending.delete(id)
-      options.signal?.removeEventListener("abort", cleanup)
-      resolve(results)
-    }
-    const cleanup = () => {
-      pending.delete(id)
-      docsWorker.postMessage({ type: "cancel", id })
-      resolve([])
-    }
-    pending.set(id, finish)
-    options.signal?.addEventListener("abort", cleanup, { once: true })
-    docsWorker.postMessage({
-      type: "search",
-      id,
-      query,
-      limit: options.limit ?? 8,
-    })
+  const outcome = docsWorker.request<SearchResult[]>({
+    message: (id) => ({ type: "search", id, query, limit: options.limit ?? 8 }),
+    decode: (reply) => reply.results,
+    // Failure and abort both answer "no docs results" — the same shape the
+    // worker itself replies with when its fetch fails.
+    fallback: () => [],
+    signal: options.signal,
+    cancelMessage: (id) => ({ type: "cancel", id }),
   })
+  return outcome.async ? outcome.promise : Promise.resolve(outcome.value)
 }

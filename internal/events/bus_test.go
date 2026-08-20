@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 type idPayload struct{ ID int }
@@ -393,4 +394,81 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition not met within deadline")
+}
+
+// TestBus_Publish_StampsRequestIDFromContext verifies that Publish attributes
+// an event to the API call it was published under, taken from the context the
+// publisher already passes. This is what gives ~160 publish sites request
+// attribution without any of them naming it.
+func TestBus_Publish_StampsRequestIDFromContext(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	const wantID = "11111111-2222-3333-4444-555555555555"
+	ctx := protocol.ContextWithRequestID(context.Background(), wantID)
+	bus.Publish(ctx, Event{Type: S3ObjectCreated, Source: "s3", Payload: idPayload{ID: 1}})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snapshot))
+	}
+	if got := snapshot[0].RequestID; got != wantID {
+		t.Errorf("RequestID = %q, want %q", got, wantID)
+	}
+}
+
+// TestBus_Publish_LeavesRequestIDEmptyWithoutOne verifies that a publish from
+// a context with no request ID records no request ID.
+//
+// The failure this guards against is a silent one: protocol.RequestIDFromContext
+// *generates* an ID rather than reporting its absence, so reaching for it here
+// would stamp every background publish — a poller, a timer, a Docker event —
+// with a well-formed ID that resolves to no trace. An empty field says "not
+// caused by a request"; a fabricated one is a link that goes nowhere.
+func TestBus_Publish_LeavesRequestIDEmptyWithoutOne(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	bus.Publish(context.Background(), Event{Type: S3ObjectCreated, Source: "s3", Payload: idPayload{ID: 1}})
+	// An explicitly empty ID on the context is absence too, not an ID of "".
+	bus.Publish(protocol.ContextWithRequestID(context.Background(), ""), Event{
+		Type: SQSQueueCreated, Source: "sqs", Payload: idPayload{ID: 2},
+	})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snapshot))
+	}
+	for i, e := range snapshot {
+		if e.RequestID != "" {
+			t.Errorf("snapshot[%d].RequestID = %q, want empty", i, e.RequestID)
+		}
+	}
+}
+
+// TestBus_Publish_RespectsExplicitRequestID verifies a caller-supplied
+// RequestID survives. The request-events middleware relies on this: it
+// publishes on context.Background() and sets the ID on the event itself.
+func TestBus_Publish_RespectsExplicitRequestID(t *testing.T) {
+	bus := NewBus()
+	defer bus.Stop()
+
+	const explicit = "explicit-request-id"
+	bus.Publish(protocol.ContextWithRequestID(context.Background(), "context-request-id"), Event{
+		Type:      S3ObjectCreated,
+		Source:    "s3",
+		Payload:   idPayload{ID: 1},
+		RequestID: explicit,
+	})
+
+	snapshot, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, Event) {})
+	defer cancel()
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snapshot))
+	}
+	if got := snapshot[0].RequestID; got != explicit {
+		t.Errorf("RequestID = %q, want %q (explicit value must win)", got, explicit)
+	}
 }

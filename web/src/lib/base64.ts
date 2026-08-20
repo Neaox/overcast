@@ -4,7 +4,7 @@
  *
  * `atob` on its own is wrong twice over. It yields a *binary string*, one code
  * unit per byte, so anything outside ASCII arrives as mojibake: a Python
- * handler printing `café` renders `cafÃ©`, and an emoji from a Node
+ * handler printing `café` renders `cafÃ©` (encoding-check:allow), and an emoji from a Node
  * `console.log` becomes four stray characters. And it throws on input that is
  * not base64 — which is fatal where the call sits in a render path with no
  * error boundary above it, costing the whole panel rather than the one value it
