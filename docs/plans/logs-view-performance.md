@@ -712,7 +712,7 @@ Known-and-accepted from the same review — all three since landed:
   deep-scroll protocol (2,800 px + settle per cycle, ~100k px deep) held
   flat at 16–19 ms per scroll frame on the *buggy* build.
 
-  The fix took three iterations, each indicted by its own trace:
+  The fix took four iterations, each indicted by its own trace:
 
   1. *Swap-rebuild on every change* (zero deletes: fresh sets rebuilt from
      live rows per coalesced microtask) fixed the lockup — max eventDelay
@@ -729,19 +729,27 @@ Known-and-accepted from the same review — all three since landed:
      every unmounting row answered `true`, took the synchronous-delete
      branch, and a sixth trace showed the original lockup resurrected
      wholesale (100% of 91k samples back in the dispose closure).
-  3. *The landed model:* disposers only enqueue; a post-commit microtask
-     triages — by then connectivity means what it says — routing
-     disconnected nodes to the garbage counter (zero deletes; the path
-     every scrolled-away row takes) and only genuinely still-connected
-     rows (Syntax toggled off in place; a text swap whose re-apply already
-     painted) through a bounded per-row delete. Hydration adds in place
-     (O(newly settled rows) — the one mutation shape no trace ever showed
-     dominating); garbage collects via one swap-rebuild (reusing live
-     rows' range objects, triaging first so fates are never double
-     counted) after a quiet second, or opportunistically at the next
-     hydration once garbage outweighs live ranges. Pinned by a regression
-     test: an unmounting row produces zero `Highlight.delete` calls
-     through disposal, triage, and sweep.
+  3. *Post-commit triage + in-place adds:* disposers enqueue; a microtask
+     later — after the commit has finished detaching, which is when
+     connectivity finally means what it says — unmounts become inert
+     garbage and only in-place withdrawals delete. Right about deletes,
+     wrong about adds: a bottom→top jump settled one large window and
+     `Highlight.add` into the REGISTERED sets measured ~1 ms per range —
+     one 21-second task, 24 s of a 55 s trace inside the apply loop.
+     (Adds into fresh, unregistered sets measure ~11 µs — the sweep in the
+     same trace.)
+  4. *The landed model — one mutation primitive:* nothing ever mutates a
+     registered set. `swapHighlights` builds fresh unregistered
+     `Highlight`s from the live applications' existing range objects and
+     swaps them in wholesale (linear, one invalidation per class); all
+     other code merely picks the swap's frequency — a settle commit's
+     hydrations coalesce into one pre-paint microtask swap, a
+     still-connected withdrawal queues the same swap, and disconnected
+     disposals (the scroll path, triaged post-commit) just count garbage
+     for a quiet-second sweep. Scrolling performs zero registered-set
+     mutations in either direction at any depth. Pinned by the
+     zero-`Highlight.delete` regression test; the bottom→top scenario
+     becomes one linear swap per settle.
 
   Chrome protocol on the final model: flat, settle ≤ 1 ms, bookkeeping
   exact post-sweep. Firefox confirmation comes from the reporter's

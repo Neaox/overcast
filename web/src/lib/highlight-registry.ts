@@ -126,25 +126,19 @@ export function resolveTokenColorClass(type: string): string | null {
 
 let registered = false
 
-// Class → the REGISTERED Highlight object, for in-place additions at settle.
-const highlightByClass = new Map<string, Highlight>()
-
 /**
  * Puts one named `Highlight` per themed token class into `CSS.highlights`,
  * so every `::highlight()` name exists from the start. Idempotent; the
- * facade calls it once at module init when the API exists.
+ * facade calls it once at module init when the API exists. The named sets
+ * are only ever REPLACED wholesale by `swapHighlights` below — nothing
+ * mutates a registered set range-by-range.
  */
 export function registerTokenHighlights(): void {
   if (registered) return
   registered = true
   for (const cls of TOKEN_COLOR_CLASSES) {
     const name = TOKEN_HIGHLIGHT_PREFIX + cls
-    let highlight = CSS.highlights.get(name)
-    if (!highlight) {
-      highlight = new Highlight()
-      CSS.highlights.set(name, highlight)
-    }
-    highlightByClass.set(cls, highlight)
+    if (!CSS.highlights.has(name)) CSS.highlights.set(name, new Highlight())
   }
 }
 
@@ -190,48 +184,52 @@ interface RangeApplication {
 }
 
 const liveApplications = new Set<RangeApplication>()
-/** Ranges left behind by disconnected rows, awaiting one lazy sweep. */
+/** Ranges stranded in the registered sets by disposed rows. */
 let garbageRanges = 0
-let liveRanges = 0
+let swapQueued = false
 let sweepTimer: ReturnType<typeof setTimeout> | null = null
+const pendingDisposals: RangeApplication[] = []
+let triageQueued = false
 
 /**
- * Mutation policy, distilled from three Firefox traces of the log stream
- * viewer (plan doc §3f):
+ * Mutation policy — the fourth iteration, and the one every Firefox trace
+ * agrees on (plan doc §3f has the full history):
  *
- * - Per-range `Highlight.delete` against the page-global sets locked the
- *   page up — 15 s of a 31 s trace inside the dispose loop, cost scaling
- *   with set size, quadratic with scroll depth.
- * - Rebuild-and-swap on every change fixed the deletes but moved the cost
- *   into `Highlight.add`: a rebuild per scroll commit re-added the whole
- *   hydrated viewport (~14k ranges) almost every frame — 12.5 s of a 17 s
- *   trace inside the rebuild.
- * - What every trace showed Firefox tolerating is *bounded, additive*
- *   mutation: settle-hydration's in-place adds never dominated.
+ * 1. Per-range `Highlight.delete` against registered sets: 15 s of a 31 s
+ *    trace, quadratic with scroll depth.
+ * 2. Swap-rebuild on every change: disposals scheduled it, so continuous
+ *    scroll re-added the hydrated viewport nearly every frame — 12.5 s of a
+ *    17 s trace.
+ * 3. In-place `Highlight.add` at settle: a bottom→top jump hydrated one
+ *    large window and paid ~1 ms per add into the registered sets — one
+ *    21-second task. Registered-set mutation is unaffordable in Firefox in
+ *    BOTH directions; adds into fresh, unregistered sets measure ~11 µs.
  *
- * So: SCROLLING MUTATES NOTHING. A row that unmounts leaves its ranges in
- * the registered sets as garbage — its text node is disconnected, and an
- * invalid static range does not paint, so the garbage is visually inert.
- * Hydration adds in place, O(the newly settled rows). The one case where a
- * stale range could paint wrong — a text swap on a node still in the tree
- * (Format toggles rewrite the same Text node's data in place) — deletes
- * synchronously, bounded by that one row. Garbage is collected by a single
- * swap-rebuild (fresh sets from the live rows' existing range objects, no
- * deletes) after a quiet moment, or opportunistically at the next hydration
- * once garbage outweighs live ranges.
+ * So there is exactly ONE way ranges reach `CSS.highlights`: `swapHighlights`
+ * builds fresh, unregistered `Highlight`s from the live applications' range
+ * objects and swaps them in wholesale — linear, one paint invalidation per
+ * class. Everything else is bookkeeping that chooses the swap's FREQUENCY:
+ *
+ * - A settle commit's hydrations coalesce into one microtask swap (before
+ *   paint — colour lands in the same frame, no flash).
+ * - A disposal whose node stayed connected (Syntax toggled off in place; a
+ *   text swap whose re-apply already registered the new ranges) also queues
+ *   the microtask swap: stale ranges over living text would paint wrong.
+ * - A disposal whose node left the tree — every scrolled-away row; the
+ *   question is asked one microtask post-commit, because React runs effect
+ *   cleanups BEFORE detaching host nodes — just counts garbage: invalid
+ *   static ranges paint nothing, so cleanup can wait for a quiet second.
+ *
+ * Scrolling therefore performs zero mutations of registered sets, in either
+ * direction, at any depth.
  */
 const SWEEP_QUIET_MS = 1_000
 
-function sweepGarbage(): void {
+function swapHighlights(): void {
   if (sweepTimer !== null) {
     clearTimeout(sweepTimer)
     sweepTimer = null
   }
-  // Disposals awaiting their post-commit triage must resolve first, or the
-  // sweep would rebuild around ranges whose fate (garbage vs live-node
-  // delete) is not yet decided — and the triage would then double-count them.
-  triageDisposals()
-  if (garbageRanges === 0) return
   const fresh = new Map<string, Highlight>()
   for (const application of liveApplications) {
     const { appliedRanges, appliedClasses } = application
@@ -241,30 +239,63 @@ function sweepGarbage(): void {
         highlight = new Highlight()
         fresh.set(appliedClasses[i], highlight)
       }
-      // Same range object, fresh set — the sweep allocates highlights and
-      // nothing else.
       highlight.add(appliedRanges[i])
     }
   }
   for (const cls of TOKEN_COLOR_CLASSES) {
-    const highlight = fresh.get(cls) ?? new Highlight()
-    CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, highlight)
-    highlightByClass.set(cls, highlight)
+    CSS.highlights.set(TOKEN_HIGHLIGHT_PREFIX + cls, fresh.get(cls) ?? new Highlight())
   }
   garbageRanges = 0
 }
 
-function scheduleSweep(): void {
-  if (sweepTimer !== null) return
+/** One swap per microtask flush, however many rows applied or withdrew. */
+function queueSwap(): void {
+  if (swapQueued) return
+  swapQueued = true
+  queueMicrotask(() => {
+    swapQueued = false
+    swapHighlights()
+  })
+}
+
+function scheduleQuietSweep(): void {
+  if (sweepTimer !== null || swapQueued) return
   sweepTimer = setTimeout(() => {
     sweepTimer = null
-    sweepGarbage()
+    if (garbageRanges > 0) swapHighlights()
   }, SWEEP_QUIET_MS)
 }
 
-/** Test seam: run the lazy sweep now instead of waiting out the quiet timer. */
+/**
+ * Post-commit triage of disposals: by now the commit has finished detaching,
+ * so connectivity means what it says. Disconnected rows are garbage (the
+ * scroll path — no swap, no urgency); a still-connected withdrawal must
+ * un-paint promptly, so it queues the swap.
+ */
+function triageDisposals(): void {
+  let needSwap = false
+  for (const application of pendingDisposals) {
+    garbageRanges += application.appliedRanges.length
+    if (application.node.isConnected) needSwap = true
+  }
+  pendingDisposals.length = 0
+  if (needSwap) queueSwap()
+  else if (garbageRanges > 0) scheduleQuietSweep()
+}
+
+function scheduleDisposalTriage(): void {
+  if (triageQueued) return
+  triageQueued = true
+  queueMicrotask(() => {
+    triageQueued = false
+    triageDisposals()
+  })
+}
+
+/** Test seam: run any pending triage and swap now, instead of waiting. */
 export function sweepHighlightGarbageForTests(): void {
-  sweepGarbage()
+  triageDisposals()
+  swapHighlights()
 }
 
 /**
@@ -277,8 +308,8 @@ export function sweepHighlightGarbageForTests(): void {
  * lives here — not in the calling hook — so every consumer of the kernel
  * inherits it.
  *
- * Painting is additive and immediate (same commit as the text — no
- * colourless flash); disposal follows the mutation policy above.
+ * Both registration and disposal are pure bookkeeping; painting happens in
+ * the coalesced swap (same commit's microtask — before paint, no flash).
  */
 export function applyTokenRanges(
   textNode: Text,
@@ -286,74 +317,20 @@ export function applyTokenRanges(
   tokenRanges: TokenRange[],
 ): () => void {
   if (textNode.data !== text) return noopDispose
-  // Hydration is the opportunistic sweep point: if scrolling has stranded
-  // more garbage than there are live ranges, collect before adding more.
-  if (garbageRanges > liveRanges) sweepGarbage()
   const appliedRanges: AbstractRange[] = []
   const appliedClasses: string[] = []
   for (const token of tokenRanges) {
     const cls = resolveTokenColorClass(token.type)
     if (cls === null) continue
-    const highlight = highlightByClass.get(cls)
-    if (!highlight) continue
-    const range = createTokenRange(textNode, token.start, token.end)
-    highlight.add(range)
-    appliedRanges.push(range)
+    appliedRanges.push(createTokenRange(textNode, token.start, token.end))
     appliedClasses.push(cls)
   }
   const application: RangeApplication = { node: textNode, appliedRanges, appliedClasses }
   liveApplications.add(application)
-  liveRanges += appliedRanges.length
+  queueSwap()
   return () => {
     if (!liveApplications.delete(application)) return
-    liveRanges -= application.appliedRanges.length
-    // Never inspect the node HERE: React runs effect cleanups during the
-    // commit BEFORE detaching host nodes, so an unmounting row still reads
-    // `isConnected === true` at this moment — asking now sent every
-    // unmounting row down a synchronous delete path and resurrected the
-    // trace-3 lockup wholesale. The question is answerable one microtask
-    // later, once the commit has finished detaching.
     pendingDisposals.push(application)
     scheduleDisposalTriage()
   }
-}
-
-const pendingDisposals: RangeApplication[] = []
-let triageQueued = false
-
-/**
- * Post-commit triage of disposed applications. By the time this microtask
- * runs, the commit that disposed them has finished mutating the DOM, so
- * connectivity finally means what it says:
- *
- * - Disconnected node → the row unmounted; its ranges are invalid, paint
- *   nothing, and wait for the quiet-moment sweep. No deletes — this is the
- *   path every scrolled-away row takes, and it must stay mutation-free.
- * - Still-connected node → the row is alive but withdrew its highlight
- *   (Syntax toggled off, or a text swap whose re-apply already painted the
- *   new ranges): stale ranges here are valid-but-wrong, so this one row's
- *   ranges come out synchronously — bounded by the row, never by the set,
- *   and only ever on rare user-initiated paths.
- */
-function triageDisposals(): void {
-  for (const application of pendingDisposals) {
-    if (application.node.isConnected) {
-      for (let i = 0; i < application.appliedRanges.length; i++) {
-        highlightByClass.get(application.appliedClasses[i])?.delete(application.appliedRanges[i])
-      }
-    } else {
-      garbageRanges += application.appliedRanges.length
-      scheduleSweep()
-    }
-  }
-  pendingDisposals.length = 0
-}
-
-function scheduleDisposalTriage(): void {
-  if (triageQueued) return
-  triageQueued = true
-  queueMicrotask(() => {
-    triageQueued = false
-    triageDisposals()
-  })
 }
