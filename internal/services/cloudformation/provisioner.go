@@ -418,6 +418,14 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 
 	for _, logicalID := range order {
 		if ctx.Err() != nil {
+			// A cancelled update stops where it stands. No reverse pass runs
+			// regardless of DisableRollback — the context that would drive it
+			// is the one that died — so, as on the no-rollback failure
+			// branches below, the stack record is the only account of where
+			// the walk stopped and must keep everything the attempt reached.
+			// Discarding the accumulated records would persist a pre-update
+			// state that no longer matches the service-side resources.
+			stack.Resources = retainedUpdateResources(newResources, stack.Resources)
 			p.failStack(ctx, stack, StatusUpdateFailed, "cancelled")
 			return
 		}
