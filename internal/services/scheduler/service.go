@@ -92,6 +92,7 @@ type Schedule struct {
 	Target                     scheduleTarget     `json:"Target"`
 	StartDate                  *time.Time         `json:"StartDate,omitempty"`
 	EndDate                    *time.Time         `json:"EndDate,omitempty"`
+	KmsKeyArn                  string             `json:"KmsKeyArn,omitempty"`
 	CreationDate               time.Time          `json:"CreationDate"`
 	LastModificationDate       time.Time          `json:"LastModificationDate"`
 }

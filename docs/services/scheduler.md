@@ -141,6 +141,9 @@ every target type EventBridge rules reach.
   - `ScheduleExpressionTimezone` is stored and returned, but `cron(...)` and
     `at(...)` are evaluated against the emulator's own clock rather than the
     named zone.
+  - `KmsKeyArn` is stored and returned, but nothing is encrypted with it — the
+    emulator holds schedule data in plaintext, so no `Decrypt` call is ever
+    made against the key.
 
 <!-- BEGIN overcast:capabilities -->
 
