@@ -3696,6 +3696,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Partial batch responses",
+        "id": "partial-batch-responses"
+      },
+      {
+        "depth": 2,
         "text": "Log format and log levels",
         "id": "log-format-and-log-levels"
       },

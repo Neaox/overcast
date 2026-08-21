@@ -200,9 +200,20 @@ func (h *Handler) pollKinesis(ctx context.Context, p *Pipe, region string) {
 		for _, rec := range records {
 			batch = append(batch, kinesisRecord(p.SourceArn, p.RoleArn, rec))
 		}
-		if err := h.execute(ctx, p, batch); err != nil {
+		failures, err := h.execute(ctx, p, batch)
+		if err != nil || failures.retryAll {
 			// Leave the cursor where it was so the batch is retried, matching
 			// a stream consumer that does not checkpoint a failed batch.
+			continue
+		}
+		if failures.reported {
+			// A partial-batch report checkpoints the shard just before the
+			// earliest record the target named, so the retry resumes there.
+			// Naming the first record of the batch leaves the cursor alone,
+			// which is the same as not checkpointing at all.
+			if failures.firstIndex > 0 {
+				h.cursors.set(key, records[failures.firstIndex-1].SequenceNumber)
+			}
 			continue
 		}
 		h.cursors.set(key, next)
@@ -254,12 +265,24 @@ func (h *Handler) pollSQS(ctx context.Context, p *Pipe) {
 		return
 	}
 	batch := make([]map[string]any, 0, len(msgs))
-	handles := make([]string, 0, len(msgs))
 	for _, msg := range msgs {
 		batch = append(batch, sqsRecord(p.SourceArn, msg))
+	}
+	failures, err := h.execute(ctx, p, batch)
+	if err != nil || failures.retryAll {
+		return
+	}
+	// A message the target reported as failed is simply not deleted: it stays
+	// in flight and SQS makes it visible again when the visibility timeout
+	// expires, which is how AWS redelivers it.
+	handles := make([]string, 0, len(msgs))
+	for _, msg := range msgs {
+		if failures.failed[msg.MessageID] {
+			continue
+		}
 		handles = append(handles, msg.ReceiptHandle)
 	}
-	if err := h.execute(ctx, p, batch); err != nil {
+	if len(handles) == 0 {
 		return
 	}
 	if err := h.messages.DeleteMessages(ctx, queue, handles); err != nil {

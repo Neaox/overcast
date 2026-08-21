@@ -234,9 +234,11 @@ func TestUnsupportedFields_ExplicitNoOpValuesAreNotRequests(t *testing.T) {
 		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{
 			"FunctionName": "explicit-noop-fn", "EventSourceArn": sqsARN("explicit-noop-queue"),
 			// CloudFormation sends exactly these to clear an ESM's optional
-			// source configuration back to its default.
-			"FunctionResponseTypes": []any{}, "SourceAccessConfigurations": []any{},
-			"Topics": []any{}, "Queues": []any{}, "MetricsConfig": map[string]any{},
+			// source configuration back to its default. FunctionResponseTypes
+			// is no longer one of them — it is implemented, so an empty list is
+			// stored as "report nothing" rather than waved through.
+			"SourceAccessConfigurations": []any{},
+			"Topics":                     []any{}, "Queues": []any{}, "MetricsConfig": map[string]any{},
 		})
 		defer resp.Body.Close()
 		helpers.AssertStatus(t, resp, http.StatusAccepted)
@@ -269,7 +271,7 @@ func TestUnsupportedFields_RealRequestsStill501(t *testing.T) {
 	t.Run("CreateEventSourceMapping", func(t *testing.T) {
 		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{
 			"FunctionName": "real-request-fn", "EventSourceArn": sqsARN("real-request-queue"),
-			"FunctionResponseTypes": []string{"ReportBatchItemFailures"},
+			"ParallelizationFactor": 2,
 		})
 		assertLambdaUnsupported(t, resp)
 	})

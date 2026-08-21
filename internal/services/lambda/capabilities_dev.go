@@ -88,7 +88,7 @@ func init() {
 
 		// Event source mappings
 		capabilities.Capability{Service: "lambda", Operation: "CreateEventSourceMapping", Category: "Event source mappings",
-			Status: capabilities.StatusSupported, Notes: "SQS→Lambda, DynamoDB Streams→Lambda; Tags are stored and readable through ListTags"},
+			Status: capabilities.StatusSupported, Notes: "SQS→Lambda, DynamoDB Streams→Lambda; `FunctionResponseTypes: [\"ReportBatchItemFailures\"]` is honoured; Tags are stored and readable through ListTags"},
 		capabilities.Capability{Service: "lambda", Operation: "GetEventSourceMapping", Category: "Event source mappings",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateEventSourceMapping", Category: "Event source mappings",

@@ -5270,8 +5270,12 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	// Tags is deliberately absent: CreateEventSourceMapping stores them (see
 	// TestCreateEventSourceMapping_StoresTags). Every value below is populated
 	// because an empty list or object means "do nothing" and is accepted.
+	//
+	// FunctionResponseTypes is deliberately absent too: the poller honours
+	// ["ReportBatchItemFailures"] since #512, so it is accepted rather than
+	// refused — see TestCreateEventSourceMapping_ReportBatchItemFailures.
 	esmFields := map[string]any{
-		"FunctionResponseTypes": []string{"ReportBatchItemFailures"}, "ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
+		"ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
 		"SourceAccessConfigurations": []any{map[string]any{"Type": "BASIC_AUTH", "URI": "arn:aws:secretsmanager:us-east-1:000000000000:secret:kafka"}},
 		"SelfManagedEventSource":     map[string]any{"Endpoints": map[string]any{"KafkaBootstrapServers": []string{"host:9092"}}},
 		"Topics":                     []string{"topic"}, "Queues": []string{"queue"},

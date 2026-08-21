@@ -17,9 +17,11 @@ findings:
     - Unsupported source/target/enrichment combinations now fail at CreatePipe/UpdatePipe instead of being stored and ignored (#470).
     - CreatePipe returns AWS's 200 with the six-member response body (#470).
     - Reconciled the stale service comment about UpdatePipe.
+    - A Lambda target's batchItemFailures report is honoured for SQS, Kinesis and DynamoDB Streams sources (#512).
   remaining_gaps:
     - FilterCriteria is rejected rather than evaluated; a pattern matcher would need the EventBridge one extracted.
-    - MaximumBatchingWindowInSeconds, ParallelizationFactor and partial-batch failure reporting are not emulated.
+    - MaximumBatchingWindowInSeconds and ParallelizationFactor are not emulated.
+    - Partial-batch failure reporting is not read from a Step Functions target (async StartExecution has no response) or from a Lambda enrichment (whose return value replaces the batch).
     - LogConfiguration and KmsKeyIdentifier are accepted but have no effect.
   intentionally_partial:
     - RoleArn is required but never evaluated - Overcast is not a security boundary.

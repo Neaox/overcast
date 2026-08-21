@@ -138,7 +138,6 @@ type updateESMRequest struct {
 
 func (req *createESMRequest) unsupportedMembers() unsupportedRequestMembers {
 	return unsupportedRequestMembers{
-		"FunctionResponseTypes":               rawRequestField(req.FunctionResponseTypes),
 		"ParallelizationFactor":               rawRequestField(req.ParallelizationFactor),
 		"StartingPositionTimestamp":           rawRequestField(req.StartingPositionTimestamp),
 		"SourceAccessConfigurations":          rawRequestField(req.SourceAccessConfigurations),
@@ -157,7 +156,6 @@ func (req *createESMRequest) unsupportedMembers() unsupportedRequestMembers {
 
 func (req *updateESMRequest) unsupportedMembers() unsupportedRequestMembers {
 	return unsupportedRequestMembers{
-		"FunctionResponseTypes":               rawRequestField(req.FunctionResponseTypes),
 		"ParallelizationFactor":               rawRequestField(req.ParallelizationFactor),
 		"SourceAccessConfigurations":          rawRequestField(req.SourceAccessConfigurations),
 		"KMSKeyArn":                           rawRequestField(req.KMSKeyArn),
@@ -170,6 +168,35 @@ func (req *updateESMRequest) unsupportedMembers() unsupportedRequestMembers {
 		"LoggingConfig":                       rawRequestField(req.LoggingConfig),
 		"SelfManagedKafkaEventSourceConfig":   rawRequestField(req.SelfManagedKafkaEventSourceConfig),
 	}
+}
+
+// parseFunctionResponseTypes validates the FunctionResponseTypes member and
+// returns the list to store on the mapping.
+//
+// set is false when the member was omitted or sent as null, which leaves an
+// existing value alone on update. An explicit empty list is set: it is how
+// CloudFormation clears the property back to its default.
+//
+// Only poll-based sources support the feature, and both sources Overcast
+// accepts for a mapping — an SQS queue and a DynamoDB stream — are poll-based,
+// so there is no source to refuse it for here.
+func parseFunctionResponseTypes(raw json.RawMessage) (values []string, set bool, aerr *protocol.AWSError) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil, false, nil
+	}
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, false, lambdaInvalidParameter("FunctionResponseTypes must be a list of strings")
+	}
+	for _, value := range values {
+		if value != functionResponseTypeReportBatchItemFailures {
+			return nil, false, smithyEnumConstraint(
+				"functionResponseTypes",
+				"["+strings.Join(values, ", ")+"]",
+				functionResponseTypeReportBatchItemFailures,
+			)
+		}
+	}
+	return values, true, nil
 }
 
 // listESMResponse is the wire response for ListEventSourceMappings.
@@ -213,6 +240,11 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 	batchSize := eventSourceBatchSize(req.EventSourceArn, req.BatchSize)
 	if aerr := validateEventSourceBatching(req.EventSourceArn, batchSize, req.MaximumBatchingWindowInSeconds, req.BatchSize != nil); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	responseTypes, _, aerr := parseFunctionResponseTypes(req.FunctionResponseTypes)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -272,6 +304,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		BisectBatchOnFunctionError:     req.BisectBatchOnFunctionError,
 		DestinationConfig:              req.DestinationConfig,
 		ScalingConfig:                  req.ScalingConfig,
+		FunctionResponseTypes:          responseTypes,
 		LastModified:                   float64(h.clk.Now().UnixMilli()) / 1000,
 		LastProcessingResult:           "No records processed",
 	}
@@ -382,6 +415,11 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	responseTypes, responseTypesSet, aerr := parseFunctionResponseTypes(req.FunctionResponseTypes)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	if req.FunctionName != nil {
 		funcName := functionNameFromARN(*req.FunctionName)
@@ -426,6 +464,9 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 	if req.ScalingConfig != nil {
 		esm.ScalingConfig = req.ScalingConfig
+	}
+	if responseTypesSet {
+		esm.FunctionResponseTypes = responseTypes
 	}
 	if req.Enabled != nil {
 		if *req.Enabled {

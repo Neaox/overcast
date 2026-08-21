@@ -824,7 +824,7 @@
           "operation": "CreateEventSourceMapping",
           "category": "Event source mappings",
           "status": "✅ Supported",
-          "notes": "SQS→Lambda, DynamoDB Streams→Lambda; Tags are stored and readable through ListTags"
+          "notes": "SQS→Lambda, DynamoDB Streams→Lambda; `FunctionResponseTypes: [\"ReportBatchItemFailures\"]` is honoured; Tags are stored and readable through ListTags"
         },
         {
           "operation": "GetEventSourceMapping",

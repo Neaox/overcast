@@ -59,7 +59,6 @@ var reviewedGatedForwards = map[string]map[string]string{
 		"S3ObjectStorageMode": "as CreateFunction's Code.S3ObjectStorageMode",
 	},
 	lambda.OpCreateEventSourceMapping: {
-		"FunctionResponseTypes":               "partial-batch failure reporting is behavioural: accepting it would delete messages that should be retried",
 		"ParallelizationFactor":               "stream shard parallelism is not emulated",
 		"StartingPositionTimestamp":           "AT_TIMESTAMP stream positioning is not emulated",
 		"SourceAccessConfigurations":          "self-managed source authentication is not emulated",
@@ -75,7 +74,6 @@ var reviewedGatedForwards = map[string]map[string]string{
 		"SelfManagedKafkaEventSourceConfig":   "self-managed Kafka is not an emulated event source",
 	},
 	lambda.OpUpdateEventSourceMapping: {
-		"FunctionResponseTypes":               "as CreateEventSourceMapping",
 		"ParallelizationFactor":               "as CreateEventSourceMapping",
 		"SourceAccessConfigurations":          "as CreateEventSourceMapping",
 		"KMSKeyArn":                           "as CreateEventSourceMapping",

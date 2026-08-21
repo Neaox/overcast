@@ -85,6 +85,27 @@ type EventSourceMapping struct {
 	// ScalingConfig controls the maximum concurrent invocations for this ESM.
 	// Only applicable to SQS sources. nil means unlimited.
 	ScalingConfig *ScalingConfig `json:"ScalingConfig,omitempty"`
+	// FunctionResponseTypes opts the mapping into partial-batch failure
+	// reporting. AWS models exactly one value, "ReportBatchItemFailures":
+	// with it set, the poller reads the function's response and acknowledges
+	// only the records the function did not report as failed. Poll-based
+	// sources only — see esm_delivery.go.
+	FunctionResponseTypes []string `json:"FunctionResponseTypes,omitempty"`
+}
+
+// functionResponseTypeReportBatchItemFailures is the only value AWS's
+// FunctionResponseTypes enum has.
+const functionResponseTypeReportBatchItemFailures = "ReportBatchItemFailures"
+
+// reportsBatchItemFailures reports whether the mapping asked for partial-batch
+// failure reporting.
+func (m *EventSourceMapping) reportsBatchItemFailures() bool {
+	for _, responseType := range m.FunctionResponseTypes {
+		if strings.EqualFold(responseType, functionResponseTypeReportBatchItemFailures) {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterCriteria defines event-filtering criteria for an EventSourceMapping.

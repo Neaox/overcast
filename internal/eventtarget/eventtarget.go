@@ -272,14 +272,26 @@ func NewDispatcher(router http.Handler, defaultRegion string) *Dispatcher {
 // is not deliverable, or when the dispatcher has no router. Callers decide
 // what a failure means — retry, dead-letter, or drop.
 func (d *Dispatcher) Deliver(ctx context.Context, req Request) error {
+	_, err := d.DeliverResponse(ctx, req)
+	return err
+}
+
+// DeliverResponse is Deliver for a caller that needs what the sink answered,
+// not only whether it accepted the delivery.
+//
+// Only a Lambda target invoked with InvocationRequestResponse has an answer to
+// return: EventBridge Pipes reads it to honour a partial-batch failure report,
+// which is a decision about the source records and so cannot be made inside the
+// sink. Every other kind returns a nil payload and behaves exactly as Deliver.
+func (d *Dispatcher) DeliverResponse(ctx context.Context, req Request) ([]byte, error) {
 	if d == nil || d.router == nil {
-		return errors.New("eventtarget: no router configured")
+		return nil, errors.New("eventtarget: no router configured")
 	}
 	kind := req.Kind
 	if kind == "" {
 		resolved, err := Classify(req.ARN)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		kind = resolved
 	}
@@ -287,24 +299,24 @@ func (d *Dispatcher) Deliver(ctx context.Context, req Request) error {
 	case KindLambda:
 		return d.deliverLambda(ctx, req)
 	case KindSQS:
-		return d.deliverSQS(ctx, req)
+		return nil, d.deliverSQS(ctx, req)
 	case KindSNS:
-		return d.deliverSNS(ctx, req)
+		return nil, d.deliverSNS(ctx, req)
 	case KindStepFunctions:
-		return d.deliverStepFunctions(ctx, req)
+		return nil, d.deliverStepFunctions(ctx, req)
 	case KindKinesis:
-		return d.deliverKinesis(ctx, req)
+		return nil, d.deliverKinesis(ctx, req)
 	case KindFirehose:
-		return d.deliverFirehose(ctx, req)
+		return nil, d.deliverFirehose(ctx, req)
 	case KindEventBus:
-		return d.deliverEventBus(ctx, req)
+		return nil, d.deliverEventBus(ctx, req)
 	case KindECS:
 		// ECS RunTask has no generic payload shape: the caller owns the body,
 		// built from its own target parameters. EventBridge dispatches it
 		// through InvokeJSONTarget instead.
-		return errors.New("eventtarget: ECS targets must be delivered with InvokeJSONTarget")
+		return nil, errors.New("eventtarget: ECS targets must be delivered with InvokeJSONTarget")
 	default:
-		return &UnsupportedKindError{Service: string(kind)}
+		return nil, &UnsupportedKindError{Service: string(kind)}
 	}
 }
 
@@ -312,12 +324,15 @@ func (d *Dispatcher) Deliver(ctx context.Context, req Request) error {
 // invocation type real EventBridge uses for Lambda targets (the rule does not
 // wait for a result); a caller that needs the result — EventBridge Pipes
 // invokes its Lambda target with REQUEST_RESPONSE — asks for it on the Request.
-func (d *Dispatcher) deliverLambda(ctx context.Context, req Request) error {
+//
+// The response body is returned for that caller. An asynchronous invoke has
+// none, so it comes back empty rather than as the 202's own body.
+func (d *Dispatcher) deliverLambda(ctx context.Context, req Request) ([]byte, error) {
 	name := FunctionName(req.ARN)
 	path := "/2015-03-31/functions/" + url.PathEscape(name) + "/invocations"
 	httpReq, err := d.newRequest(ctx, http.MethodPost, path, req.Payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	invocation := "Event"
 	if req.InvocationType == InvocationRequestResponse {
@@ -328,14 +343,17 @@ func (d *Dispatcher) deliverLambda(ctx context.Context, req Request) error {
 
 	rec, err := d.send(httpReq)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// A handled function error answers 200 and names itself in a header, so it
 	// is invisible to the status check every other sink relies on.
 	if fnErr := rec.Header().Get("X-Amz-Function-Error"); fnErr != "" {
-		return fmt.Errorf("lambda function error (%s): %s", fnErr, strings.TrimSpace(rec.Body.String()))
+		return nil, fmt.Errorf("lambda function error (%s): %s", fnErr, strings.TrimSpace(rec.Body.String()))
 	}
-	return nil
+	if invocation != InvocationRequestResponse {
+		return nil, nil
+	}
+	return rec.Body.Bytes(), nil
 }
 
 func (d *Dispatcher) deliverSQS(ctx context.Context, req Request) error {

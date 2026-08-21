@@ -6,7 +6,10 @@ package lambda
 //   - SQS:              starts a polling goroutine (once/second, batch of BatchSize)
 //   - DynamoDB Streams: registers a HandlerFunc on the shared event bus
 //
-// On success (no FunctionError), SQS messages are deleted from the queue.
+// On success (no FunctionError), SQS messages are deleted from the queue —
+// except on a mapping with FunctionResponseTypes: ["ReportBatchItemFailures"],
+// where the function's response says which records failed and only the rest are
+// deleted. See acknowledgedHandles and streamBatchRemainder.
 // On failure:
 //   - SQS: messages remain in the queue and become visible after the visibility
 //     timeout expires — matching real SQS/Lambda behaviour. The queue's own
@@ -34,6 +37,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/partialbatch"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -413,18 +417,81 @@ func (m *esmDeliveryManager) pollSQS(ctx context.Context, esm *EventSourceMappin
 				return // leave messages in queue
 			}
 
-			handles := make([]string, len(batchMsgs))
-			for i, msg := range batchMsgs {
-				handles[i] = msg.ReceiptHandle
+			handles := make([]string, 0, len(batchMsgs))
+			for _, msg := range batchMsgs {
+				handles = append(handles, msg.ReceiptHandle)
 			}
-			if err := m.receiver.DeleteMessages(ctx, queueName, handles); err != nil {
-				m.log.Logger().Warn("lambda: esm sqs: delete error",
-					zap.String("queue", queueName),
-					zap.Error(err))
+			if esmCopy.reportsBatchItemFailures() {
+				acknowledged, retryAll := m.acknowledgedHandles(&esmCopy, funcName, batchMsgs, outcome.Payload)
+				if retryAll {
+					// Nothing may be deleted: every message stays in flight and
+					// returns to the queue on its visibility timeout.
+					m.updateLastResult(ctx, esmCopy.UUID, "PROBLEM - Function returned an error")
+					return
+				}
+				handles = acknowledged
+			}
+			if len(handles) > 0 {
+				if err := m.receiver.DeleteMessages(ctx, queueName, handles); err != nil {
+					m.log.Logger().Warn("lambda: esm sqs: delete error",
+						zap.String("queue", queueName),
+						zap.Error(err))
+				}
 			}
 			m.updateLastResult(ctx, esmCopy.UUID, "OK")
 		}()
 	}
+}
+
+// acknowledgedHandles applies a partial-batch failure response to the batch
+// that produced it, returning the receipt handles the poller may delete.
+//
+// A message the function reported as failed is simply not deleted: it is still
+// in flight, and SQS makes it visible again when the visibility timeout
+// expires. That is how AWS redelivers it too — Lambda has no "return this one
+// message" call either.
+//
+// retryAll is true when the response could not be honoured, so nothing may be
+// acknowledged. AWS lists the cases (a response it cannot parse, an empty or
+// missing identifier, an identifier naming a message that was not in the batch)
+// and treats every one of them as a complete batch failure.
+func (m *esmDeliveryManager) acknowledgedHandles(esm *EventSourceMapping, funcName string, msgs []events.ReceivedMessage, payload []byte) (handles []string, retryAll bool) {
+	response := partialbatch.Parse(payload)
+	if response.WholeBatchFailed {
+		m.log.Logger().Warn("lambda: esm sqs: partial-batch response not honoured — the whole batch is retried",
+			zap.String("uuid", esm.UUID),
+			zap.String("function", funcName),
+			zap.String("reason", response.Reason))
+		return nil, true
+	}
+
+	ids := make([]string, len(msgs))
+	handleByID := make(map[string]string, len(msgs))
+	for i, msg := range msgs {
+		ids[i] = msg.MessageID
+		handleByID[msg.MessageID] = msg.ReceiptHandle
+	}
+	succeeded, failed, unknown := response.Split(ids)
+	if unknown != "" {
+		m.log.Logger().Warn("lambda: esm sqs: partial-batch response named a message that was not in the batch — the whole batch is retried",
+			zap.String("uuid", esm.UUID),
+			zap.String("function", funcName),
+			zap.String("itemIdentifier", unknown))
+		return nil, true
+	}
+	if len(failed) > 0 {
+		m.log.Logger().Debug("lambda: esm sqs: partial batch failure reported",
+			zap.String("uuid", esm.UUID),
+			zap.String("function", funcName),
+			zap.Int("failed", len(failed)),
+			zap.Int("succeeded", len(succeeded)))
+	}
+
+	handles = make([]string, 0, len(succeeded))
+	for _, id := range succeeded {
+		handles = append(handles, handleByID[id])
+	}
+	return handles, false
 }
 
 // filterAndDeleteSQS evaluates filter criteria against each message in msgs.
@@ -666,11 +733,12 @@ func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventS
 
 	m.publishESMInvoked(ctx, current, eventName, len(records))
 
-	lambdaPayload, err := json.Marshal(map[string]any{"Records": records})
-	if err != nil {
-		m.log.Logger().Error("lambda: esm dynamodb: marshal failed", zap.Error(err))
-		return
-	}
+	// pending is the slice of the batch still to be delivered. It only ever
+	// shrinks, and only when the function reports partial-batch failures: AWS
+	// checkpoints a stream batch at the lowest reported sequence number, so a
+	// retry resumes there rather than replaying records the function already
+	// handled.
+	pending := records
 
 	// Determine max retry attempts. Default: -1 (unlimited) for streams,
 	// but we cap unlimited at a reasonable 10000 to prevent infinite loops
@@ -691,6 +759,11 @@ func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventS
 			case <-ctx.Done():
 				return
 			}
+		}
+		lambdaPayload, err := json.Marshal(map[string]any{"Records": pending})
+		if err != nil {
+			m.log.Logger().Error("lambda: esm dynamodb: marshal failed", zap.Error(err))
+			return
 		}
 		outcome, err := m.invoker.Invoke(ctx, funcName, lambdaPayload)
 		if err != nil {
@@ -717,8 +790,19 @@ func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventS
 			return
 		}
 		if outcome.FunctionError == "" {
-			m.updateLastResult(ctx, esm.UUID, "OK")
-			return // success
+			if !current.reportsBatchItemFailures() {
+				m.updateLastResult(ctx, esm.UUID, "OK")
+				return // success
+			}
+			remaining, reason := m.streamBatchRemainder(current, funcName, pending, outcome.Payload)
+			if len(remaining) == 0 {
+				m.updateLastResult(ctx, esm.UUID, "OK")
+				return // every record the function was given succeeded
+			}
+			pending = remaining
+			lastErr = reason
+			m.updateLastResult(ctx, esm.UUID, "PROBLEM - Function returned an error")
+			continue
 		}
 
 		lastErr = outcome.FunctionError
@@ -731,6 +815,63 @@ func (m *esmDeliveryManager) deliverStreamBatch(ctx context.Context, esm *EventS
 
 	// Exhausted all retries — send to on-failure destination if configured.
 	m.sendOnFailure(ctx, current, lastPayload, funcName, lastErr)
+}
+
+// streamBatchRemainder applies a partial-batch failure response to a stream
+// batch, returning the records still to be delivered and the reason they are.
+//
+// A stream source has no per-record acknowledgement: AWS checkpoints the shard
+// at the lowest sequence number the function reported and retries from there,
+// so a reported record and everything after it is redelivered even if the
+// function said those later records succeeded. That is deliberate on AWS's part
+// — a stream is ordered — and it is what this reproduces.
+//
+// An empty result means the batch is done. A response that cannot be honoured
+// returns the whole batch, so nothing is checkpointed past a report the poller
+// could not read.
+func (m *esmDeliveryManager) streamBatchRemainder(esm *EventSourceMapping, funcName string, records []any, payload []byte) ([]any, string) {
+	response := partialbatch.Parse(payload)
+	if response.WholeBatchFailed {
+		m.log.Logger().Warn("lambda: esm dynamodb: partial-batch response not honoured — the whole batch is retried",
+			zap.String("uuid", esm.UUID),
+			zap.String("function", funcName),
+			zap.String("reason", response.Reason))
+		return records, "partial-batch response not honoured: " + response.Reason
+	}
+
+	ids := make([]string, len(records))
+	for i, record := range records {
+		ids[i] = streamRecordIdentifier(record)
+	}
+	index, reported, unknown := response.LowestReportedIndex(ids)
+	if unknown != "" {
+		m.log.Logger().Warn("lambda: esm dynamodb: partial-batch response named a record that was not in the batch — the whole batch is retried",
+			zap.String("uuid", esm.UUID),
+			zap.String("function", funcName),
+			zap.String("itemIdentifier", unknown))
+		return records, "partial-batch response named record " + unknown + ", which was not in the batch"
+	}
+	if !reported {
+		return nil, ""
+	}
+	m.log.Logger().Debug("lambda: esm dynamodb: partial batch failure reported",
+		zap.String("uuid", esm.UUID),
+		zap.String("function", funcName),
+		zap.Int("failed", len(response.Failed)),
+		zap.Int("retrying", len(records)-index))
+	return records[index:], fmt.Sprintf("%d of %d records reported as failed", len(response.Failed), len(records))
+}
+
+// streamRecordIdentifier returns the identifier a stream record is reported
+// under. AWS names a DynamoDB Streams record by its sequence number, which is
+// also the record's eventID here — see buildDynamoDBRecord.
+func streamRecordIdentifier(record any) string {
+	fields, ok := record.(map[string]any)
+	if !ok {
+		return ""
+	}
+	id, _ := fields["eventID"].(string)
+	return id
 }
 
 // buildDynamoDBRecord formats a DynamoDB stream payload into the standard
