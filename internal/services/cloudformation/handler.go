@@ -49,6 +49,7 @@ func (h *Handler) initOps() {
 		"CreateStack":            h.CreateStack,
 		"UpdateStack":            h.UpdateStack,
 		"RollbackStack":          h.RollbackStack,
+		"ContinueUpdateRollback": h.ContinueUpdateRollback,
 		"DeleteStack":            h.DeleteStack,
 		"DescribeStacks":         h.DescribeStacks,
 		"ListStacks":             h.ListStacks,
@@ -66,7 +67,6 @@ func (h *Handler) initOps() {
 		"ListExports":            h.ListExports,
 		"ListImports":            h.ListImports,
 		// Stubs
-		"ContinueUpdateRollback":       h.stub,
 		"CancelUpdateStack":            h.stub,
 		"SignalResource":               h.stub,
 		"SetStackPolicy":               h.stub,
@@ -425,6 +425,172 @@ func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
 	}, trace.RecorderFromContext(r.Context()))
 
 	writeCFNResponse(w, r, "RollbackStackResponse", "RollbackStackResult", stackIdResult{StackId: stack.StackID})
+}
+
+// ── ContinueUpdateRollback ─────────────────────────────────────────────────
+
+// ContinueUpdateRollback retries an update rollback that failed, and is the
+// only way back to a usable stack from UPDATE_ROLLBACK_FAILED.
+//
+// That state is reached when an update fails and the automatic rollback then
+// fails too — most often because both attempts were blocked by the same thing
+// outside the stack, a port already bound or a resource still in use. The
+// stack is then un-updatable: it has no last known stable state, so every
+// later UpdateStack and change set is refused. AWS's answer is for the
+// operator to clear the blocker by hand and call this, which picks the
+// rollback up where it stopped:
+//
+//	"A stack goes into the UPDATE_ROLLBACK_FAILED state when CloudFormation
+//	can't roll back all changes after a failed stack update. […] fix the
+//	error(s) and continue the rollback."
+//	https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ContinueUpdateRollback.html
+//
+// It differs from RollbackStack in what it will accept, not in what it does
+// once accepted. RollbackStack *starts* a rollback and so takes UPDATE_FAILED
+// and CREATE_FAILED as well; this operation continues one already under way,
+// and UPDATE_ROLLBACK_FAILED is the only state where one is. Both then run the
+// same retry — see rollbackToStable for what Overcast can and cannot put back
+// — and only this one takes ResourcesToSkip, which is why an operator whose
+// retry keeps failing needs it rather than RollbackStack.
+//
+// The response is empty: the caller polls DescribeStacks, exactly as it does
+// after the rollback this is resuming.
+func (h *Handler) ContinueUpdateRollback(w http.ResponseWriter, r *http.Request) {
+	stackName := r.FormValue("StackName")
+	if stackName == "" {
+		writeCFNError(w, r, "ValidationError", "StackName is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	stack, aerr := h.store.getLiveStackByNameOrARN(ctx, stackName)
+	if aerr != nil || stack == nil {
+		writeCFNError(w, r, "ValidationError",
+			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
+		return
+	}
+
+	// AWS reports a stack in any other state through its ordinary update
+	// guard — this operation is an update as far as that check is concerned,
+	// and the message names the state the caller has to deal with instead.
+	if stack.Status != StatusUpdateRollbackFailed {
+		protocol.WriteQueryXMLError(w, r, stackNotUpdatableErr(stack))
+		return
+	}
+
+	skips, aerr := h.collectResourcesToSkip(ctx, r, stack)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	// RoleARN is accepted per the AWS API and recorded on the stack, but
+	// Overcast does not validate or assume roles.
+	if roleARN := r.FormValue("RoleARN"); roleARN != "" {
+		stack.RoleARN = roleARN
+	}
+
+	beginStackOperation(ctx, stack, StatusUpdateRollbackInProgress, r.FormValue("ClientRequestToken"))
+	now := h.clk.Now()
+	stack.UpdatedAt = &now
+
+	if err := h.store.putStack(ctx, stack); err != nil {
+		writeCFNError(w, r, "InternalFailure", "failed to persist stack", http.StatusInternalServerError)
+		return
+	}
+
+	h.prov.continueUpdateRollback(stack, skips, trace.RecorderFromContext(r.Context()))
+
+	writeCFNResponse(w, r, "ContinueUpdateRollbackResponse", "ContinueUpdateRollbackResult", nil)
+}
+
+// collectResourcesToSkip reads ContinueUpdateRollback's ResourcesToSkip.member.N
+// form values and resolves each one to the stack that actually holds it.
+//
+// A member is a logical ID, optionally prefixed by the path of nested stacks it
+// sits under:
+//
+//	"To skip resources that are part of nested stacks, use the following
+//	format: NestedStackName.ResourceLogicalID"
+//
+// NestedStackName there is the nested stack's logical ID in its parent, not the
+// child stack's own name, so the path is walked one AWS::CloudFormation::Stack
+// resource at a time from the stack the request named. Arbitrary depth is
+// accepted because nesting is: a.b.c walks two children before naming a
+// resource in the second.
+//
+// Validation happens here, before the operation is accepted, because that is
+// where AWS does it — a rejected member leaves the stack untouched rather than
+// half-continuing a rollback and reporting the problem through stack events.
+// The error code and HTTP status are AWS's; the message wording is Overcast's,
+// since AWS does not document it.
+func (h *Handler) collectResourcesToSkip(ctx context.Context, r *http.Request, stack *Stack) ([]resourceSkip, *protocol.AWSError) {
+	var skips []resourceSkip
+	for i := 1; ; i++ {
+		member := r.FormValue(fmt.Sprintf("ResourcesToSkip.member.%d", i))
+		if member == "" {
+			break
+		}
+		skip, aerr := h.resolveResourceToSkip(ctx, stack, member)
+		if aerr != nil {
+			return nil, aerr
+		}
+		skips = append(skips, skip)
+	}
+	return skips, nil
+}
+
+// resolveResourceToSkip walks one ResourcesToSkip member down to the resource
+// it names, rejecting a path that does not lead to one — and a resource that
+// did not fail, which AWS refuses because skipping it would report a healthy
+// resource as rolled back over configuration the failed update left on it.
+func (h *Handler) resolveResourceToSkip(ctx context.Context, stack *Stack, member string) (resourceSkip, *protocol.AWSError) {
+	segments := strings.Split(member, ".")
+	current := stack
+	for _, segment := range segments[:len(segments)-1] {
+		nested := findStackResource(current, segment)
+		if nested == nil || nested.Type != "AWS::CloudFormation::Stack" || nested.PhysicalID == "" {
+			return resourceSkip{}, skipMemberErr(
+				fmt.Sprintf("Resource [%s] named in ResourcesToSkip does not resolve: stack %s has no nested stack %s",
+					member, current.StackName, segment))
+		}
+		child, aerr := h.store.getStack(ctx, stackNameFromARN(nested.PhysicalID))
+		if aerr != nil || child == nil {
+			return resourceSkip{}, skipMemberErr(
+				fmt.Sprintf("Resource [%s] named in ResourcesToSkip does not resolve: nested stack %s no longer exists",
+					member, segment))
+		}
+		current = child
+	}
+
+	logicalID := segments[len(segments)-1]
+	resource := findStackResource(current, logicalID)
+	if resource == nil {
+		return resourceSkip{}, skipMemberErr(
+			fmt.Sprintf("Resource [%s] named in ResourcesToSkip does not exist in stack %s", member, current.StackName))
+	}
+	if !strings.HasSuffix(resource.Status, "_FAILED") {
+		return resourceSkip{}, skipMemberErr(
+			fmt.Sprintf("Resource [%s] named in ResourcesToSkip is in %s state; only a resource the rollback failed on can be skipped",
+				member, resource.Status))
+	}
+	return resourceSkip{stackName: current.StackName, logicalID: logicalID}, nil
+}
+
+func skipMemberErr(message string) *protocol.AWSError {
+	return cfnerr("ValidationError", message, http.StatusBadRequest)
+}
+
+// findStackResource returns the stack's resource with the given logical ID, or
+// nil. The returned pointer addresses the caller's copy of the stack; callers
+// here only read it.
+func findStackResource(stack *Stack, logicalID string) *StackResource {
+	for i := range stack.Resources {
+		if stack.Resources[i].LogicalID == logicalID {
+			return &stack.Resources[i]
+		}
+	}
+	return nil
 }
 
 // ── DeleteStack ────────────────────────────────────────────────────────────

@@ -1797,10 +1797,24 @@ func (p *provisioner) rollbackStackResourcesCtx(
 	stack *Stack,
 	opts rollbackStackOptions,
 ) {
-	// The stored template drives Ref/GetAtt resolution for any deletes. A
-	// stack that failed early may have no usable template; an empty one still
-	// yields a valid resolve context, and the resource list is the real source
-	// of truth for what has to be retired.
+	rCtx := p.rollbackResolveContext(stack)
+
+	if opts.createPath {
+		// A failed create unwinds exactly like an automatic create rollback.
+		p.rollbackCreate(ctx, stack, rCtx, "User Initiated", createRollbackOptions{
+			retainExceptOnCreate: opts.retainExceptOnCreate,
+		})
+		return
+	}
+	p.rollbackToStable(ctx, stack, rCtx, "User Initiated", nil)
+}
+
+// rollbackResolveContext builds the resolve context a rollback's deletes run
+// under. The stored template drives Ref/GetAtt resolution; a stack that failed
+// early may have no usable template, and an empty one still yields a valid
+// context because the resource list — not the template — is the source of
+// truth for what has to be retired.
+func (p *provisioner) rollbackResolveContext(stack *Stack) *resolveContext {
 	tmpl, err := parseTemplate(stack.TemplateBody)
 	if err != nil || tmpl == nil {
 		tmpl = &Template{Resources: map[string]TemplateResource{}}
@@ -1811,26 +1825,115 @@ func (p *provisioner) rollbackStackResourcesCtx(
 			rCtx.Resources[r.LogicalID] = r.PhysicalID
 		}
 	}
+	return rCtx
+}
 
-	if opts.createPath {
-		// A failed create unwinds exactly like an automatic create rollback.
-		p.rollbackCreate(ctx, stack, rCtx, "User Initiated", createRollbackOptions{
-			retainExceptOnCreate: opts.retainExceptOnCreate,
-		})
-		return
+// ── Continue update rollback (async) ───────────────────────────────────────
+
+// resourceSkip is one resolved entry of ContinueUpdateRollback's
+// ResourcesToSkip: a logical ID, paired with the stack that actually holds it
+// — the stack the request named, or one of the nested stacks beneath it. The
+// wire value the caller sent is not kept, because the only thing that reads it
+// is the validation that produced this, and it still has it.
+type resourceSkip struct {
+	stackName string
+	logicalID string
+}
+
+// maxContinueRollbackDepth caps how far continueUpdateRollbackCtx descends
+// through nested stacks. Nesting is finite in practice — AWS's own limit is
+// five levels — and a bound here means a cycle in stored state (a child whose
+// resource list names an ancestor, which no correct provisioning writes but a
+// hand-edited store could) costs a bounded walk rather than the goroutine's
+// stack.
+const maxContinueRollbackDepth = 8
+
+// continueUpdateRollback services ContinueUpdateRollback, mirroring the async
+// shape of the other stack operations so that a fast rollback is already
+// terminal by the time the caller's next DescribeStacks lands.
+func (p *provisioner) continueUpdateRollback(stack *Stack, skips []resourceSkip, rec *trace.Recorder) {
+	p.provisionAsync(stack, rec, func(ctx context.Context) {
+		p.continueUpdateRollbackCtx(ctx, stack, skips, 0)
+	})
+}
+
+// continueUpdateRollbackCtx retries the rollback for one stack and every nested
+// stack under it that is still wedged.
+//
+// The children go first, and they have to: a parent's nested stack resource is
+// only as rolled back as the child behind it, so completing the parent over a
+// child still in UPDATE_ROLLBACK_FAILED would report a recovery that half the
+// stack has not made — and would leave the child visible in DescribeStacks as
+// permanently stuck, with no operation left that accepts it. This is also what
+// makes a nested ResourcesToSkip member mean anything: the skip is applied by
+// the child's own rollback, not the parent's.
+func (p *provisioner) continueUpdateRollbackCtx(ctx context.Context, stack *Stack, skips []resourceSkip, depth int) {
+	if depth < maxContinueRollbackDepth {
+		for _, child := range p.wedgedChildStacks(ctx, stack, skips) {
+			// The child was left behind by an earlier operation and still
+			// carries that operation's token. This retry belongs to the
+			// caller's, and the child's events have to say so.
+			child.ClientRequestToken = stack.ClientRequestToken
+			p.continueUpdateRollbackCtx(ctx, child, skips, depth+1)
+		}
 	}
-	p.rollbackToStable(ctx, stack, rCtx, "User Initiated")
+	p.rollbackToStable(ctx, stack, p.rollbackResolveContext(stack), "User Initiated", skipsForStack(skips, stack.StackName))
+}
+
+// wedgedChildStacks returns the nested stacks under stack that this operation
+// has to continue: the ones a failed rollback left in UPDATE_ROLLBACK_FAILED,
+// plus any the caller named a resource inside via ResourcesToSkip.
+func (p *provisioner) wedgedChildStacks(ctx context.Context, stack *Stack, skips []resourceSkip) []*Stack {
+	var children []*Stack
+	for _, r := range stack.Resources {
+		if r.Type != "AWS::CloudFormation::Stack" || r.PhysicalID == "" {
+			continue
+		}
+		childName := stackNameFromARN(r.PhysicalID)
+		if childName == "" {
+			continue
+		}
+		child, _ := p.store.getStack(ctx, childName)
+		if child == nil {
+			continue
+		}
+		if child.Status != StatusUpdateRollbackFailed && len(skipsForStack(skips, childName)) == 0 {
+			continue
+		}
+		children = append(children, child)
+	}
+	return children
+}
+
+// skipsForStack narrows a resolved ResourcesToSkip list to the logical IDs that
+// belong to one stack.
+func skipsForStack(skips []resourceSkip, stackName string) map[string]bool {
+	var out map[string]bool
+	for _, s := range skips {
+		if s.stackName != stackName {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]bool, len(skips))
+		}
+		out[s.logicalID] = true
+	}
+	return out
 }
 
 // rollbackToStable services RollbackStack for a stack whose update failed, or
-// whose automatic update rollback failed and is being retried.
+// whose automatic update rollback failed and is being retried — and
+// ContinueUpdateRollback, which is the same retry with a skip list.
 //
 // Overcast keeps no snapshot of each resource's pre-update properties, so it
 // cannot literally restore prior configuration the way real CloudFormation
 // does. What it can do — and what unblocks a client stuck behind
 // UPDATE_FAILED — is retire the resources the failed attempt left in a failed
 // state and drive the stack to a terminal UPDATE_ROLLBACK_COMPLETE.
-func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
+//
+// skip holds the logical IDs ContinueUpdateRollback was asked to leave alone,
+// and is nil for every other caller. See the loop for what skipping one means.
+func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string, skip map[string]bool) {
 	log := p.log.WithRecorder(ctx)
 	// An explicit RollbackStack on a stack a failed update left UPDATE_FAILED
 	// is the second — and last — chance to read the evidence: the resources
@@ -1853,6 +1956,25 @@ func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *
 		r := stack.Resources[i]
 		if ctx.Err() != nil {
 			rollbackFailed = true
+			kept = append(kept, r)
+			continue
+		}
+
+		if skip[r.LogicalID] {
+			// AWS's own description of what skipping does, and it is
+			// deliberately a lie about the resource in exchange for the truth
+			// about the stack: "CloudFormation sets the status of the
+			// specified resources to UPDATE_COMPLETE and continues to roll
+			// back the stack. After the rollback is complete, the state of the
+			// skipped resources will be inconsistent with the state of the
+			// resources in the stack template." The physical resource is left
+			// exactly as the failed attempt left it — untouched, not retried —
+			// which is the point: the operator has decided this one is theirs
+			// to deal with, and wants the rest of the stack back.
+			r.Status = ResourceUpdateComplete
+			r.StatusReason = ""
+			r.Timestamp = p.clk.Now()
+			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceUpdateComplete, "")
 			kept = append(kept, r)
 			continue
 		}
