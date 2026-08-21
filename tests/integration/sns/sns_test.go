@@ -1629,6 +1629,400 @@ func TestListTagsForResource_notFound(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 }
 
+// ---- Publish destination selection (#183) -----------------------------------
+//
+// AWS's Publish docs cross-reference TopicArn, TargetArn, and PhoneNumber:
+// "If you don't specify a value for the TopicArn parameter, you must specify
+// a value for the PhoneNumber or TargetArn parameters" (and the same for each
+// of the other two) — meaning exactly one of the three must be supplied.
+// https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+
+func TestPublish_noDestination(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "Publish", url.Values{"Message": {"hello"}})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_multipleDestinations(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "multi-dest-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":    {topicArn},
+		"PhoneNumber": {"+12125551234"},
+		"Message":     {"hello"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_targetArnReturnsExplicitUnsupported(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TargetArn": {"arn:aws:sns:us-east-1:000000000000:endpoint/APNS/app/00000000-0000-0000-0000-000000000000"},
+		"Message":   {"hello"},
+	})
+	defer resp.Body.Close()
+	// Real AWS also returns 400 here (EndpointDisabled/InvalidParameter,
+	// depending on why the endpoint can't be published to) — the important
+	// behaviour is that this is a clear rejection, not the previous generic
+	// "missing TopicArn" error a mobile-push caller would misread as its own bug.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	var errResp struct {
+		Error struct {
+			Code string `xml:"Code"`
+		} `xml:"Error"`
+	}
+	decodeXML(t, resp, &errResp)
+	if errResp.Error.Code != "InvalidParameter" {
+		t.Errorf("Code = %q, want InvalidParameter", errResp.Error.Code)
+	}
+}
+
+func TestPublish_phoneNumberDeliversDirectSMS(t *testing.T) {
+	// Given: no topic at all — a direct-to-phone-number publish.
+	srv := helpers.NewTestServer(t, helpers.WithSMTPMock())
+
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"PhoneNumber": {"+12125551234"},
+		"Message":     {"direct sms"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var pub struct {
+		Result struct {
+			MessageId string `xml:"MessageId"`
+		} `xml:"PublishResult"`
+	}
+	decodeXML(t, resp, &pub)
+	if pub.Result.MessageId == "" {
+		t.Error("expected MessageId in Publish response")
+	}
+
+	var msgs []struct {
+		Kind string   `json:"kind"`
+		To   []string `json:"to"`
+		Body string   `json:"textBody"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		mailResp, err := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
+		if err != nil {
+			return false
+		}
+		defer mailResp.Body.Close()
+		msgs = nil
+		helpers.DecodeJSON(t, mailResp, &msgs)
+		return len(msgs) == 1
+	}, "timed out waiting for direct SMS delivery")
+
+	if msgs[0].Kind != "sms" {
+		t.Errorf("Kind = %q, want sms", msgs[0].Kind)
+	}
+	if len(msgs[0].To) == 0 || msgs[0].To[0] != "+12125551234" {
+		t.Errorf("To = %v, want [+12125551234]", msgs[0].To)
+	}
+	if !strings.Contains(msgs[0].Body, "direct sms") {
+		t.Errorf("body %q should contain 'direct sms'", msgs[0].Body)
+	}
+}
+
+// ---- Publish validation: Message size, Subject (#183) -----------------------
+
+func TestPublish_messageTooLarge(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "oversized-message-topic")
+	huge := strings.Repeat("a", 262145) // 256 KB + 1 byte
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {huge},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_subjectTooLong(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "long-subject-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello"},
+		"Subject":  {strings.Repeat("s", 100)}, // AWS requires < 100 characters
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_subjectContainsControlCharacter(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "control-char-subject-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello"},
+		"Subject":  {"line one\nline two"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_validSubjectAccepted(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "valid-subject-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello"},
+		"Subject":  {"a perfectly normal subject line"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+// ---- Publish MessageStructure=json (#183) ------------------------------------
+
+func TestPublish_messageStructureJson_perProtocolSelection(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "json-structure-topic")
+	queueURL := sqsCreateQueue(t, srv, "json-structure-queue")
+	queueArn := "arn:aws:sqs:us-east-1:000000000000:json-structure-queue"
+	subscribe(t, srv, topicArn, "sqs", queueArn)
+
+	body := `{"default":"the default message","sqs":"the sqs-specific message"}`
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"json"},
+		"Message":          {body},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var recv struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            queueURL,
+			"MaxNumberOfMessages": 1,
+		})
+		defer recvResp.Body.Close()
+		recv = struct {
+			Messages []struct {
+				Body string `json:"Body"`
+			} `json:"Messages"`
+		}{}
+		helpers.DecodeJSON(t, recvResp, &recv)
+		return len(recv.Messages) == 1
+	}, "timed out waiting for SNS message to arrive in SQS")
+
+	var envelope struct {
+		Message string `json:"Message"`
+	}
+	if err := decodeJSONString(recv.Messages[0].Body, &envelope); err != nil {
+		t.Fatalf("expected SQS body to be SNS envelope JSON: %v\nbody: %s", err, recv.Messages[0].Body)
+	}
+	if envelope.Message != "the sqs-specific message" {
+		t.Errorf("Message = %q, want the sqs-specific protocol-selected message", envelope.Message)
+	}
+}
+
+func TestPublish_messageStructureJson_fallsBackToDefault(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "json-structure-fallback-topic")
+	queueURL := sqsCreateQueue(t, srv, "json-structure-fallback-queue")
+	queueArn := "arn:aws:sqs:us-east-1:000000000000:json-structure-fallback-queue"
+	subscribe(t, srv, topicArn, "sqs", queueArn)
+
+	// No "sqs" key present — sqs subscriber should fall back to "default".
+	body := `{"default":"the default message","email":"an email-only message"}`
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"json"},
+		"Message":          {body},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var recv struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            queueURL,
+			"MaxNumberOfMessages": 1,
+		})
+		defer recvResp.Body.Close()
+		recv = struct {
+			Messages []struct {
+				Body string `json:"Body"`
+			} `json:"Messages"`
+		}{}
+		helpers.DecodeJSON(t, recvResp, &recv)
+		return len(recv.Messages) == 1
+	}, "timed out waiting for SNS message to arrive in SQS")
+
+	var envelope struct {
+		Message string `json:"Message"`
+	}
+	if err := decodeJSONString(recv.Messages[0].Body, &envelope); err != nil {
+		t.Fatalf("expected SQS body to be SNS envelope JSON: %v\nbody: %s", err, recv.Messages[0].Body)
+	}
+	if envelope.Message != "the default message" {
+		t.Errorf("Message = %q, want fallback to the default message", envelope.Message)
+	}
+}
+
+func TestPublish_messageStructureJson_rawDeliveryUsesSelectedMessage(t *testing.T) {
+	// RawMessageDelivery must deliver the protocol-selected text, not the raw
+	// JSON structure blob, matching AWS: raw delivery strips the notification
+	// envelope but MessageStructure=json selection still applies underneath it.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "json-raw-topic")
+	queueURL := sqsCreateQueue(t, srv, "json-raw-queue")
+	queueArn := "arn:aws:sqs:us-east-1:000000000000:json-raw-queue"
+	subArn := subscribe(t, srv, topicArn, "sqs", queueArn)
+	setRawMessageDelivery(t, srv, subArn, "true")
+
+	body := `{"default":"the default message","sqs":"the sqs-specific message"}`
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"json"},
+		"Message":          {body},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var recv struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		recvResp := sqsCall(t, srv, "ReceiveMessage", map[string]any{
+			"QueueUrl":            queueURL,
+			"MaxNumberOfMessages": 1,
+		})
+		defer recvResp.Body.Close()
+		recv = struct {
+			Messages []struct {
+				Body string `json:"Body"`
+			} `json:"Messages"`
+		}{}
+		helpers.DecodeJSON(t, recvResp, &recv)
+		return len(recv.Messages) == 1
+	}, "timed out waiting for SNS message to arrive in SQS")
+
+	if recv.Messages[0].Body != "the sqs-specific message" {
+		t.Errorf("raw body = %q, want the sqs-specific selected message with no envelope", recv.Messages[0].Body)
+	}
+}
+
+func TestPublish_messageStructureJson_missingDefault(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "json-missing-default-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"json"},
+		"Message":          {`{"sqs":"no default here"}`},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_messageStructureJson_invalidJSON(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "json-invalid-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"json"},
+		"Message":          {`not valid json`},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_invalidMessageStructureValue(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "invalid-structure-value-topic")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":         {topicArn},
+		"MessageStructure": {"xml"}, // only "json" is a valid value
+		"Message":          {"hello"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+// ---- Publish FIFO topic parameter validation (#183) --------------------------
+
+func TestPublish_fifoTopicMissingMessageGroupId(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "orders.fifo")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":               {topicArn},
+		"Message":                {"hello"},
+		"MessageDeduplicationId": {"dedupe-1"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_fifoTopicMissingDeduplicationId(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "orders2.fifo")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":       {topicArn},
+		"Message":        {"hello"},
+		"MessageGroupId": {"group-1"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPublish_fifoTopicContentBasedDeduplicationAllowsMissingId(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "orders3.fifo")
+	setResp := snsCall(t, srv, "SetTopicAttributes", url.Values{
+		"TopicArn":       {topicArn},
+		"AttributeName":  {"ContentBasedDeduplication"},
+		"AttributeValue": {"true"},
+	})
+	setResp.Body.Close()
+
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":       {topicArn},
+		"Message":        {"hello"},
+		"MessageGroupId": {"group-1"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestPublish_fifoTopicWithBothParamsSucceeds(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "orders4.fifo")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn":               {topicArn},
+		"Message":                {"hello"},
+		"MessageGroupId":         {"group-1"},
+		"MessageDeduplicationId": {"dedupe-1"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func TestPublish_standardTopicDoesNotRequireFIFOParams(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "standard-topic-no-fifo-params")
+	resp := snsCall(t, srv, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
 // ---- Test helpers ----------------------------------------------------------
 
 // snsCall sends an AWS Query-protocol SNS request (form-encoded POST body).
@@ -1729,6 +2123,20 @@ func subscribe(t *testing.T, srv *helpers.TestServer, topicArn, protocol, endpoi
 	}
 	decodeXML(t, resp, &result)
 	return result.Result.SubscriptionArn
+}
+
+// setRawMessageDelivery sets the RawMessageDelivery subscription attribute.
+func setRawMessageDelivery(t *testing.T, srv *helpers.TestServer, subscriptionArn, value string) {
+	t.Helper()
+	resp := snsCall(t, srv, "SetSubscriptionAttributes", url.Values{
+		"SubscriptionArn": {subscriptionArn},
+		"AttributeName":   {"RawMessageDelivery"},
+		"AttributeValue":  {value},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("setRawMessageDelivery: unexpected status %d", resp.StatusCode)
+	}
 }
 
 func sqsCreateQueue(t *testing.T, srv *helpers.TestServer, name string) string {

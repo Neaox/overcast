@@ -106,7 +106,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |
 | Cognito          | [cognito.md](./services/cognito.md)                 | 70  | Comprehensive / broad support |
 | EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 72  | Comprehensive / broad support |
-| SNS              | [sns.md](./services/sns.md)                         | 29  | Comprehensive / broad support |
+| SNS              | [sns.md](./services/sns.md)                         | 30  | Comprehensive / broad support |
 | IAM              | [iam.md](./services/iam.md)                         | 74  | Core CRUD + common workflows  |
 | ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
 | ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |

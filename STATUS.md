@@ -23,7 +23,7 @@
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
 | Cognito     | 70  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
 | EC2 / VPC   | 72  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
-| SNS         | 29  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
+| SNS         | 30  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
 
 ### Core operations — basic CRUD + common features
 
@@ -74,7 +74,7 @@
 | CloudFront      | 89  |
 | Cognito         | 70  |
 | EC2 / VPC       | 72  |
-| SNS             | 29  |
+| SNS             | 30  |
 | IAM             | 74  |
 | ECS             | 48  |
 | ECR             | 20  |

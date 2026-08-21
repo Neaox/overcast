@@ -705,7 +705,7 @@ func (h *Handler) publishTyped(ctx context.Context, req *publishReq) (*publishRe
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, req.Subject, req.Message, envelope, subs, nil)
+		h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, req.Subject, req.Message, envelope, subs, nil, nil)
 	}()
 
 	return &publishResp{
@@ -749,7 +749,7 @@ func (h *Handler) publishBatchTyped(ctx context.Context, req *publishBatchReq) (
 		envCopy := envelope
 		go func() {
 			defer h.wg.Done()
-			h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, entry.Subject, entry.Message, envCopy, subs, nil)
+			h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, entry.Subject, entry.Message, envCopy, subs, nil, nil)
 		}()
 
 		successful = append(successful, xmlPublishBatchSuccess{Id: entry.Id, MessageId: msgID})

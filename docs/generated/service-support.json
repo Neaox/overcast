@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1436,
+  "total_ops": 1437,
   "services": [
     {
       "service": "s3",
@@ -3401,8 +3401,8 @@
     {
       "service": "sns",
       "display_name": "SNS",
-      "total_ops": 29,
-      "implemented_ops": 21,
+      "total_ops": 30,
+      "implemented_ops": 22,
       "operations": [
         {
           "operation": "CreateTopic",
@@ -3489,13 +3489,13 @@
           "operation": "Publish",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "Async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers"
+          "notes": "TopicArn/PhoneNumber/TargetArn destination selection (exactly one required); MessageStructure=json per-protocol payload selection; Message (256 KB) and Subject (\u003c100 chars, no control/line-break chars) validation; async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers"
         },
         {
           "operation": "PublishBatch",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages"
+          "notes": "Up to 10 messages; each entry independently validated (Message/Subject/MessageStructure=json), a bad entry fails without aborting the batch"
         },
         {
           "operation": "Message filtering (subscription filter policy)",
@@ -3519,6 +3519,14 @@
           "status": "✅ Supported",
           "notes": "A delivery that fails is redirected to the SQS queue named by the subscription's RedrivePolicy",
           "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "FIFO topic Publish parameters",
+          "category": "Publishing",
+          "status": "⚠️ Partial",
+          "notes": "MessageGroupId/MessageDeduplicationId are required and validated for a topic named `*.fifo` (or ContentBasedDeduplication substitutes for the dedup ID); actual FIFO ordering, deduplication, and SequenceNumber generation remain unimplemented",
+          "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/api/API_Publish.html)",
           "doc_only": true
         },
         {
@@ -3551,7 +3559,7 @@
           "operation": "PublishToEndpoint",
           "category": "Platform applications (mobile push)",
           "status": "❌ Unsupported",
-          "notes": "via Publish with TargetArn",
+          "notes": "via Publish with TargetArn; returns 400 InvalidParameter explicitly rather than a generic missing-TopicArn error",
           "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/mobile-push-send-directmessage.html)",
           "doc_only": true
         },
@@ -3559,7 +3567,7 @@
           "operation": "SMS publish",
           "category": "SMS",
           "status": "✅ Supported",
-          "notes": "via sms subscription on Publish; captured in the Inbox with kind=sms",
+          "notes": "via sms subscription on Publish, or directly via Publish with PhoneNumber (no topic involved); captured in the Inbox with kind=sms",
           "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-phone-number-as-subscriber.html)",
           "doc_only": true
         },
