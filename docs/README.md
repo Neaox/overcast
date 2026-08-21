@@ -170,7 +170,7 @@ All configuration is via environment variables. No config file required.
   LAMBDA_NETWORK/ECS_NETWORK/RDS_NETWORK/ELASTICACHE_NETWORK/MSK_NETWORK/
   EKS_NETWORK/EFS_NETWORK, replaced by OVERCAST_NETWORK).
 -->
-The web console's `WEB_PORT` is documented under
+The web console's `OVERCAST_UI_PORT` is documented under
 [Web management console](#web-management-console); everything the Go emulator
 itself reads is below.
 
@@ -591,8 +591,8 @@ one of them would cost more than it tells you. Hops past that budget show
 ## Web management console
 
 The full image (`ghcr.io/neaox/overcast`) includes a web management console
-accessible at **http://localhost:8080** (configurable via `WEB_PORT` env var
-inside the container).
+accessible at **http://localhost:4567** (configurable via `OVERCAST_UI_PORT`
+env var / `--ui-port` flag; `0` disables it).
 
 The console provides:
 

@@ -301,7 +301,7 @@ caller used.
 
 **The port differs by caller, and this one is not cosmetic.** The engine listens
 on 3306/5432 inside the Docker network; on the host it is reachable only through
-a published port (`OVERCAST_RDS_PORT_BASE`, 33060 upwards, since 3306 is often
+a published port (`RDS_PORT_BASE`, 33060 upwards, since 3306 is often
 taken by a local install). So:
 
 | Caller | `Endpoint.Address` | `Endpoint.Port` |

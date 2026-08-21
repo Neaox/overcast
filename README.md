@@ -22,7 +22,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 2. **Works with all official AWS SDK clients** — Go, JavaScript/TypeScript, Python, Java, .NET without code changes.
 3. **Drop-in replacement for LocalStack** — same port (4566), same env vars mapped, same path conventions. Switching requires changing one line.
 4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/neaox/overcast:alpha` is the full getting-started guide.
-5. **Fast** — sub-200ms startup, <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
+5. **Fast** — sub-50ms startup (~22ms p50, hybrid backend), <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
 6. **Honest about gaps** — unimplemented endpoints return `501 Not Implemented` with a clear message and a link to the support matrix. Silent failures are worse than loud ones.
 7. **Fully open** — MIT licensed, no auth tokens, no telemetry, no usage limits, no feature gates. Free forever for every use case including CI/CD.
 8. **Production-quality internals** — race-safe, well-tested, well-documented, easy to contribute to.
@@ -116,7 +116,7 @@ aws dynamodb list-tables
 | **Self-hosted AWS replacement**  | This is not a platform you host for others. IAM resources are emulated, but Overcast is not a security boundary and has no durability guarantees. Running it as a persistent internal service is building on quicksand. |
 | **Security testing**             | Credentials are accepted. SigV4 validation is optional, and IAM policies are not enforced as an authorization layer.                                                               |
 | **Performance / load testing**   | AWS throttling, quotas, and latency are not emulated.                                                                                                                             |
-| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility, but policy enforcement is out of scope. All operations are permitted.                                         |
+| **IAM policy testing**           | IAM resource APIs exist for local development and IaC compatibility. Policy enforcement is opt-in via `OVERCAST_ENFORCE_IAM` (off by default); when enabled it evaluates identity, resource, and boundary policies and fails closed with AWS-shaped `AccessDenied`, but it is a development aid, not a security boundary.                                         |
 | **CloudFormation / CDK deploys** | CloudFormation emulation supports 130+ resource types <!-- derived from resourceHandlers in internal/services/cloudformation/provisioner.go; exact count and full list in docs/cdk.md -->. `cdk deploy` works for stacks using [supported types](./docs/cdk.md#supported-resource-types). Coverage is not exhaustive.  |
 
 ## Running with Docker
