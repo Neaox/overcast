@@ -1,18 +1,27 @@
 package cloudformation
 
-// provisioner_elasticache_test.go — which template properties reach ElastiCache.
+// provisioner_elasticache_test.go — what crosses the template boundary, in both
+// directions: which properties reach ElastiCache, and which attributes a GetAtt
+// can read back.
 //
 // CacheSubnetGroupName is what places a replication group's container in a VPC.
 // The provisioner dropped it at the template boundary, so a stack that put its
 // cache in a VPC got one on the default plane instead — invisible while
 // placement was additive, and a cache that cannot be isolated once naming a VPC
 // restricts what a resource can reach.
+//
+// ClusterName and the endpoint attributes are the same boundary, and neither
+// side of it fails loudly: a property read under a name the resource does not
+// have simply never arrives, and an attribute never exported resolves to the
+// physical ID rather than to nothing.
 
 import (
 	"context"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -169,6 +178,130 @@ func TestElastiCacheReplicationGroupCreate_omitsAnAbsentSubnetGroup(t *testing.T
 	}
 }
 
+// ── naming and endpoint attributes ─────────────────────────────────────────
+
+// AWS::ElastiCache::CacheCluster names its cluster with ClusterName. The
+// handler read CacheClusterId — the name of the *API* parameter, and not a
+// property the resource has at all — so every template that named its cluster
+// got a generated name instead, and the endpoint the stack advertised was for a
+// cluster nobody had asked for.
+func TestElastiCacheCacheClusterCreate_namesTheClusterFromClusterName(t *testing.T) {
+	// Given: a template that names its cluster
+	f := &fakeElastiCache{}
+	p, rCtx := newTestProvisioner(t, f)
+
+	// When: CloudFormation provisions it
+	id, err := p.provisionResource(context.Background(), "Cache",
+		TemplateResource{Type: "AWS::ElastiCache::CacheCluster"}, cacheClusterProps("app-cache"), rCtx)
+	if err != nil {
+		t.Fatalf("provisionResource: %v", err)
+	}
+
+	// Then: that is the cluster's name, service-side and as the physical ID
+	if got := f.createForm().Get("CacheClusterId"); got != "app-cache" {
+		t.Errorf("CacheClusterId = %q, want %q — ClusterName was dropped at the template boundary", got, "app-cache")
+	}
+	if id != "app-cache" {
+		t.Errorf("physical ID = %q, want %q", id, "app-cache")
+	}
+}
+
+// A template that names no cluster gets CloudFormation's generated name: the
+// stack, the logical ID and a random suffix. It got "<stack>-cache", which
+// carried neither of the last two — so two unnamed clusters in one stack were
+// both handed the same ID, and the second create failed on a name the template
+// never mentions.
+func TestElastiCacheCacheClusterCreate_generatesACloudFormationShapedName(t *testing.T) {
+	// Given: two clusters in one stack, neither of them named
+	f := &fakeElastiCache{}
+	p, rCtx := newTestProvisioner(t, f)
+	props := cacheClusterProps("")
+	delete(props, "ClusterName")
+
+	// When: CloudFormation provisions both
+	first, err := p.provisionResource(context.Background(), "Cache",
+		TemplateResource{Type: "AWS::ElastiCache::CacheCluster"}, props, rCtx)
+	if err != nil {
+		t.Fatalf("provisionResource: %v", err)
+	}
+	second, err := p.provisionResource(context.Background(), "Sessions",
+		TemplateResource{Type: "AWS::ElastiCache::CacheCluster"}, props, rCtx)
+	if err != nil {
+		t.Fatalf("provisionResource: %v", err)
+	}
+
+	// Then: each is named after its own resource, and ElastiCache would accept
+	// it — a cluster ID is lowercase and at most 50 characters.
+	suffix := `-[a-z0-9]{` + strconv.Itoa(physicalIDSuffixLen) + `}$`
+	for logicalID, id := range map[string]string{"Cache": first, "Sessions": second} {
+		want := regexp.MustCompile(`^` + regexp.QuoteMeta(strings.ToLower(rCtx.StackName+"-"+logicalID)) + suffix)
+		if !want.MatchString(id) {
+			t.Errorf("%s physical ID = %q, want %s", logicalID, id, want)
+		}
+		if len(id) > maxNameLenCache {
+			t.Errorf("%s physical ID %q is %d characters, over ElastiCache's %d",
+				logicalID, id, len(id), maxNameLenCache)
+		}
+	}
+	if first == second {
+		t.Errorf("both clusters were named %q; the second create collides with the first", first)
+	}
+}
+
+// Fn::GetAtt on RedisEndpoint.Address is how a Redis cluster's host reaches the
+// code that dials it — CDK's attrRedisEndpointAddress, baked into an ECS task
+// definition as REDIS_HOST. The handler exported the ConfigurationEndpoint pair
+// alone, so the GetAtt fell through to resolveGetAtt's physical-ID fallback and
+// every task came up pointed at a bare cluster ID, which is a name no container
+// advertises and nothing can resolve.
+//
+// Which pair carries the endpoint follows the engine, as AWS populates them.
+// The other pair is exported empty rather than left out, because "left out" is
+// exactly what produced the bare cluster ID.
+func TestElastiCacheCacheClusterCreate_exportsTheEndpointPairItsEngineHas(t *testing.T) {
+	for _, tc := range []struct{ engine, populated, absent string }{
+		{"redis", "RedisEndpoint", "ConfigurationEndpoint"},
+		{"valkey", "RedisEndpoint", "ConfigurationEndpoint"},
+		{"memcached", "ConfigurationEndpoint", "RedisEndpoint"},
+	} {
+		t.Run(tc.engine, func(t *testing.T) {
+			// Given: a cluster whose endpoint the emulator mints at create time
+			f := &fakeElastiCache{}
+			p, rCtx := newTestProvisioner(t, f)
+			props := cacheClusterProps("appcache")
+			props["Engine"] = tc.engine
+
+			// When: CloudFormation provisions it
+			id, err := p.provisionResource(context.Background(), "Cache",
+				TemplateResource{Type: "AWS::ElastiCache::CacheCluster"}, props, rCtx)
+			if err != nil {
+				t.Fatalf("provisionResource: %v", err)
+			}
+			rCtx.Resources = map[string]string{"Cache": id}
+
+			// Then: the pair this engine has carries the endpoint
+			for attr, want := range map[string]string{
+				tc.populated + ".Address": "appcache.cfg.cache.overcast.test",
+				tc.populated + ".Port":    "11211",
+			} {
+				if got := resolveGetAtt("Cache."+attr, rCtx); got != want {
+					t.Errorf("GetAtt %s = %v, want %q", attr, got, want)
+				}
+			}
+
+			// And: the pair it does not have resolves empty rather than to the
+			// physical ID, which is a hostname nothing can resolve and which
+			// reads as a working value all the way to the failed connection
+			for _, attr := range []string{tc.absent + ".Address", tc.absent + ".Port"} {
+				if got := resolveGetAtt("Cache."+attr, rCtx); got != "" {
+					t.Errorf("GetAtt %s = %v, want empty — a %s cluster has no %s on AWS either",
+						attr, got, tc.engine, tc.absent)
+				}
+			}
+		})
+	}
+}
+
 // ── stabilization ──────────────────────────────────────────────────────────
 //
 // CreateCacheCluster is asynchronous: it answers with the cluster in "creating"
@@ -179,10 +312,10 @@ func TestElastiCacheReplicationGroupCreate_omitsAnAbsentSubnetGroup(t *testing.T
 
 func cacheClusterProps(id string) map[string]any {
 	return map[string]any{
-		"CacheClusterId": id,
-		"Engine":         "redis",
-		"CacheNodeType":  "cache.t3.micro",
-		"NumCacheNodes":  1,
+		"ClusterName":   id,
+		"Engine":        "redis",
+		"CacheNodeType": "cache.t3.micro",
+		"NumCacheNodes": 1,
 	}
 }
 
@@ -210,8 +343,8 @@ func TestElastiCacheCacheClusterCreate_waitsForTheClusterToBecomeAvailable(t *te
 	}
 	// The endpoint minted at create time has to survive the wait: a GetAtt on
 	// it is the most common reason a resource depends on this one.
-	if addr := rCtx.Attributes["Cache"]["ConfigurationEndpoint.Address"]; addr == "" {
-		t.Errorf("ConfigurationEndpoint.Address is empty; got %v", rCtx.Attributes["Cache"])
+	if addr := rCtx.Attributes["Cache"]["RedisEndpoint.Address"]; addr == "" {
+		t.Errorf("RedisEndpoint.Address is empty; got %v", rCtx.Attributes["Cache"])
 	}
 }
 

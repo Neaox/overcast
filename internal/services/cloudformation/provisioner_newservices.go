@@ -2371,14 +2371,38 @@ func elastiCacheWait(router http.Handler, region, subject, action, idParam, id s
 	}
 }
 
+// setEndpointAttrs writes one address/port pair into attrs as the Fn::GetAtt
+// attributes of prefix — `RedisEndpoint.Address`, `PrimaryEndPoint.Port`, and
+// so on.
+//
+// Write every prefix the resource documents, including one this resource does
+// not populate: an attribute left out of the map does not resolve to the empty
+// string, it falls through to resolveGetAtt's physical-ID fallback. That is how
+// a bare cluster ID reaches a template as a hostname, and nothing resolves it —
+// an ECS task with REDIS_HOST baked in at deploy time above all.
+func setEndpointAttrs(attrs map[string]string, prefix, address, port string) {
+	attrs[prefix+".Address"] = address
+	attrs[prefix+".Port"] = port
+}
+
 // ── AWS::ElastiCache::CacheCluster ───────────────────────────────────────────
 
 type elastiCacheCacheClusterHandler struct{}
 
 func (h *elastiCacheCacheClusterHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	id, _ := props["CacheClusterId"].(string)
+	// ClusterName, not CacheClusterId: the latter is what the *API* calls the
+	// parameter, and the resource has no property by that name at all. Reading
+	// it meant a template that named its cluster got the generated name below
+	// instead, so every endpoint the stack advertised was for a cluster nobody
+	// had asked for.
+	id, _ := props["ClusterName"].(string)
 	if id == "" {
-		id = fmt.Sprintf("%s-cache", rCtx.StackName)
+		// CloudFormation's own generated name, not "<stack>-cache": that
+		// carried neither the logical ID nor the random suffix, so two unnamed
+		// clusters in one stack were handed the same ID and the second create
+		// failed on a name the template never mentions. Lowercase and capped
+		// because ElastiCache stores a cluster ID that way.
+		id = rCtx.generatedNameLowerWithin(maxNameLenCache)
 	}
 	params := map[string]string{
 		"Action":         "CreateCacheCluster",
@@ -2410,16 +2434,25 @@ func (h *elastiCacheCacheClusterHandler) Create(ctx context.Context, router http
 	}
 	body := rec.Body.String()
 	arn := extractXMLValue(body, "ARN")
-	endpointAddr := extractXMLValue(body, "Address")
-	endpointPort := extractXMLValue(body, "Port")
 	if arn == "" {
 		arn = fmt.Sprintf("arn:aws:elasticache:%s:%s:cluster:%s", rCtx.Region, rCtx.AccountID, id)
 	}
-	return id, map[string]string{
-		"Arn":                           arn,
-		"ConfigurationEndpoint.Address": endpointAddr,
-		"ConfigurationEndpoint.Port":    endpointPort,
-	}, nil
+	// One pair per engine, as AWS populates them: RedisEndpoint for Redis and
+	// Valkey, ConfigurationEndpoint for Memcached. Filling both in would be the
+	// more forgiving thing to do and the wrong one — a template reading the
+	// pair its engine does not have would deploy here and get nothing back on
+	// AWS, which is the direction of divergence that costs a production
+	// incident rather than a local one. The other pair is written empty rather
+	// than omitted; see setEndpointAttrs for why that distinction matters.
+	engine, _ := props["Engine"].(string)
+	populated, absent := "RedisEndpoint", "ConfigurationEndpoint"
+	if strings.EqualFold(engine, "memcached") {
+		populated, absent = absent, populated
+	}
+	attrs := map[string]string{"Arn": arn}
+	setEndpointAttrs(attrs, populated, extractXMLValue(body, "Address"), extractXMLValue(body, "Port"))
+	setEndpointAttrs(attrs, absent, "", "")
+	return id, attrs, nil
 }
 
 // Stabilize holds the resource open until the cache answers. The endpoint
@@ -2656,13 +2689,16 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 	if arn == "" {
 		arn = fmt.Sprintf("arn:aws:elasticache:%s:%s:replicationgroup:%s", rCtx.Region, rCtx.AccountID, id)
 	}
-	return id, map[string]string{
-		"Arn":                           arn,
-		"PrimaryEndPoint.Address":       extractXMLValue(body, "Address"),
-		"PrimaryEndPoint.Port":          extractXMLValue(body, "Port"),
-		"ConfigurationEndPoint.Address": extractXMLValue(body, "Address"),
-		"ConfigurationEndPoint.Port":    extractXMLValue(body, "Port"),
-	}, nil
+	// Both pairs carry the endpoint. AWS populates ConfigurationEndPoint only
+	// for a cluster-mode-enabled group and PrimaryEndPoint only for a
+	// cluster-mode-disabled one, which Overcast cannot yet tell apart — it
+	// models neither node groups nor replicas. Splitting these belongs with
+	// that, not here.
+	address, port := extractXMLValue(body, "Address"), extractXMLValue(body, "Port")
+	attrs := map[string]string{"Arn": arn}
+	setEndpointAttrs(attrs, "PrimaryEndPoint", address, port)
+	setEndpointAttrs(attrs, "ConfigurationEndPoint", address, port)
+	return id, attrs, nil
 }
 
 // Stabilize holds the resource open until the replication group answers. Its

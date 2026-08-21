@@ -299,6 +299,7 @@ const (
 	maxNameLenS3        = 63  // bucket names
 	maxNameLenSQS       = 80  // queue names
 	maxNameLenRDS       = 63  // DB instance and cluster identifiers
+	maxNameLenCache     = 50  // ElastiCache cache cluster IDs (lowercase only)
 	maxNameLenECR       = 256 // repository names (lowercase only)
 	maxNameLenEvents    = 64  // EventBridge rule names
 	maxNameLenScheduler = 64  // EventBridge Scheduler schedule-group names
