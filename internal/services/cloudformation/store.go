@@ -88,20 +88,41 @@ func (st *cfnStore) getStack(ctx context.Context, name string) (*Stack, *protoco
 // getStackByNameOrARN resolves a stack reference the way AWS accepts them:
 // either the stack name or the unique stack ID (the ARN,
 // arn:aws:cloudformation:<region>:<account>:stack/<name>/<uuid>). Every
-// stack-scoped operation's StackName member takes both forms.
+// stack-scoped operation's StackName member takes both forms — but the two
+// forms are not equally durable. AWS's own docs on the StackName member spell
+// out the split: "Running stacks: You can specify either the stack's name or
+// its unique stack ID. Deleted stacks: You must specify the unique stack ID."
+// A DELETE_COMPLETE stack's name is free the instant it tombstones — a new
+// stack may be created under it — so only the ARN, which embeds the
+// generation's uuid, still names the old one specifically.
 //
-// Stacks are keyed by name and every StackID embeds the name it was minted
-// under, so an ARN resolves by extracting its name segment and verifying the
-// stored record's StackID matches the full ARN. The verification is what
-// keeps stale handles honest: recreating a name mints a fresh uuid, so an ARN
-// from the previous incarnation resolves to nothing rather than to the new
-// stack.
+// Stacks are keyed by name (one row per name; recreating overwrites it), and
+// every StackID embeds the name it was minted under, so an ARN resolves by
+// extracting its name segment and verifying the stored record's StackID
+// matches the full ARN. That verification is what keeps stale handles
+// honest: recreating a name mints a fresh uuid, so an ARN from the previous
+// incarnation resolves to nothing rather than to the new stack — and it is
+// also what makes the name/ARN split above fall out for free rather than
+// needing its own case: a name lookup only ever sees the row currently
+// occupying that name, so a DELETE_COMPLETE row is the one AWS says name
+// lookups may not have, and excluding it is the whole difference between the
+// two paths below.
 //
-// DELETE_COMPLETE records are returned — read operations report a deleted
-// stack's final state. Callers that mutate must use getLiveStackByNameOrARN.
+// Read operations report a deleted stack's final state, but per the rule
+// above that is an ARN-only privilege: the name path excludes a
+// DELETE_COMPLETE row exactly as AWS does, while the ARN path (which does not
+// share a namespace with anything, so nothing to reuse could shadow it)
+// returns any status, deleted included. Callers that mutate must use
+// getLiveStackByNameOrARN instead, which excludes DELETE_COMPLETE on both
+// paths — a retained record read fine by either handle is still not a stack
+// an update or a second delete may act on.
 func (st *cfnStore) getStackByNameOrARN(ctx context.Context, nameOrARN string) (*Stack, *protocol.AWSError) {
 	if !isARN(nameOrARN) {
-		return st.getStack(ctx, nameOrARN)
+		stack, aerr := st.getStack(ctx, nameOrARN)
+		if aerr != nil || stack == nil || stack.Status == StatusDeleteComplete {
+			return nil, aerr
+		}
+		return stack, nil
 	}
 	name := stackNameFromARN(nameOrARN)
 	if name == "" {
@@ -118,7 +139,10 @@ func (st *cfnStore) getStackByNameOrARN(ctx context.Context, nameOrARN string) (
 // the stack rather than read it. A retained DELETE_COMPLETE record is not a
 // live stack: AWS reports "does not exist" when an update or change set
 // targets one, and a repeat DeleteStack must be a no-op instead of a second
-// provisioner run.
+// provisioner run. The name path already excludes DELETE_COMPLETE above, so
+// this filter is only load-bearing for the ARN path — but it stays
+// unconditional rather than branching on isARN, so a future read-path change
+// can't silently reopen a mutation against a deleted stack found by name.
 func (st *cfnStore) getLiveStackByNameOrARN(ctx context.Context, nameOrARN string) (*Stack, *protocol.AWSError) {
 	stack, aerr := st.getStackByNameOrARN(ctx, nameOrARN)
 	if aerr != nil || stack == nil || stack.Status == StatusDeleteComplete {

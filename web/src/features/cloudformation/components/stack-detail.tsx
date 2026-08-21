@@ -49,13 +49,19 @@ import { cn } from "@/lib/utils"
 
 interface Props {
   stackName: string
+  // The stack ID (ARN) known at navigation time, when the caller already had
+  // one — see the route's `stackId` search param. A deleted stack resolves
+  // only by ARN (#829: DescribeStacks and friends now answer "does not
+  // exist" for a DELETE_COMPLETE stack looked up by name, matching AWS), so
+  // this is what lets a deleted stack's page load at all.
+  initialStackId?: string
 }
 
 // Diagnostics sits between Events and Template because it is what someone
 // reaches for immediately after the events failed to explain anything.
 type TabKey = "overview" | "resources" | "events" | "diagnostics" | "template"
 
-export function StackDetail({ stackName }: Props) {
+export function StackDetail({ stackName, initialStackId }: Props) {
   const navigate = useNavigate()
 
   const [selectedTab, setTab] = useState<TabKey>("overview")
@@ -65,12 +71,32 @@ export function StackDetail({ stackName }: Props) {
 
   // ─── Queries ────────────────────────────────────────────────────────────────
 
+  // The identifier every query in this component actually reads by. It
+  // starts as whatever the caller already knew (an ARN carried in via the
+  // route, or else the name from the URL segment), and locks onto the ARN
+  // for good the moment a fetch reports one — so watching a live stack's own
+  // deletion complete while sitting on this page keeps resolving it (by ARN)
+  // instead of 400ing the instant the record tombstones (by name).
+  //
+  // Updated during render rather than in an effect — this is React's own
+  // "adjusting state when a prop changes" escape hatch (a conditional
+  // setState call guarded by a value tracked alongside it), not a synced
+  // side effect, so it belongs in the render body: an effect would still be
+  // correct but adds an extra render cycle after every fetch for no benefit.
+  const [stackRef, setStackRef] = useState(initialStackId ?? stackName)
+  const [lastSeenStackId, setLastSeenStackId] = useState<string | undefined>(undefined)
+
   const {
     data: stack,
     isLoading: stackLoading,
     isFetching: stackFetching,
     refetch: refetchStack,
-  } = useQuery(cfnStackQueryOptions(stackName))
+  } = useQuery(cfnStackQueryOptions(stackRef))
+
+  if (stack?.StackId && stack.StackId !== lastSeenStackId) {
+    setLastSeenStackId(stack.StackId)
+    setStackRef(stack.StackId)
+  }
 
   const stackStatus = stack?.StackStatus ?? ""
 
@@ -90,7 +116,7 @@ export function StackDetail({ stackName }: Props) {
     data: diagnostics,
     isFetching: diagnosticsFetching,
     refetch: refetchDiagnostics,
-  } = useQuery(cfnDiagnosticsQueryOptions(stackName))
+  } = useQuery(cfnDiagnosticsQueryOptions(stackName, stackRef !== stackName ? stackRef : undefined))
 
   const hasDiagnostics = Boolean(diagnostics)
 
@@ -106,7 +132,7 @@ export function StackDetail({ stackName }: Props) {
     isFetching: resourcesFetching,
     refetch: refetchResources,
   } = useQuery({
-    ...cfnResourcesQueryOptions(stackName),
+    ...cfnResourcesQueryOptions(stackRef),
     enabled: tab === "resources" || tab === "overview" || tab === "events",
   })
 
@@ -124,7 +150,7 @@ export function StackDetail({ stackName }: Props) {
     hasNextPage: hasMoreEvents,
     isFetchingNextPage: isFetchingMoreEvents,
   } = useInfiniteQuery({
-    ...cfnEventsInfiniteQueryOptions(stackName),
+    ...cfnEventsInfiniteQueryOptions(stackRef),
     enabled: tab === "events",
   })
 
@@ -147,7 +173,7 @@ export function StackDetail({ stackName }: Props) {
     isFetching: templateFetching,
     refetch: refetchTemplate,
   } = useQuery({
-    ...cfnTemplateQueryOptions(stackName),
+    ...cfnTemplateQueryOptions(stackRef),
     enabled: tab === "template",
   })
 
@@ -324,6 +350,7 @@ export function StackDetail({ stackName }: Props) {
                   <Link
                     to="/cloudformation/$stackName"
                     params={{ stackName: parentStackName(stack.ParentId) }}
+                    search={{ stackId: stack.ParentId }}
                     className="text-accent hover:underline"
                   >
                     {parentStackName(stack.ParentId)}
@@ -801,6 +828,7 @@ function ResourceLink({
         <Link
           to="/cloudformation/$stackName"
           params={{ stackName: childStackName }}
+          search={{ stackId: physicalId }}
           className={cls}
           onClick={stop}
         >

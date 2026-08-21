@@ -141,6 +141,7 @@ export function StackList() {
                       navigate({
                         to: "/cloudformation/$stackName",
                         params: { stackName },
+                        search: { stackId: stack.StackId },
                       })
                     }
                   >
@@ -179,7 +180,11 @@ export function StackList() {
                         <RowAction
                           label={`View ${stackName}`}
                           onClick={() =>
-                            navigate({ to: "/cloudformation/$stackName", params: { stackName } })
+                            navigate({
+                              to: "/cloudformation/$stackName",
+                              params: { stackName },
+                              search: { stackId: stack.StackId },
+                            })
                           }
                         >
                           <Eye className="h-3.5 w-3.5" />

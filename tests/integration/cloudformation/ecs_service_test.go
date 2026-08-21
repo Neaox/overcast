@@ -187,10 +187,20 @@ func waitForStackStatusIn(t *testing.T, srv *helpers.TestServer, stackName strin
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		resp := cfnQuery(t, srv, "DescribeStacks", url.Values{"StackName": []string{stackName}})
+		status := resp.StatusCode
 		body := string(readBody(t, resp))
 		resp.Body.Close()
 		for _, w := range want {
 			if strings.Contains(body, "<StackStatus>"+w+"</StackStatus>") {
+				return w
+			}
+			// A name-based DescribeStacks on a DELETE_COMPLETE stack now
+			// answers "does not exist" instead of the status (#829, matching
+			// AWS) — the does-not-exist ValidationError is what the real
+			// stack-delete-complete SDK waiter treats as terminal success
+			// alongside the literal status, so it counts as reaching
+			// DELETE_COMPLETE here too.
+			if w == "DELETE_COMPLETE" && status == http.StatusBadRequest && strings.Contains(body, "does not exist") {
 				return w
 			}
 		}

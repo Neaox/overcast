@@ -714,6 +714,17 @@ func waitForStackStatus(t *testing.T, srv *helpers.TestServer, stackName, wantSt
 		})
 		defer resp.Body.Close()
 		b := readBody(t, resp)
+		if wantStatus == "DELETE_COMPLETE" && resp.StatusCode == http.StatusBadRequest &&
+			strings.Contains(string(b), "does not exist") {
+			// Name-based reads no longer resolve a DELETE_COMPLETE stack at all
+			// (#829, matching AWS) — a name-based DescribeStacks answers "does
+			// not exist" the moment the delete finishes, same as the real
+			// stack-delete-complete SDK waiter treats that ValidationError as
+			// the terminal success case alongside the status literally reading
+			// DELETE_COMPLETE. A caller that wants to keep observing the
+			// record afterward must poll by the ARN captured at create.
+			return true
+		}
 		return strings.Contains(string(b), wantStatus)
 	}, "timed out waiting for stack status "+wantStatus)
 }

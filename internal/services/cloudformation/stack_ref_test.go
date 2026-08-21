@@ -96,6 +96,121 @@ func TestLegacyDescribeStacks_deletedStack_byARN_stillDescribable(t *testing.T) 
 	}
 }
 
+// TestLegacyReadOps_byName_deletedStack_doNotExist is TestLegacyReadOps_byStackARN_resolveTheStack's
+// mirror: on real AWS a DELETE_COMPLETE stack is addressable only by its
+// unique stack ID, so every one of these operations must answer
+// "does not exist" when given the name instead — see #829 and the AWS
+// DescribeStacks/DescribeStackEvents/ListStackResources StackName doc:
+// "Deleted stacks: You must specify the unique stack ID."
+func TestLegacyReadOps_byName_deletedStack_doNotExist(t *testing.T) {
+	// Given: a stack that has finished deleting (its record is retained, ARN-only)
+	h, st := newRollbackTestHandler(t)
+	seedStack(t, st, "name-deleted", StatusDeleteComplete, StackResource{
+		LogicalID:  "Queue",
+		PhysicalID: "http://localhost:4566/000000000000/q",
+		Type:       "AWS::SQS::Queue",
+		Status:     ResourceCreateComplete,
+	})
+
+	// When/Then: every read operation refuses the stack name with the same
+	// ValidationError AWS gives a name that was never created
+	for _, action := range []string{
+		"DescribeStacks",
+		"GetTemplate",
+		"DescribeStackResources",
+		"ListStackResources",
+		"DescribeStackEvents",
+		"GetTemplateSummary",
+	} {
+		rec := httptest.NewRecorder()
+		h.dispatch(rec, cfnPost(action, map[string]string{"StackName": "name-deleted"}))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s by name after delete: status = %d, want 400; body: %s", action, rec.Code, rec.Body.String())
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), "does not exist") {
+			t.Errorf("%s by name after delete: body missing does-not-exist message: %s", action, rec.Body.String())
+		}
+	}
+
+	// And: the same stack is still fully readable by ARN
+	seeded, err := st.getStack(context.Background(), "name-deleted")
+	if err != nil || seeded == nil {
+		t.Fatalf("getStack: %v, %v", seeded, err)
+	}
+	rec := httptest.NewRecorder()
+	h.dispatch(rec, cfnPost("DescribeStacks", map[string]string{"StackName": seeded.StackID}))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), StatusDeleteComplete) {
+		t.Errorf("DescribeStacks by ARN after delete: status %d, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLegacyDescribeStacks_deleteInProgress_stillResolvesByName pins the
+// waiter-safety requirement: a stack mid-delete is not yet DELETE_COMPLETE,
+// so name-based reads must keep resolving it. `cdk destroy` and the AWS SDK's
+// stack-delete-complete waiter poll DescribeStacks by name (or ARN — either
+// works while the delete is running) throughout the delete; only the
+// terminal DELETE_COMPLETE record excludes the name path.
+func TestLegacyDescribeStacks_deleteInProgress_stillResolvesByName(t *testing.T) {
+	h, st := newRollbackTestHandler(t)
+	seedStack(t, st, "still-deleting", StatusDeleteInProgress)
+
+	rec := httptest.NewRecorder()
+	h.dispatch(rec, cfnPost("DescribeStacks", map[string]string{"StackName": "still-deleting"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), StatusDeleteInProgress) {
+		t.Errorf("body missing %s: %s", StatusDeleteInProgress, rec.Body.String())
+	}
+}
+
+// TestGetStackByNameOrARN_nameReuse_newGenerationResolvesByName is the
+// load-bearing name-reuse case: stacks are keyed by name (one row per name;
+// putStack overwrites it), so a DELETE_COMPLETE occupant is only ever
+// excluded from the *name* path — it never blocks the name being reused, and
+// the moment a new CreateStack lands under it, the name resolves that new
+// generation exactly as if the old one had never existed. The old
+// generation's own ARN embeds its own uuid and, while it was still the sole
+// occupant, was the only handle that resolved it — but once overwritten, the
+// row is gone, so the old ARN resolves to nothing afterward too (that half is
+// TestGetStackByNameOrARN_staleARNAfterRecreate_doesNotResolve, from #827).
+func TestGetStackByNameOrARN_nameReuse_newGenerationResolvesByName(t *testing.T) {
+	_, st := newRollbackTestHandler(t)
+	ctx := context.Background()
+	old := seedStack(t, st, "reused-name", StatusDeleteComplete)
+
+	// While only the old, deleted generation occupies the name, the name
+	// resolves to nothing (matching TestLegacyReadOps_byName_deletedStack_doNotExist)
+	// but the old generation's own ARN still finds it.
+	stack, aerr := st.getStackByNameOrARN(ctx, "reused-name")
+	if aerr != nil || stack != nil {
+		t.Fatalf("name resolved a DELETE_COMPLETE occupant: %#v, %v", stack, aerr)
+	}
+	stack, aerr = st.getStackByNameOrARN(ctx, old.StackID)
+	if aerr != nil || stack == nil || stack.Status != StatusDeleteComplete {
+		t.Fatalf("old ARN resolved to %#v, %v; want the DELETE_COMPLETE record", stack, aerr)
+	}
+
+	recreated := seedStack(t, st, "reused-name", StatusCreateComplete)
+	recreated.StackID = "arn:aws:cloudformation:us-east-1:000000000000:stack/reused-name/99999999-8888-7777-6666-555555555555"
+	if err := st.putStack(ctx, recreated); err != nil {
+		t.Fatalf("putStack: %v", err)
+	}
+
+	// The name now resolves the new generation, live and unremarkable.
+	stack, aerr = st.getStackByNameOrARN(ctx, "reused-name")
+	if aerr != nil || stack == nil || stack.StackID != recreated.StackID {
+		t.Errorf("name resolved to %#v, %v; want the recreated stack", stack, aerr)
+	}
+
+	// The new generation's own ARN finds only the new record.
+	stack, aerr = st.getStackByNameOrARN(ctx, recreated.StackID)
+	if aerr != nil || stack == nil || stack.Status != StatusCreateComplete {
+		t.Errorf("new ARN resolved to %#v, %v; want the new CREATE_COMPLETE record", stack, aerr)
+	}
+}
+
 func TestLegacyUpdateStack_byStackARN_updatesTheStack(t *testing.T) {
 	// Given: a healthy stack addressed by ARN
 	h, st := newRollbackTestHandler(t)
