@@ -7,12 +7,15 @@ import io.overcast.compat.harness.TestFn;
 import software.amazon.awssdk.services.rds.RdsClient;
 import software.amazon.awssdk.services.rds.model.*;
 
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * RDS compatibility test group.
  *
- * <p>Groups: rds-instances, rds-clusters, rds-subnet-groups, rds-parameter-groups.
+ * <p>Groups: rds-instances, rds-clusters, rds-cluster-members, rds-subnet-groups,
+ * rds-parameter-groups.
  */
 public final class RdsGroup implements ServiceGroup {
 
@@ -45,7 +48,13 @@ public final class RdsGroup implements ServiceGroup {
                 Map.entry("ModifyDBCluster",    this::modifyDbCluster),
                 Map.entry("StopDBCluster",      this::stopDbCluster),
                 Map.entry("StartDBCluster",     this::startDbCluster),
-                Map.entry("DeleteDBCluster",    this::deleteDbCluster)
+                Map.entry("DeleteDBCluster",    this::deleteDbCluster),
+                Map.entry("CreateClusterForMembers",         this::createClusterForMembers),
+                Map.entry("AddClusterMember",                this::addClusterMember),
+                Map.entry("DescribeClusterMembers",          this::describeClusterMembers),
+                Map.entry("DescribeMemberInheritedSettings", this::describeMemberInheritedSettings),
+                Map.entry("RemoveClusterMember",             this::removeClusterMember),
+                Map.entry("DeleteClusterAfterMembers",       this::deleteClusterAfterMembers)
         );
     }
 
@@ -55,7 +64,8 @@ public final class RdsGroup implements ServiceGroup {
                 "rds-instances",        this::setupInstances,
                 "rds-subnet-groups",    this::setupNoop,
                 "rds-parameter-groups", this::setupNoop,
-                "rds-clusters",         this::setupNoop
+                "rds-clusters",         this::setupNoop,
+                "rds-cluster-members",  this::setupNoop
         );
     }
 
@@ -65,7 +75,8 @@ public final class RdsGroup implements ServiceGroup {
                 "rds-instances",        ctx -> deleteDbSilently(ctx.getString("rdsInstanceId")),
                 "rds-subnet-groups",    this::teardownSubnetGroups,
                 "rds-parameter-groups", this::teardownParameterGroups,
-                "rds-clusters",         this::teardownClusters
+                "rds-clusters",         this::teardownClusters,
+                "rds-cluster-members",  this::teardownClusterMembers
         );
     }
 
@@ -429,6 +440,165 @@ public final class RdsGroup implements ServiceGroup {
         rds().deleteDBCluster(r -> r.dbClusterIdentifier(id).skipFinalSnapshot(true));
         waitForClusterGone(id);
         ctx.set("rdsClusterId", null);
+    }
+
+    // ── rds-cluster-members ───────────────────────────────────────────────────
+    //
+    // An Aurora cluster with an instance in it. rds-clusters deliberately has none,
+    // which leaves two things nothing outside the emulator's own Go tests looks at:
+    // DBClusterMembers, and the settings a member is supposed to take from its
+    // cluster rather than from its own request.
+    //
+    // Kept apart from rds-clusters rather than bolted onto it: a member changes what
+    // the cluster endpoints mean — with a writer on record they can collapse onto one
+    // loopback address for a host caller, which is deliberate and would break that
+    // group's "the two endpoints differ" assertion — and a second group declaring
+    // CreateDBCluster would make the bare impl key for it ambiguous in every suite,
+    // which aborts the run.
+
+    private static final String RDS_MEMBER_ENGINE = "aurora-mysql";
+    private static final String RDS_MEMBER_USERNAME = "clusteradmin";
+    private static final String RDS_MEMBER_PASSWORD = "Passw0rd!";
+    private static final String RDS_MEMBER_CLASS = "db.t3.micro";
+
+    private void teardownClusterMembers(TestContext ctx) {
+        // Reverse creation order: the member owns a container, the cluster owns the
+        // member.
+        String instanceId = ctx.getString("rdsMemberInstance");
+        if (instanceId != null) {
+            try {
+                rds().deleteDBInstance(r -> r.dbInstanceIdentifier(instanceId).skipFinalSnapshot(true));
+            } catch (Exception ignored) {}
+        }
+        String clusterId = ctx.getString("rdsMemberCluster");
+        if (clusterId != null) {
+            try {
+                rds().deleteDBCluster(r -> r.dbClusterIdentifier(clusterId).skipFinalSnapshot(true));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /** The DBInstanceIdentifier of every member listed on a cluster. */
+    private List<String> clusterMemberIds(String clusterId) {
+        return describeCluster(clusterId).dbClusterMembers().stream()
+                .map(DBClusterMember::dbInstanceIdentifier)
+                .collect(Collectors.toList());
+    }
+
+    private void createClusterForMembers(TestContext ctx) throws Exception {
+        String clusterId = "compat-members-" + ctx.runId();
+        ctx.set("rdsMemberCluster", clusterId);
+        var resp = rds().createDBCluster(r -> r
+                .dbClusterIdentifier(clusterId)
+                .engine(RDS_MEMBER_ENGINE)
+                .masterUsername(RDS_MEMBER_USERNAME)
+                .masterUserPassword(RDS_MEMBER_PASSWORD));
+        Assertions.assertNotBlank(resp.dbCluster().dbClusterArn(),
+                "CreateClusterForMembers: dbClusterArn is blank");
+        // The engine version the cluster settled on is what the member must inherit,
+        // so it is recorded here rather than assumed.
+        ctx.set("rdsMemberClusterEngineVersion", resp.dbCluster().engineVersion());
+    }
+
+    private void addClusterMember(TestContext ctx) throws Exception {
+        String clusterId = ctx.getString("rdsMemberCluster");
+        Assertions.assertNotBlank(clusterId, "AddClusterMember: no cluster from CreateClusterForMembers");
+        String instanceId = "compat-member-" + ctx.runId();
+        ctx.set("rdsMemberInstance", instanceId);
+        // No masterUsername or masterUserPassword: an Aurora member takes both from
+        // its cluster, and AWS documents them as not applying here.
+        var resp = rds().createDBInstance(r -> r
+                .dbInstanceIdentifier(instanceId)
+                .dbClusterIdentifier(clusterId)
+                .engine(RDS_MEMBER_ENGINE)
+                .dbInstanceClass(RDS_MEMBER_CLASS));
+        Assertions.assertEquals(instanceId, resp.dbInstance().dbInstanceIdentifier(),
+                "AddClusterMember: dbInstanceIdentifier mismatch");
+        Assertions.assertEquals(clusterId, resp.dbInstance().dbClusterIdentifier(),
+                "AddClusterMember: dbClusterIdentifier mismatch");
+    }
+
+    private void describeClusterMembers(TestContext ctx) throws Exception {
+        String clusterId = ctx.getString("rdsMemberCluster");
+        String instanceId = ctx.getString("rdsMemberInstance");
+        Assertions.assertNotBlank(clusterId, "DescribeClusterMembers: no cluster from the earlier tests");
+        Assertions.assertNotBlank(instanceId, "DescribeClusterMembers: no member from the earlier tests");
+
+        var members = describeCluster(clusterId).dbClusterMembers();
+        Assertions.assertNotEmpty(members,
+                "DescribeClusterMembers: dbClusterMembers is empty after adding " + instanceId);
+        var entry = members.stream()
+                .filter(m -> instanceId.equals(m.dbInstanceIdentifier()))
+                .findFirst()
+                .orElse(null);
+        Assertions.assertNotNull(entry, "DescribeClusterMembers: " + instanceId
+                + " is not among the listed members " + clusterMemberIds(clusterId));
+        // The first member of a cluster is its writer. A membership recorded with no
+        // writer is the shape that leaves the cluster endpoints pointing at nothing.
+        Assertions.assertTrue(Boolean.TRUE.equals(entry.isClusterWriter()),
+                "DescribeClusterMembers: " + instanceId
+                        + " is listed but isClusterWriter is false, and it is the only member");
+    }
+
+    private void describeMemberInheritedSettings(TestContext ctx) throws Exception {
+        String clusterId = ctx.getString("rdsMemberCluster");
+        String instanceId = ctx.getString("rdsMemberInstance");
+        Assertions.assertNotBlank(instanceId,
+                "DescribeMemberInheritedSettings: no member from AddClusterMember");
+
+        var resp = rds().describeDBInstances(r -> r.dbInstanceIdentifier(instanceId));
+        Assertions.assertNotEmpty(resp.dbInstances(),
+                "DescribeMemberInheritedSettings: no instance returned for " + instanceId);
+        var member = resp.dbInstances().get(0);
+
+        // The member never sent a master username; it must be the cluster's.
+        Assertions.assertEquals(RDS_MEMBER_USERNAME, member.masterUsername(),
+                "DescribeMemberInheritedSettings: masterUsername was not inherited from the cluster");
+        Assertions.assertEquals(clusterId, member.dbClusterIdentifier(),
+                "DescribeMemberInheritedSettings: dbClusterIdentifier mismatch");
+        String wantVersion = ctx.getString("rdsMemberClusterEngineVersion");
+        if (wantVersion != null && !wantVersion.isEmpty()) {
+            Assertions.assertEquals(wantVersion, member.engineVersion(),
+                    "DescribeMemberInheritedSettings: engineVersion was not inherited from the cluster");
+        }
+        // Port is deliberately not asserted: Overcast answers with a port the caller
+        // can actually dial, which differs between a host and a sibling container, so
+        // any fixed expectation here would be wrong for one of them.
+    }
+
+    private void removeClusterMember(TestContext ctx) throws Exception {
+        String clusterId = ctx.getString("rdsMemberCluster");
+        String instanceId = ctx.getString("rdsMemberInstance");
+        Assertions.assertNotBlank(clusterId, "RemoveClusterMember: no cluster from the earlier tests");
+        Assertions.assertNotBlank(instanceId, "RemoveClusterMember: no member from the earlier tests");
+
+        rds().deleteDBInstance(r -> r.dbInstanceIdentifier(instanceId).skipFinalSnapshot(true));
+
+        // Deleting the instance must take it out of the cluster too. It did not until
+        // recently: the record went and the membership entry stayed, so
+        // DescribeDBClusters kept reporting a member that no longer existed.
+        long deadline = System.nanoTime() + RDS_WAIT_BUDGET_MS * 1_000_000L;
+        while (true) {
+            if (!clusterMemberIds(clusterId).contains(instanceId)) {
+                ctx.set("rdsMemberInstance", null);
+                return;
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("DB instance " + instanceId + " was still listed in "
+                        + clusterId + "'s dbClusterMembers " + RDS_WAIT_BUDGET_MS
+                        + "ms after DeleteDBInstance");
+            }
+            Thread.sleep(RDS_CLUSTER_POLL_INTERVAL_MS);
+        }
+    }
+
+    private void deleteClusterAfterMembers(TestContext ctx) throws Exception {
+        String clusterId = ctx.getString("rdsMemberCluster");
+        Assertions.assertNotBlank(clusterId,
+                "DeleteClusterAfterMembers: no cluster from CreateClusterForMembers");
+        rds().deleteDBCluster(r -> r.dbClusterIdentifier(clusterId).skipFinalSnapshot(true));
+        waitForClusterGone(clusterId);
+        ctx.set("rdsMemberCluster", null);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
  * Groups:
  *   rds-instances        — DB instance lifecycle (create, describe, stop, start, modify, delete)
  *   rds-clusters         — Aurora DB cluster lifecycle (create, describe, modify, stop, start, delete)
+ *   rds-cluster-members  — an Aurora cluster with an instance in it: DBClusterMembers and cluster-owned settings
  *   rds-subnet-groups    — DB subnet group lifecycle
  *   rds-parameter-groups — DB parameter group lifecycle
  */
@@ -181,6 +182,29 @@ async function waitForClusterGone(
       globalThis.setTimeout(r, RDS_CLUSTER_POLL_INTERVAL_MS),
     );
   }
+}
+
+// ── rds-cluster-members helpers ──────────────────────────────────────────────
+//
+// An Aurora cluster with an instance in it. rds-clusters deliberately has none,
+// which leaves two things nothing outside the emulator's own Go tests looks at:
+// DBClusterMembers, and the settings a member is supposed to take from its
+// cluster rather than from its own request.
+//
+// Kept apart from rds-clusters rather than bolted onto it: a member changes what
+// the cluster endpoints mean — with a writer on record they can collapse onto
+// one loopback address for a host caller, which is deliberate and would break
+// that group's "the two endpoints differ" assertion — and a second group
+// declaring CreateDBCluster would make the bare impl key for it ambiguous in
+// every suite, which aborts the run.
+const RDS_MEMBER_ENGINE = "aurora-mysql";
+const RDS_MEMBER_USERNAME = "clusteradmin";
+const RDS_MEMBER_PASSWORD = "Password1!";
+const RDS_MEMBER_CLASS = "db.t3.micro";
+
+/** The DBInstanceIdentifier of every member listed on a cluster. */
+function clusterMemberIds(cluster: { DBClusterMembers?: { DBInstanceIdentifier?: string }[] }) {
+  return (cluster.DBClusterMembers ?? []).map((m) => m.DBInstanceIdentifier);
 }
 
 export function makeRDSGroups(suite: string): TestGroup[] {
@@ -505,6 +529,254 @@ export function makeRDSGroups(suite: string): TestGroup[] {
             }),
           );
         } catch {}
+      },
+    },
+
+    // ── rds-cluster-members ────────────────────────────────────────────────
+    {
+      suite,
+      service: "rds",
+      name: "rds-cluster-members",
+      tests: [
+        {
+          name: "CreateClusterForMembers",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = `compat-members-${ctx.runId}`;
+            (ctx as Record<string, unknown>)["_memberCluster"] = clusterId;
+            const resp = await rds.send(
+              new CreateDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                Engine: RDS_MEMBER_ENGINE,
+                MasterUsername: RDS_MEMBER_USERNAME,
+                MasterUserPassword: RDS_MEMBER_PASSWORD,
+              }),
+            );
+            assert.ok(
+              resp.DBCluster?.DBClusterArn,
+              "CreateClusterForMembers: missing DBClusterArn",
+            );
+            // The engine version the cluster settled on is what the member must
+            // inherit, so it is recorded here rather than assumed.
+            (ctx as Record<string, unknown>)["_memberClusterEngineVersion"] =
+              resp.DBCluster.EngineVersion;
+          },
+        },
+        {
+          name: "AddClusterMember",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_memberCluster"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "AddClusterMember: no cluster from CreateClusterForMembers",
+            );
+            const instanceId = `compat-member-${ctx.runId}`;
+            (ctx as Record<string, unknown>)["_memberInstance"] = instanceId;
+            // No MasterUsername or MasterUserPassword: an Aurora member takes
+            // both from its cluster, and AWS documents them as not applying here.
+            const resp = await rds.send(
+              new CreateDBInstanceCommand({
+                DBInstanceIdentifier: instanceId,
+                DBClusterIdentifier: clusterId,
+                Engine: RDS_MEMBER_ENGINE,
+                DBInstanceClass: RDS_MEMBER_CLASS,
+              }),
+            );
+            assert.strictEqual(
+              resp.DBInstance?.DBInstanceIdentifier,
+              instanceId,
+              "AddClusterMember: DBInstanceIdentifier mismatch",
+            );
+            assert.strictEqual(
+              resp.DBInstance.DBClusterIdentifier,
+              clusterId,
+              "AddClusterMember: DBClusterIdentifier mismatch",
+            );
+          },
+        },
+        {
+          name: "DescribeClusterMembers",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_memberCluster"
+            ] as string;
+            const instanceId = (ctx as Record<string, unknown>)[
+              "_memberInstance"
+            ] as string;
+            assert.ok(
+              clusterId && instanceId,
+              "DescribeClusterMembers: no cluster or member from the earlier tests",
+            );
+            const cluster = await describeCluster(rds, clusterId);
+            const members = cluster.DBClusterMembers ?? [];
+            assert.ok(
+              members.length > 0,
+              `DescribeClusterMembers: DBClusterMembers is empty after adding ${instanceId}`,
+            );
+            const entry = members.find(
+              (m) => m.DBInstanceIdentifier === instanceId,
+            );
+            assert.ok(
+              entry,
+              `DescribeClusterMembers: ${instanceId} is not among the listed members ${JSON.stringify(clusterMemberIds(cluster))}`,
+            );
+            // The first member of a cluster is its writer. A membership recorded
+            // with no writer is the shape that leaves the cluster endpoints
+            // pointing at nothing.
+            assert.ok(
+              entry.IsClusterWriter,
+              `DescribeClusterMembers: ${instanceId} is listed but IsClusterWriter is false, and it is the only member`,
+            );
+          },
+        },
+        {
+          name: "DescribeMemberInheritedSettings",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_memberCluster"
+            ] as string;
+            const instanceId = (ctx as Record<string, unknown>)[
+              "_memberInstance"
+            ] as string;
+            assert.ok(
+              instanceId,
+              "DescribeMemberInheritedSettings: no member from AddClusterMember",
+            );
+            const resp = await rds.send(
+              new DescribeDBInstancesCommand({
+                DBInstanceIdentifier: instanceId,
+              }),
+            );
+            const member = resp.DBInstances?.[0];
+            assert.ok(
+              member,
+              `DescribeMemberInheritedSettings: no instance returned for ${instanceId}`,
+            );
+            // The member never sent a master username; it must be the cluster's.
+            assert.strictEqual(
+              member.MasterUsername,
+              RDS_MEMBER_USERNAME,
+              "DescribeMemberInheritedSettings: MasterUsername was not inherited from the cluster",
+            );
+            assert.strictEqual(
+              member.DBClusterIdentifier,
+              clusterId,
+              "DescribeMemberInheritedSettings: DBClusterIdentifier mismatch",
+            );
+            const wantVersion = (ctx as Record<string, unknown>)[
+              "_memberClusterEngineVersion"
+            ] as string | undefined;
+            if (wantVersion) {
+              assert.strictEqual(
+                member.EngineVersion,
+                wantVersion,
+                "DescribeMemberInheritedSettings: EngineVersion was not inherited from the cluster",
+              );
+            }
+            // Port is deliberately not asserted: Overcast answers with a port
+            // the caller can actually dial, which differs between a host and a
+            // sibling container, so any fixed expectation would be wrong for one.
+          },
+        },
+        {
+          name: "RemoveClusterMember",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_memberCluster"
+            ] as string;
+            const instanceId = (ctx as Record<string, unknown>)[
+              "_memberInstance"
+            ] as string;
+            assert.ok(
+              clusterId && instanceId,
+              "RemoveClusterMember: no cluster or member from the earlier tests",
+            );
+            await rds.send(
+              new DeleteDBInstanceCommand({
+                DBInstanceIdentifier: instanceId,
+                SkipFinalSnapshot: true,
+              }),
+            );
+            // Deleting the instance must take it out of the cluster too. It did
+            // not until recently: the record went and the membership entry
+            // stayed, so DescribeDBClusters kept reporting a member that no
+            // longer existed.
+            const deadline = Date.now() + RDS_WAIT_BUDGET_MS;
+            for (;;) {
+              const cluster = await describeCluster(rds, clusterId);
+              if (!clusterMemberIds(cluster).includes(instanceId)) {
+                (ctx as Record<string, unknown>)["_memberInstance"] = undefined;
+                return;
+              }
+              if (Date.now() >= deadline) {
+                throw new Error(
+                  `DB instance ${instanceId} was still listed in ${clusterId}'s DBClusterMembers ${RDS_WAIT_BUDGET_MS}ms after DeleteDBInstance`,
+                );
+              }
+              await new Promise<void>((r) =>
+                globalThis.setTimeout(r, RDS_CLUSTER_POLL_INTERVAL_MS),
+              );
+            }
+          },
+        },
+        {
+          name: "DeleteClusterAfterMembers",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_memberCluster"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "DeleteClusterAfterMembers: no cluster from CreateClusterForMembers",
+            );
+            await rds.send(
+              new DeleteDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                SkipFinalSnapshot: true,
+              }),
+            );
+            await waitForClusterGone(rds, clusterId);
+            (ctx as Record<string, unknown>)["_memberCluster"] = undefined;
+          },
+        },
+      ],
+      teardown: async (ctx) => {
+        const { rds } = makeClients(ctx);
+        // Reverse creation order: the member owns a container, the cluster owns
+        // the member.
+        const instanceId = (ctx as Record<string, unknown>)[
+          "_memberInstance"
+        ] as string;
+        if (instanceId) {
+          try {
+            await rds.send(
+              new DeleteDBInstanceCommand({
+                DBInstanceIdentifier: instanceId,
+                SkipFinalSnapshot: true,
+              }),
+            );
+          } catch {}
+        }
+        const clusterId = (ctx as Record<string, unknown>)[
+          "_memberCluster"
+        ] as string;
+        if (clusterId) {
+          try {
+            await rds.send(
+              new DeleteDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                SkipFinalSnapshot: true,
+              }),
+            );
+          } catch {}
+        }
       },
     },
 

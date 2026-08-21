@@ -3472,6 +3472,53 @@
     },
     {
       "service": "rds",
+      "name": "rds-cluster-members",
+      "slow": true,
+      "tests": [
+        {
+          "name": "CreateClusterForMembers",
+          "op": "CreateDBCluster"
+        },
+        {
+          "name": "AddClusterMember",
+          "op": "CreateDBInstance",
+          "depends": [
+            "CreateClusterForMembers"
+          ]
+        },
+        {
+          "name": "DescribeClusterMembers",
+          "op": "DescribeDBClusters",
+          "depends": [
+            "AddClusterMember"
+          ]
+        },
+        {
+          "name": "DescribeMemberInheritedSettings",
+          "op": "DescribeDBInstances",
+          "depends": [
+            "AddClusterMember"
+          ]
+        },
+        {
+          "name": "RemoveClusterMember",
+          "op": "DeleteDBInstance",
+          "depends": [
+            "DescribeClusterMembers",
+            "DescribeMemberInheritedSettings"
+          ]
+        },
+        {
+          "name": "DeleteClusterAfterMembers",
+          "op": "DeleteDBCluster",
+          "depends": [
+            "RemoveClusterMember"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "rds",
       "name": "rds-subnet-groups",
       "tests": [
         {
