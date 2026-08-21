@@ -2868,6 +2868,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "How many tasks a rollout runs at once",
+        "id": "how-many-tasks-a-rollout-runs-at-once"
+      },
+      {
+        "depth": 2,
         "text": "Rollout state and the deployment circuit breaker",
         "id": "rollout-state-and-the-deployment-circuit-breaker"
       },

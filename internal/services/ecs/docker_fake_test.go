@@ -60,6 +60,63 @@ type fakeECSDockerDaemon struct {
 	// refuseStart holds the container-definition names whose start the daemon
 	// rejects, for the tests about a task that is only partly placed.
 	refuseStart []string
+
+	// hostPorts models the one thing a real daemon enforces that nothing else
+	// here does: a published host port belongs to one live container at a
+	// time. Nil until a test asks for it with enforceHostPorts, because most
+	// of these place containers that publish nothing and would only pay for
+	// the bookkeeping.
+	hostPorts map[string]string // host port → the container ID holding it
+}
+
+// enforceHostPorts makes the daemon refuse to start a container whose
+// HostConfig publishes a host port another live container already holds,
+// exactly as Docker does. The port is released when the container is stopped
+// or removed.
+//
+// This is what a rolling deployment of an awsvpc service runs into on a shared
+// Docker host: two tasks of the same service, both publishing the same port,
+// alive at once because the new one is started before the old one is retired.
+func (fd *fakeECSDockerDaemon) enforceHostPorts() {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.hostPorts = map[string]string{}
+}
+
+// claimHostPorts records the host ports the container publishes, or names the
+// one already taken. Callers hold fd.mu.
+func (fd *fakeECSDockerDaemon) claimHostPorts(c createdContainer) string {
+	if fd.hostPorts == nil || c.req.HostConfig == nil {
+		return ""
+	}
+	for _, bindings := range c.req.HostConfig.PortBindings {
+		for _, b := range bindings {
+			if b.HostPort == "" || b.HostPort == "0" {
+				continue // ephemeral: the daemon picks a free one
+			}
+			if holder, taken := fd.hostPorts[b.HostPort]; taken && holder != c.id {
+				return b.HostPort
+			}
+		}
+	}
+	for _, bindings := range c.req.HostConfig.PortBindings {
+		for _, b := range bindings {
+			if b.HostPort != "" && b.HostPort != "0" {
+				fd.hostPorts[b.HostPort] = c.id
+			}
+		}
+	}
+	return ""
+}
+
+// releaseHostPorts gives back everything the container was holding. Callers
+// hold fd.mu.
+func (fd *fakeECSDockerDaemon) releaseHostPorts(containerID string) {
+	for port, holder := range fd.hostPorts {
+		if holder == containerID {
+			delete(fd.hostPorts, port)
+		}
+	}
 }
 
 // failStartOf makes the daemon refuse to start the container placed for the
@@ -225,6 +282,7 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 		case strings.HasSuffix(p, "/stop"):
 			fd.mu.Lock()
 			onStop := fd.onStop
+			fd.releaseHostPorts(containerIDFromPath(p))
 			fd.mu.Unlock()
 			if onStop != nil {
 				onStop(containerIDFromPath(p))
@@ -234,7 +292,7 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 		case strings.HasSuffix(p, "/start"):
 			containerID := containerIDFromPath(p)
 			fd.mu.Lock()
-			refused := false
+			refused, portTaken := false, ""
 			for _, c := range fd.created {
 				if c.id != containerID {
 					continue
@@ -245,13 +303,22 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 						break
 					}
 				}
+				if !refused {
+					portTaken = fd.claimHostPorts(c)
+				}
 				break
 			}
-			if !refused {
+			if !refused && portTaken == "" {
 				fd.started = append(fd.started, containerID)
 			}
 			onStart := fd.onStart
 			fd.mu.Unlock()
+			if portTaken != "" {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"message":"driver failed programming external connectivity on endpoint ` + //nolint:errcheck
+					containerID + `: Bind for 0.0.0.0:` + portTaken + ` failed: port is already allocated"}`))
+				return
+			}
 			if refused {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"message":"driver failed programming external connectivity on endpoint ` + containerID + `"}`)) //nolint:errcheck
@@ -265,6 +332,7 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 		case r.Method == http.MethodDelete && strings.Contains(p, "/containers/"):
 			fd.mu.Lock()
 			fd.removed[containerIDFromPath(p)] = true
+			fd.releaseHostPorts(containerIDFromPath(p))
 			fd.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 

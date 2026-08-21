@@ -167,6 +167,49 @@ health it can collect.
 **Divergence:** the window buys evidence, not certainty. A container that
 survives the window and then dies is still reported as a completed rollout first.
 
+## How many tasks a rollout runs at once
+
+`deploymentConfiguration.maximumPercent` and `minimumHealthyPercent` are
+honoured, resolved against `desiredCount` the way AWS resolves them:
+`maximumPercent` is the ceiling on tasks that have not stopped — across the new
+deployment and the one it is replacing, both — rounded down; `minimumHealthyPercent`
+is the floor on tasks reporting `RUNNING`, rounded up. They default to AWS's
+`200` and `100`, which is what makes the default deploy a start-then-stop: the
+replacement is placed, and only once it is up is the task it replaces retired.
+
+Locally that ordering is not free, and this is the setting to reach for when it
+bites. A task whose port mapping carries a `hostPort` publishes it on the one
+Docker host, so while both deployments are alive they contend for it and the
+replacement cannot start — where on AWS each `awsvpc` task has its own ENI and
+two tasks never collide. Left on the defaults the service retries the placement
+on a backoff, reports
+`(service X) was unable to place a task. Reason: … port is already allocated`,
+and — with a `deploymentCircuitBreaker` — eventually fails the deployment, which
+is how a CloudFormation update of such a service fails and then fails its
+rollback for the same reason.
+
+Setting `maximumPercent: 100` with `minimumHealthyPercent: 0` inverts the order
+to stop-then-start, which deploys cleanly because the port is given up before it
+is asked for again. It costs a moment of downtime, which is the same trade AWS
+offers and usually the right one locally. In CDK:
+
+```ts
+new ecs.FargateService(this, 'Service', {
+  cluster,
+  taskDefinition,
+  maxHealthyPercent: 100,
+  minHealthyPercent: 0,
+});
+```
+
+**Divergence:** none in the arithmetic, but note that `100`/`100` cannot make
+progress at any desired count — nothing may be retired and nothing more may be
+placed. AWS stalls there silently; Overcast stalls too, and says so once with
+`(service X) is holding at N task(s): its deployment configuration permits at
+most N and requires N running.` That event is routine rather than
+failure-shaped, so CloudFormation will not report it as the reason a stack
+failed — the configuration is doing exactly what it was told to do.
+
 ## Rollout state and the deployment circuit breaker
 
 `rolloutState` moves `IN_PROGRESS` → `COMPLETED` when the service reaches a
@@ -488,7 +531,7 @@ is and is not enforced, and for what a refused connection looks like.
 | `UpdateClusterSettings`         | ✅ Supported   | Accepts settings array (metadata only)                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateClusterSettings.html)         |
 | `UpdateContainerAgent`          | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateContainerAgent.html)          |
 | `UpdateContainerInstancesState` | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateContainerInstancesState.html) |
-| `UpdateService`                 | ✅ Supported   | Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html)                 |
+| `UpdateService`                 | ✅ Supported   | Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion; the rollout honours deploymentConfiguration maximumPercent/minimumHealthyPercent                                                                                                                                | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html)                 |
 | `UpdateServicePrimaryTaskSet`   | ✅ Supported   | Promotes target to PRIMARY; demotes all other task sets to ACTIVE                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateServicePrimaryTaskSet.html)   |
 | `UpdateTaskSet`                 | ✅ Supported   | Updates Scale and recalculates ComputedDesiredCount                                                                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateTaskSet.html)                 |
 

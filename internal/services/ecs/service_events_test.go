@@ -23,9 +23,10 @@ import (
 	"testing"
 )
 
-// eventRecorders are the two methods that put a message on a service's event
-// list. Everything a caller ever reads passes through one of them.
-var eventRecorders = map[string]bool{"addServiceEvent": true, "addServiceEventAt": true}
+// eventRecorders are the methods that put a message on a service's event list.
+// Everything a caller ever reads passes through one of them; they forward to
+// each other, so only their callers choose wording.
+var eventRecorders = map[string]bool{"addServiceEvent": true, "addServiceEventAt": true, "addServiceEventOnce": true}
 
 func TestServiceEvents_everyCallSiteUsesADeclaredFormat(t *testing.T) {
 	// Given: the package's implementation files, the string constants they
