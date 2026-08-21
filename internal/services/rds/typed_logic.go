@@ -1279,7 +1279,7 @@ func applyLogExportConfiguration(current []string, cfg *cloudwatchLogsExportConf
 
 // --- StartDBCluster ---
 
-func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterReq) (*xmlCreateDBClusterResponse, *protocol.AWSError) {
+func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterReq) (*xmlStartDBClusterResponse, *protocol.AWSError) {
 	id := req.DBClusterIdentifier
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
@@ -1305,7 +1305,7 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 		h.transitionCluster(ctx, clID, "starting", "available")
 	})
 
-	return &xmlCreateDBClusterResponse{
+	return &xmlStartDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
 			DBCluster: h.toXMLDBCluster(ctx, cluster),
@@ -1316,7 +1316,7 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 
 // --- StopDBCluster ---
 
-func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq) (*xmlCreateDBClusterResponse, *protocol.AWSError) {
+func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq) (*xmlStopDBClusterResponse, *protocol.AWSError) {
 	id := req.DBClusterIdentifier
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
@@ -1342,7 +1342,7 @@ func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq)
 		h.transitionCluster(ctx, clID, "stopping", "stopped")
 	})
 
-	return &xmlCreateDBClusterResponse{
+	return &xmlStopDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
 			DBCluster: h.toXMLDBCluster(ctx, cluster),

@@ -491,6 +491,12 @@
     {
       "suite": "dotnet-sdk",
       "service": "rds",
+      "group": "rds-clusters",
+      "tests": 6
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "rds",
       "group": "rds-instances",
       "tests": 7
     },
@@ -1831,6 +1837,12 @@
       "service": "pipes",
       "group": "pipes-wiring",
       "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "tests": 6
     },
     {
       "suite": "rust-sdk",

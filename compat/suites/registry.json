@@ -3430,6 +3430,48 @@
     },
     {
       "service": "rds",
+      "name": "rds-clusters",
+      "slow": true,
+      "tests": [
+        {
+          "name": "CreateDBCluster"
+        },
+        {
+          "name": "DescribeDBClusters",
+          "depends": [
+            "CreateDBCluster"
+          ]
+        },
+        {
+          "name": "ModifyDBCluster",
+          "depends": [
+            "DescribeDBClusters"
+          ]
+        },
+        {
+          "name": "StopDBCluster",
+          "depends": [
+            "ModifyDBCluster"
+          ]
+        },
+        {
+          "name": "StartDBCluster",
+          "depends": [
+            "StopDBCluster"
+          ]
+        },
+        {
+          "name": "DeleteDBCluster",
+          "depends": [
+            "DescribeDBClusters",
+            "ModifyDBCluster",
+            "StartDBCluster"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "rds",
       "name": "rds-subnet-groups",
       "tests": [
         {
