@@ -122,6 +122,53 @@ describe("StackDetail — failure banner", () => {
   })
 })
 
+// ─── Fidelity notices (issue #760) ──────────────────────────────────────────
+
+describe("StackDetail — stub/inert resource notices", () => {
+  // A stack can reach CREATE_COMPLETE while a resource is a stub or backed by
+  // an inert-tier service — see internal/services/cloudformation/fidelity.go.
+  // The reason rides the same ResourceStatusReason field a failure would, so
+  // the console has to tell the two apart rather than painting every reason
+  // red the way it used to.
+  it("summarises stub/inert resources on a healthy stack, without the failure banner", () => {
+    renderWithData(
+      <StackDetail stackName={STACK_NAME} />,
+      seed({ StackStatus: "CREATE_COMPLETE" }, [
+        {
+          LogicalResourceId: "AppRole",
+          ResourceType: "AWS::IAM::Role",
+          ResourceStatus: "CREATE_COMPLETE",
+          ResourceStatusReason:
+            "Overcast: created, but iam is emulated at inert tier — the resource exists with no side effects or enforcement.",
+        },
+        {
+          LogicalResourceId: "Queue",
+          ResourceType: "AWS::SQS::Queue",
+          ResourceStatus: "CREATE_COMPLETE",
+        },
+      ]),
+    )
+
+    // A healthy stack still gets no failure banner.
+    expect(screen.queryByRole("button", { name: "View events" })).not.toBeInTheDocument()
+    // The stack-level summary the issue asks for: answerable at a glance.
+    expect(screen.getByText("1 of 2 stub or inert")).toBeInTheDocument()
+    // And the resource itself still carries its reason.
+    expect(screen.getByText(/iam is emulated at inert tier/)).toBeInTheDocument()
+  })
+
+  it("shows no summary when every resource is fully backed", () => {
+    renderWithData(
+      <StackDetail stackName={STACK_NAME} />,
+      seed({ StackStatus: "CREATE_COMPLETE" }, [
+        { LogicalResourceId: "Queue", ResourceType: "AWS::SQS::Queue", ResourceStatus: "CREATE_COMPLETE" },
+      ]),
+    )
+
+    expect(screen.queryByText(/stub or inert/)).not.toBeInTheDocument()
+  })
+})
+
 // ─── Diagnostics tab ────────────────────────────────────────────────────────
 
 /**

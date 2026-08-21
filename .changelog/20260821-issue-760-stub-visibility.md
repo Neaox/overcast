@@ -1,0 +1,1 @@
++ [cloudformation/web] a deployed stack now says which resources are stubs or backed by an inert/stub-tier service, on the same ResourceStatusReason CloudFormation already exposes and in the console's stack view, instead of only a server log line nobody sees

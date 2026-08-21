@@ -163,6 +163,38 @@ export function stackStatusExplanation(status: string): string | undefined {
   }
 }
 
+/**
+ * True for a `ResourceStatusReason` Overcast itself authored — a resource
+ * that is a stub, or backed by a service Overcast emulates at inert or stub
+ * tier — as opposed to an AWS-shaped failure reason CloudFormation itself
+ * produced.
+ *
+ * The messages this recognises come from
+ * `internal/services/cloudformation/fidelity.go` (see GitHub issue #760),
+ * which prefixes every one of them with "Overcast:" precisely so a reader —
+ * or this function — can tell "Overcast is explaining itself" from "the
+ * deploy failed" without a second field. A resource can only have one
+ * `ResourceStatusReason` at a time, and a resource that reaches
+ * `*_COMPLETE` never carries a failure reason, so the prefix check alone is
+ * enough to disambiguate: this is never true for a `*_FAILED` resource's
+ * reason.
+ */
+export function isFidelityReason(reason: string | null | undefined): boolean {
+  return (reason ?? "").startsWith("Overcast:")
+}
+
+/**
+ * The fields of a stack resource {@link countFidelityNotices} reads.
+ */
+type FidelityResourceCandidate = Pick<StackResourceSummary, "ResourceStatusReason">
+
+/** Counts resources carrying a fidelity notice — see {@link isFidelityReason}. */
+export function countFidelityNotices(
+  resources: readonly FidelityResourceCandidate[],
+): number {
+  return resources.filter((r) => isFidelityReason(r.ResourceStatusReason)).length
+}
+
 /** The resource a deployment failed on, and the reason it gave. */
 export interface FailedResource {
   logicalId: string
