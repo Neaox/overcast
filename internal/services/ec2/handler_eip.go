@@ -28,10 +28,15 @@ func (h *Handler) AllocateAddress(w http.ResponseWriter, r *http.Request) {
 	// Generate a synthetic public IP in the 203.0.113.0/24 documentation range.
 	ip := fmt.Sprintf("203.0.113.%d", syntheticIPCounter.Add(1)%254+1)
 
+	domain := r.FormValue("Domain")
+	if domain == "" {
+		domain = "vpc"
+	}
+
 	addr := &ElasticIP{
 		AllocationID: allocID,
 		PublicIP:     ip,
-		Domain:       "vpc",
+		Domain:       domain,
 	}
 	if aerr := h.store.putElasticIP(r.Context(), addr); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
@@ -87,13 +92,14 @@ type xmlDescribeAddressesResponse struct {
 }
 
 type xmlAddress struct {
-	PublicIP       string `xml:"publicIp"`
-	AllocationID   string `xml:"allocationId"`
-	Domain         string `xml:"domain"`
-	AssociationID  string `xml:"associationId,omitempty"`
-	InstanceID     string `xml:"instanceId,omitempty"`
-	NetworkIfaceID string `xml:"networkInterfaceId,omitempty"`
-	PrivateIP      string `xml:"privateIpAddress,omitempty"`
+	PublicIP       string   `xml:"publicIp"`
+	AllocationID   string   `xml:"allocationId"`
+	Domain         string   `xml:"domain"`
+	AssociationID  string   `xml:"associationId,omitempty"`
+	InstanceID     string   `xml:"instanceId,omitempty"`
+	NetworkIfaceID string   `xml:"networkInterfaceId,omitempty"`
+	PrivateIP      string   `xml:"privateIpAddress,omitempty"`
+	TagSet         []xmlTag `xml:"tagSet>item,omitempty"`
 }
 
 // DescribeAddresses lists Elastic IP addresses.
@@ -111,9 +117,19 @@ func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	items := make([]xmlAddress, 0, len(all))
 	for _, a := range all {
 		if !requested.has(a.AllocationID) || !filters.matches(a) {
+			continue
+		}
+		tags, ok := tagsView.keep(a.AllocationID)
+		if !ok {
 			continue
 		}
 		items = append(items, xmlAddress{
@@ -124,6 +140,7 @@ func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
 			InstanceID:     a.InstanceID,
 			NetworkIfaceID: a.NetworkInterfaceID,
 			PrivateIP:      a.PrivateIP,
+			TagSet:         xmlTagsOf(tags),
 		})
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeAddressesResponse{

@@ -449,7 +449,7 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 			AvailabilityZone:        sub.AvailabilityZone,
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
-			MapPublicIPOnLaunch:     false,
+			MapPublicIPOnLaunch:     sub.MapPublicIpOnLaunch,
 			TagSet:                  typedTagsOf(tags),
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -21,7 +22,9 @@ type xmlModifySubnetAttributeResponse struct {
 	Return    bool     `xml:"return"`
 }
 
-// ModifySubnetAttribute modifies a subnet attribute (metadata-only).
+// ModifySubnetAttribute modifies a subnet attribute. MapPublicIpOnLaunch is
+// the only attribute actually persisted; the rest (AssignIpv6AddressOnCreation,
+// EnableDns64, etc.) are accepted but not stored — see #529.
 func (h *Handler) ModifySubnetAttribute(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.FormValue("SubnetId")
 	if subnetID == "" {
@@ -32,12 +35,18 @@ func (h *Handler) ModifySubnetAttribute(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	// Validate subnet exists.
-	if _, aerr := h.store.getSubnet(r.Context(), subnetID); aerr != nil {
+	sub, aerr := h.store.getSubnet(r.Context(), subnetID)
+	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	// Attributes are metadata-only — acknowledge the change.
+	if v := r.FormValue("MapPublicIpOnLaunch.Value"); v != "" {
+		sub.MapPublicIpOnLaunch = strings.EqualFold(v, "true")
+		if aerr := h.store.putSubnet(r.Context(), sub); aerr != nil {
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
+			return
+		}
+	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifySubnetAttributeResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -54,7 +63,10 @@ type xmlModifyVpcAttributeResponse struct {
 	Return    bool     `xml:"return"`
 }
 
-// ModifyVpcAttribute modifies a VPC attribute (metadata-only: EnableDnsSupport, EnableDnsHostnames).
+// ModifyVpcAttribute modifies EnableDnsSupport and/or EnableDnsHostnames on a
+// VPC. Real AWS accepts only one attribute per call; this handler accepts
+// either or both in one request since it is only ever called internally (by
+// the CloudFormation provisioner) rather than validated against a client SDK.
 func (h *Handler) ModifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	if vpcID == "" {
@@ -65,12 +77,26 @@ func (h *Handler) ModifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Validate VPC exists.
-	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
+	vpc, aerr := h.store.getVPC(r.Context(), vpcID)
+	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	// DNS attributes are metadata-only — acknowledge the change.
+	changed := false
+	if v := r.FormValue("EnableDnsSupport.Value"); v != "" {
+		vpc.EnableDnsSupport = strings.EqualFold(v, "true")
+		changed = true
+	}
+	if v := r.FormValue("EnableDnsHostnames.Value"); v != "" {
+		vpc.EnableDnsHostnames = strings.EqualFold(v, "true")
+		changed = true
+	}
+	if changed {
+		if aerr := h.store.putVPC(r.Context(), vpc); aerr != nil {
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
+			return
+		}
+	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyVpcAttributeResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -93,7 +119,7 @@ type xmlAttributeVal struct {
 	Value bool `xml:"value"`
 }
 
-// DescribeVpcAttribute returns a VPC attribute value (always true for DNS attributes).
+// DescribeVpcAttribute returns the stored value of one VPC DNS attribute.
 func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	vpcID := r.FormValue("VpcId")
 	attr := r.FormValue("Attribute")
@@ -105,7 +131,8 @@ func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if _, aerr := h.store.getVPC(r.Context(), vpcID); aerr != nil {
+	vpc, aerr := h.store.getVPC(r.Context(), vpcID)
+	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -117,9 +144,9 @@ func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	}
 	switch attr {
 	case "enableDnsSupport":
-		resp.EnableDnsSupport = &xmlAttributeVal{Value: true}
+		resp.EnableDnsSupport = &xmlAttributeVal{Value: vpc.EnableDnsSupport}
 	case "enableDnsHostnames":
-		resp.EnableDnsHostnames = &xmlAttributeVal{Value: true}
+		resp.EnableDnsHostnames = &xmlAttributeVal{Value: vpc.EnableDnsHostnames}
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
 }

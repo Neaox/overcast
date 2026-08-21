@@ -123,6 +123,11 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		// outlives any VPC record pointing at it.
 		DockerNetworkID: h.cfg.Network,
 		NetworkStatus:   vpcNetworkStatusOK,
+
+		// The account's default VPC has both DNS attributes on, matching
+		// real AWS.
+		EnableDnsSupport:   true,
+		EnableDnsHostnames: true,
 	}
 
 	// The VPC record is written last, so it is the commit point: everything
@@ -160,6 +165,8 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 			CidrBlock:        fmt.Sprintf("172.31.%d.0/20", i*16),
 			AvailabilityZone: fmt.Sprintf("%s%c", region, 'a'+rune(i)),
 			State:            "available",
+			// Default VPC subnets are public by default on real AWS.
+			MapPublicIpOnLaunch: true,
 		}
 		if aerr := h.store.putSubnet(ctx, subnet); aerr != nil {
 			return nil, aerr
