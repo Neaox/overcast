@@ -2547,13 +2547,13 @@
           "operation": "CreateUserPool",
           "category": "User Pool operations",
           "status": "✅ Supported",
-          "notes": "Returns Id and Arn; Id format {region}_{8-char-hex}; accepts SignInPolicy, email templates, UserAttributeUpdateSettings, and DeviceConfiguration"
+          "notes": "Returns Id and Arn; Id format {region}_{8-char-hex}; accepts SignInPolicy, email templates, UserAttributeUpdateSettings, DeviceConfiguration, AliasAttributes, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig; LambdaConfig is stored and echoed only — no configured trigger (PreSignUp, PostConfirmation, etc.) is ever invoked, see issue #536 and follow-up #1171"
         },
         {
           "operation": "DescribeUserPool",
           "category": "User Pool operations",
           "status": "✅ Supported",
-          "notes": "Returns SignInPolicy, email templates, admin config, email configuration, and UserAttributeUpdateSettings"
+          "notes": "Returns SignInPolicy, email templates, admin config, email configuration, UserAttributeUpdateSettings, AliasAttributes, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig"
         },
         {
           "operation": "DeleteUserPool",
@@ -2565,7 +2565,7 @@
           "operation": "UpdateUserPool",
           "category": "User Pool operations",
           "status": "✅ Supported",
-          "notes": "Updates SignInPolicy, VerificationMessageTemplate, AdminCreateUserConfig, EmailConfiguration, UserAttributeUpdateSettings"
+          "notes": "Updates SignInPolicy, VerificationMessageTemplate, AdminCreateUserConfig, EmailConfiguration, UserAttributeUpdateSettings, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig; the CloudFormation UserPool handler treats an AliasAttributes/UsernameAttributes change as requiring replacement, matching real Cognito's UpdateUserPoolRequest (neither is a member there)"
         },
         {
           "operation": "ListUserPools",
@@ -2589,7 +2589,7 @@
           "operation": "CreateUserPoolClient",
           "category": "User Pool Client operations",
           "status": "✅ Supported",
-          "notes": "Returns ClientId (26-char hex); accepts and validates ExplicitAuthFlows, AccessTokenValidity, IdTokenValidity, RefreshTokenValidity, TokenValidityUnits"
+          "notes": "Returns ClientId (26-char hex); accepts and validates ExplicitAuthFlows, AccessTokenValidity, IdTokenValidity, RefreshTokenValidity, TokenValidityUnits, PreventUserExistenceErrors, ReadAttributes, WriteAttributes"
         },
         {
           "operation": "DescribeUserPoolClient",
@@ -2607,7 +2607,7 @@
           "operation": "UpdateUserPoolClient",
           "category": "User Pool Client operations",
           "status": "✅ Supported",
-          "notes": "Updates client name, validates ExplicitAuthFlows, token validity"
+          "notes": "Updates client name, validates ExplicitAuthFlows, token validity, PreventUserExistenceErrors, ReadAttributes, WriteAttributes"
         },
         {
           "operation": "ListUserPoolClients",

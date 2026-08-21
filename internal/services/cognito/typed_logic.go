@@ -97,6 +97,13 @@ type CreateUserPoolReq struct {
 	UsernameAttributes          []string                         `json:"UsernameAttributes" cbor:"UsernameAttributes"`
 	AliasAttributes             []string                         `json:"AliasAttributes" cbor:"AliasAttributes"`
 	Policies                    *userPoolPoliciesWire            `json:"Policies" cbor:"Policies"`
+	AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting" cbor:"AccountRecoverySetting"`
+	SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration" cbor:"SmsConfiguration"`
+	SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage" cbor:"SmsAuthenticationMessage"`
+	SmsVerificationMessage      string                           `json:"SmsVerificationMessage" cbor:"SmsVerificationMessage"`
+	EmailVerificationMessage    string                           `json:"EmailVerificationMessage" cbor:"EmailVerificationMessage"`
+	EmailVerificationSubject    string                           `json:"EmailVerificationSubject" cbor:"EmailVerificationSubject"`
+	LambdaConfig                *LambdaConfig                    `json:"LambdaConfig" cbor:"LambdaConfig"`
 }
 
 type UpdateUserPoolReq struct {
@@ -110,6 +117,13 @@ type UpdateUserPoolReq struct {
 	UsernameAttributes          []string                         `json:"UsernameAttributes" cbor:"UsernameAttributes"`
 	AliasAttributes             []string                         `json:"AliasAttributes" cbor:"AliasAttributes"`
 	Policies                    *userPoolPoliciesWire            `json:"Policies" cbor:"Policies"`
+	AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting" cbor:"AccountRecoverySetting"`
+	SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration" cbor:"SmsConfiguration"`
+	SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage" cbor:"SmsAuthenticationMessage"`
+	SmsVerificationMessage      string                           `json:"SmsVerificationMessage" cbor:"SmsVerificationMessage"`
+	EmailVerificationMessage    string                           `json:"EmailVerificationMessage" cbor:"EmailVerificationMessage"`
+	EmailVerificationSubject    string                           `json:"EmailVerificationSubject" cbor:"EmailVerificationSubject"`
+	LambdaConfig                *LambdaConfig                    `json:"LambdaConfig" cbor:"LambdaConfig"`
 }
 
 type DescribeUserPoolDomainReq struct {
@@ -133,6 +147,9 @@ type CreateUserPoolClientReq struct {
 	AllowedOAuthFlowsUserPoolClient bool                    `json:"AllowedOAuthFlowsUserPoolClient" cbor:"AllowedOAuthFlowsUserPoolClient"`
 	ExplicitAuthFlows               []string                `json:"ExplicitAuthFlows" cbor:"ExplicitAuthFlows"`
 	SupportedIdentityProviders      []string                `json:"SupportedIdentityProviders" cbor:"SupportedIdentityProviders"`
+	PreventUserExistenceErrors      string                  `json:"PreventUserExistenceErrors" cbor:"PreventUserExistenceErrors"`
+	ReadAttributes                  []string                `json:"ReadAttributes" cbor:"ReadAttributes"`
+	WriteAttributes                 []string                `json:"WriteAttributes" cbor:"WriteAttributes"`
 }
 
 type UpdateUserPoolClientReq struct {
@@ -149,6 +166,9 @@ type UpdateUserPoolClientReq struct {
 	AllowedOAuthFlowsUserPoolClient *bool                   `json:"AllowedOAuthFlowsUserPoolClient" cbor:"AllowedOAuthFlowsUserPoolClient"`
 	ExplicitAuthFlows               *[]string               `json:"ExplicitAuthFlows" cbor:"ExplicitAuthFlows"`
 	SupportedIdentityProviders      *[]string               `json:"SupportedIdentityProviders" cbor:"SupportedIdentityProviders"`
+	PreventUserExistenceErrors      string                  `json:"PreventUserExistenceErrors" cbor:"PreventUserExistenceErrors"`
+	ReadAttributes                  *[]string               `json:"ReadAttributes" cbor:"ReadAttributes"`
+	WriteAttributes                 *[]string               `json:"WriteAttributes" cbor:"WriteAttributes"`
 }
 
 // ─── admin user request types ─────────────────────────────────────────────────
@@ -1523,6 +1543,13 @@ func (s *Service) CreateUserPoolTyped(ctx context.Context, req *CreateUserPoolRe
 	if req.Policies != nil {
 		pool.Policies = mergeUserPoolPolicies(nil, req.Policies)
 	}
+	pool.AccountRecoverySetting = req.AccountRecoverySetting
+	pool.SmsConfiguration = req.SmsConfiguration
+	pool.SmsAuthenticationMessage = req.SmsAuthenticationMessage
+	pool.SmsVerificationMessage = req.SmsVerificationMessage
+	pool.EmailVerificationMessage = req.EmailVerificationMessage
+	pool.EmailVerificationSubject = req.EmailVerificationSubject
+	pool.LambdaConfig = req.LambdaConfig
 	if err := s.savePool(ctx, pool); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -1686,6 +1713,27 @@ func (s *Service) UpdateUserPoolTyped(ctx context.Context, req *UpdateUserPoolRe
 	if req.UserPoolTier != "" {
 		pool.UserPoolTier = req.UserPoolTier
 	}
+	if req.AccountRecoverySetting != nil {
+		pool.AccountRecoverySetting = req.AccountRecoverySetting
+	}
+	if req.SmsConfiguration != nil {
+		pool.SmsConfiguration = req.SmsConfiguration
+	}
+	if req.SmsAuthenticationMessage != "" {
+		pool.SmsAuthenticationMessage = req.SmsAuthenticationMessage
+	}
+	if req.SmsVerificationMessage != "" {
+		pool.SmsVerificationMessage = req.SmsVerificationMessage
+	}
+	if req.EmailVerificationMessage != "" {
+		pool.EmailVerificationMessage = req.EmailVerificationMessage
+	}
+	if req.EmailVerificationSubject != "" {
+		pool.EmailVerificationSubject = req.EmailVerificationSubject
+	}
+	if req.LambdaConfig != nil {
+		pool.LambdaConfig = req.LambdaConfig
+	}
 	if err := s.savePool(ctx, pool); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -1805,6 +1853,9 @@ func (s *Service) CreateUserPoolClientTyped(ctx context.Context, req *CreateUser
 		AllowedOAuthFlowsUserPoolClient: req.AllowedOAuthFlowsUserPoolClient,
 		ExplicitAuthFlows:               req.ExplicitAuthFlows,
 		SupportedIdentityProviders:      req.SupportedIdentityProviders,
+		PreventUserExistenceErrors:      req.PreventUserExistenceErrors,
+		ReadAttributes:                  req.ReadAttributes,
+		WriteAttributes:                 req.WriteAttributes,
 	}
 	applyClientDefaults(c)
 	if err := s.saveClient(ctx, c); err != nil {
@@ -1922,6 +1973,15 @@ func (s *Service) UpdateUserPoolClientTyped(ctx context.Context, req *UpdateUser
 	}
 	if req.SupportedIdentityProviders != nil {
 		c.SupportedIdentityProviders = *req.SupportedIdentityProviders
+	}
+	if req.PreventUserExistenceErrors != "" {
+		c.PreventUserExistenceErrors = req.PreventUserExistenceErrors
+	}
+	if req.ReadAttributes != nil {
+		c.ReadAttributes = *req.ReadAttributes
+	}
+	if req.WriteAttributes != nil {
+		c.WriteAttributes = *req.WriteAttributes
 	}
 	if err := s.saveClient(ctx, c); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
