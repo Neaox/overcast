@@ -1,7 +1,15 @@
 # Full-emulation priority — which services/operations get Tier 2, and in what order
 
-> Status: proposal, 2026-08-03. Owner: TBD.
-> Tracking issue: #484; sub-issues per item.
+> Status: living backlog (originally proposed 2026-08-03). Owner: TBD.
+> Tracking issue: #484 (open); sub-issues per item.
+> Verified 2026-08-21: **Waves 1–3 items 1–10 have all shipped** (issues
+> #467–#476 closed; per-item status is already recorded inline below).
+> Item 11 (DynamoDB PartiQL) is unblocked but **not started** — the three
+> PartiQL operations are still unregistered. Wave 4 is unstarted, with one
+> stale row: **Backup is no longer 9/9 `StatusInert`** — #815/#904 rebound it
+> to its modeled REST paths and it now carries Supported/Partial rows, so its
+> Wave-4 entry needs rescoring before anyone picks it up. The deferred compat
+> follow-ups #506 (CloudWatch group) and #517 (Auto Scaling group) remain open.
 > Scope: everything Tier 2-eligible. [services-never-emulated.md](./services-never-emulated.md) (if present)
 > defines what is permanently out of scope; this document's ranking starts from
 > [inert-tier-rollout.md](./inert-tier-rollout.md)'s Tier 1 floor (every registered service reaches
@@ -580,10 +588,9 @@ Per the task's instruction to triangulate 3+ independent signals — what was ac
 
 ## 5. In-flight work — not replanned here
 
-- **EFS data plane** ([efs-data-plane.md](./efs-data-plane.md)) — control plane merged (#421), Docker-volume
-  live mode step 1 landed; steps 2–4 (Lambda `FileSystemConfigs` mount, ECS `efsVolumeConfiguration`, — the
-  ECS half already shipped per #426 — and remaining steps) in progress. This plan's Lambda/ECS items assume
-  that work lands independently; no overlap.
+- **EFS data plane** ([efs-data-plane.md](./efs-data-plane.md)) — **complete**: steps 1–4 all merged
+  (NFS exports landed in #489), live mode is the default since #601, and EFS is in the compat matrix.
+  Nothing from that plan remains open.
 - **DynamoDB GSI ordered index structure** ([dynamodb-gsi-design.md](./dynamodb-gsi-design.md)) —
   **closed 2026-08-03.** Phases 1–3 implemented (#283/#287/#300), and the three deferred follow-ups
   (LSI routing, ConsistentRead-on-GSI validation, parallel-scan segmentation) all landed in #488.

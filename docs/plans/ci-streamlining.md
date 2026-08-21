@@ -1,7 +1,9 @@
 # CI streamlining — where the time goes, and what is safe to cut
 
-Status: A, B, C, E and F are implemented; D was investigated and declined. One
-repository-settings change is left — see [Outcome](#outcome). The measurements
+Status: complete. A, B, C, E and F are implemented; D was investigated and
+declined; the one repository-settings change that was left — adding
+`Test suite (-tags slim,dev)` to the required set — has since been made
+(verified against the `Protect Main` ruleset, 2026-08-21). The measurements
 below are from before any of it landed, and are kept as the baseline the
 changes were argued from.
 
@@ -246,8 +248,12 @@ Docker build (console), Docker build (slim),
 Breaking-change hold, Changelog entry, Changelog fragments
 ```
 
-**No compat check is in that set.** So `compat.yml`'s `pull_request` trigger
-can be filtered directly, with no shim, and now is: a PR touching only `**.md`,
+**No compat check is in that set.** (True when written; since then
+`Aggregate Compatibility Results` became required via classic branch
+protection, and `compat.yml` was re-gated the same way as `test.yml` — the
+jobs always report, and a scope check decides whether the suites actually
+run.) So `compat.yml`'s `pull_request` trigger
+could be filtered directly, with no shim, and was: a PR touching only `**.md`,
 `docs/**` or `.changelog/**` skips ~14 runner-minutes of SDK suites. The filter
 is deliberately short — editing a published doc also regenerates
 `internal/docssearch/index.gen.go` and `web/src/docs-index.gen.ts`, which are
@@ -373,16 +379,12 @@ request skips ~56 runner-minutes across both workflows while reporting the same
 green checks, and the two recurring false reds have had their causes removed
 rather than their symptoms re-run.
 
-One thing is left, and it is not code:
-
-**Add `Test suite (-tags slim,dev)` to the required set.** It is the only job
-that compiles tag-gated code, and it is currently advisory — a change can go
-red in it and still be mergeable. That is a repository-settings change.
-
-Note that it interacts with the gate above: it becomes a thirteenth required
-name, and like the other twelve it reports because its job always runs. The
-gate was built that way for exactly this reason — adding a required check needs
-no corresponding change here.
+The one thing that was left — adding `Test suite (-tags slim,dev)` to the
+required set — has since been made. As of 2026-08-21 the `Protect Main`
+ruleset requires it (the required set has also since gained `Script tests` and
+`Lambda invoke (native host binary)`, and classic branch protection separately
+requires `Aggregate Compatibility Results`). As predicted, the E gate needed no
+corresponding change: the job always runs, so the required name always reports.
 
 The estimate this document opened with — 56 → 40 runner-minutes — was built on
 D landing. Without it the figure is closer to 56 → 50 on a code PR, and near

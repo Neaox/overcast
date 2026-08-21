@@ -1,6 +1,14 @@
 # EC2 typed-dispatch migration — audit + design
 
-> **Status:** proposal, 2026-07-26. No production code changed by this document. Written per
+> **Status:** proposal, 2026-07-26 — **still unexecuted as of 2026-08-21.** `DispatchQuery` remains
+> legacy-only and the typed stubs stand (`describeInstancesReq` is still an empty struct; the
+> `_ = inst` discard remains). The §2 inventory is now stale in its particulars, though the three
+> root causes and the phase structure still hold: since the audit, #1032's unrecognised-filter work
+> (PRs #1033, #1038, #1040) and the tagging change (#1037) rewrote EC2's **legacy** filter
+> semantics — an unrecognised filter name is now refused via `internal/services/ec2/filters.go`,
+> and values match as AWS patterns (`*`/`?` wildcards) — and those commits also touched
+> `typed_logic.go`, so the divergence table's line references and per-op details need
+> re-baselining before any phase starts. No production code changed by this document. Written per
 > [level2-codegen.md](./level2-codegen.md) Track 2.3's explicit work queue: EC2 is the largest
 > "kept-on-legacy" item from the P1 Query-dispatch landing (~69 operations, entire typed branch
 > disabled at the dispatch level — the largest single item in that register). Modeled on

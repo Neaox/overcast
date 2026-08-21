@@ -1,6 +1,16 @@
 # Wire-Byte Golden Test Infrastructure
 
-> Status: proposal. Owner: TBD. Related: [smithy.md §8](./smithy.md#8-testing-strategy).
+> Status: partially implemented (as of 2026-08-21). The harness
+> ([tests/helpers/golden.go](../../tests/helpers/golden.go)) and pilot goldens
+> for **ssm, backup, and kinesis** landed in #306. The implementation diverges
+> from §4.2 in one deliberate way: it does not stand up a separate "legacy"
+> server — it records whatever path currently serves the request (today the
+> legacy dispatch path), and relies on `helpers.WithMockClock()` for
+> determinism. The §5.1 priority services (SQS, DynamoDB, STS, IAM, EC2) have
+> no goldens yet, and there is no per-service CI step (§5.3) — golden tests run
+> inside the normal `go test` suite. Owner: TBD.
+> Related: [smithy.md](../dev/smithy.md) — moved from docs/plans to docs/dev
+> in #286; its former §8 testing-strategy section no longer exists.
 
 ## 1. Problem
 

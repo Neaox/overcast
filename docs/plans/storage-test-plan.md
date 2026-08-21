@@ -1,5 +1,10 @@
 # Storage stabilization — full regression test plan
 
+> **Status:** the branch this gated merged to `main` as PR #267 (2026-07-24). The gate tiers (T0–T4)
+> and named regression tests remain the standing storage regression checklist — several in-tree
+> benchmarks cite this document's measurement conventions — and the T2/T3/T5/T6 pre-release rows
+> describe the (partly manual) release-time checks, not open branch work.
+>
 > **Scope:** the entire `feat/storage-stabilization` branch (Phases 1–2, Phase 3 Waves 1–3 of
 > [storage-plan.md](./storage-plan.md)) before merge to `main`. The storage layer sits under every
 > service, so the blast radius of a regression is global — this plan is deliberately broader than

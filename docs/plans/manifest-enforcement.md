@@ -1,8 +1,15 @@
 # Making the pinned manifest the enforced source of truth
 
-Status: **implemented** for the enforcement points below, as of this branch.
-Issue: [#864](https://github.com/Neaox/overcast/issues/864). Gates: [#863](https://github.com/Neaox/overcast/issues/863).
+Status: **implemented and merged** — the gates landed on `main` in PR #876,
+with point 9's path-namespace gate completed by #921 (and the debug/data-plane
+namespace moves in #929/#935).
+Issue: [#864](https://github.com/Neaox/overcast/issues/864) (still open for the
+remainder: the shape artefact #883/#884, the protocol asymmetry #886, and the
+scope-mismatch answer #887). Gates: [#863](https://github.com/Neaox/overcast/issues/863) (closed).
 Audit that prompted it: [#861](https://github.com/Neaox/overcast/issues/861).
+As of 2026-08-21 the `unservedBindings` ledger is **empty** — all 43 opening
+rows retired as #854–#860, #862 and #815 landed — and `protocolAsymmetries`
+holds its one deliberate entry (`cloudwatch/GetMetricData`, #886).
 
 ## The problem, in one sentence
 
@@ -256,8 +263,9 @@ already asserted against the model in one direction
 (`restoperation_test.go:490`). It is the cheapest remaining candidate for
 generation, and is left alone here.
 
-## Sequencing
+## Sequencing (historical)
 
-**Not to be merged until `0.0.1-alpha.34` has shipped.** A sweep this size does
-not belong in an open release window. The gates and the fallout are separate
-commits so they can be read, and if necessary landed, apart.
+The rule at the time was: not to be merged until `0.0.1-alpha.34` had shipped —
+a sweep this size did not belong in an open release window. That held: the
+change merged as #876 after alpha.34, with the gates and the fallout as
+separate commits so they could be read apart.

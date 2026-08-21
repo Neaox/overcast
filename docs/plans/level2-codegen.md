@@ -1,6 +1,19 @@
 # Wire protocols — claim-first dispatch, single-implementation ops, and model-driven codegen (v2)
 
 > Status: proposal v2, 2026-07-24 — rewrites the original "Level 2 codegen" proposal (kept below as inspiration where still valid; superseded where it conflicts). Owner: TBD.
+> Progress check, 2026-08-21: **P0 and P1 are done** (see the landing notes
+> below). **P2 is open**: the kept-on-legacy register still stands — EC2's
+> typed registry remains deliberately un-dispatched (`internal/services/ec2/service.go`),
+> `cfnLegacyOnlyOps` and `snsLegacyOnlyOps` still exist, `decodeJSON` variants
+> survive in cloudtrail/ecs/kinesis/transfer, and dynamodb's `rawOps()` base is
+> still present. **P3/P4 as scoped here never started**, but Track 3.1's
+> manifest deliverable was achieved by different machinery:
+> [aws-api-operation-coverage.md](./aws-api-operation-coverage.md) shipped
+> `cmd/awsmodelgen` + the generated manifest/registry/refresh workflow, and
+> [manifest-enforcement.md](./manifest-enforcement.md) (#876) made capgen and
+> the router enforce it. No `cmd/codegen` exists; `SupportedProtocols()` and
+> typed In/Out structs are still hand-written. Any P3 pickup should extend
+> `cmd/awsmodelgen`, per [inert-tier-rollout.md](./inert-tier-rollout.md) §4.1.
 > Level 1 (the codec/op architecture) is live in code — design doc: [docs/smithy.md](../dev/smithy.md) (note: its link to `plans/smithy.md` is stale; fix alongside this plan).
 > Inputs: the 2026-07-24 protocol/codec architecture audit (census embedded below); AWS's April-2026 wire-protocol policy and the "reactive protocol identification" guidance it points at (see e.g. floci-io/floci#156 for the same problem in a sibling emulator); [wire-byte-goldens.md](./wire-byte-goldens.md) as the codec safety net.
 

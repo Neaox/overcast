@@ -5,7 +5,8 @@ Status: **complete**. Phase 1 — the full control plane
 #421. Step 1 (named volumes) in #424, step 2 (Lambda `FileSystemConfigs`) in
 #425, step 3 (ECS `efsVolumeConfiguration`) in #426, review fixes in #427,
 access-point/task root directories via Docker volume subpaths in #429, and
-step 4 (NFS export per mount target) in this change. The open questions are
+step 4 (NFS export per mount target) in #489; live mode became the default
+in #601. The open questions are
 resolved below under [Decisions](#decisions).
 
 Findings that shaped the implementation (recorded when step 1 landed):

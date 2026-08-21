@@ -1,7 +1,8 @@
 # CloudFormation Update — coverage plan
 
-> Status: P0 ✅, P1 ✅, P2 ✅, P3 ✅. Cross-cutting: resourceUpdater oldProps ✅.
-> Remaining: ApiGateway PATCH builder (P1.2–P1.6 stubs), Kinesis UpdateShardCount.
+> Status (2026-08-21): P0 ✅, P1 ✅, P2 ✅, P3 ✅. Cross-cutting: oldProps threading ✅,
+> ApiGateway PATCH builder ✅ (`buildPatchOps` in `provisioner_apigw.go`; P1.2–P1.6 do real updates now).
+> Remaining: Kinesis UpdateShardCount (Update is still an errReplacementRequired stub), tag-diff helper.
 > Goal: make `UpdateStack` / `ExecuteChangeSet` behave like real AWS.
 
 This plan extends the existing property-hash drift detection in
@@ -38,25 +39,25 @@ synchronously on the child stack.
 
 Calls `UpdateStateMachine`. Mutable: Definition, RoleArn. Replacement: StateMachineName, Type.
 
-### P1.2 — `AWS::ApiGateway::RestApi` ✅ (stub)
+### P1.2 — `AWS::ApiGateway::RestApi` ✅
 
-Returns `errReplacementRequired` — full update needs ApiGateway PATCH builder (cross-cutting).
+Real in-place update via `buildPatchOps` (`provisioner_apigw.go`).
 
-### P1.3 — `AWS::ApiGateway::Stage` ✅ (stub)
+### P1.3 — `AWS::ApiGateway::Stage` ✅
 
-Returns `errReplacementRequired` — full update needs ApiGateway PATCH builder.
+Real in-place update via `buildPatchOps`; identity changes still return `errReplacementRequired`.
 
 ### P1.4 — `AWS::ApiGateway::Deployment` ✅
 
 Always returns `errReplacementRequired` — deployments are immutable in AWS.
 
-### P1.5 — `AWS::ApiGateway::Method` ✅ (stub)
+### P1.5 — `AWS::ApiGateway::Method` ✅
 
-Returns `errReplacementRequired` — full update needs ApiGateway PATCH builder.
+Real in-place update via `buildPatchOps`; identity changes still return `errReplacementRequired`.
 
-### P1.6 — `AWS::ApiGateway::UsagePlan` ✅ (stub)
+### P1.6 — `AWS::ApiGateway::UsagePlan` ✅
 
-Returns `errReplacementRequired` — full update needs ApiGateway PATCH builder.
+Real in-place update via `buildPatchOps` (`provisioner_apigw_apikeys.go`), including throttle/quota diffs.
 
 ### P1.7 — `AWS::Events::Rule` ✅
 
@@ -262,12 +263,14 @@ re-audit them later.
   until old-properties storage is added to `StackResource`.
 - 🟡 **Tag diffing helper.** `serviceutil.DiffTags(old, new)` returning
   add/remove sets — not yet implemented. Most handlers don't use it yet.
-- 🟡 **Pass old properties to `Update`.** The signature now accepts oldProps,
-  but they are `nil` at the call site. `StackResource` needs a `Properties`
-  field to store resolved properties during creation.
-- 🟡 **PATCH operation builder for ApiGateway.** All ApiGateway updates
-  (P1.2–P1.6) return `errReplacementRequired` until this is built.
-- 🟡 **Test coverage.** Each handler's Update needs integration tests.
+- ✅ **Pass old properties to `Update`.** `StackResource` now has a persisted
+  `Properties` field and `updateResource()` threads `oldResource.Properties`
+  into every `Update` call.
+- ✅ **PATCH operation builder for ApiGateway.** `buildPatchOps` in
+  `provisioner_apigw.go`; RestApi, Stage, Method and UsagePlan use it.
+- 🟡 **Test coverage.** Many handlers now have update integration tests
+  (`tests/integration/cloudformation/*_update_test.go` and friends); coverage
+  is per-handler rather than exhaustive.
 
 ## Suggested execution order
 

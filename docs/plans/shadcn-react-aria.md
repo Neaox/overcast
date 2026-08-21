@@ -1,6 +1,9 @@
 # shadcn React Aria migration — plan
 
-> Status: proposal.
+> Status: proposal — no migration started as of 2026-08-21. There is no `web/components.json`,
+> no `components/aria/` namespace, and no React Aria dependency; the app remains Radix-based
+> (and the direct-Radix dependency list in §1 has since grown: `package.json` now also carries
+> alert-dialog, dropdown-menu, scroll-area, select, separator and tabs packages).
 > Goal: adopt shadcn's React Aria component base for new complex UI primitives,
 > while preserving Overcast's stable app-facing component APIs and avoiding a
 > broad feature-page rewrite.

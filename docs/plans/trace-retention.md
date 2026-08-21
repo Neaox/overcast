@@ -331,7 +331,7 @@ retention, and counting them separately would let a single deploy exhaust the fa
 
 ---
 
-## Phase 4 — the retention policy ⏳ mechanics shipped
+## Phase 4 — the retention policy ✅ shipped (mechanics, then the byte backstop #956, family pinning #957 and the counters)
 
 Shipped: `RetentionPolicy`, the `pinned` ring, growth towards the ceiling, the lazy age cull, and
 classification at eviction — wired through `OVERCAST_DEBUG_TRACE_CEILING` / `_WINDOW` / `_PINNED`.

@@ -266,9 +266,10 @@ polling `DescribeStacks` every 100 ms with `curl`). But the AWS SDK
 waiter checks immediately — sees `IN_PROGRESS` because provisioning
 started microseconds earlier — then sleeps its 5 s `minDelay` before
 looking again. Every fast stack therefore costs one full waiter cycle
-regardless of emulator speed. A fix that shortens this window (a bounded
-synchronous wait so the waiter's first check already sees the terminal
-status) is tracked in [docs/plans/cfn-sync-fastpath.md](plans/cfn-sync-fastpath.md).
+regardless of emulator speed. The fix that shortens this window shipped
+in #251: a bounded synchronous wait (`OVERCAST_CFN_SYNC_WAIT_MS`) so the
+waiter's first check already sees the terminal status — see
+[docs/services/cloudformation.md](services/cloudformation.md).
 
 **What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any
 other client-side work show up as request-log silence. Report those

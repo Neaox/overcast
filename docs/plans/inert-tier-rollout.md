@@ -1,13 +1,24 @@
 # Inert-tier rollout — mass-producing Tier 1 across the AWS surface
 
 > Status: proposal, 2026-08-03. Owner: TBD.
+> Re-verified 2026-08-21: **no phase has started** — there is no
+> `internal/inert`, no `models/aws/shapes/`, no `-inert-*`/`-shapes-out` flags
+> in `cmd/awsmodelgen`, and none of the pilot services (servicediscovery, ELB
+> Classic, batch) exists. The §2 baseline has drifted since it was captured:
+> capabilities now read 1,240 Supported / 154 Unsupported / 28 Inert /
+> **12 Partial** (the zero-`StatusPartial` claim no longer holds), Backup left
+> the wholly-inert set (#815/#904 made it a real REST implementation), bedrock
+> gained two `StatusInert` rows (#857), and the tagging backfill grew
+> transfer/cloudtrail's inert row counts. `internal/capabilities/all.gen.go`
+> is authoritative; re-derive §2.2 before budgeting any wave.
 > Siblings: [compat coverage modelgen](./compat-coverage-modelgen.md) (generated compat groups),
 > [services never emulated](./services-never-emulated.md) (the scope boundary this plan obeys),
 > [full emulation priority](./full-emulation-priority.md) (what graduates to Tier 2 and in what order).
 > Depends on: [Level 2 codegen](./level2-codegen.md) Track 3 (this plan is its mass-production consumer),
 > [AWS API operation coverage](./aws-api-operation-coverage.md) (the manifest, registry, and model-refresh machinery).
 > Safety nets: [wire-byte goldens](./wire-byte-goldens.md), [pagination plan](./pagination-plan.md),
-> [startup metrics honesty](./startup-metrics-honesty.md).
+> startup-metrics honesty (shipped in #252; methodology now lives in
+> [docs/dev/performance.md](../dev/performance.md)).
 
 ## 0. Tier vocabulary
 
@@ -616,7 +627,7 @@ precedent). See [compat/suites/cdk/AGENTS.md](../../compat/suites/cdk/AGENTS.md)
 ## 6. Performance and footprint
 
 Repo values are explicit here: startup honesty
-([startup-metrics-honesty.md](./startup-metrics-honesty.md)), the ≤1 ms
+(shipped in #252 — see [docs/dev/performance.md](../dev/performance.md)), the ≤1 ms
 handler-overhead guardrail, and zero-allocation generated lookups
 ([aws-api-operation-coverage.md §5](./aws-api-operation-coverage.md), where
 registry lookups measure 79–217 ns/op at `0 B/op, 0 allocs/op`, router

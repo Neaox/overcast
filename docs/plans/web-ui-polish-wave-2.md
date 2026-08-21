@@ -1,6 +1,15 @@
 # Web UI Polish — Wave 2
 
-> Status: outstanding work after the design-2a rollout and the first polish wave.
+> Status: outstanding work after the design-2a rollout and the first polish wave. Pruned
+> 2026-08-21: the static-skeleton treatment (`components/ui/skeleton.tsx`, routed through
+> `QueryListState`), card skeletons, the cold-boot/unreachable state (`connecting-screen.tsx` +
+> `connection-gate.tsx`; the disconnected bar later became a reconnecting toast, PR #376),
+> `prefers-reduced-motion` support, the dialog anatomy (header band, icon tile, footer), the
+> pending toast variant, and copy-to-clipboard on identifiers (PR #361) have all landed and
+> their items were deleted below. The structural extractions (detail field, table wrapper, busy
+> buttons, spinner rollout) are sequenced in
+> [web-ui-dry-refactor.md](./web-ui-dry-refactor.md), which supersedes this file's wording
+> where they overlap.
 
 Wave 1 delivered the app shell (228px sidebar, 52px topbar, breadcrumbs excluding the current page), brand tokens and JetBrains Mono in both themes, the tiered dashboard, context-aware search, the command palette rebuilt against artboard 6a, a shared list-page scaffold covering 24 list pages, and a repo-wide typography pass. This file covers what is left, sourced from the design canvas (`Overcast Web UI.dc.html`, turns 1-6) and from issues found while implementing wave 1.
 
@@ -22,17 +31,15 @@ These were settled during wave 1 — do not re-litigate them while implementing:
 
 ### Loading and connection states (highest value — systemic)
 
-- Build the static skeleton treatment from artboard 5b and route `QueryListState` (`web/src/components/ui/primitives.tsx`) through it, replacing the centred spinner used by every list. There are ~325 spinner sites today and zero skeletons. Specs: table skeleton = 5 rows, column-1 bar widths `72/58/81/44/66%`, all bars `h 9px / r 3px / fill --oc-line`, opacity ladder `1.0 / 0.7 / 0.55`, column-3 fixed 46px, row padding 10px (the artboard's own 12px contradicts its real rows — use 10px). Footer: centred, padding 10px, mono 11px muted, `loading log groups` + 8px gap + a 6×12 `--oc-cursor` block.
-- Card skeletons: 3-up, gap 8px; card r10 / padding 12px / gap 12px; 30×30 r6 tile at full opacity; 34×8 meta bar at 0.6; title bar 10px high at `62/48/70%`; subtitle 8px high, fixed 56%, opacity 0.55.
 - Metric "first sample pending": mono 24px/700 in `--oc-muted`, literal em dash + 4px gap + 7×20 cursor, caption sans 11px `waiting for first sample`, sparkline slot `110px × 0` with `1px dashed --oc-line` on the baseline.
 - Idle event tail (connected-and-empty, distinct from an empty state): accent `>_` + `--oc-body` `tail --follow events`, mono 11px, 8px gap; second line `waiting for activity` + 6×12 cursor.
 - Busy controls: `Creating` — 32px, accent fill, mono 12/700, label and cursor in `--fg-on-accent`, `cursor: default`, **no dimming**. `Refreshing` — 32px, outlined, mono 12 regular, accent-glow cursor, icon dropped. Progress chip — 30px, 14px loader, `deploying stack · 2 of 5`, track 90×4 r2 accent-soft, unrounded accent fill, bare `40%` label.
-- Honour the design's `hint-placeholder-count` attribute for skeleton row counts rather than hardcoding.
-- Implement artboard 5a, the cold-boot / unreachable state. This is a **missing third state**, not a restyle: `app-shell.tsx` gates on `isConfigured()` (configuration, not liveness) and `connection-dialog.tsx` probes `/_health` then discards the result in a `catch {}`. So "configured but unreachable" currently renders nothing. Bare centred column on `--oc-bg`, 16px gaps, no card; hero is `OvercastBranding.Loader` at 72px with `aria-label="Connecting"` (not the Mark); copy `connecting to localhost:4566` (mono 13, `--oc-text`) over `Reading emulator state — first boot can take a few seconds.` (sans 12, muted). After 5s a retry affordance appears reading `still working after 5s · retry`, 7×12px padding, 13px clock icon, all one muted colour — the artboard does not style `retry` as a control, so make the whole chip the button. Topbar while disconnected shows brand + amber dot + host only: no breadcrumb, search, region select or theme toggle.
-- Add `prefers-reduced-motion` support. Nothing in the app respects it today.
+- Honour the design's `hint-placeholder-count` attribute for skeleton row counts rather than hardcoding (`QueryListState` has a `loadingCount` prop; verify the hint attribute is what feeds it).
 - **Finish the loading-affordance rollout — audited 2026-07-27, three gaps remain.** The skeleton
   work reached list pages because they share `QueryListState`; these did not:
-  - **Detail pages still use content-area spinners.** 208 `<Spinner>` usages remain, concentrated
+  - **Detail pages still use content-area spinners.** 227 `<Spinner>` usages across 101 files
+    remain (re-counted 2026-08-21; list pages now inherit skeletons via `QueryListState`, detail
+    pages do not), concentrated
     in `cognito/cognito-pool-detail.tsx` (15), `ecs/cluster-detail.tsx` (11), `ec2/ec2-dashboard.tsx`
     (11), `sqs/queue-detail.tsx` (10), `apigateway/rest-api-detail.tsx` (9). 5b restricts spinners to
     14-16px in chips and toasts, never a content area. Detail pages each hand-roll their loading
@@ -42,19 +49,27 @@ These were settled during wave 1 — do not re-litigate them while implementing:
     `{isPending && <Spinner className="mr-2 h-3.5 w-3.5" />}`; 5b specifies label + cursor
     (`Creating ▍`, `Refreshing ▍`), solid accent fill, `cursor: default`, and **no dimming**. Apply it
     in `Button`/`CreateAction`/`RefreshAction` so call sites inherit it.
-  - **Four sites bypass the `Spinner` component**, importing lucide's `Loader2` directly and so
-    escaping its size clamp: `layout/global-search.tsx:417`, `ui/combobox.tsx:391` and `:484`,
-    `cloudformation/stack-detail.tsx:380` and `:438`. Route them through `Spinner`.
+  - **Several sites bypass the `Spinner` component**, importing lucide's `Loader2` directly and
+    so escaping its size clamp (re-audited 2026-08-21): `ui/combobox.tsx`,
+    `cloudformation/stack-detail.tsx`, `cloudformation/stack-list.tsx`,
+    `layout/connection-dialog.tsx`, `routes/debug/traces/$requestId.tsx` (global-search has
+    since been fixed). Route them through `Spinner`.
 
 ### Dialogs and toasts
 
-- Dialog anatomy (4a): header band with a 30×30 icon tile, body, and a footer band on `--oc-bg`. Current dialogs are a flat `p-6 rounded-xl`.
-- Wire the `⏎ to create · esc to cancel` contract. The hint is displayed in the design and the app shows similar affordances, but the keyboard handlers are not implemented — an advertised affordance that does nothing.
-- Toasts (4b): tinted card with a 3px left accent bar and a leading icon. Add the **pending** variant, which does not exist today — slow uploads and deploys currently surface no feedback at all.
+- Roll out the `⏎ to create · esc to cancel` contract. The mechanism landed — `dialog.tsx` ships
+  `DialogKeyHint`, `DialogIcon` and `onPrimaryAction` — but as of 2026-08-21 only `ConfirmDialog`
+  uses it; the ~50 other dialog-bearing files still lack the advertised affordance. The rollout is
+  owned by the DRY plan's P5 (`ResourceFormDialog`).
 
 ### Visual consistency
 
-- Collapse raw Tailwind palette usage to the semantic roles. 266 raw hues across the app: `topology-nodes.tsx` 69, `event-console.tsx` 41, `metrics-page.tsx` 14. The design uses five roles, and all six sparklines are `--oc-accent`. Excludes the map's message-state colours — see Non-goals.
+- Collapse raw Tailwind palette usage to the semantic roles. Partially done as of 2026-08-21:
+  the event console and the ANSI ramp now resolve through the `--cat-*` identity tokens, but
+  ~330 raw hue classes remain (`service-registry.ts` 108, `topology-nodes.tsx` 50,
+  `metrics-page.tsx` 10, `startup-timeline.tsx` 10). The identity half is specified in
+  [palette-categorical-tokens.md](./palette-categorical-tokens.md). Excludes the map's
+  message-state colours — see Non-goals.
 - **Unify the modal scrims.** Five overlays, four different treatments, and the shared one is the
   odd man out. Audited 2026-07-27:
 
@@ -121,8 +136,7 @@ were brought to the canvas's sizes and weights. Still outstanding:
 
 ### Quality of life
 
-- Copy-to-clipboard on identifiers. The ARN column is 320px and truncates, with no way to get the full value out.
-- Deep-linkable state for filters and selected tabs, matching what the Raw State Debugger already does.
+- Deep-linkable state for filters and selected tabs, matching what the Raw State Debugger already does. (The CloudWatch log viewers gained anchor deep links in the logs-performance work; the rest of the app has not.)
 - Empty states audited per page — several lists fall back to a generic message.
 
 ## Open decisions
