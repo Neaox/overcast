@@ -15,7 +15,7 @@ func init() {
 		capabilities.Capability{Service: "ssm", Operation: "GetParameters", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "GetParametersByPath", Category: "General", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "ssm", Operation: "ListTagsForResource", Category: "General", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "ssm", Operation: "PutParameter", Category: "General", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "ssm", Operation: "PutParameter", Category: "General", Status: capabilities.StatusSupported, Notes: "Description, Tier, DataType, AllowedPattern and Policies are stored and echoed back rather than a fixed default; Policies is stored as given and expanded into ParameterInlinePolicy entries on read"},
 
 		// Unsupported operations: no dispatch entry, so requests return
 		// 501 NotImplemented via the dispatch fallback. DocOnly because they

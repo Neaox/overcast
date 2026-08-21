@@ -71,6 +71,8 @@ type describeParameterWire struct {
 	LastModifiedDate float64 `json:"LastModifiedDate" cbor:"LastModifiedDate"`
 	Policies         []any   `json:"Policies" cbor:"Policies"`
 	Tier             string  `json:"Tier" cbor:"Tier"`
+	DataType         string  `json:"DataType,omitempty" cbor:"DataType,omitempty"`
+	AllowedPattern   string  `json:"AllowedPattern,omitempty" cbor:"AllowedPattern,omitempty"`
 }
 
 type historyParameterWire struct {
@@ -82,16 +84,50 @@ type historyParameterWire struct {
 	Tier             string  `json:"Tier" cbor:"Tier"`
 }
 
+// toDescribeWire renders rec's metadata in DescribeParameters' shape. Shared
+// by the legacy JSON handler and the typed CBOR handler so the two protocols
+// cannot answer the same record differently.
+func (h *Handler) toDescribeWire(rec *ParameterRecord, latest *ParameterVersion) describeParameterWire {
+	return describeParameterWire{
+		Name:             rec.Name,
+		Type:             latest.Type,
+		Description:      rec.Description,
+		Version:          rec.Version(),
+		LastModifiedDate: float64(latest.CreatedAt.UnixMilli()) / 1000.0,
+		Policies:         policiesWire(rec.Policies),
+		Tier:             rec.Tier,
+		DataType:         rec.DataType,
+		AllowedPattern:   rec.AllowedPattern,
+	}
+}
+
+// toHistoryWire renders one version of rec in GetParameterHistory's shape.
+// Shared for the same reason as toDescribeWire.
+func (h *Handler) toHistoryWire(rec *ParameterRecord, v ParameterVersion, version int64) historyParameterWire {
+	return historyParameterWire{
+		Name:             rec.Name,
+		Type:             v.Type,
+		Value:            v.Value,
+		Version:          version,
+		LastModifiedDate: float64(v.CreatedAt.UnixMilli()) / 1000.0,
+		Tier:             rec.Tier,
+	}
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 // PutParameter creates or overwrites a parameter.
 func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"Name"`
-		Value       string `json:"Value"`
-		Type        string `json:"Type"`
-		Description string `json:"Description"`
-		Overwrite   bool   `json:"Overwrite"`
+		Name           string `json:"Name"`
+		Value          string `json:"Value"`
+		Type           string `json:"Type"`
+		Description    string `json:"Description"`
+		Tier           string `json:"Tier"`
+		DataType       string `json:"DataType"`
+		AllowedPattern string `json:"AllowedPattern"`
+		Policies       string `json:"Policies"`
+		Overwrite      bool   `json:"Overwrite"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -132,9 +168,13 @@ func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
 			Tags: map[string]string{},
 		}
 	}
-	if req.Description != "" {
-		rec.Description = req.Description
-	}
+	applyPutParameterFields(rec, putParameterFields{
+		Description:    req.Description,
+		Tier:           req.Tier,
+		DataType:       req.DataType,
+		AllowedPattern: req.AllowedPattern,
+		Policies:       req.Policies,
+	})
 	rec.Versions = append(rec.Versions, ParameterVersion{
 		Value:     req.Value,
 		Type:      req.Type,
@@ -159,7 +199,7 @@ func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Version": rec.Version(),
-		"Tier":    "Standard",
+		"Tier":    rec.Tier,
 	}, "application/x-amz-json-1.1")
 }
 
@@ -325,15 +365,7 @@ func (h *Handler) DescribeParameters(w http.ResponseWriter, r *http.Request) {
 		if latest == nil {
 			continue
 		}
-		params = append(params, describeParameterWire{
-			Name:             rec.Name,
-			Type:             latest.Type,
-			Description:      rec.Description,
-			Version:          rec.Version(),
-			LastModifiedDate: float64(latest.CreatedAt.UnixMilli()) / 1000.0,
-			Policies:         []any{},
-			Tier:             "Standard",
-		})
+		params = append(params, h.toDescribeWire(rec, latest))
 	}
 	resp := map[string]any{"Parameters": params}
 	if page.NextToken != "" {
@@ -386,14 +418,7 @@ func (h *Handler) GetParameterHistory(w http.ResponseWriter, r *http.Request) {
 
 	params := make([]historyParameterWire, 0, len(page.Items))
 	for _, item := range page.Items {
-		params = append(params, historyParameterWire{
-			Name:             rec.Name,
-			Type:             item.v.Type,
-			Value:            item.v.Value,
-			Version:          item.version,
-			LastModifiedDate: float64(item.v.CreatedAt.UnixMilli()) / 1000.0,
-			Tier:             "Standard",
-		})
+		params = append(params, h.toHistoryWire(rec, item.v, item.version))
 	}
 	resp := map[string]any{"Parameters": params}
 	if page.NextToken != "" {
@@ -597,6 +622,10 @@ func (h *Handler) toWire(rec *ParameterRecord, version int64, pv *ParameterVersi
 	if pv.Type == "SecureString" && !withDecryption {
 		value = secureStringMasked
 	}
+	dataType := rec.DataType
+	if dataType == "" {
+		dataType = "text"
+	}
 	return parameterWire{
 		Name:             rec.Name,
 		Type:             pv.Type,
@@ -604,7 +633,7 @@ func (h *Handler) toWire(rec *ParameterRecord, version int64, pv *ParameterVersi
 		Version:          version,
 		ARN:              h.paramARN(rec.Name),
 		LastModifiedDate: float64(pv.CreatedAt.UnixMilli()) / 1000.0,
-		DataType:         "text",
+		DataType:         dataType,
 	}
 }
 

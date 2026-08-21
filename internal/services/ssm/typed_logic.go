@@ -12,11 +12,15 @@ import (
 )
 
 type putParameterRequest struct {
-	Name        string `json:"Name" cbor:"Name"`
-	Value       string `json:"Value" cbor:"Value"`
-	Type        string `json:"Type" cbor:"Type"`
-	Description string `json:"Description" cbor:"Description"`
-	Overwrite   bool   `json:"Overwrite" cbor:"Overwrite"`
+	Name           string `json:"Name" cbor:"Name"`
+	Value          string `json:"Value" cbor:"Value"`
+	Type           string `json:"Type" cbor:"Type"`
+	Description    string `json:"Description" cbor:"Description"`
+	Tier           string `json:"Tier" cbor:"Tier"`
+	DataType       string `json:"DataType" cbor:"DataType"`
+	AllowedPattern string `json:"AllowedPattern" cbor:"AllowedPattern"`
+	Policies       string `json:"Policies" cbor:"Policies"`
+	Overwrite      bool   `json:"Overwrite" cbor:"Overwrite"`
 }
 
 type putParameterResponse struct {
@@ -150,9 +154,13 @@ func (h *Handler) putParameterTyped(ctx context.Context, req *putParameterReques
 	if rec == nil {
 		rec = &ParameterRecord{Name: req.Name, Tags: map[string]string{}}
 	}
-	if req.Description != "" {
-		rec.Description = req.Description
-	}
+	applyPutParameterFields(rec, putParameterFields{
+		Description:    req.Description,
+		Tier:           req.Tier,
+		DataType:       req.DataType,
+		AllowedPattern: req.AllowedPattern,
+		Policies:       req.Policies,
+	})
 	rec.Versions = append(rec.Versions, ParameterVersion{
 		Value:     req.Value,
 		Type:      req.Type,
@@ -167,7 +175,7 @@ func (h *Handler) putParameterTyped(ctx context.Context, req *putParameterReques
 		evType = events.SSMParameterUpdated
 	}
 	h.publishCtx(ctx, evType, req.Name)
-	return &putParameterResponse{Version: rec.Version(), Tier: "Standard"}, nil
+	return &putParameterResponse{Version: rec.Version(), Tier: rec.Tier}, nil
 }
 
 func (h *Handler) getParameterTyped(ctx context.Context, req *getParameterRequest) (*getParameterResponse, *protocol.AWSError) {
@@ -267,15 +275,7 @@ func (h *Handler) describeParametersTyped(ctx context.Context, req *describePara
 		if latest == nil {
 			continue
 		}
-		params = append(params, describeParameterWire{
-			Name:             rec.Name,
-			Type:             latest.Type,
-			Description:      rec.Description,
-			Version:          rec.Version(),
-			LastModifiedDate: float64(latest.CreatedAt.UnixMilli()) / 1000.0,
-			Policies:         []any{},
-			Tier:             "Standard",
-		})
+		params = append(params, h.toDescribeWire(rec, latest))
 	}
 	return &describeParametersResponse{Parameters: params, NextToken: page.NextToken}, nil
 }
@@ -311,14 +311,7 @@ func (h *Handler) getParameterHistoryTyped(ctx context.Context, req *getParamete
 
 	params := make([]historyParameterWire, 0, len(page.Items))
 	for _, item := range page.Items {
-		params = append(params, historyParameterWire{
-			Name:             rec.Name,
-			Type:             item.v.Type,
-			Value:            item.v.Value,
-			Version:          item.version,
-			LastModifiedDate: float64(item.v.CreatedAt.UnixMilli()) / 1000.0,
-			Tier:             "Standard",
-		})
+		params = append(params, h.toHistoryWire(rec, item.v, item.version))
 	}
 	return &parameterHistoryResponse{Parameters: params, NextToken: page.NextToken}, nil
 }
