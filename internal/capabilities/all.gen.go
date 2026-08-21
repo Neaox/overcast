@@ -1394,7 +1394,7 @@ var AllCapabilities = []Capability{
 	{Service: "ssm", Operation: "GetServiceSetting", Category: "Advanced/misc", Status: StatusUnsupported, Notes: "Returns 501", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "ssm", Operation: "LabelParameterVersion", Category: "Parameters", Status: StatusUnsupported, Notes: "Returns 501", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "ssm", Operation: "ListTagsForResource", Category: "General", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "ssm", Operation: "PutParameter", Category: "General", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "ssm", Operation: "PutParameter", Category: "General", Status: StatusSupported, Notes: "Description, Tier, DataType, AllowedPattern and Policies are stored and echoed back rather than a fixed default; Policies is stored as given and expanded into ParameterInlinePolicy entries on read", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ssm", Operation: "RegisterDefaultPatchBaseline", Category: "Advanced/misc", Status: StatusUnsupported, Notes: "Returns 501", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "ssm", Operation: "RemoveTagsFromResource", Category: "Tags", Status: StatusSupported, Notes: "Removes tags from a parameter", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "ssm", Operation: "SendCommand", Category: "Advanced/misc", Status: StatusUnsupported, Notes: "Returns 501", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},

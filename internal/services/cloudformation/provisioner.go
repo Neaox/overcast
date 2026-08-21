@@ -5374,6 +5374,110 @@ func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _
 
 type ssmParameterHandler struct{}
 
+// ssmParameterScalars pulls the PutParameter-shaped scalars off an
+// AWS::SSM::Parameter resource's properties. Every field is optional except
+// Value, which the caller validates separately.
+func ssmParameterScalars(props map[string]any) map[string]any {
+	body := map[string]any{}
+	for prop, wireKey := range map[string]string{
+		"Description":    "Description",
+		"Tier":           "Tier",
+		"DataType":       "DataType",
+		"AllowedPattern": "AllowedPattern",
+		"Policies":       "Policies",
+	} {
+		if v, _ := props[prop].(string); v != "" {
+			body[wireKey] = v
+		}
+	}
+	return body
+}
+
+// ssmParameterTagsFromProps converts AWS::SSM::Parameter's Tags property to a
+// plain map. Unlike most taggable resources, SSM::Parameter renders Tags as a
+// JSON object of key to value rather than a list of {Key, Value} pairs:
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html#cfn-ssm-parameter-tags
+// The list shape is accepted too, defensively, in case a template supplies it.
+func ssmParameterTagsFromProps(raw any) map[string]string {
+	switch v := raw.(type) {
+	case map[string]any:
+		if len(v) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			s, _ := val.(string)
+			out[k] = s
+		}
+		return out
+	case []any:
+		return mergeResourceTags(nil, v)
+	default:
+		return nil
+	}
+}
+
+// addSSMParameterTags and removeSSMParameterTags dispatch to SSM's own tag
+// operations rather than folding Tags into PutParameter: PutParameter's Tags
+// field only applies at creation and is rejected together with Overwrite, so
+// AddTagsToResource/RemoveTagsFromResource is the only path that also covers
+// updates.
+func addSSMParameterTags(ctx context.Context, router http.Handler, region, name string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	tagList := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, map[string]string{"Key": k, "Value": v})
+	}
+	body := map[string]any{
+		"ResourceType": "Parameter",
+		"ResourceId":   name,
+		"Tags":         tagList,
+	}
+	if _, err := internalJSON(ctx, router, region, "AmazonSSM.AddTagsToResource", body); err != nil {
+		return fmt.Errorf("ssm AddTagsToResource: %w", err)
+	}
+	return nil
+}
+
+func removeSSMParameterTags(ctx context.Context, router http.Handler, region, name string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	body := map[string]any{
+		"ResourceType": "Parameter",
+		"ResourceId":   name,
+		"TagKeys":      keys,
+	}
+	if _, err := internalJSON(ctx, router, region, "AmazonSSM.RemoveTagsFromResource", body); err != nil {
+		return fmt.Errorf("ssm RemoveTagsFromResource: %w", err)
+	}
+	return nil
+}
+
+// reconcileSSMParameterTags diffs desired against previous and applies only
+// the change, mirroring updateLambdaTags' add/remove split.
+func reconcileSSMParameterTags(ctx context.Context, router http.Handler, region, name string, tags, prior map[string]string) error {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if err := addSSMParameterTags(ctx, router, region, name, added); err != nil {
+		return err
+	}
+	return removeSSMParameterTags(ctx, router, region, name, removed)
+}
+
 func (h *ssmParameterHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
@@ -5385,15 +5489,20 @@ func (h *ssmParameterHandler) Create(ctx context.Context, router http.Handler, _
 	}
 	value, _ := props["Value"].(string)
 
-	body := map[string]any{
-		"Name":  name,
-		"Type":  paramType,
-		"Value": value,
-	}
+	body := ssmParameterScalars(props)
+	body["Name"] = name
+	body["Type"] = paramType
+	body["Value"] = value
 	_, err := internalJSON(ctx, router, rCtx.Region, "AmazonSSM.PutParameter", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("ssm PutParameter: %w", err)
 	}
+
+	tags := mergeStackTags(rCtx.StackTags, ssmParameterTagsFromProps(props["Tags"]))
+	if err := addSSMParameterTags(ctx, router, rCtx.Region, name, tags); err != nil {
+		return "", nil, err
+	}
+
 	attrs := map[string]string{
 		"Type":  paramType,
 		"Value": value,
@@ -5407,7 +5516,7 @@ func (h *ssmParameterHandler) Delete(ctx context.Context, router http.Handler, _
 	return teardownError("DeleteParameter", rec, err)
 }
 
-func (h *ssmParameterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *ssmParameterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// Name is immutable in AWS — changing it forces replacement.
 	if n, ok := props["Name"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
@@ -5418,15 +5527,21 @@ func (h *ssmParameterHandler) Update(ctx context.Context, router http.Handler, _
 		paramType = "String"
 	}
 	value, _ := props["Value"].(string)
-	body := map[string]any{
-		"Name":      name,
-		"Type":      paramType,
-		"Value":     value,
-		"Overwrite": true,
-	}
+	body := ssmParameterScalars(props)
+	body["Name"] = name
+	body["Type"] = paramType
+	body["Value"] = value
+	body["Overwrite"] = true
 	if _, err := internalJSON(ctx, router, rCtx.Region, "AmazonSSM.PutParameter", body); err != nil {
 		return "", nil, fmt.Errorf("ssm PutParameter (overwrite): %w", err)
 	}
+
+	tags := mergeStackTags(rCtx.StackTags, ssmParameterTagsFromProps(props["Tags"]))
+	prior := mergeStackTags(rCtx.PreviousStackTags, ssmParameterTagsFromProps(oldProps["Tags"]))
+	if err := reconcileSSMParameterTags(ctx, router, rCtx.Region, name, tags, prior); err != nil {
+		return "", nil, failUpdate(fmt.Errorf("ssm tags: %w", err))
+	}
+
 	return name, map[string]string{"Type": paramType, "Value": value}, nil
 }
 

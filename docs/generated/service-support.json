@@ -6209,7 +6209,8 @@
         {
           "operation": "PutParameter",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Description, Tier, DataType, AllowedPattern and Policies are stored and echoed back rather than a fixed default; Policies is stored as given and expanded into ParameterInlinePolicy entries on read"
         },
         {
           "operation": "LabelParameterVersion",
