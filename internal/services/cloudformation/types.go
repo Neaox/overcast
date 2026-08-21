@@ -37,6 +37,13 @@ type Stack struct {
 	DeletedAt       *time.Time        `json:"DeletionTime,omitempty"`
 	Metadata        map[string]string `json:"Metadata,omitempty"`
 
+	// RetainExceptOnCreate opts the stack operation currently in flight into
+	// deleting the resources it created rather than leaving a rollback to
+	// orphan them — see parseRetainExceptOnCreate for what AWS defines it to
+	// mean. Like DisableRollback it belongs to the operation, so each
+	// Create/Update overwrites it as it starts.
+	RetainExceptOnCreate bool `json:"RetainExceptOnCreate,omitempty"`
+
 	// ClientRequestToken identifies the stack operation currently in flight,
 	// and is stamped onto every event that operation records. It belongs to
 	// the operation rather than to the stack, so each Create/Update/Delete

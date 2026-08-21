@@ -17,26 +17,28 @@ import (
 // ── Request types (json tags used by codec.Decode for form mapping) ───
 
 type createStackReq struct {
-	StackName          string           `json:"StackName"`
-	ClientRequestToken string           `json:"ClientRequestToken"`
-	TemplateBody       string           `json:"TemplateBody"`
-	TemplateURL        string           `json:"TemplateURL"`
-	RoleARN            string           `json:"RoleARN"`
-	DisableRollback    string           `json:"DisableRollback"`
-	Parameters         []cfnParamMember `json:"Parameters"`
-	Tags               []cfnTagMember   `json:"Tags"`
-	Capabilities       []string         `json:"Capabilities"`
+	StackName            string           `json:"StackName"`
+	ClientRequestToken   string           `json:"ClientRequestToken"`
+	TemplateBody         string           `json:"TemplateBody"`
+	TemplateURL          string           `json:"TemplateURL"`
+	RoleARN              string           `json:"RoleARN"`
+	DisableRollback      string           `json:"DisableRollback"`
+	RetainExceptOnCreate string           `json:"RetainExceptOnCreate"`
+	Parameters           []cfnParamMember `json:"Parameters"`
+	Tags                 []cfnTagMember   `json:"Tags"`
+	Capabilities         []string         `json:"Capabilities"`
 }
 
 type updateStackReq struct {
-	StackName          string           `json:"StackName"`
-	ClientRequestToken string           `json:"ClientRequestToken"`
-	TemplateBody       string           `json:"TemplateBody"`
-	TemplateURL        string           `json:"TemplateURL"`
-	DisableRollback    string           `json:"DisableRollback"`
-	Parameters         []cfnParamMember `json:"Parameters"`
-	Tags               *[]cfnTagMember  `json:"Tags"`
-	Capabilities       []string         `json:"Capabilities"`
+	StackName            string           `json:"StackName"`
+	ClientRequestToken   string           `json:"ClientRequestToken"`
+	TemplateBody         string           `json:"TemplateBody"`
+	TemplateURL          string           `json:"TemplateURL"`
+	DisableRollback      string           `json:"DisableRollback"`
+	RetainExceptOnCreate string           `json:"RetainExceptOnCreate"`
+	Parameters           []cfnParamMember `json:"Parameters"`
+	Tags                 *[]cfnTagMember  `json:"Tags"`
+	Capabilities         []string         `json:"Capabilities"`
 }
 
 type deleteStackReq struct {
@@ -73,9 +75,10 @@ type describeChangeSetReq struct {
 }
 
 type executeChangeSetReq struct {
-	StackName          string `json:"StackName"`
-	ChangeSetName      string `json:"ChangeSetName"`
-	ClientRequestToken string `json:"ClientRequestToken"`
+	StackName            string `json:"StackName"`
+	ChangeSetName        string `json:"ChangeSetName"`
+	ClientRequestToken   string `json:"ClientRequestToken"`
+	RetainExceptOnCreate string `json:"RetainExceptOnCreate"`
 }
 
 type deleteChangeSetReq struct {
@@ -268,24 +271,30 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 		return nil, aerr
 	}
 
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(req.RetainExceptOnCreate)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	params := typedCollectParams(req.Parameters)
 	tags := typedCollectTags(req.Tags)
 	caps := req.Capabilities
 
 	stack := &Stack{
-		StackName:          req.StackName,
-		StackID:            stackID,
-		Region:             region,
-		TemplateBody:       templateBody,
-		Parameters:         params,
-		Tags:               tags,
-		Capabilities:       caps,
-		RoleARN:            req.RoleARN,
-		DisableRollback:    disableRollback,
-		Status:             StatusCreateInProgress,
-		StatusReason:       "User Initiated",
-		CreatedAt:          h.clk.Now(),
-		ClientRequestToken: stackOperationToken(ctx, req.ClientRequestToken),
+		StackName:            req.StackName,
+		StackID:              stackID,
+		Region:               region,
+		TemplateBody:         templateBody,
+		Parameters:           params,
+		Tags:                 tags,
+		Capabilities:         caps,
+		RoleARN:              req.RoleARN,
+		DisableRollback:      disableRollback,
+		RetainExceptOnCreate: retainExceptOnCreate,
+		Status:               StatusCreateInProgress,
+		StatusReason:         "User Initiated",
+		CreatedAt:            h.clk.Now(),
+		ClientRequestToken:   stackOperationToken(ctx, req.ClientRequestToken),
 	}
 
 	if err := h.store.putStack(ctx, stack); err != nil {
@@ -321,6 +330,10 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	if !canUpdateStackFrom(stack.Status, disableRollback) {
 		return nil, stackNotUpdatableErr(stack)
 	}
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(req.RetainExceptOnCreate)
+	if aerr != nil {
+		return nil, aerr
+	}
 	previous := captureStackGeneration(stack)
 
 	// An update may carry no template at all, meaning "reuse the stack's",
@@ -355,6 +368,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	}
 
 	stack.DisableRollback = disableRollback
+	stack.RetainExceptOnCreate = retainExceptOnCreate
 	stack.TemplateBody = templateBody
 	beginStackOperation(ctx, stack, StatusUpdateInProgress, req.ClientRequestToken)
 	now := h.clk.Now()
@@ -631,6 +645,12 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		applyStackTags(stack, cs.Tags, true)
 	}
 	stack.TemplateBody = cs.TemplateBody
+
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(req.RetainExceptOnCreate)
+	if aerr != nil {
+		return nil, aerr
+	}
+	stack.RetainExceptOnCreate = retainExceptOnCreate
 
 	cs.ExecutionStatus = ExecStatusExecuteInProgress
 	_ = h.store.putChangeSet(ctx, cs)
