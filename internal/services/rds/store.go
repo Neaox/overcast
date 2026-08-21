@@ -185,7 +185,8 @@ type DBCluster struct {
 	//
 	//   - DeletionProtection is enforced: DeleteDBCluster refuses a protected
 	//     cluster, as AWS does.
-	//   - BackupRetentionPeriod, PreferredBackupWindow and
+	//   - BackupRetentionPeriod is validated against AWS's documented 1-35 and
+	//     defaults to 1, then recorded only; PreferredBackupWindow and
 	//     PreferredMaintenanceWindow are recorded only — Overcast takes no
 	//     backups and has no maintenance window to schedule anything in.
 	//   - DBClusterParameterGroup and VpcSecurityGroupIds are recorded only;
@@ -255,14 +256,14 @@ func (s *rdsStore) putDBInstance(ctx context.Context, inst *DBInstance) *protoco
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Set(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), inst.DBInstanceIdentifier), string(raw)); err != nil {
+	if err := s.store.Set(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(inst.DBInstanceIdentifier)), string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
 func (s *rdsStore) getDBInstance(ctx context.Context, id string) (*DBInstance, *protocol.AWSError) {
-	raw, ok, err := s.store.Get(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), id))
+	raw, ok, err := s.store.Get(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(id)))
 	if err != nil || !ok {
 		return nil, errDBInstanceNotFound(id)
 	}
@@ -281,7 +282,7 @@ func (s *rdsStore) deleteDBInstance(ctx context.Context, id string) *protocol.AW
 			return aerr
 		}
 	}
-	if err := s.store.Delete(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
+	if err := s.store.Delete(ctx, nsDBInstances, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(id))); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -418,11 +419,17 @@ func errMasterPasswordNotApplied(id, detail string) *protocol.AWSError {
 	}
 }
 
+// errDBSubnetGroupNotFound is a 404, not a 400. AWS documents
+// DBSubnetGroupNotFoundFault as HTTP 404 on every operation that raises it —
+// CreateDBCluster, CreateDBInstance, DescribeDBSubnetGroups and
+// DeleteDBSubnetGroup among them — and an SDK that branches on the status
+// rather than the code treats a 400 as a malformed request it should not
+// retry or handle as "absent".
 func errDBSubnetGroupNotFound(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "DBSubnetGroupNotFoundFault",
 		Message:    fmt.Sprintf("DBSubnetGroup '%s' not found.", name),
-		HTTPStatus: http.StatusBadRequest,
+		HTTPStatus: http.StatusNotFound,
 	}
 }
 
@@ -665,14 +672,14 @@ func (s *rdsStore) putDBCluster(ctx context.Context, c *DBCluster) *protocol.AWS
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Set(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), c.DBClusterIdentifier), string(raw)); err != nil {
+	if err := s.store.Set(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(c.DBClusterIdentifier)), string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
 }
 
 func (s *rdsStore) getDBCluster(ctx context.Context, id string) (*DBCluster, *protocol.AWSError) {
-	raw, ok, err := s.store.Get(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), id))
+	raw, ok, err := s.store.Get(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(id)))
 	if err != nil || !ok {
 		return nil, errDBClusterNotFound(id)
 	}
@@ -689,7 +696,7 @@ func (s *rdsStore) deleteDBCluster(ctx context.Context, id string) *protocol.AWS
 			return aerr
 		}
 	}
-	if err := s.store.Delete(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), id)); err != nil {
+	if err := s.store.Delete(ctx, nsClusters, serviceutil.RegionKey(s.region(ctx), normalizeDBIdentifier(id))); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

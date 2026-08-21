@@ -131,9 +131,17 @@ func TestModifyDBCluster_absentPropertiesAreLeftAlone(t *testing.T) {
 	}
 }
 
-// BackupRetentionPeriod=0 and DeletionProtection=false are requests, not
-// absences: a plain int and a plain bool cannot tell "turn it off" from "did
-// not mention it", which is the same trap MultiAZ fell into on ModifyDBInstance.
+// DeletionProtection=false is a request, not an absence: a plain bool cannot
+// tell "turn it off" from "did not mention it", which is the same trap MultiAZ
+// fell into on ModifyDBInstance.
+//
+// BackupRetentionPeriod made the same point until its documented range was
+// enforced. It cannot any more: AWS gives ModifyDBCluster the same constraint
+// as CreateDBCluster — "Must be a value from 1 to 35" — so a cluster retention
+// of 0 is not a request the API accepts, and the pointer on that field now
+// earns its place on the create path instead, where nil selects the default of
+// 1 rather than storing a zero. An explicit minimum still proves the sent-vs-
+// absent distinction, and an explicit zero is now refused rather than stored.
 func TestModifyDBCluster_zeroValuesAreRequestsNotAbsences(t *testing.T) {
 	h := newClusterTestHandler(t)
 	ctx := context.Background()
@@ -148,18 +156,31 @@ func TestModifyDBCluster_zeroValuesAreRequestsNotAbsences(t *testing.T) {
 	}
 	if _, aerr := h.modifyDBClusterTyped(ctx, &modifyDBClusterReq{
 		DBClusterIdentifier:   "cl",
-		BackupRetentionPeriod: intPtr(0),
+		BackupRetentionPeriod: intPtr(clusterBackupRetentionMin),
 		DeletionProtection:    boolPtr(false),
 	}); aerr != nil {
 		t.Fatalf("ModifyDBCluster (disable): %s", aerr.Message)
 	}
 
 	got, _ := h.store.getDBCluster(ctx, "cl")
-	if got.BackupRetentionPeriod != 0 {
-		t.Errorf("BackupRetentionPeriod = %d, want 0 — an explicit zero was ignored", got.BackupRetentionPeriod)
+	if got.BackupRetentionPeriod != clusterBackupRetentionMin {
+		t.Errorf("BackupRetentionPeriod = %d, want %d — an explicit value was ignored",
+			got.BackupRetentionPeriod, clusterBackupRetentionMin)
 	}
 	if got.DeletionProtection {
 		t.Error("DeletionProtection = true, want false — an explicit false was ignored")
+	}
+
+	// The value the old expectation used is the one AWS refuses.
+	_, aerr := h.modifyDBClusterTyped(ctx, &modifyDBClusterReq{
+		DBClusterIdentifier:   "cl",
+		BackupRetentionPeriod: intPtr(0),
+	})
+	if aerr == nil {
+		t.Fatal("ModifyDBCluster accepted BackupRetentionPeriod=0, which AWS documents as out of range")
+	}
+	if aerr.Code != "InvalidParameterValue" {
+		t.Errorf("code = %q, want InvalidParameterValue", aerr.Code)
 	}
 }
 

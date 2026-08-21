@@ -276,8 +276,9 @@ the difference matters if you are relying on it:
 | `MasterUserPassword` | Applied to every member's engine — see above |
 | `EngineVersion`, `Port` | Recorded and reported |
 | `DeletionProtection` | **Enforced**: `DeleteDBCluster` refuses a protected cluster, and a stack delete fails rather than removing it |
-| `BackupRetentionPeriod`, `PreferredBackupWindow`, `PreferredMaintenanceWindow` | Recorded only — Overcast takes no backups and runs no maintenance |
-| `DBClusterParameterGroupName` | Recorded only — engine parameters are not applied to the container |
+| `BackupRetentionPeriod` | **Validated**, then recorded only: held to AWS's documented 1–35 and defaulting to 1, but Overcast takes no backups |
+| `PreferredBackupWindow`, `PreferredMaintenanceWindow` | Recorded only — Overcast takes no backups and runs no maintenance |
+| `DBClusterParameterGroupName` | Recorded only — engine parameters are not applied to the container, and the name is **not** checked against an existing group, because Overcast implements no cluster parameter group operations |
 | `VpcSecurityGroupIds` | Recorded only — security groups are not enforced against a database |
 | `EnableCloudwatchLogsExports` | Recorded only — no engine log is shipped to CloudWatch Logs |
 

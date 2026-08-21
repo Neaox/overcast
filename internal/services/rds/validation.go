@@ -86,3 +86,85 @@ func reservedDatabaseName(engine, database string) bool {
 	}
 	return false
 }
+
+// dbIdentifierMaxLen is the limit AWS documents for DBClusterIdentifier on an
+// Aurora cluster and for DBInstanceIdentifier alike. Multi-AZ DB clusters cap at
+// 52, which Overcast never creates.
+const dbIdentifierMaxLen = 63
+
+// normalizeDBIdentifier applies the one transformation AWS documents for both
+// identifiers: "This parameter is stored as a lowercase string."
+//
+// It is applied on the way in and again wherever a record is keyed, so
+// "MyCluster" and "mycluster" name one resource here as they do on AWS. Doing
+// only the first half would be worse than doing neither: a create would answer
+// with an identifier that a describe for the name the caller sent could not
+// find.
+func normalizeDBIdentifier(id string) string { return strings.ToLower(id) }
+
+// validateDBIdentifier enforces the shape AWS documents in identical words for
+// DBClusterIdentifier and DBInstanceIdentifier:
+//
+//	Must contain from 1 to 63 letters, numbers, or hyphens.
+//	First character must be a letter.
+//	Can't end with a hyphen or contain two consecutive hyphens.
+//
+// Expects an already-normalized identifier. param names the request parameter so
+// the message says which one was wrong, as AWS's does.
+func validateDBIdentifier(param, id string) *protocol.AWSError {
+	valid := len(id) > 0 && len(id) <= dbIdentifierMaxLen &&
+		asciiLetter(id[0]) &&
+		!strings.HasSuffix(id, "-") &&
+		!strings.Contains(id, "--")
+	if valid {
+		for i := 0; i < len(id); i++ {
+			c := id[i]
+			if asciiLetter(c) || (c >= '0' && c <= '9') || c == '-' {
+				continue
+			}
+			valid = false
+			break
+		}
+	}
+	if valid {
+		return nil
+	}
+	return errInvalidParameterValue(fmt.Sprintf(
+		"The parameter %s is not a valid identifier: %q. Identifiers must begin with a letter; "+
+			"must contain only ASCII letters, digits, and hyphens; and must not end with a hyphen "+
+			"or contain two consecutive hyphens.", param, id))
+}
+
+// Cluster backup retention, from CreateDBCluster's "Must be a value from 1 to
+// 35". Note the asymmetry with CreateDBInstance, which documents 0 to 35 because
+// 0 disables automated backups there — a cluster has no such setting, so 0 is
+// not a value it can be asked for. Overcast does not model instance-level
+// retention at all, so only the cluster rule has somewhere to live.
+const (
+	clusterBackupRetentionMin     = 1
+	clusterBackupRetentionMax     = 35
+	clusterBackupRetentionDefault = 1
+)
+
+func validateClusterBackupRetentionPeriod(days int) *protocol.AWSError {
+	if days < clusterBackupRetentionMin || days > clusterBackupRetentionMax {
+		return errInvalidParameterValue(fmt.Sprintf(
+			"The parameter BackupRetentionPeriod must be a value from %d to %d: %d.",
+			clusterBackupRetentionMin, clusterBackupRetentionMax, days))
+	}
+	return nil
+}
+
+// Port bounds, from the "Valid Values: 1150-65535" both create operations carry.
+const (
+	dbPortMin = 1150
+	dbPortMax = 65535
+)
+
+func validateDBPort(port int) *protocol.AWSError {
+	if port < dbPortMin || port > dbPortMax {
+		return errInvalidParameterValue(fmt.Sprintf(
+			"The parameter Port must be a value from %d to %d: %d.", dbPortMin, dbPortMax, port))
+	}
+	return nil
+}
