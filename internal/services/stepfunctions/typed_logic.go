@@ -11,10 +11,12 @@ import (
 )
 
 type createStateMachineRequest struct {
-	Name       string `json:"name" cbor:"name"`
-	Definition string `json:"definition" cbor:"definition"`
-	RoleArn    string `json:"roleArn" cbor:"roleArn"`
-	Type       string `json:"type" cbor:"type"`
+	Name                 string         `json:"name" cbor:"name"`
+	Definition           string         `json:"definition" cbor:"definition"`
+	RoleArn              string         `json:"roleArn" cbor:"roleArn"`
+	Type                 string         `json:"type" cbor:"type"`
+	LoggingConfiguration map[string]any `json:"loggingConfiguration" cbor:"loggingConfiguration"`
+	TracingConfiguration map[string]any `json:"tracingConfiguration" cbor:"tracingConfiguration"`
 }
 
 type createStateMachineResponse struct {
@@ -27,13 +29,27 @@ type describeStateMachineRequest struct {
 }
 
 type describeStateMachineResponse struct {
-	StateMachineArn string  `json:"stateMachineArn" cbor:"stateMachineArn"`
-	Name            string  `json:"name" cbor:"name"`
-	Definition      string  `json:"definition" cbor:"definition"`
-	RoleArn         string  `json:"roleArn" cbor:"roleArn"`
-	Type            string  `json:"type" cbor:"type"`
-	Status          string  `json:"status" cbor:"status"`
-	CreationDate    float64 `json:"creationDate" cbor:"creationDate"`
+	StateMachineArn      string         `json:"stateMachineArn" cbor:"stateMachineArn"`
+	Name                 string         `json:"name" cbor:"name"`
+	Definition           string         `json:"definition" cbor:"definition"`
+	RoleArn              string         `json:"roleArn" cbor:"roleArn"`
+	Type                 string         `json:"type" cbor:"type"`
+	Status               string         `json:"status" cbor:"status"`
+	CreationDate         float64        `json:"creationDate" cbor:"creationDate"`
+	LoggingConfiguration map[string]any `json:"loggingConfiguration" cbor:"loggingConfiguration"`
+	TracingConfiguration map[string]any `json:"tracingConfiguration" cbor:"tracingConfiguration"`
+}
+
+type updateStateMachineRequest struct {
+	StateMachineArn      string         `json:"stateMachineArn" cbor:"stateMachineArn"`
+	Definition           string         `json:"definition" cbor:"definition"`
+	RoleArn              string         `json:"roleArn" cbor:"roleArn"`
+	LoggingConfiguration map[string]any `json:"loggingConfiguration" cbor:"loggingConfiguration"`
+	TracingConfiguration map[string]any `json:"tracingConfiguration" cbor:"tracingConfiguration"`
+}
+
+type updateStateMachineResponse struct {
+	UpdateDate float64 `json:"updateDate" cbor:"updateDate"`
 }
 
 type listStateMachinesRequest struct{}
@@ -103,13 +119,15 @@ func (h *Handler) createStateMachineTyped(ctx context.Context, req *createStateM
 	now := h.clk.Now()
 	arn := protocol.ARN(h.cfg.Region, h.cfg.AccountID, "states", "stateMachine:"+req.Name)
 	sm := &StateMachine{
-		Name:       req.Name,
-		ARN:        arn,
-		Definition: req.Definition,
-		RoleArn:    req.RoleArn,
-		Type:       smType,
-		Status:     "ACTIVE",
-		CreatedAt:  now,
+		Name:                 req.Name,
+		ARN:                  arn,
+		Definition:           req.Definition,
+		RoleArn:              req.RoleArn,
+		Type:                 smType,
+		Status:               "ACTIVE",
+		CreatedAt:            now,
+		LoggingConfiguration: req.LoggingConfiguration,
+		TracingConfiguration: req.TracingConfiguration,
 	}
 	if err := h.store.PutStateMachine(ctx, sm); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
@@ -131,14 +149,54 @@ func (h *Handler) describeStateMachineTyped(ctx context.Context, req *describeSt
 		return nil, errSMNotFound(req.StateMachineArn)
 	}
 	return &describeStateMachineResponse{
-		StateMachineArn: sm.ARN,
-		Name:            sm.Name,
-		Definition:      sm.Definition,
-		RoleArn:         sm.RoleArn,
-		Type:            sm.Type,
-		Status:          sm.Status,
-		CreationDate:    float64(sm.CreatedAt.UnixMilli()) / 1000.0,
+		StateMachineArn:      sm.ARN,
+		Name:                 sm.Name,
+		Definition:           sm.Definition,
+		RoleArn:              sm.RoleArn,
+		Type:                 sm.Type,
+		Status:               sm.Status,
+		CreationDate:         float64(sm.CreatedAt.UnixMilli()) / 1000.0,
+		LoggingConfiguration: sfnLoggingConfigOrDefault(sm.LoggingConfiguration),
+		TracingConfiguration: sfnTracingConfigOrDefault(sm.TracingConfiguration),
 	}, nil
+}
+
+// updateStateMachineTyped implements UpdateStateMachine. Every field besides
+// StateMachineArn is optional and left unchanged when omitted, matching real
+// AWS: an update supplies only the properties it wants to change.
+//
+// Versioning (publish/versionDescription, stateMachineVersionArn in the
+// response) is out of scope — Overcast does not model state machine
+// versions or aliases anywhere else either.
+func (h *Handler) updateStateMachineTyped(ctx context.Context, req *updateStateMachineRequest) (*updateStateMachineResponse, *protocol.AWSError) {
+	name := extractSMName(req.StateMachineArn)
+	sm, err := h.store.GetStateMachine(ctx, name)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if sm == nil {
+		return nil, errSMNotFound(req.StateMachineArn)
+	}
+	if req.Definition != "" {
+		if aerr := validateDefinitionForCreate(req.Definition); aerr != nil {
+			return nil, aerr
+		}
+		sm.Definition = req.Definition
+	}
+	if req.RoleArn != "" {
+		sm.RoleArn = req.RoleArn
+	}
+	if req.LoggingConfiguration != nil {
+		sm.LoggingConfiguration = req.LoggingConfiguration
+	}
+	if req.TracingConfiguration != nil {
+		sm.TracingConfiguration = req.TracingConfiguration
+	}
+	if err := h.store.PutStateMachine(ctx, sm); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	h.publishCtx(ctx, events.SFNStateMachineUpdated, events.ResourcePayload{Name: name})
+	return &updateStateMachineResponse{UpdateDate: float64(h.clk.Now().UnixMilli()) / 1000.0}, nil
 }
 
 func (h *Handler) listStateMachinesTyped(ctx context.Context, _ *listStateMachinesRequest) (*listStateMachinesResponse, *protocol.AWSError) {

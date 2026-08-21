@@ -1415,6 +1415,7 @@ var AllCapabilities = []Capability{
 	{Service: "stepfunctions", Operation: "StopExecution", Category: "Executions", Status: StatusSupported, Notes: "Interrupts a running execution; it reaches ABORTED asynchronously", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "stepfunctions", Operation: "TagResource", Category: "Tags", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "stepfunctions", Operation: "UntagResource", Category: "Tags", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "stepfunctions", Operation: "UpdateStateMachine", Category: "State machines", Status: StatusSupported, Notes: "Definition/roleArn/loggingConfiguration/tracingConfiguration; no versioning (publish)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sts", Operation: "AssumeRole", Category: "General", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sts", Operation: "AssumeRoleWithSAML", Category: "Unsupported", Status: StatusUnsupported, Notes: "Returns NotImplemented", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "sts", Operation: "AssumeRoleWithWebIdentity", Category: "General", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

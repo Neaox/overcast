@@ -63,6 +63,7 @@ func (h *Handler) initOps() {
 		"ListStateMachines":    h.ListStateMachines,
 		"StartExecution":       h.StartExecution,
 		"DeleteStateMachine":   h.DeleteStateMachine,
+		"UpdateStateMachine":   h.typedJSONHandler("UpdateStateMachine"),
 		"TagResource":          h.TagResource,
 		"UntagResource":        h.UntagResource,
 		"ListTagsForResource":  h.ListTagsForResource,
@@ -107,10 +108,12 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 
 func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name       string `json:"name"`
-		Definition string `json:"definition"`
-		RoleArn    string `json:"roleArn"`
-		Type       string `json:"type"`
+		Name                 string         `json:"name"`
+		Definition           string         `json:"definition"`
+		RoleArn              string         `json:"roleArn"`
+		Type                 string         `json:"type"`
+		LoggingConfiguration map[string]any `json:"loggingConfiguration"`
+		TracingConfiguration map[string]any `json:"tracingConfiguration"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -167,13 +170,15 @@ func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
 	now := h.clk.Now()
 	arn := protocol.ARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "states", "stateMachine:"+req.Name)
 	sm := &StateMachine{
-		Name:       req.Name,
-		ARN:        arn,
-		Definition: req.Definition,
-		RoleArn:    req.RoleArn,
-		Type:       smType,
-		Status:     "ACTIVE",
-		CreatedAt:  now,
+		Name:                 req.Name,
+		ARN:                  arn,
+		Definition:           req.Definition,
+		RoleArn:              req.RoleArn,
+		Type:                 smType,
+		Status:               "ACTIVE",
+		CreatedAt:            now,
+		LoggingConfiguration: req.LoggingConfiguration,
+		TracingConfiguration: req.TracingConfiguration,
 	}
 
 	if err := h.store.PutStateMachine(r.Context(), sm); err != nil {
@@ -211,14 +216,38 @@ func (h *Handler) DescribeStateMachine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"stateMachineArn": sm.ARN,
-		"name":            sm.Name,
-		"definition":      sm.Definition,
-		"roleArn":         sm.RoleArn,
-		"type":            sm.Type,
-		"status":          sm.Status,
-		"creationDate":    float64(sm.CreatedAt.UnixMilli()) / 1000.0,
+		"stateMachineArn":      sm.ARN,
+		"name":                 sm.Name,
+		"definition":           sm.Definition,
+		"roleArn":              sm.RoleArn,
+		"type":                 sm.Type,
+		"status":               sm.Status,
+		"creationDate":         float64(sm.CreatedAt.UnixMilli()) / 1000.0,
+		"loggingConfiguration": sfnLoggingConfigOrDefault(sm.LoggingConfiguration),
+		"tracingConfiguration": sfnTracingConfigOrDefault(sm.TracingConfiguration),
 	})
+}
+
+// sfnLoggingConfigOrDefault and sfnTracingConfigOrDefault return AWS's
+// documented defaults — logging OFF, tracing disabled — when the state
+// machine did not configure either, so DescribeStateMachine always echoes
+// the shape real AWS returns instead of omitting the field.
+func sfnLoggingConfigOrDefault(v map[string]any) map[string]any {
+	if v != nil {
+		return v
+	}
+	return map[string]any{
+		"level":                "OFF",
+		"includeExecutionData": false,
+		"destinations":         []any{},
+	}
+}
+
+func sfnTracingConfigOrDefault(v map[string]any) map[string]any {
+	if v != nil {
+		return v
+	}
+	return map[string]any{"enabled": false}
 }
 
 // ── ListStateMachines ─────────────────────────────────────────────────────────

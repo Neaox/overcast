@@ -260,6 +260,7 @@ export const EventType = {
   // ── Step Functions ──────────────────────────────────────────────────────
   stepfunctions: {
     StateMachineCreated: "stepfunctions:StateMachineCreated",
+    StateMachineUpdated: "stepfunctions:StateMachineUpdated",
     StateMachineDeleted: "stepfunctions:StateMachineDeleted",
     ExecutionStarted: "stepfunctions:ExecutionStarted",
   },

@@ -114,7 +114,7 @@ history.
 
 | Category       | ✅ Supported |
 | -------------- | ------------ |
-| State machines | 5            |
+| State machines | 6            |
 | Executions     | 6            |
 | Tags           | 3            |
 
@@ -124,13 +124,14 @@ history.
 
 ### State machines
 
-| Operation                          | Status       | Notes                                                              | AWS Docs                                                                                                         |
-| ---------------------------------- | ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `CreateStateMachine`               | ✅ Supported | Validates the ASL; idempotent — returns existing if name+def match | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_CreateStateMachine.html)               |
-| `DescribeStateMachine`             | ✅ Supported |                                                                    | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeStateMachine.html)             |
-| `ListStateMachines`                | ✅ Supported |                                                                    | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListStateMachines.html)                |
-| `DeleteStateMachine`               | ✅ Supported |                                                                    | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DeleteStateMachine.html)               |
-| `DescribeStateMachineForExecution` | ✅ Supported |                                                                    | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeStateMachineForExecution.html) |
+| Operation                          | Status       | Notes                                                                                 | AWS Docs                                                                                                         |
+| ---------------------------------- | ------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `CreateStateMachine`               | ✅ Supported | Validates the ASL; idempotent — returns existing if name+def match                    | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_CreateStateMachine.html)               |
+| `DescribeStateMachine`             | ✅ Supported |                                                                                       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeStateMachine.html)             |
+| `ListStateMachines`                | ✅ Supported |                                                                                       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListStateMachines.html)                |
+| `DeleteStateMachine`               | ✅ Supported |                                                                                       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DeleteStateMachine.html)               |
+| `UpdateStateMachine`               | ✅ Supported | Definition/roleArn/loggingConfiguration/tracingConfiguration; no versioning (publish) | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_UpdateStateMachine.html)               |
+| `DescribeStateMachineForExecution` | ✅ Supported |                                                                                       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_DescribeStateMachineForExecution.html) |
 
 ### Executions
 
