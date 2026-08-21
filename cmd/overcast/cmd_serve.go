@@ -112,7 +112,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	prof.mark("logger init")
 
 	if cfg.SigV4Validate {
-		logger.Warn("OVERCAST_SIGV4_VALIDATE is set but SigV4 validation is not yet implemented — all requests are accepted")
+		logger.Info("SigV4 signature validation enabled — requests with invalid signatures are rejected with 403 InvalidSignatureException; secrets resolve through IAM user access keys and STS session credentials, falling back to \"test\"")
 	}
 	if cfg.Debug {
 		logger.Warn("debug endpoints enabled (/_overcast/debug/*) — do not expose this port publicly")

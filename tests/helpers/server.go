@@ -491,8 +491,8 @@ func WithEC2VPCStrategy(strategy string) Option {
 }
 
 // WithSigV4Validate enables or disables SigV4 signature validation for the
-// test server. When enabled, unsigned requests and requests with invalid
-// signatures are rejected with a 403. Default is false.
+// test server. When enabled, requests with invalid signatures are rejected
+// with a 403; unsigned requests still pass through. Default is false.
 func WithSigV4Validate(enabled bool) Option {
 	return func(so *serverOptions) {
 		so.cfg.SigV4Validate = enabled
