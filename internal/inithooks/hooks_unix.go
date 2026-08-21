@@ -19,3 +19,10 @@ func buildScriptCmd(ctx context.Context, path string) *exec.Cmd {
 	}
 	return cmd
 }
+
+// runScriptCmd starts and waits for cmd. On Unix, buildScriptCmd already set
+// up everything needed (process group + Cancel) for a timeout to take down
+// the whole tree, so this is a plain Run.
+func runScriptCmd(cmd *exec.Cmd) error {
+	return cmd.Run()
+}

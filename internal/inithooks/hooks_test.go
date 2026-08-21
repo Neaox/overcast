@@ -2,6 +2,7 @@ package inithooks
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -304,12 +305,16 @@ func TestRun_timeout(t *testing.T) {
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
-	// The sleep only has to outlive the 100ms timeout. Keep it short: on
-	// Windows there is no process-group kill, so the orphaned sleep holds an
-	// inherited stdout handle and `go test` waits for it before reporting.
 	writeScript(t, readyDir, "01_slow.sh", "#!/bin/sh\ntrap 'exit 0' TERM\nsleep 5 &\nwait\n")
 
 	runner := NewRunner([]string{base}, nil, 100*time.Millisecond, zaptest.NewLogger(t))
+	// Route hook output away from the process's real stdout/stderr. If a
+	// descendant of the timed-out script somehow survives despite the
+	// tree-kill in runScriptCmd, it should not be able to hold this test
+	// binary's own output pipe open (see TestRun_timeout_killsDescendants
+	// and issue #947, which this defends in depth against).
+	runner.Stdout = io.Discard
+	runner.Stderr = io.Discard
 
 	// When: we run the READY stage
 	runner.Run(context.Background(), StageReady)
@@ -319,4 +324,51 @@ func TestRun_timeout(t *testing.T) {
 	assert.True(t, status.Completed)
 	require.Len(t, status.Scripts, 1)
 	assert.Equal(t, StateError, status.Scripts[0].State)
+}
+
+// TestRun_timeout_killsDescendants proves the actual defect behind issue
+// #947: a timed-out hook's whole process tree must be terminated, not just
+// the shell. On Windows, TerminateProcess (the only cancellation mechanism
+// exec.CommandContext has there) reaches the shell alone; a trap can't help
+// either, since TerminateProcess delivers no signal for it to catch. Any
+// descendant the shell backgrounded with `&` is orphaned and keeps running,
+// still holding whatever handles it inherited — including, under `go test`,
+// the test binary's own stdout pipe, which is what actually reds the
+// pre-push gate.
+//
+// The script backgrounds a delayed write to a marker file. If the tree is
+// genuinely killed, the marker is never written; if only the shell dies, the
+// backgrounded write survives the timeout and writes it a little later. The
+// wait below is bounded comfortably below 1s either way, so a regression
+// fails fast here instead of reintroducing a 60s stall in the real suite.
+func TestRun_timeout_killsDescendants(t *testing.T) {
+	requirePOSIXShell(t)
+
+	base := t.TempDir()
+	readyDir := filepath.Join(base, "ready.d")
+	require.NoError(t, os.MkdirAll(readyDir, 0o755))
+
+	marker := filepath.Join(t.TempDir(), "still-alive")
+	script := "#!/bin/sh\n" +
+		"trap 'exit 0' TERM\n" +
+		"(sleep 0.3; echo alive > " + shellPath(marker) + ") &\n" +
+		"wait\n"
+	writeScript(t, readyDir, "01_slow.sh", script)
+
+	runner := NewRunner([]string{base}, nil, 100*time.Millisecond, zaptest.NewLogger(t))
+	runner.Stdout = io.Discard
+	runner.Stderr = io.Discard
+
+	// When: we run the READY stage, which times out after 100ms
+	runner.Run(context.Background(), StageReady)
+
+	status := runner.StageStatus(StageReady)
+	require.Len(t, status.Scripts, 1)
+	assert.Equal(t, StateError, status.Scripts[0].State)
+
+	// Then: the backgrounded write never lands, because the whole tree was
+	// killed well before its 300ms delay elapsed.
+	time.Sleep(600 * time.Millisecond)
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "grandchild process outlived the timed-out hook and wrote %s", marker)
 }
