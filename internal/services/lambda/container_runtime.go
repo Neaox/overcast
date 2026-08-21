@@ -1268,6 +1268,14 @@ type containerInstance struct {
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 
+	// logStreamEverOpened is true once this container's Docker log connection
+	// has succeeded at least once in its life. It is what lets dockerSilentSince
+	// tell a container's very first connect — which races container start, so a
+	// cold-started invocation's wait can begin before it clears — apart from a
+	// later reconnect backoff, where "no stream open" really does mean the
+	// pipeline has nothing outstanding. See dockerSilentSince.
+	logStreamEverOpened atomic.Bool
+
 	// tailUnclaimed records that a tail wait gave up before its invocation's
 	// output arrived, so whatever lands next belongs to an invocation that has
 	// already answered. Guarded by tailMu, along with the boundary that wait was
@@ -1906,7 +1914,8 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 // outstanding, which is not the same as a negative answer and must not be timed
 // as one.
 //
-// The three states of logParkedAt map onto it directly:
+// The three states of logParkedAt map onto it directly, except that "not
+// reading" splits in two depending on logStreamEverOpened (issue #1160):
 //
 //   - Parked in a Read. That Read covers everything Docker held from the moment
 //     it began, so silence counts from then — or from the start of the wait if
@@ -1915,12 +1924,30 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 //   - Between Reads. The reader is somewhere in the loop that takes it back to
 //     the stream and cannot be told anything until it arrives; there is no
 //     question outstanding and no silence to measure.
-//   - Not reading, because no stream is open. Nothing can arrive over a
-//     connection that does not exist, so there is nothing to wait for and the
-//     caller's own clock is all there is to go on.
+//   - Not reading, no stream ever opened. The very first ContainerLogsStream
+//     call for this container is still outstanding — a Docker daemon round
+//     trip that races container start rather than following it, and can lose
+//     that race under daemon contention. No question has reached Docker yet,
+//     so there is nothing to time against the wait's own clock: report false,
+//     the same as "between Reads", and let the wait's own deadline (100 ms on
+//     the tail path, 2 s on the drain path) be the only bound. Before this
+//     distinction existed, this state was folded into the one below, and a
+//     slow first connect was timed as "asked and told nothing" from the wait's
+//     first tick — which is what let a genuinely-arriving cold-start line lose
+//     the race against a 25 ms bound sized for an already-open reader.
+//   - Not reading, but the stream has opened before. This is an ordinary
+//     reconnect backoff, which opens again in 50 ms, or a stream that is never
+//     coming back at all. Either way a connection that has already proven it
+//     can open once is not worth extending a bound for: holding on could not
+//     usefully outlast the backoff, and this container has already shown
+//     Docker will talk to it, so there is less reason to assume it just hasn't
+//     had the chance yet. Time it from the start of the wait, exactly as
+//     before this distinction existed.
 func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (time.Time, bool) {
 	switch parked := ci.logParkedAt.Load(); {
 	case parked == logReaderBetweenReads:
+		return time.Time{}, false
+	case parked == logReaderNotReading && !ci.logStreamEverOpened.Load():
 		return time.Time{}, false
 	case parked > waitStart.UnixNano():
 		return time.Unix(0, parked), true
@@ -2026,13 +2053,21 @@ const logDrainFirstReadGrace = 25 * time.Millisecond
 // trace that says why it died. #873 was this same misreading on the tail path,
 // where it cost a truncated tail; here it costs the output outright.
 //
-// A reader with no stream open at all (logReaderNotReading) is the one state
-// this does not hold for, and dockerSilentSince times it from the start of the
-// wait. That is right here as well as on the tail path: nothing arrives over a
-// connection that does not exist, a reconnect backoff opens at 50 ms — twice
-// the grace, so holding on could not outlast one anyway — and a stream that
-// can never be opened at all would otherwise park every teardown on the 2 s
-// deadline.
+// A reader with no stream open at all (logReaderNotReading) splits in two
+// (issue #1160). If the stream has connected before, dockerSilentSince still
+// times it from the start of the wait: nothing arrives over a connection that
+// does not exist, a reconnect backoff opens at 50 ms — twice the grace, so
+// holding on could not outlast one anyway — and a stream that can never be
+// opened again would otherwise park every teardown on the 2 s deadline. But if
+// the stream has never once connected, opening it is a Docker round trip that
+// races container start — exactly the case the previous paragraph calls out as
+// where a dying-early container is likeliest to be short of its first Read —
+// and timing that race against the 25 ms grace read a connect that was merely
+// slow as a container that had nothing to say. dockerSilentSince reports no
+// question outstanding for that case instead, same as between Reads, which
+// leaves the 2 s deadline as the only bound: long enough for a contended
+// daemon's first connect to clear, short enough that a stream which truly never
+// opens still lets teardown proceed.
 //
 // What none of this can resolve is a container that really did print nothing,
 // which looks the same from outside however long we wait. The size of the grace
@@ -2248,7 +2283,10 @@ func (ci *containerInstance) Close() error {
 const (
 	// logReaderNotReading: no Docker log stream is open, so nothing is on its
 	// way through one. This is the zero value, which is what an instance whose
-	// streamLogs has not started — or has ended — should read as.
+	// streamLogs has not started — or has ended — should read as. It covers two
+	// different situations that dockerSilentSince tells apart via
+	// logStreamEverOpened: a container's very first connect, still racing
+	// container start, and an already-proven stream between reconnects.
 	logReaderNotReading = 0
 	// logReaderBetweenReads: a stream is open and the reader is not blocked in
 	// a Read on it — either it has not reached its first, or one has returned
@@ -2493,6 +2531,11 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	// gone nothing can arrive over it, and a "between reads" left behind would
 	// hold every tail wait open for its full deadline across a reconnect
 	// backoff.
+	//
+	// logStreamEverOpened flips once and stays flipped: it is what tells
+	// dockerSilentSince a later logReaderNotReading is an ordinary reconnect
+	// backoff, not this connection racing container start. See its docstring.
+	ci.logStreamEverOpened.Store(true)
 	ci.logParkedAt.Store(logReaderBetweenReads)
 	defer ci.logParkedAt.Store(logReaderNotReading)
 	reader := bufio.NewReaderSize(tracked, 64*1024)
