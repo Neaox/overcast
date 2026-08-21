@@ -93,7 +93,7 @@ All of these operations are implemented.
 <!--
   Derivation: the counts and tables in this section are transcribed from the
   resourceHandlers map in internal/services/cloudformation/provisioner.go —
-  133 registered entries (123 real handlers + 10 stubResourceHandler entries),
+  136 registered entries (126 real handlers + 10 stubResourceHandler entries),
   plus the dynamically resolved Custom::* / AWS::CloudFormation::CustomResource
   and AWS::CloudFormation::Stack (see resolveHandler in the same file).
   Re-derive with:  grep -c '"AWS::' on the map literal (stubs are the entries
@@ -101,8 +101,8 @@ All of these operations are implemented.
   map changes.
 -->
 
-Overcast's CloudFormation provisioner has handlers for **133 resource types**
-(123 provisioned for real, 10 recognised as stubs), plus custom resources and
+Overcast's CloudFormation provisioner has handlers for **136 resource types**
+(126 provisioned for real, 10 recognised as stubs), plus custom resources and
 nested stacks, which are resolved dynamically. The count comes from the
 `resourceHandlers` map in `internal/services/cloudformation/provisioner.go`.
 Resources with real handlers are provisioned through the emulated services —
@@ -121,7 +121,7 @@ they create real state that you can query via the AWS APIs.
 | EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPNGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
 | ECS             | `AWS::ECS::Cluster`, `AWS::ECS::TaskDefinition`, `AWS::ECS::Service`                                                                                                                                                                                                              |
 | ECR             | `AWS::ECR::Repository`                                                                                                                                                                                                                                                            |
-| API Gateway     | `AWS::ApiGateway::RestApi`, `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, `AWS::ApiGateway::Deployment`, `AWS::ApiGateway::Stage`, `AWS::ApiGateway::ApiKey`, `AWS::ApiGateway::UsagePlan`, `AWS::ApiGateway::UsagePlanKey`                                             |
+| API Gateway     | `AWS::ApiGateway::RestApi`, `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, `AWS::ApiGateway::Deployment`, `AWS::ApiGateway::Stage`, `AWS::ApiGateway::ApiKey`, `AWS::ApiGateway::UsagePlan`, `AWS::ApiGateway::UsagePlanKey`, `AWS::ApiGateway::Authorizer`, `AWS::ApiGateway::Model`, `AWS::ApiGateway::RequestValidator`                                             |
 | API Gateway V2  | `AWS::ApiGatewayV2::Api`, `AWS::ApiGatewayV2::Stage`, `AWS::ApiGatewayV2::Integration`, `AWS::ApiGatewayV2::Route`                                                                                                                                                                |
 | AppSync         | `AWS::AppSync::Api`, `AWS::AppSync::GraphQLApi`, `AWS::AppSync::GraphQLSchema`, `AWS::AppSync::ChannelNamespace`, `AWS::AppSync::ApiKey`, `AWS::AppSync::DataSource`, `AWS::AppSync::Resolver`, `AWS::AppSync::FunctionConfiguration`, `AWS::AppSync::DomainName`, `AWS::AppSync::DomainNameApiAssociation`, `AWS::AppSync::ApiCache`, `AWS::AppSync::SourceApiAssociation` |
 | AppConfig       | `AWS::AppConfig::Application`, `AWS::AppConfig::Environment`, `AWS::AppConfig::ConfigurationProfile`                                                                                                                                                                              |
@@ -157,7 +157,7 @@ they create real state that you can query via the AWS APIs.
 | Shield          | `AWS::Shield::Protection`                                                                                                                                                                                                                                                         |
 | WAF v2          | `AWS::WAFv2::WebACL`                                                                                                                                                                                                                                                              |
 | AppRegistry     | `AWS::ServiceCatalogAppRegistry::Application`, `AWS::ServiceCatalogAppRegistry::ResourceAssociation`                                                                                                                                                                              |
-| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` (resolved dynamically, in addition to the 132 static handlers)                                                                                                                    |
+| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` (resolved dynamically, in addition to the 136 static handlers)                                                                                                                    |
 
 ### Stubs (succeed silently, no real state)
 

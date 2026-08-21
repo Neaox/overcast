@@ -8,6 +8,7 @@ package apigateway
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -283,6 +284,24 @@ func (h *Handler) UpdateStage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, op := range req.PatchOperations {
+		// Stage variables patch as "/variables/{name}" (AWS's per-key JSON
+		// Patch shape for map-valued stage properties): replace/add sets the
+		// key, remove deletes it. This is what CreateDeployment's
+		// stageDescription/variables path bypasses on first deploy, but
+		// UpdateStage is the only way a CDK `variables: {...}` change to an
+		// existing stage reaches the emulator.
+		if name, ok := strings.CutPrefix(op.Path, "/variables/"); ok {
+			switch op.Op {
+			case "replace", "add":
+				if stage.Variables == nil {
+					stage.Variables = make(map[string]string)
+				}
+				stage.Variables[name] = op.Value
+			case "remove":
+				delete(stage.Variables, name)
+			}
+			continue
+		}
 		if op.Op != "replace" {
 			continue
 		}
