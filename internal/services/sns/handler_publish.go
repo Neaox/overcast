@@ -215,6 +215,67 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PublishToTopic implements events.TopicPublisher: the internal seam another
+// service uses to publish a service-originated notification to a topic — S3
+// bucket notifications arrive here. It builds the same notification envelope a
+// client Publish builds and fans out to every subscriber asynchronously, so
+// the caller (the S3 dispatcher goroutine) is not held for delivery.
+//
+// A non-nil error means the publish was refused (no such topic) and the caller
+// still owns the event; per-subscription delivery failures are reported through
+// failDelivery exactly as they are for a client Publish.
+//
+// There is no HTTP request behind this publish, so the origin is empty and the
+// per-subscription UnsubscribeURL is minted on the configured base URL. No
+// message attributes exist either — matching AWS, where S3 publishes its
+// notifications without message attributes, so an attribute-keyed filter
+// policy on a subscription does not match.
+func (h *Handler) PublishToTopic(ctx context.Context, topicARN, subject, message string) error {
+	topic, aerr := h.snsStore.getTopicByARN(ctx, topicARN)
+	if aerr != nil {
+		return fmt.Errorf("%s: %s", aerr.Code, aerr.Message)
+	}
+	subs, aerr := h.snsStore.listSubscriptionsByTopic(ctx, topic.Name)
+	if aerr != nil {
+		return fmt.Errorf("%s: %s", aerr.Code, aerr.Message)
+	}
+
+	msgID := uuid.New().String()
+	envelope := snsNotificationEnvelope{
+		Type:             "Notification",
+		MessageId:        msgID,
+		TopicArn:         topic.ARN,
+		Subject:          subject,
+		Message:          message,
+		Timestamp:        h.clk.Now().UTC().Format(snsTimestampFormat),
+		SignatureVersion: "1",
+		Signature:        "EXAMPLE",
+		SigningCertURL:   "EXAMPLE",
+		// UnsubscribeURL is set per-subscription in fanOut.
+	}
+
+	// Notify the UI that this topic received a publish, before fan-out begins —
+	// the same event a client Publish raises.
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{
+			Type:   events.SNSMessagePublished,
+			Time:   h.clk.Now(),
+			Source: "sns",
+			Payload: events.SNSPublishPayload{
+				TopicName: topic.Name,
+				MessageID: msgID,
+			},
+		})
+	}
+
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.fanOut(context.WithoutCancel(ctx), "", topic.Name, msgID, subject, message, envelope, subs, nil)
+	}()
+	return nil
+}
+
 // ---- XML response types for PublishBatch -----------------------------------
 
 type xmlPublishBatchResponse struct {

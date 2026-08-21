@@ -14,6 +14,7 @@ package s3
 //	      → load bucket's NotificationConfig from store
 //	      → match event type + key filter rules
 //	      → call MessageEnqueuer for each matching queue config
+//	      → call TopicPublisher for each matching topic config
 //	      → call FunctionInvoker for each matching lambda config
 //	      → call BusPublisher once when EventBridge delivery is enabled
 
@@ -33,6 +34,7 @@ import (
 type NotificationDispatcher struct {
 	store    *s3Store
 	enqueuer events.MessageEnqueuer
+	topics   events.TopicPublisher  // nil only when wired without SNS (tests)
 	invoker  events.FunctionInvoker // nil only when wired without Lambda (tests)
 	bus      events.BusPublisher    // nil only when wired without EventBridge (tests)
 	logger   *zap.Logger
@@ -43,12 +45,15 @@ type NotificationDispatcher struct {
 // given event bus for all S3 event types. The returned cancel function
 // removes the subscriptions (useful in tests).
 //
-// invoker is nil only when wired without Lambda (tests); Lambda
-// notification configs will be skipped in that case. eventBus is nil only when
-// wired without EventBridge, and EventBridge configurations are skipped then.
+// topics is nil only when wired without SNS (tests); topic notification
+// configs will be skipped in that case. invoker is nil only when wired without
+// Lambda (tests); Lambda notification configs will be skipped then. eventBus
+// is nil only when wired without EventBridge, and EventBridge configurations
+// are skipped then.
 func NewNotificationDispatcher(
 	store *s3Store,
 	enqueuer events.MessageEnqueuer,
+	topics events.TopicPublisher,
 	invoker events.FunctionInvoker,
 	eventBus events.BusPublisher,
 	bus *events.Bus,
@@ -58,6 +63,7 @@ func NewNotificationDispatcher(
 	d = &NotificationDispatcher{
 		store:    store,
 		enqueuer: enqueuer,
+		topics:   topics,
 		invoker:  invoker,
 		bus:      eventBus,
 		logger:   logger,
@@ -113,6 +119,29 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 		}
 	}
 
+	// SNS delivery. Real S3 publishes the notification JSON as the SNS Message
+	// — the {"Records":[…]} document as a string inside the standard SNS
+	// notification envelope, with Subject "Amazon S3 Notification" — so an
+	// SNS→SQS subscriber parses the envelope's Message back into the S3 event.
+	if d.topics != nil {
+		for _, tc := range cfg.TopicConfigurations {
+			if !matchesEvent(tc.Events, eventType) {
+				continue
+			}
+			if !matchesFilter(tc.Filter, p.Key) {
+				continue
+			}
+
+			body := buildNotificationJSON(p, e.Time, tc.ID, d.region)
+			if err := d.topics.PublishToTopic(ctx, tc.ARN, snsNotificationSubject, body); err != nil {
+				d.logger.Warn("s3: notification delivery to SNS failed",
+					zap.String("topic", tc.ARN),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
 	// EventBridge delivery. AWS sends *every* object event to the default bus
 	// while EventBridgeConfiguration is present: there is no per-event
 	// selection and no key filter on this destination, so nothing is matched
@@ -127,8 +156,6 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 			}
 		}
 	}
-
-	// TODO(priority:P3): deliver to TopicConfigurations (SNS) when SNS is implemented
 
 	// Lambda delivery
 	if d.invoker != nil {
@@ -150,6 +177,10 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 		}
 	}
 }
+
+// snsNotificationSubject is the Subject real S3 sets on every notification it
+// publishes to an SNS topic.
+const snsNotificationSubject = "Amazon S3 Notification"
 
 // matchesEvent checks whether eventType matches any of the configured events.
 // Supports wildcard matching: "s3:ObjectCreated:*" matches "s3:ObjectCreated:*".

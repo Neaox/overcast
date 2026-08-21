@@ -299,7 +299,7 @@
           "operation": "PutBucketNotificationConfiguration",
           "category": "Notifications",
           "status": "✅ Supported",
-          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for"
+          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; SNS deliveries carry the Records JSON as the notification envelope's Message string with Subject \"Amazon S3 Notification\", as real S3 does; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for"
         }
       ]
     },
