@@ -2429,6 +2429,22 @@ func (h *elastiCacheCacheClusterHandler) Create(ctx context.Context, router http
 	if v, _ := props["ReplicationGroupId"].(string); v != "" {
 		params["ReplicationGroupId"] = v
 	}
+	if v, _ := props["PreferredAvailabilityZone"].(string); v != "" {
+		params["PreferredAvailabilityZone"] = v
+	}
+	if v, _ := props["CacheParameterGroupName"].(string); v != "" {
+		params["CacheParameterGroupName"] = v
+	}
+	if tags, ok := props["Tags"].([]any); ok {
+		for i, item := range tags {
+			if tag, ok := item.(map[string]any); ok {
+				if key, _ := tag["Key"].(string); key != "" {
+					params[fmt.Sprintf("Tags.Tag.%d.Key", i+1)] = key
+					params[fmt.Sprintf("Tags.Tag.%d.Value", i+1)] = fmt.Sprintf("%v", tag["Value"])
+				}
+			}
+		}
+	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -2666,6 +2682,18 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 		"ReplicationGroupId":          id,
 		"ReplicationGroupDescription": fmt.Sprintf("%v", props["ReplicationGroupDescription"]),
 	}
+	// Engine and EngineVersion pick the Docker image CreateReplicationGroup
+	// starts (engineImage in internal/services/elasticache/handler.go) — a
+	// replication group declared for valkey or memcached, or pinned to a
+	// specific redis version, silently got a redis:7 container without these.
+	// Update already treats an Engine change as replacement, so the handler
+	// has always known the property exists; only Create was dropping it.
+	if v, _ := props["Engine"].(string); v != "" {
+		params["Engine"] = v
+	}
+	if v, _ := props["EngineVersion"].(string); v != "" {
+		params["EngineVersion"] = v
+	}
 	if v, _ := props["CacheNodeType"].(string); v != "" {
 		params["CacheNodeType"] = v
 	}
@@ -2674,6 +2702,12 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 	}
 	if v := props["MultiAZEnabled"]; v != nil {
 		params["MultiAZEnabled"] = cfnScalarString(v)
+	}
+	if v := props["SnapshotRetentionLimit"]; v != nil {
+		params["SnapshotRetentionLimit"] = cfnScalarString(v)
+	}
+	if v, _ := props["PrimaryClusterId"].(string); v != "" {
+		params["PrimaryClusterId"] = v
 	}
 	// What places the group in a VPC. CDK's elasticache constructs put the
 	// subnet group on the replication group itself, so dropping it here left

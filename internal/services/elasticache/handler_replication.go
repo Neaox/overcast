@@ -72,6 +72,7 @@ type xmlReplicationGroup struct {
 	AutomaticFailover      string            `xml:"AutomaticFailover"`
 	MultiAZ                string            `xml:"MultiAZ"`
 	CacheNodeType          string            `xml:"CacheNodeType"`
+	Engine                 string            `xml:"Engine,omitempty"`
 	SnapshotRetentionLimit int               `xml:"SnapshotRetentionLimit"`
 	MemberClusters         xmlMemberClusters `xml:"MemberClusters"`
 	ConfigurationEndpoint  *xmlEndpoint      `xml:"ConfigurationEndpoint,omitempty"`
@@ -375,6 +376,7 @@ func toXMLReplicationGroup(rg *ReplicationGroup) xmlReplicationGroup {
 		AutomaticFailover:      rg.AutomaticFailover,
 		MultiAZ:                rg.MultiAZ,
 		CacheNodeType:          rg.CacheNodeType,
+		Engine:                 rg.Engine,
 		SnapshotRetentionLimit: rg.SnapshotRetentionLimit,
 		MemberClusters:         xmlMemberClusters{Items: members},
 	}
