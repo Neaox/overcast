@@ -5,7 +5,9 @@ description: Decision record for #761 (OVERCAST_HOST defaults to 0.0.0.0 while t
 
 # Bind address: default, name, and the docs that contradict it
 
-> Status: **decision pending — maintainer call**, options framed 2026-08-22. Owner: maintainer.
+> Status: **decided 2026-08-22 — A + C, sequenced per §4** (maintainer approval:
+> "pick both up"). Implementation in progress: #870 (rename with alias) ships
+> first, then #761 (environment-dependent native default). Owner: in flight.
 > Tracks: [#761](https://github.com/Neaox/overcast/issues/761) (default vs docs),
 > [#870](https://github.com/Neaox/overcast/issues/870) (naming vs LocalStack convention).
 > The two issues carry the full evidence; this doc exists so the *combined* decision
