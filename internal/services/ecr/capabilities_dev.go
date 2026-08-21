@@ -6,7 +6,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.Register(
-		capabilities.Capability{Service: "ecr", Operation: "CreateRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns ARN, URI, and createdAt"},
+		capabilities.Capability{Service: "ecr", Operation: "CreateRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns ARN, URI, createdAt, imageTagMutability, imageScanningConfiguration, and encryptionConfiguration"},
 		capabilities.Capability{Service: "ecr", Operation: "DescribeRepositories", Category: "General", Status: capabilities.StatusSupported, Notes: "Lists all repos or filters by name"},
 		capabilities.Capability{Service: "ecr", Operation: "DeleteRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Deletes the repository and all its image records; a repository still holding images raises RepositoryNotEmptyException unless `force` is set"},
 		capabilities.Capability{Service: "ecr", Operation: "GetAuthorizationToken", Category: "Auth", Status: capabilities.StatusSupported, Notes: "Returns `base64(\"AWS:<password>\")` and the registry proxy endpoint; token expiry is 12 hours"},
@@ -17,6 +17,8 @@ func init() {
 		capabilities.Capability{Service: "ecr", Operation: "BatchGetImage", Category: "Images", Status: capabilities.StatusSupported, Notes: "Fetches manifests by tag or digest"},
 		capabilities.Capability{Service: "ecr", Operation: "DescribeImageScanFindings", Category: "Images", Status: capabilities.StatusSupported, Notes: "Returns empty/not-scanned findings; no scan engine is emulated"},
 		capabilities.Capability{Service: "ecr", Operation: "BatchDeleteImage", Category: "Images", Status: capabilities.StatusSupported, Notes: "Deletes images by tag or digest"},
+		capabilities.Capability{Service: "ecr", Operation: "PutImageTagMutability", Category: "General", Status: capabilities.StatusSupported, Notes: "Stores MUTABLE/IMMUTABLE and DescribeRepositories echoes it; not enforced against a repeat PutImage of the same tag"},
+		capabilities.Capability{Service: "ecr", Operation: "PutImageScanningConfiguration", Category: "Images", Status: capabilities.StatusSupported, Notes: "Stores scanOnPush and DescribeRepositories echoes it; no scan engine is emulated"},
 		capabilities.Capability{Service: "ecr", Operation: "SetRepositoryPolicy", Category: "Policy", Status: capabilities.StatusSupported, Notes: "Stores arbitrary IAM policy text"},
 		capabilities.Capability{Service: "ecr", Operation: "GetRepositoryPolicy", Category: "Policy", Status: capabilities.StatusSupported, Notes: "Retrieves stored policy; returns 400 if none set"},
 		capabilities.Capability{Service: "ecr", Operation: "DeleteRepositoryPolicy", Category: "Policy", Status: capabilities.StatusSupported},

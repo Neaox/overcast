@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1441,
+  "total_ops": 1443,
   "services": [
     {
       "service": "s3",
@@ -4285,14 +4285,14 @@
     {
       "service": "ecr",
       "display_name": "ECR",
-      "total_ops": 20,
-      "implemented_ops": 20,
+      "total_ops": 22,
+      "implemented_ops": 22,
       "operations": [
         {
           "operation": "CreateRepository",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns ARN, URI, and createdAt"
+          "notes": "Returns ARN, URI, createdAt, imageTagMutability, imageScanningConfiguration, and encryptionConfiguration"
         },
         {
           "operation": "DescribeRepositories",
@@ -4353,6 +4353,18 @@
           "category": "Images",
           "status": "✅ Supported",
           "notes": "Deletes images by tag or digest"
+        },
+        {
+          "operation": "PutImageTagMutability",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stores MUTABLE/IMMUTABLE and DescribeRepositories echoes it; not enforced against a repeat PutImage of the same tag"
+        },
+        {
+          "operation": "PutImageScanningConfiguration",
+          "category": "Images",
+          "status": "✅ Supported",
+          "notes": "Stores scanOnPush and DescribeRepositories echoes it; no scan engine is emulated"
         },
         {
           "operation": "SetRepositoryPolicy",

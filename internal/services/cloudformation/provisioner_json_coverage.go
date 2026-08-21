@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/awsapi"
@@ -123,6 +125,91 @@ func ecrApplyRepositoryPolicies(ctx context.Context, router http.Handler, rCtx *
 	return nil
 }
 
+// ecrImageScanningConfigBody renders the ImageScanningConfiguration property
+// into the scanOnPush body CreateRepository/PutImageScanningConfiguration
+// take. A template that omits the property gets no call at all on Create —
+// the service's own CreateRepository default (scanOnPush: false) stands —
+// and no reconciliation on Update, since there is nothing to compare against.
+func ecrImageScanningConfigBody(v any) (map[string]any, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	scanOnPush, _ := m["ScanOnPush"].(bool)
+	return map[string]any{"scanOnPush": scanOnPush}, true
+}
+
+// ecrEncryptionConfigBody renders the EncryptionConfiguration property into
+// the body CreateRepository takes, applying the same AES256 default the ECR
+// service applies. Comparing two calls to this — see the Update handler — is
+// therefore not fooled by an explicit "AES256" looking different from an
+// absent property that resolves to the same thing.
+func ecrEncryptionConfigBody(v any) map[string]any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	encType, _ := m["EncryptionType"].(string)
+	if encType == "" {
+		encType = "AES256"
+	}
+	body := map[string]any{"encryptionType": encType}
+	if kmsKey, _ := m["KmsKey"].(string); kmsKey != "" {
+		body["kmsKey"] = kmsKey
+	}
+	return body
+}
+
+// ecrTagsFromMap renders a merged stack+resource tag map into the
+// {Key,Value} list shape ecr.Tag — and therefore CreateRepository's "tags"
+// and TagResource's "tags" — takes, sorted for a deterministic request body.
+func ecrTagsFromMap(tags map[string]string) []map[string]string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]string{"Key": k, "Value": tags[k]})
+	}
+	return out
+}
+
+// ecrReconcileTags reconciles a repository's tags on Update: added or
+// changed keys go through TagResource, keys dropped from the template go
+// through UntagResource. Mirrors updateLambdaTags/updateSQSQueueTags's diff
+// shape for ECR's ARN-keyed, AWSJSON1.1 TagResource/UntagResource pair.
+func ecrReconcileTags(ctx context.Context, router http.Handler, region, arn string, tags, prior map[string]string) error {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+
+	if len(added) > 0 {
+		body := map[string]any{"resourceArn": arn, "tags": ecrTagsFromMap(added)}
+		if _, err := internalJSON(ctx, router, region, ecrTargetPrefix+"TagResource", body); err != nil {
+			return fmt.Errorf("ecr TagResource: %w", err)
+		}
+	}
+	if len(removed) > 0 {
+		body := map[string]any{"resourceArn": arn, "tagKeys": removed}
+		if _, err := internalJSON(ctx, router, region, ecrTargetPrefix+"UntagResource", body); err != nil {
+			return fmt.Errorf("ecr UntagResource: %w", err)
+		}
+	}
+	return nil
+}
+
 func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["RepositoryName"].(string)
 	if name == "" {
@@ -133,6 +220,18 @@ func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, 
 
 	body := map[string]any{
 		"repositoryName": name,
+	}
+	if mutability, ok := props["ImageTagMutability"].(string); ok && mutability != "" {
+		body["imageTagMutability"] = mutability
+	}
+	if sc, ok := ecrImageScanningConfigBody(props["ImageScanningConfiguration"]); ok {
+		body["imageScanningConfiguration"] = sc
+	}
+	if ec := ecrEncryptionConfigBody(props["EncryptionConfiguration"]); ec != nil {
+		body["encryptionConfiguration"] = ec
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["tags"] = ecrTagsFromMap(tags)
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"CreateRepository", body)
@@ -179,7 +278,26 @@ func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, 
 	return arn, attrs, nil
 }
 
+// Delete is the fallback teardown path, used when no template properties are
+// available for the resource being removed (e.g. a resource orphaned by
+// drift). With nothing to consult for EmptyOnDelete it keeps the previous
+// behavior of always forcing.
 func (h *ecrRepositoryHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	return ecrDeleteRepository(ctx, router, physicalID, rCtx, true)
+}
+
+// DeleteWithProperties honors EmptyOnDelete: real CloudFormation only forces
+// the delete of a repository that still holds images when the template says
+// EmptyOnDelete: true (default false) — otherwise DeleteRepository fails with
+// RepositoryNotEmptyException the same as a bare `aws ecr delete-repository`
+// would, and the stack operation reports that failure instead of silently
+// discarding images nothing asked it to.
+func (h *ecrRepositoryHandler) DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	emptyOnDelete, _ := props["EmptyOnDelete"].(bool)
+	return ecrDeleteRepository(ctx, router, physicalID, rCtx, emptyOnDelete)
+}
+
+func ecrDeleteRepository(ctx context.Context, router http.Handler, physicalID string, rCtx *resolveContext, force bool) error {
 	// Extract repository name from ARN if possible, otherwise use physicalID as name.
 	name := physicalID
 	if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
@@ -187,7 +305,7 @@ func (h *ecrRepositoryHandler) Delete(ctx context.Context, router http.Handler, 
 	}
 	body := map[string]any{
 		"repositoryName": name,
-		"force":          true,
+		"force":          force,
 	}
 	rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepository", body)
 	return teardownError("DeleteRepository", rec, err)
@@ -209,7 +327,34 @@ func (h *ecrRepositoryHandler) Update(ctx context.Context, router http.Handler, 
 		return "", nil, errReplacementRequired
 	}
 
+	// EncryptionConfiguration is fixed at CreateRepository — real ECR has no
+	// Put* to change it later — so a template that changes it must replace the
+	// repository rather than have the update silently keep the old encryption.
+	if !reflect.DeepEqual(ecrEncryptionConfigBody(props["EncryptionConfiguration"]), ecrEncryptionConfigBody(oldProps["EncryptionConfiguration"])) {
+		return "", nil, errReplacementRequired
+	}
+
 	if err := ecrApplyRepositoryPolicies(ctx, router, rCtx, oldName, props, oldProps); err != nil {
+		return "", nil, err
+	}
+
+	if mutability, ok := props["ImageTagMutability"].(string); ok && mutability != "" {
+		body := map[string]any{"repositoryName": oldName, "imageTagMutability": mutability}
+		if _, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"PutImageTagMutability", body); err != nil {
+			return "", nil, fmt.Errorf("PutImageTagMutability: %w", err)
+		}
+	}
+
+	if sc, ok := ecrImageScanningConfigBody(props["ImageScanningConfiguration"]); ok {
+		body := map[string]any{"repositoryName": oldName, "imageScanningConfiguration": sc}
+		if _, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"PutImageScanningConfiguration", body); err != nil {
+			return "", nil, fmt.Errorf("PutImageScanningConfiguration: %w", err)
+		}
+	}
+
+	newTags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	oldTags := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if err := ecrReconcileTags(ctx, router, rCtx.Region, physicalID, newTags, oldTags); err != nil {
 		return "", nil, err
 	}
 
