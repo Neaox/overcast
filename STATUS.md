@@ -39,9 +39,10 @@
 | CloudFormation  | 52  | Stacks, change sets, async provisioner (132 resource types — see `docs/cdk.md#supported-resource-types`), intrinsic functions, GetAtt                                                                       |
 | RDS             | 34  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
+| EFS             | 31  | File systems (Docker-volume-backed, `live` mode default), mount targets, access points, file-system policies, lifecycle/backup config, tagging                                                            |
 | AppConfig       | 20  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 2   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
-| Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
+| Secrets Manager | 22  | Secret CRUD, versioning, tags, real rotation (invokes the configured Lambda, all four steps), resource policies (stored, not evaluated — #496)                                                            |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
 | CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 45  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
@@ -122,10 +123,19 @@
 
 ## Current focus
 
-- **DynamoDB** — full UpdateTable (GSI/LSI, provisioned throughput changes)
-- **IAM** — integration test coverage (33 ops implemented, zero test coverage)
-- **DynamoDB Streams** — dedicated integration tests
-- **ECR** — real OCI registry push/pull support behind the existing control plane
+This section previously named four items — full UpdateTable GSI/LSI support,
+IAM integration tests, DynamoDB Streams tests, and real ECR registry
+push/pull — that had all already shipped by the time this drift was reported
+in [#744](https://github.com/Neaox/overcast/issues/744): none of the PRs that
+finished them came back to remove the STATUS.md line. Rather than hand-curate
+a list that has already gone stale twice, "current focus" now points at the
+live source instead of restating it: filter
+[GitHub Issues](https://github.com/Neaox/overcast/issues) by
+[`priority/p0`](https://github.com/Neaox/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp0)
+for what's blocking or
+[`priority/p1`](https://github.com/Neaox/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp1)
+for what's next. [#484](https://github.com/Neaox/overcast/issues/484) is the
+prioritized Tier 2 full-emulation backlog itself.
 
 ## Future roadmap
 
@@ -133,6 +143,5 @@ Tracked in [GitHub Issues](https://github.com/Neaox/overcast/issues).
 `// TODO(priority:Pn):` comments in code are auto-converted to issues.
 
 - Step Functions `.waitForTaskToken`, activity tasks and distributed Map (the ASL interpreter landed; these are what it still refuses)
-- API Gateway advanced features (throttle/quota enforcement, cache settings)
-- Lambda `ImageConfig` overrides for container image functions
-- Topology graph enhancements (`internal/router/topology.go`)
+- API Gateway cache settings (`CacheClusterEnabled`/`Size`, `ClientCertificateId`, `DocumentationVersion`); usage-plan throttle/quota enforcement itself shipped and is opt-in via `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`
+- Topology graph enhancements (`internal/router/topology.go`) — e.g. S3 → SNS notification edges via `TopicConfigurations`
