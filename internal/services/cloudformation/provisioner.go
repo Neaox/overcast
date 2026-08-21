@@ -2758,7 +2758,7 @@ var resourceHandlers = map[string]resourceHandler{
 	// API Gateway V2 (additional)
 	"AWS::ApiGatewayV2::Deployment": &stubResourceHandler{},
 	// DynamoDB (additional)
-	"AWS::DynamoDB::GlobalTable": &stubResourceHandler{},
+	"AWS::DynamoDB::GlobalTable": &dynamodbGlobalTableHandler{},
 }
 
 // ── Stub resource handler ──────────────────────────────────────────────────
@@ -3954,6 +3954,13 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 	} else if changed {
 		return "", nil, failUpdate(fmt.Errorf("AWS::DynamoDB::Table LocalSecondaryIndexes updates are not supported"))
 	}
+	// Diff and validate GlobalSecondaryIndexes before dispatching anything, so
+	// a template with an unsupported index-schema change fails whole rather
+	// than half-applied.
+	gsiUpdates, err := dynamodbGSIUpdates(props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
 
 	reqBody := map[string]any{"TableName": physicalID}
 	haveMutable := false
@@ -3996,6 +4003,21 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 			}
 			return "", nil, failUpdate(updateErr)
 		}
+	}
+	// GlobalSecondaryIndexUpdates: one operation per UpdateTable call, matching
+	// AWS's one-index-change-at-a-time rule; a failure partway through leaves
+	// earlier index changes applied with no compensation, so it is dirty.
+	for _, update := range gsiUpdates {
+		body := map[string]any{
+			"TableName":                   physicalID,
+			"GlobalSecondaryIndexUpdates": []any{update},
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "DynamoDB_20120810.UpdateTable", body); err != nil {
+			return "", nil, failDirtyUpdate(fmt.Errorf("dynamodb UpdateTable (GlobalSecondaryIndexUpdates): %w", err))
+		}
+	}
+	if err := reconcileDynamoDBTags(ctx, router, rCtx.Region, dynamodbTableARN(rCtx.Region, rCtx.AccountID, physicalID), rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], oldProps["Tags"]); err != nil {
+		return "", nil, failDirtyUpdate(err)
 	}
 	return physicalID, map[string]string{"TableName": physicalID}, nil
 }
@@ -4058,6 +4080,15 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 				return tableName, nil, errors.Join(ttlErr, fmt.Errorf("delete DynamoDB table after TTL failure: %w", deleteErr))
 			}
 			return "", nil, ttlErr
+		}
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		if err := dynamodbTagResource(ctx, router, rCtx.Region, dynamodbTableARN(rCtx.Region, rCtx.AccountID, tableName), tags); err != nil {
+			tagErr := fmt.Errorf("dynamodb TagResource: %w", err)
+			if _, deleteErr := internalJSON(ctx, router, rCtx.Region, "DynamoDB_20120810.DeleteTable", map[string]any{"TableName": tableName}); deleteErr != nil {
+				return tableName, nil, errors.Join(tagErr, fmt.Errorf("delete DynamoDB table after TagResource failure: %w", deleteErr))
+			}
+			return "", nil, tagErr
 		}
 	}
 
@@ -4239,6 +4270,285 @@ func (h *dynamodbTableHandler) Delete(ctx context.Context, router http.Handler, 
 		"TableName": name,
 	})
 	return teardownError("DeleteTable", rec, err)
+}
+
+// dynamodbTableARN builds the ARN DynamoDB's own handler stamps onto a table
+// (internal/services/dynamodb/handler.go), for CloudFormation calls — like
+// TagResource — that address a table by ARN rather than by name.
+func dynamodbTableARN(region, accountID, tableName string) string {
+	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", region, accountID, tableName)
+}
+
+func dynamodbTagResource(ctx context.Context, router http.Handler, region, tableARN string, tags map[string]string) error {
+	tagList := make([]map[string]string, 0, len(tags))
+	for key, value := range tags {
+		tagList = append(tagList, map[string]string{"Key": key, "Value": value})
+	}
+	_, err := internalJSON(ctx, router, region, "DynamoDB_20120810.TagResource", map[string]any{
+		"ResourceArn": tableARN,
+		"Tags":        tagList,
+	})
+	return err
+}
+
+func dynamodbUntagResource(ctx context.Context, router http.Handler, region, tableARN string, keys []string) error {
+	_, err := internalJSON(ctx, router, region, "DynamoDB_20120810.UntagResource", map[string]any{
+		"ResourceArn": tableARN,
+		"TagKeys":     keys,
+	})
+	return err
+}
+
+// reconcileDynamoDBTags mirrors updateLambdaTags's add/remove diff (#523),
+// dispatched through DynamoDB's JSON-RPC Tag/UntagResource rather than
+// Lambda's REST tag endpoints.
+func reconcileDynamoDBTags(ctx context.Context, router http.Handler, region, tableARN string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) error {
+	tags := mergeResourceTags(stackTags, rawTags)
+	prior := mergeResourceTags(priorStackTags, rawPrior)
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	var removed []string
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if len(added) > 0 {
+		if err := dynamodbTagResource(ctx, router, region, tableARN, added); err != nil {
+			return fmt.Errorf("dynamodb TagResource: %w", err)
+		}
+	}
+	if len(removed) > 0 {
+		if err := dynamodbUntagResource(ctx, router, region, tableARN, removed); err != nil {
+			return fmt.Errorf("dynamodb UntagResource: %w", err)
+		}
+	}
+	return nil
+}
+
+// dynamodbIndexedGSIs reads the GlobalSecondaryIndexes property into a
+// name → definition map so create/update/delete can be diffed by IndexName.
+func dynamodbIndexedGSIs(props map[string]any) (map[string]map[string]any, error) {
+	out := map[string]map[string]any{}
+	raw, ok := props["GlobalSecondaryIndexes"]
+	if !ok || raw == nil {
+		return out, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("GlobalSecondaryIndexes must be a list")
+	}
+	for _, item := range list {
+		gsi, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("GlobalSecondaryIndexes entries must be objects")
+		}
+		name, _ := gsi["IndexName"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("GlobalSecondaryIndexes entries require IndexName")
+		}
+		out[name] = gsi
+	}
+	return out, nil
+}
+
+// dynamodbGSIUpdates diffs desired against previous GlobalSecondaryIndexes
+// and returns one GlobalSecondaryIndexUpdates entry per changed index, in
+// delete-then-create-then-throughput-update order, ready to dispatch one at a
+// time — DynamoDB's UpdateTable accepts only one index operation per call,
+// same as AWS. A KeySchema or Projection change on an existing index is
+// rejected rather than attempted as an implicit delete+recreate, the same
+// conservative stance the LocalSecondaryIndexes update check above takes:
+// AWS itself requires that as two separate operations, and index deletion
+// here discards the index's rows.
+func dynamodbGSIUpdates(props, oldProps map[string]any) ([]map[string]any, error) {
+	desired, err := dynamodbIndexedGSIs(props)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := dynamodbIndexedGSIs(oldProps)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(desired)+len(previous))
+	seen := make(map[string]struct{}, len(desired)+len(previous))
+	for name := range desired {
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	for name := range previous {
+		if _, ok := seen[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	var deletes, creates, updates []map[string]any
+	for _, name := range names {
+		newGSI, isNew := desired[name]
+		oldGSI, existed := previous[name]
+		switch {
+		case existed && !isNew:
+			deletes = append(deletes, map[string]any{"Delete": map[string]any{"IndexName": name}})
+		case isNew && !existed:
+			creates = append(creates, map[string]any{"Create": newGSI})
+		case isNew && existed:
+			schemaChanged, err := cfnPropertyChanged(newGSI, oldGSI, "KeySchema")
+			if err != nil {
+				return nil, err
+			}
+			projectionChanged, err := cfnPropertyChanged(newGSI, oldGSI, "Projection")
+			if err != nil {
+				return nil, err
+			}
+			if schemaChanged || projectionChanged {
+				return nil, fmt.Errorf("AWS::DynamoDB::Table GlobalSecondaryIndexes %s: KeySchema and Projection changes are not supported; remove and re-add the index in a separate update", name)
+			}
+			throughputChanged, err := cfnPropertyChanged(newGSI, oldGSI, "ProvisionedThroughput")
+			if err != nil {
+				return nil, err
+			}
+			if throughputChanged {
+				updates = append(updates, map[string]any{"Update": map[string]any{"IndexName": name, "ProvisionedThroughput": newGSI["ProvisionedThroughput"]}})
+			}
+		}
+	}
+	result := make([]map[string]any, 0, len(deletes)+len(creates)+len(updates))
+	result = append(result, deletes...)
+	result = append(result, creates...)
+	result = append(result, updates...)
+	return result, nil
+}
+
+// ── DynamoDB GlobalTable handler ────────────────────────────────────────────
+
+// dynamodbGlobalTableHandler provisions AWS::DynamoDB::GlobalTable as a real
+// table for the stack's own deploy region, replacing the no-op stub that
+// previously registered it (#523): a stack that declared a global table
+// provisioned "successfully" and created no table at all, so every later
+// operation against it failed. Overcast emulates a single region, so
+// cross-region replication is out of scope — the contract here is to
+// provision the Replicas entry matching rCtx.Region faithfully, or fail the
+// stack loudly when no Replica names that region, rather than silently doing
+// nothing.
+//
+// Reuses AWS::DynamoDB::Table's handler outright: translate GlobalTable's
+// top-level-plus-matching-Replica properties into the Table's property shape
+// (see dynamodbGlobalTableReplicaProps) and delegate, so GSI/TTL/Tags
+// reconciliation, billing-mode fidelity and error handling live in exactly
+// one place rather than a second copy drifting from it.
+type dynamodbGlobalTableHandler struct{}
+
+func (h *dynamodbGlobalTableHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	tableProps, found, err := dynamodbGlobalTableReplicaProps(props, rCtx.Region)
+	if err != nil {
+		return "", nil, err
+	}
+	if !found {
+		return "", nil, fmt.Errorf("AWS::DynamoDB::GlobalTable must declare a Replica for the stack's deploy region %s; Overcast emulates a single region and provisions only the Replica matching it", rCtx.Region)
+	}
+	return (&dynamodbTableHandler{}).Create(ctx, router, cfg, tableProps, rCtx)
+}
+
+func (h *dynamodbGlobalTableHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	oldTableProps, oldFound, err := dynamodbGlobalTableReplicaProps(oldProps, rCtx.Region)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	newTableProps, newFound, err := dynamodbGlobalTableReplicaProps(props, rCtx.Region)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if !newFound {
+		if oldFound {
+			// The stack's own region dropped out of Replicas: the table this
+			// resource stands for no longer has anywhere to live, so replace
+			// it (delete the old table, evaluate the new template fresh)
+			// rather than leaving a table CloudFormation no longer accounts
+			// for or silently keeping the old one running unchanged.
+			return "", nil, errReplacementRequired
+		}
+		return "", nil, failUpdate(fmt.Errorf("AWS::DynamoDB::GlobalTable must declare a Replica for the stack's deploy region %s", rCtx.Region))
+	}
+	return (&dynamodbTableHandler{}).Update(ctx, router, cfg, physicalID, newTableProps, oldTableProps, rCtx)
+}
+
+func (h *dynamodbGlobalTableHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	return (&dynamodbTableHandler{}).Delete(ctx, router, cfg, physicalID, rCtx)
+}
+
+// dynamodbGlobalTableReplicaProps translates AWS::DynamoDB::GlobalTable's
+// top-level-plus-Replicas shape into the property shape AWS::DynamoDB::Table
+// accepts, selecting the Replicas entry naming region. found is false when no
+// Replicas entry names region.
+//
+// Global tables always stream (replication requires it), so
+// StreamSpecification is forced on to NEW_AND_OLD_IMAGES regardless of the
+// property — which this resource does not even expose, unlike
+// AWS::DynamoDB::Table.
+//
+// PROVISIONED billing on a global table is expressed only through
+// WriteProvisionedThroughputSettings/ReadProvisionedThroughputSettings' own
+// auto-scaling settings, which nothing in Overcast's DynamoDB emulation runs;
+// forwarding a guessed fixed ProvisionedThroughput derived from them would be
+// worse than failing, so that combination is rejected outright. A BillingMode
+// left unset defaults to PAY_PER_REQUEST here — global tables provisioned
+// through the modern replication model default to on-demand, unlike
+// AWS::DynamoDB::Table's PROVISIONED default.
+func dynamodbGlobalTableReplicaProps(props map[string]any, region string) (map[string]any, bool, error) {
+	rawReplicas, ok := props["Replicas"]
+	if !ok || rawReplicas == nil {
+		return nil, false, nil
+	}
+	replicas, ok := rawReplicas.([]any)
+	if !ok {
+		return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable Replicas must be a list")
+	}
+	var replica map[string]any
+	for _, item := range replicas {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable Replicas entries must be objects")
+		}
+		if entryRegion, _ := entry["Region"].(string); entryRegion == region {
+			replica = entry
+			break
+		}
+	}
+	if replica == nil {
+		return nil, false, nil
+	}
+
+	if _, provisioned := props["WriteProvisionedThroughputSettings"]; provisioned {
+		return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable WriteProvisionedThroughputSettings (PROVISIONED billing) is not supported by CloudFormation provisioning; use BillingMode PAY_PER_REQUEST")
+	}
+	if _, provisioned := replica["ReadProvisionedThroughputSettings"]; provisioned {
+		return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable ReadProvisionedThroughputSettings (PROVISIONED billing) is not supported by CloudFormation provisioning; use BillingMode PAY_PER_REQUEST")
+	}
+
+	tableProps := map[string]any{}
+	for _, property := range []string{"TableName", "AttributeDefinitions", "KeySchema", "GlobalSecondaryIndexes", "TimeToLiveSpecification", "Tags"} {
+		if v, ok := props[property]; ok {
+			tableProps[property] = v
+		}
+	}
+	billingMode, _ := props["BillingMode"].(string)
+	switch billingMode {
+	case "", "PAY_PER_REQUEST":
+		tableProps["BillingMode"] = "PAY_PER_REQUEST"
+	case "PROVISIONED":
+		return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable BillingMode PROVISIONED is not supported by CloudFormation provisioning; use BillingMode PAY_PER_REQUEST")
+	default:
+		return nil, false, fmt.Errorf("AWS::DynamoDB::GlobalTable BillingMode %q is not a supported value", billingMode)
+	}
+	tableProps["StreamSpecification"] = map[string]any{"StreamViewType": "NEW_AND_OLD_IMAGES"}
+	return tableProps, true, nil
 }
 
 // ── Lambda Function handler ────────────────────────────────────────────────

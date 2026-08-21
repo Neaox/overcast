@@ -2,7 +2,7 @@ service: dynamodb
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-08
+last_updated: 2026-08-21
 protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
@@ -79,12 +79,33 @@ findings:
         aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations.html
         tests:
           - tests/integration/dynamodb/unsupported_operations_test.go
+    - scenario: >-
+        CloudFormation no longer drops properties DynamoDB implements (#523). AWS::DynamoDB::Table
+        applies Tags via TagResource on create and reconciles them via Tag/UntagResource on update, and
+        reconciles GlobalSecondaryIndexes add/remove/throughput-change through
+        GlobalSecondaryIndexUpdates on update — previously forwarded on create only. A KeySchema or
+        Projection change on an existing index is rejected rather than attempted as an implicit
+        delete+recreate. AWS::DynamoDB::GlobalTable, previously a no-op stub, now provisions the Replicas
+        entry naming the stack's own region as a real table by delegating into AWS::DynamoDB::Table's
+        handler, forcing NEW_AND_OLD_IMAGES streaming and defaulting BillingMode to PAY_PER_REQUEST;
+        PROVISIONED billing and a Replicas list missing the stack's own region both fail the stack rather
+        than silently completing.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-globaltable.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_tags_test.go
+          - tests/integration/cloudformation/dynamodb_gsi_update_test.go
+          - tests/integration/cloudformation/dynamodb_global_table_test.go
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
     - Review CBOR coverage against SDK expectations.
-    - AWS::DynamoDB::Table GlobalSecondaryIndexes changes are silently ignored on stack updates — the CloudFormation update handler forwards GSIs on create only and never emits GlobalSecondaryIndexUpdates (internal/services/cloudformation/provisioner.go dynamodbTableHandler.Update).
-    - AWS::DynamoDB::Table Tags are never forwarded to DynamoDB by CloudFormation, on create or update.
     - UpdateTable applies BillingMode without the throughput validation CreateTable now enforces, so switching a table to PROVISIONED without ProvisionedThroughput is accepted where AWS answers "One or more parameter values were invalid: ProvisionedThroughput must be specified when BillingMode is PROVISIONED".
+    - AWS::DynamoDB::Table/GlobalTable SSESpecification, PointInTimeRecoverySpecification, DeletionProtectionEnabled, TableClass, KinesisStreamSpecification, ContributorInsightsSpecification, ImportSourceSpecification, ResourcePolicy, and OnDemandThroughput are not applied — DynamoDB itself has no support for any of them, so CloudFormation cannot honestly forward them either.
+    - AWS::DynamoDB::GlobalTable offers no real cross-region replication; Overcast emulates a single region and provisions only the Replica naming the stack's own region.
   intentionally_partial: []
 handoff:
   start_with: [Query, Scan, UpdateItem, transactions]

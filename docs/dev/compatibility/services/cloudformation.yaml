@@ -2,7 +2,7 @@ service: cloudformation
 status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-14
+last_updated: 2026-08-21
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
@@ -77,6 +77,17 @@ operations:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
           - internal/services/cloudformation/dynamodb_ttl_test.go
         notes: AWS::DynamoDB::Table validates the distinct CloudFormation TimeToLiveSpecification shape before mutation, applies enabled TTL through DynamoDB UpdateTimeToLive after creation, disables then re-enables TTL when its attribute changes, and disables TTL when the property is removed. Enabled is required; AttributeName is validated at 1..255 when present or required, while Enabled=false without AttributeName is a no-op for an already-disabled/new table. Failed create or update phases compensate the table or prior TTL configuration.
+      - name: dynamodb table tags, global secondary index updates, and global table local-replica provisioning
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_tags_test.go
+          - tests/integration/cloudformation/dynamodb_gsi_update_test.go
+          - tests/integration/cloudformation/dynamodb_global_table_test.go
+        notes: |
+          Closes issue #523's remaining scope (LocalSecondaryIndexes forwarding and TimeToLiveSpecification were already fixed above).
+          AWS::DynamoDB::Table applies effective resource-plus-stack Tags through TagResource after create, and reconciles additions/changes/removals through Tag/UntagResource on update, matching the Lambda/Logs/Secrets Manager tag-forwarding shape elsewhere in this adapter — DynamoDB grew TagResource/ListTagsOfResource/UntagResource in #685, after the original CreateTable allow-list was written, and nothing forwarded Tags afterwards.
+          GlobalSecondaryIndexes changes on update now dispatch GlobalSecondaryIndexUpdates (previously forwarded on create only and silently ignored on update): one index operation per UpdateTable call, matching AWS's one-GSI-change-at-a-time rule. Adding or removing an index, or changing only its ProvisionedThroughput, is supported; changing an existing index's KeySchema or Projection in place fails the update loudly (AWS requires that as a separate remove-then-re-add) rather than attempting an implicit delete+recreate.
+          AWS::DynamoDB::GlobalTable is no longer a no-op stub. Overcast emulates a single region, so it provisions the Replicas entry naming the stack's own deploy region as a real table (translating into AWS::DynamoDB::Table's Create/Update/Delete outright, so GSI/TTL/Tags fidelity is shared code, not a second copy) and forces streaming (NEW_AND_OLD_IMAGES), matching real global tables. BillingMode PAY_PER_REQUEST is supported and is the default when omitted (global tables provisioned through the modern replication model default to on-demand, unlike AWS::DynamoDB::Table's PROVISIONED default); BillingMode PROVISIONED is rejected loudly rather than guessing fixed capacity from the auto-scaling-only WriteProvisionedThroughputSettings/ReadProvisionedThroughputSettings shape, which nothing in Overcast's DynamoDB emulation runs. A stack whose Replicas never name its own deploy region fails loudly at create, and a region dropped from Replicas on update requires replacement, rather than a silent no-op either way.
       - name: log group retention and tags on create and update
         status: fixed
         tests:
@@ -151,6 +162,7 @@ findings:
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
     - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
+    - AWS::DynamoDB::Table applies Tags on create and reconciles them on update, and reconciles GlobalSecondaryIndexes add/remove/throughput-change through GlobalSecondaryIndexUpdates on update instead of only at create. AWS::DynamoDB::GlobalTable provisions the local-region Replica as a real table instead of a no-op stub, failing loudly when no Replica names the stack's own region (#523).
     - AWS::Logs::LogGroup applies RetentionInDays, resource Tags, and propagated stack tags when created, then reconciles effective tag additions, changes, and removals during stack updates.
     - AWS::SecretsManager::Secret no longer drops KmsKeyId or Tags, and malformed GenerateSecretString templates fail before password generation or secret creation.
     - No-op updates no longer retrieve Secrets Manager dynamic references before literal-property change detection, preserving AWS's intentionally stale resource value and avoiding unnecessary internal API calls.
@@ -163,7 +175,7 @@ findings:
     - Review update/delete semantics and unsupported-resource stubbing.
     - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
     - AWS::Logs::LogGroup KmsKeyId, DataProtectionPolicy, LogGroupClass, and newer LogGroup properties need underlying CloudWatch Logs API/state support before CloudFormation can forward them.
-    - AWS::DynamoDB::Table GlobalSecondaryIndexes changes are silently ignored on stack updates (GSIs are forwarded on create only; no GlobalSecondaryIndexUpdates dispatch), and Tags are never forwarded to DynamoDB on create or update.
+    - AWS::DynamoDB::Table SSESpecification, PointInTimeRecoverySpecification, DeletionProtectionEnabled, TableClass, KinesisStreamSpecification, ContributorInsightsSpecification, ImportSourceSpecification, ResourcePolicy, and OnDemandThroughput are not forwarded; the underlying DynamoDB emulation has no support for any of them (see docs/services/dynamodb.md), so CloudFormation cannot honestly apply them either. AWS::DynamoDB::GlobalTable inherits the same gap for its shared top-level properties, plus SSE/PITR/ContributorInsights being per-Replica rather than top-level, and offers no cross-region replication (single-region emulator).
     - AWS::KMS::Key Tags and EnableKeyRotation are not applied; see docs/dev/compatibility/services/kms.yaml.
     - Complete Secrets Manager generated-value updates (#678), replica regions (#679), target attachments (#680), and rotation schedules (#681).
   intentionally_partial: []
