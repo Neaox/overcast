@@ -244,15 +244,21 @@ response including errors. Some LocalStack error responses omit this header.
 
 ---
 
-## Known gaps (features LocalStack has that overcast doesn't yet)
+## Coverage differences
 
-| Feature               | overcast status | Notes                               |
-| --------------------- | --------------- | ----------------------------------- |
-| SigV4 validation      | TODO            | Accepted but not validated          |
-| CloudWatch Metrics    | Not implemented | Logs are supported; metrics are not |
-| Kinesis Data Firehose | Not implemented |                                     |
-| Route 53              | Not implemented |                                     |
-| ElastiCache           | Not implemented |                                     |
+A hand-maintained list of missing services rots quickly, so this guide no
+longer carries one. For current per-service coverage, use the
+[generated service index](./README.md#services) — it lists every emulated
+service with its operation count — and the per-service pages under
+`docs/services/` for operation-level detail.
+
+Two behavioural defaults worth knowing when coming from LocalStack:
+
+- **SigV4 validation is off by default.** Requests are accepted without
+  signature verification unless you opt in with `OVERCAST_SIGV4_VALIDATE=true`.
+- **IAM enforcement is off by default.** Policies are stored and can be
+  simulated, but requests are not denied unless you opt in with
+  `OVERCAST_ENFORCE_IAM=true`.
 
 The following features that were previously missing are now implemented:
 
@@ -264,8 +270,13 @@ The following features that were previously missing are now implemented:
 - **S3 versioning** — PutBucketVersioning, GetBucketVersioning, ListObjectVersions
 - **SNS → SQS fan-out** — working
 - **SQS → Lambda ESM** — event source mapping with CRUD and polling delivery
-- **CloudFormation** — CreateStack, UpdateStack, DeleteStack, DescribeStacks, ListStacks with ~50 resource types
-- **IAM** — users, roles, groups, policies, instance profiles (credentials accepted but not enforced)
+- **CloudFormation** — CreateStack, UpdateStack, DeleteStack, DescribeStacks, ListStacks with 130+ resource types (see [supported resource types](./cdk.md#supported-resource-types))
+- **IAM** — users, roles, groups, policies, instance profiles (credentials accepted; enforcement is opt-in via `OVERCAST_ENFORCE_IAM`)
+- **SigV4 validation** — opt-in via `OVERCAST_SIGV4_VALIDATE=true`
+- **CloudWatch** — metrics (`PutMetricData` and friends) and automatic alarm evaluation, alongside Logs
+- **Kinesis Data Firehose** — delivery stream CRUD and record ingestion (records are acknowledged but not delivered to destinations)
+- **Route 53** — hosted zones, record sets, health checks (metadata with AWS-faithful validation; no DNS queries answered)
+- **ElastiCache** — Docker-backed Redis/Valkey/Memcached cache clusters, replication groups, serverless caches
 
 If a feature you need is missing, check `docs/services/<service>.md` for the
 detailed support matrix, then open an issue or PR.

@@ -675,8 +675,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known gaps (features LocalStack has that overcast doesn't yet)",
-        "id": "known-gaps-features-localstack-has-that-overcast-doesn-t-yet"
+        "text": "Coverage differences",
+        "id": "coverage-differences"
       },
       {
         "depth": 2,

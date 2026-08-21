@@ -90,31 +90,74 @@ All of these operations are implemented.
 
 ## Supported resource types
 
-Overcast's CloudFormation provisioner has handlers for ~50 resource types.
+<!--
+  Derivation: the counts and tables in this section are transcribed from the
+  resourceHandlers map in internal/services/cloudformation/provisioner.go —
+  132 registered entries (122 real handlers + 10 stubResourceHandler entries),
+  plus the dynamically resolved Custom::* / AWS::CloudFormation::CustomResource
+  and AWS::CloudFormation::Stack (see resolveHandler in the same file).
+  Re-derive with:  grep -c '"AWS::' on the map literal (stubs are the entries
+  whose value is &stubResourceHandler{}). Keep this section in sync when the
+  map changes.
+-->
+
+Overcast's CloudFormation provisioner has handlers for **132 resource types**
+(122 provisioned for real, 10 recognised as stubs), plus custom resources and
+nested stacks, which are resolved dynamically. The count comes from the
+`resourceHandlers` map in `internal/services/cloudformation/provisioner.go`.
 Resources with real handlers are provisioned through the emulated services —
 they create real state that you can query via the AWS APIs.
 
 ### Real handlers (resources are fully provisioned)
 
-| Service         | Resource Types                                                                                                                                                                                                                                             |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                 |
-| SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                          |
-| SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                |
-| DynamoDB        | `AWS::DynamoDB::Table`                                                                                                                                                                                                                                     |
-| Lambda          | `AWS::Lambda::Function`, `AWS::Lambda::EventSourceMapping`, `AWS::Lambda::LayerVersion`                                                                                                                                                                    |
-| IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`                                                                                                                                |
-| EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
-| ECS             | `AWS::ECS::Cluster`, `AWS::ECS::TaskDefinition`, `AWS::ECS::Service`                                                                                                                                                                                       |
-| API Gateway     | `AWS::ApiGateway::RestApi`, `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, `AWS::ApiGateway::Deployment`, `AWS::ApiGateway::Stage`                                                                                                                |
-| API Gateway V2  | `AWS::ApiGatewayV2::Api`, `AWS::ApiGatewayV2::Stage`, `AWS::ApiGatewayV2::Integration`, `AWS::ApiGatewayV2::Route`                                                                                                                                         |
-| EventBridge     | `AWS::Events::EventBus`, `AWS::Events::Rule`                                                                                                                                                                                                               |
-| KMS             | `AWS::KMS::Key`, `AWS::KMS::Alias`                                                                                                                                                                                                                         |
-| Step Functions  | `AWS::StepFunctions::StateMachine`                                                                                                                                                                                                                         |
-| CloudWatch Logs | `AWS::Logs::LogGroup`, `AWS::Logs::LogStream`                                                                                                                                                                                                              |
-| SSM             | `AWS::SSM::Parameter`                                                                                                                                                                                                                                      |
-| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                              |
-| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` |
+| Service         | Resource Types                                                                                                                                                                                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                                        |
+| SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                                                 |
+| SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                                       |
+| DynamoDB        | `AWS::DynamoDB::Table`                                                                                                                                                                                                                                                            |
+| Lambda          | `AWS::Lambda::Function`, `AWS::Lambda::Alias`, `AWS::Lambda::Url`, `AWS::Lambda::EventSourceMapping`, `AWS::Lambda::Permission`, `AWS::Lambda::LayerVersion`, `AWS::Lambda::CodeSigningConfig`                                                                                    |
+| IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`, `AWS::IAM::User`, `AWS::IAM::AccessKey`                                                                                                              |
+| EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPNGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
+| ECS             | `AWS::ECS::Cluster`, `AWS::ECS::TaskDefinition`, `AWS::ECS::Service`                                                                                                                                                                                                              |
+| ECR             | `AWS::ECR::Repository`                                                                                                                                                                                                                                                            |
+| API Gateway     | `AWS::ApiGateway::RestApi`, `AWS::ApiGateway::Resource`, `AWS::ApiGateway::Method`, `AWS::ApiGateway::Deployment`, `AWS::ApiGateway::Stage`, `AWS::ApiGateway::ApiKey`, `AWS::ApiGateway::UsagePlan`, `AWS::ApiGateway::UsagePlanKey`                                             |
+| API Gateway V2  | `AWS::ApiGatewayV2::Api`, `AWS::ApiGatewayV2::Stage`, `AWS::ApiGatewayV2::Integration`, `AWS::ApiGatewayV2::Route`                                                                                                                                                                |
+| AppSync         | `AWS::AppSync::Api`, `AWS::AppSync::GraphQLApi`, `AWS::AppSync::GraphQLSchema`, `AWS::AppSync::ChannelNamespace`, `AWS::AppSync::ApiKey`, `AWS::AppSync::DataSource`, `AWS::AppSync::Resolver`, `AWS::AppSync::FunctionConfiguration`, `AWS::AppSync::DomainName`, `AWS::AppSync::DomainNameApiAssociation`, `AWS::AppSync::ApiCache`, `AWS::AppSync::SourceApiAssociation` |
+| AppConfig       | `AWS::AppConfig::Application`, `AWS::AppConfig::Environment`, `AWS::AppConfig::ConfigurationProfile`                                                                                                                                                                              |
+| RDS             | `AWS::RDS::DBInstance`, `AWS::RDS::DBCluster`, `AWS::RDS::DBSubnetGroup`, `AWS::RDS::DBParameterGroup`                                                                                                                                                                            |
+| ElastiCache     | `AWS::ElastiCache::CacheCluster`, `AWS::ElastiCache::ServerlessCache`, `AWS::ElastiCache::ReplicationGroup`, `AWS::ElastiCache::SubnetGroup`                                                                                                                                      |
+| EFS             | `AWS::EFS::FileSystem`, `AWS::EFS::MountTarget`, `AWS::EFS::AccessPoint`                                                                                                                                                                                                          |
+| EKS             | `AWS::EKS::Cluster`, `AWS::EKS::Nodegroup`, `AWS::EKS::FargateProfile`, `AWS::EKS::Addon`, `AWS::EKS::AccessEntry`, `AWS::EKS::PodIdentityAssociation`                                                                                                                            |
+| MSK             | `AWS::MSK::Cluster`, `AWS::MSK::Configuration`                                                                                                                                                                                                                                    |
+| EventBridge     | `AWS::Events::EventBus`, `AWS::Events::Rule`                                                                                                                                                                                                                                      |
+| Scheduler       | `AWS::Scheduler::Schedule`, `AWS::Scheduler::ScheduleGroup`                                                                                                                                                                                                                       |
+| Pipes           | `AWS::Pipes::Pipe`                                                                                                                                                                                                                                                                |
+| Step Functions  | `AWS::StepFunctions::StateMachine`                                                                                                                                                                                                                                                |
+| Kinesis         | `AWS::Kinesis::Stream`                                                                                                                                                                                                                                                            |
+| Firehose        | `AWS::KinesisFirehose::DeliveryStream`                                                                                                                                                                                                                                            |
+| CloudWatch      | `AWS::CloudWatch::Alarm`                                                                                                                                                                                                                                                          |
+| CloudWatch Logs | `AWS::Logs::LogGroup`, `AWS::Logs::LogStream`                                                                                                                                                                                                                                     |
+| KMS             | `AWS::KMS::Key`, `AWS::KMS::Alias`                                                                                                                                                                                                                                                |
+| SSM             | `AWS::SSM::Parameter`                                                                                                                                                                                                                                                             |
+| Secrets Manager | `AWS::SecretsManager::Secret`                                                                                                                                                                                                                                                     |
+| Cognito         | `AWS::Cognito::UserPool`, `AWS::Cognito::UserPoolClient`                                                                                                                                                                                                                          |
+| Route 53        | `AWS::Route53::HostedZone`, `AWS::Route53::RecordSet`, `AWS::Route53::HealthCheck`                                                                                                                                                                                                |
+| CloudFront      | `AWS::CloudFront::Distribution`                                                                                                                                                                                                                                                   |
+| ELBv2           | `AWS::ElasticLoadBalancingV2::LoadBalancer`, `AWS::ElasticLoadBalancingV2::TargetGroup`, `AWS::ElasticLoadBalancingV2::Listener`                                                                                                                                                  |
+| Auto Scaling    | `AWS::AutoScaling::AutoScalingGroup`, `AWS::AutoScaling::LaunchConfiguration`                                                                                                                                                                                                     |
+| SES             | `AWS::SES::Template`                                                                                                                                                                                                                                                              |
+| ACM             | `AWS::CertificateManager::Certificate`                                                                                                                                                                                                                                            |
+| CloudTrail      | `AWS::CloudTrail::Trail`                                                                                                                                                                                                                                                          |
+| Backup          | `AWS::Backup::BackupVault`, `AWS::Backup::BackupPlan`                                                                                                                                                                                                                             |
+| Transfer Family | `AWS::Transfer::Server`, `AWS::Transfer::User`                                                                                                                                                                                                                                    |
+| Glue            | `AWS::Glue::Database`, `AWS::Glue::Table`                                                                                                                                                                                                                                         |
+| Athena          | `AWS::Athena::WorkGroup`                                                                                                                                                                                                                                                          |
+| OpenSearch      | `AWS::OpenSearchService::Domain`                                                                                                                                                                                                                                                  |
+| Shield          | `AWS::Shield::Protection`                                                                                                                                                                                                                                                         |
+| WAF v2          | `AWS::WAFv2::WebACL`                                                                                                                                                                                                                                                              |
+| AppRegistry     | `AWS::ServiceCatalogAppRegistry::Application`, `AWS::ServiceCatalogAppRegistry::ResourceAssociation`                                                                                                                                                                              |
+| CloudFormation  | `AWS::CloudFormation::Stack` (nested stacks), `AWS::CloudFormation::CustomResource`, `Custom::*` (resolved dynamically, in addition to the 132 static handlers)                                                                                                                    |
 
 ### Stubs (succeed silently, no real state)
 
@@ -122,11 +165,15 @@ These resource types are recognised and return a synthetic physical ID so the
 stack can complete, but no real resources are created:
 
 - `AWS::SQS::QueuePolicy`
-- `AWS::Lambda::Permission`
+- `AWS::DynamoDB::GlobalTable`
+- `AWS::ApiGateway::Account`
+- `AWS::ApiGatewayV2::Deployment`
+- `AWS::ElastiCache::ParameterGroup`
+- `AWS::SES::ConfigurationSet`
+- `AWS::Events::Connection`
 - `AWS::CDK::Metadata`
 - `AWS::CloudFormation::WaitConditionHandle`
 - `AWS::CloudFormation::WaitCondition`
-- `AWS::ApiGateway::Account`
 
 ### Unknown resource types
 
