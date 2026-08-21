@@ -12,8 +12,8 @@
 // on them. Every port is chosen by probing, so two compat sessions (or two
 // agents) can run side by side. Ports are bound on loopback, never on every
 // interface, whether the instance is a container (published with -p) or a
-// native binary (told where to listen with OVERCAST_HOST) — see loopbackHost,
-// bindHosts and dockerBridgeGateway.
+// native binary (told where to listen with OVERCAST_LISTEN) — see
+// loopbackHost, bindHosts and dockerBridgeGateway.
 package main
 
 import (
@@ -73,7 +73,7 @@ const (
 	// container, bound there for a native binary — and the address every port
 	// probe binds. Both paths default to every interface if left alone: a bare
 	// "<host>:<container>" mapping publishes on all of them, and the emulator's
-	// own OVERCAST_HOST default is 0.0.0.0. Either puts an unauthenticated
+	// own OVERCAST_LISTEN default is 0.0.0.0. Either puts an unauthenticated
 	// emulator on whatever network the machine is attached to, and trips a
 	// Windows Firewall prompt. Nothing that talks to a compat instance is
 	// off-box.
@@ -227,7 +227,7 @@ func overcastEnv(apiPort, uiPort int, hosts []string) []string {
 	return []string{
 		"OVERCAST_PORT=" + strconv.Itoa(apiPort),
 		"OVERCAST_UI_PORT=" + strconv.Itoa(uiPort),
-		"OVERCAST_HOST=" + strings.Join(hosts, ","),
+		"OVERCAST_LISTEN=" + strings.Join(hosts, ","),
 		"OVERCAST_STATE=memory",
 	}
 }
@@ -821,7 +821,7 @@ func publishArgs(hostPort, containerPort int, extraHost string) []string {
 // this machine's containers and from nowhere else.
 //
 // Both managed paths use it, and mean the same thing by it: publishArgs adds a
-// -p mapping on it, bindHosts adds it to OVERCAST_HOST.
+// -p mapping on it, bindHosts adds it to OVERCAST_LISTEN.
 //
 // It is not a rust-sdk-only accommodation. internal/containerendpoint hands
 // every container Overcast starts itself — Lambda, ECS — an /etc/hosts entry

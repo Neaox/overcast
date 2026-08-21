@@ -33,7 +33,7 @@ var base string
 
 func init() {
 	port := envOr("OVERCAST_PORT", "4566")
-	host := envOr("OVERCAST_HOST", "localhost")
+	host := envOr("OVERCAST_LISTEN", "localhost")
 	base = fmt.Sprintf("http://%s:%s", host, port)
 }
 
@@ -79,7 +79,7 @@ func printUsage() {
 	fmt.Println("Overcast Debug Tool")
 	fmt.Println()
 	fmt.Printf("  Target: %s\n", base)
-	fmt.Printf("  Set OVERCAST_HOST / OVERCAST_PORT to change.\n")
+	fmt.Printf("  Set OVERCAST_LISTEN / OVERCAST_PORT to change.\n")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println()

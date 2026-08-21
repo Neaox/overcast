@@ -95,7 +95,16 @@ const DefaultEFSNFSImage = "registry.k8s.io/sig-storage/nfs-provisioner@sha256:c
 // Zero value is not valid — always construct via Load().
 type Config struct {
 	// Host is the hostname or IP address to bind to.
-	// Equivalent to LocalStack's LOCALSTACK_HOST.
+	//
+	// NOT equivalent to LocalStack's LOCALSTACK_HOST — that variable sets the
+	// name LocalStack embeds in URLs it returns, which is what Hostname below
+	// does here. Host controls the socket bind address, which LocalStack calls
+	// GATEWAY_LISTEN; Overcast's OVERCAST_LISTEN follows that idiom (see #870).
+	//
+	// Set via OVERCAST_LISTEN. The pre-rename name, OVERCAST_HOST, has been
+	// removed rather than kept as an alias — Overcast is alpha software, and a
+	// leftover OVERCAST_HOST is a hard startup error naming the replacement
+	// (see resolveListen) rather than a silently-honoured fallback.
 	// Use "127.0.0.1" to restrict to localhost only.
 	// Defaults to "0.0.0.0" (all interfaces).
 	// When several addresses are configured this is the first of them — see
@@ -791,10 +800,10 @@ func (c *Config) Addrs() []string {
 	return addrs
 }
 
-// parseHosts splits OVERCAST_HOST into the addresses to bind. Blank entries
-// are dropped and repeats collapsed — binding the same address twice on one
-// port fails the second listen with EADDRINUSE, and a trailing comma is not
-// worth failing a startup over.
+// parseHosts splits an OVERCAST_LISTEN value into the addresses to bind.
+// Blank entries are dropped and repeats collapsed — binding the same address
+// twice on one port fails the second listen with EADDRINUSE, and a trailing
+// comma is not worth failing a startup over.
 //
 // A wildcard alongside a specific address is refused rather than collapsed.
 // It reads as a widening ("loopback, and also everything") when it is the
@@ -811,19 +820,41 @@ func parseHosts(raw string) ([]string, error) {
 		hosts = append(hosts, host)
 	}
 	if len(hosts) == 0 {
-		return nil, fmt.Errorf("config: OVERCAST_HOST %q names no address to bind", raw)
+		return nil, fmt.Errorf("config: OVERCAST_LISTEN %q names no address to bind", raw)
 	}
 	if len(hosts) > 1 {
 		for _, host := range hosts {
 			if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
 				return nil, fmt.Errorf(
-					"config: OVERCAST_HOST %q combines the wildcard %q with a specific address; "+
+					"config: OVERCAST_LISTEN %q combines the wildcard %q with a specific address; "+
 						"the wildcard already covers every address, so drop either it or the rest",
 					raw, host)
 			}
 		}
 	}
 	return hosts, nil
+}
+
+// resolveListen determines the raw (comma-separated, undefaulted) bind
+// address list from OVERCAST_LISTEN.
+//
+// OVERCAST_HOST, the pre-rename name (#870), has been removed rather than
+// kept as an alias: Overcast is alpha software, and the project's policy for
+// a removed setting is a loud startup failure naming the replacement, not a
+// silently-honoured fallback — a leftover OVERCAST_HOST from before the
+// rename must not be quietly ignored (which is exactly what would happen if
+// it were left unrecognised: envOr would just see it as irrelevant noise and
+// fall through to the OVERCAST_LISTEN default, changing nothing about the
+// bind address while looking, to the operator, like it took effect).
+//
+// defaultListen is the fallback when OVERCAST_LISTEN is unset — always
+// "0.0.0.0" today; #761 makes it depend on whether Overcast is containerised.
+func resolveListen(defaultListen string) (string, error) {
+	if _, hostSet := os.LookupEnv("OVERCAST_HOST"); hostSet {
+		return "", fmt.Errorf(
+			"config: OVERCAST_HOST has been removed; use OVERCAST_LISTEN instead (same value format)")
+	}
+	return envOr("OVERCAST_LISTEN", defaultListen), nil
 }
 
 // WildcardDNSDomains are the public domains whose every subdomain resolves to
@@ -1059,8 +1090,10 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //
 // Environment variables (all optional, defaults shown):
 //
-//	OVERCAST_HOST                      0.0.0.0 (comma-separated for several)
-//	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs)
+//	OVERCAST_LISTEN                    0.0.0.0 (comma-separated for several; bind address —
+//	                                           OVERCAST_HOST was renamed to this and removed, see #870)
+//	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs; the actual
+//	                                           analogue of LocalStack's LOCALSTACK_HOST)
 //	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
 //	                                           inside containers, comma-separated)
 //	OVERCAST_PORT                      4566
@@ -1193,8 +1226,12 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 func Load() (*Config, error) {
 	cfg := &Config{}
 
-	// Host
-	hosts, err := parseHosts(envOr("OVERCAST_HOST", "0.0.0.0"))
+	// Host — OVERCAST_LISTEN (OVERCAST_HOST removed, #870)
+	rawListen, err := resolveListen("0.0.0.0")
+	if err != nil {
+		return nil, err
+	}
+	hosts, err := parseHosts(rawListen)
 	if err != nil {
 		return nil, err
 	}

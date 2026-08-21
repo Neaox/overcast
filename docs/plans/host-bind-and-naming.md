@@ -6,8 +6,14 @@ description: Decision record for #761 (OVERCAST_HOST defaults to 0.0.0.0 while t
 # Bind address: default, name, and the docs that contradict it
 
 > Status: **decided 2026-08-22 — A + C, sequenced per §4** (maintainer approval:
-> "pick both up"). Implementation in progress: #870 (rename with alias) ships
-> first, then #761 (environment-dependent native default). Owner: in flight.
+> "pick both up"). Revised same day: **C ships as a straight rename with the
+> old name *removed*, not kept as a permanent alias** — Overcast is alpha
+> software and the standing policy is that a removed setting fails loudly
+> naming its replacement rather than being silently accepted. #870 (rename,
+> `OVERCAST_HOST` removed) ships in
+> [#1176](https://github.com/Neaox/overcast/pull/1176); #761
+> (environment-dependent native default) follows once it merges. Owner: in
+> flight.
 > Tracks: [#761](https://github.com/Neaox/overcast/issues/761) (default vs docs),
 > [#870](https://github.com/Neaox/overcast/issues/870) (naming vs LocalStack convention).
 > The two issues carry the full evidence; this doc exists so the *combined* decision
@@ -31,7 +37,7 @@ These are decision-free and should ship regardless of everything below:
 
 | Item | Why it is free |
 |---|---|
-| **Startup log line naming the bind address** and that `OVERCAST_HOST` changes it | #761 asks for it under either resolution; precedent is the storage-mode log line |
+| **Startup log line naming the bind address** and that `OVERCAST_LISTEN` changes it | #761 asks for it under either resolution; precedent is the storage-mode log line |
 | **Fix the false `LOCALSTACK_HOST` equivalence comment** (`internal/config/config.go`) | It is wrong today and misdirects LocalStack migrants; #870 asks for it independently of the rename |
 | **Container default stays `0.0.0.0`** | Docker `-p` publishing requires it; the image is the primary distribution; #761 states this as a hard constraint |
 | **An explicit setting always wins**, in both directions | Both issues assume it; nobody proposes otherwise |
@@ -52,8 +58,18 @@ contradiction is not.
 
 | Option | What ships | Cost | Benefit |
 |---|---|---|---|
-| **C. Rename with permanent alias** (the issue's proposal) | `OVERCAST_LISTEN` accepted (LocalStack's `GATEWAY_LISTEN` idiom; value format already matches); `OVERCAST_HOST` works forever as an alias; both-set-with-different-values fails at startup; docs use the new name | A second name to keep accepting (cheap); docs churn | The `docs/dev/networking.md` disambiguation section becomes deletable; the `*_HOST`-means-advertised-name collision with LocalStack/Floci convention ends |
+| **C. Rename, old name removed** (revised from the issue's alias proposal — see below) | `OVERCAST_LISTEN` is the only bind-address variable (LocalStack's `GATEWAY_LISTEN` idiom; value format already matches); `OVERCAST_HOST` is removed rather than kept as a permanent alias — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN`, so a straggler cannot be silently ignored; docs use the new name throughout | A breaking change (`*!` changelog entry with migration steps); every compose file, `.env`, test, and workflow setting `OVERCAST_HOST` must be updated in the same change | The `docs/dev/networking.md` disambiguation section becomes deletable; the `*_HOST`-means-advertised-name collision with LocalStack/Floci convention ends; no second name to keep supporting forever |
 | **D. Keep the name** | Comment fix + docs clarity only | The silent wrong-variable failure modes #870 documents stay live (worst: someone tightening exposure gets no tightening and a broken URL surface, with no error) | No churn |
+
+**Revision, 2026-08-22:** the issue's original proposal kept `OVERCAST_HOST`
+working forever as a permanent alias (see the issue text and #1176's first
+commit for that shape). The maintainer overrode this after #1176 opened:
+Overcast is alpha, the API is fully changeable, and a permanent alias is the
+wrong instinct for a project whose own fidelity principle is that silent
+divergence — a stale setting doing nothing while looking accepted — is the
+expensive failure mode. `OVERCAST_HOST` is removed outright; a value left
+over from before the rename fails startup by name rather than being quietly
+ignored.
 
 Open sub-questions #870 flags for the same sitting: whether `OVERCAST_HOSTNAME`
 keeps its double duty (advertised name + virtual-host base + `/etc/hosts` entry
@@ -62,11 +78,12 @@ keeps its double duty (advertised name + virtual-host base + `/etc/hosts` entry
 
 ## 4. Interaction — why decide these together
 
-If both A and C are chosen, **C ships first**: introduce `OVERCAST_LISTEN`,
-then change the *native default* in the same release the new name is
-documented. The migration story becomes one coherent line — "native builds now
-listen on loopback; set `OVERCAST_LISTEN=0.0.0.0` (né `OVERCAST_HOST`) to
-restore the old reach" — instead of a renamed variable and a changed default
+If both A and C are chosen, **C ships first**: introduce `OVERCAST_LISTEN`
+(with `OVERCAST_HOST` removed), then change the *native default* in the same
+release the new name is documented. The migration story becomes one coherent
+sequence — rename `OVERCAST_HOST` to `OVERCAST_LISTEN` first, then, once native
+default work lands, set `OVERCAST_LISTEN=0.0.0.0` to restore the old reach if
+you were relying on it — instead of a renamed variable and a changed default
 arriving as two separate surprises. If only one is chosen, nothing about it
 constrains later adopting the other.
 
@@ -84,8 +101,10 @@ security-posture trade-off in §3.1 is the maintainer's call.
 
 - The §2 decision-free items are merged.
 - The chosen option(s) from §3 are implemented with their issues' own
-  acceptance criteria (#761: default or docs + log line; #870: alias behaviour,
-  conflict-fail, docs rename, disambiguation section deleted).
+  acceptance criteria, as revised 2026-08-22 (#761: default or docs + log
+  line; #870: `OVERCAST_LISTEN` is the only bind-address variable,
+  `OVERCAST_HOST` removed and fails loudly rather than kept as an alias, docs
+  rename, disambiguation section deleted).
 - README.md, AGENTS.md, the architecture doc, `docs/README.md`'s configuration
   reference, and `docs/dev/networking.md` agree with the shipped behaviour.
 - This doc's status line records the decision and the shipping PRs, or the doc

@@ -56,13 +56,13 @@ services:
 
 | LocalStack        | overcast                                 | Notes                                                             |
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind, or a comma-separated list. Default: `0.0.0.0`   |
+| `LOCALSTACK_HOST` | `OVERCAST_HOSTNAME`                      | The *advertised* name embedded in returned URLs — the true analogue. (`OVERCAST_HOST`, despite the similar name, used to be the bind address instead; it has since been renamed and removed — see the next row) |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
 | `SERVICES`        | — *(no equivalent)*                      | Overcast runs every service, always. Drop the variable; a leftover value is ignored rather than rejected |
 | `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
-| `GATEWAY_LISTEN`  | `OVERCAST_HOST:OVERCAST_PORT`            | Split into two variables                                          |
+| `GATEWAY_LISTEN`  | `OVERCAST_LISTEN` + `OVERCAST_PORT`      | Bind address, split into two variables. (Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN` as the replacement, rather than being silently ignored) |
 | —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `auto` there is always `memory` and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
 | —                 | `OVERCAST_DEBUG=true`                    | Enable `/_overcast/debug/*` endpoints                                      |
 | —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |

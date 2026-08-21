@@ -199,7 +199,7 @@ RUN mkdir -p /etc/localstack/init/boot.d \
              /etc/overcast/init/shutdown.d
 
 ENV OVERCAST_PORT=4566 \
-    OVERCAST_HOST=0.0.0.0 \
+    OVERCAST_LISTEN=0.0.0.0 \
     OVERCAST_DATA_DIR=/data \
     OVERCAST_DATA_DIR_SOURCE=image \
     OVERCAST_LOG_LEVEL=info \

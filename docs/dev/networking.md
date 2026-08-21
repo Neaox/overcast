@@ -16,7 +16,7 @@
 
 1. [The problem AWS does not have](#1-the-problem-aws-does-not-have)
 2. [What binds where](#2-what-binds-where)
-3. [`OVERCAST_HOST` is not `OVERCAST_HOSTNAME`](#3-overcast_host-is-not-overcast_hostname)
+3. [Bind address versus advertised name](#3-bind-address-versus-advertised-name)
 4. [Which service owns a request](#4-which-service-owns-a-request)
 5. [The addresses Overcast hands back](#5-the-addresses-overcast-hands-back)
 6. [Names: the split-horizon domains](#6-names-the-split-horizon-domains)
@@ -60,7 +60,7 @@ The fourth catches people out, and it is why ECR gets [its own section](#10-ecr-
 
 ## 2. What binds where
 
-| Listener | Default port | Config | Honours `OVERCAST_HOST`? |
+| Listener | Default port | Config | Honours `OVERCAST_LISTEN`? |
 |---|---|---|---|
 | AWS API | 4566 | `OVERCAST_PORT` | **Yes** — every address in the list |
 | Web console / BFF | 4567 | `OVERCAST_UI_PORT`, `--ui-port`; `0` disables | **Partly** — first address only |
@@ -71,17 +71,17 @@ The fourth catches people out, and it is why ECR gets [its own section](#10-ecr-
 
 Four of those diverge, each for a reason.
 
-**`OVERCAST_HOST` takes a list.** Comma-separated; blanks dropped and duplicates collapsed, since binding one address twice would fail the second listen. A value that names *no* address is a hard error rather than a silent fall back to the default — the reasoning being that unset means "use the default", while set-to-nothing means the value is wrong, and defaulting it would bind every interface, the opposite of what anyone setting it wants.
+**`OVERCAST_LISTEN` takes a list.** Comma-separated; blanks dropped and duplicates collapsed, since binding one address twice would fail the second listen. A value that names *no* address is a hard error rather than a silent fall back to the default — the reasoning being that unset means "use the default", while set-to-nothing means the value is wrong, and defaulting it would bind every interface, the opposite of what anyone setting it wants. The pre-rename name, `OVERCAST_HOST` (see [§3](#3-bind-address-versus-advertised-name)), has been removed rather than kept as an alias — Overcast is alpha software, so a leftover `OVERCAST_HOST` is a startup error naming the replacement rather than a silent no-op.
 
 **A wildcard mixed with a specific address is refused.** `127.0.0.1,0.0.0.0` reads as a widening — "loopback, and also everything" — when it is the opposite of what the specific address asked for. On Linux the second bind fails anyway, and it fails as an opaque listen error rather than as the configuration mistake it is. Note `::` counts as a wildcard here too, not only `0.0.0.0`.
 
-The list exists for a specific shape: a throwaway instance that wants loopback and nowhere routable, but whose test suite runs in a sibling container reaching the host over the Docker bridge, where loopback is invisible. `OVERCAST_HOST=127.0.0.1,172.17.0.1` serves both without putting the emulator on the network the machine is attached to. The compat harness does exactly this.
+The list exists for a specific shape: a throwaway instance that wants loopback and nowhere routable, but whose test suite runs in a sibling container reaching the host over the Docker bridge, where loopback is invisible. `OVERCAST_LISTEN=127.0.0.1,172.17.0.1` serves both without putting the emulator on the network the machine is attached to. The compat harness does exactly this.
 
 If a later address in the list fails to bind, everything already opened is closed before the error returns, so a partial bind never leaves a port held for a reason that no longer exists.
 
-**The web console is deliberately narrower than the API.** It binds only the first address. `OVERCAST_HOST=127.0.0.1` is how an unauthenticated emulator is kept off the network the machine is attached to, and a console that ignored it would leave the state browser — and its write actions — reachable from that network anyway. The extra addresses exist so container-side clients can reach the API; the console is a browser surface on this machine.
+**The web console is deliberately narrower than the API.** It binds only the first address. `OVERCAST_LISTEN=127.0.0.1` is how an unauthenticated emulator is kept off the network the machine is attached to, and a console that ignored it would leave the state browser — and its write actions — reachable from that network anyway. The extra addresses exist so container-side clients can reach the API; the console is a browser surface on this machine.
 
-**SMTP is loopback-only regardless of `OVERCAST_HOST`.** That means an SMTP client in a sibling container cannot reach it. This appears to be undeclared rather than deliberate — see [§13](#13-things-that-will-bite-you).
+**SMTP is loopback-only regardless of `OVERCAST_LISTEN`.** That means an SMTP client in a sibling container cannot reach it. This appears to be undeclared rather than deliberate — see [§13](#13-things-that-will-bite-you).
 
 **The Lambda Runtime API narrows deliberately, and the wildcard is only a fallback.** A wildcard would put an unauthenticated control channel for every Lambda container on whatever network this machine is attached to, and nothing off this machine is a legitimate caller. But loopback alone would strand every invocation, because containers connect back to it over the control plane. So it binds loopback plus one reachable address, chosen from where Overcast is running — its own network IP when containerised, the network gateway on native Linux, the host's default-route address under Docker Desktop.
 
@@ -98,16 +98,15 @@ Two separate concerns, as in any server reachable by a name it does not bind —
 
 | | Binds | Advertises |
 |---|---|---|
-| Overcast | `OVERCAST_HOST` | `OVERCAST_HOSTNAME` |
+| Overcast | `OVERCAST_LISTEN` | `OVERCAST_HOSTNAME` |
 | LocalStack | `GATEWAY_LISTEN` | `LOCALSTACK_HOST` |
 | Floci | — (`FLOCI_PORT` only) | `FLOCI_HOSTNAME` |
 
-`OVERCAST_HOSTNAME` is the name that goes inside URLs Overcast hands back, and it is additive to the built-in wildcard bases rather than replacing them. It also becomes a virtual-hosted base for [host classification](#4-which-service-owns-a-request), an `/etc/hosts` entry inside every container Overcast starts, and a TLS SAN.
+`OVERCAST_LISTEN` follows LocalStack's `GATEWAY_LISTEN` idiom directly — same shape of variable, same job — which is what closed the naming collision that used to live in this section (see [#870](https://github.com/Neaox/overcast/issues/870)). The pre-rename name, `OVERCAST_HOST`, has been removed: Overcast is alpha software, and the project's policy for a removed setting is a startup error naming the replacement rather than a silently-honoured leftover.
+
+`OVERCAST_HOSTNAME` is the name that goes inside URLs Overcast hands back, and it is additive to the built-in wildcard bases rather than replacing them. It also becomes a virtual-hosted base for [host classification](#4-which-service-owns-a-request), an `/etc/hosts` entry inside every container Overcast starts, and a TLS SAN. It is the true analogue of LocalStack's `LOCALSTACK_HOST`, not `OVERCAST_LISTEN`.
 
 **`OVERCAST_HOSTNAME=localhost` is the one setting that silently breaks container callers.** Inside a container, `localhost` is the container. The code defends halfway — loopback names are dropped from the hostname set, so it produces neither an `/etc/hosts` entry nor a DNS claim — but URL minting still uses it, because a hostname *was* configured. Nothing warns.
-
-**A trap for anyone arriving from LocalStack:** the two `*_HOST` variables mean opposite things. `LOCALSTACK_HOST` advertises; `OVERCAST_HOST` binds. Overcast's true analogue of `LOCALSTACK_HOST` is `OVERCAST_HOSTNAME`. A code comment currently asserts the wrong equivalence, and a rename to remove the collision is proposed in
-[#870](https://github.com/Neaox/overcast/issues/870).
 
 ---
 
@@ -374,10 +373,10 @@ Current behaviour, symptom first.
 - **Security groups, NACLs and subnets are not enforced.** Docker network membership expresses "in this VPC or not" and nothing finer, so there is no port- or source-level filtering and no public/private subnet distinction within a VPC.
 - **A VPC with no internet gateway still reaches the internet.** Its own network is `--internal`, but every container also sits on the control plane, which is not. Closing that is a separate change with a wider blast radius — a container in such a VPC would lose egress entirely, including during INIT.
 - **HTTPS fails for API Gateway, Lambda function URLs and AppSync.** A one-level wildcard certificate matches exactly one label, so `{id}.execute-api.{region}.{base}` falls outside the auto-minted SANs. Those need their own certificate.
-- **A container cannot reach the SMTP capture server.** It binds loopback whatever `OVERCAST_HOST` says.
+- **A container cannot reach the SMTP capture server.** It binds loopback whatever `OVERCAST_LISTEN` says.
 - **On a native Windows or macOS host, wildcard subdomains do not resolve inside containers, the data-plane guard does not run, and VPC placement is therefore not enforced.** The resolver needs `/etc/resolv.conf` to find upstreams and silently does not start without one, logging at debug level. The apex names still work, because those come from `/etc/hosts`. Since a forbidden connection could only fail by hanging there, the restriction is withheld rather than delivered blind — so the same stack behaves differently on a host run and a containerised one. Run Overcast in a container to get either.
 - **Same-CIDR VPCs are not isolated under the default strategy.** `shared` puts them on one Docker bridge, so anything scoped to a network is scoped to both. `strict` and `remapped` give real separation; `netns` is declared but falls back to `shared` with a startup warning.
-- **You cannot tell which addresses Overcast bound.** Nothing logs it, and the default is the wildcard — so a native run listens on every interface with no signal either way. Tracked as [#761](https://github.com/Neaox/overcast/issues/761), which also asks whether that default should narrow.
+- **A native run still defaults to the wildcard.** A startup log line now names every bound address and that `OVERCAST_LISTEN` changes it, so it is no longer a silent default — but whether the *native* default itself should narrow from `0.0.0.0` is tracked separately as [#761](https://github.com/Neaox/overcast/issues/761).
 
 ---
 

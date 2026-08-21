@@ -73,9 +73,11 @@ Consequences for agents:
 - **A managed instance listens on `127.0.0.1`, never on every interface.**
   Both start-up paths default to every interface if left alone — a bare
   `-p <host>:<container>` publishes on all of them, and the emulator's own
-  `OVERCAST_HOST` default is `0.0.0.0` — and either puts an unauthenticated
+  `OVERCAST_LISTEN` default is `0.0.0.0` — and either puts an unauthenticated
   emulator on whatever network the machine is attached to. So a container is
-  published on loopback and a native binary is told `OVERCAST_HOST=127.0.0.1`.
+  published on loopback and a native binary is told `OVERCAST_LISTEN=127.0.0.1`
+  (renamed from `OVERCAST_HOST`, which has been removed — see
+  [#870](https://github.com/Neaox/overcast/issues/870)).
   On Linux both also cover the Docker bridge gateway, because that is what
   `host.docker.internal:host-gateway` resolves to there and it is the only way
   [suites/rust-sdk/run.sh](./suites/rust-sdk/run.sh) reaches the emulator from

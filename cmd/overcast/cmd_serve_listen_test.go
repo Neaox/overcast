@@ -4,6 +4,12 @@ import (
 	"net"
 	"strings"
 	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/Neaox/overcast/internal/config"
 )
 
 // freeLoopbackAddr returns a loopback address that was free a moment ago.
@@ -21,7 +27,7 @@ func freeLoopbackAddr(t *testing.T) string {
 }
 
 func TestListenAllBindsEveryAddress(t *testing.T) {
-	// Given: two addresses, as OVERCAST_HOST produces when it names more than
+	// Given: two addresses, as OVERCAST_LISTEN produces when it names more than
 	// one — loopback plus a second address the same server should answer on
 	// When: they are bound
 	// Then: both are listening, and the first is first, since callers read
@@ -94,5 +100,30 @@ func TestListenAllOnASingleAddress(t *testing.T) {
 	}
 	if got := lns[0].Addr().String(); got != addr {
 		t.Errorf("listener is on %q, want %q", got, addr)
+	}
+}
+
+// TestLogListenResolution_namesTheAddressAndTheVariable verifies the startup
+// log line (#870 §2 / #761's decision-free item) names the resolved bind
+// address(es) and points at OVERCAST_LISTEN as the way to change it — the
+// bind-address analogue of logStoreMode's storage-mode line.
+func TestLogListenResolution_namesTheAddressAndTheVariable(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+	cfg := &config.Config{Host: "127.0.0.1", Port: 4566, Hosts: []string{"127.0.0.1", "172.17.0.1"}}
+
+	logListenResolution(logger, cfg)
+
+	entries := logs.FilterMessageSnippet("set OVERCAST_LISTEN to change this").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 listen-resolution log line, got %d", len(entries))
+	}
+	entry := entries[0]
+	if !strings.Contains(entry.Message, "127.0.0.1:4566") || !strings.Contains(entry.Message, "172.17.0.1:4566") {
+		t.Errorf("log message %q does not name both bound addresses", entry.Message)
+	}
+	got, _ := entry.ContextMap()["addrs"].([]interface{})
+	if len(got) != 2 {
+		t.Errorf("addrs field: expected 2 entries, got %v", got)
 	}
 }

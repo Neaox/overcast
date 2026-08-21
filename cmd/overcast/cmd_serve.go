@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -45,7 +46,7 @@ All configuration is via environment variables. See internal/config/config.go.
 Examples:
   overcast serve
   OVERCAST_STATE=memory overcast serve
-  OVERCAST_HOST=127.0.0.1 overcast serve`,
+  OVERCAST_LISTEN=127.0.0.1 overcast serve`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uiPort, _ := cmd.Flags().GetInt("ui-port")
@@ -125,6 +126,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 			zap.String("stateAutoSignal", cfg.StateAutoSignal),
 		)
 	}
+	logListenResolution(logger, cfg)
 
 	// Whether OVERCAST_HOSTNAME's subdomains resolve on this host is a
 	// property of the host's resolver, not of Overcast, and it breaks
@@ -250,18 +252,16 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 
 	// Bind the listeners explicitly so we know the ports are ready before
-	// running READY hooks and before entering the select loop. OVERCAST_HOST
+	// running READY hooks and before entering the select loop. OVERCAST_LISTEN
 	// usually names one address; when it names several they all front the same
-	// http.Server, so a request is answered identically whichever it arrives on.
+	// http.Server, so a request is answered identically whichever it arrives
+	// on. logListenResolution above names which addresses these actually bound.
 	//
-	// Nothing logs which addresses these actually bound. Outside the
-	// compat-managed case OVERCAST_HOST still defaults to 0.0.0.0, so an
+	// Outside the compat-managed case this still defaults to 0.0.0.0, so an
 	// ordinary native run listens on every interface while the docs say not to
-	// expose Overcast on an untrusted network — and the operator gets no signal
-	// either way. The storage layer already logs its resolved mode and the
-	// reason for it; an equivalent line here would close the gap. See
-	// https://github.com/Neaox/overcast/issues/761, which also covers whether
-	// the native default should narrow to loopback.
+	// expose Overcast on an untrusted network. See
+	// https://github.com/Neaox/overcast/issues/761, which covers whether the
+	// native default should narrow to loopback.
 	lns, err := listenAll(cfg.Addrs())
 	if err != nil {
 		return err
@@ -282,7 +282,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {
-			// Bound on cfg.Host, not on the wildcard: OVERCAST_HOST=127.0.0.1
+			// Bound on cfg.Host, not on the wildcard: OVERCAST_LISTEN=127.0.0.1
 			// is how an unauthenticated emulator is kept off the network the
 			// machine is attached to, and a UI that ignored it left the state
 			// browser — and its write actions — reachable from that network
@@ -697,6 +697,20 @@ func logStoreMode(logger *zap.Logger, cfg *config.Config) {
 	default:
 		logger.Info("state backend: memory (data will not persist across restarts)")
 	}
+}
+
+// logListenResolution names the resolved bind address(es) at startup and
+// that OVERCAST_LISTEN changes it — mirroring how logStoreMode above reports
+// the storage mode it resolved to. Unlike logStoreMode this always logs,
+// whether or not the value was defaulted: unlike storage mode, there is no
+// "the interesting case is auto-detection" — an operator who set the bind
+// address explicitly still benefits from a single line confirming what
+// actually got bound.
+func logListenResolution(logger *zap.Logger, cfg *config.Config) {
+	logger.Info(
+		fmt.Sprintf("listening on %s — set OVERCAST_LISTEN to change this", strings.Join(cfg.Addrs(), ", ")),
+		zap.Strings("addrs", cfg.Hosts),
+	)
 }
 
 // buildHookEnv returns the environment variables passed to init hook scripts.
