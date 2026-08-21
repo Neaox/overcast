@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -147,19 +148,76 @@ type xmlPublishResult struct {
 // ---- Handlers --------------------------------------------------------------
 
 // Publish handles SNS Publish. Delivers message to all active SQS subscribers.
+//
+// Destination selection, MessageStructure=json, Message/Subject validation,
+// and FIFO parameter checks below all follow
+// https://docs.aws.amazon.com/sns/latest/api/API_Publish.html — see #183.
 func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
-	topicArn, ok := h.requireForm(w, r, "TopicArn")
-	if !ok {
+	topicArn := r.FormValue("TopicArn")
+	targetArn := r.FormValue("TargetArn")
+	phoneNumber := r.FormValue("PhoneNumber")
+
+	dest, aerr := resolvePublishDestination(topicArn, targetArn, phoneNumber)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
+
 	message, ok := h.requireForm(w, r, "Message")
 	if !ok {
 		return
 	}
 	subject := r.FormValue("Subject")
+	if aerr := validateSubject(subject); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	// SMS has its own (unenforced — see publishDirectSMS) size handling: AWS
+	// splits an over-limit SMS into multiple text messages rather than
+	// rejecting the Publish call, so the 256 KB check does not apply there.
+	if dest != publishDestPhoneNumber {
+		if aerr := validateMessageSize(message); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
+	}
+
+	var structuredMsgs map[string]string
+	if ms := r.FormValue("MessageStructure"); ms != "" {
+		if ms != "json" {
+			protocol.WriteQueryXMLError(w, r, errInvalidMessageStructure(ms))
+			return
+		}
+		structuredMsgs, aerr = parseJSONMessageStructure(message)
+		if aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
+	}
+
+	switch dest {
+	case publishDestPhoneNumber:
+		h.publishDirectSMS(w, r, phoneNumber, message, structuredMsgs)
+		return
+	case publishDestTargetArn:
+		// Mobile platform endpoints (CreatePlatformEndpoint/PublishToEndpoint)
+		// are not modelled — see docs/services/sns.md's "Platform applications"
+		// table. Say so explicitly rather than falling through to the
+		// TopicArn-shaped code below with an empty ARN.
+		protocol.WriteQueryXMLError(w, r, errTargetArnUnsupported())
+		return
+	case publishDestTopic:
+		// Falls through to the TopicArn-shaped publish below.
+	}
 
 	topic, aerr := h.snsStore.getTopicByARN(r.Context(), topicArn)
 	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	if aerr := validateFIFOPublishParams(topic, r.FormValue("MessageGroupId"), r.FormValue("MessageDeduplicationId")); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -205,7 +263,7 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envelope, subs, msgAttrs)
+		h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envelope, subs, msgAttrs, structuredMsgs)
 	}()
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlPublishResponse{
@@ -213,6 +271,267 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		Result:           xmlPublishResult{MessageId: msgID},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
+}
+
+// ---- Publish destination selection ------------------------------------------
+
+// publishDestination is which of TopicArn, TargetArn, or PhoneNumber a
+// Publish call named as its destination — resolvePublishDestination has
+// already confirmed exactly one was supplied.
+type publishDestination int
+
+const (
+	publishDestTopic publishDestination = iota
+	publishDestPhoneNumber
+	publishDestTargetArn
+)
+
+// resolvePublishDestination implements AWS's documented Publish destination
+// rule. TopicArn, TargetArn, and PhoneNumber are each individually optional
+// in the API reference, but the docs cross-reference each other — "If you
+// don't specify a value for the TopicArn parameter, you must specify a value
+// for the PhoneNumber or TargetArn parameters" (and likewise for each of the
+// other two) — which only holds if exactly one of the three is present.
+// https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+func resolvePublishDestination(topicArn, targetArn, phoneNumber string) (publishDestination, *protocol.AWSError) {
+	n := 0
+	if topicArn != "" {
+		n++
+	}
+	if targetArn != "" {
+		n++
+	}
+	if phoneNumber != "" {
+		n++
+	}
+	switch {
+	case n == 0:
+		return 0, &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: TopicArn, TargetArn, or PhoneNumber Reason: no value for required parameter",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	case n > 1:
+		return 0, &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: Exactly one of TopicArn, TargetArn, or PhoneNumber must be specified.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	case topicArn != "":
+		return publishDestTopic, nil
+	case phoneNumber != "":
+		return publishDestPhoneNumber, nil
+	default:
+		return publishDestTargetArn, nil
+	}
+}
+
+// errTargetArnUnsupported reports Publish's TargetArn (mobile platform
+// endpoint) destination as unsupported. AWS's own error for a genuinely
+// disabled endpoint is EndpointDisabled, but Overcast has no
+// CreatePlatformEndpoint at all, so no TargetArn is ever a real endpoint —
+// InvalidParameter (the code AWS uses for a malformed/unusable parameter
+// value) is the honest answer here, not a 200 that silently drops the
+// notification.
+func errTargetArnUnsupported() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameter",
+		Message:    "Invalid parameter: TargetArn - publishing directly to a mobile platform endpoint is not supported by this emulator.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// publishDirectSMS implements Publish with PhoneNumber: an SMS sent directly
+// to a phone number, independent of any topic or subscription. It mirrors
+// the sms-protocol subscription delivery path in fanOut (same SMSSender,
+// same Inbox capture with kind=sms) but bypasses topic/subscriber resolution
+// entirely, since AWS treats this destination as topic-less.
+// https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-phone-number-as-subscriber.html
+func (h *Handler) publishDirectSMS(w http.ResponseWriter, r *http.Request, phoneNumber, message string, structured map[string]string) {
+	msgID := uuid.New().String()
+	if h.smsSender != nil {
+		body := messageForProtocol(structured, message, "sms")
+		// groupTopic is "" — there is no topic behind a direct PhoneNumber
+		// publish, matching SMSSender.SendSMS's documented "" for standalone
+		// messages.
+		if err := h.smsSender.SendSMS("sns", h.cfg.SMTPFrom, phoneNumber, body, msgID, ""); err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+			return
+		}
+		if h.bus != nil {
+			h.bus.Publish(r.Context(), events.Event{
+				Type:   events.SNSSMSDelivered,
+				Time:   h.clk.Now(),
+				Source: "sns",
+				Payload: events.SNSSMSPayload{
+					To:        phoneNumber,
+					MessageID: msgID,
+				},
+			})
+		}
+	}
+	// As with topic fan-out's sms case, a nil SMSSender does not fail the
+	// Publish call — the message still "sends" from the caller's point of
+	// view, it is just not captured anywhere to inspect.
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlPublishResponse{
+		Xmlns:            snsXMLNS,
+		Result:           xmlPublishResult{MessageId: msgID},
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+// ---- Publish validation: Message size, Subject, MessageStructure=json ------
+
+// snsMaxMessageBytes is AWS's documented Publish size limit for the Message
+// parameter: "With the exception of SMS, messages must be UTF-8 encoded
+// strings and at most 256 KB in size (262,144 bytes, not 262,144
+// characters)." https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+const snsMaxMessageBytes = 262144
+
+// validateMessageSize enforces snsMaxMessageBytes. Byte length, not rune
+// count, matching AWS's own "bytes, not characters" wording.
+func validateMessageSize(message string) *protocol.AWSError {
+	if len(message) > snsMaxMessageBytes {
+		return &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    fmt.Sprintf("Invalid parameter: Message too long. Message must be less than %d bytes.", snsMaxMessageBytes),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
+}
+
+// snsMaxSubjectChars is AWS's documented Subject constraint: "Subjects must
+// be UTF-8 text with no line breaks or control characters, and less than 100
+// characters long" — strictly fewer than 100.
+const snsMaxSubjectChars = 100
+
+// validateSubject enforces the length and character constraints AWS
+// documents for Subject. An absent Subject (empty string) is always valid —
+// Subject is optional.
+func validateSubject(subject string) *protocol.AWSError {
+	if subject == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(subject) >= snsMaxSubjectChars {
+		return &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: Subject Reason: Subject must be less than 100 characters long.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	for _, r := range subject {
+		if r == '\n' || r == '\r' || (r < 0x20) || r == 0x7f {
+			return &protocol.AWSError{
+				Code:       "InvalidParameter",
+				Message:    "Invalid parameter: Subject Reason: Subject must not contain line breaks or control characters.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	return nil
+}
+
+// errInvalidMessageStructure reports an unsupported MessageStructure value.
+// AWS's only documented valid value is the literal string "json".
+func errInvalidMessageStructure(value string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameter",
+		Message:    fmt.Sprintf("Invalid parameter: MessageStructure Reason: %q is not a valid MessageStructure value; the only supported value is \"json\".", value),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// parseJSONMessageStructure implements the MessageStructure=json contract:
+// Message must be a syntactically valid JSON object with a top-level
+// "default" key whose value is a string. Other top-level keys are AWS's
+// per-protocol payload overrides, keyed by the exact protocol name — see
+// messageForProtocol. A non-string value for any other key is silently
+// ignored rather than rejected, matching AWS: "Non-string values will cause
+// the key to be ignored." https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+func parseJSONMessageStructure(raw string) (map[string]string, *protocol.AWSError) {
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: Message Structure - Message must be a syntactically valid JSON object when MessageStructure is json: " + err.Error(),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	out := make(map[string]string, len(body))
+	for k, v := range body {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		out[k] = s
+	}
+	if _, ok := out["default"]; !ok {
+		return nil, &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: Message Structure - No default entry in JSON message body",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return out, nil
+}
+
+// messageForProtocol returns the notification text a subscriber of protocol
+// proto receives. structured is nil unless the publish used
+// MessageStructure=json, in which case it is the map parseJSONMessageStructure
+// returned (always containing "default"). proto is matched against its own
+// key exactly as AWS's documented examples key the JSON object — "sqs",
+// "email", "email-json", "http", "https", "sms", "lambda", etc. — case
+// folded since Subscribe stores Protocol verbatim from the caller; a
+// protocol with no entry of its own falls back to "default".
+// https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+func messageForProtocol(structured map[string]string, plain, proto string) string {
+	if structured == nil {
+		return plain
+	}
+	if v, ok := structured[strings.ToLower(proto)]; ok {
+		return v
+	}
+	return structured["default"]
+}
+
+// ---- FIFO topic Publish parameter validation --------------------------------
+
+// validateFIFOPublishParams implements AWS's FIFO-topic Publish parameter
+// requirements — MessageGroupId is always required, and
+// MessageDeduplicationId is required unless the topic has
+// ContentBasedDeduplication enabled. FIFO-ness is read off the topic name's
+// ".fifo" suffix, the naming convention AWS itself enforces at CreateTopic
+// time, rather than a dedicated stored flag: Overcast's CreateTopic does not
+// currently accept creation-time Attributes (a separate gap), but any
+// SetTopicAttributes call can still set ContentBasedDeduplication, which is
+// stored as a plain attribute like any other.
+//
+// This only validates that the required parameters are present so a client
+// relying on FIFO semantics fails fast instead of silently getting
+// standard-topic behaviour — actual message ordering, deduplication, and
+// SequenceNumber generation remain unimplemented (tracked in #183 as a
+// documented gap, not fixed here).
+// https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
+func validateFIFOPublishParams(topic *Topic, messageGroupID, messageDeduplicationID string) *protocol.AWSError {
+	if !strings.HasSuffix(topic.Name, ".fifo") {
+		return nil
+	}
+	if messageGroupID == "" {
+		return &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: MessageGroupId Reason: The MessageGroupId parameter is required for FIFO topics.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	if messageDeduplicationID == "" && !strings.EqualFold(topic.Attributes["ContentBasedDeduplication"], "true") {
+		return &protocol.AWSError{
+			Code:       "InvalidParameter",
+			Message:    "Invalid parameter: MessageDeduplicationId Reason: The topic should either have ContentBasedDeduplication set, or MessageDeduplicationId provided explicitly.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
 }
 
 // PublishToTopic implements events.TopicPublisher: the internal seam another
@@ -271,7 +590,7 @@ func (h *Handler) PublishToTopic(ctx context.Context, topicARN, subject, message
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.fanOut(context.WithoutCancel(ctx), "", topic.Name, msgID, subject, message, envelope, subs, nil)
+		h.fanOut(context.WithoutCancel(ctx), "", topic.Name, msgID, subject, message, envelope, subs, nil, nil)
 	}()
 	return nil
 }
@@ -303,6 +622,12 @@ type xmlPublishBatchFailed struct {
 
 // PublishBatch handles SNS PublishBatch.
 // Publishes up to 10 messages in a single request.
+//
+// Each entry is validated (Message size, Subject, MessageStructure=json)
+// independently, matching AWS: a bad entry lands in Failed without aborting
+// the rest of the batch. FIFO parameter validation is not applied here —
+// see #183's disposition notes — only the single-message Publish path
+// enforces MessageGroupId/MessageDeduplicationId today.
 // AWS docs: https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html
 func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 	topicArn, ok := h.requireForm(w, r, "TopicArn")
@@ -321,7 +646,7 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 	origin := publishOrigin(r.Context())
 
 	// Parse member.N entries from the form-encoded body.
-	// Form keys: PublishBatchRequestEntries.member.N.{Id,Message,Subject}
+	// Form keys: PublishBatchRequestEntries.member.N.{Id,Message,Subject,MessageStructure}
 	var successful []xmlPublishBatchSuccess
 	var failed []xmlPublishBatchFailed
 
@@ -333,6 +658,29 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		message := r.FormValue(prefix + "Message")
 		subject := r.FormValue(prefix + "Subject")
+
+		if aerr := validateSubject(subject); aerr != nil {
+			failed = append(failed, xmlPublishBatchFailed{Id: entryID, Code: aerr.Code, Message: aerr.Message})
+			continue
+		}
+		if aerr := validateMessageSize(message); aerr != nil {
+			failed = append(failed, xmlPublishBatchFailed{Id: entryID, Code: aerr.Code, Message: aerr.Message})
+			continue
+		}
+		var structuredMsgs map[string]string
+		if ms := r.FormValue(prefix + "MessageStructure"); ms != "" {
+			if ms != "json" {
+				aerr := errInvalidMessageStructure(ms)
+				failed = append(failed, xmlPublishBatchFailed{Id: entryID, Code: aerr.Code, Message: aerr.Message})
+				continue
+			}
+			var perr *protocol.AWSError
+			structuredMsgs, perr = parseJSONMessageStructure(message)
+			if perr != nil {
+				failed = append(failed, xmlPublishBatchFailed{Id: entryID, Code: perr.Code, Message: perr.Message})
+				continue
+			}
+		}
 
 		msgID := uuid.New().String()
 		envelope := snsNotificationEnvelope{
@@ -360,9 +708,10 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 		// Deliver to all subscribers — runs asynchronously after the response is sent.
 		h.wg.Add(1)
 		envCopy := envelope
+		structuredCopy := structuredMsgs
 		go func() {
 			defer h.wg.Done()
-			h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envCopy, subs, nil)
+			h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envCopy, subs, nil, structuredCopy)
 		}()
 
 		successful = append(successful, xmlPublishBatchSuccess{Id: entryID, MessageId: msgID})
@@ -414,10 +763,17 @@ func publishOrigin(ctx context.Context) string {
 // origin is the publishing caller's origin (see publishOrigin), carried in
 // because fan-out outlives the request that started it.
 // msgAttrs is the map of message attributes from the Publish call (may be nil).
+// structuredMsgs is the parsed MessageStructure=json payload (nil unless the
+// publish used it) — see messageForProtocol, which selects each
+// subscription's own delivery text from it. plainMessage stays the original,
+// unselected Message parameter throughout: FilterPolicyScope=MessageBody
+// matching evaluates against it exactly as it did before MessageStructure=json
+// support existed, since AWS scopes that filtering to the raw published body,
+// not any one protocol's selected payload.
 // It handles sqs, lambda, email, email-json, sms, http/https, and application
 // protocols and respects FilterPolicy. A protocol with no delivery
 // implementation is reported through failDelivery rather than dropped.
-func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute) {
+func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute, structuredMsgs map[string]string) {
 	log := h.log.WithRecorder(ctx)
 	// Filter-policy matching works on plain string values. Derive them at most
 	// once per publish rather than once per subscription, and only when some
@@ -441,8 +797,16 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 				continue
 			}
 		}
-		// Build the per-subscription envelope with the correct UnsubscribeURL.
+		// MessageStructure=json: this subscription's protocol may have its own
+		// payload, falling back to "default" — see messageForProtocol. Without
+		// MessageStructure=json this is just plainMessage, unchanged for every
+		// subscriber, exactly as before.
+		protoMessage := messageForProtocol(structuredMsgs, plainMessage, sub.Protocol)
+
+		// Build the per-subscription envelope with the correct UnsubscribeURL
+		// and this protocol's selected message.
 		subEnv := env
+		subEnv.Message = protoMessage
 		subEnv.UnsubscribeURL = h.unsubscribeURL(origin, sub.SubscriptionARN)
 		jsonBytes, err := json.Marshal(subEnv)
 		if err != nil {
@@ -453,7 +817,10 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 		jsonBody := string(jsonBytes)
 		deliveryBody := jsonBody
 		if strings.EqualFold(sub.Attributes["RawMessageDelivery"], "true") {
-			deliveryBody = plainMessage
+			// Raw delivery strips the notification envelope but MessageStructure=json
+			// selection still applies underneath it — the subscriber gets its own
+			// protocol's text, not the full JSON structure blob.
+			deliveryBody = protoMessage
 		}
 		d := delivery{
 			sub:       sub,
@@ -499,8 +866,8 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 				// email-json: full SNS envelope as the body.
 				emailBody = jsonBody
 			} else {
-				// email: human-readable plain-text — just the message.
-				emailBody = plainMessage
+				// email: human-readable plain-text — just the (protocol-selected) message.
+				emailBody = protoMessage
 			}
 			raw := smtp.BuildMessage(from, to, subject, emailBody, "", map[string]string{
 				"X-Overcast-Group-Id":    msgID,
@@ -529,7 +896,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 				continue
 			}
 			// SNS sms-protocol endpoint is the destination phone number.
-			if err := h.smsSender.SendSMS("sns", h.cfg.SMTPFrom, sub.Endpoint, plainMessage, msgID, topicName); err != nil {
+			if err := h.smsSender.SendSMS("sns", h.cfg.SMTPFrom, sub.Endpoint, protoMessage, msgID, topicName); err != nil {
 				h.failDelivery(ctx, d, "SMS capture failed: "+err.Error())
 				continue
 			}
