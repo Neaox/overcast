@@ -127,3 +127,70 @@ func TestLogListenResolution_namesTheAddressAndTheVariable(t *testing.T) {
 		t.Errorf("addrs field: expected 2 entries, got %v", got)
 	}
 }
+
+// TestLogListenResolution_namesTheReasonWhenDefaulted verifies the #761
+// extension: when the bind address was defaulted rather than set explicitly,
+// the log line also says why — containerised or native — since that default
+// is now environment-dependent.
+func TestLogListenResolution_namesTheReasonWhenDefaulted(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		signal string
+		reason string
+	}{
+		{name: "containerised", signal: "containerised", reason: "containerised (OVERCAST_DATA_DIR_SOURCE=image)"},
+		{name: "native", signal: "native", reason: "native — loopback only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, logs := observer.New(zapcore.DebugLevel)
+			logger := zap.New(core)
+			cfg := &config.Config{
+				Host: "127.0.0.1", Port: 4566, Hosts: []string{"127.0.0.1"},
+				ListenSource:     config.ListenSourceAuto,
+				ListenAutoSignal: tc.signal,
+				ListenAutoReason: tc.reason,
+			}
+
+			logListenResolution(logger, cfg)
+
+			entries := logs.FilterMessageSnippet("set OVERCAST_LISTEN to change this").All()
+			if len(entries) != 1 {
+				t.Fatalf("expected exactly 1 listen-resolution log line, got %d", len(entries))
+			}
+			entry := entries[0]
+			if !strings.Contains(entry.Message, tc.reason) {
+				t.Errorf("log message %q does not name the reason %q", entry.Message, tc.reason)
+			}
+			if got := entry.ContextMap()["listenAutoSignal"]; got != tc.signal {
+				t.Errorf("listenAutoSignal field: expected %q, got %v", tc.signal, got)
+			}
+		})
+	}
+}
+
+// TestLogListenResolution_explicitOmitsTheReason verifies an explicitly
+// configured bind address gets the plain message, with no "(default: ...)"
+// clause and no listenAutoSignal field — there is nothing to explain when
+// the operator set it themselves.
+func TestLogListenResolution_explicitOmitsTheReason(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+	cfg := &config.Config{
+		Host: "127.0.0.1", Port: 4566, Hosts: []string{"127.0.0.1"},
+		ListenSource: config.ListenSourceExplicit,
+	}
+
+	logListenResolution(logger, cfg)
+
+	entries := logs.FilterMessageSnippet("set OVERCAST_LISTEN to change this").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 listen-resolution log line, got %d", len(entries))
+	}
+	entry := entries[0]
+	if strings.Contains(entry.Message, "default:") {
+		t.Errorf("log message %q should not explain a default when the value was explicit", entry.Message)
+	}
+	if _, ok := entry.ContextMap()["listenAutoSignal"]; ok {
+		t.Errorf("listenAutoSignal field should be absent when explicit, got %v", entry.ContextMap())
+	}
+}

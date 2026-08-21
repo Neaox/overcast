@@ -306,7 +306,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `--bridge` / —                   | off         | Also run the mDNS bridge and port-80 proxy (see `overcast bridge`).                          |
 | `--bridge-bind-ip`               | `127.0.0.1` | IP advertised in mDNS when `--bridge` is set.                                                |
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
-| `OVERCAST_LISTEN`                | `0.0.0.0`   | Interface to bind. Comma-separate to bind several, e.g. `127.0.0.1,172.17.0.1`. Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup |
+| `OVERCAST_LISTEN`                | `0.0.0.0` containerised, `127.0.0.1` native | Interface to bind. Comma-separate to bind several, e.g. `127.0.0.1,172.17.0.1`. An explicit value always wins over the default, in either direction. Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup |
 | `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. `hybrid`/`persistent` need SQLite, which `overcastd` and the slim image do not have — see [Builds without SQLite](./docs/storage.md#builds-without-sqlite). |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.

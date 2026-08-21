@@ -73,6 +73,8 @@ Four of those diverge, each for a reason.
 
 **`OVERCAST_LISTEN` takes a list.** Comma-separated; blanks dropped and duplicates collapsed, since binding one address twice would fail the second listen. A value that names *no* address is a hard error rather than a silent fall back to the default — the reasoning being that unset means "use the default", while set-to-nothing means the value is wrong, and defaulting it would bind every interface, the opposite of what anyone setting it wants. The pre-rename name, `OVERCAST_HOST` (see [§3](#3-bind-address-versus-advertised-name)), has been removed rather than kept as an alias — Overcast is alpha software, so a leftover `OVERCAST_HOST` is a startup error naming the replacement rather than a silent no-op.
 
+**The default depends on where Overcast is running (#761).** Containerised — detected the same way storage-mode auto-detection tells the Docker image apart from a native run, via the `OVERCAST_DATA_DIR_SOURCE=image` marker the Dockerfile bakes in — it defaults to `0.0.0.0`, which Docker's `-p` publishing requires. Native, it defaults to `127.0.0.1`. An explicit `OVERCAST_LISTEN` always wins over either default, in both directions: set it to `0.0.0.0` natively to restore the old reach from a VM, a second machine, or a phone on the same network. The startup log line names which default fired and why.
+
 **A wildcard mixed with a specific address is refused.** `127.0.0.1,0.0.0.0` reads as a widening — "loopback, and also everything" — when it is the opposite of what the specific address asked for. On Linux the second bind fails anyway, and it fails as an opaque listen error rather than as the configuration mistake it is. Note `::` counts as a wildcard here too, not only `0.0.0.0`.
 
 The list exists for a specific shape: a throwaway instance that wants loopback and nowhere routable, but whose test suite runs in a sibling container reaching the host over the Docker bridge, where loopback is invisible. `OVERCAST_LISTEN=127.0.0.1,172.17.0.1` serves both without putting the emulator on the network the machine is attached to. The compat harness does exactly this.
@@ -342,7 +344,7 @@ The symptom to recognise: **`docker push` to the emulated registry fails, and so
 
 **Overcast is IPv4 in practice.** Do not plan on reaching it over IPv6.
 
-That is not an oversight so much as a choice never to take IPv6 on: the API binds the IPv4 wildcard by default, container address discovery cannot produce an IPv6 address at all, and CloudFormation states outright that there is no IPv6 networking for a template to describe. An explicit IPv6 bind address is accepted and formatted correctly, but nothing downstream is built for one.
+That is not an oversight so much as a choice never to take IPv6 on: the API's IPv4 default (`0.0.0.0` containerised, `127.0.0.1` natively — see [§2](#2-what-binds-where)) is IPv4 either way, container address discovery cannot produce an IPv6 address at all, and CloudFormation states outright that there is no IPv6 networking for a template to describe. An explicit IPv6 bind address is accepted and formatted correctly, but nothing downstream is built for one.
 
 Where IPv6 has forced itself on Overcast, it has been dealt with deliberately and with evident effort — the DNS server's A-only answer below, and the daemon-side port probing in [§10](#10-ecr-and-the-fourth-caller), both exist because the dual-stack case produced real failures. What is absent is IPv6 as a supported way to reach the emulator, not attention to IPv6 where it intrudes.
 
@@ -376,7 +378,7 @@ Current behaviour, symptom first.
 - **A container cannot reach the SMTP capture server.** It binds loopback whatever `OVERCAST_LISTEN` says.
 - **On a native Windows or macOS host, wildcard subdomains do not resolve inside containers, the data-plane guard does not run, and VPC placement is therefore not enforced.** The resolver needs `/etc/resolv.conf` to find upstreams and silently does not start without one, logging at debug level. The apex names still work, because those come from `/etc/hosts`. Since a forbidden connection could only fail by hanging there, the restriction is withheld rather than delivered blind — so the same stack behaves differently on a host run and a containerised one. Run Overcast in a container to get either.
 - **Same-CIDR VPCs are not isolated under the default strategy.** `shared` puts them on one Docker bridge, so anything scoped to a network is scoped to both. `strict` and `remapped` give real separation; `netns` is declared but falls back to `shared` with a startup warning.
-- **A native run still defaults to the wildcard.** A startup log line now names every bound address and that `OVERCAST_LISTEN` changes it, so it is no longer a silent default — but whether the *native* default itself should narrow from `0.0.0.0` is tracked separately as [#761](https://github.com/Neaox/overcast/issues/761).
+- ~~A native run still defaults to the wildcard.~~ Resolved by [#761](https://github.com/Neaox/overcast/issues/761): the default now depends on where Overcast is running — `0.0.0.0` when containerised (Docker's `-p` publishing requires it), `127.0.0.1` natively. A startup log line names every bound address and, when defaulted, why. An explicit `OVERCAST_LISTEN` always wins over either default.
 
 ---
 

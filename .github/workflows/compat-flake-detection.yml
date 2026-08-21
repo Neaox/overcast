@@ -136,7 +136,11 @@ jobs:
             # OVERCAST_RDS_MODE=mock matches the compat workflow — flake
             # detection has to run the same emulator the gate does, or it
             # measures a configuration nothing else uses. See issue #614.
-            OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn OVERCAST_RDS_MODE=mock ./bin/overcast serve &
+            # OVERCAST_LISTEN=0.0.0.0 for the same reason compat.yml sets it:
+            # the rust-sdk suite's client runs in a sibling container reaching
+            # this binary over the Docker bridge gateway, which the native
+            # loopback-only default (#761) is invisible from on this runner.
+            OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn OVERCAST_RDS_MODE=mock OVERCAST_LISTEN=0.0.0.0 ./bin/overcast serve &
             pid=$!
             for _ in $(seq 1 30); do
               curl -sf http://localhost:4566/_overcast/health > /dev/null && break

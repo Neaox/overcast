@@ -1167,10 +1167,14 @@ func TestLoad_hostBindingRejectsAnEmptyList(t *testing.T) {
 	}
 }
 
-// TestLoad_hostBindingDefaultsToWildcard verifies the default is unchanged.
-func TestLoad_hostBindingDefaultsToWildcard(t *testing.T) {
-	// Given: no OVERCAST_LISTEN
+// TestLoad_hostBindingDefaultsToWildcard_containerised verifies the
+// container default is unchanged (#761): Docker's -p publishing requires
+// binding every interface, so this must stay 0.0.0.0 regardless of the
+// native default narrowing.
+func TestLoad_hostBindingDefaultsToWildcard_containerised(t *testing.T) {
+	// Given: no OVERCAST_LISTEN, and the Docker image's own signal present
 	clearEnv(t)
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
 
 	// When: we load config
 	cfg, err := config.Load()
@@ -1184,6 +1188,85 @@ func TestLoad_hostBindingDefaultsToWildcard(t *testing.T) {
 	}
 	if got := cfg.Addrs(); len(got) != 1 {
 		t.Errorf("Addrs(): expected one address, got %v", got)
+	}
+	if cfg.ListenSource != config.ListenSourceAuto {
+		t.Errorf("ListenSource: expected auto, got %q", cfg.ListenSource)
+	}
+	if cfg.ListenAutoSignal != "containerised" {
+		t.Errorf("ListenAutoSignal: expected containerised, got %q", cfg.ListenAutoSignal)
+	}
+	if cfg.ListenAutoReason == "" {
+		t.Error("ListenAutoReason: expected a non-empty reason")
+	}
+}
+
+// TestLoad_hostBindingDefaultsToLoopback_native verifies the #761
+// environment-dependent default: a native run (no OVERCAST_DATA_DIR_SOURCE
+// marker) narrows to loopback rather than the wildcard.
+func TestLoad_hostBindingDefaultsToLoopback_native(t *testing.T) {
+	// Given: no OVERCAST_LISTEN, and no container signal
+	clearEnv(t)
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: loopback, not the wildcard
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Host != "127.0.0.1" {
+		t.Errorf("Host: expected 127.0.0.1, got %q", cfg.Host)
+	}
+	if got := cfg.Addrs(); len(got) != 1 {
+		t.Errorf("Addrs(): expected one address, got %v", got)
+	}
+	if cfg.ListenSource != config.ListenSourceAuto {
+		t.Errorf("ListenSource: expected auto, got %q", cfg.ListenSource)
+	}
+	if cfg.ListenAutoSignal != "native" {
+		t.Errorf("ListenAutoSignal: expected native, got %q", cfg.ListenAutoSignal)
+	}
+	if cfg.ListenAutoReason == "" {
+		t.Error("ListenAutoReason: expected a non-empty reason")
+	}
+}
+
+// TestLoad_listenExplicit_winsOverDefault verifies an explicit OVERCAST_LISTEN
+// always wins over the environment-dependent default, in both directions:
+// naming the wildcard natively, and naming loopback in the image.
+func TestLoad_listenExplicit_winsOverDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		imageMarker bool
+		listenVal   string
+	}{
+		{name: "wildcard explicit natively", imageMarker: false, listenVal: "0.0.0.0"},
+		{name: "loopback explicit in the image", imageMarker: true, listenVal: "127.0.0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			if tc.imageMarker {
+				t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+			}
+			t.Setenv("OVERCAST_LISTEN", tc.listenVal)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Host != tc.listenVal {
+				t.Errorf("Host: expected %q, got %q", tc.listenVal, cfg.Host)
+			}
+			if cfg.ListenSource != config.ListenSourceExplicit {
+				t.Errorf("ListenSource: expected explicit, got %q", cfg.ListenSource)
+			}
+			if cfg.ListenAutoReason != "" {
+				t.Errorf("ListenAutoReason: expected empty when explicit, got %q", cfg.ListenAutoReason)
+			}
+			if cfg.ListenAutoSignal != "" {
+				t.Errorf("ListenAutoSignal: expected empty when explicit, got %q", cfg.ListenAutoSignal)
+			}
+		})
 	}
 }
 

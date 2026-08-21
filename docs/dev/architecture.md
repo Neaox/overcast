@@ -56,10 +56,14 @@ the design:
 - **Not a security boundary.** Credentials are accepted but not validated by
   default. Never expose it on a public network — and note that `OVERCAST_LISTEN`
   (renamed from `OVERCAST_HOST`, which has been removed — see
-  [#870](https://github.com/Neaox/overcast/issues/870)) defaults to `0.0.0.0`,
-  so a run with nothing set listens on every interface. Set it to `127.0.0.1`
-  on a network you do not trust. Whether the default should narrow for native
-  runs is [#761](https://github.com/Neaox/overcast/issues/761).
+  [#870](https://github.com/Neaox/overcast/issues/870)) defaults to `0.0.0.0`
+  when Overcast is containerised (required for Docker's `-p` publishing to
+  reach it) and to `127.0.0.1` when it is not (#761) — so a native run with
+  nothing set no longer listens on every interface. An explicit
+  `OVERCAST_LISTEN` always wins over either default, in both directions: set
+  it to `0.0.0.0` to restore the old native reach (from a VM, a second
+  machine, or a phone on the same network), or to `127.0.0.1` inside a
+  container if you want the narrower behaviour there too.
 - **Not a performance testing tool.** No latency emulation, no request-rate
   limits, no per-service quotas. Overcast is deliberately as fast as it can be;
   making it artificially slow to "feel like AWS" is explicitly rejected. There

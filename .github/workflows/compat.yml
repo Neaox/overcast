@@ -432,6 +432,14 @@ jobs:
       # error. This leaves the RDS container path with no automated coverage at
       # all — issue #614 covers both getting compat back to live mode and the
       # Go-side integration test that should have been guarding it regardless.
+      # OVERCAST_LISTEN=0.0.0.0 is explicit rather than relying on the
+      # native default (#761, which narrows an unset OVERCAST_LISTEN to
+      # loopback): the rust-sdk suite's test client runs in a sibling
+      # container reaching this binary over the Docker bridge gateway
+      # (compat/suites/rust-sdk/run.sh's host.docker.internal rewrite), and
+      # a loopback-only bind is invisible from there on this runner's plain
+      # (non-Desktop) Docker daemon. This job is a throwaway CI runner, so
+      # the wildcard costs nothing here.
       - name: Start Overcast
         if: env.RUN_SUITES == 'true'
         run: |
@@ -439,6 +447,7 @@ jobs:
           OVERCAST_STATE=memory \
           OVERCAST_LOG_LEVEL=warn \
           OVERCAST_RDS_MODE=mock \
+          OVERCAST_LISTEN=0.0.0.0 \
             ./bin/overcast serve &
           echo "OVERCAST_PID=$!" >> "$GITHUB_ENV"
 

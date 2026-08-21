@@ -115,10 +115,23 @@ func resolveAutoState(sig autoStateSignals) (backend StateBackend, signal string
 func detectAutoStateSignals(dataDir, dataDirEnvRaw, dataDirSource string) autoStateSignals {
 	return autoStateSignals{
 		Mountpoint:       isMountpoint(dataDir),
-		DataDirExplicit:  dataDirEnvRaw != "" && dataDirSource != "image",
+		DataDirExplicit:  dataDirEnvRaw != "" && !isDockerImage(dataDirSource),
 		ExistingDatabase: hasExistingDatabase(dataDir),
 		SQLiteAvailable:  sqliteBuildSupported,
 	}
+}
+
+// isDockerImage reports whether dataDirSource — the literal value of
+// OVERCAST_DATA_DIR_SOURCE — carries the marker the Dockerfile bakes in
+// alongside its own OVERCAST_DATA_DIR=/data default (see the ENV block in
+// Dockerfile). This is the same signal storage-mode auto-detection above
+// uses to tell "the image's own untouched default" apart from "a user
+// actually configured this" (see DataDirExplicit); Load's native-vs-
+// containerised bind-address default (#761) reuses it rather than
+// duplicating the heuristic, so the two decisions can never disagree about
+// what "containerised" means.
+func isDockerImage(dataDirSource string) bool {
+	return dataDirSource == "image"
 }
 
 // hasExistingDatabase reports whether a persistent-backend database file
