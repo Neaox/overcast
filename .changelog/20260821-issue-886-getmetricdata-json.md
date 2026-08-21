@@ -1,0 +1,1 @@
+* [cloudwatch] `GetMetricData` now answers over the JSON protocol (`X-Amz-Target: GraniteServiceVersion20100801.GetMetricData`), the pinned model's primary protocol for the operation — previously only the Query protocol reached it, so an AWS SDK speaking JSON got `UnknownOperationException`
