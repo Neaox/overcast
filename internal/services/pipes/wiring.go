@@ -182,6 +182,12 @@ func validateSourceParameters(p *Pipe) *protocol.AWSError {
 		return validationError("SourceParameters.FilterCriteria",
 			"Overcast does not evaluate EventBridge Pipes FilterCriteria. Remove the filter, or filter inside a Lambda enrichment instead.")
 	}
+	if aerr := validateDeadLetterConfig("SourceParameters.DynamoDBStreamParameters.DeadLetterConfig", sp.DynamoDBStreamParameters); aerr != nil {
+		return aerr
+	}
+	if aerr := validateDeadLetterConfig("SourceParameters.KinesisStreamParameters.DeadLetterConfig", sp.KinesisStreamParameters); aerr != nil {
+		return aerr
+	}
 	for field, raw := range map[string][]byte{
 		"SourceParameters.ActiveMQBrokerParameters":        sp.ActiveMQBrokerParameters,
 		"SourceParameters.RabbitMQBrokerParameters":        sp.RabbitMQBrokerParameters,
@@ -191,6 +197,30 @@ func validateSourceParameters(p *Pipe) *protocol.AWSError {
 		if len(raw) > 0 {
 			return validationError(field, fmt.Sprintf("Overcast does not emulate that source type. Supported sources: %s.", supportedSourceList))
 		}
+	}
+	return nil
+}
+
+// validateDeadLetterConfig refuses a stream source's DeadLetterConfig up front
+// when Overcast could never deliver to it, rather than storing it and only
+// discovering that the first time a batch exhausts its retries. AWS supports
+// only an SQS queue or an SNS topic as a Pipes source dead-letter target
+// (SourceParameters.DynamoDBStreamParameters.DeadLetterConfig /
+// SourceParameters.KinesisStreamParameters.DeadLetterConfig); an SQS *source*
+// has no DeadLetterConfig of its own — that source dead-letters through the
+// queue's own RedrivePolicy instead, so nothing calls this for it.
+func validateDeadLetterConfig(field string, sp *StreamSourceParameters) *protocol.AWSError {
+	if sp == nil || sp.DeadLetterConfig == nil {
+		return nil
+	}
+	arn := strings.TrimSpace(sp.DeadLetterConfig.Arn)
+	if arn == "" {
+		return nil
+	}
+	kind, err := eventtarget.Classify(arn)
+	if err != nil || (kind != eventtarget.KindSQS && kind != eventtarget.KindSNS) {
+		return validationError(field, fmt.Sprintf(
+			"DeadLetterConfig.Arn must be an SQS queue or an SNS topic ARN Overcast can deliver to, got %q.", arn))
 	}
 	return nil
 }

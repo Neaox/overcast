@@ -170,6 +170,11 @@ type Handler struct {
 	deliveries *deliveryLog
 	// cursors holds each Kinesis source's per-shard read position.
 	cursors *cursors
+	// kinesisAttempts counts each Kinesis shard's consecutive delivery
+	// failures at its current cursor, so a batch that never succeeds is
+	// dead-lettered once MaximumRetryAttempts is exhausted instead of being
+	// retried forever.
+	kinesisAttempts *attemptCounts
 
 	pollOnce sync.Once
 	stopOnce sync.Once
@@ -179,13 +184,14 @@ type Handler struct {
 
 func newHandler(cfg *config.Config, st state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
 	return &Handler{
-		cfg:        cfg,
-		store:      newPipesStore(st, cfg.Region),
-		log:        log,
-		clk:        clk,
-		deliveries: newDeliveryLog(),
-		cursors:    newCursors(),
-		stopCh:     make(chan struct{}),
+		cfg:             cfg,
+		store:           newPipesStore(st, cfg.Region),
+		log:             log,
+		clk:             clk,
+		deliveries:      newDeliveryLog(),
+		cursors:         newCursors(),
+		kinesisAttempts: newAttemptCounts(),
+		stopCh:          make(chan struct{}),
 	}
 }
 

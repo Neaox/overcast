@@ -45,20 +45,28 @@ field, so a pipe is never stored in a state where it would silently do nothing.
 - **Input transformation.** `EnrichmentParameters.InputTemplate` and
   `TargetParameters.InputTemplate` are applied to each record individually, over the JSON-path
   subset AWS accepts plus the `aws.pipes.*` reserved variables.
-- **Polling.** Kinesis and SQS sources are polled once per second on the emulator's clock. A
-  failed execution leaves SQS messages to become visible again and does not advance the Kinesis
-  shard cursor, so the batch is retried.
-- **DynamoDB Streams retries and dead-lettering.** A stream record arrives over the internal
-  event bus and is gone once the subscriber returns — there is no cursor to leave alone and no
-  message to let reappear — so a failed delivery is retried in place up to
-  `SourceParameters.DynamoDBStreamParameters.MaximumRetryAttempts` (capped at 5 retries; unset
-  means AWS's "retry until the record expires", which the cap stands in for, and an explicit `0`
-  means one attempt). Once the retries are exhausted the batch is sent to the source's
-  `DeadLetterConfig` SQS queue or SNS topic if one is configured, and otherwise reported as
-  `failed` on the delivery feed with a logged warning. Overcast dead-letters the source records
-  themselves rather than AWS's shard/sequence-range failure envelope, because a DynamoDB-sourced
-  pipe here is bus-driven and keeps no shard bookkeeping — the records are what makes the batch
-  replayable.
+- **Polling.** Kinesis and SQS sources are polled once per second on the emulator's clock. An SQS
+  source retries by leaving failed messages to become visible again — AWS dead-letters an
+  SQS-sourced pipe through the *queue's own* `RedrivePolicy`, not `DeadLetterConfig`, so Overcast
+  does nothing further there.
+- **Stream retries and dead-lettering (Kinesis and DynamoDB Streams).** Both stream sources share
+  AWS's `MaximumRetryAttempts`/`DeadLetterConfig` shape and the same retry-then-dead-letter
+  contract, capped at 5 retries (unset means AWS's "retry until the record expires", which the cap
+  stands in for; an explicit `0` means one attempt). A Kinesis batch is retried by leaving the
+  shard cursor alone for one poll tick per attempt; a DynamoDB Streams batch has no cursor to leave
+  alone — it arrives over the internal event bus and is gone once the subscriber returns — so it is
+  retried in place instead. Once the retries are exhausted the batch is sent to the source's
+  `DeadLetterConfig` SQS queue or SNS topic if one is configured (reported as `dlq` on the delivery
+  feed), and otherwise reported as `failed` with a logged warning, and the cursor/subscription moves
+  on rather than blocking on the batch forever. Overcast dead-letters the source records themselves
+  rather than AWS's shard/sequence-range failure envelope — Lambda's own on-failure destination for
+  a Kinesis event source mapping sends only that metadata (`KinesisBatchInfo`: `shardId`,
+  `startSequenceNumber`, `endSequenceNumber`, `streamArn`), not the records, so a consumer re-reads
+  them from the stream before they expire. Overcast keeps no shard/sequence bookkeeping to build
+  that envelope from — for the DynamoDB source because delivery is bus-driven, and for Kinesis for
+  consistency with it — so the records are sent instead, which is what makes the batch replayable
+  without a second read. A `DeadLetterConfig` naming a destination that is not an SQS queue or an
+  SNS topic is refused at `CreatePipe`/`UpdatePipe` time rather than stored.
 - **Filtering is not emulated.** `SourceParameters.FilterCriteria` is rejected rather than stored
   and ignored — filter inside a Lambda enrichment instead.
 - **`UpdatePipe` is `PUT /v1/pipes/{name}`**, as AWS routes it, and requires `RoleArn`.
@@ -80,11 +88,8 @@ field, so a pipe is never stored in a state where it would silently do nothing.
   the batch rather than reporting on it. AWS offers no partial-batch reporting for any other target
   type.
 - **Stored but not acted on.** `LogConfiguration`, `KmsKeyIdentifier` and `ParallelizationFactor`
-  have no effect, and a *Kinesis* source's
-  `MaximumRetryAttempts` and `DeadLetterConfig` do not either — a Kinesis batch is retried by not
-  advancing the shard cursor, so it never runs out of attempts and never reaches a dead-letter
-  queue. `RoleArn` is required, as AWS requires it, but is not evaluated — Overcast is not a
-  security boundary.
+  have no effect. `RoleArn` is required, as AWS requires it, but is not evaluated — Overcast is not
+  a security boundary.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -101,13 +106,13 @@ field, so a pipe is never stored in a state where it would silently do nothing.
 
 ### Pipes
 
-| Operation      | Status       | Notes                                                                                      | AWS Docs                                                                                     |
-| -------------- | ------------ | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `CreatePipe`   | ✅ Supported | Validates source/enrichment/target wiring up front; async state machine (CREATING→RUNNING) | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_CreatePipe.html)   |
-| `DescribePipe` | ✅ Supported | Returns the full pipe configuration and current state                                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_DescribePipe.html) |
-| `UpdatePipe`   | ✅ Supported | Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)     | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_UpdatePipe.html)   |
-| `DeletePipe`   | ✅ Supported | Async deletion (DELETING→removed)                                                          | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_DeletePipe.html)   |
-| `ListPipes`    | ✅ Supported | Lists all pipes as PipeSummary                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_ListPipes.html)    |
+| Operation      | Status       | Notes                                                                                                                                                       | AWS Docs                                                                                     |
+| -------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CreatePipe`   | ✅ Supported | Validates source/enrichment/target wiring up front, including a stream source's DeadLetterConfig destination; async state machine (CREATING→RUNNING)        | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_CreatePipe.html)   |
+| `DescribePipe` | ✅ Supported | Returns the full pipe configuration and current state                                                                                                       | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_DescribePipe.html) |
+| `UpdatePipe`   | ✅ Supported | Updates DesiredState, description, role and parameter blocks, re-validating wiring and DeadLetterConfig on a reconfiguring change (UPDATING→previous state) | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_UpdatePipe.html)   |
+| `DeletePipe`   | ✅ Supported | Async deletion (DELETING→removed)                                                                                                                           | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_DeletePipe.html)   |
+| `ListPipes`    | ✅ Supported | Lists all pipes as PipeSummary                                                                                                                              | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_ListPipes.html)    |
 
 ### Tags
 
