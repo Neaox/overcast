@@ -1,19 +1,19 @@
 service: iam
-status: not_started
+status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-22
 protocols: [query]
 implementation: [internal/services/iam]
 integration_tests: [tests/integration/iam]
 capability_docs: docs/services/iam.md
 operation_count_estimate: 61 tracked, 61 supported
-current_support_level: Broad IAM resource-management support; enforcement behavior needs docs/test reconciliation.
+current_support_level: Broad IAM resource-management support; request-time enforcement (OVERCAST_ENFORCE_IAM) docs now match tested behavior.
 operations: {}
 findings:
-  fixed: []
+  fixed:
+    - Reconcile docs/capability wording with IAM enforcement tests. README.md's "What Overcast is NOT" table claimed opt-in enforcement "evaluates identity, resource, and boundary policies" — resource-based policies (bucket/queue/topic policies) are not consulted at request time; only identity policies and the permissions boundary are, per internal/middleware/iam_enforce.go's evaluateIAMDecision and docs/services/iam.md's own "Resource-based policies ... are not consulted at request time yet" note, both of which the internal/middleware/iam_enforce_resources_test.go suite exercises (those "ResourcePolicy" test names cover identity-policy Resource-ARN scoping, not attached resource-based policies). Also completed docs/services/iam.md's action-prefix exception list, which named 8 of the 10 services whose IAM action prefix differs from Overcast's service key — DynamoDB Streams (authorizes under dynamodb:) and AppConfig Data (authorizes under appconfig:) were implemented in internal/middleware/serviceidentity.go's iamActionPrefix but undocumented and untested; pinned with two new cases in internal/middleware/serviceidentity_test.go's TestRequestIAMActionUsesTheAWSActionPrefix.
   remaining_gaps:
-    - Reconcile docs/capability wording with IAM enforcement tests.
     - Review CDK role, policy, and instance profile compatibility.
   intentionally_partial: []
 handoff:

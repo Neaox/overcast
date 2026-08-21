@@ -191,6 +191,11 @@ func TestRequestIAMActionUsesTheAWSActionPrefix(t *testing.T) {
 		{"elasticfilesystem", http.MethodGet, "/2015-02-01/file-systems", "efs:DescribeFileSystems", "elasticfilesystem:DescribeFileSystems"},
 		{"es", http.MethodGet, "/2021-01-01/domain", "opensearch:ListDomainNames", "es:ListDomainNames"},
 
+		// AppConfig Data authorizes under AppConfig's own prefix — AWS has no
+		// separate "appconfigdata:" IAM namespace, even though it is a
+		// distinct signing name and a distinct Overcast service key.
+		{"appconfig", http.MethodPost, "/configurationsessions", "appconfigdata:StartConfigurationSession", "appconfig:StartConfigurationSession"},
+
 		// Controls: services whose key already is their AWS prefix.
 		{"lambda", http.MethodGet, "/2015-03-31/functions", "lambda:ListFunctions", "lambda:ListFunctions"},
 		{"apigateway", http.MethodGet, "/restapis", "apigateway:GetRestApis", "apigateway:GetRestApis"},
@@ -214,6 +219,12 @@ func TestRequestIAMActionUsesTheAWSActionPrefix(t *testing.T) {
 		{"states", "AWSStepFunctions.StartExecution", "stepfunctions:StartExecution", "states:StartExecution"},
 		{"cognito-idp", "AWSCognitoIdentityProviderService.ListUserPools", "cognito:ListUserPools", "cognito-idp:ListUserPools"},
 		{"wafv2", "AWSWAF_20190729.ListWebACLs", "waf:ListWebACLs", "wafv2:ListWebACLs"},
+
+		// DynamoDB Streams authorizes under DynamoDB's own prefix — AWS has
+		// no separate "dynamodbstreams:" IAM namespace for GetRecords,
+		// DescribeStream, GetShardIterator or ListStreams, even though it is
+		// a distinct Overcast service key with its own target prefix.
+		{"dynamodb", "DynamoDBStreams_20120810.DescribeStream", "dynamodbstreams:DescribeStream", "dynamodb:DescribeStream"},
 
 		// Controls.
 		{"logs", "Logs_20140328.PutLogEvents", "logs:PutLogEvents", "logs:PutLogEvents"},

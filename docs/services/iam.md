@@ -179,10 +179,15 @@ When it is on:
 - The action evaluated is `<prefix>:<Operation>`, where the operation is the one the request
   invokes and the prefix is **the IAM action prefix AWS uses for that service** — so write
   policies with the names the AWS documentation gives. Most services are called the same
-  thing throughout, but eight are not: MSK authorizes as `kafka:`, Step Functions as
+  thing throughout, but ten are not: MSK authorizes as `kafka:`, Step Functions as
   `states:`, EFS as `elasticfilesystem:`, OpenSearch as `es:`, ELBv2 as
   `elasticloadbalancing:`, Service Catalog AppRegistry as `servicecatalog:`, Cognito user
-  pools as `cognito-idp:`, and WAF as `wafv2:`.
+  pools as `cognito-idp:`, and WAF as `wafv2:` — each a distinct AWS signing name reused as
+  the action prefix. DynamoDB Streams and AppConfig Data are the other two, and differ in
+  kind rather than degree: AWS gives neither its own IAM action namespace at all, so
+  `dynamodb:GetRecords`/`dynamodb:DescribeStream`/`dynamodb:GetShardIterator`/`dynamodb:ListStreams`
+  authorize DynamoDB Streams requests under DynamoDB's own prefix, and `appconfig:` authorizes
+  AppConfig Data's `GetLatestConfiguration`/`StartConfigurationSession` under AppConfig's.
 - Enforcement is **fail-closed**: an unsigned request, a policy that cannot be parsed, or a
   construct the evaluator does not implement all deny. The reason is logged at debug level.
 - The one exception is a request whose operation cannot be named, which is **not** gated. S3
