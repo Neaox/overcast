@@ -1002,7 +1002,7 @@
           "operation": "UpdateRestApi",
           "category": "REST API v1 management",
           "status": "✅ Supported",
-          "notes": "Patch operations on name and description"
+          "notes": "Patch `/name`, `/description`, `/policy`, `/disableExecuteApiEndpoint`"
         },
         {
           "operation": "CreateResource",
@@ -1136,7 +1136,7 @@
           "operation": "UpdateStage",
           "category": "REST API v1 stages",
           "status": "✅ Supported",
-          "notes": "Patch description, autoDeploy, deploymentId, stageVariables"
+          "notes": "Patch `/description`, `/deploymentId`, and per-key `/variables/{name}` (replace/add/remove); MethodSettings, TracingEnabled, AccessLogSetting, CacheClusterEnabled/Size, ClientCertificateId, DocumentationVersion not implemented"
         },
         {
           "operation": "DeleteStage",

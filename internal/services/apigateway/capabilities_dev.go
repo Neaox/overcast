@@ -16,7 +16,7 @@ func init() {
 		capabilities.Capability{Service: "apigateway", Operation: "DeleteRestApi", Category: "REST API v1 management",
 			Status: capabilities.StatusSupported, Notes: "Cascade deletes resources, stages, and deployments"},
 		capabilities.Capability{Service: "apigateway", Operation: "UpdateRestApi", Category: "REST API v1 management",
-			Status: capabilities.StatusSupported, Notes: "Patch operations on name and description"},
+			Status: capabilities.StatusSupported, Notes: "Patch `/name`, `/description`, `/policy`, `/disableExecuteApiEndpoint`"},
 		capabilities.Capability{Service: "apigateway", Operation: "CreateResource", Category: "REST API v1 management",
 			Status: capabilities.StatusSupported, Notes: "Computes full path from parent chain"},
 		capabilities.Capability{Service: "apigateway", Operation: "GetResource", Category: "REST API v1 management",
@@ -68,7 +68,7 @@ func init() {
 		capabilities.Capability{Service: "apigateway", Operation: "GetStages", Category: "REST API v1 stages",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "apigateway", Operation: "UpdateStage", Category: "REST API v1 stages",
-			Status: capabilities.StatusSupported, Notes: "Patch description, autoDeploy, deploymentId, stageVariables"},
+			Status: capabilities.StatusSupported, Notes: "Patch `/description`, `/deploymentId`, and per-key `/variables/{name}` (replace/add/remove); MethodSettings, TracingEnabled, AccessLogSetting, CacheClusterEnabled/Size, ClientCertificateId, DocumentationVersion not implemented"},
 		capabilities.Capability{Service: "apigateway", Operation: "DeleteStage", Category: "REST API v1 stages",
 			Status: capabilities.StatusSupported},
 

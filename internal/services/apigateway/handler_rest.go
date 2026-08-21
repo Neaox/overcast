@@ -218,6 +218,10 @@ func (h *Handler) UpdateRestApi(w http.ResponseWriter, r *http.Request) {
 			api.Name = op.Value
 		case "/description":
 			api.Description = op.Value
+		case "/policy":
+			api.Policy = op.Value
+		case "/disableExecuteApiEndpoint":
+			api.DisableExecuteAPI = op.Value == "true"
 		}
 	}
 
@@ -1061,6 +1065,7 @@ type restAPIResponse struct {
 	CreatedDate       float64           `json:"createdDate"`
 	Version           string            `json:"version,omitempty"`
 	EndpointConfig    *EndpointConfig   `json:"endpointConfiguration,omitempty"`
+	Policy            string            `json:"policy,omitempty"`
 	Tags              map[string]string `json:"tags,omitempty"`
 	BinaryMediaTypes  []string          `json:"binaryMediaTypes,omitempty"`
 	DisableExecuteAPI bool              `json:"disableExecuteApiEndpoint,omitempty"`
@@ -1078,6 +1083,7 @@ func restAPIToResponse(api *RestAPI, region string) restAPIResponse {
 		CreatedDate:       float64(api.CreatedDate) / 1000.0,
 		Version:           api.Version,
 		EndpointConfig:    api.EndpointConfig,
+		Policy:            api.Policy,
 		Tags:              api.Tags,
 		BinaryMediaTypes:  api.BinaryMediaTypes,
 		DisableExecuteAPI: api.DisableExecuteAPI,
