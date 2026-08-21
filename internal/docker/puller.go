@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // UtilityImage is the image Overcast runs its own infrastructure containers
@@ -27,6 +28,10 @@ type ImagePuller struct {
 	client   *Client
 	resolver ImageResolver
 	pullOnce sync.Map // resolved image reference → *pullEntry
+	// sleep backs the retry backoff in pullWithRetry. nil uses time.Sleep;
+	// tests in this package set it directly to a no-op so the transient-error
+	// retry path does not make them slow.
+	sleep func(time.Duration)
 }
 
 // pullEntry pairs a sync.Once with the error it produced.
@@ -86,7 +91,7 @@ func (p *ImagePuller) ensure(ctx context.Context, ref ImageReference) error {
 	v, _ := p.pullOnce.LoadOrStore(ref.Ref, &pullEntry{})
 	e := v.(*pullEntry)
 	e.once.Do(func() {
-		e.err = p.client.PullImageWithOptions(ctx, ref.Ref, PullOptions{Auth: ref.Auth})
+		e.err = p.pullWithRetry(ctx, ref)
 		if e.err != nil && p.imagePresent(ctx, ref.Ref) {
 			// The pull failed but the daemon already has the image, so the
 			// container can still start. This is the difference between "you
@@ -101,6 +106,63 @@ func (p *ImagePuller) ensure(ctx context.Context, ref ImageReference) error {
 		}
 	})
 	return e.err
+}
+
+// pullRetryBackoff is the delay before each retry of a transient pull
+// failure, indexed by attempt (pullRetryBackoff[0] is the wait before the
+// second attempt). A public registry's rate limit is a per-second or
+// per-minute window, not an outage, and RunTask — the caller waiting on this
+// — is already synchronous, so a few seconds of bounded backoff trades a
+// little latency for not failing a placement that would have worked a moment
+// later.
+var pullRetryBackoff = []time.Duration{250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
+
+// pullWithRetry pulls ref, retrying when the daemon's answer says the
+// failure is transient — a registry rate limit — rather than treating one
+// blip as a permanent failure that bricks the task placement that hit it.
+//
+// Anything else is not retried: an image that does not exist, a daemon that
+// is unreachable, or credentials that are wrong will not start working
+// because this waited and asked again, and retrying those would only add
+// latency to a failure that was always going to happen.
+func (p *ImagePuller) pullWithRetry(ctx context.Context, ref ImageReference) error {
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = p.client.PullImageWithOptions(ctx, ref.Ref, PullOptions{Auth: ref.Auth})
+		if err == nil || !isTransientPullError(err) || attempt >= len(pullRetryBackoff) {
+			return err
+		}
+		p.sleepFor(pullRetryBackoff[attempt])
+	}
+}
+
+// sleepFor waits d, through the injectable hook so tests do not pay the real
+// backoff.
+func (p *ImagePuller) sleepFor(d time.Duration) {
+	if p.sleep != nil {
+		p.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// isTransientPullError reports whether a pull failure is a registry rate
+// limit, which retrying can resolve, rather than something retrying cannot
+// fix. Docker's daemon surfaces a rate limit two different ways depending on
+// when in the pull it strikes: an immediate non-200 response wraps the
+// registry's own JSON body verbatim ("status 500: {\"message\":
+// \"toomanyrequests: Rate exceeded\"}"), while a failure discovered mid-stream
+// lands as the last progress line's own "error" field ("toomanyrequests:
+// Rate exceeded"). Matching the substring catches both without depending on
+// which HTTP status a given registry or daemon version wraps it in.
+func isTransientPullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "toomanyrequests") ||
+		strings.Contains(msg, "rate exceeded") ||
+		strings.Contains(msg, "rate limit")
 }
 
 // imagePresent reports whether the daemon already holds image locally.
