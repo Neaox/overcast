@@ -4992,7 +4992,7 @@
       "service": "cloudformation",
       "display_name": "CloudFormation",
       "total_ops": 52,
-      "implemented_ops": 23,
+      "implemented_ops": 24,
       "operations": [
         {
           "operation": "CreateStack",
@@ -5013,6 +5013,12 @@
           "notes": "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state"
         },
         {
+          "operation": "ContinueUpdateRollback",
+          "category": "Stacks",
+          "status": "✅ Supported",
+          "notes": "Retries a failed update rollback from UPDATE_ROLLBACK_FAILED; ResourcesToSkip, including nested-stack paths"
+        },
+        {
           "operation": "DeleteStack",
           "category": "Stacks",
           "status": "✅ Supported",
@@ -5029,12 +5035,6 @@
           "category": "Stacks",
           "status": "✅ Supported",
           "notes": "StackStatusFilter; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason"
-        },
-        {
-          "operation": "ContinueUpdateRollback",
-          "category": "Stacks",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
         },
         {
           "operation": "CancelUpdateStack",
