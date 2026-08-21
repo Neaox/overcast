@@ -270,6 +270,7 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 	replicationGroupID := r.FormValue("ReplicationGroupId")
 	subnetGroupName := r.FormValue("CacheSubnetGroupName")
 	az := r.FormValue("PreferredAvailabilityZone")
+	parameterGroupName := r.FormValue("CacheParameterGroupName")
 
 	region := h.store.region(r.Context())
 	arn := fmt.Sprintf("arn:aws:elasticache:%s:%s:cluster:%s", region, h.cfg.AccountID, id)
@@ -289,13 +290,30 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 		PreferredAvailabilityZone: az,
 		CacheSubnetGroupName:      subnetGroupName,
 		ReplicationGroupId:        replicationGroupID,
+		CacheParameterGroupName:   parameterGroupName,
 		ARN:                       arn,
 		ConfigurationEndpoint:     endpoint,
+	}
+
+	// Create-time tags are validated before anything is written, so a
+	// rejected tag set fails the create rather than leaving a cluster that
+	// exists with the tags the caller asked for missing. Mirrors the
+	// serverless-cache create path (handler_serverless.go).
+	tags := formTags(r)
+	if aerr := serviceutil.ValidateTags(cacheTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
 	}
 
 	if aerr := h.store.putCacheCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
+	}
+	if len(tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), arn, tags, cacheTagCfg); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
 	}
 
 	clusterID := id

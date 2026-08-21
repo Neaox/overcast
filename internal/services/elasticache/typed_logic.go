@@ -10,6 +10,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 
 	"go.uber.org/zap"
 )
@@ -17,14 +18,24 @@ import (
 // ---- Request types ----
 
 type ecCreateCacheClusterReq struct {
-	CacheClusterId            string `json:"CacheClusterId"`
-	Engine                    string `json:"Engine"`
-	EngineVersion             string `json:"EngineVersion"`
-	CacheNodeType             string `json:"CacheNodeType"`
-	NumCacheNodes             int    `json:"NumCacheNodes"`
-	ReplicationGroupId        string `json:"ReplicationGroupId"`
-	CacheSubnetGroupName      string `json:"CacheSubnetGroupName"`
-	PreferredAvailabilityZone string `json:"PreferredAvailabilityZone"`
+	CacheClusterId            string  `json:"CacheClusterId"`
+	Engine                    string  `json:"Engine"`
+	EngineVersion             string  `json:"EngineVersion"`
+	CacheNodeType             string  `json:"CacheNodeType"`
+	NumCacheNodes             int     `json:"NumCacheNodes"`
+	ReplicationGroupId        string  `json:"ReplicationGroupId"`
+	CacheSubnetGroupName      string  `json:"CacheSubnetGroupName"`
+	PreferredAvailabilityZone string  `json:"PreferredAvailabilityZone"`
+	CacheParameterGroupName   string  `json:"CacheParameterGroupName"`
+	Tags                      []ecTag `json:"Tags"`
+}
+
+// ecTag is the Query-protocol Tags.Tag.N.Key/Value shape, shared by every
+// create operation that accepts tags inline rather than through a separate
+// AddTagsToResource call.
+type ecTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
 }
 
 type ecDescribeCacheClustersReq struct {
@@ -202,6 +213,7 @@ type ecXMLReplicationGroup struct {
 	AutomaticFailover      string              `xml:"AutomaticFailover"`
 	MultiAZ                string              `xml:"MultiAZ"`
 	CacheNodeType          string              `xml:"CacheNodeType"`
+	Engine                 string              `xml:"Engine,omitempty"`
 	SnapshotRetentionLimit int                 `xml:"SnapshotRetentionLimit"`
 	MemberClusters         ecXMLMemberClusters `xml:"MemberClusters"`
 	ConfigurationEndpoint  *ecXMLEndpoint      `xml:"ConfigurationEndpoint,omitempty"`
@@ -373,6 +385,20 @@ func ecMetaFromCtx(ctx context.Context) ecRespMeta {
 	return ecRespMeta{RequestId: protocol.RequestIDFromContext(ctx)}
 }
 
+// ecTagsToMap converts the decoded Tags.Tag.N.Key/Value list into the map
+// shape serviceutil's tag store takes. A tag with an empty key is dropped
+// rather than stored, matching formTags' behaviour in the legacy raw path.
+func ecTagsToMap(tags []ecTag) map[string]string {
+	out := map[string]string{}
+	for _, t := range tags {
+		if t.Key == "" {
+			continue
+		}
+		out[t.Key] = t.Value
+	}
+	return out
+}
+
 func ecToXMLCacheCluster(c *CacheCluster) ecXMLCacheCluster {
 	out := ecXMLCacheCluster{
 		CacheClusterId:            c.CacheClusterId,
@@ -406,6 +432,7 @@ func ecToXMLReplicationGroup(rg *ReplicationGroup) ecXMLReplicationGroup {
 		AutomaticFailover:      rg.AutomaticFailover,
 		MultiAZ:                rg.MultiAZ,
 		CacheNodeType:          rg.CacheNodeType,
+		Engine:                 rg.Engine,
 		SnapshotRetentionLimit: rg.SnapshotRetentionLimit,
 		MemberClusters:         ecXMLMemberClusters{Items: members},
 	}
@@ -482,11 +509,25 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 		PreferredAvailabilityZone: req.PreferredAvailabilityZone,
 		CacheSubnetGroupName:      req.CacheSubnetGroupName,
 		ReplicationGroupId:        req.ReplicationGroupId,
+		CacheParameterGroupName:   req.CacheParameterGroupName,
 		ARN:                       arn,
 		ConfigurationEndpoint:     endpoint,
 	}
+	// Create-time tags are validated before anything is written, so a
+	// rejected tag set fails the create rather than leaving a cluster that
+	// exists with the tags the caller asked for missing. Mirrors the
+	// serverless-cache create path.
+	tags := ecTagsToMap(req.Tags)
+	if aerr := serviceutil.ValidateTags(cacheTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := h.store.putCacheCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
+	}
+	if len(tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.store.tags(), arn, tags, cacheTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 	clusterID := req.CacheClusterId
 	if h.dockerReady.Load() {
