@@ -18,7 +18,7 @@ services:
       OVERCAST_LOG_LEVEL: debug
       OVERCAST_DEFAULT_REGION: us-east-1
       OVERCAST_ACCOUNT_ID: "000000000000"
-      # OVERCAST_SIGV4_VALIDATE: "false"  # TODO: set to true once implemented
+      # OVERCAST_SIGV4_VALIDATE: "true"  # verify SigV4 signatures; invalid ones get 403
       # Where the local CA lives. Kept OFF /data deliberately: state is
       # disposable and per-environment, a CA is a trust anchor you installed
       # into this machine's trust store once. Pointing them at the same volume
