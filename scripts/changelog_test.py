@@ -816,6 +816,36 @@ class CommandFoldTest(unittest.TestCase):
 		self.assertEqual(before, (root / "CHANGELOG.md").read_text(encoding="utf-8"))
 		self.assertEqual(1, len(list((root / ".changelog").iterdir())))
 
+	def test_a_later_run_recovers_a_fragment_a_lost_push_left_behind(self) -> None:
+		# Models release-prep's refresh job self-healing (#968): two runs race
+		# to push the same release branch, the loser's push is rejected and its
+		# fold never lands, but its fragment is never deleted from `main` either
+		# (only the release branch deletes a fragment it has folded). So the
+		# next run to actually land — merging main again, which still carries
+		# the stranded fragment untouched — folds it in on top of whatever the
+		# winner already folded, rather than needing to know it was "the
+		# retry". That is what makes serializing runs (rather than force-
+		# pushing or diffing against a specific prior state) a correct fix:
+		# fold always reconciles from whatever fragments are currently on disk.
+		root = self.prepare()
+		first = self.run_fold(root)
+		self.assertEqual(0, first.returncode, first.stderr.decode("utf-8", "replace"))
+		self.assertEqual([], list((root / ".changelog").iterdir()))
+
+		# The stranded fragment: present on `main` (it was never consumed by
+		# the run that lost the push race) and now merged into the branch.
+		(root / ".changelog" / "20260803-stranded.md").write_text(
+			"* [efs] a fix whose refresh run lost the push race\n", encoding="utf-8"
+		)
+
+		second = self.run_fold(root)
+
+		self.assertEqual(0, second.returncode, second.stderr.decode("utf-8", "replace"))
+		text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+		self.assertIn("- [lambda] arrived after the release PR was opened", text)
+		self.assertIn("- [efs] a fix whose refresh run lost the push race", text)
+		self.assertEqual([], list((root / ".changelog").iterdir()))
+
 
 class CommandSummaryTest(unittest.TestCase):
 	def run_summary(self, root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:

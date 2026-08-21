@@ -41,6 +41,25 @@ on:
   push:
     branches: [main]
 
+# refresh reads the release branch, folds into it and pushes it, all as
+# separate steps — so two runs triggered by pushes seconds apart (two PRs
+# merging back to back) can both read the same starting tip, both fold, and
+# then race the push. The loser's push is rejected and nothing re-drives it,
+# so its fold is silently lost until the next push happens to redo it, or the
+# release PR's own changelog gate catches the gap by name.
+#
+# One fixed group serializes every run of this workflow — prepare's branch
+# writes included, since a `regenerate` push could race a refresh the same
+# way. cancel-in-progress stays false: a queued run must run to completion,
+# not be cancelled, because a cancelled run's fold is the same lost update by
+# another route. Queuing is enough on its own *because* fold reads whatever
+# fragments are on the branch after the merge rather than a per-push diff —
+# a run that ends up serialized behind others still folds everything still
+# outstanding, so nothing needs to know which push it was responding to.
+concurrency:
+  group: release-prep
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
