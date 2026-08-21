@@ -900,7 +900,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
 | `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every currently-supported runtime image at startup |
 | `LAMBDA_TAR_CACHE_MB`                 | `256`            | In-memory cache of pre-built code/layer tars (0 = off)  |
-| `LAMBDA_PROACTIVE_INIT`               | `false`          | Pre-initialize an environment after config settles      |
+| `LAMBDA_PROACTIVE_INIT`               | `true`           | Pre-initialize an environment after config settles; `false` opts out |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID`     | —                | AWS access key for remote layer downloads               |
 | `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | —                | AWS secret key for remote layer downloads               |
@@ -915,8 +915,9 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 ### Proactive initialization
 
 AWS documents that Lambda "may proactively initialize execution
-environments" ahead of traffic; with `LAMBDA_PROACTIVE_INIT=true` Overcast
-mirrors that. Ten seconds after a function's code or configuration stops
+environments" ahead of traffic; Overcast mirrors that by default
+(`LAMBDA_PROACTIVE_INIT=true`; set it to `false` to opt out). Ten seconds
+after a function's code or configuration stops
 changing (so a CDK deploy's create-then-update burst collapses into one
 attempt), one execution environment is created in the background — for
 functions that have been invoked this session or have a function URL or

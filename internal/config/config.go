@@ -442,7 +442,9 @@ type Config struct {
 	// LambdaProactiveInit pre-initializes one execution environment after a
 	// function's configuration settles, mirroring AWS's documented proactive
 	// initialization, so the next request lands warm. Corresponds to env var
-	// LAMBDA_PROACTIVE_INIT. Default false while the feature beds in.
+	// LAMBDA_PROACTIVE_INIT. Default true (on by default since the flip in
+	// issue #1099, after a soak of opt-in releases with no reported
+	// regressions); set LAMBDA_PROACTIVE_INIT=false to opt back out.
 	LambdaProactiveInit bool
 
 	// HotReload is the umbrella opt-in for bind-mount source reload across every
@@ -1141,8 +1143,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
 //	LAMBDA_TAR_CACHE_MB                256   (in-memory cache of pre-built cold-start code and
 //	                                           layer tars; 0 disables it)
-//	LAMBDA_PROACTIVE_INIT              false (true = pre-initialize one execution environment once
-//	                                           a function's configuration settles)
+//	LAMBDA_PROACTIVE_INIT              true  (false = disable pre-initializing one execution
+//	                                           environment once a function's configuration settles)
 //	LAMBDA_FETCH_REMOTE_LAYERS         false (true = download missing layers from real AWS)
 //	LAMBDA_LAYER_CACHE_DIR             <OVERCAST_DATA_DIR>/layers (where layer zips are looked up
 //	                                           and cached, named {sha256(arn)}.zip)
@@ -1468,7 +1470,7 @@ func Load() (*Config, error) {
 	if cfg.LambdaTarCacheMB < 0 {
 		cfg.LambdaTarCacheMB = 0
 	}
-	cfg.LambdaProactiveInit = envBool("LAMBDA_PROACTIVE_INIT", false)
+	cfg.LambdaProactiveInit = envBool("LAMBDA_PROACTIVE_INIT", true)
 	// Per-service hot reload inherits the umbrella when its own variable is
 	// unset, and overrides it when set — including opting a single service out
 	// of an umbrella true, since envBool returns false for an explicit "false"
