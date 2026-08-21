@@ -90,10 +90,10 @@ export function cfnTemplateQueryOptions(name: string) {
  * show" and "a tab that fails to load", and only one of those is worth
  * interrupting someone with.
  */
-export function cfnDiagnosticsQueryOptions(name: string) {
+export function cfnDiagnosticsQueryOptions(name: string, stackId?: string) {
   return queryOptions({
     queryKey: cfnKeys.diagnosticsDetail(name),
-    queryFn: () => cloudformation.getStackDiagnostics(name),
+    queryFn: () => cloudformation.getStackDiagnostics(name, stackId),
   })
 }
 

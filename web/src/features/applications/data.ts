@@ -111,7 +111,10 @@ export function applicationReverseMapQueryOptions() {
               addKey(map, stackName, owner)
               if (stackName) {
                 try {
-                  const children = await cloudformation.listStackResources(stackName)
+                  // By ARN, not name: a stack the app-registry association
+                  // still names may since have reached DELETE_COMPLETE, which
+                  // only the ARN resolves (#829).
+                  const children = await cloudformation.listStackResources(r.arn)
                   for (const child of children) {
                     addKey(map, child.PhysicalResourceId, owner)
                   }

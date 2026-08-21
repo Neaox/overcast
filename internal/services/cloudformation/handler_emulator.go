@@ -36,17 +36,27 @@ import (
 func (h *Handler) GetStackDiagnostics(w http.ResponseWriter, r *http.Request) {
 	stackName := chi.URLParam(r, "stackName")
 
+	// The path segment is always the plain name — an ARN's embedded slashes
+	// cannot travel as one route segment — so a caller that already resolved
+	// the stack's ARN (the only handle a DELETE_COMPLETE stack answers to
+	// once a name-based lookup excludes it, #829) passes it as a query
+	// override instead.
+	ref := stackName
+	if id := r.URL.Query().Get("stackId"); id != "" {
+		ref = id
+	}
+
 	// Resolved by name or ARN, as every stack-scoped operation accepts both.
 	// The journal itself is keyed by name; going through the stack record is
 	// what makes an ARN work and what keeps a stale ARN from a
 	// deleted-and-recreated stack resolving to the new stack's diagnosis.
-	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
+	stack, aerr := h.store.getStackByNameOrARN(r.Context(), ref)
 	if aerr != nil {
 		writeCFNEmulatorError(w, http.StatusInternalServerError, "could not read the stack")
 		return
 	}
 	if stack == nil {
-		writeCFNEmulatorError(w, http.StatusNotFound, "no such stack: "+stackName)
+		writeCFNEmulatorError(w, http.StatusNotFound, "no such stack: "+ref)
 		return
 	}
 

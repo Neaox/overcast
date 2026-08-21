@@ -132,9 +132,17 @@ export const cloudformation = {
    * from an older server, is treated as "nothing to show" rather than as a
    * half-rendered tab.
    */
-  getStackDiagnostics: async (stackName: string): Promise<StackDiagnostics | null> => {
+  getStackDiagnostics: async (
+    stackName: string,
+    stackId?: string,
+  ): Promise<StackDiagnostics | null> => {
+    // The path segment stays the plain name — an ARN's embedded `/`s cannot
+    // travel as one route segment — so a caller that already resolved the
+    // stack's ARN (the only handle a DELETE_COMPLETE stack answers to, #829)
+    // passes it as a query override instead.
+    const qs = stackId ? `?stackId=${encodeURIComponent(stackId)}` : ""
     const body = await apiFetch<StackDiagnostics | { error?: string }>(
-      `/cloudformation/stacks/${encodeURIComponent(stackName)}/diagnostics`,
+      `/cloudformation/stacks/${encodeURIComponent(stackName)}/diagnostics${qs}`,
       undefined,
       { acceptStatuses: [404] },
     )

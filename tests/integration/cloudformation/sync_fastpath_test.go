@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -59,12 +60,7 @@ func TestDeleteStack_fastStack(t *testing.T) {
 	// Given: an existing small stack
 	srv := helpers.NewTestServer(t)
 	stackName := "fast-delete-stack"
-	resp := cfnQuery(t, srv, "CreateStack", url.Values{
-		"StackName":    []string{stackName},
-		"TemplateBody": []string{minimalTemplate},
-	})
-	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	arn := createStackReturningARN(t, srv, stackName)
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
 
 	// When: the stack is deleted
@@ -74,9 +70,25 @@ func TestDeleteStack_fastStack(t *testing.T) {
 	defer deleteResp.Body.Close()
 	helpers.AssertStatus(t, deleteResp, http.StatusOK)
 
-	// Then: the immediate describe sees the terminal delete status
-	if got := describeStackStatus(t, srv, stackName); got != "DELETE_COMPLETE" {
-		t.Fatalf("expected immediate DELETE_COMPLETE, got %q", got)
+	// Then: the immediate describe-by-ARN sees the terminal delete status —
+	// proving the delete really did complete synchronously, since a stack
+	// still mid-delete would report DELETE_IN_PROGRESS instead.
+	arnResp := cfnQuery(t, srv, "DescribeStacks", url.Values{"StackName": []string{arn}})
+	defer arnResp.Body.Close()
+	helpers.AssertStatus(t, arnResp, http.StatusOK)
+	if b := readBody(t, arnResp); !strings.Contains(string(b), "DELETE_COMPLETE") {
+		t.Fatalf("expected immediate DELETE_COMPLETE by ARN, got: %s", b)
+	}
+
+	// And: the immediate describe-by-name already answers "does not exist"
+	// rather than the retained record — a deleted stack is only addressable
+	// by its ARN on AWS (#829), and this pins that the sync fastpath's
+	// synchronous completion doesn't race the name exclusion.
+	nameResp := cfnQuery(t, srv, "DescribeStacks", url.Values{"StackName": []string{stackName}})
+	defer nameResp.Body.Close()
+	nb := readBody(t, nameResp)
+	if nameResp.StatusCode != http.StatusBadRequest || !strings.Contains(string(nb), "does not exist") {
+		t.Fatalf("expected immediate does-not-exist by name, got status %d: %s", nameResp.StatusCode, nb)
 	}
 }
 
