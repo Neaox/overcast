@@ -1,8 +1,12 @@
 /**
  * Imports all search contributors, triggering their `registerContributor` side-effects.
  * Import this file once from the application entry point or search component.
+ *
+ * Each contributor's cacheKey reuses the corresponding feature's own key
+ * factory (e.g. s3Keys.buckets()) rather than hand-building the array, so the
+ * shape — including endpoint/region scoping — can never drift out of sync
+ * with the query it's meant to hit. See create-contributor.ts.
  */
-// TODO(priority:P2): the s3, sqs, sns, kinesis, lambda, secretsmanager and logs contributors build cacheKey as [service, resource, baseUrl] — and logs omits the endpoint entirely — so none of them match the feature query keys' required [baseUrl, region, ...] shape; global search therefore always misses the cache and refetches, and it ignores the selected region.
 import "./s3"
 import "./sqs"
 import "./sns"

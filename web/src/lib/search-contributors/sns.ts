@@ -1,10 +1,13 @@
 import { sns } from "@/services/api"
+import { snsKeys } from "@/features/sns/data"
 import type { SNSTopic } from "@/types"
 import { createSearchContributor } from "./create-contributor"
 
 createSearchContributor<SNSTopic>({
   id: "sns",
-  cacheKey: (ep) => ["sns", "topics", ep.baseUrl],
+  // Reuse the feature's own key factory so this can never drift out of sync
+  // with the shape (and endpoint/region scoping) the real query uses.
+  cacheKey: () => snsKeys.topics(),
   fetchAll: () => sns.listTopics(),
   matchFields: (t) => [t.TopicArn?.split(":").pop() ?? "", t.TopicArn ?? ""],
   toResult: (t) => {

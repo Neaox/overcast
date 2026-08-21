@@ -1,10 +1,13 @@
 import { lambda } from "@/services/api"
+import { lambdaKeys } from "@/features/lambda/data"
 import type { LambdaFunction } from "@/types"
 import { createSearchContributor } from "./create-contributor"
 
 createSearchContributor<LambdaFunction>({
   id: "lambda",
-  cacheKey: (ep) => ["lambda", "functions", ep.baseUrl],
+  // Reuse the feature's own key factory so this can never drift out of sync
+  // with the shape (and endpoint/region scoping) the real query uses.
+  cacheKey: () => lambdaKeys.functions(),
   fetchAll: () => lambda.listFunctions(),
   matchFields: (f) => [f.FunctionName ?? "", f.FunctionArn ?? "", f.Description ?? ""],
   toResult: (f) => ({
