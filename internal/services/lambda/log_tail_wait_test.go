@@ -56,6 +56,38 @@ func newTailWaitInstance(clk clock.Clock) *containerInstance {
 func readerParks(ci *containerInstance) { ci.logParkedAt.Store(ci.clk.Now().UnixNano()) }
 func readerWorks(ci *containerInstance) { ci.logParkedAt.Store(logReaderBetweenReads) }
 
+// newNeverConnectedInstance returns a containerInstance in the state a
+// container is actually in from the moment its streamLogs goroutine is
+// scheduled until the moment ContainerLogsStream first returns:
+// logParkedAt at its zero value (logReaderNotReading) and
+// logStreamEverOpened still false. newTailWaitInstance does not model this —
+// readerParks always leaves the reader already parked in a Read, i.e. with a
+// stream that has opened — so nothing before this test drove
+// waitForScannerIdle through it.
+//
+// It is a real state, not a hypothetical one: opening the Docker log stream
+// is a daemon round trip, and it races container start rather than following
+// it. Under daemon contention that round trip can lose that race, and a
+// cold-started invocation's tail wait can begin — and, before this fix, time
+// out — before it clears.
+func newNeverConnectedInstance(clk clock.Clock) *containerInstance {
+	return &containerInstance{
+		id:        "cafebabe1234deadbeef",
+		logger:    zap.NewNop(),
+		clk:       clk,
+		logWriter: noopLogWriter{},
+	}
+}
+
+// streamOpens does to the instance what streamOnce does the instant
+// ContainerLogsStream returns: the connection now exists (logStreamEverOpened
+// becomes permanently true) and the reader is between Reads on it, having not
+// reached its first one yet.
+func streamOpens(ci *containerInstance) {
+	ci.logStreamEverOpened.Store(true)
+	readerWorks(ci)
+}
+
 // deliverBytes does to the instance what logReadTracker does the instant Docker
 // hands over bytes, and nothing more. That is the whole point of having it: a
 // Read seldom lands a whole line, so this is a state the pipeline really passes
@@ -296,6 +328,109 @@ func TestWaitForScannerIdle_readerThatHasNotAskedDockerIsNotSilence(t *testing.T
 	}
 	if elapsed < 40*time.Millisecond {
 		t.Errorf("wait returned after %v — it read the reader's own backlog as the function's silence", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_neverConnectedStreamIsNotSilence is the regression
+// test for issue #1160: a cold-started invocation's tail wait can begin before
+// streamLogs has completed its very first ContainerLogsStream call, because
+// that call is a Docker daemon round trip racing container start rather than
+// following it. dockerSilentSince used to read logParkedAt's zero value the
+// same way whether or not the stream had ever opened, so a slow first connect
+// was timed as "asked and told nothing" from the moment the wait began — the
+// same 25 ms firstReadMax that correctly bounds an already-open, already-idle
+// reader. Under daemon contention (a busy CI runner with many containers
+// starting at once) the connect alone can take longer than that, and the wait
+// gave up before the connection — let alone the handler's own line — had
+// arrived, which is what left TestInvoke_logTail's cold-start tail holding
+// only the synthetic START/END/REPORT lines it writes directly. See
+// discardUnclaimedOutput's own account of why a truncated tail, though
+// AWS-legal, is not the same failure as this one: this is the emulator
+// answering "the reader asked and Docker said nothing" when the true answer is
+// "the reader had not yet been able to ask".
+func TestWaitForScannerIdle_neverConnectedStreamIsNotSilence(t *testing.T) {
+	// Given: an invocation that begins before its container's log stream has
+	// ever connected.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	mark := ci.beginTail()
+
+	// When: the connection itself takes 60 ms to open — a daemon round trip
+	// still racing container start, slow because the daemon is busy with other
+	// containers — and the handler's line follows 10 ms after that: 70 ms after
+	// the invocation began. That is past the 25 ms bound that governs an
+	// already-open reader's silence — which is exactly what made this a false
+	// red on real CI runs, where the connect alone can outrun 25 ms — but well
+	// inside the 100 ms deadline that bounds the wait as a whole.
+	start := mock.Now()
+	opened, delivered := false, false
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		elapsed := mock.Now().Sub(start)
+		if !opened && elapsed >= 60*time.Millisecond {
+			streamOpens(ci)
+			opened = true
+		}
+		if !delivered && elapsed >= 70*time.Millisecond {
+			deliverLine(ci, "hello from lambda")
+			delivered = true
+		}
+	})
+	elapsed := mock.Now().Sub(start)
+
+	// Then: the wait held through the connect delay for the line, rather than
+	// reading "no stream open yet" as proof the handler had nothing to say.
+	if !strings.Contains(tailContents(ci), "hello from lambda") {
+		t.Errorf("tail is missing the handler's output: %q", tailContents(ci))
+	}
+	if elapsed < 70*time.Millisecond {
+		t.Errorf("wait returned after %v, before the delayed connection delivered the line at 70ms", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline pins the
+// cost side of the fix above: a container whose log stream never manages to
+// connect at all — daemon down, container killed before Docker ever accepted
+// the streaming request — must not hold the invoke response hostage. Losing
+// the firstReadMax bound for an unopened stream must not mean losing a bound
+// altogether; deadlineMax is what is left to catch it.
+func TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline(t *testing.T) {
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	mark := ci.beginTail()
+
+	elapsed := runScannerWait(t, mock, ci, mark, -1, "")
+
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("wait for a stream that never connected returned after %v, expected to run out the 100ms deadline", elapsed)
+	}
+	if elapsed > 110*time.Millisecond {
+		t.Errorf("wait for a stream that never connected ran %v past the 100ms deadline", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_reconnectBackoffStillBoundedByFirstReadMax pins the
+// distinction the fix above depends on: once a container's log stream has
+// connected at least once, a later logParkedAt zero value means an ordinary
+// reconnect backoff, not the racy first-connect window — and that must stay
+// bounded by firstReadMax exactly as before. Losing this bound would leave
+// every invocation that lands during a reconnect paying up to the full 100 ms
+// deadline instead of the 25 ms grace, on a case the reconnect backoff opening
+// at 50 ms already covers.
+func TestWaitForScannerIdle_reconnectBackoffStillBoundedByFirstReadMax(t *testing.T) {
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	// The stream connected once already and is now between connections — a
+	// reconnect backoff, not a first connect.
+	ci.logStreamEverOpened.Store(true)
+	mark := ci.beginTail()
+
+	elapsed := runScannerWait(t, mock, ci, mark, -1, "")
+
+	if elapsed > 30*time.Millisecond {
+		t.Errorf("reconnect backoff wait held for %v, expected to give up around the 25ms firstReadMax", elapsed)
 	}
 }
 
