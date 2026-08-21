@@ -373,6 +373,46 @@ to call back into the emulator:
   Overcast, so a single URL is dialable from both sides. `OVERCAST_HOSTNAME` and
   the comma-separated `OVERCAST_SPLIT_HORIZON_HOSTS` are added to that set.
 
+### Containers in an awsvpc task share one network namespace
+
+Every container in an `awsvpc` task — which is every Fargate task, since it is
+the only network mode Fargate supports — runs in **one** network namespace, as
+on AWS: one ENI, one address, one set of listening ports, and `127.0.0.1`
+reaching every other container in the same task.
+
+That is the contract the ECS sidecar pattern is built on. `fastcgi_pass
+127.0.0.1:9000` from an nginx container to a php-fpm container in the same task,
+or an application reaching its X-Ray daemon on `127.0.0.1:2000`, is the
+AWS-correct configuration and works here unchanged.
+
+Overcast builds the shared namespace the way the ECS agent does, and for the
+same reason: the agent starts an extra `pause` container per task, configures
+its network namespace, and then starts the task's own containers so they share
+its network stack ([Allocate a network interface for an Amazon ECS
+task](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-networking-awsvpc.html)).
+So a task shows one container more than its definition
+declares, named `overcast-ecs-<cluster>-<task>-internal.ecs.pause`, and
+everything belonging to the namespace rather than to a process hangs off it:
+
+- the ENI, so the `privateIPv4Address` that `DescribeTasks` reports and that an
+  ip-type target group is registered with is the address **every** container in
+  the task answers on, not the first one's;
+- the task's published ports, pooled from every container definition — an
+  `awsvpc` mapping's `hostPort` must be blank or equal its `containerPort`
+  ([PortMapping](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_PortMapping.html)),
+  so a task's ports are one flat set rather than a per-container mapping;
+- the `/etc/hosts` entries and resolvers described above, which Docker shares
+  with every container that joins the namespace.
+
+`DescribeTasks` reports the containers the task definition declared and nothing
+else, as AWS does — the namespace container is infrastructure, not a container
+the user asked for. It is torn down with the task, including when the task ends
+because its own containers exited.
+
+Other network modes are unaffected: `bridge` gives each container its own
+namespace on the docker bridge, exactly as on EC2, and loopback there reaches
+only the calling container.
+
 ### A task in a VPC is restricted to it
 
 A task whose `networkConfiguration.awsvpcConfiguration` names subnets in a VPC
@@ -438,7 +478,7 @@ is and is not enforced, and for what a refused connection looks like.
 | `PutClusterCapacityProviders`   | ✅ Supported   | Associates providers and default strategy with a cluster                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_PutClusterCapacityProviders.html)   |
 | `RegisterContainerInstance`     | ✅ Supported   | Metadata-only; auto-generates ARN; status ACTIVE; agentConnected true                                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RegisterContainerInstance.html)     |
 | `RegisterTaskDefinition`        | ✅ Supported   | Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos, rejects host.sourcePath and dockerVolumeConfiguration as AWS does; all four volume shapes honoured at placement (EFS, host.sourcePath binds, dockerVolumeConfiguration, name-only scratch); tags stored against the revision's ARN, including overcast:hot-reload-path                                                                  | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RegisterTaskDefinition.html)        |
-| `RunTask`                       | ✅ Supported   | Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST                                                                     | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html)                       |
+| `RunTask`                       | ✅ Supported   | Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST; awsvpc task containers share one network namespace and address     | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html)                       |
 | `StartTask`                     | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StartTask.html)                     |
 | `StopTask`                      | ✅ Supported   | Stops Docker containers; sets STOPPED with stopCode UserInitiated; cancels pending transitions                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html)                      |
 | `TagResource`                   | ✅ Supported   | Add tags to any ECS resource by ARN                                                                                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_TagResource.html)                   |

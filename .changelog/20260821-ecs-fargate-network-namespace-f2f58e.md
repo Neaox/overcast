@@ -1,0 +1,1 @@
+* [ecs] containers in an `awsvpc` task now share one network namespace, so `127.0.0.1` reaches every container in the task as it does on Fargate — the ECS sidecar pattern (nginx to php-fpm, an application to its X-Ray daemon) works against the AWS-correct task definition, and the address `DescribeTasks` reports is the one every container answers on

@@ -1219,6 +1219,8 @@ func (h *Handler) retireTaskContainers(ctx context.Context, task *Task) {
 			}
 		}
 	}
+	// Last: it is the namespace the containers above were running in.
+	h.retireTaskNamespaceContainer(ctx, task)
 }
 
 // reconcile drives a service toward the state its current deployment describes:

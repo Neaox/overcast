@@ -309,11 +309,36 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 // DockerIDs. beforeStart closes the publication race immediately before the
 // first container can emit a die event; launchTask releases that guard only
 // after the task record is stored. The RUNNING transition is queued there too.
-func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement, beforeStart func()) error {
+//
+// An awsvpc task gets one container more than it declares: the namespace its
+// containers share, started first and recorded on the task. See task_netns.go.
+func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement, beforeStart func()) (retErr error) {
 	// Resolve how task containers reach Overcast. The planes themselves are
 	// created once by the Docker supervisor, before any client is handed to a
 	// service, so there is nothing to ensure here.
 	endpoint := h.containerEndpoint(ctx)
+
+	// An awsvpc task's containers all run in one network namespace, so it is
+	// built before any of them — the task's whole networking hangs off it. See
+	// task_netns.go.
+	namespaceID := ""
+	if taskSharesNetworkNamespace(td, task.LaunchType) {
+		id, err := h.startTaskNamespaceContainer(ctx, task, td, clusterName, taskID, placement, endpoint)
+		if err != nil {
+			return err
+		}
+		task.NetworkNamespaceID, namespaceID = id, id
+		defer func() {
+			// A task that could not be placed leaves nothing of itself running.
+			// The namespace container outlives its application containers by
+			// design, so unwinding a failed start is the one path that has to
+			// take it down explicitly.
+			if retErr != nil {
+				h.retireTaskNamespaceContainer(ctx, task)
+				task.NetworkNamespaceID = ""
+			}
+		}()
+	}
 
 	// Build an override index by container name.
 	overrides := make(map[string]*ContainerOverride)
@@ -372,27 +397,6 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			cmd = cd.Command
 		}
 
-		// Build port bindings.
-		var exposedPorts map[string]struct{}
-		var portBindings map[string][]docker.PortBinding
-		if len(cd.PortMappings) > 0 {
-			exposedPorts = make(map[string]struct{}, len(cd.PortMappings))
-			portBindings = make(map[string][]docker.PortBinding, len(cd.PortMappings))
-			for _, pm := range cd.PortMappings {
-				proto := pm.Protocol
-				if proto == "" {
-					proto = "tcp"
-				}
-				key := fmt.Sprintf("%d/%s", pm.ContainerPort, proto)
-				exposedPorts[key] = struct{}{}
-				if pm.HostPort > 0 {
-					portBindings[key] = []docker.PortBinding{
-						{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", pm.HostPort)},
-					}
-				}
-			}
-		}
-
 		containerName := fmt.Sprintf("overcast-ecs-%s-%s-%s", clusterName, taskID[:8], cd.Name)
 
 		mounts := h.containerMounts(ctx, td, &td.ContainerDefinitions[i], taskID, hotReload)
@@ -405,25 +409,20 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				// entryPoint and workingDirectory override the image's own, as
 				// they do on ECS. A task definition that sets either and has it
 				// dropped runs something other than what it asked for, silently.
-				Entrypoint:   cd.EntryPoint,
-				WorkingDir:   cd.WorkingDirectory,
-				User:         cd.User,
-				ExposedPorts: exposedPorts,
-				Labels:       mergeDockerLabels(h.instances.ManagedLabels(ctx, serviceName, resourceID), cd.DockerLabels),
+				Entrypoint: cd.EntryPoint,
+				WorkingDir: cd.WorkingDirectory,
+				User:       cd.User,
+				Labels:     mergeDockerLabels(h.instances.ManagedLabels(ctx, serviceName, resourceID), cd.DockerLabels),
 			},
 			// Keep the container through Docker's die event so the final bounded
 			// log tail can be retained for post-mortem diagnostics. The exit
 			// notifier schedules removal immediately after capturing it.
 			HostConfig: &docker.HostConfig{AutoRemove: false,
-				Privileged:   cd.Privileged != nil && *cd.Privileged,
-				Mounts:       mounts,
-				NetworkMode:  dataplane.Primary(h.cfg),
-				PortBindings: portBindings,
-				ExtraHosts:   endpoint.ExtraHosts(),
-				Dns:          endpoint.DNSServers(),
+				Privileged: cd.Privileged != nil && *cd.Privileged,
+				Mounts:     mounts,
 			},
-			NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 		}
+		h.applyTaskNetwork(ccfg, namespaceID, endpoint, portSurfaceFor(cd))
 
 		// The puller retries once when the image was removed behind our back
 		// (docker rmi after the recorded pull) instead of failing until restart.
@@ -445,17 +444,19 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			}
 		}
 
-		// Join the default data plane before starting: the container was created
-		// on the control plane, and an application that dials a database in its
-		// first breath would otherwise race the attachment.
+		// A container in the task's shared namespace has no network attachments
+		// of its own to make: the namespace container made every one of them
+		// before this loop began, and this container inherits them by running
+		// inside it. Everything below is for a task whose containers each have a
+		// namespace of their own.
 		//
-		// A task placed in a VPC does *not* join it — that is the restriction —
-		// unless it asked for `assignPublicIp: ENABLED`, which on AWS is what
-		// gives an awsvpc task a way out of its subnet. Its VPC attachment
-		// happens after the start below, because it reads back the address
-		// Docker assigned and that is not fixed until the container runs.
-		if placement.networkID == "" || placement.assignPublicIP {
-			if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
+		// Joining the data plane comes before the start, because an application
+		// that dials a database in its first breath would otherwise race the
+		// attachment; the VPC attachment comes after it, because it reads back
+		// the address Docker assigned and that is not fixed until the container
+		// runs.
+		if namespaceID == "" {
+			if err := h.joinTaskDataPlane(ctx, placement, dockerID); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
 				return containerFailure(cd.Name, "ecs: container %s: %w", cd.Name, err)
 			}
@@ -466,11 +467,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			_ = h.docker.RemoveContainerForce(dockerID)
 			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, decorateBindMountError(err, mounts))
 		}
-		if placement.networkID != "" {
-			// Only the first container carries the task's ENI address. AWS gives
-			// every container in an awsvpc task one shared network namespace and
-			// so one address; Docker gives each container its own, and the task
-			// reports a single privateIPv4Address either way.
+		if namespaceID == "" && placement.networkID != "" {
+			// Only the first container carries the task's ENI address: AWS
+			// reports one privateIPv4Address per task, and Docker has given each
+			// of these containers an address of its own.
 			if err := h.attachTaskENI(ctx, task, placement, dockerID, i == 0); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
 				return containerFailure(cd.Name, "ecs: connect container %s to VPC network %s: %w", cd.Name, placement.networkID, err)
@@ -487,6 +487,39 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	}
 
 	return nil
+}
+
+// stopTaskContainers tears down the Docker containers of a task a caller has
+// stopped: every application container, and then the namespace container they
+// shared, which nothing else removes.
+//
+// Both StopTask paths come through here — the JSON one and the typed one — so a
+// task stopped over CBOR is torn down exactly as one stopped over JSON is.
+func (h *Handler) stopTaskContainers(ctx context.Context, task *Task) {
+	if !h.dockerReady.Load() {
+		return
+	}
+	for _, c := range task.Containers {
+		if c.DockerID == "" {
+			continue
+		}
+		if h.gc != nil {
+			// The GC captures the container's output before it removes it — see
+			// SetBeforeRemove, wired in SetDocker.
+			h.gc.StopNow(c.DockerID)
+			h.gc.ScheduleRemove(c.DockerID)
+			continue
+		}
+		// Without one, this path owns the ordering itself, as
+		// retireTaskContainers does: stop, capture, then remove.
+		_ = h.docker.StopContainer(ctx, c.DockerID, 10)
+		h.captureContainerLogs(ctx, task, c.DockerID)
+		if !h.cfg.ECSKeepContainers {
+			_ = h.docker.RemoveContainerForce(c.DockerID)
+		}
+	}
+	// Last: it is the namespace the containers above were running in.
+	h.retireTaskNamespaceContainer(ctx, task)
 }
 
 // mergeDockerLabels adds a container definition's dockerLabels to Overcast's
@@ -1064,28 +1097,7 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop Docker containers if Docker is available.
-	if h.dockerReady.Load() {
-		for _, c := range task.Containers {
-			if c.DockerID == "" {
-				continue
-			}
-			if h.gc != nil {
-				// The GC captures the container's output before it removes
-				// it — see SetBeforeRemove, wired in SetDocker.
-				h.gc.StopNow(c.DockerID)
-				h.gc.ScheduleRemove(c.DockerID)
-			} else {
-				// Without one, this path owns the ordering itself, as
-				// retireTaskContainers does: stop, capture, then remove.
-				_ = h.docker.StopContainer(r.Context(), c.DockerID, 10)
-				h.captureContainerLogs(r.Context(), task, c.DockerID)
-				if !h.cfg.ECSKeepContainers {
-					_ = h.docker.RemoveContainerForce(c.DockerID)
-				}
-			}
-		}
-	}
+	h.stopTaskContainers(r.Context(), task)
 	h.publish(r, events.ECSTaskStopped, events.ResourcePayload{Name: taskID})
 	if ownedByService {
 		h.scheduleServiceReplacement(r.Context(), h.store.region(r.Context()), clusterName, serviceName)

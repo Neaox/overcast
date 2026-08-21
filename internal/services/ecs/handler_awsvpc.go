@@ -125,8 +125,14 @@ func (h *Handler) resolveAwsvpcPlacement(
 //
 // So the address is asked for rather than assumed: the connect requests the
 // allocated one, and whatever the container ends up with is read back and
-// recorded. carriesENI is false for a task's second and later containers, which
-// share the task's one reported address on AWS and cannot be given it here.
+// recorded.
+//
+// carriesENI says whether this container is the one holding the task's single
+// reported address. For an awsvpc task that is the container holding its network
+// namespace, and it is the only one attached at all — every other container in
+// the task runs inside it and shares the address outright, as on AWS. For a task
+// whose containers were each attached separately it is the first of them, the
+// rest having addresses of their own that the task does not report.
 func (h *Handler) attachTaskENI(ctx context.Context, task *Task, placement awsvpcPlacement, dockerID string, carriesENI bool) error {
 	wanted := ""
 	log := h.log.WithRecorder(ctx)

@@ -118,6 +118,12 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	// left. Shared-scope volumes are left alone; see removeTaskVolumes.
 	h.removeTaskVolumes(ctx, clusterName, taskID)
 
+	// Nothing is left inside the task's network namespace either. The container
+	// holding it open outlives the application containers by design — it carries
+	// the task's ENI, which on AWS outlives any one container — so no container
+	// exit takes it down as a side effect and this path has to.
+	h.retireTaskNamespaceContainer(ctx, task)
+
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.ECSTaskStopped,

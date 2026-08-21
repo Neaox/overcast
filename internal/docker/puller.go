@@ -7,6 +7,18 @@ import (
 	"sync"
 )
 
+// UtilityImage is the image Overcast runs its own infrastructure containers
+// from — the ones that are not a user's workload and that a user never named.
+// Small, multi-arch, and long-lived upstream.
+//
+// One constant rather than one per service, because the reason for the choice
+// is the same everywhere and the daemon only has to hold one of them: EFS's
+// root-directory materializer (internal/services/efs) and the network
+// namespace container an awsvpc task's containers share
+// (internal/services/ecs) both run from it, so a machine that has pulled it
+// once can start either offline.
+const UtilityImage = "busybox:1.36"
+
 // ImagePuller deduplicates Docker image pulls. It ensures each image is
 // pulled at most once per process lifetime. Services that run containers
 // (RDS, ECS, Lambda) should share an ImagePuller rather than duplicating

@@ -17,9 +17,10 @@ import (
 // the subpath inside the backing volume before the first subpath mount —
 // Docker rejects a volume Subpath mount whose directory does not exist.
 
-// efsHelperImage is the image used for root-directory materialization. Small,
-// multi-arch, and long-lived upstream.
-const efsHelperImage = "busybox:1.36"
+// efsHelperImage is the image used for root-directory materialization: the
+// shared utility image, so this is one more caller of a pull the daemon may
+// already have rather than a second minimal image to keep current.
+const efsHelperImage = docker.UtilityImage
 
 // subdirRunTimeout bounds one materialization run (image pull excluded — the
 // puller has its own discipline).
