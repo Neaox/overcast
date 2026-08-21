@@ -25,6 +25,7 @@ import (
 	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/Neaox/overcast/internal/hostnamecheck"
 	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/Neaox/overcast/internal/router"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -124,6 +125,16 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 			zap.String("stateAutoSignal", cfg.StateAutoSignal),
 		)
 	}
+
+	// Whether OVERCAST_HOSTNAME's subdomains resolve on this host is a
+	// property of the host's resolver, not of Overcast, and it breaks
+	// virtual-hosted-style S3 and `cdk deploy` asset publishing in a way that
+	// surfaces far from the cause (a bare ENOTFOUND on a bucket-shaped
+	// hostname). Probed here, off the critical path: it is two DNS lookups,
+	// bounded but still I/O, and must not add to boot latency (see the #252
+	// startup-metrics work) or block startup on a wedged resolver — the
+	// goroutine logs its own Warn once it has an answer, whenever that is.
+	go hostnamecheck.Run(context.Background(), cfg.ExternalHostname(), cfg.SplitHorizonHosts, logger)
 
 	// ---- Init hooks -----------------------------------------------------------
 	var hookRunner *inithooks.Runner
