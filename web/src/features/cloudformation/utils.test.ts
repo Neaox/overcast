@@ -2,8 +2,10 @@ import type { BadgeProps } from "@/components/ui/badge"
 import {
   canDeleteStack,
   canUpdateStack,
+  countFidelityNotices,
   failedResource,
   formatStatus,
+  isFidelityReason,
   isRollbackStatus,
   isStackFailed,
   isStackInProgress,
@@ -353,6 +355,40 @@ describe("failedResource", () => {
       },
     ])
     expect(found).toEqual({ logicalId: "Queue", reason: "queue name already in use" })
+  })
+})
+
+describe("isFidelityReason", () => {
+  it("recognises an Overcast-authored fidelity notice", () => {
+    expect(isFidelityReason("Overcast: created, but iam is emulated at inert tier — …")).toBe(
+      true,
+    )
+  })
+
+  it("does not mistake an AWS-shaped failure reason for one", () => {
+    expect(isFidelityReason("queue name already in use")).toBe(false)
+  })
+
+  it("treats a missing reason as not a fidelity notice", () => {
+    expect(isFidelityReason(undefined)).toBe(false)
+    expect(isFidelityReason(null)).toBe(false)
+    expect(isFidelityReason("")).toBe(false)
+  })
+})
+
+describe("countFidelityNotices", () => {
+  it("counts only the resources carrying a fidelity notice", () => {
+    const count = countFidelityNotices([
+      { ResourceStatusReason: "Overcast: created, but iam is emulated at inert tier — …" },
+      { ResourceStatusReason: "Overcast: AWS::CDK::Metadata is accepted as a no-op. …" },
+      { ResourceStatusReason: undefined },
+      { ResourceStatusReason: "queue name already in use" },
+    ])
+    expect(count).toBe(2)
+  })
+
+  it("returns 0 for an empty resource list", () => {
+    expect(countFidelityNotices([])).toBe(0)
   })
 })
 

@@ -559,6 +559,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				PhysicalID:          physID,
 				Type:                res.Type,
 				Status:              ResourceUpdateComplete,
+				StatusReason:        rCtx.EmulationLimitation,
 				Timestamp:           now,
 				Attributes:          rCtx.Attributes[logicalID],
 				PropertiesHash:      propsHash,
@@ -567,7 +568,10 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				UpdateReplacePolicy: res.UpdateReplacePolicy,
 			})
 			rCtx.Resources[logicalID] = physID
-			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceUpdateComplete, "")
+			// As on the create path: the reason, when there is one, says what
+			// Overcast will not do with the resource, and rides the
+			// UPDATE_COMPLETE event so a deploy shows it as the resource goes by.
+			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceUpdateComplete, rCtx.EmulationLimitation)
 			p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 			delete(existing, logicalID)
 			continue
@@ -898,6 +902,7 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 			zap.String("type", res.Type),
 			zap.String("logicalId", logicalID),
 			zap.String("physicalId", physID))
+		limitations.add(unrecognizedResourceMessage(res.Type))
 		return physID, nil
 	}
 
@@ -932,6 +937,10 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 	if appTag := extractAwsApplicationTag(props); appTag != "" && physID != "" {
 		p.autoAssociateResource(ctx, rCtx, appTag, physID)
 	}
+	// The resource is real and stable. Say so if it is a deliberate no-op or
+	// backed by an inert/stub-tier service — see fidelity.go — unless the
+	// handler already reported something more specific.
+	addFidelityFallback(limitations, res.Type, handler, true)
 	return physID, nil
 }
 
@@ -967,6 +976,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
 		// Unknown resource type — keep stub physical ID, no-op.
+		rCtx.EmulationLimitation = unrecognizedResourceMessage(res.Type)
 		return resourceUpdateOutcome{PhysicalID: oldPhysicalID}, nil
 	}
 
@@ -976,6 +986,10 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 		if oldResource != nil {
 			oldProps = oldResource.Properties
 		}
+		// Same reasoning as provisionResource: gather whatever the dispatched
+		// calls report as inert while this update runs, so the caller can
+		// record it as the resource's status reason.
+		ctx, limitations := withLimitationCollector(ctx)
 		physID, attrs, err := updater.Update(ctx, router, p.cfg, oldPhysicalID, props, oldProps, rCtx)
 		if err == nil {
 			if physID == "" {
@@ -998,6 +1012,8 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 					return outcome, failUpdate(stErr)
 				}
 			}
+			addFidelityFallback(limitations, res.Type, handler, true)
+			rCtx.EmulationLimitation = limitations.reason()
 			return outcome, nil
 		}
 		// An update that applied and then failed is terminal — replacing the

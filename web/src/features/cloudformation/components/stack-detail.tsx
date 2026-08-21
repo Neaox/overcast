@@ -18,7 +18,9 @@ import {
   resourceStatusVariant,
   canUpdateStack,
   canDeleteStack,
+  countFidelityNotices,
   failedResource,
+  isFidelityReason,
   isStackInProgress,
   isStackFailed,
   isStackRollingBack,
@@ -107,6 +109,12 @@ export function StackDetail({ stackName }: Props) {
     ...cfnResourcesQueryOptions(stackName),
     enabled: tab === "resources" || tab === "overview" || tab === "events",
   })
+
+  // How many resources are stubs or backed by an inert/stub-tier service —
+  // see internal/services/cloudformation/fidelity.go and issue #760. A green
+  // CREATE_COMPLETE resource can still be one of these, so this is the
+  // stack-level "answerable at a glance" summary the issue asks for.
+  const fidelityCount = countFidelityNotices(resources)
 
   const {
     data: eventsData,
@@ -412,7 +420,14 @@ export function StackDetail({ stackName }: Props) {
           {resources.length > 0 && (
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <h2 className="font-mono text-sm font-medium text-fg">Resources</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-mono text-sm font-medium text-fg">Resources</h2>
+                  {fidelityCount > 0 && (
+                    <Badge variant="info">
+                      {fidelityCount} of {resources.length} stub or inert
+                    </Badge>
+                  )}
+                </div>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -452,7 +467,14 @@ export function StackDetail({ stackName }: Props) {
                             </Badge>
                           </span>
                           {r.ResourceStatusReason && (
-                            <p className="mt-0.5 font-sans text-[13px] text-danger">
+                            <p
+                              className={cn(
+                                "mt-0.5 font-sans text-[13px]",
+                                isFidelityReason(r.ResourceStatusReason)
+                                  ? "text-fg-muted"
+                                  : "text-danger",
+                              )}
+                            >
                               {r.ResourceStatusReason}
                             </p>
                           )}
@@ -474,55 +496,76 @@ export function StackDetail({ stackName }: Props) {
               description="No resources have been provisioned yet."
             />
           ) : (
-            <div className="rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Logical ID</TableHead>
-                    <TableHead>Physical ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {resources.map((r) => (
-                    <TableRow key={r.LogicalResourceId}>
-                      <TableCell className="font-medium">
-                        <ResourceLink
-                          logicalId={r.LogicalResourceId ?? ""}
-                          resourceType={r.ResourceType ?? ""}
-                          physicalId={r.PhysicalResourceId}
-                        />
-                      </TableCell>
-                      <TableCell className="max-w-xs truncate text-fg-muted">
-                        {r.PhysicalResourceId ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <span className="flex items-center gap-1.5">
-                            {isStackInProgress(r.ResourceStatus ?? "") && (
-                              <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
-                            )}
-                            <Badge variant={resourceStatusVariant(r.ResourceStatus ?? "")}>
-                              {formatStatus(r.ResourceStatus ?? "")}
-                            </Badge>
-                          </span>
-                          {r.ResourceStatusReason && (
-                            <span className="font-sans text-[13px] text-danger">
-                              {r.ResourceStatusReason}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-fg-muted">
-                        {r.LastUpdatedTimestamp ? r.LastUpdatedTimestamp.toLocaleString() : "—"}
-                      </TableCell>
+            <div className="flex flex-col gap-2">
+              {fidelityCount > 0 && (
+                <div className="flex items-center gap-1.5 text-[13px] text-fg-muted">
+                  <Badge variant="info">
+                    {fidelityCount} of {resources.length} stub or inert
+                  </Badge>
+                  <span>
+                    {fidelityCount === 1
+                      ? "This resource is a stub, or backed by a service Overcast emulates at inert or stub tier — see its reason below."
+                      : "These resources are stubs, or backed by a service Overcast emulates at inert or stub tier — see each reason below."}
+                  </span>
+                </div>
+              )}
+              <div className="rounded-md border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Logical ID</TableHead>
+                      <TableHead>Physical ID</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Last updated</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {resources.map((r) => (
+                      <TableRow key={r.LogicalResourceId}>
+                        <TableCell className="font-medium">
+                          <ResourceLink
+                            logicalId={r.LogicalResourceId ?? ""}
+                            resourceType={r.ResourceType ?? ""}
+                            physicalId={r.PhysicalResourceId}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate text-fg-muted">
+                          {r.PhysicalResourceId ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="flex items-center gap-1.5">
+                              {isStackInProgress(r.ResourceStatus ?? "") && (
+                                <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
+                              )}
+                              <Badge variant={resourceStatusVariant(r.ResourceStatus ?? "")}>
+                                {formatStatus(r.ResourceStatus ?? "")}
+                              </Badge>
+                            </span>
+                            {r.ResourceStatusReason && (
+                              <span
+                                className={cn(
+                                  "font-sans text-[13px]",
+                                  isFidelityReason(r.ResourceStatusReason)
+                                    ? "text-fg-muted"
+                                    : "text-danger",
+                                )}
+                              >
+                                {r.ResourceStatusReason}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-fg-muted">
+                          {r.LastUpdatedTimestamp ? r.LastUpdatedTimestamp.toLocaleString() : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </TabPanel>
