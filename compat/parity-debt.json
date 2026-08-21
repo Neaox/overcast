@@ -173,6 +173,12 @@
     {
       "suite": "dotnet-sdk",
       "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "backup",
       "group": "backup-vaults",
       "tests": 10
     },
@@ -641,6 +647,12 @@
     {
       "suite": "go-sdk",
       "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
+    },
+    {
+      "suite": "go-sdk",
+      "service": "backup",
       "group": "backup-vaults",
       "tests": 10
     },
@@ -833,6 +845,12 @@
     {
       "suite": "java-sdk",
       "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
+    },
+    {
+      "suite": "java-sdk",
+      "service": "backup",
       "group": "backup-vaults",
       "tests": 10
     },
@@ -1025,6 +1043,12 @@
     {
       "suite": "node-js-sdk",
       "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "backup",
       "group": "backup-vaults",
       "tests": 10
     },
@@ -1213,6 +1237,12 @@
       "service": "backup",
       "group": "backup-selections",
       "tests": 4
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
     },
     {
       "suite": "python-sdk",
@@ -1489,6 +1519,12 @@
       "service": "backup",
       "group": "backup-selections",
       "tests": 4
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "backup",
+      "group": "backup-tags",
+      "tests": 3
     },
     {
       "suite": "rust-sdk",
