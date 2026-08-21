@@ -1137,7 +1137,7 @@ func hashProps(props map[string]any) string {
 // merging here also avoids updates when they override a changed stack tag.
 func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
 	switch resourceType {
-	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret", "AWS::SQS::Queue", "AWS::Kinesis::Stream":
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret", "AWS::SQS::Queue", "AWS::Kinesis::Stream", "AWS::ECR::Repository":
 		return hashProps(map[string]any{
 			"Properties":    props,
 			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
@@ -1159,7 +1159,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	// Hashes written before propagated-tag tracking contained only the property
 	// map. Preserve their no-op behavior when effective tags did not change,
 	// while still reconciling a real stack-only tag delta.
-	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::SQS::Queue" && resourceType != "AWS::Kinesis::Stream" && resourceType != "AWS::CloudFormation::Stack" {
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::SQS::Queue" && resourceType != "AWS::Kinesis::Stream" && resourceType != "AWS::ECR::Repository" && resourceType != "AWS::CloudFormation::Stack" {
 		return oldHash == ""
 	}
 	var currentTags, previousTags any

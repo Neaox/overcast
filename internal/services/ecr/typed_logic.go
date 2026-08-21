@@ -19,9 +19,23 @@ import (
 // ---- Request types ----
 
 type createRepositoryRequest struct {
+	RepositoryName             string                     `json:"repositoryName" cbor:"repositoryName"`
+	ImageTagMutability         string                     `json:"imageTagMutability" cbor:"imageTagMutability"`
+	ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration" cbor:"imageScanningConfiguration"`
+	EncryptionConfiguration    EncryptionConfiguration    `json:"encryptionConfiguration" cbor:"encryptionConfiguration"`
+	Tags                       []Tag                      `json:"tags" cbor:"tags"`
+}
+
+type putImageTagMutabilityRequest struct {
 	RepositoryName     string `json:"repositoryName" cbor:"repositoryName"`
+	RegistryId         string `json:"registryId" cbor:"registryId"`
 	ImageTagMutability string `json:"imageTagMutability" cbor:"imageTagMutability"`
-	Tags               []Tag  `json:"tags" cbor:"tags"`
+}
+
+type putImageScanningConfigurationRequest struct {
+	RepositoryName             string                     `json:"repositoryName" cbor:"repositoryName"`
+	RegistryId                 string                     `json:"registryId" cbor:"registryId"`
+	ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration" cbor:"imageScanningConfiguration"`
 }
 
 type describeRepositoriesRequest struct {
@@ -91,6 +105,18 @@ type listTagsForResourceRequest struct {
 
 type createRepositoryResponse struct {
 	Repository Repository `json:"repository" cbor:"repository"`
+}
+
+type putImageTagMutabilityResponse struct {
+	RegistryId         string `json:"registryId" cbor:"registryId"`
+	RepositoryName     string `json:"repositoryName" cbor:"repositoryName"`
+	ImageTagMutability string `json:"imageTagMutability" cbor:"imageTagMutability"`
+}
+
+type putImageScanningConfigurationResponse struct {
+	RegistryId                 string                     `json:"registryId" cbor:"registryId"`
+	RepositoryName             string                     `json:"repositoryName" cbor:"repositoryName"`
+	ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration" cbor:"imageScanningConfiguration"`
 }
 
 type describeRepositoriesResponse struct {
@@ -252,12 +278,18 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 	if mutability == "" {
 		mutability = "MUTABLE"
 	}
+	encryption := req.EncryptionConfiguration
+	if encryption.EncryptionType == "" {
+		encryption.EncryptionType = "AES256"
+	}
 	repo := &Repository{
-		RepositoryArn:      s.repoARN(region, req.RepositoryName),
-		RegistryId:         s.accountID(),
-		RepositoryName:     req.RepositoryName,
-		CreatedAt:          float64(s.clk.Now().Unix()),
-		ImageTagMutability: mutability,
+		RepositoryArn:              s.repoARN(region, req.RepositoryName),
+		RegistryId:                 s.accountID(),
+		RepositoryName:             req.RepositoryName,
+		CreatedAt:                  float64(s.clk.Now().Unix()),
+		ImageTagMutability:         mutability,
+		ImageScanningConfiguration: req.ImageScanningConfiguration,
+		EncryptionConfiguration:    encryption,
 	}
 	s.applyCurrentRepoURI(ctx, region, repo)
 	if err := s.saveRepo(ctx, region, repo); err != nil {
@@ -268,6 +300,56 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 	}
 	s.publish(ctx, events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
 	return &createRepositoryResponse{Repository: *repo}, nil
+}
+
+// putImageTagMutabilityTyped is the CBOR counterpart of putImageTagMutability;
+// see that handler for why IMMUTABLE is stored but not enforced on push.
+func (s *Service) putImageTagMutabilityTyped(ctx context.Context, req *putImageTagMutabilityRequest) (*putImageTagMutabilityResponse, *protocol.AWSError) {
+	if req.ImageTagMutability != "MUTABLE" && req.ImageTagMutability != "IMMUTABLE" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "imageTagMutability must be MUTABLE or IMMUTABLE", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	region := s.regionCtx(ctx)
+	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if !found {
+		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
+	}
+	repo.ImageTagMutability = req.ImageTagMutability
+	if err := s.saveRepo(ctx, region, repo); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &putImageTagMutabilityResponse{
+		RegistryId:         s.accountID(),
+		RepositoryName:     req.RepositoryName,
+		ImageTagMutability: req.ImageTagMutability,
+	}, nil
+}
+
+// putImageScanningConfigurationTyped is the CBOR counterpart of
+// putImageScanningConfiguration; see that handler for why no scan engine
+// runs either way.
+func (s *Service) putImageScanningConfigurationTyped(ctx context.Context, req *putImageScanningConfigurationRequest) (*putImageScanningConfigurationResponse, *protocol.AWSError) {
+	region := s.regionCtx(ctx)
+	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if !found {
+		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
+	}
+	repo.ImageScanningConfiguration = req.ImageScanningConfiguration
+	if err := s.saveRepo(ctx, region, repo); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &putImageScanningConfigurationResponse{
+		RegistryId:                 s.accountID(),
+		RepositoryName:             req.RepositoryName,
+		ImageScanningConfiguration: repo.ImageScanningConfiguration,
+	}, nil
 }
 
 func (s *Service) describeRepositoriesTyped(ctx context.Context, req *describeRepositoriesRequest) (*describeRepositoriesResponse, *protocol.AWSError) {

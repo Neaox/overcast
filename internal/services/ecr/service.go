@@ -4,7 +4,8 @@
 // DeleteRepository, GetAuthorizationToken, DescribeRegistry, ListImages, PutImage,
 // BatchGetImage, BatchDeleteImage, SetRepositoryPolicy, GetRepositoryPolicy,
 // DeleteRepositoryPolicy, PutLifecyclePolicy, GetLifecyclePolicy,
-// DeleteLifecyclePolicy, TagResource, UntagResource, ListTagsForResource.
+// DeleteLifecyclePolicy, PutImageTagMutability, PutImageScanningConfiguration,
+// TagResource, UntagResource, ListTagsForResource.
 //
 // The control-plane operations (repository CRUD, image metadata, tags, policies)
 // are fully implemented in-memory. When Docker is available, ECR also lazy-starts
@@ -106,12 +107,35 @@ const (
 
 // Repository represents an ECR repository.
 type Repository struct {
-	RepositoryArn      string  `json:"repositoryArn"`
-	RegistryId         string  `json:"registryId"`
-	RepositoryName     string  `json:"repositoryName"`
-	RepositoryUri      string  `json:"repositoryUri"`
-	CreatedAt          float64 `json:"createdAt"`
-	ImageTagMutability string  `json:"imageTagMutability"`
+	RepositoryArn              string                     `json:"repositoryArn"`
+	RegistryId                 string                     `json:"registryId"`
+	RepositoryName             string                     `json:"repositoryName"`
+	RepositoryUri              string                     `json:"repositoryUri"`
+	CreatedAt                  float64                    `json:"createdAt"`
+	ImageTagMutability         string                     `json:"imageTagMutability"`
+	ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration"`
+	EncryptionConfiguration    EncryptionConfiguration    `json:"encryptionConfiguration"`
+}
+
+// ImageScanningConfiguration is the scan-on-push toggle CreateRepository
+// accepts and DescribeRepositories echoes back. Overcast stores and returns
+// the value; no scan engine runs (see DescribeImageScanFindings), so setting
+// it true does not make PutImage trigger a scan.
+type ImageScanningConfiguration struct {
+	ScanOnPush bool `json:"scanOnPush"`
+}
+
+// EncryptionConfiguration is the at-rest encryption choice CreateRepository
+// accepts and DescribeRepositories echoes back. Real ECR always encrypts
+// storage — AES256 (the default) or a customer KMS key — and Overcast does
+// not model either, so the value round-trips without changing how images are
+// stored. Real AWS treats this property as fixed for the life of the
+// repository (CreateRepository only, no Put* to change it); Overcast matches
+// that by requiring replacement when a template changes it — see
+// ecrRepositoryHandler.Update.
+type EncryptionConfiguration struct {
+	EncryptionType string `json:"encryptionType"`
+	KmsKey         string `json:"kmsKey,omitempty"`
 }
 
 // ImageIdentifier uniquely identifies an image by tag or digest.
@@ -272,26 +296,28 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		s.puller = docker.NewImagePuller(s.docker)
 	}
 	s.ops = map[string]http.HandlerFunc{
-		"CreateRepository":          s.createRepository,
-		"DescribeRepositories":      s.describeRepositories,
-		"DeleteRepository":          s.deleteRepository,
-		"GetAuthorizationToken":     s.getAuthorizationToken,
-		"DescribeRegistry":          s.describeRegistry,
-		"ListImages":                s.listImages,
-		"DescribeImages":            s.describeImages,
-		"PutImage":                  s.putImage,
-		"BatchGetImage":             s.batchGetImage,
-		"DescribeImageScanFindings": s.describeImageScanFindings,
-		"BatchDeleteImage":          s.batchDeleteImage,
-		"SetRepositoryPolicy":       s.setRepositoryPolicy,
-		"GetRepositoryPolicy":       s.getRepositoryPolicy,
-		"DeleteRepositoryPolicy":    s.deleteRepositoryPolicy,
-		"PutLifecyclePolicy":        s.putLifecyclePolicy,
-		"GetLifecyclePolicy":        s.getLifecyclePolicy,
-		"DeleteLifecyclePolicy":     s.deleteLifecyclePolicy,
-		"TagResource":               s.tagResource,
-		"UntagResource":             s.untagResource,
-		"ListTagsForResource":       s.listTagsForResource,
+		"CreateRepository":              s.createRepository,
+		"DescribeRepositories":          s.describeRepositories,
+		"DeleteRepository":              s.deleteRepository,
+		"GetAuthorizationToken":         s.getAuthorizationToken,
+		"DescribeRegistry":              s.describeRegistry,
+		"ListImages":                    s.listImages,
+		"DescribeImages":                s.describeImages,
+		"PutImage":                      s.putImage,
+		"BatchGetImage":                 s.batchGetImage,
+		"DescribeImageScanFindings":     s.describeImageScanFindings,
+		"BatchDeleteImage":              s.batchDeleteImage,
+		"PutImageTagMutability":         s.putImageTagMutability,
+		"PutImageScanningConfiguration": s.putImageScanningConfiguration,
+		"SetRepositoryPolicy":           s.setRepositoryPolicy,
+		"GetRepositoryPolicy":           s.getRepositoryPolicy,
+		"DeleteRepositoryPolicy":        s.deleteRepositoryPolicy,
+		"PutLifecyclePolicy":            s.putLifecyclePolicy,
+		"GetLifecyclePolicy":            s.getLifecyclePolicy,
+		"DeleteLifecyclePolicy":         s.deleteLifecyclePolicy,
+		"TagResource":                   s.tagResource,
+		"UntagResource":                 s.untagResource,
+		"ListTagsForResource":           s.listTagsForResource,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -494,9 +520,11 @@ func (s *Service) repoHoldsImages(ctx context.Context, region, name string) (boo
 
 func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RepositoryName     string `json:"repositoryName"`
-		ImageTagMutability string `json:"imageTagMutability"`
-		Tags               []Tag  `json:"tags"`
+		RepositoryName             string                     `json:"repositoryName"`
+		ImageTagMutability         string                     `json:"imageTagMutability"`
+		ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration"`
+		EncryptionConfiguration    EncryptionConfiguration    `json:"encryptionConfiguration"`
+		Tags                       []Tag                      `json:"tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -530,12 +558,18 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 	if mutability == "" {
 		mutability = "MUTABLE"
 	}
+	encryption := req.EncryptionConfiguration
+	if encryption.EncryptionType == "" {
+		encryption.EncryptionType = "AES256"
+	}
 	repo := &Repository{
-		RepositoryArn:      s.repoARN(region, req.RepositoryName),
-		RegistryId:         s.accountID(),
-		RepositoryName:     req.RepositoryName,
-		CreatedAt:          float64(s.clk.Now().Unix()),
-		ImageTagMutability: mutability,
+		RepositoryArn:              s.repoARN(region, req.RepositoryName),
+		RegistryId:                 s.accountID(),
+		RepositoryName:             req.RepositoryName,
+		CreatedAt:                  float64(s.clk.Now().Unix()),
+		ImageTagMutability:         mutability,
+		ImageScanningConfiguration: req.ImageScanningConfiguration,
+		EncryptionConfiguration:    encryption,
 	}
 	s.applyCurrentRepoURI(r.Context(), region, repo)
 	if err := s.saveRepo(r.Context(), region, repo); err != nil {
@@ -1359,6 +1393,93 @@ func (s *Service) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"imageIds": deleted,
 		"failures": failures,
+	})
+}
+
+// putImageTagMutability reconciles the mutability setting CreateRepository
+// stored. Real ECR does not enforce it here on the control plane — the
+// rejection happens on PutImage, when a tag that already exists is pushed
+// again to an IMMUTABLE repository. Overcast does not implement that push-time
+// check (see putImage/putImageTyped), so setting IMMUTABLE changes what
+// DescribeRepositories reports without changing what a second `docker push`
+// of the same tag is allowed to do.
+func (s *Service) putImageTagMutability(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName     string `json:"repositoryName"`
+		RegistryId         string `json:"registryId"`
+		ImageTagMutability string `json:"imageTagMutability"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ImageTagMutability != "MUTABLE" && req.ImageTagMutability != "IMMUTABLE" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterException",
+			Message:    "imageTagMutability must be MUTABLE or IMMUTABLE",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+
+	region := s.region(r)
+	ctx := r.Context()
+	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if !found {
+		s.errRepoNotFound(w, r, req.RepositoryName)
+		return
+	}
+
+	repo.ImageTagMutability = req.ImageTagMutability
+	if err := s.saveRepo(ctx, region, repo); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
+		"registryId":         s.accountID(),
+		"repositoryName":     req.RepositoryName,
+		"imageTagMutability": req.ImageTagMutability,
+	})
+}
+
+// putImageScanningConfiguration reconciles the scan-on-push setting
+// CreateRepository stored. No scan engine runs either way — see
+// DescribeImageScanFindings — so this changes what DescribeRepositories
+// reports, not what happens when an image is pushed.
+func (s *Service) putImageScanningConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName             string                     `json:"repositoryName"`
+		RegistryId                 string                     `json:"registryId"`
+		ImageScanningConfiguration ImageScanningConfiguration `json:"imageScanningConfiguration"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	region := s.region(r)
+	ctx := r.Context()
+	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if !found {
+		s.errRepoNotFound(w, r, req.RepositoryName)
+		return
+	}
+
+	repo.ImageScanningConfiguration = req.ImageScanningConfiguration
+	if err := s.saveRepo(ctx, region, repo); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
+		"registryId":                 s.accountID(),
+		"repositoryName":             req.RepositoryName,
+		"imageScanningConfiguration": repo.ImageScanningConfiguration,
 	})
 }
 

@@ -40,6 +40,12 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"BatchDeleteImage": op.NewTyped[imageIDSetRequest, batchDeleteImageResponse](
 			"BatchDeleteImage", s.batchDeleteImageTyped,
 		),
+		"PutImageTagMutability": op.NewTyped[putImageTagMutabilityRequest, putImageTagMutabilityResponse](
+			"PutImageTagMutability", s.putImageTagMutabilityTyped,
+		),
+		"PutImageScanningConfiguration": op.NewTyped[putImageScanningConfigurationRequest, putImageScanningConfigurationResponse](
+			"PutImageScanningConfiguration", s.putImageScanningConfigurationTyped,
+		),
 		"SetRepositoryPolicy": op.NewTyped[setRepositoryPolicyRequest, setRepositoryPolicyResponse](
 			"SetRepositoryPolicy", s.setRepositoryPolicyTyped,
 		),
