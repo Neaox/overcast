@@ -13,9 +13,9 @@ description: Decision record for #761 (OVERCAST_HOST defaults to 0.0.0.0 while t
 > silently accepted. #870 (rename, `OVERCAST_HOST` removed) shipped in
 > [#1176](https://github.com/Neaox/overcast/pull/1176); #761
 > (environment-dependent native default) shipped in
-> the PR that carries this commit, sequenced after it as §4 planned. This doc
-> is kept (rather than deleted) because both issues' comment threads
-> reference it directly.
+> [#1179](https://github.com/Neaox/overcast/pull/1179), sequenced after it as
+> §4 planned. This doc is kept (rather than deleted) because both issues'
+> comment threads reference it directly.
 > Tracks: [#761](https://github.com/Neaox/overcast/issues/761) (default vs docs),
 > [#870](https://github.com/Neaox/overcast/issues/870) (naming vs LocalStack convention).
 > The two issues carry the full evidence; this doc exists so the *combined* decision
