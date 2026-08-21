@@ -330,6 +330,78 @@ func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.
 	}
 }
 
+// TestFunctionPolicy_QualifiedTargetExistenceAcrossAddGetRemove is the
+// AddPermission-only "policy-race-fn:missing" coverage above, generalized:
+// AWS validates that a qualified target actually exists — a published
+// version or an alias — before AddPermission, GetPolicy, and RemovePermission
+// touch the policy, per
+// https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html and
+// https://docs.aws.amazon.com/lambda/latest/api/API_GetPolicy.html and
+// https://docs.aws.amazon.com/lambda/latest/api/API_RemovePermission.html
+// (each returns ResourceNotFoundException for a nonexistent qualifier).
+func TestFunctionPolicy_QualifiedTargetExistenceAcrossAddGetRemove(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-qualified-existence")
+	versionResp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-qualified-existence/versions"), publishVersionReq{})
+	helpers.AssertStatus(t, versionResp, http.StatusCreated)
+	versionResp.Body.Close()
+	aliasResp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-qualified-existence/aliases"), createAliasReq{
+		Name: "live", FunctionVersion: "1",
+	})
+	helpers.AssertStatus(t, aliasResp, http.StatusCreated)
+	aliasResp.Body.Close()
+
+	missingQualifiers := []string{"99", "missing-alias"}
+	for _, qualifier := range missingQualifiers {
+		t.Run("missing/"+qualifier, func(t *testing.T) {
+			policyPath := lambdaURL(srv, "/functions/policy-qualified-existence/policy") + "?Qualifier=" + qualifier
+
+			add := doJSON(t, http.MethodPost, policyPath, map[string]any{
+				"StatementId": "add-" + qualifier, "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+			})
+			helpers.AssertStatus(t, add, http.StatusNotFound)
+			helpers.AssertJSONError(t, add, "ResourceNotFoundException")
+			add.Body.Close()
+
+			get := doJSON(t, http.MethodGet, policyPath, nil)
+			helpers.AssertStatus(t, get, http.StatusNotFound)
+			helpers.AssertJSONError(t, get, "ResourceNotFoundException")
+			get.Body.Close()
+
+			remove := doJSON(t, http.MethodDelete,
+				lambdaURL(srv, "/functions/policy-qualified-existence/policy/some-statement")+"?Qualifier="+qualifier, nil)
+			helpers.AssertStatus(t, remove, http.StatusNotFound)
+			helpers.AssertJSONError(t, remove, "ResourceNotFoundException")
+			remove.Body.Close()
+		})
+	}
+
+	// Then: the same three operations succeed against the real version and
+	// alias qualifiers — a regression control so a future change can't fix
+	// the missing-target case by rejecting every qualifier.
+	existingQualifiers := map[string]string{"1": "existing-version", "live": "existing-alias"}
+	for qualifier, statementID := range existingQualifiers {
+		t.Run("existing/"+qualifier, func(t *testing.T) {
+			policyPath := lambdaURL(srv, "/functions/policy-qualified-existence/policy") + "?Qualifier=" + qualifier
+
+			add := doJSON(t, http.MethodPost, policyPath, map[string]any{
+				"StatementId": statementID, "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+			})
+			helpers.AssertStatus(t, add, http.StatusCreated)
+			add.Body.Close()
+
+			get := doJSON(t, http.MethodGet, policyPath, nil)
+			helpers.AssertStatus(t, get, http.StatusOK)
+			get.Body.Close()
+
+			remove := doJSON(t, http.MethodDelete,
+				lambdaURL(srv, "/functions/policy-qualified-existence/policy/"+statementID)+"?Qualifier="+qualifier, nil)
+			helpers.AssertStatus(t, remove, http.StatusNoContent)
+			remove.Body.Close()
+		})
+	}
+}
+
 func TestFunctionPolicy_DeleteAliasRemovesQualifiedPolicy(t *testing.T) {
 	// Given: an alias with a qualified resource policy.
 	srv := helpers.NewTestServer(t)
