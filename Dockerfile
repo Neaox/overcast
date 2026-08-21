@@ -69,9 +69,13 @@ FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed
 
 WORKDIR /web
 
-# corepack resolves the pnpm version pinned in package.json's packageManager field.
+# corepack resolves the pnpm version pinned in package.json's packageManager
+# field. It shipped bundled with Node through v24 but is gone from newer
+# distributions (Node 26 LTS included, due October 2026) — install it as its
+# own npm package instead, which works the same regardless of what Node
+# bundles. See https://github.com/Neaox/overcast/issues/558.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable pnpm
+RUN npm install -g corepack@latest && corepack enable pnpm
 
 # Install dependencies first for layer caching.
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
