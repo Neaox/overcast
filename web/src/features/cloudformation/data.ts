@@ -14,7 +14,7 @@
  *   cfnKeys.template()                           -> ["cloudformation", "template"]
  *   cfnKeys.templateDetail(baseUrl, name)        -> ["cloudformation", "template", baseUrl, name]
  *   cfnKeys.diagnostics()                        -> ["cloudformation", "diagnostics"]
- *   cfnKeys.diagnosticsDetail(baseUrl, name)     -> ["cloudformation", "diagnostics", baseUrl, name]
+ *   cfnKeys.diagnosticsDetail(baseUrl, name, stackId?) -> ["cloudformation", "diagnostics", baseUrl, name, stackId]
  */
 
 import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/react-query"
@@ -39,7 +39,8 @@ export const cfnKeys = {
   template: () => [...cfnKeys.all(), "template"] as const,
   templateDetail: (name: string) => [...cfnKeys.template(), name] as const,
   diagnostics: () => [...cfnKeys.all(), "diagnostics"] as const,
-  diagnosticsDetail: (name: string) => [...cfnKeys.diagnostics(), name] as const,
+  diagnosticsDetail: (name: string, stackId?: string) =>
+    [...cfnKeys.diagnostics(), name, stackId] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ export function cfnTemplateQueryOptions(name: string) {
  */
 export function cfnDiagnosticsQueryOptions(name: string, stackId?: string) {
   return queryOptions({
-    queryKey: cfnKeys.diagnosticsDetail(name),
+    queryKey: cfnKeys.diagnosticsDetail(name, stackId),
     queryFn: () => cloudformation.getStackDiagnostics(name, stackId),
   })
 }

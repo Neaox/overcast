@@ -77,7 +77,14 @@ export function StackDetail({ stackName, initialStackId }: Props) {
   // for good the moment a fetch reports one — so watching a live stack's own
   // deletion complete while sitting on this page keeps resolving it (by ARN)
   // instead of 400ing the instant the record tombstones (by name).
+  //
+  // Updated during render rather than in an effect — this is React's own
+  // "adjusting state when a prop changes" escape hatch (a conditional
+  // setState call guarded by a value tracked alongside it), not a synced
+  // side effect, so it belongs in the render body: an effect would still be
+  // correct but adds an extra render cycle after every fetch for no benefit.
   const [stackRef, setStackRef] = useState(initialStackId ?? stackName)
+  const [lastSeenStackId, setLastSeenStackId] = useState<string | undefined>(undefined)
 
   const {
     data: stack,
@@ -86,11 +93,10 @@ export function StackDetail({ stackName, initialStackId }: Props) {
     refetch: refetchStack,
   } = useQuery(cfnStackQueryOptions(stackRef))
 
-  useEffect(() => {
-    if (stack?.StackId && stack.StackId !== stackRef) {
-      setStackRef(stack.StackId)
-    }
-  }, [stack?.StackId, stackRef])
+  if (stack?.StackId && stack.StackId !== lastSeenStackId) {
+    setLastSeenStackId(stack.StackId)
+    setStackRef(stack.StackId)
+  }
 
   const stackStatus = stack?.StackStatus ?? ""
 
