@@ -3122,6 +3122,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "CloudFormation",
+        "id": "cloudformation"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
