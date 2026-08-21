@@ -10,14 +10,16 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createStreamRequest struct {
-	StreamName string            `json:"StreamName"`
-	ShardCount int               `json:"ShardCount"`
-	Tags       map[string]string `json:"Tags"`
+	StreamName        string             `json:"StreamName"`
+	ShardCount        int                `json:"ShardCount"`
+	Tags              map[string]string  `json:"Tags"`
+	StreamModeDetails *StreamModeDetails `json:"StreamModeDetails"`
 }
 
 type deleteStreamRequest struct {
@@ -248,13 +250,15 @@ func (h *Handler) createStreamTyped(ctx context.Context, req *createStreamReques
 	}
 	st := &Stream{
 		StreamName:           req.StreamName,
-		StreamARN:            streamARN(h.cfg.AccountID, h.cfg.Region, req.StreamName),
+		StreamARN:            streamARN(h.cfg.AccountID, middleware.RegionFromContext(ctx, h.cfg.Region), req.StreamName),
 		StreamStatus:         "ACTIVE",
 		ShardCount:           shardCount,
 		Shards:               buildInitialShards(shardCount),
 		Tags:                 createStreamTags(req.Tags),
 		CreatedAt:            h.clk.Now().UTC(),
 		RetentionPeriodHours: 24,
+		StreamModeDetails:    req.StreamModeDetails,
+		EncryptionType:       "NONE",
 	}
 	if aerr := h.store.putStream(ctx, st); aerr != nil {
 		return nil, aerr
@@ -297,15 +301,7 @@ func (h *Handler) describeStreamSummaryTyped(ctx context.Context, req *describeS
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &describeStreamSummaryResponse{StreamDescriptionSummary: map[string]any{
-		"StreamName":              st.StreamName,
-		"StreamARN":               st.StreamARN,
-		"StreamStatus":            st.StreamStatus,
-		"OpenShardCount":          activeShardCount(st),
-		"RetentionPeriodHours":    st.RetentionPeriodHours,
-		"StreamCreationTimestamp": st.CreatedAt.Unix(),
-		"EnhancedMonitoring":      []any{},
-	}}, nil
+	return &describeStreamSummaryResponse{StreamDescriptionSummary: toStreamDescriptionSummary(st)}, nil
 }
 
 func (h *Handler) listStreamsTyped(ctx context.Context, _ *listStreamsRequest) (*listStreamsResponse, *protocol.AWSError) {
@@ -741,6 +737,81 @@ func (h *Handler) updateRetentionPeriod(ctx context.Context, req *retentionPerio
 		return nil, aerr
 	}
 	st.RetentionPeriodHours = req.RetentionPeriodHours
+	if aerr := h.store.putStream(ctx, st); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+type updateStreamModeRequest struct {
+	StreamARN         string             `json:"StreamARN"`
+	StreamModeDetails *StreamModeDetails `json:"StreamModeDetails"`
+}
+
+// updateStreamModeTyped handles Kinesis_20131202.UpdateStreamMode. Real
+// Kinesis addresses this operation by StreamARN only (no StreamName
+// alternative), unlike StartStreamEncryption/StopStreamEncryption below.
+func (h *Handler) updateStreamModeTyped(ctx context.Context, req *updateStreamModeRequest) (*struct{}, *protocol.AWSError) {
+	if req.StreamModeDetails == nil || req.StreamModeDetails.StreamMode == "" {
+		return nil, protocol.ErrMissingParameter("StreamModeDetails")
+	}
+	st, aerr := h.streamForResourceARN(ctx, req.StreamARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	st.StreamModeDetails = req.StreamModeDetails
+	if aerr := h.store.putStream(ctx, st); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+// streamEncryptionRequest is shared by StartStreamEncryption and
+// StopStreamEncryption — both accept either StreamName or StreamARN.
+type streamEncryptionRequest struct {
+	StreamName     string `json:"StreamName"`
+	StreamARN      string `json:"StreamARN"`
+	EncryptionType string `json:"EncryptionType"`
+	KeyId          string `json:"KeyId"`
+}
+
+// resolveStream looks a stream up by name, falling back to ARN — the shape
+// StartStreamEncryption/StopStreamEncryption's request takes (either
+// identifier is accepted on real Kinesis).
+func (h *Handler) resolveStream(ctx context.Context, streamName, arn string) (*Stream, *protocol.AWSError) {
+	if streamName != "" {
+		return h.store.getStream(ctx, streamName)
+	}
+	if arn != "" {
+		return h.streamForResourceARN(ctx, arn)
+	}
+	return nil, protocol.ErrMissingParameter("StreamName")
+}
+
+func (h *Handler) startStreamEncryptionTyped(ctx context.Context, req *streamEncryptionRequest) (*struct{}, *protocol.AWSError) {
+	st, aerr := h.resolveStream(ctx, req.StreamName, req.StreamARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	encryptionType := req.EncryptionType
+	if encryptionType == "" {
+		encryptionType = "KMS"
+	}
+	st.EncryptionType = encryptionType
+	st.KeyId = req.KeyId
+	if aerr := h.store.putStream(ctx, st); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) stopStreamEncryptionTyped(ctx context.Context, req *streamEncryptionRequest) (*struct{}, *protocol.AWSError) {
+	st, aerr := h.resolveStream(ctx, req.StreamName, req.StreamARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	st.EncryptionType = "NONE"
+	st.KeyId = ""
 	if aerr := h.store.putStream(ctx, st); aerr != nil {
 		return nil, aerr
 	}

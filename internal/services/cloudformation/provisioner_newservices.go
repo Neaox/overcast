@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -763,10 +765,22 @@ func (h *rdsDBParameterGroupHandler) Update(ctx context.Context, router http.Han
 
 type kinesisStreamHandler struct{}
 
+// kinesisStreamDefaultRetentionHours is what CreateStream leaves an
+// AWS::Kinesis::Stream at when the template does not set
+// RetentionPeriodHours (kinesis/handler.go's CreateStream/createStreamTyped
+// hardcode the same value).
+const kinesisStreamDefaultRetentionHours = 24
+
 func (h *kinesisStreamHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-stream", rCtx.StackName)
+		// A generated, per-resource-instance name — not a deterministic
+		// "<StackName>-stream" — so a replacement (Name unset, ShardCount
+		// changed) can create the new stream before the old one is torn
+		// down instead of colliding with it under the same name. Mirrors
+		// every other unnamed-resource handler (SNS topics, SQS queues,
+		// Lambda functions, ...).
+		name = rCtx.generatedName()
 	}
 
 	body := map[string]any{
@@ -777,10 +791,31 @@ func (h *kinesisStreamHandler) Create(ctx context.Context, router http.Handler, 
 	} else {
 		body["ShardCount"] = 1
 	}
+	// StreamModeDetails is a genuine CreateStream parameter on real Kinesis
+	// (unlike StreamEncryption below, which has no create-time equivalent) —
+	// its wire shape ({StreamMode: ...}) already matches the CFN property, so
+	// it forwards as-is.
+	if smd, ok := props["StreamModeDetails"]; ok {
+		body["StreamModeDetails"] = smd
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = tags
+	}
 
 	_, err := internalJSON(ctx, router, rCtx.Region, "Kinesis_20131202.CreateStream", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateStream: %w", err)
+	}
+
+	if err := reconcileKinesisRetention(ctx, router, rCtx.Region, name, kinesisEffectiveRetentionHours(props), kinesisStreamDefaultRetentionHours); err != nil {
+		return "", nil, err
+	}
+	// StreamEncryption has no CreateStream parameter on real Kinesis — a
+	// template that sets it goes through StartStreamEncryption right after
+	// the stream comes up, same as the AWS::Kinesis::Stream resource
+	// provider does.
+	if err := reconcileKinesisStreamEncryption(ctx, router, rCtx.Region, name, props["StreamEncryption"], nil); err != nil {
+		return "", nil, err
 	}
 
 	arn := fmt.Sprintf("arn:aws:kinesis:%s:%s:stream/%s", rCtx.Region, rCtx.AccountID, name)
@@ -797,6 +832,11 @@ func (h *kinesisStreamHandler) Delete(ctx context.Context, router http.Handler, 
 	return teardownError("DeleteStream", rec, err)
 }
 
+// Update reconciles everything Kinesis can change on a live stream in
+// place — RetentionPeriodHours, Tags, StreamEncryption and StreamModeDetails
+// — and only forces replacement for Name and ShardCount, neither of which
+// has an in-place equivalent here: ShardCount specifically needs
+// UpdateShardCount, which Overcast does not implement yet (#1096).
 func (h *kinesisStreamHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	if oldProps != nil {
 		if newName, _ := props["Name"].(string); newName != "" {
@@ -804,8 +844,168 @@ func (h *kinesisStreamHandler) Update(ctx context.Context, router http.Handler, 
 				return "", nil, errReplacementRequired
 			}
 		}
+		if !reflect.DeepEqual(props["ShardCount"], oldProps["ShardCount"]) {
+			return "", nil, errReplacementRequired
+		}
 	}
-	return "", nil, errReplacementRequired
+
+	name := physicalID
+	if n, _ := props["Name"].(string); n != "" {
+		name = n
+	}
+	arn := fmt.Sprintf("arn:aws:kinesis:%s:%s:stream/%s", rCtx.Region, rCtx.AccountID, name)
+
+	oldHours := kinesisStreamDefaultRetentionHours
+	var oldTags, oldEncryption, oldMode any
+	if oldProps != nil {
+		oldHours = kinesisEffectiveRetentionHours(oldProps)
+		oldTags = oldProps["Tags"]
+		oldEncryption = oldProps["StreamEncryption"]
+		oldMode = oldProps["StreamModeDetails"]
+	}
+
+	if err := reconcileKinesisRetention(ctx, router, rCtx.Region, name, kinesisEffectiveRetentionHours(props), oldHours); err != nil {
+		return "", nil, err
+	}
+	if err := reconcileKinesisStreamTags(ctx, router, rCtx.Region, name, rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], oldTags); err != nil {
+		return "", nil, err
+	}
+	if err := reconcileKinesisStreamEncryption(ctx, router, rCtx.Region, name, props["StreamEncryption"], oldEncryption); err != nil {
+		return "", nil, err
+	}
+	if err := reconcileKinesisStreamMode(ctx, router, rCtx.Region, arn, props["StreamModeDetails"], oldMode); err != nil {
+		return "", nil, err
+	}
+
+	attrs := map[string]string{
+		"Arn":  arn,
+		"Name": name,
+	}
+	return name, attrs, nil
+}
+
+// kinesisEffectiveRetentionHours reads RetentionPeriodHours off a Kinesis
+// stream's properties, defaulting to Kinesis' own 24-hour default when the
+// template does not set it — including when it is dropped from a template on
+// update, which real CloudFormation also resolves back to the default.
+func kinesisEffectiveRetentionHours(props map[string]any) int {
+	if v, ok := props["RetentionPeriodHours"]; ok {
+		if n, err := cfnInt64(v); err == nil {
+			return int(n)
+		}
+	}
+	return kinesisStreamDefaultRetentionHours
+}
+
+// reconcileKinesisRetention threads AWS::Kinesis::Stream's
+// RetentionPeriodHours to the stream via Increase/DecreaseStreamRetentionPeriod
+// — CreateStream itself has no retention parameter on real Kinesis, and every
+// stream starts at the 24-hour default, so applying a non-default value is
+// itself a reconciliation against that starting point.
+func reconcileKinesisRetention(ctx context.Context, router http.Handler, region, streamName string, newHours, oldHours int) error {
+	if newHours == oldHours {
+		return nil
+	}
+	target := "Kinesis_20131202.IncreaseStreamRetentionPeriod"
+	if newHours < oldHours {
+		target = "Kinesis_20131202.DecreaseStreamRetentionPeriod"
+	}
+	body := map[string]any{"StreamName": streamName, "RetentionPeriodHours": newHours}
+	if _, err := internalJSON(ctx, router, region, target, body); err != nil {
+		return fmt.Errorf("%s: %w", target, err)
+	}
+	return nil
+}
+
+// reconcileKinesisStreamTags reconciles a stream's tags via
+// AddTagsToStream/RemoveTagsFromStream: added/changed keys go through
+// AddTagsToStream, keys dropped from the template go through
+// RemoveTagsFromStream. Mirrors updateSQSQueueTags' diff shape.
+func reconcileKinesisStreamTags(ctx context.Context, router http.Handler, region, streamName string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) error {
+	tags := mergeResourceTags(stackTags, rawTags)
+	prior := mergeResourceTags(priorStackTags, rawPrior)
+
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+
+	if len(added) > 0 {
+		body := map[string]any{"StreamName": streamName, "Tags": added}
+		if _, err := internalJSON(ctx, router, region, "Kinesis_20131202.AddTagsToStream", body); err != nil {
+			return fmt.Errorf("kinesis AddTagsToStream: %w", err)
+		}
+	}
+	if len(removed) > 0 {
+		body := map[string]any{"StreamName": streamName, "TagKeys": removed}
+		if _, err := internalJSON(ctx, router, region, "Kinesis_20131202.RemoveTagsFromStream", body); err != nil {
+			return fmt.Errorf("kinesis RemoveTagsFromStream: %w", err)
+		}
+	}
+	return nil
+}
+
+// reconcileKinesisStreamEncryption starts or stops a stream's server-side
+// encryption when AWS::Kinesis::Stream's StreamEncryption property changed.
+// A template that never sets it leaves the stream at CreateStream's
+// EncryptionType="NONE" default; removing it on update stops encryption the
+// same way real CloudFormation does.
+func reconcileKinesisStreamEncryption(ctx context.Context, router http.Handler, region, streamName string, newRaw, oldRaw any) error {
+	newEnc, _ := newRaw.(map[string]any)
+	oldEnc, _ := oldRaw.(map[string]any)
+	if reflect.DeepEqual(newEnc, oldEnc) {
+		return nil
+	}
+	if len(newEnc) > 0 {
+		encryptionType, _ := newEnc["EncryptionType"].(string)
+		if encryptionType == "" {
+			encryptionType = "KMS"
+		}
+		keyID, _ := newEnc["KeyId"].(string)
+		body := map[string]any{"StreamName": streamName, "EncryptionType": encryptionType, "KeyId": keyID}
+		if _, err := internalJSON(ctx, router, region, "Kinesis_20131202.StartStreamEncryption", body); err != nil {
+			return fmt.Errorf("StartStreamEncryption: %w", err)
+		}
+		return nil
+	}
+	if len(oldEnc) > 0 {
+		encryptionType, _ := oldEnc["EncryptionType"].(string)
+		keyID, _ := oldEnc["KeyId"].(string)
+		body := map[string]any{"StreamName": streamName, "EncryptionType": encryptionType, "KeyId": keyID}
+		if _, err := internalJSON(ctx, router, region, "Kinesis_20131202.StopStreamEncryption", body); err != nil {
+			return fmt.Errorf("StopStreamEncryption: %w", err)
+		}
+	}
+	return nil
+}
+
+// reconcileKinesisStreamMode applies a StreamModeDetails change via
+// UpdateStreamMode (ARN-addressed, matching real Kinesis — it has no
+// StreamName alternative). A template that drops StreamModeDetails on update
+// leaves the stream's mode alone: Kinesis has no "reset to default" call,
+// and real CloudFormation does the same for an already-provisioned stream.
+func reconcileKinesisStreamMode(ctx context.Context, router http.Handler, region, streamARN string, newRaw, oldRaw any) error {
+	if reflect.DeepEqual(newRaw, oldRaw) {
+		return nil
+	}
+	smd, ok := newRaw.(map[string]any)
+	if !ok || len(smd) == 0 {
+		return nil
+	}
+	body := map[string]any{"StreamARN": streamARN, "StreamModeDetails": smd}
+	if _, err := internalJSON(ctx, router, region, "Kinesis_20131202.UpdateStreamMode", body); err != nil {
+		return fmt.Errorf("UpdateStreamMode: %w", err)
+	}
+	return nil
 }
 
 // ── AWS::Cognito::UserPool ────────────────────────────────────────────────

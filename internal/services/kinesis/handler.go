@@ -9,8 +9,6 @@ import (
 	"math/big"
 	"net/http"
 
-	"go.uber.org/zap"
-
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
@@ -62,6 +60,9 @@ func (h *Handler) initOps() {
 		"MergeShards":                   h.MergeShards,
 		"IncreaseStreamRetentionPeriod": h.IncreaseStreamRetentionPeriod,
 		"DecreaseStreamRetentionPeriod": h.DecreaseStreamRetentionPeriod,
+		"UpdateStreamMode":              h.UpdateStreamMode,
+		"StartStreamEncryption":         h.StartStreamEncryption,
+		"StopStreamEncryption":          h.StopStreamEncryption,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -90,45 +91,22 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 
 // CreateStream handles Kinesis_20131202.CreateStream.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_CreateStream.html
+//
+// Delegates to createStreamTyped (typed_logic.go) — see PutRecord's doc
+// comment about the JSON1.1/legacy and CBOR/typed-dispatch paths sharing one
+// implementation. This also fixes a divergence between the two: the typed
+// path built the stream ARN from h.cfg.Region regardless of the request's
+// resolved region, while this handler used middleware.RegionFromContext;
+// createStreamTyped now does the same, so both paths agree.
 func (h *Handler) CreateStream(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName string            `json:"StreamName"`
-		ShardCount int               `json:"ShardCount"`
-		Tags       map[string]string `json:"Tags"`
-	}
+	var req createStreamRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	shardCount := req.ShardCount
-	if shardCount <= 0 {
-		shardCount = 1
-	}
-
-	if _, aerr := h.store.getStream(r.Context(), req.StreamName); aerr == nil {
-		protocol.WriteJSONError(w, r, errStreamAlreadyExists(req.StreamName))
-		return
-	}
-
-	st := &Stream{
-		StreamName:           req.StreamName,
-		StreamARN:            streamARN(h.cfg.AccountID, middleware.RegionFromContext(r.Context(), h.cfg.Region), req.StreamName),
-		StreamStatus:         "ACTIVE",
-		ShardCount:           shardCount,
-		Shards:               buildInitialShards(shardCount),
-		Tags:                 createStreamTags(req.Tags),
-		CreatedAt:            h.clk.Now().UTC(),
-		RetentionPeriodHours: 24,
-	}
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.createStreamTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.KinesisStreamCreated, events.ResourcePayload{Name: req.StreamName, ARN: st.StreamARN})
-	h.log.Debug("stream created", zap.String("stream", req.StreamName), zap.Int("shards", shardCount))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -200,15 +178,7 @@ func (h *Handler) DescribeStreamSummary(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"StreamDescriptionSummary": map[string]any{
-			"StreamName":              st.StreamName,
-			"StreamARN":               st.StreamARN,
-			"StreamStatus":            st.StreamStatus,
-			"OpenShardCount":          activeShardCount(st),
-			"RetentionPeriodHours":    st.RetentionPeriodHours,
-			"StreamCreationTimestamp": st.CreatedAt.Unix(),
-			"EnhancedMonitoring":      []any{},
-		},
+		"StreamDescriptionSummary": toStreamDescriptionSummary(st),
 	}, "application/x-amz-json-1.1")
 }
 
@@ -597,6 +567,57 @@ func (h *Handler) DecreaseStreamRetentionPeriod(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusOK)
 }
 
+// UpdateStreamMode handles Kinesis_20131202.UpdateStreamMode.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_UpdateStreamMode.html
+//
+// Delegates to updateStreamModeTyped (typed_logic.go) — see TagResource's
+// doc comment about the empty-body void-response convention.
+func (h *Handler) UpdateStreamMode(w http.ResponseWriter, r *http.Request) {
+	var req updateStreamModeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.updateStreamModeTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// StartStreamEncryption handles Kinesis_20131202.StartStreamEncryption.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StartStreamEncryption.html
+//
+// Delegates to startStreamEncryptionTyped (typed_logic.go) — see
+// TagResource's doc comment.
+func (h *Handler) StartStreamEncryption(w http.ResponseWriter, r *http.Request) {
+	var req streamEncryptionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.startStreamEncryptionTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// StopStreamEncryption handles Kinesis_20131202.StopStreamEncryption.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StopStreamEncryption.html
+//
+// Delegates to stopStreamEncryptionTyped (typed_logic.go) — see TagResource's
+// doc comment.
+func (h *Handler) StopStreamEncryption(w http.ResponseWriter, r *http.Request) {
+	var req streamEncryptionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.stopStreamEncryptionTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // ---- Response helpers --------------------------------------------------------
 
 func toStreamDescription(st *Stream) map[string]any {
@@ -613,7 +634,33 @@ func toStreamDescription(st *Stream) map[string]any {
 		"RetentionPeriodHours":    st.RetentionPeriodHours,
 		"StreamCreationTimestamp": st.CreatedAt.Unix(),
 		"EnhancedMonitoring":      []any{},
+		"StreamModeDetails":       streamModeDetailsToMap(st.effectiveStreamModeDetails()),
+		"EncryptionType":          st.effectiveEncryptionType(),
+		"KeyId":                   st.KeyId,
 	}
+}
+
+// toStreamDescriptionSummary is DescribeStreamSummary's response shape,
+// shared by the JSON1.1 handler (DescribeStreamSummary above) and the typed
+// CBOR path (describeStreamSummaryTyped, typed_logic.go) so the two field
+// lists cannot drift apart.
+func toStreamDescriptionSummary(st *Stream) map[string]any {
+	return map[string]any{
+		"StreamName":              st.StreamName,
+		"StreamARN":               st.StreamARN,
+		"StreamStatus":            st.StreamStatus,
+		"OpenShardCount":          activeShardCount(st),
+		"RetentionPeriodHours":    st.RetentionPeriodHours,
+		"StreamCreationTimestamp": st.CreatedAt.Unix(),
+		"EnhancedMonitoring":      []any{},
+		"StreamModeDetails":       streamModeDetailsToMap(st.effectiveStreamModeDetails()),
+		"EncryptionType":          st.effectiveEncryptionType(),
+		"KeyId":                   st.KeyId,
+	}
+}
+
+func streamModeDetailsToMap(smd *StreamModeDetails) map[string]any {
+	return map[string]any{"StreamMode": smd.StreamMode}
 }
 
 func shardToMap(shard Shard) map[string]any {

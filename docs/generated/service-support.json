@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1438,
+  "total_ops": 1441,
   "services": [
     {
       "service": "s3",
@@ -4613,8 +4613,8 @@
     {
       "service": "kinesis",
       "display_name": "Kinesis",
-      "total_ops": 20,
-      "implemented_ops": 20,
+      "total_ops": 23,
+      "implemented_ops": 23,
       "operations": [
         {
           "operation": "AddTagsToStream",
@@ -4625,12 +4625,13 @@
           "operation": "CreateStream",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Stream becomes ACTIVE immediately; inline `Tags` applied at creation"
+          "notes": "Stream becomes ACTIVE immediately; inline `Tags` and `StreamModeDetails` applied at creation, defaulting to PROVISIONED"
         },
         {
           "operation": "DecreaseStreamRetentionPeriod",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Stores and echoes the new value; does not trim any record now older than the shortened window"
         },
         {
           "operation": "DeleteStream",
@@ -4654,7 +4655,7 @@
           "operation": "GetRecords",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns stored records and a valid NextShardIterator"
+          "notes": "Returns stored records and a valid NextShardIterator; records are never expired by RetentionPeriodHours, so a shard keeps every record for the life of the stream regardless of the configured retention"
         },
         {
           "operation": "GetShardIterator",
@@ -4665,7 +4666,8 @@
         {
           "operation": "IncreaseStreamRetentionPeriod",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Stores and echoes the new value from DescribeStream/DescribeStreamSummary; not enforced against stored records (see GetRecords)"
         },
         {
           "operation": "ListShards",
@@ -4720,6 +4722,18 @@
           "notes": "Closes parent, creates two children at NewStartingHashKey"
         },
         {
+          "operation": "StartStreamEncryption",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stores EncryptionType/KeyId and echoes them from Describe*; records are not actually encrypted at rest"
+        },
+        {
+          "operation": "StopStreamEncryption",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Resets EncryptionType to NONE and clears KeyId"
+        },
+        {
           "operation": "TagResource",
           "category": "General",
           "status": "✅ Supported",
@@ -4730,6 +4744,12 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Stream ARNs"
+        },
+        {
+          "operation": "UpdateStreamMode",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stores StreamModeDetails and echoes it from Describe*; on-demand capacity is not actually enforced"
         }
       ]
     },
