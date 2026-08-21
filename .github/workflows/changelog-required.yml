@@ -122,6 +122,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           RELEASE_CANDIDATE: ${{ steps.release.outputs.candidate }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          # For the dependency-bot exemption. A bot suffix ([bot]) cannot be
+          # taken by a user account, so the login is proof of authorship; the
+          # script still requires the diff to be nothing but manifests.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
 
@@ -157,6 +161,7 @@ jobs:
             --waiver-file waiver.json \
             --release-candidate "$RELEASE_CANDIDATE" \
             --version "$RELEASE_VERSION" \
+            --author "$PR_AUTHOR" \
             --changelog CHANGELOG.md \
             "${fragments[@]}")"
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
@@ -192,6 +197,11 @@ jobs:
             cp .github/release-bot/changelog-missing.md comment.md
           fi
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note that this is dependency automation
+        if: steps.decide.outputs.verdict == 'dependencies'
+        run: |
+          echo "::notice::Automated dependency update: authored by Renovate, touching only dependency manifests. The decision this check asks for is recorded once, in .github/renovate.json5. A bump that merits a release note gets a fragment added by its reviewer, which answers the check by itself."
 
       - name: Note what answered it
         if: steps.decide.outputs.verdict == 'not-applicable'
