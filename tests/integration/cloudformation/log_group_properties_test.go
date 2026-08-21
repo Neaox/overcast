@@ -48,6 +48,115 @@ func TestCreateStack_LogGroupRetentionInDays(t *testing.T) {
 	}
 }
 
+// CloudFormation accepts a numeric property written as a JSON string too — a
+// String-typed Ref or Parameter produces "7" rather than 7 — and coerces it
+// before the resource is provisioned. The emulator must do the same instead
+// of handing the raw string to the Logs service's strict int decoder.
+func TestCreateStack_LogGroupRetentionInDaysAsString(t *testing.T) {
+	// Given: a stack template with retention written as a JSON string
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-retention-string-stack"
+	const logGroupName = "/cloudformation/retention-as-string"
+	const template = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/retention-as-string",
+        "RetentionInDays": "7"
+      }
+    }
+  }
+}`
+
+	// When: the stack is created
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {template},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// Then: the log group reports retention as a coerced number
+	retention := describeLogGroupRetention(t, srv, logGroupName)
+	if retention == nil {
+		t.Fatal("retentionInDays is absent after stack creation")
+	}
+	if *retention != 7 {
+		t.Errorf("retentionInDays = %d, want 7", *retention)
+	}
+}
+
+// A string RetentionInDays that isn't a valid AWS retention value must still
+// fail with the Logs service's own validation error rather than a raw JSON
+// decode failure or a silently accepted value.
+func TestCreateStack_LogGroupRetentionInDaysInvalidStringRollsBack(t *testing.T) {
+	// Given: a stack template with a non-numeric retention string
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-retention-invalid-string-stack"
+	const logGroupName = "/cloudformation/retention-invalid-string"
+	const template = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/retention-invalid-string",
+        "RetentionInDays": "abc"
+      }
+    }
+  }
+}`
+
+	// When: the stack is created
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {template},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	// Then: the stack rolls back instead of reporting success
+	waitForStackStatus(t, srv, stackName, "ROLLBACK_COMPLETE")
+
+	// And: the log group created before the failure was cleaned up
+	if logGroupExists(t, srv, logGroupName) {
+		t.Error("log group survived rollback")
+	}
+}
+
+// The same coercion must apply to an in-place update.
+func TestUpdateStack_LogGroupRetentionInDaysAsString(t *testing.T) {
+	// Given: a stack whose log group starts without a retention policy
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-retention-string-update-stack"
+	const logGroupName = "/cloudformation/retention-string-update"
+	const initialTemplate = `{"Resources":{"LogGroup":{"Type":"AWS::Logs::LogGroup","Properties":{"LogGroupName":"/cloudformation/retention-string-update"}}}}`
+	const updatedTemplate = `{"Resources":{"LogGroup":{"Type":"AWS::Logs::LogGroup","Properties":{"LogGroupName":"/cloudformation/retention-string-update","RetentionInDays":"14"}}}}`
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {initialTemplate},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: the update sets retention as a JSON string
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {updatedTemplate},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the service reports the coerced retention value
+	retention := describeLogGroupRetention(t, srv, logGroupName)
+	if retention == nil || *retention != 14 {
+		t.Fatalf("retentionInDays = %v after update, want 14", retention)
+	}
+}
+
 func TestUpdateStack_LogGroupRetentionInDaysRemoved(t *testing.T) {
 	// Given: a stack whose log group has a retention policy
 	srv := helpers.NewTestServer(t)
