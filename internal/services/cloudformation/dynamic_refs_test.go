@@ -310,3 +310,151 @@ func TestResolveAllProperties_leavesDynamicReferencesForTheSeparateExpansionPass
 		t.Error("expansion mutated the recorded properties, so the resolved secret would be persisted")
 	}
 }
+
+// ── Custom resource restriction on secure references (issue #606) ─────────
+//
+// AWS: "Dynamic references can't be used for secure values (like those stored
+// in Parameter Store or Secrets Manager) in custom resources."
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-considerations
+
+func TestFindSecureDynamicRef(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		props   map[string]any
+		wantOK  bool
+		wantSvc string
+	}{
+		{
+			name:    "secretsmanager is secure",
+			props:   map[string]any{"Password": "{{resolve:secretsmanager:db-creds:SecretString:password}}"},
+			wantOK:  true,
+			wantSvc: "secretsmanager",
+		},
+		{
+			name:    "ssm-secure is secure",
+			props:   map[string]any{"ApiKey": "{{resolve:ssm-secure:/app/api-key}}"},
+			wantOK:  true,
+			wantSvc: "ssm-secure",
+		},
+		{
+			name:   "plain ssm is not secure",
+			props:  map[string]any{"Tier": "{{resolve:ssm:/app/tier}}"},
+			wantOK: false,
+		},
+		{
+			name:   "no reference at all",
+			props:  map[string]any{"Name": "plain-value"},
+			wantOK: false,
+		},
+		{
+			name: "secure reference nested inside a list of maps",
+			props: map[string]any{
+				"Tags": []any{
+					map[string]any{"Key": "db", "Value": "{{resolve:ssm:/db/name}}"},
+					map[string]any{"Key": "secret", "Value": "{{resolve:secretsmanager:db-creds}}"},
+				},
+			},
+			wantOK:  true,
+			wantSvc: "secretsmanager",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, ok := findSecureDynamicRef(tc.props)
+			if ok != tc.wantOK {
+				t.Fatalf("findSecureDynamicRef ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if ref.Service != tc.wantSvc {
+				t.Errorf("service = %q, want %q", ref.Service, tc.wantSvc)
+			}
+		})
+	}
+}
+
+func TestRejectSecureCustomResourceRefs(t *testing.T) {
+	t.Run("secure reference fails, naming the restriction", func(t *testing.T) {
+		err := rejectSecureCustomResourceRefs(map[string]any{
+			"Password": "{{resolve:secretsmanager:db-creds:SecretString:password}}",
+		})
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "secretsmanager") || !strings.Contains(err.Error(), "not supported") {
+			t.Errorf("error = %v, want it to name the service and the restriction", err)
+		}
+	})
+	t.Run("plain ssm is unaffected", func(t *testing.T) {
+		if err := rejectSecureCustomResourceRefs(map[string]any{
+			"Tier": "{{resolve:ssm:/app/tier}}",
+		}); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("nil properties", func(t *testing.T) {
+		if err := rejectSecureCustomResourceRefs(nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+// expandCustomResourceProperties rejects a secure reference without resolving
+// it (the resolver is never even asked), and otherwise behaves exactly like
+// expandRecordedProperties.
+func TestExpandCustomResourceProperties(t *testing.T) {
+	t.Run("secure reference rejected, resolver never asked", func(t *testing.T) {
+		ctx := &resolveContext{
+			DynamicRef: func(ref dynamicRef) (string, error) {
+				t.Fatalf("resolver invoked for %s — a secure reference must be rejected, not resolved", ref.Raw)
+				return "", nil
+			},
+		}
+		_, err := expandCustomResourceProperties(map[string]any{
+			"Password": "{{resolve:secretsmanager:db-creds:SecretString:password}}",
+		}, ctx)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+	t.Run("plain ssm still resolves", func(t *testing.T) {
+		ctx := stubRefCtx(map[string]string{"{{resolve:ssm:/app/tier}}": "prod"})
+		got, err := expandCustomResourceProperties(map[string]any{
+			"Tier": "{{resolve:ssm:/app/tier}}",
+		}, ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got["Tier"] != "prod" {
+			t.Errorf("Tier = %v, want %q", got["Tier"], "prod")
+		}
+	})
+}
+
+// expandResourceProperties routes a custom resource type through the
+// reject-secure/resolve-plain rule and leaves every other resource type on
+// the ordinary expansion path, where a secure reference still resolves —
+// e.g. an RDS MasterUsername from Secrets Manager, which is exactly the
+// reference AWS's own examples use.
+func TestExpandResourceProperties_routesByResourceType(t *testing.T) {
+	secureRef := "{{resolve:secretsmanager:db-creds:SecretString:password}}"
+	ctx := stubRefCtx(map[string]string{secureRef: "s3cr3t"})
+	recorded := map[string]any{"Password": secureRef}
+
+	t.Run("custom resource type rejects", func(t *testing.T) {
+		for _, resType := range []string{"Custom::TestResource", "AWS::CloudFormation::CustomResource"} {
+			if _, err := expandResourceProperties(resType, recorded, ctx); err == nil {
+				t.Errorf("%s: expected the secure reference to be rejected", resType)
+			}
+		}
+	})
+	t.Run("ordinary resource type resolves", func(t *testing.T) {
+		got, err := expandResourceProperties("AWS::RDS::DBInstance", recorded, ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got["Password"] != "s3cr3t" {
+			t.Errorf("Password = %v, want the resolved secret", got["Password"])
+		}
+	})
+}
