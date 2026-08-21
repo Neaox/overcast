@@ -685,6 +685,8 @@ func (s *Service) dispatchJSON(w http.ResponseWriter, r *http.Request, action st
 		s.describeAlarmsJSON(w, r)
 	case "GetMetricStatistics":
 		s.getMetricStatisticsJSON(w, r)
+	case "GetMetricData":
+		s.getMetricDataJSON(w, r)
 	case "PutMetricData":
 		s.putMetricDataJSON(w, r)
 	case "PutMetricAlarm":
@@ -930,6 +932,120 @@ func (s *Service) getMetricStatisticsJSON(w http.ResponseWriter, r *http.Request
 		Label:      in.MetricName,
 		Datapoints: datapoints,
 	})
+}
+
+// getMetricDataJSON is the awsJson1_0 encoding of GetMetricData — the
+// operation's *primary* modeled protocol (issue #886). Real CloudWatch
+// diverges from its own Query encoding here in three ways this handler has
+// to bridge, all on top of the shared computeMetricDataResults core:
+//
+//   - MetricDataQueries arrives as a JSON array of structures instead of
+//     the Query protocol's MetricDataQueries.member.N indexing.
+//   - StartTime/EndTime/Timestamps are epoch-second numbers, not the
+//     Query protocol's ISO-8601 strings.
+//   - MetricDataResults is a JSON array of structures instead of Query's
+//     parallel Timestamps/Values member lists.
+func (s *Service) getMetricDataJSON(w http.ResponseWriter, r *http.Request) {
+	type metricJSON struct {
+		Namespace  string      `json:"Namespace"`
+		MetricName string      `json:"MetricName"`
+		Dimensions []Dimension `json:"Dimensions,omitempty"`
+	}
+	type metricStatJSON struct {
+		Metric metricJSON `json:"Metric"`
+		Period int        `json:"Period"`
+		Stat   string     `json:"Stat"`
+		Unit   string     `json:"Unit,omitempty"`
+	}
+	type metricDataQueryJSON struct {
+		Id         string          `json:"Id"`
+		MetricStat *metricStatJSON `json:"MetricStat,omitempty"`
+		Expression string          `json:"Expression,omitempty"`
+		Label      string          `json:"Label,omitempty"`
+	}
+	var in struct {
+		MetricDataQueries []metricDataQueryJSON `json:"MetricDataQueries"`
+		StartTime         float64               `json:"StartTime"`
+		EndTime           float64               `json:"EndTime"`
+		ScanBy            string                `json:"ScanBy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	if in.StartTime == 0 || in.EndTime == 0 {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "MissingParameter", Message: "StartTime and EndTime are required", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	startTime := parseEpochSeconds(in.StartTime)
+	endTime := parseEpochSeconds(in.EndTime)
+
+	scanBy := in.ScanBy
+	if scanBy == "" {
+		scanBy = "TimestampDescending"
+	}
+
+	queries := make([]metricDataQueryInput, 0, len(in.MetricDataQueries))
+	for _, q := range in.MetricDataQueries {
+		mdq := metricDataQueryInput{id: q.Id, expression: q.Expression}
+		if mdq.expression == "" {
+			if q.MetricStat == nil {
+				protocol.WriteJSONError(w, r, &protocol.AWSError{
+					Code: "InvalidParameterValue", Message: "Each query must include MetricStat with Metric, Period, and Stat",
+					HTTPStatus: http.StatusBadRequest,
+				})
+				return
+			}
+			mdq.namespace = q.MetricStat.Metric.Namespace
+			mdq.metricName = q.MetricStat.Metric.MetricName
+			mdq.period = q.MetricStat.Period
+			mdq.stat = q.MetricStat.Stat
+			if mdq.stat == "" {
+				mdq.stat = "Average"
+			}
+			mdq.dimensions = canonicalizeDimensions(q.MetricStat.Metric.Dimensions)
+			if mdq.namespace == "" || mdq.metricName == "" || mdq.period <= 0 {
+				protocol.WriteJSONError(w, r, &protocol.AWSError{
+					Code: "InvalidParameterValue", Message: "Each query must include MetricStat with Metric, Period, and Stat",
+					HTTPStatus: http.StatusBadRequest,
+				})
+				return
+			}
+		}
+		queries = append(queries, mdq)
+	}
+
+	dataResults, aerr := s.computeMetricDataResults(r.Context(), queries, startTime, endTime, scanBy)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	type metricDataResultJSON struct {
+		Id         string    `json:"Id"`
+		Label      string    `json:"Label"`
+		Timestamps []float64 `json:"Timestamps"`
+		Values     []float64 `json:"Values"`
+		StatusCode string    `json:"StatusCode"`
+	}
+	out := make([]metricDataResultJSON, 0, len(dataResults))
+	for _, res := range dataResults {
+		timestamps := make([]float64, len(res.timestamps))
+		for i, t := range res.timestamps {
+			timestamps[i] = epochSeconds(t)
+		}
+		out = append(out, metricDataResultJSON{
+			Id:         res.id,
+			Label:      res.label,
+			Timestamps: timestamps,
+			Values:     res.values,
+			StatusCode: "Complete",
+		})
+	}
+
+	writeJSONResult(w, r, struct {
+		MetricDataResults []metricDataResultJSON `json:"MetricDataResults"`
+	}{MetricDataResults: out})
 }
 
 func (s *Service) putMetricDataJSON(w http.ResponseWriter, r *http.Request) {
@@ -1436,8 +1552,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 		scanBy = "TimestampDescending"
 	}
 
-	resultsByID := map[string]metricDataResult{}
-	var results strings.Builder
+	queries := make([]metricDataQueryInput, 0, 1)
 	for i := 1; ; i++ {
 		id := r.FormValue(fmt.Sprintf("MetricDataQueries.member.%d.Id", i))
 		if id == "" {
@@ -1445,19 +1560,7 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 		}
 		expr := r.FormValue(fmt.Sprintf("MetricDataQueries.member.%d.Expression", i))
 		if expr != "" {
-			res, err := evaluateMetricExpression(strings.TrimSpace(expr), resultsByID, scanBy)
-			if err != nil {
-				protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-					Code:       "InvalidParameterValue",
-					Message:    "Invalid expression for query id " + id + ": " + err.Error(),
-					HTTPStatus: http.StatusBadRequest,
-				})
-				return
-			}
-			res.id = id
-			res.label = expr
-			resultsByID[id] = res
-			results.WriteString(renderMetricDataResultMember(res))
+			queries = append(queries, metricDataQueryInput{id: id, expression: expr})
 			continue
 		}
 
@@ -1486,26 +1589,88 @@ func (s *Service) getMetricData(w http.ResponseWriter, r *http.Request) {
 			value := r.FormValue(fmt.Sprintf("MetricDataQueries.member.%d.MetricStat.Metric.Dimensions.member.%d.Value", i, j))
 			dimensions = append(dimensions, Dimension{Name: name, Value: value})
 		}
-		dimensions = canonicalizeDimensions(dimensions)
 
-		points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
-		if err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
+		queries = append(queries, metricDataQueryInput{
+			id:         id,
+			namespace:  namespace,
+			metricName: metricName,
+			stat:       stat,
+			period:     periodSec,
+			dimensions: canonicalizeDimensions(dimensions),
+		})
+	}
+
+	dataResults, aerr := s.computeMetricDataResults(r.Context(), queries, startTime, endTime, scanBy)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	var results strings.Builder
+	for _, res := range dataResults {
+		results.WriteString(renderMetricDataResultMember(res))
+	}
+
+	writeXMLResult(w, r, "GetMetricData", "<MetricDataResults>"+results.String()+"</MetricDataResults>")
+}
+
+// metricDataQueryInput is the protocol-neutral parse of one
+// MetricDataQueries member — either a MetricStat query or a math Expression
+// — decoded by the Query form parser or the JSON body decoder before
+// reaching computeMetricDataResults. Sharing this shape keeps GetMetricData's
+// evaluation logic single-sourced across both wire protocols (issue #886).
+type metricDataQueryInput struct {
+	id         string
+	expression string
+	namespace  string
+	metricName string
+	stat       string
+	period     int
+	dimensions []Dimension
+}
+
+// computeMetricDataResults evaluates MetricDataQueries in submission order —
+// the same rule real CloudWatch uses, where a math Expression may only
+// reference a query id defined earlier in the list — against stored metric
+// data points. It is the shared core behind both getMetricData (Query/XML)
+// and getMetricDataJSON (awsJson1_0): the aggregation, expression
+// evaluation and stat selection are identical: only the wire encoding of
+// the request and the response differs.
+func (s *Service) computeMetricDataResults(ctx context.Context, queries []metricDataQueryInput, startTime, endTime time.Time, scanBy string) ([]metricDataResult, *protocol.AWSError) {
+	resultsByID := map[string]metricDataResult{}
+	out := make([]metricDataResult, 0, len(queries))
+	for _, q := range queries {
+		if q.expression != "" {
+			res, err := evaluateMetricExpression(strings.TrimSpace(q.expression), resultsByID, scanBy)
+			if err != nil {
+				return nil, &protocol.AWSError{
+					Code:       "InvalidParameterValue",
+					Message:    "Invalid expression for query id " + q.id + ": " + err.Error(),
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+			res.id = q.id
+			res.label = q.expression
+			resultsByID[q.id] = res
+			out = append(out, res)
+			continue
 		}
-		buckets := aggregateMetricBuckets(points, startTime.UTC(), endTime.UTC(), periodSec)
+
+		points, err := s.store.listMetricDataPoints(ctx, q.namespace, q.metricName, q.dimensions, startTime, endTime)
+		if err != nil {
+			return nil, protocol.ErrInternalError
+		}
+		buckets := aggregateMetricBuckets(points, startTime.UTC(), endTime.UTC(), q.period)
 		if scanBy == "TimestampDescending" {
 			for l, r := 0, len(buckets)-1; l < r; l, r = l+1, r-1 {
 				buckets[l], buckets[r] = buckets[r], buckets[l]
 			}
 		}
-
-		res := buildMetricDataResult(id, metricName, stat, buckets)
-		resultsByID[id] = res
-		results.WriteString(renderMetricDataResultMember(res))
+		res := buildMetricDataResult(q.id, q.metricName, q.stat, buckets)
+		resultsByID[q.id] = res
+		out = append(out, res)
 	}
-
-	writeXMLResult(w, r, "GetMetricData", "<MetricDataResults>"+results.String()+"</MetricDataResults>")
+	return out, nil
 }
 
 type metricBucket struct {

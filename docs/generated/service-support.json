@@ -7506,7 +7506,7 @@
           "operation": "GetMetricData",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns query-based metric values over time ranges"
+          "notes": "Returns query-based metric values over time ranges, over both the Query and JSON protocols — the pinned model makes awsJson1_0 primary, so an SDK reaching it that way now gets the same result the Query protocol always returned (#886)"
         },
         {
           "operation": "GetMetricStatistics",

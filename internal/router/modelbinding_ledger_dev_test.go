@@ -108,20 +108,15 @@ var weaklyServedBindings = map[string]string{
 //
 // Like unservedBindings this is a ratchet: an unrecorded asymmetry fails the
 // build, and so does a recorded one that has been resolved.
-var protocolAsymmetries = map[string]string{
-	// Pre-existing and deliberate. CloudWatch's own
-	// TestDispatchJSON_CoversEveryQueryOperation has carried the same
-	// exemption since #794, with the reason "no JSON request/response shape
-	// yet: MetricDataQueries, epoch timestamps and MetricDataResults all need
-	// their own encoding". The model makes awsJson1_0 GetMetricData's
-	// *primary* protocol, so this is the one CloudWatch operation an SDK
-	// reaches only by falling back to Query.
-	//
-	// #886 owns the encoding work: MetricDataQueries, epoch timestamps and
-	// MetricDataResults each need their own JSON shape, so it is not a rename
-	// away from the Query encoder.
-	"cloudwatch/GetMetricData": "#886",
-}
+// var protocolAsymmetries = map[string]string{} would be the same map, but an
+// empty composite literal reads as "nothing has ever been here" rather than
+// "the ledger emptied out". It last held one entry: cloudwatch/GetMetricData
+// (#886), CloudWatch's awsJson1_0-primary operation that was reachable only
+// over Query. #886 added getMetricDataJSON — bridging MetricDataQueries,
+// epoch timestamps and MetricDataResults onto the same computeMetricDataResults
+// core getMetricData (Query) already used — so the row is gone, not just
+// resolved, per this ledger's own rule that a resolved entry has to leave.
+var protocolAsymmetries = map[string]string{}
 
 // assertProtocolAsymmetry compares the observed asymmetries with the recorded
 // ones in both directions.

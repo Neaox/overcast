@@ -765,6 +765,120 @@ func TestGetMetricData_expressionFunctions(t *testing.T) {
 	}
 }
 
+// TestGetMetricData_jsonTargetCompatibility pins issue #886: GetMetricData
+// must be reachable over awsJson1_0 (X-Amz-Target:
+// GraniteServiceVersion20100801.GetMetricData), the protocol the pinned
+// model makes *primary* for this operation, not only over Query — the
+// protocol it was Query-only under until this fix. Before the fix this
+// request hit dispatchJSON's default arm and got UnknownOperationException.
+//
+// It also asserts response parity against the identical query issued over
+// Query/XML: same aggregated value, same query id, same StatusCode, just
+// encoded as JSON numbers/arrays instead of XML members and ISO-8601
+// strings.
+func TestGetMetricData_jsonTargetCompatibility(t *testing.T) {
+	// Given: datapoints are published for a metric (Query protocol, as
+	// PutMetricData already covers its own JSON reachability elsewhere).
+	base := time.Now().UTC().Truncate(time.Second)
+	srv := helpers.NewTestServer(t)
+	put := cwCall(t, srv, "PutMetricData", url.Values{
+		"Namespace":                      {"CompatNS"},
+		"MetricData.member.1.MetricName": {"CPUUtilization"},
+		"MetricData.member.1.Timestamp":  {base.Add(-50 * time.Second).Format(time.RFC3339)},
+		"MetricData.member.1.Value":      {"40"},
+		"MetricData.member.2.MetricName": {"CPUUtilization"},
+		"MetricData.member.2.Timestamp":  {base.Add(-40 * time.Second).Format(time.RFC3339)},
+		"MetricData.member.2.Value":      {"60"},
+	})
+	defer put.Body.Close()
+	helpers.AssertStatus(t, put, http.StatusOK)
+
+	startTime := base.Add(-1 * time.Minute)
+	endTime := base.Add(1 * time.Minute)
+
+	// When: the same GetMetricData query is issued over Query/XML and over
+	// awsJson1_0 (AWS SDK wire format: X-Amz-Target + JSON body, epoch
+	// second timestamps, MetricDataQueries as a JSON array).
+	xmlResp := cwCall(t, srv, "GetMetricData", url.Values{
+		"StartTime":                     {startTime.Format(time.RFC3339)},
+		"EndTime":                       {endTime.Format(time.RFC3339)},
+		"ScanBy":                        {"TimestampAscending"},
+		"MetricDataQueries.member.1.Id": {"q1"},
+		"MetricDataQueries.member.1.MetricStat.Metric.Namespace":  {"CompatNS"},
+		"MetricDataQueries.member.1.MetricStat.Metric.MetricName": {"CPUUtilization"},
+		"MetricDataQueries.member.1.MetricStat.Period":            {"60"},
+		"MetricDataQueries.member.1.MetricStat.Stat":              {"Average"},
+	})
+	defer xmlResp.Body.Close()
+	helpers.AssertStatus(t, xmlResp, http.StatusOK)
+	xmlBody, err := io.ReadAll(xmlResp.Body)
+	if err != nil {
+		t.Fatalf("read xml body: %v", err)
+	}
+	xml := string(xmlBody)
+	if !strings.Contains(xml, "<Id>q1</Id>") || !strings.Contains(xml, "<Values><member>50</member></Values>") {
+		t.Fatalf("expected Query-protocol baseline id q1 / value 50, got: %s", xml)
+	}
+
+	jsonResp := cwTargetCall(t, srv, "GetMetricData", map[string]any{
+		"StartTime": float64(startTime.Unix()),
+		"EndTime":   float64(endTime.Unix()),
+		"ScanBy":    "TimestampAscending",
+		"MetricDataQueries": []map[string]any{
+			{
+				"Id": "q1",
+				"MetricStat": map[string]any{
+					"Metric": map[string]any{
+						"Namespace":  "CompatNS",
+						"MetricName": "CPUUtilization",
+					},
+					"Period": 60,
+					"Stat":   "Average",
+				},
+			},
+		},
+	})
+	defer jsonResp.Body.Close()
+
+	// Then: the JSON-protocol request succeeds — not
+	// UnknownOperationException — and returns the same result the Query
+	// path returned, in awsJson1_0's own shapes.
+	helpers.AssertStatus(t, jsonResp, http.StatusOK)
+	jsonBytes, err := io.ReadAll(jsonResp.Body)
+	if err != nil {
+		t.Fatalf("read json body: %v", err)
+	}
+
+	var out struct {
+		MetricDataResults []struct {
+			Id         string    `json:"Id"`
+			Label      string    `json:"Label"`
+			Timestamps []float64 `json:"Timestamps"`
+			Values     []float64 `json:"Values"`
+			StatusCode string    `json:"StatusCode"`
+		} `json:"MetricDataResults"`
+	}
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		t.Fatalf("unmarshal json body: %v; body: %s", err, jsonBytes)
+	}
+	if len(out.MetricDataResults) != 1 {
+		t.Fatalf("expected exactly one MetricDataResults entry, got %d: %s", len(out.MetricDataResults), jsonBytes)
+	}
+	res := out.MetricDataResults[0]
+	if res.Id != "q1" {
+		t.Fatalf("expected id q1, got %q", res.Id)
+	}
+	if res.StatusCode != "Complete" {
+		t.Fatalf("expected StatusCode Complete, got %q", res.StatusCode)
+	}
+	if len(res.Values) != 1 || res.Values[0] != 50 {
+		t.Fatalf("expected a single average value of 50 (parity with the Query-protocol result), got: %v", res.Values)
+	}
+	if len(res.Timestamps) != 1 {
+		t.Fatalf("expected a single timestamp, got: %v", res.Timestamps)
+	}
+}
+
 func TestAlarmAutoTransitionsToAlarm(t *testing.T) {
 	// Given: a mock-clock server with an alarm and breaching datapoint
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())

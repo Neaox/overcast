@@ -125,9 +125,11 @@ func TestDispatchJSON_CoversEveryQueryOperation(t *testing.T) {
 	// with the reason. An entry here is a known gap an SDK can hit, not an
 	// exemption to be added lightly — the fix is a JSON handler, not a new
 	// line in this map.
-	queryOnly := map[string]string{
-		"GetMetricData": "no JSON request/response shape yet: MetricDataQueries, epoch timestamps and MetricDataResults all need their own encoding",
-	}
+	//
+	// GetMetricData's own exemption ("no JSON request/response shape yet")
+	// was removed by #886: getMetricDataJSON now bridges the awsJson1_0
+	// shapes onto the same computeMetricDataResults core getMetricData uses.
+	queryOnly := map[string]string{}
 
 	for action := range svc.ops {
 		if reason, skip := queryOnly[action]; skip {
