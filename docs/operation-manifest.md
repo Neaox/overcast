@@ -1,6 +1,6 @@
 ---
 title: "Overcast Operation Manifest"
-description: "Total: 834 operations across 43 services"
+description: "Typed-dispatch: 809 ops across 37 services; 13 more services are REST-routed or not yet migrated (see below)"
 section: "Getting Started"
 tags:
   - docs
@@ -11,38 +11,21 @@ tags:
 
 # Overcast Operation Manifest
 
-## acm — 7 ops, protocols: JSON10, JSON11, RPCv2CBOR
+This manifest counts **typed-dispatch operation registrations** — one row per `op.NewTyped`/`op.NewRaw`/`op.NewTypedAny` call in a service's `typed_ops.go` — not Overcast's overall implementation coverage. That is a different metric from the "Ops" column in [docs/README.md](./README.md)'s service index and from [docs/generated/service-support.json](./generated/service-support.json), which both count capability-registry entries (implemented operations plus explicit stubs) for every service, including the ones below that have no typed dispatch at all. The two kinds of counts are expected to disagree with each other; neither is wrong, they are answering different questions.
+
+## acm — 10 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR
   - AddTagsToCertificate (addTagsToCertificateRequest → struct{})
   - DeleteCertificate (deleteCertificateRequest → struct{})
   - DescribeCertificate (describeCertificateRequest → describeCertificateResponse)
   - ListCertificates (listCertificatesRequest → listCertificatesResponse)
   - ListTagsForCertificate (listTagsForCertificateRequest → listTagsForCertificateResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - RemoveTagsFromCertificate (removeTagsFromCertificateRequest → struct{})
   - RequestCertificate (requestCertificateRequest → requestCertificateResponse)
+  - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## appconfig — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - CreateApplication (createApplicationRequest → createApplicationResponse)
-  - CreateConfigurationProfile (createConfigurationProfileRequest → createConfigurationProfileResponse)
-  - CreateEnvironment (createEnvironmentRequest → createEnvironmentResponse)
-  - CreateHostedConfigurationVersion (createHostedConfigurationVersionRequest → createHostedConfigurationVersionResponse)
-  - DeleteApplication (deleteApplicationRequest → ?)
-  - DeleteConfigurationProfile (deleteConfigurationProfileRequest → ?)
-  - DeleteEnvironment (deleteEnvironmentRequest → ?)
-  - DeleteHostedConfigurationVersion (deleteHostedConfigurationVersionRequest → ?)
-  - GetApplication (getApplicationRequest → getApplicationResponse)
-  - GetConfigurationProfile (getConfigurationProfileRequest → getConfigurationProfileResponse)
-  - GetEnvironment (getEnvironmentRequest → getEnvironmentResponse)
-  - GetHostedConfigurationVersion (getHostedConfigurationVersionRequest → getHostedConfigurationVersionResponse)
-  - ListApplications (listApplicationsRequest → listApplicationsResponse)
-  - ListConfigurationProfiles (listConfigurationProfilesRequest → listConfigurationProfilesResponse)
-  - ListEnvironments (listEnvironmentsRequest → listEnvironmentsResponse)
-  - ListHostedConfigurationVersions (listHostedConfigurationVersionsRequest → listHostedConfigurationVersionsResponse)
-
-## appconfigdata — 2 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - GetLatestConfiguration (getLatestConfigurationRequest → getLatestConfigurationResponse)
-  - StartConfigurationSession (startConfigurationSessionRequest → startConfigurationSessionResponse)
-
-## appregistry — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## appregistry — 17 ops, modeled: 24, protocols: JSON10, JSON11, RPCv2CBOR
   - AssociateAttributeGroup (associateAttributeGroupRequest → associateAttributeGroupResponse)
   - AssociateResource (associateResourceRequest → associateResourceResponse)
   - CreateApplication (createApplicationRequest → createApplicationResponse)
@@ -61,125 +44,47 @@ tags:
   - UpdateApplication (updateApplicationRequest → updateApplicationResponse)
   - UpdateAttributeGroup (updateAttributeGroupRequest → updateAttributeGroupResponse)
 
-## appsync — 70 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - AssociateApi (associateApiRequest → associateApiResponse)
-  - AssociateMergedGraphqlApi (associateMergedGraphqlApiRequest → associateMergedGraphqlApiResponse)
-  - AssociateSourceGraphqlApi (associateSourceGraphqlApiRequest → associateSourceGraphqlApiResponse)
-  - CreateApi (createEventApiRequest → createEventApiResponse)
-  - CreateApiCache (createApiCacheRequest → createApiCacheResponse)
-  - CreateApiKey (createApiKeyRequest → createApiKeyResponse)
-  - CreateChannelNamespace (createChannelNamespaceRequest → createChannelNamespaceResponse)
-  - CreateDataSource (createDataSourceRequest → createDataSourceResponse)
-  - CreateDomainName (createDomainNameRequest → createDomainNameResponse)
-  - CreateFunction (createFunctionRequest → createFunctionResponse)
-  - CreateGraphqlApi (createGraphqlApiRequest → createGraphqlApiResponse)
-  - CreateResolver (createResolverRequest → createResolverResponse)
-  - CreateType (createTypeRequest → createTypeResponse)
-  - DeleteApi (deleteEventApiRequest → ?)
-  - DeleteApiCache (deleteApiCacheRequest → ?)
-  - DeleteApiKey (deleteApiKeyRequest → ?)
-  - DeleteChannelNamespace (deleteChannelNamespaceRequest → ?)
-  - DeleteDataSource (deleteDataSourceRequest → ?)
-  - DeleteDomainName (deleteDomainNameRequest → ?)
-  - DeleteFunction (deleteFunctionRequest → ?)
-  - DeleteGraphqlApi (deleteGraphqlApiRequest → ?)
-  - DeleteResolver (deleteResolverRequest → ?)
-  - DeleteType (deleteTypeRequest → ?)
-  - DisassociateApi (disassociateApiRequest → ?)
-  - DisassociateMergedGraphqlApi (disassociateMergedGraphqlApiRequest → ?)
-  - DisassociateSourceGraphqlApi (disassociateSourceGraphqlApiRequest → ?)
-  - EvaluateCode (evaluateCodeRequest → evaluateCodeResponse)
-  - EvaluateMappingTemplate (evaluateMappingTemplateRequest → evaluateMappingTemplateResponse)
-  - FlushApiCache (flushApiCacheRequest → ?)
-  - GetApi (getEventApiRequest → getEventApiResponse)
-  - GetApiAssociation (getApiAssociationRequest → getApiAssociationResponse)
-  - GetApiCache (getApiCacheRequest → getApiCacheResponse)
-  - GetChannelNamespace (getChannelNamespaceRequest → getChannelNamespaceResponse)
-  - GetDataSource (getDataSourceRequest → getDataSourceResponse)
-  - GetDomainName (getDomainNameRequest → getDomainNameResponse)
-  - GetFunction (getFunctionRequest → getFunctionResponse)
-  - GetGraphqlApi (getGraphqlApiRequest → getGraphqlApiResponse)
-  - GetGraphqlApiEnvironmentVariables (getGraphqlApiEnvVarsRequest → getGraphqlApiEnvVarsResponse)
-  - GetIntrospectionSchema (getIntrospectionSchemaRequest → getIntrospectionSchemaResponse)
-  - GetResolver (getResolverRequest → getResolverResponse)
-  - GetSchemaCreationStatus (getSchemaCreationStatusRequest → getSchemaCreationStatusResponse)
-  - GetSourceApiAssociation (getSourceApiAssociationRequest → getSourceApiAssociationResponse)
-  - GetType (getTypeRequest → getTypeResponse)
-  - ListApiKeys (listApiKeysRequest → listApiKeysResponse)
-  - ListApis (listEventApisRequest → listEventApisResponse)
-  - ListChannelNamespaces (listChannelNamespacesRequest → listChannelNamespacesResponse)
-  - ListDataSources (listDataSourcesRequest → listDataSourcesResponse)
-  - ListDomainNames (listDomainNamesRequest → listDomainNamesResponse)
-  - ListFunctions (listFunctionsRequest → listFunctionsResponse)
-  - ListGraphqlApis (listGraphqlApisRequest → listGraphqlApisResponse)
-  - ListResolvers (listResolversRequest → listResolversResponse)
-  - ListResolversByFunction (listResolversByFunctionRequest → listResolversByFunctionResponse)
-  - ListSourceApiAssociations (listSourceApiAssociationsRequest → listSourceApiAssociationsResponse)
-  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
-  - ListTypes (listTypesRequest → listTypesResponse)
-  - PutGraphqlApiEnvironmentVariables (putGraphqlApiEnvVarsRequest → putGraphqlApiEnvVarsResponse)
-  - StartSchemaCreation (startSchemaCreationRequest → startSchemaCreationResponse)
-  - StartSchemaMerge (startSchemaMergeRequest → startSchemaMergeResponse)
-  - TagResource (tagResourceRequest → ?)
-  - UntagResource (untagResourceRequest → ?)
-  - UpdateApi (updateEventApiRequest → updateEventApiResponse)
-  - UpdateApiCache (updateApiCacheRequest → updateApiCacheResponse)
-  - UpdateApiKey (updateApiKeyRequest → updateApiKeyResponse)
-  - UpdateChannelNamespace (updateChannelNamespaceRequest → updateChannelNamespaceResponse)
-  - UpdateDataSource (updateDataSourceRequest → updateDataSourceResponse)
-  - UpdateDomainName (updateDomainNameRequest → updateDomainNameResponse)
-  - UpdateFunction (updateFunctionRequest → updateFunctionResponse)
-  - UpdateGraphqlApi (updateGraphqlApiRequest → updateGraphqlApiResponse)
-  - UpdateResolver (updateResolverRequest → updateResolverResponse)
-  - UpdateType (updateTypeRequest → updateTypeResponse)
-
-## athena — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## athena — 11 ops, modeled: 70, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateWorkGroup (createWorkGroupReq → struct{})
   - DeleteWorkGroup (workGroupNameReq → struct{})
   - GetQueryExecution (queryIDReq → getQueryExecResp)
   - GetQueryResults (queryIDReq → getQueryResultsResp)
   - GetWorkGroup (workGroupNameReq → getWorkGroupResp)
   - ListQueryExecutions (struct{} → listQueriesResp)
+  - ListTagsForResource (listTagsForResourceReq → listTagsForResourceResp)
   - ListWorkGroups (struct{} → listWorkGroupsResp)
   - StartQueryExecution (startQueryExecReq → startQueryExecResp)
+  - TagResource (tagResourceReq → struct{})
+  - UntagResource (untagResourceReq → struct{})
 
-## autoscaling — 19 ops, protocols: QueryXML
-  - CreateAutoScalingGroup (createASGReq → asgEmptyResp)
-  - CreateLaunchConfiguration (createLaunchConfigReq → asgEmptyResp)
-  - CreateOrUpdateTags (createOrUpdateTagsReq → asgEmptyResp)
-  - DeleteAutoScalingGroup (deleteASGReq → asgEmptyResp)
-  - DeleteLaunchConfiguration (deleteLaunchConfigReq → asgEmptyResp)
-  - DeleteLifecycleHook (deleteLifecycleHookReq → asgEmptyResp)
-  - DeletePolicy (deletePolicyReq → asgEmptyResp)
-  - DeleteTags (deleteTagsReq → asgEmptyResp)
+## autoscaling — 25 ops, modeled: 66, protocols: QueryXML
+  - CompleteLifecycleAction (completeLifecycleActionReq → completeLifecycleActionResp)
+  - CreateAutoScalingGroup (createASGReq → createASGResp)
+  - CreateLaunchConfiguration (createLaunchConfigReq → createLaunchConfigResp)
+  - CreateOrUpdateTags (createOrUpdateTagsReq → createOrUpdateTagsResp)
+  - DeleteAutoScalingGroup (deleteASGReq → deleteASGResp)
+  - DeleteLaunchConfiguration (deleteLaunchConfigReq → deleteLaunchConfigResp)
+  - DeleteLifecycleHook (deleteLifecycleHookReq → deleteLifecycleHookResp)
+  - DeletePolicy (deletePolicyReq → deletePolicyResp)
+  - DeleteTags (deleteTagsReq → deleteTagsResp)
   - DescribeAutoScalingGroups (describeASGsReq → describeASGsResp)
-  - DescribeAutoScalingInstances (struct{} → describeInstancesResp)
+  - DescribeAutoScalingInstances (describeInstancesReq → describeInstancesResp)
   - DescribeLaunchConfigurations (describeLaunchConfigsReq → describeLaunchConfigsResp)
   - DescribeLifecycleHooks (describeLifecycleHooksReq → describeLifecycleHooksResp)
   - DescribePolicies (describePoliciesReq → describePoliciesResp)
+  - DescribeScalingActivities (describeActivitiesReq → describeActivitiesResp)
   - DescribeTags (describeTagsReq → describeTagsResp)
-  - PutLifecycleHook (putLifecycleHookReq → asgEmptyResp)
+  - ExecutePolicy (executePolicyReq → executePolicyResp)
+  - PutLifecycleHook (putLifecycleHookReq → putLifecycleHookResp)
   - PutScalingPolicy (putScalingPolicyReq → putScalingPolicyResp)
-  - SetDesiredCapacity (setDesiredCapacityReq → asgEmptyResp)
+  - RecordLifecycleActionHeartbeat (recordHeartbeatReq → recordHeartbeatResp)
+  - SetDesiredCapacity (setDesiredCapacityReq → setDesiredCapacityResp)
+  - SetInstanceHealth (setInstanceHealthReq → setInstanceHealthResp)
+  - SetInstanceProtection (setInstanceProtectionReq → setInstanceProtectionResp)
   - TerminateInstanceInAutoScalingGroup (terminateInstanceReq → terminateInstanceResp)
-  - UpdateAutoScalingGroup (updateASGReq → asgEmptyResp)
+  - UpdateAutoScalingGroup (updateASGReq → updateASGResp)
 
-## backup — 9 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - CreateBackupPlan (createBackupPlanRequest → createBackupPlanResponse)
-  - CreateBackupVault (createBackupVaultRequest → createBackupVaultResponse)
-  - DeleteBackupPlan (deleteBackupPlanRequest → deleteBackupPlanResponse)
-  - DeleteBackupVault (deleteBackupVaultRequest → deleteBackupVaultResponse)
-  - DescribeBackupVault (describeBackupVaultRequest → backupVault)
-  - GetBackupPlan (getBackupPlanRequest → getBackupPlanResponse)
-  - ListBackupPlans (listBackupPlansRequest → listBackupPlansResponse)
-  - ListBackupVaults (listBackupVaultsRequest → listBackupVaultsResponse)
-  - UpdateBackupPlan (updateBackupPlanRequest → updateBackupPlanResponse)
-
-## bedrock — 2 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - Converse (converseRequest → converseResponse)
-  - InvokeModel (invokeModelRequest → invokeModelResponse)
-
-## cloudformation — 18 ops, protocols: QueryXML
+## cloudformation — 18 ops, modeled: 90, protocols: QueryXML
   - CreateChangeSet (createChangeSetReq → createChangeSetResp)
   - CreateStack (createStackReq → createStackResp)
   - DeleteChangeSet (deleteChangeSetReq → struct{})
@@ -199,18 +104,21 @@ tags:
   - UpdateStack (updateStackReq → updateStackResp)
   - ValidateTemplate (validateTemplateReq → validateTemplateResp)
 
-## cloudtrail — 9 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## cloudtrail — 12 ops, modeled: 60, protocols: JSON10, JSON11, RPCv2CBOR
+  - AddTags (addTagsRequest → struct{})
   - CreateTrail (createTrailInput → createTrailOutput)
   - DeleteTrail (deleteTrailRequest → struct{})
   - DescribeTrails (describeTrailsRequest → describeTrailsResponse)
   - GetTrailStatus (getTrailStatusRequest → getTrailStatusResponse)
+  - ListTags (listTagsRequest → listTagsResponse)
   - ListTrails (struct{} → listTrailsResponse)
   - LookupEvents (struct{} → lookupEventsResponse)
+  - RemoveTags (removeTagsRequest → struct{})
   - StartLogging (loggingRequest → struct{})
   - StopLogging (loggingRequest → struct{})
   - UpdateTrail (updateTrailInput → createTrailOutput)
 
-## cloudwatch-logs — 14 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateLogGroup (createLogGroupRequest → struct{})
   - CreateLogStream (createLogStreamRequest → struct{})
   - DeleteLogGroup (deleteLogGroupRequest → struct{})
@@ -226,7 +134,7 @@ tags:
   - TagLogGroup (tagLogGroupRequest → struct{})
   - UntagLogGroup (untagLogGroupRequest → struct{})
 
-## cognito — 67 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## cognito — 70 ops, modeled: 129, protocols: JSON10, JSON11, RPCv2CBOR
   - AdminAddUserToGroup (PoolAndUserGroupReq → struct{})
   - AdminConfirmSignUp (PoolAndUserReq → struct{})
   - AdminCreateUser (AdminCreateUserReq → AdminCreateUserResp)
@@ -275,6 +183,7 @@ tags:
   - InitiateAuth (InitiateAuthReq → InitiateAuthResp)
   - ListDevices (ListDevicesReq → ListDevicesResp)
   - ListGroups (PoolLimitReq → ListGroupsResp)
+  - ListTagsForResource (ListTagsForResourceReq → ListTagsForResourceResp)
   - ListUserPoolClients (UserPoolIDReq → ListUserPoolClientsResp)
   - ListUserPools (struct{} → ListUserPoolsResp)
   - ListUsers (ListUsersReq → ListUsersResp)
@@ -286,6 +195,8 @@ tags:
   - SetUserPoolMfaConfig (UserPoolMfaConfigReq → UserPoolMfaConfigResp)
   - SignUp (SignUpReq → SignUpResp)
   - StartWebAuthnRegistration (AccessTokenReq → StartWebAuthnRegistrationResp)
+  - TagResource (TagResourceReq → struct{})
+  - UntagResource (UntagResourceReq → struct{})
   - UpdateDeviceStatus (UpdateDeviceStatusReq → struct{})
   - UpdateGroup (UpdateGroupReq → struct{})
   - UpdateUserAttributes (UpdateUserAttributesReq → UpdateUserAttributesResp)
@@ -295,7 +206,7 @@ tags:
   - VerifySoftwareToken (VerifySoftwareTokenReq → VerifySoftwareTokenResp)
   - VerifyUserAttribute (VerifyUserAttributeReq → struct{})
 
-## dynamodb — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## dynamodb — 20 ops, modeled: 57, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchGetItem (batchGetItemRequest → batchGetItemResponse)
   - BatchWriteItem (batchWriteItemRequest → batchWriteItemResponse)
   - CreateTable (createTableRequest → createTableResponse)
@@ -305,22 +216,25 @@ tags:
   - DescribeTimeToLive (describeTimeToLiveRequest → describeTimeToLiveResponse)
   - GetItem (getItemRequest → getItemResponse)
   - ListTables (listTablesRequest → listTablesResponse)
+  - ListTagsOfResource (listTagsOfResourceRequest → listTagsOfResourceResponse)
   - PutItem (putItemRequest → putItemResponse)
   - Query (queryRequest → ?)
   - Scan (scanRequest → ?)
+  - TagResource (tagResourceRequest → struct{})
   - TransactGetItems (transactGetItemsRequest → transactGetItemsResponse)
   - TransactWriteItems (transactWriteItemsRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
   - UpdateItem (updateItemRequest → updateItemResponse)
   - UpdateTable (updateTableRequest → createTableResponse)
   - UpdateTimeToLive (updateTimeToLiveRequest → updateTimeToLiveResponse)
 
-## dynamodbstreams — 4 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## dynamodbstreams — 4 ops, modeled: 4, protocols: JSON10, JSON11, RPCv2CBOR
   - DescribeStream (describeStreamRequest → describeStreamResponse)
   - GetRecords (getRecordsRequest → getRecordsResponse)
   - GetShardIterator (getShardIteratorRequest → getShardIteratorResponse)
   - ListStreams (listStreamsRequest → listStreamsResponse)
 
-## ec2 — 69 ops, protocols: QueryXML
+## ec2 — 69 ops, modeled: 772, protocols: QueryXML
   - AcceptVpcPeeringConnection (acceptVPCPeeringReq → acceptVPCPeeringResp)
   - AllocateAddress (allocateAddressReq → allocateAddressResp)
   - AssociateAddress (associateAddressReq → associateAddressResp)
@@ -391,7 +305,7 @@ tags:
   - StopInstances (stopInstancesReq → stopInstancesResp)
   - TerminateInstances (terminateInstancesReq → terminateInstancesResp)
 
-## ecr — 20 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## ecr — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchDeleteImage (imageIDSetRequest → batchDeleteImageResponse)
   - BatchGetImage (imageIDSetRequest → batchGetImageResponse)
   - CreateRepository (createRepositoryRequest → createRepositoryResponse)
@@ -413,7 +327,7 @@ tags:
   - TagResource (tagResourceRequest → tagResourceResponse)
   - UntagResource (untagResourceRequest → untagResourceResponse)
 
-## ecs — 48 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## ecs — 48 ops, modeled: 77, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateCapacityProvider (createCapacityProviderRequest → createCapacityProviderResponse)
   - CreateCluster (createClusterRequest → createClusterResponse)
   - CreateService (createServiceRequest → createServiceResponse)
@@ -463,7 +377,37 @@ tags:
   - UpdateServicePrimaryTaskSet (updateServicePrimaryTaskSetRequest → updateServicePrimaryTaskSetResponse)
   - UpdateTaskSet (updateTaskSetRequest → updateTaskSetResponse)
 
-## eks — 52 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## efs — 28 ops, modeled: 31, protocols: JSON10, JSON11, RPCv2CBOR
+  - CreateAccessPoint (createAccessPointRequest → AccessPointDescription)
+  - CreateFileSystem (createFileSystemRequest → FileSystemDescription)
+  - CreateMountTarget (createMountTargetRequest → MountTargetDescription)
+  - CreateTags (createTagsRequest → ?)
+  - DeleteAccessPoint (deleteAccessPointRequest → ?)
+  - DeleteFileSystem (deleteFileSystemRequest → ?)
+  - DeleteFileSystemPolicy (describeFileSystemPolicyRequest → ?)
+  - DeleteMountTarget (deleteMountTargetRequest → ?)
+  - DeleteTags (deleteTagsRequest → ?)
+  - DescribeAccessPoints (describeAccessPointsRequest → describeAccessPointsResponse)
+  - DescribeAccountPreferences (describeAccountPreferencesRequest → accountPreferencesResponse)
+  - DescribeBackupPolicy (describeBackupPolicyRequest → backupPolicyResponse)
+  - DescribeFileSystemPolicy (describeFileSystemPolicyRequest → fileSystemPolicyResponse)
+  - DescribeFileSystems (describeFileSystemsRequest → describeFileSystemsResponse)
+  - DescribeLifecycleConfiguration (describeLifecycleConfigurationRequest → lifecycleConfigurationResponse)
+  - DescribeMountTargetSecurityGroups (mountTargetSecurityGroupsRequest → describeMountTargetSecurityGroupsResponse)
+  - DescribeMountTargets (describeMountTargetsRequest → describeMountTargetsResponse)
+  - DescribeTags (describeTagsRequest → describeTagsResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
+  - ModifyMountTargetSecurityGroups (mountTargetSecurityGroupsRequest → ?)
+  - PutAccountPreferences (putAccountPreferencesRequest → accountPreferencesResponse)
+  - PutBackupPolicy (putBackupPolicyRequest → backupPolicyResponse)
+  - PutFileSystemPolicy (putFileSystemPolicyRequest → fileSystemPolicyResponse)
+  - PutLifecycleConfiguration (putLifecycleConfigurationRequest → lifecycleConfigurationResponse)
+  - TagResource (tagResourceRequest → ?)
+  - UntagResource (untagResourceRequest → ?)
+  - UpdateFileSystem (updateFileSystemRequest → FileSystemDescription)
+  - UpdateFileSystemProtection (updateFileSystemProtectionRequest → FileSystemProtectionDescription)
+
+## eks — 50 ops, modeled: 65, protocols: JSON10, JSON11, RPCv2CBOR
   - AssociateAccessPolicy (associateAccessPolicyRequest → associateAccessPolicyResponse)
   - AssociateIdentityProviderConfig (associateIdentityProviderConfigRequest → associateIdentityProviderConfigResponse)
   - CreateAccessEntry (createAccessEntryRequest → createAccessEntryResponse)
@@ -479,7 +423,6 @@ tags:
   - DeleteNodegroup (deleteNodegroupRequest → deleteNodegroupResponse)
   - DeletePodIdentityAssociation (deletePodIdentityAssociationRequest → deletePodIdentityAssociationResponse)
   - DescribeAccessEntry (describeAccessEntryRequest → describeAccessEntryResponse)
-  - DescribeAccessPolicy (describeAccessPolicyRequest → describeAccessPolicyResponse)
   - DescribeAddon (describeAddonRequest → describeAddonResponse)
   - DescribeAddonConfiguration (describeAddonConfigurationRequest → describeAddonConfigurationResponse)
   - DescribeAddonVersions (describeAddonVersionsRequest → describeAddonVersionsResponse)
@@ -511,13 +454,12 @@ tags:
   - UpdateAddon (updateAddonRequest → updateAddonResponse)
   - UpdateClusterConfig (updateClusterConfigRequest → updateClusterConfigResponse)
   - UpdateClusterVersion (updateClusterVersionRequest → updateClusterVersionResponse)
-  - UpdateIdentityProviderConfig (updateIdentityProviderConfigRequest → updateIdentityProviderConfigResponse)
   - UpdateKubeconfig (updateKubeconfigRequest → updateKubeconfigResponse)
   - UpdateNodegroupConfig (updateNodegroupConfigRequest → updateNodegroupConfigResponse)
   - UpdateNodegroupVersion (updateNodegroupVersionRequest → updateNodegroupVersionResponse)
   - UpdatePodIdentityAssociation (updatePodIdentityAssociationRequest → updatePodIdentityAssociationResponse)
 
-## elasticache — 24 ops, protocols: QueryXML
+## elasticache — 24 ops, modeled: 75, protocols: QueryXML
   - AddTagsToResource (? → ?)
   - CreateCacheCluster (ecCreateCacheClusterReq → ecCreateCacheClusterResp)
   - CreateCacheParameterGroup (ecCreateCacheParameterGroupReq → ecCreateCacheParameterGroupResp)
@@ -543,7 +485,8 @@ tags:
   - RebootCacheCluster (? → ?)
   - RemoveTagsFromResource (? → ?)
 
-## elbv2 — 12 ops, protocols: QueryXML
+## elbv2 — 15 ops, modeled: 51, protocols: QueryXML
+  - AddTags (? → ?)
   - CreateListener (? → ?)
   - CreateLoadBalancer (? → ?)
   - CreateTargetGroup (? → ?)
@@ -553,11 +496,13 @@ tags:
   - DeregisterTargets (? → ?)
   - DescribeListeners (? → ?)
   - DescribeLoadBalancers (? → ?)
+  - DescribeTags (? → ?)
   - DescribeTargetGroups (? → ?)
   - DescribeTargetHealth (? → ?)
   - RegisterTargets (? → ?)
+  - RemoveTags (? → ?)
 
-## eventbridge — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## eventbridge — 17 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateEventBus (createEventBusRequest → createEventBusResponse)
   - DeleteEventBus (deleteEventBusRequest → struct{})
   - DeleteRule (deleteRuleRequest → struct{})
@@ -574,16 +519,20 @@ tags:
   - PutTargets (putTargetsRequest → targetsMutationResponse)
   - RemoveTargets (removeTargetsRequest → targetsMutationResponse)
   - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## firehose — 6 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## firehose — 9 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateDeliveryStream (createDeliveryStreamReq → createDeliveryStreamResp)
   - DeleteDeliveryStream (deleteDeliveryStreamReq → struct{})
   - DescribeDeliveryStream (describeDeliveryStreamReq → describeDeliveryStreamResp)
   - ListDeliveryStreams (struct{} → listDeliveryStreamsResp)
+  - ListTagsForDeliveryStream (listTagsForDeliveryStreamReq → listTagsForDeliveryStreamResp)
   - PutRecord (putRecordReq → putRecordResp)
   - PutRecordBatch (putRecordBatchReq → putRecordBatchResp)
+  - TagDeliveryStream (tagDeliveryStreamReq → struct{})
+  - UntagDeliveryStream (untagDeliveryStreamReq → struct{})
 
-## glue — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## glue — 11 ops, modeled: 297, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateDatabase (createDatabaseReq → struct{})
   - CreateTable (createTableReq → struct{})
   - DeleteDatabase (deleteDatabaseReq → struct{})
@@ -592,8 +541,11 @@ tags:
   - GetDatabases (struct{} → getDatabasesResp)
   - GetTable (getTableReq → getTableResp)
   - GetTables (getTablesReq → getTablesResp)
+  - GetTags (glueListTagsForResourceReq → glueListTagsForResourceResp)
+  - TagResource (glueTagResourceReq → struct{})
+  - UntagResource (glueUntagResourceReq → struct{})
 
-## iam — 61 ops, protocols: QueryXML
+## iam — 74 ops, modeled: 176, protocols: QueryXML
   - AddRoleToInstanceProfile (? → ?)
   - AddUserToGroup (? → ?)
   - AttachGroupPolicy (? → ?)
@@ -603,6 +555,7 @@ tags:
   - CreateGroup (? → ?)
   - CreateInstanceProfile (? → ?)
   - CreatePolicy (? → ?)
+  - CreatePolicyVersion (? → ?)
   - CreateRole (? → ?)
   - CreateServiceLinkedRole (? → ?)
   - CreateUser (? → ?)
@@ -612,8 +565,10 @@ tags:
   - DeleteInstanceProfile (? → ?)
   - DeletePolicy (? → ?)
   - DeleteRole (? → ?)
+  - DeleteRolePermissionsBoundary (? → ?)
   - DeleteRolePolicy (? → ?)
   - DeleteUser (? → ?)
+  - DeleteUserPermissionsBoundary (? → ?)
   - DeleteUserPolicy (? → ?)
   - DetachGroupPolicy (? → ?)
   - DetachRolePolicy (? → ?)
@@ -634,9 +589,11 @@ tags:
   - ListGroupPolicies (? → ?)
   - ListGroups (? → ?)
   - ListGroupsForUser (? → ?)
+  - ListInstanceProfileTags (? → ?)
   - ListInstanceProfiles (? → ?)
   - ListInstanceProfilesForRole (? → ?)
   - ListPolicies (? → ?)
+  - ListPolicyTags (? → ?)
   - ListRolePolicies (? → ?)
   - ListRoleTags (? → ?)
   - ListRoles (? → ?)
@@ -644,19 +601,27 @@ tags:
   - ListUserTags (? → ?)
   - ListUsers (? → ?)
   - PutGroupPolicy (? → ?)
+  - PutRolePermissionsBoundary (? → ?)
   - PutRolePolicy (? → ?)
+  - PutUserPermissionsBoundary (? → ?)
   - PutUserPolicy (? → ?)
   - RemoveRoleFromInstanceProfile (? → ?)
   - RemoveUserFromGroup (? → ?)
+  - SimulateCustomPolicy (? → ?)
   - SimulatePrincipalPolicy (? → ?)
+  - TagInstanceProfile (? → ?)
+  - TagPolicy (? → ?)
   - TagRole (? → ?)
   - TagUser (? → ?)
+  - UntagInstanceProfile (? → ?)
+  - UntagPolicy (? → ?)
   - UntagRole (? → ?)
   - UntagUser (? → ?)
   - UpdateAssumeRolePolicy (? → ?)
+  - UpdateRole (? → ?)
   - UpdateUser (? → ?)
 
-## kinesis — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## kinesis — 20 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR
   - AddTagsToStream (addTagsToStreamRequest → struct{})
   - CreateStream (createStreamRequest → struct{})
   - DecreaseStreamRetentionPeriod (retentionPeriodRequest → struct{})
@@ -668,14 +633,17 @@ tags:
   - IncreaseStreamRetentionPeriod (retentionPeriodRequest → struct{})
   - ListShards (listShardsRequest → listShardsResponse)
   - ListStreams (listStreamsRequest → listStreamsResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - ListTagsForStream (listTagsForStreamRequest → listTagsForStreamResponse)
   - MergeShards (mergeShardsRequest → struct{})
   - PutRecord (putRecordRequest → putRecordResponse)
   - PutRecords (putRecordsRequest → putRecordsResponse)
   - RemoveTagsFromStream (removeTagsFromStreamRequest → struct{})
   - SplitShard (splitShardRequest → struct{})
+  - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## kms — 32 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## kms — 33 ops, modeled: 54, protocols: JSON10, JSON11, RPCv2CBOR
   - CancelKeyDeletion (keyIDRequest → cancelKeyDeletionResponse)
   - CreateAlias (createAliasRequest → struct{})
   - CreateGrant (createGrantRequest → createGrantResponse)
@@ -706,41 +674,14 @@ tags:
   - TagResource (tagResourceRequest → struct{})
   - UntagResource (untagResourceRequest → struct{})
   - UpdateAlias (updateAliasRequest → struct{})
+  - UpdateKeyDescription (updateKeyDescriptionRequest → struct{})
   - Verify (verifyRequest → verifyResponse)
   - VerifyMac (verifyMacRequest → verifyMacResponse)
 
-## msk — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - CreateCluster (createClusterRequest → createClusterResponse)
-  - CreateClusterV2 (createClusterV2Request → createClusterV2Response)
-  - CreateConfiguration (createConfigurationRequest → createConfigurationResponse)
-  - DeleteCluster (deleteClusterRequest → deleteClusterResponse)
-  - DeleteConfiguration (deleteConfigurationRequest → struct{})
-  - DescribeCluster (describeClusterRequest → describeClusterResponse)
-  - DescribeClusterV2 (describeClusterV2Request → describeClusterV2Response)
-  - DescribeConfiguration (describeConfigurationRequest → describeConfigurationResponse)
-  - GetBootstrapBrokers (getBootstrapBrokersRequest → getBootstrapBrokersResponse)
-  - ListClusters (listClustersRequest → listClustersResponse)
-  - ListConfigurations (listConfigurationsRequest → listConfigurationsResponse)
-  - ListKafkaVersions (listKafkaVersionsRequest → listKafkaVersionsResponse)
-  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
-  - TagResource (tagResourceRequest → struct{})
-  - UntagResource (untagResourceRequest → struct{})
-  - UpdateClusterConfiguration (updateClusterConfigurationRequest → updateClusterConfigurationResponse)
-
-## opensearch — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR
-  - AddTags (addTagsRequest → struct{})
-  - CreateDomain (createDomainRequest → createDomainResponse)
-  - DeleteDomain (deleteDomainRequest → deleteDomainResponse)
-  - DescribeDomain (describeDomainRequest → describeDomainResponse)
-  - DescribeDomains (describeDomainsRequest → describeDomainsResponse)
-  - ListDomainNames (listDomainNamesRequest → listDomainNamesResponse)
-  - ListTags (listTagsRequest → listTagsResponse)
-  - RemoveTags (removeTagsRequest → struct{})
-
-## organizations — 1 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## organizations — 1 ops, modeled: 63, protocols: JSON10, JSON11, RPCv2CBOR
   - DescribeOrganization (describeOrganizationRequest → describeOrganizationResponse)
 
-## rds — 33 ops, protocols: QueryXML
+## rds — 34 ops, modeled: 164, protocols: QueryXML
   - AddTagsToResource (? → ?)
   - CreateDBCluster (? → ?)
   - CreateDBClusterSnapshot (? → ?)
@@ -762,6 +703,7 @@ tags:
   - DescribeDBParameterGroups (? → ?)
   - DescribeDBSnapshots (? → ?)
   - DescribeDBSubnetGroups (? → ?)
+  - DescribeEvents (? → ?)
   - DescribeOrderableDBInstanceOptions (? → ?)
   - DownloadDBLogFilePortion (? → ?)
   - ListTagsForResource (? → ?)
@@ -775,7 +717,7 @@ tags:
   - StopDBCluster (? → ?)
   - StopDBInstance (? → ?)
 
-## route53 — 6 ops, protocols: QueryXML
+## route53 — 6 ops, modeled: 71, protocols: QueryXML
   - CreateHostedZone (r53CreateHostedZoneReq → r53CreateHostedZoneResp)
   - DeleteHostedZone (r53DeleteHostedZoneReq → r53DeleteHostedZoneResp)
   - GetChange (r53GetChangeReq → r53GetChangeResp)
@@ -783,7 +725,7 @@ tags:
   - ListHostedZones (r53ListHostedZonesReq → r53ListHostedZonesResp)
   - ListResourceRecordSets (r53ListResourceRecordSetsReq → r53ListResourceRecordSetsResp)
 
-## scheduler — 12 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## scheduler — 12 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateSchedule (createScheduleRequest → createScheduleResponse)
   - CreateScheduleGroup (createScheduleGroupRequest → createScheduleGroupResponse)
   - DeleteSchedule (deleteScheduleRequest → ?)
@@ -797,19 +739,19 @@ tags:
   - UntagResource (untagResourceRequest → ?)
   - UpdateSchedule (updateScheduleRequest → updateScheduleResponse)
 
-## secretsmanager — 21 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## secretsmanager — 22 ops, modeled: 23, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchGetSecretValue (batchGetSecretValueRequest → batchGetSecretValueResponse)
   - CancelRotateSecret (secretIDRequest → cancelRotateSecretResponse)
   - CreateSecret (createSecretRequest → createSecretResponse)
-  - DeleteResourcePolicy (struct{} → struct{})
+  - DeleteResourcePolicy (secretIDRequest → resourcePolicyIdentityResponse)
   - DeleteSecret (deleteSecretRequest → deleteSecretResponse)
   - DescribeSecret (secretIDRequest → describeSecretResponse)
   - GetRandomPassword (getRandomPasswordRequest → getRandomPasswordResponse)
-  - GetResourcePolicy (struct{} → struct{})
+  - GetResourcePolicy (secretIDRequest → getResourcePolicyResponse)
   - GetSecretValue (getSecretValueRequest → secretValueResponse)
   - ListSecretVersionIds (secretIDRequest → listSecretVersionIdsResponse)
   - ListSecrets (listSecretsRequest → listSecretsResponse)
-  - PutResourcePolicy (struct{} → struct{})
+  - PutResourcePolicy (putResourcePolicyRequest → resourcePolicyIdentityResponse)
   - PutSecretValue (putSecretValueRequest → putSecretValueResponse)
   - RemoveRegionsFromReplication (struct{} → struct{})
   - ReplicateSecretToRegions (struct{} → struct{})
@@ -818,9 +760,10 @@ tags:
   - TagResource (tagResourceRequest → struct{})
   - UntagResource (untagResourceRequest → struct{})
   - UpdateSecret (updateSecretRequest → updateSecretResponse)
-  - ValidateResourcePolicy (struct{} → struct{})
+  - UpdateSecretVersionStage (updateSecretVersionStageRequest → updateSecretVersionStageResponse)
+  - ValidateResourcePolicy (validateResourcePolicyRequest → validateResourcePolicyResponse)
 
-## ses — 19 ops, protocols: QueryXML
+## ses — 19 ops, modeled: 183, protocols: QueryXML
   - CreateTemplate (createTemplateReq → createTemplateResp)
   - DeleteIdentity (deleteIdentityReq → deleteIdentityResp)
   - DeleteIdentity (deleteIdentityReq → deleteIdentityResp)
@@ -841,14 +784,17 @@ tags:
   - VerifyEmailIdentity (verifyEmailIdentityReq → verifyEmailIdentityResp)
   - VerifyEmailIdentity (verifyEmailIdentityReq → verifyEmailIdentityResp)
 
-## shield — 5 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## shield — 8 ops, modeled: 36, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateProtection (createProtectionRequest → createProtectionResponse)
   - DeleteProtection (deleteProtectionRequest → struct{})
   - DescribeProtection (describeProtectionRequest → describeProtectionResponse)
   - DescribeSubscription (struct{} → describeSubscriptionResponse)
   - ListProtections (listProtectionsRequest → listProtectionsResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
+  - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## sns — 14 ops, protocols: QueryXML
+## sns — 17 ops, modeled: 42, protocols: QueryXML
   - ConfirmSubscription (confirmSubscriptionReq → confirmSubscriptionResp)
   - CreateTopic (createTopicReq → createTopicResp)
   - DeleteTopic (deleteTopicReq → deleteTopicResp)
@@ -856,15 +802,18 @@ tags:
   - GetTopicAttributes (getTopicAttributesReq → getTopicAttributesResp)
   - ListSubscriptions (struct{} → listSubscriptionsResp)
   - ListSubscriptionsByTopic (listSubscriptionsByTopicReq → listSubscriptionsByTopicResp)
+  - ListTagsForResource (listTagsForResourceReq → listTagsForResourceResp)
   - ListTopics (struct{} → listTopicsResp)
   - Publish (publishReq → publishResp)
   - PublishBatch (publishBatchReq → publishBatchResp)
   - SetSubscriptionAttributes (setSubscriptionAttributesReq → setSubscriptionAttributesResp)
   - SetTopicAttributes (setTopicAttributesReq → setTopicAttributesResp)
   - Subscribe (subscribeReq → subscribeResp)
+  - TagResource (tagResourceReq → tagResourceResp)
   - Unsubscribe (unsubscribeReq → unsubscribeResp)
+  - UntagResource (untagResourceReq → untagResourceResp)
 
-## sqs — 21 ops, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML
+## sqs — 21 ops, modeled: 23, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML
   - AddPermission (struct{} → struct{})
   - ChangeMessageVisibility (changeMessageVisibilityRequest → struct{})
   - ChangeMessageVisibilityBatch (changeMessageVisibilityBatchRequest → changeMessageVisibilityBatchResponse)
@@ -887,7 +836,7 @@ tags:
   - TagQueue (tagQueueRequest → struct{})
   - UntagQueue (untagQueueRequest → struct{})
 
-## ssm — 10 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## ssm — 11 ops, modeled: 152, protocols: JSON10, JSON11, RPCv2CBOR
   - AddTagsToResource (addTagsToResourceRequest → struct{})
   - DeleteParameter (deleteParameterRequest → struct{})
   - DeleteParameters (deleteParametersRequest → deleteParametersResponse)
@@ -898,22 +847,32 @@ tags:
   - GetParametersByPath (getParametersByPathRequest → parametersPageResponse)
   - ListTagsForResource (resourceIDRequest → listTagsForResourceResponse)
   - PutParameter (putParameterRequest → putParameterResponse)
+  - RemoveTagsFromResource (removeTagsFromResourceRequest → struct{})
 
-## stepfunctions — 5 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## stepfunctions — 14 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateStateMachine (createStateMachineRequest → createStateMachineResponse)
   - DeleteStateMachine (deleteStateMachineRequest → struct{})
+  - DescribeExecution (describeExecutionRequest → describeExecutionResponse)
   - DescribeStateMachine (describeStateMachineRequest → describeStateMachineResponse)
+  - DescribeStateMachineForExecution (describeStateMachineForExecutionRequest → describeStateMachineForExecutionResponse)
+  - GetExecutionHistory (getExecutionHistoryRequest → getExecutionHistoryResponse)
+  - ListExecutions (listExecutionsRequest → listExecutionsResponse)
   - ListStateMachines (listStateMachinesRequest → listStateMachinesResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceTypedResponse)
   - StartExecution (startExecutionRequest → startExecutionResponse)
+  - StartSyncExecution (startSyncExecutionRequest → startSyncExecutionResponse)
+  - StopExecution (stopExecutionRequest → stopExecutionResponse)
+  - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## sts — 5 ops, protocols: QueryXML
+## sts — 5 ops, modeled: 11, protocols: QueryXML
   - AssumeRole (assumeRoleReq → assumeRoleResp)
   - AssumeRoleWithWebIdentity (assumeRoleReq → assumeRoleWithWebIdentityResp)
   - GetCallerIdentity (struct{} → getCallerIdentityResp)
   - GetFederationToken (getFederationTokenReq → getFederationTokenResp)
   - GetSessionToken (getSessionTokenReq → getSessionTokenResp)
 
-## transfer — 10 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## transfer — 13 ops, modeled: 71, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateServer (createServerRequest → createServerResponse)
   - CreateUser (createUserRequest → createUserResponse)
   - DeleteServer (deleteServerRequest → struct{})
@@ -921,15 +880,41 @@ tags:
   - DescribeServer (describeServerRequest → describeServerResponse)
   - DescribeUser (describeUserRequest → describeUserResponse)
   - ListServers (listServersRequest → listServersResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - ListUsers (listUsersRequest → listUsersResponse)
+  - TagResource (tagResourceRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
   - UpdateServer (updateServerRequest → struct{})
   - UpdateUser (updateUserRequest → updateUserResponse)
 
-## waf — 4 ops, protocols: JSON10, JSON11, RPCv2CBOR
+## waf — 7 ops, modeled: 59, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateWebACL (createWebACLRequest → createWebACLResponse)
   - DeleteWebACL (deleteWebACLRequest → struct{})
   - GetWebACL (getWebACLRequest → getWebACLResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - ListWebACLs (listWebACLsRequest → listWebACLsResponse)
+  - TagResource (tagResourceRequest → tagResourceResponse)
+  - UntagResource (untagResourceRequest → untagResourceResponse)
+
+## Services outside this manifest
+
+The 13 service(s) below implement operations through the REST router or a not-yet-migrated legacy dispatcher, so they have no `typed_ops.go` and get no section above. Their modeled operation counts (from the pinned AWS model corpus) are shown for reference; see docs/generated/service-support.json for what Overcast actually implements per service.
+
+| Service | Modeled ops | Why excluded |
+|---|---|---|
+| apigateway | 227 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| appconfig | 56 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| appconfigdata | 2 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| appsync | 74 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| backup | 109 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| bedrock | 119 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| cloudfront | 167 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| cloudwatch | 50 | not yet migrated to the typed op registry |
+| lambda | 85 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| msk | 59 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| opensearch | 96 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| pipes | 10 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| s3 | 112 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 
 ---
-Total: 834 operations across 43 services
+Model corpus: 18850 operations across 422 services; typed registrations: 809 across 37 services (13 services outside typed dispatch, listed above)

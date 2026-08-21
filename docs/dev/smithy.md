@@ -176,9 +176,11 @@ type ProtocolService interface {
 }
 ```
 
-The `cmd/stub-report` tool walks all services and produces the complete
-operation manifest at `docs/operation-manifest.md` — 834 operations across
-43 services.
+The `cmd/stub-report` tool walks typed-dispatch services (those with a
+`typed_ops.go`) and produces the operation manifest at
+`docs/operation-manifest.md`. REST-routed and not-yet-migrated services carry
+no `typed_ops.go`, so they get no typed-dispatch section — the manifest lists
+them separately, by name and reason, instead of omitting them silently.
 
 ---
 

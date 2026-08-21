@@ -130,3 +130,80 @@ func TestModeledOperationCounts_readsGeneratedCorpus(t *testing.T) {
 		t.Errorf("modeledOperationCounts() missing generated services: %+v", counts)
 	}
 }
+
+// TestExcludedServices_ListsDirsWithoutTypedOps pins the fix for #748: a
+// service directory that scanServices skips (no typed_ops.go) must still be
+// named in the manifest, not silently dropped.
+func TestExcludedServices_ListsDirsWithoutTypedOps(t *testing.T) {
+	root := t.TempDir()
+	writeTypedOpsFixture(t, filepath.Join(root, "widgets"), "widgets", "ListWidgets")
+	if err := os.MkdirAll(filepath.Join(root, "gadgets"), 0o755); err != nil {
+		t.Fatalf("mkdir gadgets: %v", err)
+	}
+
+	included, err := scanServices(root)
+	if err != nil {
+		t.Fatalf("scanServices: %v", err)
+	}
+	excluded, err := excludedServices(root, included)
+	if err != nil {
+		t.Fatalf("excludedServices: %v", err)
+	}
+
+	if len(excluded) != 1 || excluded[0] != "gadgets" {
+		t.Errorf("excludedServices() = %v, want [gadgets]", excluded)
+	}
+}
+
+// TestExcludedServices_RealServicesFromIssue748 pins that every service
+// reported missing from docs/operation-manifest.md by #748 (S3, Lambda, API
+// Gateway, CloudFront, Pipes, CloudWatch) is captured by excludedServices
+// against the real internal/services tree, so it can no longer disappear
+// from the doc without a visible entry.
+func TestExcludedServices_RealServicesFromIssue748(t *testing.T) {
+	root, err := findWorkspaceRoot(".")
+	if err != nil {
+		t.Fatalf("findWorkspaceRoot: %v", err)
+	}
+	svcRoot := filepath.Join(root, "internal", "services")
+
+	included, err := scanServices(svcRoot)
+	if err != nil {
+		t.Fatalf("scanServices: %v", err)
+	}
+	excluded, err := excludedServices(svcRoot, included)
+	if err != nil {
+		t.Fatalf("excludedServices: %v", err)
+	}
+
+	excludedSet := make(map[string]bool, len(excluded))
+	for _, n := range excluded {
+		excludedSet[n] = true
+	}
+	for _, want := range []string{"s3", "lambda", "apigateway", "cloudfront", "pipes", "cloudwatch"} {
+		if !excludedSet[want] {
+			t.Errorf("expected %q to be reported as excluded (no typed_ops.go), got excluded=%v", want, excluded)
+		}
+	}
+}
+
+func TestExclusionReason(t *testing.T) {
+	tests := []struct {
+		name      string
+		protocols []string
+		want      string
+	}{
+		{"rest json", []string{"restJson1"}, "REST-routed (chi router, path/method dispatch), not target-header typed dispatch"},
+		{"rest xml", []string{"restXml"}, "REST-routed (chi router, path/method dispatch), not target-header typed dispatch"},
+		{"mixed with rest", []string{"awsJson1_1", "restJson1"}, "REST-routed (chi router, path/method dispatch), not target-header typed dispatch"},
+		{"json only", []string{"awsJson1_1"}, "not yet migrated to the typed op registry"},
+		{"no protocol data", nil, "no protocol data in the pinned model corpus"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exclusionReason(tc.protocols); got != tc.want {
+				t.Errorf("exclusionReason(%v) = %q, want %q", tc.protocols, got, tc.want)
+			}
+		})
+	}
+}
