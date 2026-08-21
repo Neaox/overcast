@@ -161,17 +161,20 @@ func TestCreateRollback_failsWhenAResourceDeleteFails(t *testing.T) {
 	}
 }
 
-// DeleteStack is deliberately not symmetric with rollback, and this pins the
-// asymmetry so that it is changed on purpose rather than by accident.
+// DeleteStack used to be deliberately asymmetric with rollback: it stopped only
+// for a resource that refused to be deleted (errDeletionBlocked) and recorded
+// every other failure on its way past. That asymmetry existed for one reason —
+// the handlers without the absent-resource allowance would have wedged a
+// teardown over a resource that was merely already gone — and it went when the
+// last of them got the allowance.
 //
-// A teardown the operator asked for stops only for a resource that refuses to
-// be deleted (errDeletionBlocked); a call that could not be made is recorded
-// and the teardown moves on. That distinction is what deleteResource exists to
-// draw, and it cannot be collapsed into "any error fails the delete" until
-// every handler has the absent-resource allowance the ones here now have —
-// around sixty still report a plain error for a resource that is merely gone,
-// and making DeleteStack fatal today would wedge a stack over each of them.
-func TestDeleteStack_completesWhenAResourceDeleteFails(t *testing.T) {
+// Both teardowns now answer the same question the same way: the resource is
+// gone, or it is not. A resource that is still standing leaves the stack
+// DELETE_FAILED with the resource listed, which is what AWS does and what tells
+// an operator the teardown is unfinished. Reporting DELETE_COMPLETE over it
+// would delete the stack's own record of the resource — the only thing that
+// still says what is out there.
+func TestDeleteStack_failsWhenAResourceDeleteFails(t *testing.T) {
 	// Given: a log group whose service cannot be reached
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
@@ -186,9 +189,44 @@ func TestDeleteStack_completesWhenAResourceDeleteFails(t *testing.T) {
 	// When: the stack is deleted
 	p.deleteStackResourcesCtx(context.Background(), stack)
 
-	// Then: the teardown finishes rather than stranding the stack
+	// Then: the stack reports the teardown it could not finish
+	if stack.Status != StatusDeleteFailed {
+		t.Errorf("stack status = %q, want %q — the log group is still standing",
+			stack.Status, StatusDeleteFailed)
+	}
+	if len(stack.Resources) != 1 {
+		t.Fatalf("stack resources = %+v, want the log group left in the list so a retry knows what is standing",
+			stack.Resources)
+	}
+	if got := stack.Resources[0].Status; got != ResourceDeleteFailed {
+		t.Errorf("resource status = %q, want %q", got, ResourceDeleteFailed)
+	}
+	if reason := stack.Resources[0].StatusReason; !strings.Contains(reason, "DeleteLogGroup") {
+		t.Errorf("status reason = %q, want it to name the operation that failed", reason)
+	}
+}
+
+// The allowance is what makes the strictness above affordable, so it is pinned
+// on this path too: a deliberate teardown must still run to completion over a
+// resource that no longer exists.
+func TestDeleteStack_completesWhenTheResourceIsAlreadyGone(t *testing.T) {
+	// Given: a log group the service says does not exist
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"__type":"ResourceNotFoundException","message":"The specified log group does not exist."}`)) //nolint:errcheck
+	})
+	p, stack := newTeardownRollbackFixture(t, router)
+	if err := p.store.putStack(context.Background(), stack); err != nil {
+		t.Fatalf("putStack: %v", err)
+	}
+
+	// When: the stack is deleted
+	p.deleteStackResourcesCtx(context.Background(), stack)
+
+	// Then: the teardown finishes
 	if stack.Status != StatusDeleteComplete {
-		t.Errorf("stack status = %q, want %q — an unreachable service must not wedge a deliberate teardown",
+		t.Errorf("stack status = %q, want %q — an absent resource is a successful teardown",
 			stack.Status, StatusDeleteComplete)
 	}
 }
