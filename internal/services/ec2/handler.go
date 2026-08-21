@@ -413,7 +413,10 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
-	vpc := &VPC{VpcID: vpcID, CidrBlock: cidr, State: "available", CreateTime: h.clk.Now().UnixMilli()}
+	// Matches real AWS: every new VPC has DNS resolution on; DNS hostnames
+	// stay off until ModifyVpcAttribute (or a CDK-issued CFN property) turns
+	// them on, except for the seeded default VPC (see seedDefaultVPC).
+	vpc := &VPC{VpcID: vpcID, CidrBlock: cidr, State: "available", CreateTime: h.clk.Now().UnixMilli(), EnableDnsSupport: true, EnableDnsHostnames: false}
 
 	// Strategy decides whether to create a new Docker network or share one
 	// from another VPC with the same CIDR. EnsureNetwork mutates vpc in place.

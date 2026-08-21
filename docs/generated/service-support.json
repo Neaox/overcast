@@ -2978,7 +2978,7 @@
           "operation": "AllocateAddress",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Generates eipalloc- ID and synthetic public IP"
+          "notes": "Generates eipalloc- ID and synthetic public IP; Domain honoured"
         },
         {
           "operation": "AssociateAddress",
@@ -3178,7 +3178,7 @@
           "operation": "DescribeAddresses",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Selects by AllocationId.N; Filters: allocation-id, association-id, domain, instance-id, network-interface-id, private-ip-address, public-ip"
+          "notes": "Selects by AllocationId.N; returns tags; Filters: allocation-id, association-id, domain, instance-id, network-interface-id, private-ip-address, public-ip"
         },
         {
           "operation": "DescribeAvailabilityZones",
@@ -3268,7 +3268,7 @@
           "operation": "DescribeVpcAttribute",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns enableDnsSupport or enableDnsHostnames"
+          "notes": "Returns the stored enableDnsSupport or enableDnsHostnames value"
         },
         {
           "operation": "DescribeVpcEndpoints",
@@ -3328,13 +3328,13 @@
           "operation": "ModifySubnetAttribute",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "MapPublicIpOnLaunch (metadata only)"
+          "notes": "MapPublicIpOnLaunch is persisted and returned by DescribeSubnets"
         },
         {
           "operation": "ModifyVpcAttribute",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "EnableDnsSupport, EnableDnsHostnames (metadata only)"
+          "notes": "EnableDnsSupport, EnableDnsHostnames are persisted and returned by DescribeVpcAttribute"
         },
         {
           "operation": "ReleaseAddress",

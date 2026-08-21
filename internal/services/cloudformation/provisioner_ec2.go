@@ -121,6 +121,34 @@ type ec2AssociateRouteTableResponse struct {
 
 type ec2VPCHandler struct{}
 
+// applyVpcDNSAttributes issues ModifyVpcAttribute for whichever of
+// EnableDnsSupport / EnableDnsHostnames the template sets. CDK's Vpc
+// construct always sets both (enableDnsHostnames/enableDnsSupport default to
+// true in the CDK L2, independent of the emulator's CreateVpc defaults), so
+// leaving this unset is what silently reset a CDK-shaped VPC back to the
+// emulator's own CreateVpc defaults. See #529.
+func applyVpcDNSAttributes(ctx context.Context, router http.Handler, region, vpcID string, props map[string]any) error {
+	params := map[string]string{
+		"Action":  "ModifyVpcAttribute",
+		"Version": "2016-11-15",
+		"VpcId":   vpcID,
+	}
+	set := false
+	if v, ok := props["EnableDnsSupport"]; ok {
+		params["EnableDnsSupport.Value"] = strconv.FormatBool(asBool(v))
+		set = true
+	}
+	if v, ok := props["EnableDnsHostnames"]; ok {
+		params["EnableDnsHostnames.Value"] = strconv.FormatBool(asBool(v))
+		set = true
+	}
+	if !set {
+		return nil
+	}
+	_, err := internalQuery(ctx, router, region, params)
+	return err
+}
+
 func (h *ec2VPCHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	cidr, _ := props["CidrBlock"].(string)
 	if cidr == "" {
@@ -148,12 +176,49 @@ func (h *ec2VPCHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	if err := applyEC2Tags(ctx, router, rCtx.Region, resp.Vpc.VpcID, props["Tags"]); err != nil {
 		return "", nil, fmt.Errorf("CreateVpc tags: %w", err)
 	}
+	if err := applyVpcDNSAttributes(ctx, router, rCtx.Region, resp.Vpc.VpcID, props); err != nil {
+		return "", nil, fmt.Errorf("CreateVpc dns attributes: %w", err)
+	}
 
 	attrs := map[string]string{
 		"VpcId":     resp.Vpc.VpcID,
 		"CidrBlock": cidr,
 	}
 	return resp.Vpc.VpcID, attrs, nil
+}
+
+// Update re-applies the DNS attributes and tags in place. CidrBlock and
+// InstanceTenancy both require replacement on real AWS (CloudFormation's own
+// VPC resource provider does not support updating either in place), so a
+// template that changes either falls back to delete+create like it would
+// against real CloudFormation.
+func (h *ec2VPCHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	newCidr, _ := props["CidrBlock"].(string)
+	oldCidr, _ := oldProps["CidrBlock"].(string)
+	if newCidr != "" && newCidr != oldCidr {
+		return "", nil, errReplacementRequired
+	}
+	if _, ok := props["InstanceTenancy"]; ok {
+		if fmt.Sprint(props["InstanceTenancy"]) != fmt.Sprint(oldProps["InstanceTenancy"]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	if err := applyVpcDNSAttributes(ctx, router, rCtx.Region, physicalID, props); err != nil {
+		return "", nil, fmt.Errorf("ModifyVpcAttribute: %w", err)
+	}
+	if err := applyEC2Tags(ctx, router, rCtx.Region, physicalID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("ModifyVpcAttribute tags: %w", err)
+	}
+	cidr := oldCidr
+	if newCidr != "" {
+		cidr = newCidr
+	}
+	attrs := map[string]string{
+		"VpcId":     physicalID,
+		"CidrBlock": cidr,
+	}
+	return physicalID, attrs, nil
 }
 
 func (h *ec2VPCHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -169,6 +234,25 @@ func (h *ec2VPCHandler) Delete(ctx context.Context, router http.Handler, cfg *co
 // ── AWS::EC2::Subnet ───────────────────────────────────────────────────────
 
 type ec2SubnetHandler struct{}
+
+// applySubnetMapPublicIP issues ModifySubnetAttribute when the template sets
+// MapPublicIpOnLaunch. CDK sets this true on every public subnet it
+// generates, so leaving it unset is what silently reset a CDK-shaped public
+// subnet back to the emulator's CreateSubnet default of false. See #529.
+func applySubnetMapPublicIP(ctx context.Context, router http.Handler, region, subnetID string, props map[string]any) error {
+	v, ok := props["MapPublicIpOnLaunch"]
+	if !ok {
+		return nil
+	}
+	params := map[string]string{
+		"Action":                    "ModifySubnetAttribute",
+		"Version":                   "2016-11-15",
+		"SubnetId":                  subnetID,
+		"MapPublicIpOnLaunch.Value": strconv.FormatBool(asBool(v)),
+	}
+	_, err := internalQuery(ctx, router, region, params)
+	return err
+}
 
 func (h *ec2SubnetHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	params := map[string]string{
@@ -197,6 +281,9 @@ func (h *ec2SubnetHandler) Create(ctx context.Context, router http.Handler, cfg 
 	if err := applyEC2Tags(ctx, router, rCtx.Region, resp.Subnet.SubnetID, props["Tags"]); err != nil {
 		return "", nil, fmt.Errorf("CreateSubnet tags: %w", err)
 	}
+	if err := applySubnetMapPublicIP(ctx, router, rCtx.Region, resp.Subnet.SubnetID, props); err != nil {
+		return "", nil, fmt.Errorf("CreateSubnet map-public-ip: %w", err)
+	}
 
 	attrs := map[string]string{
 		"SubnetId":         resp.Subnet.SubnetID,
@@ -205,6 +292,47 @@ func (h *ec2SubnetHandler) Create(ctx context.Context, router http.Handler, cfg 
 		"AvailabilityZone": resp.Subnet.AvailabilityZone,
 	}
 	return resp.Subnet.SubnetID, attrs, nil
+}
+
+// Update re-applies MapPublicIpOnLaunch and tags in place. VpcId,
+// CidrBlock, and AvailabilityZone are all immutable on a subnet in real AWS
+// (each requires replacement), so a template that changes any of them falls
+// back to delete+create like it would against real CloudFormation.
+func (h *ec2SubnetHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	for _, key := range []string{"VpcId", "CidrBlock", "AvailabilityZone"} {
+		newV, _ := props[key].(string)
+		oldV, _ := oldProps[key].(string)
+		if newV != "" && newV != oldV {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	if err := applySubnetMapPublicIP(ctx, router, rCtx.Region, physicalID, props); err != nil {
+		return "", nil, fmt.Errorf("ModifySubnetAttribute: %w", err)
+	}
+	if err := applyEC2Tags(ctx, router, rCtx.Region, physicalID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("ModifySubnetAttribute tags: %w", err)
+	}
+
+	vpcID, _ := props["VpcId"].(string)
+	cidr, _ := props["CidrBlock"].(string)
+	az, _ := props["AvailabilityZone"].(string)
+	if vpcID == "" {
+		vpcID, _ = oldProps["VpcId"].(string)
+	}
+	if cidr == "" {
+		cidr, _ = oldProps["CidrBlock"].(string)
+	}
+	if az == "" {
+		az, _ = oldProps["AvailabilityZone"].(string)
+	}
+	attrs := map[string]string{
+		"SubnetId":         physicalID,
+		"VpcId":            vpcID,
+		"CidrBlock":        cidr,
+		"AvailabilityZone": az,
+	}
+	return physicalID, attrs, nil
 }
 
 func (h *ec2SubnetHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -621,10 +749,14 @@ func (h *ec2SubnetRouteTableAssociationHandler) Delete(ctx context.Context, rout
 type ec2EIPHandler struct{}
 
 func (h *ec2EIPHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	domain, _ := props["Domain"].(string)
+	if domain == "" {
+		domain = "vpc"
+	}
 	params := map[string]string{
 		"Action":  "AllocateAddress",
 		"Version": "2016-11-15",
-		"Domain":  "vpc",
+		"Domain":  domain,
 	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
@@ -635,6 +767,9 @@ func (h *ec2EIPHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	var resp ec2AllocateAddressResponse
 	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		return "", nil, fmt.Errorf("AllocateAddress: parse response: %w", err)
+	}
+	if err := applyEC2Tags(ctx, router, rCtx.Region, resp.AllocationID, props["Tags"]); err != nil {
+		return "", nil, fmt.Errorf("AllocateAddress tags: %w", err)
 	}
 
 	attrs := map[string]string{

@@ -56,6 +56,16 @@ type VPC struct {
 	// Used by reconcile to deterministically pick the winner when multiple
 	// VPCs claim the same CIDR — earliest creation wins.
 	CreateTime int64 `json:"CreateTime,omitempty"`
+
+	// EnableDnsSupport controls whether the Amazon-provided DNS server
+	// resolves names for instances in the VPC. Real AWS defaults this to
+	// true for every VPC, default or not.
+	EnableDnsSupport bool `json:"EnableDnsSupport"`
+
+	// EnableDnsHostnames controls whether instances with a public IP are
+	// also given a public DNS hostname. Real AWS defaults this to false for
+	// VPCs created via CreateVpc, and true for the account's default VPC.
+	EnableDnsHostnames bool `json:"EnableDnsHostnames"`
 }
 
 // Subnet represents an EC2 Subnet resource.
@@ -65,6 +75,11 @@ type Subnet struct {
 	CidrBlock        string `json:"CidrBlock"`
 	AvailabilityZone string `json:"AvailabilityZone"`
 	State            string `json:"State"`
+
+	// MapPublicIpOnLaunch controls whether instances launched into this
+	// subnet are automatically assigned a public IP. Real AWS defaults this
+	// to false for subnets created via CreateSubnet.
+	MapPublicIpOnLaunch bool `json:"MapPublicIpOnLaunch"`
 }
 
 // IpRange represents a CIDR range in a security group rule.
