@@ -545,12 +545,12 @@ func TestOvercastEnvBindsLoopbackOnly(t *testing.T) {
 	// binary path's half of what TestDockerRunArgsPublishesToLoopbackOnly
 	// pins for the container path, and it is the half that matters most:
 	// findOvercastBinary means the binary is what compat picks when one is
-	// built, so an unset OVERCAST_HOST — the emulator's own default is
+	// built, so an unset OVERCAST_LISTEN — the emulator's own default is
 	// 0.0.0.0 — would put an unauthenticated instance on whatever network
 	// the machine is attached to, in the *common* case rather than the
 	// fallback one.
 	env := overcastEnv(4570, 0, bindHosts(""))
-	if !containsEnv(env, "OVERCAST_HOST=127.0.0.1") {
+	if !containsEnv(env, "OVERCAST_LISTEN=127.0.0.1") {
 		t.Errorf("overcastEnv did not pin the bind address to loopback: %v", env)
 	}
 }
@@ -564,7 +564,7 @@ func TestOvercastEnvAddsBridgeGatewayBind(t *testing.T) {
 	// "host.docker.internal:host-gateway" resolves to on native Linux, and
 	// compat/suites/rust-sdk/run.sh reaches the emulator that way.
 	env := overcastEnv(4570, 0, bindHosts("172.17.0.1"))
-	if !containsEnv(env, "OVERCAST_HOST=127.0.0.1,172.17.0.1") {
+	if !containsEnv(env, "OVERCAST_LISTEN=127.0.0.1,172.17.0.1") {
 		t.Errorf("overcastEnv did not add the bridge gateway: %v", env)
 	}
 }

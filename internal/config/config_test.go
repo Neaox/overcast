@@ -1050,9 +1050,9 @@ func TestLoad_hotReloadInheritance(t *testing.T) {
 
 // TestLoad_hostBinding verifies custom host binding.
 func TestLoad_hostBinding(t *testing.T) {
-	// Given: OVERCAST_HOST is set to localhost only
+	// Given: OVERCAST_LISTEN is set to localhost only
 	clearEnv(t)
-	t.Setenv("OVERCAST_HOST", "127.0.0.1")
+	t.Setenv("OVERCAST_LISTEN", "127.0.0.1")
 	t.Setenv("OVERCAST_PORT", "9000")
 
 	// When: we load config
@@ -1071,13 +1071,13 @@ func TestLoad_hostBinding(t *testing.T) {
 	}
 }
 
-// TestLoad_hostBindingList verifies OVERCAST_HOST accepts several addresses.
+// TestLoad_hostBindingList verifies OVERCAST_LISTEN accepts several addresses.
 func TestLoad_hostBindingList(t *testing.T) {
-	// Given: OVERCAST_HOST names loopback and a host-local bridge address —
+	// Given: OVERCAST_LISTEN names loopback and a host-local bridge address —
 	// the shape the compat launcher uses so a sibling container can reach an
 	// emulator that is otherwise invisible outside this machine
 	clearEnv(t)
-	t.Setenv("OVERCAST_HOST", " 127.0.0.1 , 172.17.0.1 ,,127.0.0.1 ")
+	t.Setenv("OVERCAST_LISTEN", " 127.0.0.1 , 172.17.0.1 ,,127.0.0.1 ")
 	t.Setenv("OVERCAST_PORT", "9000")
 
 	// When: we load config
@@ -1105,22 +1105,22 @@ func TestLoad_hostBindingList(t *testing.T) {
 // TestLoad_hostBindingRejectsWildcardInList verifies a wildcard cannot be
 // combined with a specific address.
 func TestLoad_hostBindingRejectsWildcardInList(t *testing.T) {
-	// Given: OVERCAST_HOST pairs a wildcard with a specific address
+	// Given: OVERCAST_LISTEN pairs a wildcard with a specific address
 	// When: we load config
 	// Then: it is refused. A wildcard already covers every address, and on
 	// Linux the second bind fails with EADDRINUSE — which would surface as a
 	// listen error at startup rather than as the configuration mistake it is.
 	for _, host := range []string{"0.0.0.0,127.0.0.1", "127.0.0.1,::", "::,127.0.0.1"} {
 		clearEnv(t)
-		t.Setenv("OVERCAST_HOST", host)
+		t.Setenv("OVERCAST_LISTEN", host)
 
 		_, err := config.Load()
 		if err == nil {
-			t.Errorf("OVERCAST_HOST=%q: expected an error, got none", host)
+			t.Errorf("OVERCAST_LISTEN=%q: expected an error, got none", host)
 			continue
 		}
-		if !strings.Contains(err.Error(), "OVERCAST_HOST") {
-			t.Errorf("OVERCAST_HOST=%q: error %q does not name the variable", host, err)
+		if !strings.Contains(err.Error(), "OVERCAST_LISTEN") {
+			t.Errorf("OVERCAST_LISTEN=%q: error %q does not name the variable", host, err)
 		}
 	}
 }
@@ -1128,9 +1128,9 @@ func TestLoad_hostBindingRejectsWildcardInList(t *testing.T) {
 // TestLoad_hostBindingBracketsIPv6Literals verifies an IPv6 address comes back
 // in a form net.Listen accepts.
 func TestLoad_hostBindingBracketsIPv6Literals(t *testing.T) {
-	// Given: OVERCAST_HOST pairing the two loopbacks
+	// Given: OVERCAST_LISTEN pairing the two loopbacks
 	clearEnv(t)
-	t.Setenv("OVERCAST_HOST", "127.0.0.1,::1")
+	t.Setenv("OVERCAST_LISTEN", "127.0.0.1,::1")
 	t.Setenv("OVERCAST_PORT", "9000")
 
 	// When: we load config
@@ -1152,24 +1152,24 @@ func TestLoad_hostBindingBracketsIPv6Literals(t *testing.T) {
 // TestLoad_hostBindingRejectsAnEmptyList verifies a list of nothing is an
 // error rather than a silent fall back to the wildcard.
 func TestLoad_hostBindingRejectsAnEmptyList(t *testing.T) {
-	// Given: OVERCAST_HOST set to separators and whitespace only
+	// Given: OVERCAST_LISTEN set to separators and whitespace only
 	// When: we load config
 	// Then: it is refused. Unset means "use the default"; set to something
 	// that names no address means the value is wrong, and defaulting it would
 	// bind every interface — the opposite of what anyone setting this wants.
 	for _, host := range []string{",", " , ", ",,"} {
 		clearEnv(t)
-		t.Setenv("OVERCAST_HOST", host)
+		t.Setenv("OVERCAST_LISTEN", host)
 
 		if _, err := config.Load(); err == nil {
-			t.Errorf("OVERCAST_HOST=%q: expected an error, got none", host)
+			t.Errorf("OVERCAST_LISTEN=%q: expected an error, got none", host)
 		}
 	}
 }
 
 // TestLoad_hostBindingDefaultsToWildcard verifies the default is unchanged.
 func TestLoad_hostBindingDefaultsToWildcard(t *testing.T) {
-	// Given: no OVERCAST_HOST
+	// Given: no OVERCAST_LISTEN
 	clearEnv(t)
 
 	// When: we load config
@@ -1184,6 +1184,66 @@ func TestLoad_hostBindingDefaultsToWildcard(t *testing.T) {
 	}
 	if got := cfg.Addrs(); len(got) != 1 {
 		t.Errorf("Addrs(): expected one address, got %v", got)
+	}
+}
+
+// TestLoad_listenAlone verifies OVERCAST_LISTEN, the only bind-address
+// variable since #870 renamed and removed OVERCAST_HOST, binds correctly.
+func TestLoad_listenAlone(t *testing.T) {
+	// Given: only OVERCAST_LISTEN is set
+	clearEnv(t)
+	t.Setenv("OVERCAST_LISTEN", "127.0.0.1")
+	t.Setenv("OVERCAST_PORT", "9000")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: it binds as expected
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Addr() != "127.0.0.1:9000" {
+		t.Errorf("Addr(): expected 127.0.0.1:9000, got %q", cfg.Addr())
+	}
+}
+
+// TestLoad_overcastHostRemoved_fails verifies that OVERCAST_HOST — the
+// pre-#870 name for the bind address — is not silently accepted, ignored, or
+// treated as an alias. Overcast is alpha software; the project's policy for a
+// removed setting is a loud startup failure naming the replacement, so a
+// leftover OVERCAST_HOST from before the rename cannot look like it took
+// effect while quietly doing nothing.
+func TestLoad_overcastHostRemoved_fails(t *testing.T) {
+	// Given: the pre-rename name is set, whether or not OVERCAST_LISTEN also is
+	for _, tc := range []struct {
+		name      string
+		setListen bool
+		listenVal string
+	}{
+		{name: "host alone", setListen: false},
+		{name: "host and listen set to the same value", setListen: true, listenVal: "127.0.0.1"},
+		{name: "host and listen set to different values", setListen: true, listenVal: "0.0.0.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_HOST", "127.0.0.1")
+			if tc.setListen {
+				t.Setenv("OVERCAST_LISTEN", tc.listenVal)
+			}
+
+			// When: we load config
+			_, err := config.Load()
+
+			// Then: it is refused, naming the replacement variable
+			if err == nil {
+				t.Fatal("expected an error when OVERCAST_HOST is set, got none")
+			}
+			for _, want := range []string{"OVERCAST_HOST", "OVERCAST_LISTEN", "removed"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
 	}
 }
 
@@ -1615,7 +1675,7 @@ func TestLoad_protocolStrictDisabledByDefault(t *testing.T) {
 func clearEnv(t *testing.T) {
 	t.Helper()
 	awsEmuVars := []string{
-		"OVERCAST_HOST", "OVERCAST_PORT", "OVERCAST_SERVICES", "OVERCAST_STATE",
+		"OVERCAST_HOST", "OVERCAST_LISTEN", "OVERCAST_PORT", "OVERCAST_SERVICES", "OVERCAST_STATE",
 		"OVERCAST_HYBRID_FLUSH_INTERVAL", "OVERCAST_HYBRID_SYNC", "OVERCAST_HYBRID_SYNC_INTERVAL",
 		"OVERCAST_HYBRID_DIRTY_ENTRY_THRESHOLD", "OVERCAST_HYBRID_DIRTY_BYTE_THRESHOLD",
 		"OVERCAST_WAL_FSYNC", "OVERCAST_WAL_FSYNC_INTERVAL", "OVERCAST_WAL_MAX_LOG_BYTES",

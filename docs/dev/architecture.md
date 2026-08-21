@@ -54,11 +54,12 @@ the design:
   will be. Do not make production go/no-go decisions on the basis of an
   Overcast test.
 - **Not a security boundary.** Credentials are accepted but not validated by
-  default. Never expose it on a public network — and note that `OVERCAST_HOST`
-  defaults to `0.0.0.0`, so a run with nothing set listens on every interface.
-  Set it to `127.0.0.1` on a network you do not trust. Whether the default
-  should narrow for native runs is
-  [#761](https://github.com/Neaox/overcast/issues/761).
+  default. Never expose it on a public network — and note that `OVERCAST_LISTEN`
+  (renamed from `OVERCAST_HOST`, which has been removed — see
+  [#870](https://github.com/Neaox/overcast/issues/870)) defaults to `0.0.0.0`,
+  so a run with nothing set listens on every interface. Set it to `127.0.0.1`
+  on a network you do not trust. Whether the default should narrow for native
+  runs is [#761](https://github.com/Neaox/overcast/issues/761).
 - **Not a performance testing tool.** No latency emulation, no request-rate
   limits, no per-service quotas. Overcast is deliberately as fast as it can be;
   making it artificially slow to "feel like AWS" is explicitly rejected. There
