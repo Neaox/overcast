@@ -787,6 +787,20 @@ func (s *HybridStore) Get(ctx context.Context, namespace, key string) (string, b
 
 // Set publishes the dirty overlay before writing memory so lazy SQLite-backed
 // reads cannot observe stale persisted state between the two updates.
+//
+// mem is only ever consulted by Get/List/Scan/ScanPage for a namespace when
+// shouldReadHybridNamespaceFromSQLite reports false — i.e. a TierHot
+// namespace, which mem must hold in full forever (that is the whole point of
+// the tier). For a TierCached namespace, every read path checks the pending
+// overlay first (dirty/flushing, populated by applyOverlayLocked just above)
+// and falls through to SQLite once ready; mem is reached only as the
+// pre-ready/degraded fallback, and by then the overlay already covers every
+// write this process has made that SQLite hasn't durably absorbed yet — see
+// flushOnce, which only ever clears an overlay entry once its op has
+// committed. Writing TierCached values into mem here would just pin a second,
+// permanently-retained, never-read copy of every write since process start
+// (#785) — mem never evicts, so that copy would sit resident for the rest of
+// the process's life regardless of whether anything ever reads it again.
 func (s *HybridStore) Set(ctx context.Context, namespace, key, value string) error {
 	s.mu.Lock()
 	seq := s.allocSeqLocked()
@@ -800,6 +814,10 @@ func (s *HybridStore) Set(ctx context.Context, namespace, key, value string) err
 	if trigger {
 		s.signalFlush()
 	}
+	if shouldReadHybridNamespaceFromSQLite(namespace) {
+		s.writes.Add(1)
+		return nil
+	}
 	err := s.mem.Set(ctx, namespace, key, value)
 	if err == nil {
 		s.writes.Add(1)
@@ -809,6 +827,8 @@ func (s *HybridStore) Set(ctx context.Context, namespace, key, value string) err
 
 // Delete publishes the tombstone before removing memory for the same reason as
 // Set: the dirty overlay is what makes lazy reads linearizable with writes.
+// Skips mem for TierCached namespaces for the same reason Set does — see its
+// doc comment.
 func (s *HybridStore) Delete(ctx context.Context, namespace, key string) error {
 	s.mu.Lock()
 	seq := s.allocSeqLocked()
@@ -821,6 +841,10 @@ func (s *HybridStore) Delete(ctx context.Context, namespace, key string) error {
 	s.mu.Unlock()
 	if trigger {
 		s.signalFlush()
+	}
+	if shouldReadHybridNamespaceFromSQLite(namespace) {
+		s.writes.Add(1)
+		return nil
 	}
 	err := s.mem.Delete(ctx, namespace, key)
 	if err == nil {
@@ -847,6 +871,14 @@ func (s *HybridStore) DeletePrefix(ctx context.Context, namespace, prefix string
 	s.mu.Unlock()
 	if trigger {
 		s.signalFlush()
+	}
+	// Skip mem for TierCached namespaces for the same reason Set does — see
+	// its doc comment. The prefix tombstone just recorded in the overlay
+	// above already shadows any not-yet-flushed key under prefix for every
+	// read path; mem was never holding TierCached data to delete from.
+	if shouldReadHybridNamespaceFromSQLite(namespace) {
+		s.writes.Add(1)
+		return nil
 	}
 	if deleter, ok := any(s.mem).(PrefixDeleter); ok {
 		err := deleter.DeletePrefix(ctx, namespace, prefix)
@@ -2575,15 +2607,23 @@ func (s *HybridStore) replayPendingLog() error {
 // locking s.mu here is harmless, not required for correctness, and kept only
 // so applyOverlayLocked has one calling convention). An unknown op is logged
 // and ignored instead of silently dropped.
+//
+// Skips mem for TierCached namespaces for the same reason Set does (see its
+// doc comment): the overlay update below already makes the replayed entry
+// visible to every read path, and a crash-recovery replay is exactly the
+// kind of write Set's fix targets — pinning it into mem here would silently
+// reopen #785 every time a process restarts with a non-empty pending log.
 func (s *HybridStore) applyPendingEntry(ctx context.Context, entry walEntry) {
-	switch entry.Op {
-	case walSet:
-		_ = s.mem.Set(ctx, entry.Namespace, entry.Key, entry.Value)
-	case walDelete:
-		_ = s.mem.Delete(ctx, entry.Namespace, entry.Key)
-	case walDeletePrefix:
-		if deleter, ok := any(s.mem).(PrefixDeleter); ok {
-			_ = deleter.DeletePrefix(ctx, entry.Namespace, entry.Key)
+	if !shouldReadHybridNamespaceFromSQLite(entry.Namespace) {
+		switch entry.Op {
+		case walSet:
+			_ = s.mem.Set(ctx, entry.Namespace, entry.Key, entry.Value)
+		case walDelete:
+			_ = s.mem.Delete(ctx, entry.Namespace, entry.Key)
+		case walDeletePrefix:
+			if deleter, ok := any(s.mem).(PrefixDeleter); ok {
+				_ = deleter.DeletePrefix(ctx, entry.Namespace, entry.Key)
+			}
 		}
 	}
 	s.mu.Lock()

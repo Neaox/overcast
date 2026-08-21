@@ -44,6 +44,8 @@ package state
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -268,4 +270,75 @@ func BenchmarkHybridStore_ColdStartHydration_1kEntries(b *testing.B) {
 
 func BenchmarkHybridStore_ColdStartHydration_50kEntries(b *testing.B) {
 	benchmarkHybridColdStartHydration(b, 50_000)
+}
+
+// ---- Retained heap after Set + Flush for a TierCached namespace (#785) ----
+
+// BenchmarkHybridStore_Set_TierCached_RetainedHeapAfterFlush measures the
+// exact term #785 changed: how much heap a sustained run of cold-tier writes
+// leaves resident AFTER those writes are durably flushed to SQLite, not just
+// the per-op allocation cost during the Set loop (already covered by
+// BenchmarkHybridStore_Set_TierCached above). Before the fix, HybridStore.Set
+// wrote every value into s.mem unconditionally regardless of tier, so a
+// TierCached namespace's data stayed pinned in memory for the rest of the
+// process's life even once durably in SQLite and the pending overlay entry
+// had been cleared — memory scaled with everything ever written, not the
+// working set. After the fix, Set skips mem entirely for TierCached
+// namespaces (mem is never the source of truth for them — every read either
+// hits the pending overlay or SQLite), so once Flush clears the overlay
+// there should be near-zero heap retained per entry.
+//
+// The value size (8 KiB) is deliberately large relative to the namespace's
+// own bookkeeping overhead, per this project's benchmark-shape rule (a
+// wrong-shape benchmark hid a 52x allocation regression before — see
+// docs/plans/storage-plan.md's PR #938/#945 history): retained bytes must be
+// dominated by the payload the fix stops duplicating, not by map/btree
+// entry overhead, or an improvement here could be lost in the noise floor.
+// Each entry's payload is also given DISTINCT content (index suffix on a
+// repeated filler), not one shared string reused across every Set call —
+// identical string content across iterations would let every dirty-overlay
+// and (pre-fix) mem entry alias the same underlying byte array, hiding
+// exactly the per-entry retention this benchmark exists to measure. This
+// was caught empirically: an earlier version of this benchmark reused one
+// value for all iterations and measured ~130 B retained per entry on the
+// pre-fix code — the shared backing array, not the fix — instead of the
+// ~8 KiB actually pinned per entry.
+//
+// Reported via b.ReportMetric as bytes retained per entry after Flush,
+// alongside the standard -benchmem allocs/op and B/op for the Set loop
+// itself (a live runtime.MemStats delta, not the testing.B allocation
+// counters, since those measure gross bytes allocated during the timed
+// loop, which includes memory that IS expected to be freed — retention is
+// what this benchmark exists to isolate).
+func BenchmarkHybridStore_Set_TierCached_RetainedHeapAfterFlush(b *testing.B) {
+	s := newBenchHybridStore(b)
+	ctx := context.Background()
+	filler := strings.Repeat("x", 8<<10) // 8 KiB — deployment-package/S3-object-shaped payload
+
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		key := fmt.Sprintf("us-east-1/bucket/obj-%d", i)
+		value := filler + fmt.Sprintf("-%d", i) // distinct content per entry, see doc comment
+		if err := s.Set(ctx, "s3:objects", key, value); err != nil {
+			b.Fatalf("Set: %v", err)
+		}
+	}
+	if err := s.Flush(ctx); err != nil {
+		b.Fatalf("Flush: %v", err)
+	}
+	b.StopTimer()
+
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	if b.N > 0 {
+		retainedPerEntry := (int64(after.HeapAlloc) - int64(before.HeapAlloc)) / int64(b.N)
+		b.ReportMetric(float64(retainedPerEntry), "B/retained-entry-after-flush")
+	}
 }

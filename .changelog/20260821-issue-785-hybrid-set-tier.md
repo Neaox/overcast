@@ -1,0 +1,1 @@
+* [state] `HybridStore.Set`/`Delete`/`DeletePrefix` no longer pin TierCached writes (S3 objects, SQS messages, Lambda deployment packages, CloudWatch Logs events, …) permanently in memory; they now live only in the pending overlay until flushed, then in SQLite
