@@ -13,10 +13,12 @@ import (
 )
 
 type createLoadBalancerReq struct {
-	Name   string `json:"Name"`
-	Type   string `json:"Type"`
-	Scheme string `json:"Scheme"`
-	VpcId  string `json:"VpcId"`
+	Name          string     `json:"Name"`
+	Type          string     `json:"Type"`
+	Scheme        string     `json:"Scheme"`
+	IpAddressType string     `json:"IpAddressType"`
+	VpcId         string     `json:"VpcId"`
+	Tags          []elbv2Tag `json:"Tags"`
 }
 
 type describeLoadBalancersReq struct {
@@ -28,12 +30,33 @@ type deleteLoadBalancerReq struct {
 	LoadBalancerArn string `json:"LoadBalancerArn"`
 }
 
+// reqMatcher is the wire shape of CreateTargetGroup/ModifyTargetGroup's
+// Matcher member.
+type reqMatcher struct {
+	HttpCode string `json:"HttpCode"`
+	GrpcCode string `json:"GrpcCode"`
+}
+
 type createTargetGroupReq struct {
-	Name       string `json:"Name"`
-	Protocol   string `json:"Protocol"`
-	Port       int    `json:"Port"`
-	VpcId      string `json:"VpcId"`
-	TargetType string `json:"TargetType"`
+	Name            string `json:"Name"`
+	Protocol        string `json:"Protocol"`
+	ProtocolVersion string `json:"ProtocolVersion"`
+	Port            int    `json:"Port"`
+	VpcId           string `json:"VpcId"`
+	TargetType      string `json:"TargetType"`
+	IpAddressType   string `json:"IpAddressType"`
+
+	HealthCheckEnabled         *bool       `json:"HealthCheckEnabled"`
+	HealthCheckProtocol        string      `json:"HealthCheckProtocol"`
+	HealthCheckPort            string      `json:"HealthCheckPort"`
+	HealthCheckPath            string      `json:"HealthCheckPath"`
+	HealthCheckIntervalSeconds *int        `json:"HealthCheckIntervalSeconds"`
+	HealthCheckTimeoutSeconds  *int        `json:"HealthCheckTimeoutSeconds"`
+	HealthyThresholdCount      *int        `json:"HealthyThresholdCount"`
+	UnhealthyThresholdCount    *int        `json:"UnhealthyThresholdCount"`
+	Matcher                    *reqMatcher `json:"Matcher"`
+
+	Tags []elbv2Tag `json:"Tags"`
 }
 
 type describeTargetGroupsReq struct {
@@ -42,6 +65,32 @@ type describeTargetGroupsReq struct {
 }
 
 type deleteTargetGroupReq struct {
+	TargetGroupArn string `json:"TargetGroupArn"`
+}
+
+// modifyTargetGroupReq is ModifyTargetGroup's request. Port, Protocol,
+// VpcId and TargetType are create-only in the real API — there is no field
+// for them here because ModifyTargetGroup does not accept them either.
+type modifyTargetGroupReq struct {
+	TargetGroupArn string `json:"TargetGroupArn"`
+
+	HealthCheckEnabled         *bool       `json:"HealthCheckEnabled"`
+	HealthCheckProtocol        string      `json:"HealthCheckProtocol"`
+	HealthCheckPort            string      `json:"HealthCheckPort"`
+	HealthCheckPath            string      `json:"HealthCheckPath"`
+	HealthCheckIntervalSeconds *int        `json:"HealthCheckIntervalSeconds"`
+	HealthCheckTimeoutSeconds  *int        `json:"HealthCheckTimeoutSeconds"`
+	HealthyThresholdCount      *int        `json:"HealthyThresholdCount"`
+	UnhealthyThresholdCount    *int        `json:"UnhealthyThresholdCount"`
+	Matcher                    *reqMatcher `json:"Matcher"`
+}
+
+type modifyTargetGroupAttributesReq struct {
+	TargetGroupArn string     `json:"TargetGroupArn"`
+	Attributes     []elbv2Tag `json:"Attributes"`
+}
+
+type describeTargetGroupAttributesReq struct {
 	TargetGroupArn string `json:"TargetGroupArn"`
 }
 
@@ -234,10 +283,15 @@ func (h *Handler) createLoadBalancerTyped(ctx context.Context, req *createLoadBa
 		DNSName:          dnsName,
 		Type:             lbType,
 		Scheme:           scheme,
+		IpAddressType:    req.IpAddressType,
 		State:            "active",
 		VpcId:            req.VpcId,
 		CreatedTime:      h.clk.Now(),
 		Region:           region,
+		Tags:             tagsFromWire(req.Tags),
+	}
+	if aerr := serviceutil.ValidateTags(elbv2TagCfg, lb.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if err := h.putLB(ctx, region, lb); err != nil {
 		return nil, protocol.ErrInternalError
@@ -290,6 +344,80 @@ func (h *Handler) deleteLoadBalancerTyped(ctx context.Context, req *deleteLoadBa
 	}, nil
 }
 
+// applyHealthCheckReq copies whichever health-check fields a Create or
+// Modify request set explicitly onto tg. Shared by createTargetGroupTyped
+// and modifyTargetGroupTyped so the two operations can't drift on how a
+// field gets applied.
+func applyHealthCheckReq(tg *TargetGroup, enabled *bool, hcProtocol, hcPort, hcPath string,
+	interval, timeout, healthy, unhealthy *int, matcher *reqMatcher) {
+	if enabled != nil {
+		tg.HealthCheckEnabled = *enabled
+	}
+	if hcProtocol != "" {
+		tg.HealthCheckProtocol = hcProtocol
+	}
+	if hcPort != "" {
+		tg.HealthCheckPort = hcPort
+	}
+	if hcPath != "" {
+		tg.HealthCheckPath = hcPath
+	}
+	if interval != nil {
+		tg.HealthCheckIntervalSeconds = *interval
+	}
+	if timeout != nil {
+		tg.HealthCheckTimeoutSeconds = *timeout
+	}
+	if healthy != nil {
+		tg.HealthyThresholdCount = *healthy
+	}
+	if unhealthy != nil {
+		tg.UnhealthyThresholdCount = *unhealthy
+	}
+	if matcher != nil {
+		tg.Matcher = &Matcher{HttpCode: matcher.HttpCode, GrpcCode: matcher.GrpcCode}
+	}
+}
+
+// applyHealthCheckDefaults fills in AWS's documented health-check defaults
+// for whatever a Create request left unset. "lambda" target groups do not
+// health-check over a protocol by default, so nothing is filled in for them
+// unless the request set it explicitly.
+func applyHealthCheckDefaults(tg *TargetGroup) {
+	if tg.TargetType == "lambda" {
+		return
+	}
+	if tg.HealthCheckProtocol == "" {
+		switch tg.Protocol {
+		case "TCP", "UDP", "TCP_UDP", "TLS":
+			tg.HealthCheckProtocol = "TCP"
+		default:
+			tg.HealthCheckProtocol = "HTTP"
+		}
+	}
+	if tg.HealthCheckPort == "" {
+		tg.HealthCheckPort = "traffic-port"
+	}
+	if tg.HealthCheckPath == "" && (tg.HealthCheckProtocol == "HTTP" || tg.HealthCheckProtocol == "HTTPS") {
+		tg.HealthCheckPath = "/"
+	}
+	if tg.HealthCheckIntervalSeconds == 0 {
+		tg.HealthCheckIntervalSeconds = 30
+	}
+	if tg.HealthCheckTimeoutSeconds == 0 {
+		tg.HealthCheckTimeoutSeconds = 5
+	}
+	if tg.HealthyThresholdCount == 0 {
+		tg.HealthyThresholdCount = 5
+	}
+	if tg.UnhealthyThresholdCount == 0 {
+		tg.UnhealthyThresholdCount = 2
+	}
+	if tg.Matcher == nil && (tg.HealthCheckProtocol == "HTTP" || tg.HealthCheckProtocol == "HTTPS") {
+		tg.Matcher = &Matcher{HttpCode: "200"}
+	}
+}
+
 func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetGroupReq) (*xmlTypedCreateTargetGroupResponse, *protocol.AWSError) {
 	name := req.Name
 	if name == "" {
@@ -307,13 +435,24 @@ func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetG
 		region, account, name, tgID[:12])
 
 	tg := &TargetGroup{
-		TargetGroupArn:  arn,
-		TargetGroupName: name,
-		Protocol:        req.Protocol,
-		Port:            req.Port,
-		VpcId:           req.VpcId,
-		TargetType:      tgType,
-		Region:          region,
+		TargetGroupArn:     arn,
+		TargetGroupName:    name,
+		Protocol:           req.Protocol,
+		ProtocolVersion:    req.ProtocolVersion,
+		Port:               req.Port,
+		VpcId:              req.VpcId,
+		TargetType:         tgType,
+		IpAddressType:      req.IpAddressType,
+		HealthCheckEnabled: true,
+		Region:             region,
+		Tags:               tagsFromWire(req.Tags),
+	}
+	applyHealthCheckReq(tg, req.HealthCheckEnabled, req.HealthCheckProtocol, req.HealthCheckPort, req.HealthCheckPath,
+		req.HealthCheckIntervalSeconds, req.HealthCheckTimeoutSeconds, req.HealthyThresholdCount, req.UnhealthyThresholdCount, req.Matcher)
+	applyHealthCheckDefaults(tg)
+
+	if aerr := serviceutil.ValidateTags(elbv2TagCfg, tg.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if err := h.putTG(ctx, region, tg); err != nil {
 		return nil, protocol.ErrInternalError
@@ -324,6 +463,108 @@ func (h *Handler) createTargetGroupTyped(ctx context.Context, req *createTargetG
 		Result:           xmlTypedCreateTargetGroupResult{TargetGroups: xmlTypedTGs{Items: []xmlTG{toTGXML(tg)}}},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
+}
+
+func (h *Handler) modifyTargetGroupTyped(ctx context.Context, req *modifyTargetGroupReq) (*xmlModifyTargetGroupResponse, *protocol.AWSError) {
+	arn := req.TargetGroupArn
+	if arn == "" {
+		return nil, errMissingParam("TargetGroupArn")
+	}
+	region := h.region(ctx)
+	tg, found, err := h.getTG(ctx, region, arn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	} else if !found {
+		return nil, errTGNotFound(arn)
+	}
+
+	applyHealthCheckReq(tg, req.HealthCheckEnabled, req.HealthCheckProtocol, req.HealthCheckPort, req.HealthCheckPath,
+		req.HealthCheckIntervalSeconds, req.HealthCheckTimeoutSeconds, req.HealthyThresholdCount, req.UnhealthyThresholdCount, req.Matcher)
+
+	if err := h.putTG(ctx, region, tg); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+
+	resp := &xmlModifyTargetGroupResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}
+	resp.Result.TargetGroups.Member = []xmlTG{toTGXML(tg)}
+	return resp, nil
+}
+
+func (h *Handler) modifyTargetGroupAttributesTyped(ctx context.Context, req *modifyTargetGroupAttributesReq) (*xmlModifyTargetGroupAttributesResponse, *protocol.AWSError) {
+	arn := req.TargetGroupArn
+	if arn == "" {
+		return nil, errMissingParam("TargetGroupArn")
+	}
+	region := h.region(ctx)
+	tg, found, err := h.getTG(ctx, region, arn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	} else if !found {
+		return nil, errTGNotFound(arn)
+	}
+
+	if tg.Attributes == nil {
+		tg.Attributes = map[string]string{}
+	}
+	for _, a := range req.Attributes {
+		if a.Key == "" {
+			continue
+		}
+		tg.Attributes[a.Key] = a.Value
+	}
+	if err := h.putTG(ctx, region, tg); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+
+	resp := &xmlModifyTargetGroupAttributesResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}
+	resp.Result.Attributes.Member = attributesXML(tg.Attributes)
+	return resp, nil
+}
+
+func (h *Handler) describeTargetGroupAttributesTyped(ctx context.Context, req *describeTargetGroupAttributesReq) (*xmlDescribeTargetGroupAttributesResponse, *protocol.AWSError) {
+	arn := req.TargetGroupArn
+	if arn == "" {
+		return nil, errMissingParam("TargetGroupArn")
+	}
+	region := h.region(ctx)
+	tg, found, err := h.getTG(ctx, region, arn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	} else if !found {
+		return nil, errTGNotFound(arn)
+	}
+
+	resp := &xmlDescribeTargetGroupAttributesResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}
+	resp.Result.Attributes.Member = attributesXML(tg.Attributes)
+	return resp, nil
+}
+
+// attributesXML renders a target group's Attributes map in AWS's documented
+// order-independent Key/Value member shape. DescribeTargetGroupAttributes
+// always answers the full list AWS ships defaults for; Overcast only stores
+// what ModifyTargetGroupAttributes (or a CFN TargetGroupAttributes property)
+// actually set, so an attribute this emulator has no opinion on is simply
+// absent rather than echoed back with a fabricated default.
+func attributesXML(attrs map[string]string) []xmlAttribute {
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]xmlAttribute, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, xmlAttribute{Key: k, Value: attrs[k]})
+	}
+	return out
 }
 
 func (h *Handler) describeTargetGroupsTyped(ctx context.Context, req *describeTargetGroupsReq) (*xmlTypedDescribeTargetGroupsResponse, *protocol.AWSError) {
@@ -509,6 +750,27 @@ func (h *Handler) describeTargetHealthTyped(ctx context.Context, req *describeTa
 type elbv2Tag struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
+}
+
+// tagsFromWire converts a Create request's inline Tags list into the map
+// form the store keeps. CreateLoadBalancer and CreateTargetGroup both accept
+// Tags directly (unlike ModifyTargetGroupAttributes' Attributes, tags need
+// no separate AddTags call to reach the record CDK just created).
+func tagsFromWire(tags []elbv2Tag) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(tags))
+	for _, t := range tags {
+		if t.Key == "" {
+			continue
+		}
+		out[t.Key] = t.Value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 type addTagsReq struct {

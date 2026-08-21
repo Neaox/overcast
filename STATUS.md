@@ -112,7 +112,7 @@
 | Backup          | 9   |
 | CloudTrail      | 12  |
 | EKS             | 50  |
-| ELBv2           | 18  |
+| ELBv2           | 21  |
 | MSK             | 30  |
 | Organizations   | 1   |
 | Transfer Family | 13  |

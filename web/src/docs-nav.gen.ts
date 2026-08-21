@@ -3152,13 +3152,48 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Behavior Notes",
+        "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Endpoints",
+        "id": "endpoints"
+      },
+      {
+        "depth": 3,
+        "text": "Load Balancers",
+        "id": "load-balancers"
+      },
+      {
+        "depth": 3,
+        "text": "Target Groups",
+        "id": "target-groups"
+      },
+      {
+        "depth": 3,
+        "text": "Listeners",
+        "id": "listeners"
+      },
+      {
+        "depth": 3,
+        "text": "Targets",
+        "id": "targets"
+      },
+      {
+        "depth": 3,
+        "text": "Listener Rules",
+        "id": "listener-rules"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },

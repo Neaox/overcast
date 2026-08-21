@@ -23,26 +23,6 @@ A load balancer is not metadata alone: a request addressed to its DNS name is
 forwarded to a target registered behind it, which is what makes a service
 deployed behind one reachable at the URL it was given.
 
-## Summary
-
-| Operation                      | Status         | Notes                                       |
-| ------------------------------ | -------------- | ------------------------------------------- |
-| `CreateLoadBalancer`           | ✅ Supported   | Creates load balancer metadata and DNS name |
-| `DescribeLoadBalancers`        | ✅ Supported   | Lists load balancers                        |
-| `DeleteLoadBalancer`           | ✅ Supported   | Deletes load balancer metadata              |
-| `CreateTargetGroup`            | ✅ Supported   | Creates target group metadata               |
-| `DescribeTargetGroups`         | ✅ Supported   | Lists target groups                         |
-| `DeleteTargetGroup`            | ✅ Supported   | Deletes target group metadata               |
-| `CreateListener`               | ✅ Supported   | Creates listener metadata                   |
-| `DescribeListeners`            | ✅ Supported   | Lists listeners                             |
-| `DeleteListener`               | ✅ Supported   | Deletes listener metadata                   |
-| `RegisterTargets`              | ✅ Supported   | Registers targets in a target group         |
-| `DeregisterTargets`            | ✅ Supported   | Deregisters targets from a target group     |
-| `DescribeTargetHealth`         | ✅ Supported   | Returns synthetic healthy target state      |
-| `CreateRule`                   | ❌ Unsupported | Not implemented                             |
-| `DescribeRules`                | ❌ Unsupported | Not implemented                             |
-| `ModifyLoadBalancerAttributes` | ❌ Unsupported | Not implemented                             |
-
 ## Behavior Notes
 
 - Service name in Overcast is `elbv2`.
@@ -60,7 +40,84 @@ deployed behind one reachable at the URL it was given.
 - An ECS service with a `loadBalancers` configuration registers and deregisters
   its tasks as it places and stops them, so scaling the service changes what the
   load balancer forwards to.
-- `DescribeTargetHealth` reports every registered target `healthy`; there are no
-  health checks behind it.
-- Only `forward` listener actions have a data-plane effect. Others are stored
-  and echoed back.
+- `DescribeTargetHealth` reports every registered target `healthy`. A target
+  group's `HealthCheck*` properties (path, port, protocol, interval, timeout,
+  thresholds, `Matcher`) are stored and echoed back by `DescribeTargetGroups`,
+  but nothing evaluates them against a target's actual state.
+- Only `forward` listener actions have a data-plane effect. `RedirectConfig`
+  and `FixedResponseConfig` round-trip through `DescribeListeners`, but a
+  request against such a listener is still forwarded rather than redirected
+  or answered with the fixed body. Weighted `ForwardConfig`,
+  `Certificates`/`SslPolicy`/`AlpnPolicy`/`MutualAuthentication`, the
+  Cognito/OIDC auth actions, and listener rules (`CreateRule`/`DescribeRules`)
+  are not modelled at all.
+
+<!-- BEGIN overcast:capabilities -->
+
+## Summary
+
+| Category       | ✅ Supported | ❌ Unsupported |
+| -------------- | ------------ | -------------- |
+| Load Balancers | 3            | 1              |
+| Target Groups  | 6            |                |
+| Listeners      | 3            |                |
+| Targets        | 3            |                |
+| Listener Rules |              | 2              |
+| Tags           | 3            |                |
+
+---
+
+## Endpoints
+
+### Load Balancers
+
+| Operation                      | Status         | Notes                                                                 | AWS Docs                                                                                                           |
+| ------------------------------ | -------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `CreateLoadBalancer`           | ✅ Supported   | Threads Type, Scheme, IpAddressType, Subnets, SecurityGroups and Tags | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html)           |
+| `DescribeLoadBalancers`        | ✅ Supported   |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeLoadBalancers.html)        |
+| `DeleteLoadBalancer`           | ✅ Supported   |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeleteLoadBalancer.html)           |
+| `ModifyLoadBalancerAttributes` | ❌ Unsupported |                                                                       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_ModifyLoadBalancerAttributes.html) |
+
+### Target Groups
+
+| Operation                       | Status       | Notes                                                                                                                                                                | AWS Docs                                                                                                            |
+| ------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `CreateTargetGroup`             | ✅ Supported | Threads TargetType, ProtocolVersion, IpAddressType, the HealthCheck* family, Matcher and Tags; health checks are stored and echoed but not evaluated against targets | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateTargetGroup.html)             |
+| `DescribeTargetGroups`          | ✅ Supported |                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeTargetGroups.html)          |
+| `DeleteTargetGroup`             | ✅ Supported |                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeleteTargetGroup.html)             |
+| `ModifyTargetGroup`             | ✅ Supported | Updates the HealthCheck* family and Matcher; TargetType/Protocol/Port/VpcId require replacement                                                                      | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_ModifyTargetGroup.html)             |
+| `ModifyTargetGroupAttributes`   | ✅ Supported | Stores and echoes attributes such as deregistration_delay.timeout_seconds; not enforced by the data plane                                                            | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_ModifyTargetGroupAttributes.html)   |
+| `DescribeTargetGroupAttributes` | ✅ Supported |                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeTargetGroupAttributes.html) |
+
+### Listeners
+
+| Operation           | Status       | Notes                                                                                                                                                                                                                                        | AWS Docs                                                                                                |
+| ------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `CreateListener`    | ✅ Supported | Forwards each DefaultActions member's Type, TargetGroupArn, Order, RedirectConfig and FixedResponseConfig; weighted ForwardConfig, Certificates/SslPolicy/AlpnPolicy/MutualAuthentication and the Cognito/OIDC auth actions are not modelled | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateListener.html)    |
+| `DescribeListeners` | ✅ Supported |                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeListeners.html) |
+| `DeleteListener`    | ✅ Supported |                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeleteListener.html)    |
+
+### Targets
+
+| Operation              | Status       | Notes                                                                                    | AWS Docs                                                                                                   |
+| ---------------------- | ------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `RegisterTargets`      | ✅ Supported |                                                                                          | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_RegisterTargets.html)      |
+| `DeregisterTargets`    | ✅ Supported |                                                                                          | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeregisterTargets.html)    |
+| `DescribeTargetHealth` | ✅ Supported | Always reports "healthy"; the stored HealthCheck* block is not evaluated against targets | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeTargetHealth.html) |
+
+### Listener Rules
+
+| Operation       | Status         | Notes | AWS Docs                                                                                            |
+| --------------- | -------------- | ----- | --------------------------------------------------------------------------------------------------- |
+| `CreateRule`    | ❌ Unsupported |       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateRule.html)    |
+| `DescribeRules` | ❌ Unsupported |       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeRules.html) |
+
+### Tags
+
+| Operation      | Status       | Notes                                               | AWS Docs                                                                                           |
+| -------------- | ------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `AddTags`      | ✅ Supported | Adds tags to load balancers and target groups       | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_AddTags.html)      |
+| `RemoveTags`   | ✅ Supported | Removes tags from load balancers and target groups  | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_RemoveTags.html)   |
+| `DescribeTags` | ✅ Supported | Describes tags for load balancers and target groups | [docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DescribeTags.html) |
+
+<!-- END overcast:capabilities -->
