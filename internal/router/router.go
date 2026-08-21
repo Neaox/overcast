@@ -514,9 +514,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("RegisterRoutes for enabled services")
 
 	// ---- Event notification wiring ----------------------------------------
-	// S3 notifications → SQS + Lambda + EventBridge: connect after all services
-	// are constructed.
-	s3Svc.InitNotifications(sqsSvc.Enqueuer(), lambdaSvc.Invoker(), ebSvc.BusPublisher(), bus, logger)
+	// S3 notifications → SQS + SNS + Lambda + EventBridge: connect after all
+	// services are constructed.
+	s3Svc.InitNotifications(sqsSvc.Enqueuer(), snsSvc.TopicPublisher(), lambdaSvc.Invoker(), ebSvc.BusPublisher(), bus, logger)
 	// Lambda → CloudWatch Logs: wire log writer so Lambda can write invocation logs.
 	lambdaSvc.InitLogWriter(logsSvc.LogWriter())
 	// Lambda bus: lifecycle events for topology / UI.

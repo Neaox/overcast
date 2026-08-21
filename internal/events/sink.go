@@ -40,6 +40,24 @@ type BusPublisher interface {
 	PublishBusEvent(ctx context.Context, entry BusEntry) error
 }
 
+// TopicPublisher is the narrow interface used by notification dispatchers to
+// publish event payloads to SNS topics (S3 bucket notifications). It lives in
+// the events package so both the dispatcher and the SNS implementation can
+// reference it without creating import cycles.
+//
+// topicARN is the full SNS topic ARN. subject and message become the SNS
+// notification envelope's Subject and Message fields, so message is the
+// already-marshalled JSON document a subscriber should read back — for S3
+// notifications, the {"Records":[…]} envelope as a string.
+//
+// A non-nil error means the publish was refused (no such topic); fan-out to
+// the topic's subscribers is asynchronous and its per-subscription failures
+// are reported through SNS's own delivery-failure path, exactly as they are
+// for a client Publish call.
+type TopicPublisher interface {
+	PublishToTopic(ctx context.Context, topicARN, subject, message string) error
+}
+
 // ReceivedMessage is a single message received from an SQS queue by
 // the event source mapping (ESM) SQS poller.
 type ReceivedMessage struct {

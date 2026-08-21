@@ -104,14 +104,15 @@ func (s *Service) Stop(ctx context.Context) {
 }
 
 // InitNotifications wires up the S3 event notification dispatcher.
-// Call this after constructing the S3, SQS, Lambda and EventBridge services so
-// the router can pass their narrow sink interfaces without creating an import
-// cycle between services.
+// Call this after constructing the S3, SQS, SNS, Lambda and EventBridge
+// services so the router can pass their narrow sink interfaces without
+// creating an import cycle between services.
 //
-// invoker is nil only in tests that wire notifications without Lambda, and
-// eventBus only in tests that wire them without EventBridge.
-func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker events.FunctionInvoker, eventBus events.BusPublisher, bus *events.Bus, logger *zap.Logger) {
-	NewNotificationDispatcher(s.handler.store, enqueuer, invoker, eventBus, bus, logger, s.cfg.Region)
+// topics is nil only in tests that wire notifications without SNS, invoker
+// only in tests that wire them without Lambda, and eventBus only in tests
+// that wire them without EventBridge.
+func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, topics events.TopicPublisher, invoker events.FunctionInvoker, eventBus events.BusPublisher, bus *events.Bus, logger *zap.Logger) {
+	NewNotificationDispatcher(s.handler.store, enqueuer, topics, invoker, eventBus, bus, logger, s.cfg.Region)
 }
 
 // GetObjectBytes returns the full body of an S3 object for internal callers

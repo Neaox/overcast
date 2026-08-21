@@ -130,6 +130,6 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "GetBucketNotificationConfiguration", Category: "Notifications",
 			Status: capabilities.StatusSupported, Notes: "Returns empty config if none set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketNotificationConfiguration", Category: "Notifications",
-			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for"},
+			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; SNS deliveries carry the Records JSON as the notification envelope's Message string with Subject \"Amazon S3 Notification\", as real S3 does; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for"},
 	)
 }

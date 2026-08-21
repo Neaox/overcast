@@ -89,6 +89,14 @@ func (s *Service) InitBus(b *events.Bus) {
 	s.handler.setBus(b)
 }
 
+// TopicPublisher returns the narrow internal-publish seam other services use
+// to deliver service-originated notifications to SNS topics — the S3 bucket
+// notification dispatcher publishes through it. Fan-out uses whatever delivery
+// wiring (SQS, Lambda, email, …) has been Init'd by the time an event fires.
+func (s *Service) TopicPublisher() events.TopicPublisher {
+	return s.handler
+}
+
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
