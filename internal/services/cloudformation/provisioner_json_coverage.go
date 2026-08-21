@@ -54,8 +54,8 @@ func (h *acmCertificateHandler) Create(ctx context.Context, router http.Handler,
 
 func (h *acmCertificateHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"CertificateArn": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "CertificateManager.DeleteCertificate", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "CertificateManager.DeleteCertificate", body)
+	return teardownError("DeleteCertificate", rec, err)
 }
 
 func (h *acmCertificateHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -96,7 +96,13 @@ func ecrApplyRepositoryPolicies(ctx context.Context, router http.Handler, rCtx *
 			return fmt.Errorf("SetRepositoryPolicy: %w", err)
 		}
 	} else if _, had := oldProps["RepositoryPolicyText"]; had {
-		_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepositoryPolicy", map[string]any{"repositoryName": name})
+		// Removing a policy the new template dropped. A policy that is not
+		// there is already in the state being asked for; anything else left it
+		// attached, which the update must not report as applied.
+		rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepositoryPolicy", map[string]any{"repositoryName": name})
+		if err := teardownError("DeleteRepositoryPolicy", rec, err); err != nil {
+			return err
+		}
 	}
 
 	lifecycleText := ""
@@ -109,7 +115,10 @@ func ecrApplyRepositoryPolicies(ctx context.Context, router http.Handler, rCtx *
 			return fmt.Errorf("PutLifecyclePolicy: %w", err)
 		}
 	} else if _, had := oldProps["LifecyclePolicy"]; had {
-		_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteLifecyclePolicy", map[string]any{"repositoryName": name})
+		rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteLifecyclePolicy", map[string]any{"repositoryName": name})
+		if err := teardownError("DeleteLifecyclePolicy", rec, err); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -180,8 +189,8 @@ func (h *ecrRepositoryHandler) Delete(ctx context.Context, router http.Handler, 
 		"repositoryName": name,
 		"force":          true,
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepository", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, ecrTargetPrefix+"DeleteRepository", body)
+	return teardownError("DeleteRepository", rec, err)
 }
 
 func (h *ecrRepositoryHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -289,8 +298,8 @@ func (h *cloudtrailTrailHandler) Delete(ctx context.Context, router http.Handler
 		name = physicalID[idx+1:]
 	}
 	body := map[string]any{"Name": name}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.DeleteTrail", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.DeleteTrail", body)
+	return teardownError("DeleteTrail", rec, err)
 }
 
 func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -402,9 +411,9 @@ func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handl
 }
 
 func (h *backupBackupVaultHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		backupVaultsPath+"/"+url.PathEscape(backupIDFromARN(physicalID)), "", nil)
-	return nil
+	return teardownError("DeleteBackupVault", rec, err)
 }
 
 func (h *backupBackupVaultHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -470,9 +479,9 @@ func (h *backupBackupPlanHandler) Create(ctx context.Context, router http.Handle
 // id, as this did before, never matched a plan and a stack delete left it
 // behind.
 func (h *backupBackupPlanHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		backupPlansPath+"/"+url.PathEscape(backupIDFromARN(physicalID)), "", nil)
-	return nil
+	return teardownError("DeleteBackupPlan", rec, err)
 }
 
 func (h *backupBackupPlanHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -525,8 +534,8 @@ func (h *transferServerHandler) Create(ctx context.Context, router http.Handler,
 
 func (h *transferServerHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"ServerId": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "TransferService.DeleteServer", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "TransferService.DeleteServer", body)
+	return teardownError("DeleteServer", rec, err)
 }
 
 func (h *transferServerHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -587,8 +596,8 @@ func (h *transferUserHandler) Delete(ctx context.Context, router http.Handler, c
 		"ServerId": parts[0],
 		"UserName": parts[1],
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "TransferService.DeleteUser", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "TransferService.DeleteUser", body)
+	return teardownError("DeleteUser", rec, err)
 }
 
 func (h *transferUserHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -661,8 +670,8 @@ func (h *shieldProtectionHandler) Create(ctx context.Context, router http.Handle
 
 func (h *shieldProtectionHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"ProtectionId": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSShield_20160616.DeleteProtection", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSShield_20160616.DeleteProtection", body)
+	return teardownError("DeleteProtection", rec, err)
 }
 
 func (h *shieldProtectionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -713,8 +722,8 @@ func (h *firehoseDeliveryStreamHandler) Create(ctx context.Context, router http.
 
 func (h *firehoseDeliveryStreamHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"DeliveryStreamName": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "Firehose_20150804.DeleteDeliveryStream", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Firehose_20150804.DeleteDeliveryStream", body)
+	return teardownError("DeleteDeliveryStream", rec, err)
 }
 
 func (h *firehoseDeliveryStreamHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -754,8 +763,8 @@ func (h *athenaWorkGroupHandler) Create(ctx context.Context, router http.Handler
 
 func (h *athenaWorkGroupHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"WorkGroup": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AmazonAthena.DeleteWorkGroup", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonAthena.DeleteWorkGroup", body)
+	return teardownError("DeleteWorkGroup", rec, err)
 }
 
 func (h *athenaWorkGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -796,8 +805,8 @@ func (h *glueDatabaseHandler) Create(ctx context.Context, router http.Handler, c
 
 func (h *glueDatabaseHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"Name": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSGlue.DeleteDatabase", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSGlue.DeleteDatabase", body)
+	return teardownError("DeleteDatabase", rec, err)
 }
 
 func (h *glueDatabaseHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -846,8 +855,8 @@ func (h *glueTableHandler) Delete(ctx context.Context, router http.Handler, cfg 
 		"DatabaseName": parts[0],
 		"Name":         parts[1],
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSGlue.DeleteTable", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSGlue.DeleteTable", body)
+	return teardownError("DeleteTable", rec, err)
 }
 
 func (h *glueTableHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -923,8 +932,8 @@ func (h *cloudwatchAlarmHandler) Delete(ctx context.Context, router http.Handler
 	body := map[string]any{
 		"AlarmNames": []string{physicalID},
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "GraniteServiceVersion20100801.DeleteAlarms", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "GraniteServiceVersion20100801.DeleteAlarms", body)
+	return teardownError("DeleteAlarms", rec, err)
 }
 
 func (h *cloudwatchAlarmHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1096,8 +1105,8 @@ func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handl
 		"Name":      parts[1],
 		"GroupName": parts[0],
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteSchedule", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteSchedule", body)
+	return teardownError("DeleteSchedule", rec, err)
 }
 
 func (h *schedulerScheduleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1154,8 +1163,8 @@ func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.
 
 func (h *schedulerScheduleGroupHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"Name": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteScheduleGroup", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteScheduleGroup", body)
+	return teardownError("DeleteScheduleGroup", rec, err)
 }
 
 func (h *schedulerScheduleGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1231,9 +1240,9 @@ func (h *opensearchDomainHandler) Delete(ctx context.Context, router http.Handle
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
 	}
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		opensearchDomainPath+"/"+url.PathEscape(name), "", nil)
-	return nil
+	return teardownError("DeleteDomain", rec, err)
 }
 
 func (h *opensearchDomainHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1314,9 +1323,9 @@ func (h *appconfigApplicationHandler) Create(ctx context.Context, router http.Ha
 }
 
 func (h *appconfigApplicationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		appconfigApplicationsPath+"/"+url.PathEscape(physicalID), nil)
-	return nil
+	return teardownError("DeleteApplication", rec, err)
 }
 
 func (h *appconfigApplicationHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1359,9 +1368,9 @@ func (h *appconfigEnvironmentHandler) Delete(ctx context.Context, router http.Ha
 	if len(parts) != 2 {
 		return nil
 	}
-	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		appconfigApplicationsPath+"/"+url.PathEscape(parts[0])+"/environments/"+url.PathEscape(parts[1]), nil)
-	return nil
+	return teardownError("DeleteEnvironment", rec, err)
 }
 
 func (h *appconfigEnvironmentHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1405,9 +1414,9 @@ func (h *appconfigConfigurationProfileHandler) Delete(ctx context.Context, route
 	if len(parts) != 2 {
 		return nil
 	}
-	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+	rec, err := internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
 		appconfigApplicationsPath+"/"+url.PathEscape(parts[0])+"/configurationprofiles/"+url.PathEscape(parts[1]), nil)
-	return nil
+	return teardownError("DeleteConfigurationProfile", rec, err)
 }
 
 func (h *appconfigConfigurationProfileHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

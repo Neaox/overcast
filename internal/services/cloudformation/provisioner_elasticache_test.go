@@ -122,6 +122,27 @@ func (f *fakeElastiCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			`</DescribeServerlessCachesResult></DescribeServerlessCachesResponse>`,
 			r.Form.Get("ServerlessCacheName"), f.script.next("AVAILABLE"))
 
+	// Rollback deletes what the failed create built, and its outcome decides
+	// whether the rollback completes. A double that has no answer for the
+	// delete makes every rollback here fail for a reason the test is not about.
+	case "DeleteCacheCluster":
+		fmt.Fprintf(w, `<DeleteCacheClusterResponse><DeleteCacheClusterResult><CacheCluster>`+
+			`<CacheClusterId>%s</CacheClusterId><CacheClusterStatus>deleting</CacheClusterStatus>`+
+			`</CacheCluster></DeleteCacheClusterResult></DeleteCacheClusterResponse>`,
+			r.Form.Get("CacheClusterId"))
+
+	case "DeleteReplicationGroup":
+		fmt.Fprintf(w, `<DeleteReplicationGroupResponse><DeleteReplicationGroupResult><ReplicationGroup>`+
+			`<ReplicationGroupId>%s</ReplicationGroupId><Status>deleting</Status>`+
+			`</ReplicationGroup></DeleteReplicationGroupResult></DeleteReplicationGroupResponse>`,
+			r.Form.Get("ReplicationGroupId"))
+
+	case "DeleteServerlessCache":
+		fmt.Fprintf(w, `<DeleteServerlessCacheResponse><DeleteServerlessCacheResult><ServerlessCache>`+
+			`<ServerlessCacheName>%s</ServerlessCacheName><Status>DELETING</Status>`+
+			`</ServerlessCache></DeleteServerlessCacheResult></DeleteServerlessCacheResponse>`,
+			r.Form.Get("ServerlessCacheName"))
+
 	default:
 		http.Error(w, "unexpected action "+action, http.StatusBadRequest)
 	}

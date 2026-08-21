@@ -2315,11 +2315,12 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 // which is what AWS does: the delete fails, the resource survives, and the
 // operator clears the block and tries again.
 //
-// It is a sentinel rather than "any error fails the delete" on purpose. Every
-// other handler swallows its own teardown errors so that a resource which is
-// already gone cannot wedge a stack teardown, and that is the behaviour worth
-// keeping — a resource refusing deletion is a different thing from a resource
-// that could not be reached.
+// It is a sentinel rather than "any error fails the delete" on purpose, and the
+// distinction it draws is what DeleteStack keys on: a resource refusing
+// deletion is a different thing from a resource that could not be reached, and
+// only the first should stop a teardown the operator asked for. The rollback
+// paths make no such distinction, because there a delete that did not happen is
+// the whole finding (see teardownError).
 //
 // TODO(priority:P2): route EC2's DependencyViolation through this sentinel too — AWS::EC2::SecurityGroup, Subnet, VPC and InternetGateway all refuse deletion while dependents remain, and their handlers still swallow that refusal and report the resource deleted.
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
@@ -2709,6 +2710,96 @@ func statusError(rec *httptest.ResponseRecorder) error {
 		return fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
 	return nil
+}
+
+// teardownError classifies the outcome of a delete dispatched while tearing a
+// resource down, so that every resource handler answers the question the same
+// way.
+//
+// A teardown succeeds only when the resource is gone, and there are two ways
+// for it to be gone: this delete removed it, or it was not there to begin with.
+// Anything else — the service refused, the service failed, the call never
+// reached it — is reported, because the resource is still standing and no
+// caller may record DELETE_COMPLETE over it. That is what the rollback paths
+// exist to notice: a rollback that cannot delete what the failed create built
+// reaches ROLLBACK_FAILED, which is the signal an operator needs, rather than
+// claiming a teardown that did not happen.
+//
+// Handlers used to discard the dispatch result outright and return nil. It read
+// as defensive — a resource that is already gone must never wedge a teardown —
+// but it bought that safety by reporting every failure as a success.
+// resourceAlreadyGone buys the same safety precisely.
+//
+// The operation name travels in the error because it reaches the operator as a
+// stack event's ResourceStatusReason, where a bare "HTTP 500" says nothing
+// about what was being torn down.
+//
+// TODO(priority:P2): route the handlers that still return their dispatch error raw through this too — around sixty Delete implementations (EC2, API Gateway, AppSync, EKS, EventBridge, KMS among them) report a plain error for a resource that is merely already gone, which is the same lie inverted: it fails a rollback over a resource nobody needs deleted.
+func teardownError(op string, rec *httptest.ResponseRecorder, err error) error {
+	if err == nil || resourceAlreadyGone(rec) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
+// resourceAlreadyGone reports whether a failed dispatch failed only because the
+// resource it names does not exist.
+//
+// AWS has no single shape for that answer and the emulator's services mirror
+// each one, so two signals are needed rather than one:
+//
+//   - HTTP 404. Every REST-shaped service answers this way, and Athena answers
+//     it for an absent workgroup under a generic InvalidRequestException.
+//   - Absence named in the error body. That covers both the specific codes
+//     (ResourceNotFoundException, DBSubnetGroupNotFoundFault,
+//     AWS.SimpleQueueService.NonExistentQueue, NoSuchEntity,
+//     TemplateDoesNotExist) — several of which carry HTTP 400, so the status
+//     alone is not enough — and the message under a code that does not name it
+//     at all. Auto Scaling's DeleteAutoScalingGroup answers a plain
+//     ValidationError for a group that is not there, and its message is the
+//     only thing separating that from a genuinely invalid request, on AWS as
+//     well as here.
+//
+// The body is scanned rather than parsed because the four protocols in play
+// spell the same answer four ways — JSON's __type, Query XML's Code, REST
+// JSON's message — and an error body carries nothing but that code and its
+// message, so a scan reads exactly the two fields a parser would.
+func resourceAlreadyGone(rec *httptest.ResponseRecorder) bool {
+	if rec == nil {
+		return false
+	}
+	if rec.Code == http.StatusNotFound {
+		return true
+	}
+	body := lettersLower(rec.Body.String())
+	for _, phrase := range absentResourcePhrases {
+		if strings.Contains(body, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// absentResourcePhrases are the ways AWS spells "it is not there" once
+// punctuation and case are stripped: "ResourceNotFoundException" and "name not
+// found" both reduce to notfound, "does not exist" and "TemplateDoesNotExist"
+// both to notexist.
+var absentResourcePhrases = []string{"notfound", "nonexistent", "nosuch", "notexist"}
+
+// lettersLower reduces a response body to lowercase letters, so that a phrase
+// can be matched across the punctuation, tag names and word breaks the four
+// protocols disagree about.
+func lettersLower(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			b.WriteRune(r + ('a' - 'A'))
+		} else if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // linkChildRequest wires an internal dispatch into the trace graph: the child
@@ -3144,8 +3235,8 @@ func (h *sqsQueueHandler) Delete(ctx context.Context, router http.Handler, cfg *
 	body := map[string]any{
 		"QueueUrl": queueURL,
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AmazonSQS.DeleteQueue", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonSQS.DeleteQueue", body)
+	return teardownError("DeleteQueue", rec, err)
 }
 
 // ── SNS Topic handler ──────────────────────────────────────────────────────
@@ -3403,8 +3494,8 @@ func (h *snsTopicHandler) Delete(ctx context.Context, router http.Handler, _ *co
 		"TopicArn": physicalID,
 		"Version":  "2010-03-31",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteTopic", rec, err)
 }
 
 // ── SNS Subscription handler ───────────────────────────────────────────────
@@ -3457,8 +3548,8 @@ func (h *snsSubscriptionHandler) Delete(ctx context.Context, router http.Handler
 		"SubscriptionArn": physicalID,
 		"Version":         "2010-03-31",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("Unsubscribe", rec, err)
 }
 
 func (h *snsSubscriptionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -3888,10 +3979,10 @@ func (h *dynamodbTableHandler) Delete(ctx context.Context, router http.Handler, 
 	if i := strings.LastIndex(physicalID, "/"); i >= 0 {
 		name = physicalID[i+1:]
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "DynamoDB_20120810.DeleteTable", map[string]any{
+	rec, err := internalJSON(ctx, router, rCtx.Region, "DynamoDB_20120810.DeleteTable", map[string]any{
 		"TableName": name,
 	})
-	return nil
+	return teardownError("DeleteTable", rec, err)
 }
 
 // ── Lambda Function handler ────────────────────────────────────────────────
@@ -4531,8 +4622,8 @@ func (h *lambdaAliasHandler) Delete(ctx context.Context, router http.Handler, _ 
 		return nil
 	}
 	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/aliases/" + url.PathEscape(parts[1])
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteAlias", rec, err)
 }
 
 // ── Lambda Function URL handler ───────────────────────────────────────────
@@ -4594,8 +4685,8 @@ func (h *lambdaUrlHandler) Delete(ctx context.Context, router http.Handler, _ *c
 	if qualifier != "" {
 		path += "?Qualifier=" + url.QueryEscape(qualifier)
 	}
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteFunctionUrlConfig", rec, err)
 }
 
 func mergeResourceTags(stackTags []Tag, rawResourceTags any) map[string]string {
@@ -4642,41 +4733,35 @@ func mergeStackTags(stackTags []Tag, resourceTags map[string]string) map[string]
 
 // ── IAM teardown ───────────────────────────────────────────────────────────
 
-// iamTeardownError classifies the outcome of an IAM delete dispatched while
-// tearing a resource down, so that every IAM handler answers a refusal the same
-// way.
+// iamTeardownError is teardownError plus the one outcome only IAM has: a
+// refusal that must fail the stack outright.
 //
 // Three outcomes, and the middle one is the point:
 //
-//   - HTTP 404 — the entity is already gone, which is a successful teardown.
-//     Nothing here may wedge a stack over a resource that no longer exists.
+//   - The entity is already gone, which is a successful teardown. Nothing here
+//     may wedge a stack over a resource that no longer exists. Shared with
+//     every other handler, via resourceAlreadyGone.
 //   - HTTP 409 — AWS's DeleteConflict: the entity still has dependencies, so
 //     IAM refuses and the entity survives. That refusal is wrapped in
 //     errDeletionBlocked, which is what makes deleteResource fail the stack
 //     rather than log the error and report DELETE_COMPLETE over an entity that
 //     is still standing. Real CloudFormation fails the stack here too, leaving
 //     the operator to clear the dependency and delete again.
-//   - Anything else — returned unwrapped, which leaves it swallowed on the
-//     teardown path (deleteResource logs it) and fatal on the rollback paths,
-//     exactly as before. A refusal by the entity is a different thing from a
-//     call that could not be made.
+//   - Anything else — reported unwrapped, which is fatal on the rollback paths
+//     and swallowed on the DeleteStack path (deleteResource logs it). A refusal
+//     by the entity is a different thing from a call that could not be made.
 //
 // The refusal's own code and message travel in the error so they reach the
 // stack event and the resource's status reason: tooling and operators key on
 // AWS's wording, not on the fact that something failed.
 func iamTeardownError(action, name string, rec *httptest.ResponseRecorder, err error) error {
-	if err == nil {
+	if err == nil || resourceAlreadyGone(rec) {
 		return nil
 	}
-	if rec != nil {
-		switch rec.Code {
-		case http.StatusNotFound:
-			return nil
-		case http.StatusConflict:
-			body := rec.Body.String()
-			return fmt.Errorf("%w: iam %s %s: %s: %s", errDeletionBlocked, action, name,
-				extractXMLValue(body, "Code"), extractXMLValue(body, "Message"))
-		}
+	if rec != nil && rec.Code == http.StatusConflict {
+		body := rec.Body.String()
+		return fmt.Errorf("%w: iam %s %s: %s: %s", errDeletionBlocked, action, name,
+			extractXMLValue(body, "Code"), extractXMLValue(body, "Message"))
 	}
 	return fmt.Errorf("iam %s %s: %w", action, name, err)
 }
@@ -4918,8 +5003,8 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 
 func (h *logsLogGroupHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"logGroupName": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", body)
+	return teardownError("DeleteLogGroup", rec, err)
 }
 
 func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -5012,8 +5097,8 @@ func (h *ssmParameterHandler) Create(ctx context.Context, router http.Handler, _
 
 func (h *ssmParameterHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"Name": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AmazonSSM.DeleteParameter", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonSSM.DeleteParameter", body)
+	return teardownError("DeleteParameter", rec, err)
 }
 
 func (h *ssmParameterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -5402,8 +5487,8 @@ func (h *secretsManagerSecretHandler) Delete(ctx context.Context, router http.Ha
 		"SecretId":                   physicalID,
 		"ForceDeleteWithoutRecovery": true,
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "secretsmanager.DeleteSecret", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.DeleteSecret", body)
+	return teardownError("DeleteSecret", rec, err)
 }
 
 // ── Custom resource handler (Lambda-backed) ────────────────────────────────

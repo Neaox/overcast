@@ -67,8 +67,9 @@ func (h *iamPolicyHandler) Delete(_ context.Context, _ http.Handler, _ *config.C
 // creates the dependency edge, and teardown runs in reverse), so the leftover
 // would strand the role and fail the stack teardown.
 //
-// A removal that fails is not reported: the entity may already be gone, which
-// is not an error. Deleting the entity itself is what surfaces a real leftover.
+// An entity that is already gone took its inline policy with it, so nothing is
+// reported for it. Every other failure is: the policy is still attached, and
+// the DeleteRole that follows will refuse because of it.
 func (h *iamPolicyHandler) DeleteWithProperties(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
 	policyName, _ := props["PolicyName"].(string)
 	if policyName == "" {
@@ -83,6 +84,7 @@ func (h *iamPolicyHandler) DeleteWithProperties(ctx context.Context, router http
 		return nil
 	}
 
+	var removalErr error
 	for _, target := range []struct{ propKey, action, param string }{
 		{"Roles", "DeleteRolePolicy", "RoleName"},
 		{"Groups", "DeleteGroupPolicy", "GroupName"},
@@ -97,15 +99,18 @@ func (h *iamPolicyHandler) DeleteWithProperties(ctx context.Context, router http
 			if entity == "" {
 				continue
 			}
-			_, _ = internalQuery(ctx, router, rCtx.Region, map[string]string{
+			rec, err := internalQuery(ctx, router, rCtx.Region, map[string]string{
 				"Action":     target.action,
 				"Version":    "2010-05-08",
 				target.param: entity,
 				"PolicyName": policyName,
 			})
+			// Every entity is attempted before reporting: one that refuses must
+			// not leave the policy attached to the others.
+			removalErr = errors.Join(removalErr, teardownError(target.action, rec, err))
 		}
 	}
-	return nil
+	return removalErr
 }
 
 func (h *iamPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
