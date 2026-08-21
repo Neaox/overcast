@@ -71,6 +71,7 @@ VERDICT_NOT_APPLICABLE = "not-applicable"
 VERDICT_RELEASE_PR = "release-pr"
 VERDICT_WAIVED = "waived"
 VERDICT_MISSING = "missing"
+VERDICT_DEPENDENCIES = "dependencies"
 
 # The whole of what a release-prep PR touches: the version it names, the
 # section that names it, and the fragments it consumes into that section.
@@ -154,6 +155,40 @@ EXEMPT_FILES = frozenset(
     }
 )
 
+# Automated dependency maintenance. The question this check asks — did
+# somebody decide, and say why? — is answered for Renovate's PRs once, in
+# .github/renovate.json5, where every update policy is written down and was
+# reviewed on its way in. Asking again on each weekly bump would put a
+# `/no-changelog` reflex on a schedule, which is the failure mode the reason
+# field exists to prevent (it is also what kept every Dependabot PR unmerged:
+# none of them could answer).
+#
+# Author alone is not enough: a bot login cannot be impersonated, but anyone
+# with write access can push more commits onto a bot's branch. So the
+# exemption takes the author AND the shape of the diff — every file must be a
+# dependency manifest Renovate is configured to touch. One file outside the
+# list and the PR is asked as usual, exactly like EXEMPT_* above. A major bump
+# that does merit a release note gets its fragment added by the human who
+# reviews it, and VERDICT_FRAGMENT already wins over this.
+DEPENDENCY_BOT = "renovate[bot]"
+DEPENDENCY_MANIFEST_FILES = frozenset(
+    {
+        "go.mod",
+        "go.sum",
+        "Dockerfile",
+        "web/package.json",
+        "web/pnpm-lock.yaml",
+        "web/pnpm-workspace.yaml",
+        "web/api/package.json",
+        ".github/renovate.json5",
+    }
+)
+# Action bumps edit `uses:` pins in workflows and composite actions.
+DEPENDENCY_MANIFEST_PREFIXES = (
+    ".github/workflows/",
+    ".github/actions/",
+)
+
 COMMAND_NONE = "none"
 COMMAND_WAIVE = "waive"
 COMMAND_REVOKE = "revoke"
@@ -216,6 +251,29 @@ def exempt(path: str) -> bool:
 def in_scope(paths: list[str]) -> list[str]:
     """The files that put this PR in scope — empty when none of them do."""
     return [path for path in paths if path.strip() and not exempt(path)]
+
+
+def dependency_manifest(path: str) -> bool:
+    """Is this a file Renovate is configured to touch?"""
+    path = tidy(path)
+    return path in DEPENDENCY_MANIFEST_FILES or path.startswith(
+        DEPENDENCY_MANIFEST_PREFIXES
+    )
+
+
+def dependency_bot_pr(author: str, paths: list[str]) -> bool:
+    """Is this Renovate doing exactly what .github/renovate.json5 told it to?
+
+    Both parts required — see the note on DEPENDENCY_BOT. An empty change list
+    degrades towards asking, as everywhere else in this file: not knowing what
+    changed is not the same as knowing only manifests did.
+    """
+    if author != DEPENDENCY_BOT:
+        return False
+    touched = [tidy(path) for path in paths if path.strip()]
+    if not touched:
+        return False
+    return all(dependency_manifest(path) for path in touched)
 
 
 def has_release_section(changelog: str, version: str) -> bool:
@@ -433,6 +491,17 @@ def command_check(args: argparse.Namespace) -> int:
         print(VERDICT_RELEASE_PR)
         return 0
 
+    # After the release check, before the scope test: like the release PR,
+    # this exemption takes the whole shape of the PR (author and diff), not
+    # where any one file lives.
+    if dependency_bot_pr(args.author.strip(), changed):
+        print(
+            "::notice::Automated dependency update: every file changed is a dependency manifest and the author is Renovate. The decision this check asks for is recorded in .github/renovate.json5.",
+            file=sys.stderr,
+        )
+        print(VERDICT_DEPENDENCIES)
+        return 0
+
     # No CHANGELOG.md carve-out, deliberately. A release window forbids
     # fragments, but the way out of that is to wait for the tag or to waive —
     # never to hand-edit the file the release PR owns. The exemption above is
@@ -504,6 +573,11 @@ def main() -> int:
         help="'true' when the checked-out VERSION has no tag yet (release-candidate-check.sh)",
     )
     check.add_argument("--version", default="", help="the checked-out VERSION")
+    check.add_argument(
+        "--author",
+        default="",
+        help="the PR author's login, for the dependency-bot exemption",
+    )
     check.add_argument(
         "--changelog", default="", help="the checked-out CHANGELOG.md"
     )

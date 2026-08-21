@@ -405,6 +405,48 @@ class CheckCommandTest(unittest.TestCase):
 	def test_an_unreadable_comments_file_asks_again(self) -> None:
 		self.assertEqual(gate.VERDICT_MISSING, self.run_check("--comments-file", "does-not-exist.json"))
 
+	def test_a_renovate_pr_touching_only_manifests_is_not_asked(self) -> None:
+		changed = self.write_changed(["go.mod", "go.sum", "Dockerfile"])
+		self.assertEqual(
+			gate.VERDICT_DEPENDENCIES,
+			self.run_check("--changed-files-file", changed, "--author", "renovate[bot]"),
+		)
+
+	# Anyone with write access can push onto a bot's branch, so the author
+	# alone must never clear the question.
+	def test_a_renovate_pr_carrying_a_code_file_is_asked(self) -> None:
+		changed = self.write_changed(["go.mod", "internal/services/sqs/handlers.go"])
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check("--changed-files-file", changed, "--author", "renovate[bot]"),
+		)
+
+	def test_a_human_touching_only_manifests_is_asked(self) -> None:
+		changed = self.write_changed(["go.mod", "go.sum"])
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check("--changed-files-file", changed, "--author", "someone"),
+		)
+
+	# The reviewer of a major bump can still answer with a fragment; it wins
+	# before the author is ever consulted.
+	def test_a_fragment_on_a_renovate_pr_still_wins(self) -> None:
+		changed = self.write_changed(["Dockerfile"])
+		self.assertEqual(
+			gate.VERDICT_FRAGMENT,
+			self.run_check(
+				".changelog/20260822-node-24.md",
+				"--changed-files-file", changed,
+				"--author", "renovate[bot]",
+			),
+		)
+
+	def test_an_unreadable_changed_list_is_not_a_dependency_pr(self) -> None:
+		self.assertEqual(
+			gate.VERDICT_MISSING,
+			self.run_check("--changed-files-file", "nope.txt", "--author", "renovate[bot]"),
+		)
+
 	def write_changelog(self, text: str = CHANGELOG) -> str:
 		path = Path(tempfile.mkdtemp()) / "CHANGELOG.md"
 		path.write_text(text, encoding="utf-8")
@@ -453,6 +495,43 @@ class CheckCommandTest(unittest.TestCase):
 	# CHANGELOG.md are both deliberately in scope.
 	def test_the_exemption_is_reached_before_the_scope_test(self) -> None:
 		self.assertNotEqual([], gate.in_scope(RELEASE_PR_PATHS))
+
+
+class DependencyBotTest(unittest.TestCase):
+	def test_manifests(self) -> None:
+		for path in (
+			"go.mod",
+			"go.sum",
+			"Dockerfile",
+			"web/package.json",
+			"web/pnpm-lock.yaml",
+			"web/pnpm-workspace.yaml",
+			"web/api/package.json",
+			".github/renovate.json5",
+			".github/workflows/test.yml",
+			".github/actions/docker-hub-mirror/action.yml",
+		):
+			self.assertTrue(gate.dependency_manifest(path), path)
+
+	def test_everything_else_is_not_a_manifest(self) -> None:
+		for path in (
+			"internal/services/sqs/handlers.go",
+			"scripts/changelog-required.py",
+			"compat/suites/cdk/package.json",
+			"web/src/main.tsx",
+			"Makefile",
+			".github/dependabot.yml",
+		):
+			self.assertFalse(gate.dependency_manifest(path), path)
+
+	def test_the_author_must_be_the_bot(self) -> None:
+		self.assertTrue(gate.dependency_bot_pr("renovate[bot]", ["go.mod"]))
+		self.assertFalse(gate.dependency_bot_pr("renovate", ["go.mod"]))
+		self.assertFalse(gate.dependency_bot_pr("", ["go.mod"]))
+
+	def test_an_empty_change_list_degrades_towards_asking(self) -> None:
+		self.assertFalse(gate.dependency_bot_pr("renovate[bot]", []))
+		self.assertFalse(gate.dependency_bot_pr("renovate[bot]", ["", "  "]))
 
 
 class ParseSubcommandTest(unittest.TestCase):
