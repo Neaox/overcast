@@ -1531,18 +1531,67 @@ func claimAnswersCaller(claim awsapi.Claim, credentialService string) bool {
 	}
 }
 
-// restClaimFor returns the modeled operation a request positively identifies,
-// or false when S3 must keep the path.
-func restClaimFor(operationRegistry *awsapi.Registry, r *http.Request) (awsapi.Claim, bool) {
+// claimScopeMismatchesCaller reports whether a modeled binding that did not
+// answer this caller (claimAnswersCaller already said no) failed because the
+// caller positively signed for a *different, real* AWS service — the one
+// case AWS itself answers with a scoped-credential error rather than routing
+// the request anywhere else. See #887.
+//
+// Two narrower cases deliberately still fall through to S3, unchanged:
+//   - claim.SigningName == "": the binding declares no expected signing name
+//     to name in the error (Overcast has nothing to tell the caller it wants
+//     instead), so there is nothing to answer with.
+//   - !awsapi.IsSigningName(credentialService): the caller's scope is not a
+//     signing name any pinned model actually declares — a typo, a
+//     placeholder, or a non-AWS SigV4 client's own convention rather than
+//     evidence a real AWS SDK produced this request. Overcast does not
+//     validate signatures, so an unrecognised scope on its own does not
+//     support a confident claim about what the caller meant; today's
+//     behaviour (S3's wildcard) is the safer default. This mirrors
+//     addressesNonS3's absent-scope branch, which the same rationale governs.
+//
+// Ambiguous claims never reach here: claimAnswersCaller already answers true
+// for them regardless of scope, so no ambiguous binding can be "mismatched".
+func claimScopeMismatchesCaller(claim awsapi.Claim, credentialService string) bool {
+	return claim.SigningName != "" && awsapi.IsSigningName(credentialService)
+}
+
+// restClaimOutcome classifies what a request positively identified against a
+// modeled REST binding: no claim at all, a claim that answers the caller, or
+// a claim the caller's own credential scope rules out for a different real
+// service.
+type restClaimOutcome uint8
+
+const (
+	// restClaimNone: no modeled binding answers this request; S3 keeps the path.
+	restClaimNone restClaimOutcome = iota
+	// restClaimAnswers: the modeled binding answers this caller.
+	restClaimAnswers
+	// restClaimScopeMismatch: the binding is real, but the caller's credential
+	// scope names a different real AWS service. AWS answers this with a
+	// scoped-credential error rather than routing to any service's handler.
+	restClaimScopeMismatch
+)
+
+// restClaimFor classifies a request against the modeled REST bindings and the
+// caller's SigV4 credential scope. See restClaimOutcome for what each result
+// means; restFallback decides what to write for each.
+func restClaimFor(operationRegistry *awsapi.Registry, r *http.Request) (awsapi.Claim, restClaimOutcome) {
 	credentialService := middleware.ServiceFromCredential(r)
 	if !addressesNonS3(r, credentialService) {
-		return awsapi.Claim{}, false
+		return awsapi.Claim{}, restClaimNone
 	}
 	claim, ok := claimModeledPath(operationRegistry, r)
 	if !ok {
-		return awsapi.Claim{}, false
+		return awsapi.Claim{}, restClaimNone
 	}
-	return claim, claimAnswersCaller(claim, credentialService)
+	if claimAnswersCaller(claim, credentialService) {
+		return claim, restClaimAnswers
+	}
+	if claimScopeMismatchesCaller(claim, credentialService) {
+		return claim, restClaimScopeMismatch
+	}
+	return awsapi.Claim{}, restClaimNone
 }
 
 // claimModeledPath walks the generated trie for a request, trying the escaped
@@ -1582,11 +1631,54 @@ func claimModeledPath(operationRegistry *awsapi.Registry, r *http.Request) (awsa
 
 func restFallback(operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if claim, ok := restClaimFor(operationRegistry, r); ok {
+		claim, outcome := restClaimFor(operationRegistry, r)
+		switch outcome {
+		case restClaimAnswers:
 			writeNotImplemented(w, r, claim)
-			return
+		case restClaimScopeMismatch:
+			writeScopeMismatch(w, r, claim)
+		case restClaimNone:
+			s3Router.ServeHTTP(w, r)
 		}
-		s3Router.ServeHTTP(w, r)
+	}
+}
+
+// scopeMismatchError builds the InvalidSignatureException AWS itself answers
+// when a SigV4 credential scope names a service other than the one the
+// endpoint expects. AWS validates the scope's service component against the
+// endpoint before it ever computes a signature, so this fires independently
+// of whether the signature itself would have verified — matching Overcast's
+// stance that reading the scope is free while validating it is out of scope
+// (#887). Message wording verified against real AWS's InvalidSignatureException.
+func scopeMismatchError(expectedSigningName string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidSignatureException",
+		Message:    fmt.Sprintf("Credential should be scoped to correct service: '%s'.", expectedSigningName),
+		HTTPStatus: http.StatusForbidden,
+	}
+}
+
+// writeScopeMismatch answers a scope-mismatched modeled binding in the error
+// envelope that operation's wire protocol expects — the same per-profile
+// dispatch writeNotImplemented uses, so a caller sees one consistent shape
+// from a service regardless of which of its errors it receives.
+func writeScopeMismatch(w http.ResponseWriter, r *http.Request, claim awsapi.Claim) {
+	aerr := scopeMismatchError(claim.SigningName)
+	switch claim.ErrorProfile {
+	case awsapi.ErrorProfileJSON:
+		protocol.WriteJSONError(w, r, aerr)
+	case awsapi.ErrorProfileEC2QueryXML:
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+	case awsapi.ErrorProfileQueryXML:
+		protocol.WriteQueryXMLError(w, r, aerr)
+	case awsapi.ErrorProfileXML:
+		protocol.WriteXMLError(w, r, aerr)
+	case awsapi.ErrorProfileRPCV2CBOR:
+		codec.RPCv2CBOR.WriteError(w, r, aerr)
+	case awsapi.ErrorProfileRPCV2JSON:
+		codec.RPCv2JSON.WriteError(w, r, aerr)
+	default:
+		protocol.WriteJSONError(w, r, aerr)
 	}
 }
 

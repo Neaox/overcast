@@ -1,6 +1,9 @@
 package awsapi
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Protocol identifies the wire protocol declared by an AWS Smithy service model.
 type Protocol string
@@ -173,4 +176,31 @@ func WalkSigningNames(visit func(service, signingName string) bool) {
 			return
 		}
 	}
+}
+
+// signingNames is every distinct SigV4 signing name WalkSigningNames visits,
+// lower-cased and built once so a lookup costs a map read rather than a scan
+// of restOperations.
+var signingNames = func() map[string]bool {
+	names := make(map[string]bool, 128)
+	WalkSigningNames(func(_, signingName string) bool {
+		names[strings.ToLower(signingName)] = true
+		return true
+	})
+	return names
+}()
+
+// IsSigningName reports whether name is a SigV4 signing name a pinned model
+// actually declares for some real AWS service — as opposed to a value a
+// caller invented, a typo, or Overcast's own service key where that key
+// happens to differ from the name an SDK signs with (see WalkSigningNames).
+// Comparison folds case: a credential scope's service component is
+// conventionally lower-case, but nothing enforces that on the wire.
+//
+// This exists so a caller can tell "signed for a different, real AWS
+// service" apart from "signed for something that isn't a service at all" —
+// the distinction the router's scope-mismatch answer depends on (#887): only
+// the first is evidence a genuine SDK produced the request.
+func IsSigningName(name string) bool {
+	return name != "" && signingNames[strings.ToLower(name)]
 }
