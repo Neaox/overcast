@@ -160,6 +160,20 @@ in the repository.
 
 All configuration is via environment variables. No config file required.
 
+<!--
+  This table mirrors the authoritative enumeration in the doc comment on
+  Config.Load in internal/config/config.go. When a variable is added or
+  removed there, update this table in the same change. Deliberately absent:
+  OVERCAST_DATA_DIR_SOURCE (internal provenance marker set by the Docker
+  image, not for end users) and removed variables that are no longer read
+  (OVERCAST_SERVICES, OVERCAST_MCP_REPLAY_LIMIT, and the per-service
+  LAMBDA_NETWORK/ECS_NETWORK/RDS_NETWORK/ELASTICACHE_NETWORK/MSK_NETWORK/
+  EKS_NETWORK/EFS_NETWORK, replaced by OVERCAST_NETWORK).
+-->
+The web console's `WEB_PORT` is documented under
+[Web management console](#web-management-console); everything the Go emulator
+itself reads is below.
+
 | Variable                         | Default                | Description                                                                          |
 | -------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
 | `OVERCAST_HOST`                  | `0.0.0.0`              | Hostname or IP to bind the AWS API to. Accepts a comma-separated list to bind several, e.g. `127.0.0.1,172.17.0.1` to be reachable from this machine and from its containers over the Docker bridge without being on any network the machine is attached to. A wildcard cannot be combined with a specific address. The web console binds the first address only |
@@ -197,6 +211,15 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
 | `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
 | `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait; also budgets the final store flush — if it can't finish in time the process exits anyway and unflushed writes replay from the pending log on next start |
+| `OVERCAST_PROTOCOL_STRICT`       | `false`                | Return `415` when a request arrives in a protocol the target service does not declare, instead of attempting the decode anyway |
+| `OVERCAST_DNS`                   | `true`                 | Run the built-in DNS resolver that serves the split-horizon names to the containers Overcast starts. Failing to bind the port is not fatal |
+| `OVERCAST_DNS_PORT`              | `53`                   | Port for the built-in DNS resolver. Docker's `--dns` cannot express a port, so anything other than `53` is only useful for tests |
+| `OVERCAST_HOT_RELOAD`            | `false`                | Umbrella switch for hot reload across every compute service — see [The inner loop](./local-dev.md) |
+| `OVERCAST_LAMBDA_HOT_RELOAD`     | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for Lambda functions                             |
+| `OVERCAST_ECS_HOT_RELOAD`        | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for ECS tasks                                    |
+| `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks: `shared`, `strict`, or `remapped` (`strict` and `remapped` currently fall back to `shared` with a startup warning; `netns` is rejected) — see [Local VPCs](./cdk/local-vpc.md) |
+| `OVERCAST_MCP_REMOTE_EXPOSURE`   | `false`                | **Security-relevant.** Declares that the MCP endpoint (`/_overcast/mcp`) will be reachable by non-local clients, and turns on bearer-token auth for every MCP request. Setting it `true` makes `OVERCAST_MCP_AUTH_TOKEN` mandatory — Overcast refuses to start without one. Note it does not itself change what Overcast binds: if `OVERCAST_HOST` exposes the port, the MCP endpoint is exposed with it, so set this (and a token) before exposing the port beyond localhost. Browser `Origin` checks (localhost origins only) are enforced on MCP regardless |
+| `OVERCAST_MCP_AUTH_TOKEN`        | —                      | Bearer token every MCP request must present once set (mandatory when `OVERCAST_MCP_REMOTE_EXPOSURE=true`; setting it alone also enables the auth check). Treat it like any other credential — anyone holding it can drive the emulator through MCP |
 | `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts is reachable on by name when it belongs to no VPC — the default data plane. A resource that names a VPC joins that VPC's network instead. Overcast derives a second network from this, `<name>_control`, which carries the Lambda Runtime API and the emulator endpoint; see [container networking](./dev/container-networking.md) |
 | `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD). The per-service socket overrides below must all address the **same** daemon: containers are attached to shared networks across service boundaries |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on. The addresses are not configurable and do not follow `OVERCAST_HOST`: Overcast binds loopback plus the one address containers on the control plane reach it at — its own address on that network when Overcast is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop |
@@ -208,12 +231,34 @@ All configuration is via environment variables. No config file required.
 | `LAMBDA_SEED_RUNTIME_IMAGES`     | `false`                | Pre-pull every currently-supported Lambda runtime image at startup                   |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
+| `LAMBDA_TAR_CACHE_MB`            | `256`                  | In-memory cache of pre-built cold-start code and layer tars; `0` disables it         |
+| `LAMBDA_PROACTIVE_INIT`          | `false`                | Pre-initialize one execution environment once a function's configuration settles     |
+| `LAMBDA_FETCH_REMOTE_LAYERS`     | `false`                | Download layers missing locally from real AWS (needs the `LAMBDA_REMOTE_AWS_*` credentials) |
+| `LAMBDA_LAYER_CACHE_DIR`         | `$OVERCAST_DATA_DIR/layers` | Where layer zips are looked up and cached, named `{sha256(arn)}.zip`            |
+| `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID` | —                     | AWS access key ID used by `LAMBDA_FETCH_REMOTE_LAYERS`                               |
+| `LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY` | —                 | AWS secret access key used by `LAMBDA_FETCH_REMOTE_LAYERS`                           |
+| `LAMBDA_REMOTE_AWS_SESSION_TOKEN` | —                     | Optional AWS session token used by `LAMBDA_FETCH_REMOTE_LAYERS`                      |
 | `ECS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for ECS — Unix path or `tcp://host:port`                             |
 | `ECS_KEEP_CONTAINERS`            | `false`                | Keep stopped ECS task containers after they exit                                     |
 | `OVERCAST_RDS_MODE`              | `live`                 | `live` runs a real engine container per instance; `mock` is metadata-only            |
 | `RDS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for RDS — Unix path or `tcp://host:port`                             |
 | `RDS_PORT_BASE`                  | `33060`                | Starting host port for RDS containers (each instance gets the next available port)   |
 | `RDS_KEEP_CONTAINERS`            | `false`                | Keep stopped RDS containers after instance deletion                                  |
+| `ELASTICACHE_DOCKER_SOCKET`      | _(Lambda socket)_      | Docker endpoint for ElastiCache — Unix path or `tcp://host:port`                     |
+| `ELASTICACHE_PORT_BASE`          | `63790`                | Starting host port for ElastiCache engine containers                                 |
+| `ELASTICACHE_KEEP_CONTAINERS`    | `false`                | Keep stopped ElastiCache containers after deletion                                   |
+| `MSK_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for MSK — Unix path or `tcp://host:port`                             |
+| `MSK_PORT_BASE`                  | `49092`                | Starting host port for MSK broker containers                                         |
+| `MSK_KEEP_CONTAINERS`            | `false`                | Keep stopped MSK containers after cluster deletion                                   |
+| `OVERCAST_EKS_MODE`              | `mock`                 | `mock` is metadata-only; `live` runs real cluster containers — see [eks.md](./services/eks.md) |
+| `EKS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for EKS — Unix path or `tcp://host:port`                             |
+| `OVERCAST_EFS_MODE`              | `live`                 | `live` backs file systems with real storage (inert without Docker); `mock` is metadata-only — see [efs.md](./services/efs.md) |
+| `EFS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for EFS — Unix path or `tcp://host:port`                             |
+| `OVERCAST_EFS_NFS`               | `false`                | Run one NFS-Ganesha export container per mount target (live mode only) — see [efs.md](./services/efs.md) |
+| `EFS_NFS_PORT_BASE`              | `22049`                | Starting host port for the NFS export containers                                     |
+| `EFS_NFS_IMAGE`                  | `registry.k8s.io/sig-storage/nfs-provisioner@sha256:…` | Digest-pinned image used for the NFS export containers               |
+| `OVERCAST_ECR_REGISTRY_PORT`     | `4510`                 | Host port the shared ECR registry container asks for; `0`, or a port already taken, falls back to an ephemeral port |
+| `OVERCAST_ECR_REGISTRY_PERSIST`  | `true`                 | Back the fixed-port registry with a named Docker volume, so pushed images survive a restart |
 | `OVERCAST_SMTP_MOCK`             | `true`                 | Enable built-in SMTP capture server (auto-disabled when `OVERCAST_SMTP_HOST` is set) |
 | `OVERCAST_SMTP_PORT`             | `1025`                 | Port for the mock SMTP server                                                        |
 | `OVERCAST_SMTP_HOST`             | —                      | External SMTP relay hostname (disables the mock server)                              |
@@ -222,6 +267,9 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_SMTP_PASSWORD`         | —                      | SMTP AUTH PLAIN password for external relay                                          |
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
+| `OVERCAST_INIT_ENABLED`          | `true`                 | Run init-hook scripts found in `OVERCAST_INIT_DIRS` at startup; set `false` to disable |
+| `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in stage subdirs (`boot.d/`, `start.d/`, `ready.d/`, `shutdown.d/`); LocalStack's layout is honoured for drop-in migration — see [Migrating from LocalStack](./migration-from-localstack.md) |
+| `OVERCAST_INIT_TIMEOUT`          | `30s`                  | Per-script timeout for init hooks                                                    |
 
 ### Service names
 
@@ -503,6 +551,8 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 | `/_overcast/debug/trace/{requestId}` | GET    | Full trace for one request: bodies, headers, log entries, AWS errors |
 | `/_overcast/debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
 | `/_overcast/debug/traces/count`      | GET    | Current trace buffer count and capacity               |
+| `/_overcast/debug/traces/search`     | GET    | Free-text search over retained traces                 |
+| `/_overcast/debug/ec2/vpcs`          | GET    | EC2 VPC-to-Docker-network wiring, for debugging VPC-backed networking. Service-specific debug routes live under `/_overcast/debug/<service>/…`; this is the only one today |
 
 Traces are retained under three rules, so that the request explaining a failure is
 still there when you go looking, without your having configured anything first:

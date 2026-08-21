@@ -114,6 +114,12 @@ Divergences from AWS:
 
 ## Supported resource types
 
+The provisioner registers handlers for **132 resource types** (122 provisioned
+for real, 10 stubs), plus dynamically resolved custom resources and nested
+stacks. The source of truth is the `resourceHandlers` map in
+`internal/services/cloudformation/provisioner.go`; the complete list, grouped
+by service, is in [cdk.md § Supported resource types](../cdk.md#supported-resource-types).
+
 The provisioner dispatches internal HTTP requests to the emulated services. Resources
 listed as **Provisioned** create real state in the target service; **Stub** resources
 generate a placeholder ID without side effects.
@@ -186,6 +192,10 @@ cluster, an ElastiCache cache and an MSK cluster all behave the same way.
 fresh tasks even when the task definition is unchanged. Those tasks resolve
 Secrets Manager and SSM values again at container start.
 
+The table below details physical ID formats and `Fn::GetAtt` attributes for the
+most commonly used types. It is **not** the complete registry — for the full
+132-type list see [cdk.md § Supported resource types](../cdk.md#supported-resource-types).
+
 | Resource Type                              | Status      | Physical ID Format        | GetAtt Attributes                               |
 | ------------------------------------------ | ----------- | ------------------------- | ----------------------------------------------- |
 | `AWS::SQS::Queue`                          | Provisioned | ARN                       | QueueName, Arn, QueueUrl                        |
@@ -198,7 +208,7 @@ Secrets Manager and SSM values again at container start.
 | `AWS::Lambda::Function`                    | Provisioned | ARN                       | Arn, FunctionName                               |
 | `AWS::Lambda::EventSourceMapping`          | Provisioned | UUID                      | —                                               |
 | `AWS::Lambda::LayerVersion`                | Provisioned | Layer version ARN         | LayerVersionArn                                 |
-| `AWS::Lambda::Permission`                  | Stub        | —                         | —                                               |
+| `AWS::Lambda::Permission`                  | Provisioned | `functionName\|statementId` | —                                             |
 | `AWS::IAM::Role`                           | Provisioned | ARN                       | Arn, RoleId, RoleName                           |
 | `AWS::IAM::Policy`                         | Provisioned | Stack-scoped name         | —                                               |
 | `AWS::IAM::ManagedPolicy`                  | Provisioned | Policy ARN                | Arn                                             |
