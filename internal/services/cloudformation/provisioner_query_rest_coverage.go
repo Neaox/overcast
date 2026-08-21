@@ -553,11 +553,8 @@ func (h *route53HostedZoneHandler) Create(ctx context.Context, router http.Handl
 }
 
 func (h *route53HostedZoneHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2013-04-01/hostedzone/"+physicalID, "", nil)
-	if err != nil {
-		return fmt.Errorf("DeleteHostedZone: %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2013-04-01/hostedzone/"+physicalID, "", nil)
+	return teardownError("DeleteHostedZone", rec, err)
 }
 
 func (h *route53HostedZoneHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -682,11 +679,12 @@ func (h *route53RecordSetHandler) Delete(ctx context.Context, router http.Handle
 		return fmt.Errorf("Route53: marshal ChangeResourceRecordSets (delete): %w", err)
 	}
 
+	// The record was there a moment ago, but the fetch and the change are two
+	// calls: a record that went between them is gone, which is what the delete
+	// was for.
 	path := fmt.Sprintf("/2013-04-01/hostedzone/%s/rrset", hostedZoneID)
-	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/xml", xmlBytes); err != nil {
-		return fmt.Errorf("ChangeResourceRecordSets (delete): %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/xml", xmlBytes)
+	return teardownError("ChangeResourceRecordSets (delete)", rec, err)
 }
 
 // route53RecordSetXML is the wire shape shared by the record fetch and the
@@ -855,13 +853,7 @@ func (h *route53HealthCheckHandler) Create(ctx context.Context, router http.Hand
 
 func (h *route53HealthCheckHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2013-04-01/healthcheck/"+physicalID, "", nil)
-	if err != nil {
-		if rec != nil && rec.Code == http.StatusNotFound {
-			return nil // already deleted
-		}
-		return fmt.Errorf("DeleteHealthCheck: %w", err)
-	}
-	return nil
+	return teardownError("DeleteHealthCheck", rec, err)
 }
 
 func (h *route53HealthCheckHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1011,11 +1003,8 @@ func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, 
 
 func (h *eksClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"name": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteCluster", body)
-	if err != nil {
-		return fmt.Errorf("DeleteCluster: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteCluster", body)
+	return teardownError("DeleteCluster", rec, err)
 }
 
 func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1111,11 +1100,8 @@ func (h *eksNodegroupHandler) Delete(ctx context.Context, router http.Handler, c
 		"clusterName":   clusterName,
 		"nodegroupName": nodegroupName,
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteNodegroup", body)
-	if err != nil {
-		return fmt.Errorf("DeleteNodegroup: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteNodegroup", body)
+	return teardownError("DeleteNodegroup", rec, err)
 }
 
 func (h *eksNodegroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1193,11 +1179,8 @@ func (h *eksFargateProfileHandler) Delete(ctx context.Context, router http.Handl
 		"clusterName":        clusterName,
 		"fargateProfileName": fargateProfileName,
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteFargateProfile", body)
-	if err != nil {
-		return fmt.Errorf("DeleteFargateProfile: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteFargateProfile", body)
+	return teardownError("DeleteFargateProfile", rec, err)
 }
 
 func (h *eksFargateProfileHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1243,11 +1226,8 @@ func (h *eksAddonHandler) Delete(ctx context.Context, router http.Handler, cfg *
 		"clusterName": clusterName,
 		"addonName":   addonName,
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAddon", body)
-	if err != nil {
-		return fmt.Errorf("DeleteAddon: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAddon", body)
+	return teardownError("DeleteAddon", rec, err)
 }
 
 func (h *eksAddonHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1287,11 +1267,8 @@ func (h *eksAccessEntryHandler) Delete(ctx context.Context, router http.Handler,
 		"clusterName":  clusterName,
 		"principalArn": principalArn,
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAccessEntry", body)
-	if err != nil {
-		return fmt.Errorf("DeleteAccessEntry: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAccessEntry", body)
+	return teardownError("DeleteAccessEntry", rec, err)
 }
 
 func (h *eksAccessEntryHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1366,11 +1343,8 @@ func (h *eksPodIdentityAssociationHandler) Create(ctx context.Context, router ht
 
 func (h *eksPodIdentityAssociationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"associationId": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeletePodIdentityAssociation", body)
-	if err != nil {
-		return fmt.Errorf("DeletePodIdentityAssociation: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeletePodIdentityAssociation", body)
+	return teardownError("DeletePodIdentityAssociation", rec, err)
 }
 
 func (h *eksPodIdentityAssociationHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1536,11 +1510,8 @@ func mskClusterNameFromARN(clusterARN string) string {
 func (h *mskClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	// The ARN is a non-greedy httpLabel, so it goes into one escaped path
 	// segment exactly as an SDK would send it.
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/clusters/"+url.PathEscape(physicalID), "", nil)
-	if err != nil {
-		return fmt.Errorf("DeleteCluster: %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/clusters/"+url.PathEscape(physicalID), "", nil)
+	return teardownError("DeleteCluster", rec, err)
 }
 
 func (h *mskClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1592,11 +1563,8 @@ func (h *mskConfigurationHandler) Create(ctx context.Context, router http.Handle
 }
 
 func (h *mskConfigurationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/configurations/"+url.PathEscape(physicalID), "", nil)
-	if err != nil {
-		return fmt.Errorf("DeleteConfiguration: %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/configurations/"+url.PathEscape(physicalID), "", nil)
+	return teardownError("DeleteConfiguration", rec, err)
 }
 
 func (h *mskConfigurationHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1651,11 +1619,8 @@ func (h *pipesPipeHandler) Create(ctx context.Context, router http.Handler, cfg 
 }
 
 func (h *pipesPipeHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/pipes/"+physicalID, "", nil)
-	if err != nil {
-		return fmt.Errorf("DeletePipe: %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/pipes/"+physicalID, "", nil)
+	return teardownError("DeletePipe", rec, err)
 }
 
 func (h *pipesPipeHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1885,11 +1850,8 @@ func (h *wafv2WebACLHandler) Delete(ctx context.Context, router http.Handler, cf
 		"Scope":     scope,
 		"LockToken": fmt.Sprintf("%s-%d", rCtx.StackName, len(rCtx.Resources)),
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AWSWAF_20190729.DeleteWebACL", body)
-	if err != nil {
-		return fmt.Errorf("DeleteWebACL: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSWAF_20190729.DeleteWebACL", body)
+	return teardownError("DeleteWebACL", rec, err)
 }
 
 func (h *wafv2WebACLHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

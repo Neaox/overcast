@@ -671,11 +671,11 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			continue
 		}
 		p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteInProgress, "")
-		// A refusal here does not fail the update. This is the cleanup phase,
-		// which AWS runs after the update has already succeeded and does not
-		// roll back — so the event says the resource is still standing and the
-		// stack still completes, rather than either lying about the delete or
-		// failing an update that worked.
+		// A teardown that could not finish here does not fail the update. This
+		// is the cleanup phase, which AWS runs after the update has already
+		// succeeded and does not roll back — so the event says the resource is
+		// still standing and the stack still completes, rather than either
+		// lying about the delete or failing an update that worked.
 		if err := p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, old.Properties, rCtx); err != nil {
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteFailed, err.Error())
 			continue
@@ -816,9 +816,11 @@ func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack)
 		stack.Resources[i].Status = ResourceDeleteInProgress
 		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteInProgress, "")
 		if err := p.deleteResource(ctx, r.LogicalID, r.Type, r.PhysicalID, r.Properties, rCtx); err != nil {
-			// The resource refused. Leave it in the stack's resource list —
-			// AWS keeps a DELETE_FAILED resource visible so the retry, once
-			// the block is cleared, knows what is still standing.
+			// The resource is still standing — it refused, or the delete
+			// failed. Leave it in the stack's resource list: AWS keeps a
+			// DELETE_FAILED resource visible so the retry, once the cause is
+			// cleared, knows what is still out there. Dropping it here would
+			// destroy the last record of a resource nothing else names.
 			stack.Resources[i].Status = ResourceDeleteFailed
 			stack.Resources[i].StatusReason = err.Error()
 			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteFailed, err.Error())
@@ -1150,11 +1152,23 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	return effectiveTagsUnchanged && (oldHash == "" || oldHash == hashProps(props))
 }
 
-// deleteResource tears down a provisioned resource.
+// deleteResource tears down a provisioned resource, and reports whatever the
+// handler answers.
 //
-// It reports only a refusal by the resource itself (errDeletionBlocked); every
-// other teardown error is logged and swallowed, so a resource that has already
-// gone cannot wedge a stack teardown.
+// It used to report only a refusal by the resource itself (errDeletionBlocked)
+// and swallow every other error, which meant DeleteStack recorded
+// DELETE_COMPLETE over a resource whose delete had genuinely failed — and, with
+// it, dropped the stack's record of the resource, the only thing that still
+// said the resource was out there. The filter was there to keep a resource that
+// was already gone from wedging a teardown, back when a handler could not tell
+// the two apart. Every handler now can: teardownError answers nil for a
+// resource that is absent and reports everything else, so the failures reaching
+// here are resources that are still standing.
+//
+// What each caller does with that is its own decision, and they differ as they
+// do on AWS: DeleteStack stops, because a teardown that cannot finish must not
+// claim it did, while the update cleanup phase records DELETE_FAILED on the
+// resource and lets an update that already succeeded complete.
 func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, props map[string]any, rCtx *resolveContext) error {
 	log := p.log.WithRecorder(ctx)
 	p.mu.Lock()
@@ -1178,10 +1192,7 @@ func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, ph
 		zap.String("logicalId", logicalID),
 		zap.String("physicalId", physicalID),
 		zap.Error(err))
-	if errors.Is(err, errDeletionBlocked) {
-		return err
-	}
-	return nil
+	return err
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -2348,14 +2359,16 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 // which is what AWS does: the delete fails, the resource survives, and the
 // operator clears the block and tries again.
 //
-// It is a sentinel rather than "any error fails the delete" on purpose, and the
-// distinction it draws is what DeleteStack keys on: a resource refusing
-// deletion is a different thing from a resource that could not be reached, and
-// only the first should stop a teardown the operator asked for. The rollback
-// paths make no such distinction, because there a delete that did not happen is
-// the whole finding (see teardownError).
+// It no longer decides whether a teardown stops — every error does that now,
+// because every one of them means the resource is still standing. What it
+// still marks is which kind of standing it is: a refusal is a lasting
+// condition an operator has to clear, where a failure may be transient and a
+// retry may be all it takes. That distinction reaches the operator through the
+// error text, which becomes the resource's DELETE_FAILED status reason, and a
+// nested stack carries its child's reason out under the same sentinel so the
+// parent's event says what the child refused over.
 //
-// TODO(priority:P2): route EC2's DependencyViolation through this sentinel too — AWS::EC2::SecurityGroup, Subnet, VPC and InternetGateway all refuse deletion while dependents remain, and their handlers still swallow that refusal and report the resource deleted.
+// TODO(priority:P2): route EC2's DependencyViolation through this sentinel too — AWS::EC2::SecurityGroup, Subnet, VPC and InternetGateway all refuse deletion while dependents remain, and their handlers report that refusal as an ordinary failure rather than as the standing condition it is.
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
@@ -2767,7 +2780,11 @@ func statusError(rec *httptest.ResponseRecorder) error {
 // stack event's ResourceStatusReason, where a bare "HTTP 500" says nothing
 // about what was being torn down.
 //
-// TODO(priority:P2): route the handlers that still return their dispatch error raw through this too — around sixty Delete implementations (EC2, API Gateway, AppSync, EKS, EventBridge, KMS among them) report a plain error for a resource that is merely already gone, which is the same lie inverted: it fails a rollback over a resource nobody needs deleted.
+// Every Delete in the package that dispatches now goes through here, which is
+// what lets both teardown paths treat an error as a resource still standing.
+// The two that do not are correct as they are: the custom resource's delete is
+// a Lambda invoke with no response to classify, and the S3 bucket's non-empty
+// refusal is an errDeletionBlocked the stack has to see.
 func teardownError(op string, rec *httptest.ResponseRecorder, err error) error {
 	if err == nil || resourceAlreadyGone(rec) {
 		return nil
@@ -4199,10 +4216,7 @@ func (h *lambdaFunctionHandler) Delete(ctx context.Context, router http.Handler,
 		name = physicalID[i+1:]
 	}
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2015-03-31/functions/"+url.PathEscape(name), "", nil)
-	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
-		return fmt.Errorf("lambda DeleteFunction: %w", err)
-	}
-	return nil
+	return teardownError("lambda DeleteFunction", rec, err)
 }
 
 // Update implements in-place updates for AWS::Lambda::Function. Code changes
@@ -4599,10 +4613,7 @@ func (h *lambdaPermissionHandler) Delete(ctx context.Context, router http.Handle
 	}
 	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/policy/" + url.PathEscape(parts[1])
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
-		return fmt.Errorf("lambda RemovePermission: %w", err)
-	}
-	return nil
+	return teardownError("lambda RemovePermission", rec, err)
 }
 
 // ── Lambda Alias handler ──────────────────────────────────────────────────
@@ -4776,13 +4787,12 @@ func mergeStackTags(stackTags []Tag, resourceTags map[string]string) map[string]
 //     every other handler, via resourceAlreadyGone.
 //   - HTTP 409 — AWS's DeleteConflict: the entity still has dependencies, so
 //     IAM refuses and the entity survives. That refusal is wrapped in
-//     errDeletionBlocked, which is what makes deleteResource fail the stack
-//     rather than log the error and report DELETE_COMPLETE over an entity that
-//     is still standing. Real CloudFormation fails the stack here too, leaving
-//     the operator to clear the dependency and delete again.
-//   - Anything else — reported unwrapped, which is fatal on the rollback paths
-//     and swallowed on the DeleteStack path (deleteResource logs it). A refusal
-//     by the entity is a different thing from a call that could not be made.
+//     errDeletionBlocked, which marks it as the standing condition it is:
+//     nothing will change until the operator clears the dependency. Real
+//     CloudFormation fails the stack here too.
+//   - Anything else — reported unwrapped. It fails the teardown just the same,
+//     because the entity is still standing either way; the wrapping only says
+//     whether a retry alone could get past it.
 //
 // The refusal's own code and message travel in the error so they reach the
 // stack event and the resource's status reason: tooling and operators key on

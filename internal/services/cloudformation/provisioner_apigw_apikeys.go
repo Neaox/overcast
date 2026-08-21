@@ -86,8 +86,8 @@ func (h *apigwApiKeyHandler) Delete(ctx context.Context, router http.Handler, cf
 	if physicalID == "" {
 		return nil
 	}
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/apikeys/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/apikeys/"+physicalID, "", nil)
+	return teardownError("DeleteApiKey", rec, err)
 }
 
 // ── AWS::ApiGateway::UsagePlan ─────────────────────────────────────────────
@@ -177,8 +177,8 @@ func (h *apigwUsagePlanHandler) Delete(ctx context.Context, router http.Handler,
 	if physicalID == "" {
 		return nil
 	}
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/usageplans/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/usageplans/"+physicalID, "", nil)
+	return teardownError("DeleteUsagePlan", rec, err)
 }
 
 func (h *apigwUsagePlanHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -258,8 +258,8 @@ func (h *apigwUsagePlanKeyHandler) Delete(ctx context.Context, router http.Handl
 			planID := physicalID[:i]
 			keyID := physicalID[i+1:]
 			path := fmt.Sprintf("/usageplans/%s/keys/%s", planID, keyID)
-			_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-			return err
+			rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+			return teardownError("DeleteUsagePlanKey", rec, err)
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"time"
 
@@ -99,8 +100,8 @@ func (h *ecsClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 
 func (h *ecsClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"cluster": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeleteCluster", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeleteCluster", body)
+	return teardownError("DeleteCluster", rec, err)
 }
 
 func (h *ecsClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -138,8 +139,30 @@ func (h *ecsTaskDefinitionHandler) Create(ctx context.Context, router http.Handl
 
 func (h *ecsTaskDefinitionHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"taskDefinition": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition", body)
+	if err != nil && taskDefinitionAlreadyGone(rec) {
+		return nil
+	}
+	return teardownError("DeregisterTaskDefinition", rec, err)
+}
+
+// taskDefinitionAlreadyGone reports whether ECS answered that the task
+// definition is not there.
+//
+// It exists because ECS is the one service whose absence answer
+// resourceAlreadyGone cannot see. A task definition that was never registered
+// is a ClientException on HTTP 400 whose message is the only distinguishing
+// mark — the same code carries every one of ECS's validation errors — so
+// neither the status nor a code naming absence is available to read. AWS
+// answers exactly this, and the message is generated in one place, on the
+// not-found branch of ecsStore.getTaskDefinition and getLatestTaskDefinition
+// (internal/services/ecs/store.go).
+//
+// Matching the message rather than widening absentResourcePhrases keeps the
+// shared predicate free of a phrase that means "absent" in this one service and
+// nothing in particular anywhere else.
+func taskDefinitionAlreadyGone(rec *httptest.ResponseRecorder) bool {
+	return rec != nil && strings.Contains(rec.Body.String(), "Unable to describe task definition")
 }
 
 // ── AWS::ECS::Service ──────────────────────────────────────────────────────

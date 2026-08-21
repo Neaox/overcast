@@ -525,8 +525,8 @@ func (h *eventsEventBusHandler) Delete(ctx context.Context, router http.Handler,
 		name = physicalID[idx+1:]
 	}
 	body := map[string]any{"Name": name}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.DeleteEventBus", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.DeleteEventBus", body)
+	return teardownError("DeleteEventBus", rec, err)
 }
 
 // ── AWS::Events::Rule ──────────────────────────────────────────────────────
@@ -660,8 +660,8 @@ func (h *eventsRuleHandler) Delete(ctx context.Context, router http.Handler, cfg
 	if eventBusName != "" {
 		body["EventBusName"] = eventBusName
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.DeleteRule", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSEvents.DeleteRule", body)
+	return teardownError("DeleteRule", rec, err)
 }
 
 func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -857,8 +857,8 @@ func (h *kmsKeyHandler) Delete(ctx context.Context, router http.Handler, cfg *co
 		"KeyId":               physicalID,
 		"PendingWindowInDays": 7,
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", body)
+	return teardownError("ScheduleKeyDeletion", rec, err)
 }
 
 func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1001,8 +1001,8 @@ func (h *kmsAliasHandler) Create(ctx context.Context, router http.Handler, cfg *
 
 func (h *kmsAliasHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"AliasName": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DeleteAlias", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DeleteAlias", body)
+	return teardownError("DeleteAlias", rec, err)
 }
 
 // ── AWS::Lambda::EventSourceMapping ────────────────────────────────────────
@@ -1098,8 +1098,8 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 
 func (h *lambdaEventSourceMappingHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	path := fmt.Sprintf("/2015-03-31/event-source-mappings/%s", physicalID)
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteEventSourceMapping", rec, err)
 }
 
 func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1332,10 +1332,8 @@ func (h *lambdaCodeSigningConfigHandler) Create(ctx context.Context, router http
 
 func (h *lambdaCodeSigningConfigHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	path := "/2020-04-22/code-signing-configs/" + physicalID
-	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
-		return fmt.Errorf("DeleteCodeSigningConfig: %w", err)
-	}
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteCodeSigningConfig", rec, err)
 }
 
 // ── AWS::StepFunctions::StateMachine ───────────────────────────────────────
@@ -1391,8 +1389,8 @@ func (h *sfnStateMachineHandler) Create(ctx context.Context, router http.Handler
 
 func (h *sfnStateMachineHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"stateMachineArn": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AWSStepFunctions.DeleteStateMachine", body)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSStepFunctions.DeleteStateMachine", body)
+	return teardownError("DeleteStateMachine", rec, err)
 }
 
 func (h *sfnStateMachineHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1463,8 +1461,8 @@ func (h *s3BucketPolicyHandler) Create(ctx context.Context, router http.Handler,
 
 func (h *s3BucketPolicyHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	path := "/" + physicalID + "?policy"
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteBucketPolicy", rec, err)
 }
 
 func (h *s3BucketPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
