@@ -104,6 +104,61 @@ func TestTeardownError(t *testing.T) {
 	})
 }
 
+// TestTeardownError_EC2DependencyViolation covers EC2's half of the sentinel:
+// DependencyViolation is EC2's answer for "a dependent still exists" across
+// several resource types — InternetGateway, the main-table case of
+// RouteTable, and VpnGateway all raise it today — and every one of their
+// Delete implementations dispatches through teardownError. It must wrap
+// errDeletionBlocked exactly the way IAM's DeleteConflict does, so a stack
+// teardown records the refusal as the standing condition it is rather than as
+// an ordinary — and possibly transient — failure.
+func TestTeardownError_EC2DependencyViolation(t *testing.T) {
+	const dependencyViolationBody = `<Response><Errors><Error>` +
+		`<Code>DependencyViolation</Code>` +
+		`<Message>The internetGateway 'igw-0123456789abcdef0' has dependencies and cannot be deleted</Message>` +
+		`</Error></Errors><RequestID>req-1</RequestID></Response>`
+
+	// The err argument mirrors what internalQuery actually hands teardownError
+	// for a non-2xx response: statusError(rec), which folds the response body
+	// into the error text. A bare placeholder error would let the classifier
+	// pass while telling the operator nothing AWS actually said.
+	t.Run("DependencyViolation blocks the stack and carries EC2's message", func(t *testing.T) {
+		rec := newTeardownRec(http.StatusBadRequest, dependencyViolationBody)
+		err := teardownError("DeleteInternetGateway", rec, statusError(rec))
+		if !errors.Is(err, errDeletionBlocked) {
+			t.Fatalf("got %v, want it to wrap errDeletionBlocked", err)
+		}
+		for _, want := range []string{"DeleteInternetGateway", "DependencyViolation", "has dependencies and cannot be deleted"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	})
+
+	t.Run("the same refusal blocks DeleteRouteTable and DeleteVpnGateway too", func(t *testing.T) {
+		for _, op := range []string{"DeleteRouteTable", "DeleteVpnGateway"} {
+			rec := newTeardownRec(http.StatusBadRequest, dependencyViolationBody)
+			err := teardownError(op, rec, statusError(rec))
+			if !errors.Is(err, errDeletionBlocked) {
+				t.Errorf("%s: got %v, want it to wrap errDeletionBlocked", op, err)
+			}
+		}
+	})
+
+	t.Run("an unrelated EC2 refusal stays a plain error", func(t *testing.T) {
+		rec := newTeardownRec(http.StatusBadRequest,
+			`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
+				`<Message>not a dependency problem</Message></Error></Errors></Response>`)
+		err := teardownError("DeleteSubnet", rec, statusError(rec))
+		if err == nil {
+			t.Fatal("got nil, want the refusal reported")
+		}
+		if errors.Is(err, errDeletionBlocked) {
+			t.Errorf("error %q wraps errDeletionBlocked; only a DependencyViolation refusal may do that", err)
+		}
+	})
+}
+
 // newTeardownRollbackFixture seeds a one-resource stack whose log group the
 // rollback has to delete, wired to a router the test controls.
 func newTeardownRollbackFixture(t *testing.T, router http.Handler) (*provisioner, *Stack) {
