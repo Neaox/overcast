@@ -312,6 +312,13 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 //
 // An awsvpc task gets one container more than it declares: the namespace its
 // containers share, started first and recorded on the task. See task_netns.go.
+//
+// Placement is all-or-nothing: a task whose third container cannot be pulled
+// has the two already running torn down before the error returns. Nothing
+// downstream would do it otherwise — launchTask persists the task STOPPED, so
+// no later pass walks its containers, and they would hold their ports and
+// memory until the GC's shutdown sweep. A service crash-looping on a bad image
+// leaks a fresh set on every replacement attempt.
 func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement, beforeStart func()) (retErr error) {
 	// Resolve how task containers reach Overcast. The planes themselves are
 	// created once by the Docker supervisor, before any client is handed to a
@@ -370,6 +377,21 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		}
 		return containerFailure(name, "ecs: %w", err)
 	}
+
+	// Containers this call has put on the daemon, in the order they were put
+	// there. A failure anywhere below unwinds all of them — including the one
+	// being placed when it happened, which is why the index is recorded as soon
+	// as the create returns rather than once the container is fully placed.
+	//
+	// Registered after the namespace container's own unwind above, so it runs
+	// before it: the application containers are torn down first, and then the
+	// namespace they were running inside.
+	var placed []int
+	defer func() {
+		if retErr != nil {
+			h.unwindTaskContainers(ctx, task, placed)
+		}
+	}()
 
 	// Every failure below belongs to the container being placed when it happens,
 	// and is returned naming it: the reason is recorded against that container
@@ -431,6 +453,14 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			return containerFailure(cd.Name, "ecs: create container %s: %w", cd.Name, decorateBindMountError(err, mounts))
 		}
 
+		// Claim it on the task record straight away: the unwind resolves a
+		// container's name through this to file its final output under, and a
+		// container that has to be torn down before it is fully placed is
+		// exactly the one whose output is worth keeping. RuntimeId, which is
+		// AWS's own field, still waits for a container that is actually running.
+		task.Containers[i].DockerID = dockerID
+		placed = append(placed, i)
+
 		// With TLS on, the task must trust the CA that minted Overcast's
 		// certificate before its first SDK call. Same mechanism as function
 		// code: CopyToContainer, because a dockerized Overcast has no host
@@ -439,7 +469,6 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			h.log.ZapLogger().Warn("ecs: CA bundle unavailable; task TLS calls to Overcast will fail verification", zap.Error(caErr))
 		} else if caTar != nil {
 			if err := h.docker.CopyToContainer(ctx, dockerID, "/", bytes.NewReader(caTar)); err != nil {
-				_ = h.docker.RemoveContainerForce(dockerID)
 				return containerFailure(cd.Name, "ecs: inject CA bundle into %s: %w", cd.Name, err)
 			}
 		}
@@ -457,14 +486,12 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// runs.
 		if namespaceID == "" {
 			if err := h.joinTaskDataPlane(ctx, placement, dockerID); err != nil {
-				_ = h.docker.RemoveContainerForce(dockerID)
 				return containerFailure(cd.Name, "ecs: container %s: %w", cd.Name, err)
 			}
 		}
 
 		beforeStart()
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {
-			_ = h.docker.RemoveContainerForce(dockerID)
 			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, decorateBindMountError(err, mounts))
 		}
 		if namespaceID == "" && placement.networkID != "" {
@@ -472,12 +499,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			// reports one privateIPv4Address per task, and Docker has given each
 			// of these containers an address of its own.
 			if err := h.attachTaskENI(ctx, task, placement, dockerID, i == 0); err != nil {
-				_ = h.docker.RemoveContainerForce(dockerID)
 				return containerFailure(cd.Name, "ecs: connect container %s to VPC network %s: %w", cd.Name, placement.networkID, err)
 			}
 		}
 
-		task.Containers[i].DockerID = dockerID
 		task.Containers[i].RuntimeId = dockerID
 
 		// Ship this container's output to CloudWatch Logs when the task
@@ -520,6 +545,61 @@ func (h *Handler) stopTaskContainers(ctx context.Context, task *Task) {
 	}
 	// Last: it is the namespace the containers above were running in.
 	h.retireTaskNamespaceContainer(ctx, task)
+}
+
+// unwindTaskContainers tears down the containers a placement had already put on
+// the daemon when it failed, named by their index into the task's containers in
+// the order they were placed. It is the launch-time counterpart of
+// retireTaskContainers: a task that could not be placed leaves nothing running.
+// An awsvpc task's namespace container is not among them — it is retired by its
+// own defer in startTaskContainers, which runs after this one so the containers
+// come down before the namespace they were running inside.
+//
+// The ordering is that function's, for that function's reason — stop, capture,
+// then remove — and see there for why the capture cannot sit on either side of
+// the pair instead. This path has the same thing to lose, and loses it to the
+// same reader: an image that will not pull, or a port already taken, is exactly
+// what somebody is trying to explain when they go looking for the output of the
+// sidecar that did come up.
+//
+// Teardown runs in reverse, so a container is gone before whatever it was
+// started alongside. Nothing here depends on that today — Overcast does not yet
+// order startup by dependsOn — but a partial placement unwound in placement
+// order tears down the containers a later one may still be talking to first.
+//
+// The Docker IDs stay on the task record afterwards, pointing at containers
+// that are gone. That is deliberate: the emulator's task-log endpoint gates on
+// a container having an ID before it will serve anything, retained copy
+// included, so clearing them would 404 the very output this just captured.
+// Nothing else is misled by them — every stop path tolerates a container Docker
+// answers 404 for, which is also what it answers for one that exited an hour
+// ago and has since been swept.
+func (h *Handler) unwindTaskContainers(ctx context.Context, task *Task, placed []int) {
+	if !h.dockerReady.Load() || h.docker == nil {
+		return
+	}
+	log := h.log.WithRecorder(ctx)
+	for n := len(placed) - 1; n >= 0; n-- {
+		i := placed[n]
+		dockerID := task.Containers[i].DockerID
+		if dockerID == "" {
+			continue
+		}
+		if err := h.docker.StopContainer(ctx, dockerID, 5); err != nil {
+			log.Warn("ecs: unwind failed task: could not stop container",
+				zap.String("container", dockerID), zap.Error(err))
+		}
+		h.captureContainerLogs(ctx, task, dockerID)
+		if h.cfg != nil && h.cfg.ECSKeepContainers {
+			// Kept deliberately for post-mortem inspection, and a launch that
+			// failed is the post-mortem this flag is usually set for.
+			continue
+		}
+		if err := h.docker.RemoveContainerForce(dockerID); err != nil {
+			log.Warn("ecs: unwind failed task: could not remove container",
+				zap.String("container", dockerID), zap.Error(err))
+		}
+	}
 }
 
 // mergeDockerLabels adds a container definition's dockerLabels to Overcast's

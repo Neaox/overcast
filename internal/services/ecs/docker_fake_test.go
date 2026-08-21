@@ -56,6 +56,33 @@ type fakeECSDockerDaemon struct {
 	// ordering bug.
 	logs    map[string][]byte
 	removed map[string]bool
+
+	// refuseStart holds the container-definition names whose start the daemon
+	// rejects, for the tests about a task that is only partly placed.
+	refuseStart []string
+}
+
+// failStartOf makes the daemon refuse to start the container placed for the
+// named container definition, the way it refuses one whose port is already
+// taken.
+func (fd *fakeECSDockerDaemon) failStartOf(containerName string) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.refuseStart = append(fd.refuseStart, containerName)
+}
+
+// containerIDOf returns the ID the daemon minted for the named container
+// definition — the first, should a task hold more than one whose name ends
+// that way — or "" if nothing was created for it.
+func (fd *fakeECSDockerDaemon) containerIDOf(containerName string) string {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	for _, c := range fd.created {
+		if c.placedAs(containerName) {
+			return c.id
+		}
+	}
+	return ""
 }
 
 // createdContainer is one container create the daemon answered, paired with the
@@ -66,6 +93,14 @@ type createdContainer struct {
 	name string
 	id   string
 	req  docker.CreateContainerRequest
+}
+
+// placedAs reports whether this container was created for the named container
+// definition. Overcast names a task's containers
+// "overcast-ecs-<cluster>-<task>-<definition>", so the definition is the
+// suffix.
+func (c createdContainer) placedAs(containerName string) bool {
+	return strings.HasSuffix(c.name, "-"+containerName)
 }
 
 // createdContainers returns the creates the daemon has answered, in order.
@@ -197,11 +232,31 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			w.WriteHeader(http.StatusNoContent)
 
 		case strings.HasSuffix(p, "/start"):
-			fd.mu.Lock()
 			containerID := containerIDFromPath(p)
-			fd.started = append(fd.started, containerID)
+			fd.mu.Lock()
+			refused := false
+			for _, c := range fd.created {
+				if c.id != containerID {
+					continue
+				}
+				for _, name := range fd.refuseStart {
+					if c.placedAs(name) {
+						refused = true
+						break
+					}
+				}
+				break
+			}
+			if !refused {
+				fd.started = append(fd.started, containerID)
+			}
 			onStart := fd.onStart
 			fd.mu.Unlock()
+			if refused {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"message":"driver failed programming external connectivity on endpoint ` + containerID + `"}`)) //nolint:errcheck
+				return
+			}
 			if onStart != nil {
 				onStart(containerID)
 			}
