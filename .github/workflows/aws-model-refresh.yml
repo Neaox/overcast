@@ -171,10 +171,20 @@ jobs:
 
       - name: Validate generated ownership and full regeneration
         if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
+        id: validate
+        continue-on-error: true
+        shell: bash
         env:
           AWS_MODELS_DIR: ${{ env.MODEL_CHECKOUT }}/models
           AWS_MODELS_REVISION: ${{ steps.upstream.outputs.latest_revision }}
-        run: make aws-models-check
+        run: |
+          set -euo pipefail
+          # A failure here is a legitimate finding (AWS moved a binding this
+          # repo implements), not noise. continue-on-error lets the branch
+          # and PR steps below still run so that finding lands somewhere a
+          # maintainer will see it, instead of a red scheduled run nobody
+          # opens. The captured log feeds the PR body.
+          make aws-models-check 2>&1 | tee "$RUNNER_TEMP/aws-models-check.log"
 
       - name: Commit and update the dedicated branch
         if: steps.upstream.outputs.changed == 'true' && steps.branch.outputs.refresh_needed == 'true'
@@ -208,17 +218,61 @@ jobs:
         env:
           LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
           MODEL_DATE: ${{ steps.generate.outputs.model_date }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
         run: |
           set -euo pipefail
           short_revision="${LATEST_REVISION:0:12}"
+          # This label already reads "Blocked on a named dependency, decision,
+          # or verification step" — a failed gate is exactly that, and it
+          # keeps anyone merging on autopilot from missing it.
+          gate_label="status/blocked"
+
+          if [[ "$VALIDATE_OUTCOME" == "failure" ]]; then
+            pr_title="chore(aws-models): refresh to $short_revision — verification failed"
+          else
+            pr_title="chore(aws-models): refresh to $short_revision"
+          fi
+
           {
+            if [[ "$VALIDATE_OUTCOME" == "failure" ]]; then
+              echo "**Verification failed — a modeled binding moved.**"
+              echo
+              echo "\`make aws-models-check\` failed against this refresh: a REST-bound"
+              echo "operation, a protocol binding, or a Supported row likely moved"
+              echo "upstream. Review the gate output below before merging this by hand —"
+              echo "this PR is not safe to merge as-is."
+              echo
+              echo "<details><summary>Gate output (<code>make aws-models-check</code>)</summary>"
+              echo
+              echo '```'
+              if [[ -s "$RUNNER_TEMP/aws-models-check.log" ]]; then
+                tail -c 8000 "$RUNNER_TEMP/aws-models-check.log"
+                if [[ "$(wc -c < "$RUNNER_TEMP/aws-models-check.log")" -gt 8000 ]]; then
+                  echo
+                  echo "... (truncated to the last 8000 characters; see the workflow run for the full log)"
+                fi
+              else
+                echo "(no output captured)"
+              fi
+              echo '```'
+              echo
+              echo "</details>"
+              echo
+            else
+              echo "Verification passed — \`make aws-models-check\` is clean against this revision."
+              echo
+            fi
             echo "This automated PR refreshes the pinned AWS Smithy models to \`$LATEST_REVISION\` ($MODEL_DATE)."
             echo
             cat "$RUNNER_TEMP/aws-model-summary.md"
             echo
             echo "## Verification"
             echo
-            echo "- \`make aws-models-check\`"
+            if [[ "$VALIDATE_OUTCOME" == "failure" ]]; then
+              echo "- \`make aws-models-check\` — **failed**, see gate output above"
+            else
+              echo "- \`make aws-models-check\` — passed"
+            fi
             echo "- Full byte-for-byte regeneration from the verified upstream checkout"
             echo
             echo "This workflow never merges the PR automatically."
@@ -232,12 +286,24 @@ jobs:
             --jq '.[0].number // empty')"
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" \
-              --title "chore(aws-models): refresh to $short_revision" \
+              --title "$pr_title" \
               --body-file "$RUNNER_TEMP/aws-model-pr.md"
           else
             gh pr create \
               --base main \
               --head "$UPDATE_BRANCH" \
-              --title "chore(aws-models): refresh to $short_revision" \
+              --title "$pr_title" \
               --body-file "$RUNNER_TEMP/aws-model-pr.md"
+            pr_number="$(gh pr list \
+              --state open \
+              --base main \
+              --head "$UPDATE_BRANCH" \
+              --json number \
+              --jq '.[0].number // empty')"
+          fi
+
+          if [[ "$VALIDATE_OUTCOME" == "failure" ]]; then
+            gh pr edit "$pr_number" --add-label "$gate_label"
+          else
+            gh pr edit "$pr_number" --remove-label "$gate_label"
           fi
