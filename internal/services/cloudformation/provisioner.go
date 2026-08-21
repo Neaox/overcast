@@ -5348,11 +5348,18 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 		}
 		return "", nil, fmt.Errorf("logs %s: %w", operation, operationErr)
 	}
-	// TODO(priority:P3): coerce a string RetentionInDays to a number before dispatching — a String-typed Ref or Parameter yields "7" rather than 7, which fails JSON decoding in the Logs service instead of being accepted as CloudFormation accepts it.
+	// CloudFormation accepts RetentionInDays as either a number or the string
+	// form a String-typed Ref or Parameter produces ("7" rather than 7); the
+	// Logs service itself decodes a strict int, so the value is coerced here
+	// the way real CloudFormation coerces it before dispatching.
 	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+		retention, err := cfnInt64(rd)
+		if err != nil {
+			return cleanup("PutRetentionPolicy", fmt.Errorf("RetentionInDays: %w", err))
+		}
 		body := map[string]any{
 			"logGroupName":    name,
-			"retentionInDays": rd,
+			"retentionInDays": retention,
 		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
 			return cleanup("PutRetentionPolicy", err)
@@ -5405,9 +5412,16 @@ func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _
 	// Apply RetentionInDays in place. Logs themselves are preserved.
 	if retentionChanged {
 		if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+			retention, err := cfnInt64(rd)
+			if err != nil {
+				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+					return "", nil, failDirtyUpdate(fmt.Errorf("RetentionInDays: %w; tag compensation: %v", err, restoreErr))
+				}
+				return "", nil, failUpdate(fmt.Errorf("RetentionInDays: %w", err))
+			}
 			body := map[string]any{
 				"logGroupName":    physicalID,
-				"retentionInDays": rd,
+				"retentionInDays": retention,
 			}
 			if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
 				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
