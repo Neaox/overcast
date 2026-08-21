@@ -37,14 +37,46 @@ const (
 
 // Stream represents a Kinesis Data Stream.
 type Stream struct {
-	StreamName           string            `json:"StreamName"`
-	StreamARN            string            `json:"StreamARN"`
-	StreamStatus         string            `json:"StreamStatus"` // CREATING, ACTIVE, UPDATING, DELETING
-	ShardCount           int               `json:"ShardCount"`
-	Shards               []Shard           `json:"Shards"`
-	Tags                 map[string]string `json:"Tags,omitempty"`
-	CreatedAt            time.Time         `json:"CreatedAt"`
-	RetentionPeriodHours int               `json:"RetentionPeriodHours"`
+	StreamName           string             `json:"StreamName"`
+	StreamARN            string             `json:"StreamARN"`
+	StreamStatus         string             `json:"StreamStatus"` // CREATING, ACTIVE, UPDATING, DELETING
+	ShardCount           int                `json:"ShardCount"`
+	Shards               []Shard            `json:"Shards"`
+	Tags                 map[string]string  `json:"Tags,omitempty"`
+	CreatedAt            time.Time          `json:"CreatedAt"`
+	RetentionPeriodHours int                `json:"RetentionPeriodHours"`
+	StreamModeDetails    *StreamModeDetails `json:"StreamModeDetails,omitempty"`
+	EncryptionType       string             `json:"EncryptionType,omitempty"`
+	KeyId                string             `json:"KeyId,omitempty"`
+}
+
+// StreamModeDetails mirrors AWS's StreamModeDetails: whether a stream is
+// capacity-managed (PROVISIONED, the historical default) or scales
+// automatically (ON_DEMAND). Set at CreateStream and changed in place via
+// UpdateStreamMode.
+type StreamModeDetails struct {
+	StreamMode string `json:"StreamMode"`
+}
+
+// effectiveStreamModeDetails defaults a stream's mode to PROVISIONED — both
+// for a stream created before this field existed (persisted JSON with no
+// StreamModeDetails key unmarshals to nil) and for CreateStream requests
+// that omit it, matching real Kinesis' default.
+func (st *Stream) effectiveStreamModeDetails() *StreamModeDetails {
+	if st.StreamModeDetails != nil && st.StreamModeDetails.StreamMode != "" {
+		return st.StreamModeDetails
+	}
+	return &StreamModeDetails{StreamMode: "PROVISIONED"}
+}
+
+// effectiveEncryptionType defaults an unset EncryptionType to "NONE", the
+// same way a pre-existing stream (persisted before this field existed) and a
+// stream that never called StartStreamEncryption both read on real Kinesis.
+func (st *Stream) effectiveEncryptionType() string {
+	if st.EncryptionType == "" {
+		return "NONE"
+	}
+	return st.EncryptionType
 }
 
 // Shard represents a Kinesis shard.

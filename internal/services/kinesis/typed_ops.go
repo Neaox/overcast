@@ -67,6 +67,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"DecreaseStreamRetentionPeriod": op.NewTyped[retentionPeriodRequest, struct{}](
 			"DecreaseStreamRetentionPeriod", h.decreaseStreamRetentionPeriodTyped,
 		),
+		"UpdateStreamMode": op.NewTyped[updateStreamModeRequest, struct{}](
+			"UpdateStreamMode", h.updateStreamModeTyped,
+		),
+		"StartStreamEncryption": op.NewTyped[streamEncryptionRequest, struct{}](
+			"StartStreamEncryption", h.startStreamEncryptionTyped,
+		),
+		"StopStreamEncryption": op.NewTyped[streamEncryptionRequest, struct{}](
+			"StopStreamEncryption", h.stopStreamEncryptionTyped,
+		),
 	}
 }
 

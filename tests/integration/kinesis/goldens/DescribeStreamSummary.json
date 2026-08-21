@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.1"
   },
-  "body": "{\"StreamDescriptionSummary\":{\"EnhancedMonitoring\":[],\"OpenShardCount\":1,\"RetentionPeriodHours\":24,\"StreamARN\":\"arn:aws:kinesis:us-east-1:000000000000:stream/golden-stream\",\"StreamCreationTimestamp\":0,\"StreamName\":\"golden-stream\",\"StreamStatus\":\"ACTIVE\"}}"
+  "body": "{\"StreamDescriptionSummary\":{\"EncryptionType\":\"NONE\",\"EnhancedMonitoring\":[],\"KeyId\":\"\",\"OpenShardCount\":1,\"RetentionPeriodHours\":24,\"StreamARN\":\"arn:aws:kinesis:us-east-1:000000000000:stream/golden-stream\",\"StreamCreationTimestamp\":0,\"StreamModeDetails\":{\"StreamMode\":\"PROVISIONED\"},\"StreamName\":\"golden-stream\",\"StreamStatus\":\"ACTIVE\"}}"
 }
