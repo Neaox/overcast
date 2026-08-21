@@ -25,15 +25,15 @@ TrentService.<OperationName>` and Smithy RPC v2 CBOR requests at
 
 ## Summary
 
-| Category          | ✅ Supported |
-| ----------------- | ------------ |
-| Key lifecycle     | 8            |
-| Aliases           | 4            |
-| Symmetric crypto  | 6            |
-| Asymmetric crypto | 4            |
-| Tags              | 3            |
-| Key policies      | 3            |
-| Grants            | 5            |
+| Category          | ✅ Supported | ⚠️ Partial |
+| ----------------- | ------------ | ---------- |
+| Key lifecycle     | 7            | 1          |
+| Aliases           | 4            |            |
+| Symmetric crypto  | 6            |            |
+| Asymmetric crypto | 4            |            |
+| Tags              | 3            |            |
+| Key policies      | 3            |            |
+| Grants            | 5            |            |
 
 ---
 
@@ -41,16 +41,16 @@ TrentService.<OperationName>` and Smithy RPC v2 CBOR requests at
 
 ### Key lifecycle
 
-| Operation              | Status       | Notes                                                                              | AWS Docs                                                                                  |
-| ---------------------- | ------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CreateKey`            | ✅ Supported | Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateKey.html)            |
-| `DescribeKey`          | ✅ Supported | Lookup by UUID, ARN, or alias                                                      | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DescribeKey.html)          |
-| `ListKeys`             | ✅ Supported | Excludes `PendingDeletion` keys; no pagination (Truncated=false)                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeys.html)             |
-| `EnableKey`            | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_EnableKey.html)            |
-| `DisableKey`           | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)           |
-| `UpdateKeyDescription` | ✅ Supported | Also dispatched by CloudFormation when AWS::KMS::Key Description changes           | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html) |
-| `ScheduleKeyDeletion`  | ✅ Supported | `PendingWindowInDays` honoured; defaults to 30 days                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)  |
-| `CancelKeyDeletion`    | ✅ Supported | Restores key to `Disabled` state                                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)    |
+| Operation              | Status       | Notes                                                                                                                                                                           | AWS Docs                                                                                  |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `CreateKey`            | ⚠️ Partial   | Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed; accepts `Tags`; rejects `Origin` other than `AWS_KMS` and `MultiRegion=true` (not emulated) | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateKey.html)            |
+| `DescribeKey`          | ✅ Supported | Lookup by UUID, ARN, or alias                                                                                                                                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DescribeKey.html)          |
+| `ListKeys`             | ✅ Supported | Excludes `PendingDeletion` keys; no pagination (Truncated=false)                                                                                                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeys.html)             |
+| `EnableKey`            | ✅ Supported |                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_EnableKey.html)            |
+| `DisableKey`           | ✅ Supported |                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)           |
+| `UpdateKeyDescription` | ✅ Supported | Also dispatched by CloudFormation when AWS::KMS::Key Description changes                                                                                                        | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html) |
+| `ScheduleKeyDeletion`  | ✅ Supported | `PendingWindowInDays` honoured; defaults to 30 days                                                                                                                             | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html)  |
+| `CancelKeyDeletion`    | ✅ Supported | Restores key to `Disabled` state                                                                                                                                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)    |
 
 ### Aliases
 

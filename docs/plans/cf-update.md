@@ -129,10 +129,20 @@ Calls `CreatePolicyVersion` with `SetAsDefault=true`.
 ### P2.7 — `AWS::KMS::Key`
 
 - APIs: `TrentService.UpdateKeyDescription`, `TrentService.PutKeyPolicy`,
-  `TrentService.EnableKey` / `DisableKey`
-- Mutable: `Description`, `KeyPolicy`, `Enabled`, `EnableKeyRotation`
-  (via `EnableKeyRotation`/`DisableKeyRotation`)
-- Replacement: `KeySpec`, `KeyUsage`, `Origin`, `MultiRegion`
+  `TrentService.EnableKey` / `DisableKey`, `TrentService.TagResource` /
+  `UntagResource`
+- Mutable: `Description`, `KeyPolicy` (diffed, only re-`PutKeyPolicy`d on
+  change), `Enabled`, `Tags` (ad-hoc add/remove diff, same shape as the
+  Lambda/Secrets Manager handlers — see the cross-cutting tag-diff item below)
+- `EnableKeyRotation` false→true is dispatched to `TrentService.EnableKeyRotation`
+  rather than applied: the KMS service does not model rotation state at all
+  (no `GetKeyRotationStatus`/`EnableKeyRotation`/`DisableKeyRotation` ops
+  exist), so the dispatch 501s and the create/update fails loudly instead of
+  silently reporting rotation off. `RotationPeriodInDays` rides along with it.
+- Replacement: `KeySpec`, `KeyUsage`, `Origin`, `MultiRegion` — `Origin` other
+  than `AWS_KMS` and `MultiRegion: true` are also rejected by `CreateKey`
+  itself (#525), so a replacement can never actually apply a non-default
+  value either.
 
 ### P2.8 — `AWS::Kinesis::Stream`
 

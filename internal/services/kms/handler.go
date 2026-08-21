@@ -148,6 +148,9 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Description                    string  `json:"Description"`
+		Tags                           []Tag   `json:"Tags"`
+		Origin                         string  `json:"Origin"`
+		MultiRegion                    bool    `json:"MultiRegion"`
 		KeySpec                        string  `json:"KeySpec"`
 		KeyUsage                       string  `json:"KeyUsage"`
 		Policy                         *string `json:"Policy"`
@@ -161,6 +164,14 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.KeyUsage == "" {
 		req.KeyUsage = "ENCRYPT_DECRYPT"
+	}
+	if aerr := validateKeyOrigin(req.Origin); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if req.MultiRegion {
+		protocol.WriteJSONError(w, r, errMultiRegionNotSupported())
+		return
 	}
 
 	keyID := uuid.NewString()
@@ -186,6 +197,7 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		KeyState:    "Enabled",
 		CreatedAt:   h.clk.Now(),
 		Policy:      policy,
+		Tags:        req.Tags,
 	}
 
 	// Generate crypto material
@@ -1355,6 +1367,34 @@ func errDisabled(keyID string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "DisabledException",
 		Message:    fmt.Sprintf("arn:aws:kms key is disabled: %s", keyID),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// validateKeyOrigin rejects an Origin the emulator cannot honour. Overcast
+// only ever generates AWS_KMS-origin key material — there is no import flow
+// backing EXTERNAL (PENDING_IMPORT + ImportKeyMaterial) or a CloudHSM cluster
+// backing AWS_CLOUDHSM — so accepting either and silently falling back to
+// AWS_KMS would misrepresent the key's actual origin to every later caller.
+func validateKeyOrigin(origin string) *protocol.AWSError {
+	if origin == "" || origin == "AWS_KMS" {
+		return nil
+	}
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    fmt.Sprintf("Invalid parameter: Origin %q is not supported by this emulator; only AWS_KMS is emulated.", origin),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// errMultiRegionNotSupported reports that a multi-Region key was requested.
+// Replica keys (ReplicateKey) and the shared key-material relationship they
+// require are not modeled, so honouring MultiRegion=true would silently drop
+// the very property that makes the key multi-Region.
+func errMultiRegionNotSupported() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationException",
+		Message:    "Invalid parameter: MultiRegion=true is not supported by this emulator.",
 		HTTPStatus: http.StatusBadRequest,
 	}
 }
