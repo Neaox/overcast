@@ -48,6 +48,7 @@ type fakeECSDockerDaemon struct {
 	started []string
 	created []createdContainer
 	onStart func(string)
+	onStop  func(string)
 
 	// logs and removed model the one thing the retention paths turn on: a
 	// container's output is readable right up to the moment it is removed, and
@@ -96,6 +97,19 @@ func (fd *fakeECSDockerDaemon) setOnStart(fn func(string)) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 	fd.onStart = fn
+}
+
+// setOnStop runs fn when a container is stopped, before the daemon answers.
+//
+// A real daemon raises a die event there, and the handler for it is what the
+// stop paths race — so a test about that ordering needs the event delivered at
+// the moment of the kill rather than at some point afterwards. Running it
+// inline on the caller's own goroutine is the worst case of that race and the
+// only version of it that is not a coin toss.
+func (fd *fakeECSDockerDaemon) setOnStop(fn func(string)) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.onStop = fn
 }
 
 // setContainerLogs gives a container the bytes its logs endpoint serves, in
@@ -174,6 +188,12 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			w.Write(body) //nolint:errcheck
 
 		case strings.HasSuffix(p, "/stop"):
+			fd.mu.Lock()
+			onStop := fd.onStop
+			fd.mu.Unlock()
+			if onStop != nil {
+				onStop(containerIDFromPath(p))
+			}
 			w.WriteHeader(http.StatusNoContent)
 
 		case strings.HasSuffix(p, "/start"):

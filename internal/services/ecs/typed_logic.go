@@ -850,35 +850,9 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 }
 
 func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*stopTaskResponse, *protocol.AWSError) {
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-	clusterName := extractClusterName(req.Cluster)
-	taskID := extractTaskID(req.Task)
-	task, aerr := h.store.getTask(ctx, clusterName, taskID)
+	task, aerr := h.stopTaskCore(ctx, req.Cluster, req.Task, req.Reason)
 	if aerr != nil {
 		return nil, aerr
-	}
-	if task == nil {
-		return nil, &protocol.AWSError{
-			Code: "InvalidParameterException", Message: "The referenced task was not found.", HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
-	h.stopTaskContainers(ctx, task)
-	task, _, aerr = h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
-		reason: req.Reason, code: "UserInitiated",
-	})
-	if aerr != nil {
-		return nil, aerr
-	}
-	if task == nil {
-		return nil, &protocol.AWSError{
-			Code: "InvalidParameterException", Message: "The referenced task was not found.", HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	if h.bus != nil {
-		h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStopped, Payload: events.ResourcePayload{Name: taskID}})
 	}
 	return &stopTaskResponse{Task: *task}, nil
 }
