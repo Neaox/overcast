@@ -26,22 +26,32 @@ func (h *iamPolicyHandler) Create(ctx context.Context, router http.Handler, cfg 
 	policyDoc, _ := props["PolicyDocument"].(map[string]any)
 	policyJSON, _ := json.Marshal(policyDoc)
 
-	// Attach to each role listed in Roles property.
-	if roles, ok := props["Roles"].([]any); ok {
-		for _, r := range roles {
-			roleName, _ := r.(string)
-			if roleName == "" {
+	// Write the document onto every principal the properties name. Update and
+	// Delete already handled all three principal kinds; Create used to stop at
+	// Roles, so a policy aimed at users or groups attached to nothing (#710).
+	for _, target := range []struct{ propKey, action, param string }{
+		{"Roles", "PutRolePolicy", "RoleName"},
+		{"Groups", "PutGroupPolicy", "GroupName"},
+		{"Users", "PutUserPolicy", "UserName"},
+	} {
+		entities, ok := props[target.propKey].([]any)
+		if !ok {
+			continue
+		}
+		for _, e := range entities {
+			entity, _ := e.(string)
+			if entity == "" {
 				continue
 			}
 			params := map[string]string{
-				"Action":         "PutRolePolicy",
+				"Action":         target.action,
 				"Version":        "2010-05-08",
-				"RoleName":       roleName,
+				target.param:     entity,
 				"PolicyName":     policyName,
 				"PolicyDocument": string(policyJSON),
 			}
 			if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
-				return "", nil, fmt.Errorf("PutRolePolicy on %s: %w", roleName, err)
+				return "", nil, fmt.Errorf("%s on %s: %w", target.action, entity, err)
 			}
 		}
 	}
@@ -197,6 +207,9 @@ func (h *iamPolicyHandler) Update(ctx context.Context, router http.Handler, _ *c
 type iamManagedPolicyHandler struct{}
 
 func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidateManagedPolicyPrincipals(props); err != nil {
+		return "", nil, err
+	}
 	policyName, _ := props["ManagedPolicyName"].(string)
 	if policyName == "" {
 		policyName = rCtx.generatedName()
@@ -216,6 +229,9 @@ func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handle
 		"PolicyDocument": string(policyJSON),
 		"Path":           path,
 	}
+	if description, _ := props["Description"].(string); description != "" {
+		params["Description"] = description
+	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -232,6 +248,19 @@ func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handle
 	attrs := map[string]string{
 		"Arn": arn,
 	}
+	// Attach to every principal the Roles/Users/Groups lists name (#521 —
+	// these used to be parsed into nothing, so a template's policy attached to
+	// nobody).
+	mutations, err := iamPolicyPrincipalMutations(arn, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(mutations); err != nil {
+		if cleanupErr := iamQuery(ctx, router, rCtx.Region, "DeletePolicy", map[string]string{"PolicyArn": arn}); cleanupErr != nil {
+			return "", nil, fmt.Errorf("%w; cleanup newly-created managed policy: %v", err, cleanupErr)
+		}
+		return "", nil, err
+	}
 	return arn, attrs, nil
 }
 
@@ -245,7 +274,23 @@ func (h *iamManagedPolicyHandler) Delete(ctx context.Context, router http.Handle
 	return iamTeardownError("DeletePolicy", physicalID, rec, err)
 }
 
-func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+// DeleteWithProperties detaches the policy from every principal its own
+// properties attached it to before deleting it — IAM answers DeleteConflict
+// while any attachment remains (#710). Attachments made outside the stack are
+// left alone; if one exists, the delete still refuses and the stack fails, as
+// AWS's would.
+func (h *iamManagedPolicyHandler) DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	return iamPrincipalTeardown(ctx, router, rCtx, func() error {
+		return h.Delete(ctx, router, cfg, physicalID, rCtx)
+	}, func() ([]iamMutation, error) {
+		return iamPolicyPrincipalMutations(physicalID, nil, props)
+	})
+}
+
+func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidateManagedPolicyPrincipals(props); err != nil {
+		return "", nil, failUpdate(err)
+	}
 	policyName, _ := props["ManagedPolicyName"].(string)
 
 	// Extract policy name from ARN to detect rename.
@@ -263,22 +308,52 @@ func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handle
 	if oldName != policyName {
 		return "", nil, errReplacementRequired
 	}
-
-	policyDoc, _ := props["PolicyDocument"].(map[string]any)
-	policyJSON, _ := json.Marshal(policyDoc)
-
-	params := map[string]string{
-		"Action":         "CreatePolicyVersion",
-		"Version":        "2010-05-08",
-		"PolicyArn":      physicalID,
-		"PolicyDocument": string(policyJSON),
-		"SetAsDefault":   "true",
+	// Path and Description are create-only on AWS::IAM::ManagedPolicy.
+	if iamJSONPropertyChanged(props, oldProps, "Path") || iamJSONPropertyChanged(props, oldProps, "Description") {
+		return "", nil, errReplacementRequired
 	}
-	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
-		return "", nil, fmt.Errorf("CreatePolicyVersion: %w", err)
+
+	mutations, err := iamPolicyPrincipalMutations(physicalID, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	tx := newIAMTransaction(ctx, router, rCtx.Region)
+	if err := tx.apply(mutations); err != nil {
+		return "", nil, classifyIAMTransactionFailure(err)
+	}
+
+	// The document updates in place under the same ARN, as AWS's provider
+	// does: a new default policy version.
+	if iamJSONPropertyChanged(props, oldProps, "PolicyDocument") {
+		policyJSON, err := json.Marshal(props["PolicyDocument"])
+		if err != nil {
+			return "", nil, failUpdate(fmt.Errorf("marshal PolicyDocument: %w", err))
+		}
+		params := map[string]string{
+			"PolicyArn":      physicalID,
+			"PolicyDocument": string(policyJSON),
+			"SetAsDefault":   "true",
+		}
+		if err := iamQuery(ctx, router, rCtx.Region, "CreatePolicyVersion", params); err != nil {
+			if rollbackErr := tx.rollback(); rollbackErr != nil {
+				return "", nil, failDirtyUpdate(fmt.Errorf("%w; rollback: %v", err, rollbackErr))
+			}
+			return "", nil, failUpdate(err)
+		}
 	}
 
 	return physicalID, nil, nil
+}
+
+// iamValidateManagedPolicyPrincipals rejects malformed Roles/Users/Groups
+// attachment lists before any mutation is dispatched.
+func iamValidateManagedPolicyPrincipals(props map[string]any) error {
+	for _, property := range []string{"Roles", "Users", "Groups"} {
+		if _, err := iamStringSet(props, property); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── AWS::IAM::InstanceProfile ──────────────────────────────────────────────

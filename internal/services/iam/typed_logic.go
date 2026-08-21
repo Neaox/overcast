@@ -80,6 +80,8 @@ type createRoleReq struct {
 	Path                     string     `json:"Path"`
 	PermissionsBoundary      string     `json:"PermissionsBoundary"`
 	Tags                     []tagEntry `json:"Tags"`
+	Description              string     `json:"Description"`
+	MaxSessionDuration       int        `json:"MaxSessionDuration"`
 }
 
 type getRoleReq struct {
@@ -155,6 +157,7 @@ type createPolicyReq struct {
 	PolicyDocument string     `json:"PolicyDocument"`
 	Path           string     `json:"Path"`
 	Tags           []tagEntry `json:"Tags"`
+	Description    string     `json:"Description"`
 }
 
 type getPolicyReq struct {
@@ -1174,6 +1177,12 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 			return nil, aerr
 		}
 	}
+	duration := req.MaxSessionDuration
+	if duration == 0 {
+		duration = defaultMaxSessionDuration
+	} else if aerr := checkMaxSessionDuration(duration); aerr != nil {
+		return nil, aerr
+	}
 	role := &Role{
 		RoleName:                 req.RoleName,
 		RoleId:                   iamID("AROA", 17),
@@ -1183,6 +1192,8 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      req.PermissionsBoundary,
 		Tags:                     createTags(req.Tags),
+		Description:              req.Description,
+		MaxSessionDuration:       duration,
 	}
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
@@ -1429,13 +1440,14 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 		return nil, errEntityAlreadyExists("policy", req.PolicyName)
 	}
 	p := &Policy{
-		PolicyName: req.PolicyName,
-		PolicyId:   iamID("ANPA", 17),
-		Arn:        arn,
-		Path:       path,
-		Document:   req.PolicyDocument,
-		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:       createTags(req.Tags),
+		PolicyName:  req.PolicyName,
+		PolicyId:    iamID("ANPA", 17),
+		Arn:         arn,
+		Path:        path,
+		Document:    req.PolicyDocument,
+		CreateDate:  h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        createTags(req.Tags),
+		Description: req.Description,
 	}
 	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
 		return nil, aerr

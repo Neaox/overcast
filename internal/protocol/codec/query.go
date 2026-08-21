@@ -213,7 +213,7 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 		field := rv.Field(fieldIdx)
 		if len(parts) == 1 {
 			// Simple field
-			if err := setFieldValue(field, vals[0]); err != nil {
+			if err := setStructFieldValue(field, rt.Field(fieldIdx), vals[0]); err != nil {
 				continue
 			}
 		} else {
@@ -369,7 +369,7 @@ func decodeItem(rv reflect.Value, values url.Values) error {
 			}
 			name, _, _ := strings.Cut(tag, ",")
 			if values.Has(name) {
-				if err := setFieldValue(rv.Field(i), values.Get(name)); err != nil {
+				if err := setStructFieldValue(rv.Field(i), rt.Field(i), values.Get(name)); err != nil {
 					return err
 				}
 			}
@@ -385,6 +385,19 @@ func decodeItem(rv reflect.Value, values url.Values) error {
 		return nil
 	}
 	return nil
+}
+
+// setStructFieldValue is setFieldValue plus one wire distinction only a struct
+// tag can ask for: a *string field tagged `queryEmpty:"set"` treats a present
+// but empty parameter as an explicit empty string rather than as absent. IAM's
+// UpdateRole needs it — Description="" clears the description, while an absent
+// Description leaves it alone.
+func setStructFieldValue(rv reflect.Value, field reflect.StructField, value string) error {
+	if value == "" && field.Tag.Get("queryEmpty") == "set" && rv.Kind() == reflect.Ptr && rv.Type().Elem().Kind() == reflect.String {
+		rv.Set(reflect.New(rv.Type().Elem()))
+		return nil
+	}
+	return setFieldValue(rv, value)
 }
 
 func setFieldValue(rv reflect.Value, s string) error {

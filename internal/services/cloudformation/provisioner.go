@@ -1217,6 +1217,13 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 		region = p.cfg.Region
 	}
 
+	// Record each declared parameter's type so Ref can give the value the
+	// shape the type promises (a CommaDelimitedList resolves to a list).
+	paramTypes := make(map[string]string, len(tmpl.Parameters))
+	for name, def := range tmpl.Parameters {
+		paramTypes[name] = def.Type
+	}
+
 	// Collect cross-stack exports for Fn::ImportValue resolution.
 	exports := p.collectExports(stack)
 
@@ -1228,6 +1235,7 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 		ClientRequestToken: stack.ClientRequestToken,
 		StackTags:          append([]Tag(nil), stack.Tags...),
 		Params:             params,
+		ParamTypes:         paramTypes,
 		Resources:          make(map[string]string),
 		Conditions:         evaluateConditions(tmpl.Conditions, params),
 		Mappings:           tmpl.Mappings,
@@ -2441,6 +2449,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::IAM::Role":              &iamRoleHandler{},
 	"AWS::IAM::Policy":            &iamPolicyHandler{},
 	"AWS::IAM::ManagedPolicy":     &iamManagedPolicyHandler{},
+	"AWS::IAM::Group":             &iamGroupHandler{},
 	"AWS::IAM::InstanceProfile":   &iamInstanceProfileHandler{},
 	"AWS::IAM::ServiceLinkedRole": &iamServiceLinkedRoleHandler{},
 	// CloudWatch Logs
@@ -4814,6 +4823,9 @@ func iamTeardownError(action, name string, rec *httptest.ResponseRecorder, err e
 type iamRoleHandler struct{}
 
 func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidatePrincipalProperties(props, false); err != nil {
+		return "", nil, err
+	}
 	roleName, _ := props["RoleName"].(string)
 	if roleName == "" {
 		roleName = rCtx.generatedName()
@@ -4830,6 +4842,19 @@ func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *con
 		"AssumeRolePolicyDocument": assumePolicy,
 		"Version":                  "2010-05-08",
 	}
+	for _, property := range []string{"Path", "Description", "PermissionsBoundary"} {
+		if value, _ := props[property].(string); value != "" {
+			params[property] = value
+		}
+	}
+	if value, ok := props["MaxSessionDuration"]; ok && value != nil {
+		params["MaxSessionDuration"] = cfnScalarString(value)
+	}
+	tags, err := iamTags(props)
+	if err != nil {
+		return "", nil, err
+	}
+	iamTagParams(params, tags)
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
 		return "", nil, fmt.Errorf("iam CreateRole: %w", err)
@@ -4844,8 +4869,49 @@ func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *con
 		"RoleId":   roleID,
 		"RoleName": roleName,
 	}
+	// The template's actual permissions: AttachRolePolicy per ManagedPolicyArns
+	// entry, PutRolePolicy per Policies entry (#521 — these used to be parsed
+	// into nothing, leaving a CDK role with no permissions at all).
+	managed, err := iamManagedPolicyMutations("Role", roleName, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	inline, err := iamInlinePolicyMutations("Role", roleName, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(append(managed, inline...)); err != nil {
+		if cleanupErr := iamQuery(ctx, router, rCtx.Region, "DeleteRole", map[string]string{"RoleName": roleName}); cleanupErr != nil {
+			return "", nil, fmt.Errorf("%w; cleanup newly-created role: %v", err, cleanupErr)
+		}
+		return "", nil, err
+	}
 	// CloudFormation Ref on AWS::IAM::Role returns the role name, not the ARN.
 	return roleName, attrs, nil
+}
+
+// DeleteWithProperties detaches the role's template-declared managed policies
+// and removes its inline policies before deleting it: IAM answers
+// DeleteConflict while they remain, and nothing but the stored properties
+// records what the Create above attached (#710).
+func (h *iamRoleHandler) DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	name := physicalID
+	if i := strings.LastIndex(physicalID, "/"); i >= 0 {
+		name = physicalID[i+1:]
+	}
+	return iamPrincipalTeardown(ctx, router, rCtx, func() error {
+		return h.Delete(ctx, router, cfg, physicalID, rCtx)
+	}, func() ([]iamMutation, error) {
+		managed, err := iamManagedPolicyMutations("Role", name, nil, props)
+		if err != nil {
+			return nil, err
+		}
+		inline, err := iamInlinePolicyMutations("Role", name, nil, props)
+		if err != nil {
+			return nil, err
+		}
+		return append(managed, inline...), nil
+	})
 }
 
 func (h *iamRoleHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -4862,40 +4928,99 @@ func (h *iamRoleHandler) Delete(ctx context.Context, router http.Handler, _ *con
 	return iamTeardownError("DeleteRole", name, rec, err)
 }
 
-func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidatePrincipalProperties(props, false); err != nil {
+		return "", nil, failUpdate(err)
+	}
 	name := physicalID
 	if i := strings.LastIndex(physicalID, "/"); i >= 0 {
 		name = physicalID[i+1:]
 	}
-	// RoleName is immutable in AWS.
+	// RoleName and Path are immutable in AWS.
 	if n, ok := props["RoleName"].(string); ok && n != "" && n != name {
 		return "", nil, errReplacementRequired
 	}
-	// AssumeRolePolicyDocument is the most commonly changed property in dev.
-	if ap, ok := props["AssumeRolePolicyDocument"]; ok && ap != nil {
-		b, _ := json.Marshal(ap)
-		params := map[string]string{
-			"Action":         "UpdateAssumeRolePolicy",
-			"RoleName":       name,
-			"PolicyDocument": string(b),
-			"Version":        "2010-05-08",
-		}
-		if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
-			return "", nil, fmt.Errorf("iam UpdateAssumeRolePolicy: %w", err)
-		}
+	if iamJSONPropertyChanged(props, oldProps, "Path") {
+		return "", nil, errReplacementRequired
 	}
-	// Description is in-place via UpdateRole.
-	if d, ok := props["Description"].(string); ok {
-		params := map[string]string{
-			"Action":      "UpdateRole",
-			"RoleName":    name,
-			"Description": d,
-			"Version":     "2010-05-08",
+	mutations := make([]iamMutation, 0)
+	// AssumeRolePolicyDocument is the most commonly changed property in dev.
+	if ap, ok := props["AssumeRolePolicyDocument"]; ok && ap != nil && iamJSONPropertyChanged(props, oldProps, "AssumeRolePolicyDocument") {
+		document, _ := json.Marshal(ap)
+		oldDocument, _ := json.Marshal(oldProps["AssumeRolePolicyDocument"])
+		mutations = append(mutations, iamMutation{
+			action: "UpdateAssumeRolePolicy", params: map[string]string{"RoleName": name, "PolicyDocument": string(document)},
+			undoAction: "UpdateAssumeRolePolicy", undoParams: map[string]string{"RoleName": name, "PolicyDocument": string(oldDocument)},
+		})
+	}
+	// Description and MaxSessionDuration are in-place via UpdateRole. A removed
+	// property resets to its AWS default rather than lingering.
+	if iamJSONPropertyChanged(props, oldProps, "Description") || iamJSONPropertyChanged(props, oldProps, "MaxSessionDuration") {
+		params := map[string]string{"RoleName": name}
+		undo := map[string]string{"RoleName": name}
+		if iamJSONPropertyChanged(props, oldProps, "Description") {
+			params["Description"], _ = props["Description"].(string)
+			undo["Description"], _ = oldProps["Description"].(string)
 		}
-		_, _ = internalQuery(ctx, router, rCtx.Region, params)
+		if iamJSONPropertyChanged(props, oldProps, "MaxSessionDuration") {
+			params["MaxSessionDuration"] = iamSessionDurationParam(props)
+			undo["MaxSessionDuration"] = iamSessionDurationParam(oldProps)
+		}
+		mutations = append(mutations, iamMutation{action: "UpdateRole", params: params, undoAction: "UpdateRole", undoParams: undo})
+	}
+	if iamJSONPropertyChanged(props, oldProps, "PermissionsBoundary") {
+		mutations = append(mutations, iamBoundaryMutation("Role", name, props, oldProps))
+	}
+	managed, err := iamManagedPolicyMutations("Role", name, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	inline, err := iamInlinePolicyMutations("Role", name, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	tags, err := iamTagMutations("Role", name, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	mutations = append(mutations, managed...)
+	mutations = append(mutations, inline...)
+	mutations = append(mutations, tags...)
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(mutations); err != nil {
+		return "", nil, classifyIAMTransactionFailure(err)
 	}
 	arn := fmt.Sprintf("arn:aws:iam::%s:role/%s", rCtx.AccountID, name)
 	return name, map[string]string{"Arn": arn, "RoleName": name}, nil
+}
+
+// iamSessionDurationParam renders a property set's MaxSessionDuration for
+// UpdateRole, substituting AWS's 3600-second default when the template no
+// longer sets one.
+func iamSessionDurationParam(props map[string]any) string {
+	if value, ok := props["MaxSessionDuration"]; ok && value != nil {
+		return cfnScalarString(value)
+	}
+	return "3600"
+}
+
+// iamBoundaryMutation reconciles the PermissionsBoundary property: present
+// means Put<Principal>PermissionsBoundary, absent means Delete, and the undo
+// restores the previous state the same way.
+func iamBoundaryMutation(principalType, principalName string, props, oldProps map[string]any) iamMutation {
+	nameKey := principalType + "Name"
+	action := "Delete" + principalType + "PermissionsBoundary"
+	params := map[string]string{nameKey: principalName}
+	if boundary, _ := props["PermissionsBoundary"].(string); boundary != "" {
+		action = "Put" + principalType + "PermissionsBoundary"
+		params["PermissionsBoundary"] = boundary
+	}
+	undoAction := "Delete" + principalType + "PermissionsBoundary"
+	undoParams := map[string]string{nameKey: principalName}
+	if oldBoundary, _ := oldProps["PermissionsBoundary"].(string); oldBoundary != "" {
+		undoAction = "Put" + principalType + "PermissionsBoundary"
+		undoParams["PermissionsBoundary"] = oldBoundary
+	}
+	return iamMutation{action: action, params: params, undoAction: undoAction, undoParams: undoParams}
 }
 
 // ── CloudWatch Logs LogGroup handler ───────────────────────────────────────

@@ -62,6 +62,10 @@ type Role struct {
 	// PermissionsBoundary is the ARN of the managed policy that caps what this
 	// role's identity policies can grant. Empty when none is attached.
 	PermissionsBoundary string `json:"PermissionsBoundary,omitempty"`
+	Description         string `json:"Description,omitempty"`
+	// MaxSessionDuration is the assume-role session cap in seconds. Zero in a
+	// record persisted before the field existed reads as AWS's 3600 default.
+	MaxSessionDuration int `json:"MaxSessionDuration,omitempty"`
 }
 
 // AttachedPolicy is a managed policy attached to a role.
@@ -80,6 +84,13 @@ type Policy struct {
 	CreateDate      string            `json:"CreateDate"`
 	AttachmentCount int               `json:"AttachmentCount"`
 	Tags            map[string]string `json:"Tags,omitempty"`
+	Description     string            `json:"Description,omitempty"`
+	// DefaultVersion numbers the operative document ("v1" when zero) and
+	// LatestVersion the highest version ever minted. Only counters are kept:
+	// CreatePolicyVersion replaces the stored document when it sets the
+	// default, but superseded documents are not retained.
+	DefaultVersion int `json:"DefaultVersion,omitempty"`
+	LatestVersion  int `json:"LatestVersion,omitempty"`
 }
 
 func (p *Policy) GetTags() map[string]string     { return p.Tags }
