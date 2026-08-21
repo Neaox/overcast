@@ -4199,10 +4199,7 @@ func (h *lambdaFunctionHandler) Delete(ctx context.Context, router http.Handler,
 		name = physicalID[i+1:]
 	}
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2015-03-31/functions/"+url.PathEscape(name), "", nil)
-	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
-		return fmt.Errorf("lambda DeleteFunction: %w", err)
-	}
-	return nil
+	return teardownError("lambda DeleteFunction", rec, err)
 }
 
 // Update implements in-place updates for AWS::Lambda::Function. Code changes
@@ -4599,10 +4596,7 @@ func (h *lambdaPermissionHandler) Delete(ctx context.Context, router http.Handle
 	}
 	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/policy/" + url.PathEscape(parts[1])
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
-		return fmt.Errorf("lambda RemovePermission: %w", err)
-	}
-	return nil
+	return teardownError("lambda RemovePermission", rec, err)
 }
 
 // ── Lambda Alias handler ──────────────────────────────────────────────────

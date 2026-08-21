@@ -77,8 +77,8 @@ func (h *apigwRestApiHandler) Create(ctx context.Context, router http.Handler, c
 }
 
 func (h *apigwRestApiHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/restapis/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/restapis/"+physicalID, "", nil)
+	return teardownError("DeleteRestApi", rec, err)
 }
 
 func (h *apigwRestApiHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -141,8 +141,8 @@ func (h *apigwResourceHandler) Delete(ctx context.Context, router http.Handler, 
 		return nil
 	}
 	path := fmt.Sprintf("/restapis/%s/resources/%s", parts[0], parts[1])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteResource", rec, err)
 }
 
 // ── AWS::ApiGateway::Method ────────────────────────────────────────────────
@@ -204,8 +204,8 @@ func (h *apigwMethodHandler) Delete(ctx context.Context, router http.Handler, cf
 		return nil
 	}
 	path := fmt.Sprintf("/restapis/%s/resources/%s/methods/%s", parts[0], parts[1], parts[2])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteMethod", rec, err)
 }
 
 func (h *apigwMethodHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -324,8 +324,8 @@ func (h *apigwStageHandler) Delete(ctx context.Context, router http.Handler, cfg
 		return nil
 	}
 	path := fmt.Sprintf("/restapis/%s/stages/%s", parts[0], parts[1])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteStage", rec, err)
 }
 
 func (h *apigwStageHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -399,8 +399,8 @@ func (h *apigwV2ApiHandler) Create(ctx context.Context, router http.Handler, cfg
 }
 
 func (h *apigwV2ApiHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v2/apis/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v2/apis/"+physicalID, "", nil)
+	return teardownError("DeleteApi", rec, err)
 }
 
 // ── AWS::ApiGatewayV2::Stage ───────────────────────────────────────────────
@@ -441,8 +441,8 @@ func (h *apigwV2StageHandler) Delete(ctx context.Context, router http.Handler, c
 		return nil
 	}
 	path := fmt.Sprintf("/v2/apis/%s/stages/%s", parts[0], parts[1])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteStage", rec, err)
 }
 
 // ── AWS::ApiGatewayV2::Integration ─────────────────────────────────────────
@@ -493,8 +493,8 @@ func (h *apigwV2IntegrationHandler) Delete(ctx context.Context, router http.Hand
 		return nil
 	}
 	path := fmt.Sprintf("/v2/apis/%s/integrations/%s", parts[0], parts[1])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteIntegration", rec, err)
 }
 
 // ── AWS::ApiGatewayV2::Route ───────────────────────────────────────────────
@@ -542,6 +542,6 @@ func (h *apigwV2RouteHandler) Delete(ctx context.Context, router http.Handler, c
 		return nil
 	}
 	path := fmt.Sprintf("/v2/apis/%s/routes/%s", parts[0], parts[1])
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteRoute", rec, err)
 }

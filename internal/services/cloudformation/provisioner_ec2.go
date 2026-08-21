@@ -162,8 +162,8 @@ func (h *ec2VPCHandler) Delete(ctx context.Context, router http.Handler, cfg *co
 		"Version": "2016-11-15",
 		"VpcId":   physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteVpc", rec, err)
 }
 
 // ── AWS::EC2::Subnet ───────────────────────────────────────────────────────
@@ -213,8 +213,8 @@ func (h *ec2SubnetHandler) Delete(ctx context.Context, router http.Handler, cfg 
 		"Version":  "2016-11-15",
 		"SubnetId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteSubnet", rec, err)
 }
 
 // ── AWS::EC2::SecurityGroup ────────────────────────────────────────────────
@@ -330,8 +330,8 @@ func (h *ec2SecurityGroupHandler) Delete(ctx context.Context, router http.Handle
 		"Version": "2016-11-15",
 		"GroupId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteSecurityGroup", rec, err)
 }
 
 // ── AWS::EC2::InternetGateway ──────────────────────────────────────────────
@@ -370,8 +370,8 @@ func (h *ec2InternetGatewayHandler) Delete(ctx context.Context, router http.Hand
 		"Version":           "2016-11-15",
 		"InternetGatewayId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteInternetGateway", rec, err)
 }
 
 // ── AWS::EC2::VPNGateway ───────────────────────────────────────────────────
@@ -413,8 +413,8 @@ func (h *ec2VPNGatewayHandler) Delete(ctx context.Context, router http.Handler, 
 		"Version":      "2016-11-15",
 		"VpnGatewayId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteVpnGateway", rec, err)
 }
 
 // ── AWS::EC2::VPCGatewayAttachment ─────────────────────────────────────────
@@ -463,8 +463,8 @@ func (h *ec2VPCGatewayAttachmentHandler) Delete(ctx context.Context, router http
 			"InternetGatewayId": parts[1],
 			"VpcId":             parts[0],
 		}
-		_, err := internalQuery(ctx, router, rCtx.Region, params)
-		return err
+		rec, err := internalQuery(ctx, router, rCtx.Region, params)
+		return teardownError("DetachInternetGateway", rec, err)
 	}
 	if len(parts) != 3 {
 		return fmt.Errorf("VPCGatewayAttachment: invalid physical ID: %s", physicalID)
@@ -476,8 +476,8 @@ func (h *ec2VPCGatewayAttachmentHandler) Delete(ctx context.Context, router http
 			"VpnGatewayId": parts[2],
 			"VpcId":        parts[0],
 		}
-		_, err := internalQuery(ctx, router, rCtx.Region, params)
-		return err
+		rec, err := internalQuery(ctx, router, rCtx.Region, params)
+		return teardownError("DetachVpnGateway", rec, err)
 	}
 	params := map[string]string{
 		"Action":            "DetachInternetGateway",
@@ -485,8 +485,8 @@ func (h *ec2VPCGatewayAttachmentHandler) Delete(ctx context.Context, router http
 		"InternetGatewayId": parts[2],
 		"VpcId":             parts[0],
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DetachInternetGateway", rec, err)
 }
 
 // ── AWS::EC2::RouteTable ───────────────────────────────────────────────────
@@ -528,8 +528,8 @@ func (h *ec2RouteTableHandler) Delete(ctx context.Context, router http.Handler, 
 		"Version":      "2016-11-15",
 		"RouteTableId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteRouteTable", rec, err)
 }
 
 // ── AWS::EC2::Route ────────────────────────────────────────────────────────
@@ -573,8 +573,8 @@ func (h *ec2RouteHandler) Delete(ctx context.Context, router http.Handler, cfg *
 		"RouteTableId":         parts[0],
 		"DestinationCidrBlock": parts[1],
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteRoute", rec, err)
 }
 
 // ── AWS::EC2::SubnetRouteTableAssociation ──────────────────────────────────
@@ -612,8 +612,8 @@ func (h *ec2SubnetRouteTableAssociationHandler) Delete(ctx context.Context, rout
 		"Version":       "2016-11-15",
 		"AssociationId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DisassociateRouteTable", rec, err)
 }
 
 // ── AWS::EC2::EIP ──────────────────────────────────────────────────────────
@@ -650,8 +650,8 @@ func (h *ec2EIPHandler) Delete(ctx context.Context, router http.Handler, cfg *co
 		"Version":      "2016-11-15",
 		"AllocationId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("ReleaseAddress", rec, err)
 }
 
 // ── AWS::EC2::NatGateway ───────────────────────────────────────────────────
@@ -696,6 +696,6 @@ func (h *ec2NatGatewayHandler) Delete(ctx context.Context, router http.Handler, 
 		"Version":      "2016-11-15",
 		"NatGatewayId": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteNatGateway", rec, err)
 }

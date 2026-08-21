@@ -520,18 +520,17 @@ func (h *rdsDBClusterHandler) Delete(ctx context.Context, router http.Handler, c
 	if err == nil {
 		return nil
 	}
-	// Deletion protection is the one refusal that has to reach the stack. On
-	// AWS a stack cannot delete a protected cluster: the delete fails, the
-	// cluster survives, and the operator disables the flag and tries again.
-	// Swallowing it here would report DELETE_COMPLETE over a cluster that is
-	// still there, which is the failure the flag exists to prevent.
-	//
-	// Every other error stays swallowed, as it is for the other resource
-	// handlers: a cluster that is already gone must not block a teardown.
+	// Deletion protection is a refusal, not a failure, and it is the one that
+	// has to stop a DeleteStack outright. On AWS a stack cannot delete a
+	// protected cluster: the delete fails, the cluster survives, and the
+	// operator disables the flag and tries again. Reporting it as an ordinary
+	// error would let a deliberate teardown record DELETE_COMPLETE over a
+	// cluster that is still there, which is the failure the flag exists to
+	// prevent.
 	if rec != nil && strings.Contains(rec.Body.String(), "InvalidParameterCombination") {
 		return fmt.Errorf("%w: DB cluster %s has deletion protection enabled", errDeletionBlocked, physicalID)
 	}
-	return nil
+	return teardownError("DeleteDBCluster", rec, err)
 }
 
 // rdsClusterReplaceOnChange are the AWS::RDS::DBCluster properties AWS
@@ -1312,8 +1311,8 @@ func (h *appsyncEventsApiHandler) Create(ctx context.Context, router http.Handle
 }
 
 func (h *appsyncEventsApiHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v2/apis/"+url.PathEscape(physicalID), "", nil)
-	return err
+	rec, err := internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v2/apis/"+url.PathEscape(physicalID), "", nil)
+	return teardownError("DeleteApi", rec, err)
 }
 
 func (h *appsyncEventsApiHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1381,8 +1380,8 @@ func (h *appsyncChannelNamespaceHandler) Delete(ctx context.Context, router http
 		return nil
 	}
 	path := fmt.Sprintf("/v2/apis/%s/channelNamespaces/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	_, err = internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalAppSyncEventsRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteChannelNamespace", rec, err)
 }
 
 func (h *appsyncChannelNamespaceHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1447,8 +1446,8 @@ func (h *appsyncGraphQLApiHandler) Create(ctx context.Context, router http.Handl
 }
 
 func (h *appsyncGraphQLApiHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/apis/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/apis/"+physicalID, "", nil)
+	return teardownError("DeleteGraphqlApi", rec, err)
 }
 
 func (h *appsyncGraphQLApiHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1568,8 +1567,8 @@ func (h *appsyncApiKeyHandler) Delete(ctx context.Context, router http.Handler, 
 		return nil
 	}
 	path := fmt.Sprintf("/v1/apis/%s/apikeys/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteApiKey", rec, err)
 }
 
 func (h *appsyncApiKeyHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1622,8 +1621,8 @@ func (h *appsyncFunctionConfigurationHandler) Delete(ctx context.Context, router
 		return nil
 	}
 	path := fmt.Sprintf("/v1/apis/%s/functions/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteFunction", rec, err)
 }
 
 func (h *appsyncFunctionConfigurationHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1741,8 +1740,8 @@ func (h *appsyncDataSourceHandler) Delete(ctx context.Context, router http.Handl
 		return nil
 	}
 	path := fmt.Sprintf("/v1/apis/%s/datasources/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteDataSource", rec, err)
 }
 
 func (h *appsyncDataSourceHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1793,8 +1792,8 @@ func (h *appsyncResolverHandler) Delete(ctx context.Context, router http.Handler
 		return nil
 	}
 	path := fmt.Sprintf("/v1/apis/%s/types/%s/resolvers/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(parts[2]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DeleteResolver", rec, err)
 }
 
 func (h *appsyncResolverHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1845,8 +1844,8 @@ func (h *appsyncDomainNameHandler) Create(ctx context.Context, router http.Handl
 }
 
 func (h *appsyncDomainNameHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/domainnames/"+url.PathEscape(physicalID), "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/domainnames/"+url.PathEscape(physicalID), "", nil)
+	return teardownError("DeleteDomainName", rec, err)
 }
 
 func (h *appsyncDomainNameHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1901,8 +1900,8 @@ func (h *appsyncDomainNameApiAssociationHandler) Delete(ctx context.Context, rou
 		return nil
 	}
 	path := fmt.Sprintf("/v1/domainnames/%s/apiassociation", url.PathEscape(parts[0]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DisassociateApi", rec, err)
 }
 
 func (h *appsyncDomainNameApiAssociationHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1934,8 +1933,8 @@ func (h *appsyncApiCacheHandler) Create(ctx context.Context, router http.Handler
 }
 
 func (h *appsyncApiCacheHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/apis/"+url.PathEscape(physicalID)+"/ApiCaches", "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/apis/"+url.PathEscape(physicalID)+"/ApiCaches", "", nil)
+	return teardownError("DeleteApiCache", rec, err)
 }
 
 func (h *appsyncApiCacheHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1994,8 +1993,8 @@ func (h *appsyncSourceApiAssociationHandler) Delete(ctx context.Context, router 
 		return nil
 	}
 	path := fmt.Sprintf("/v1/mergedApis/%s/sourceApiAssociations/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DisassociateSourceGraphqlApi", rec, err)
 }
 
 func (h *appsyncSourceApiAssociationHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -2139,10 +2138,13 @@ func cloudFrontItemName(parent string) string {
 func (h *cloudfrontDistributionHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	basePath := "/2020-05-31/distribution/" + physicalID
 
-	// Step 1: GET distribution to get current ETag.
+	// Step 1: GET distribution to get current ETag. A distribution that is
+	// already gone is a finished teardown; a read that failed for any other
+	// reason is not, and reporting it as one would claim a delete this never
+	// went on to make.
 	rec, err := cfInternalRequest(ctx, router, rCtx.Region, http.MethodGet, basePath, "", nil, nil)
 	if err != nil {
-		return nil // Already deleted or doesn't exist.
+		return teardownError("GetDistribution", rec, err)
 	}
 	etag := rec.Header().Get("ETag")
 
@@ -2168,8 +2170,8 @@ func (h *cloudfrontDistributionHandler) Delete(ctx context.Context, router http.
 	}
 
 	// Step 3: DELETE with If-Match.
-	_, err = cfInternalRequest(ctx, router, rCtx.Region, http.MethodDelete, basePath, "", nil, map[string]string{"If-Match": etag})
-	return err
+	delRec, err := cfInternalRequest(ctx, router, rCtx.Region, http.MethodDelete, basePath, "", nil, map[string]string{"If-Match": etag})
+	return teardownError("DeleteDistribution", delRec, err)
 }
 
 func (h *cloudfrontDistributionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

@@ -131,8 +131,8 @@ func (h *appregistryApplicationHandler) Create(ctx context.Context, router http.
 }
 
 func (h *appregistryApplicationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/applications/"+physicalID, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/applications/"+physicalID, "", nil)
+	return teardownError("DeleteApplication", rec, err)
 }
 
 func (h *appregistryApplicationHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -203,6 +203,6 @@ func (h *appregistryResourceAssociationHandler) Delete(ctx context.Context, rout
 		return fmt.Errorf("DisassociateResource: malformed physical ID %q", physicalID)
 	}
 	path := "/applications/" + physicalID[:first] + "/resources/" + physicalID[first+1:second] + "/" + physicalID[second+1:]
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
-	return err
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	return teardownError("DisassociateResource", rec, err)
 }

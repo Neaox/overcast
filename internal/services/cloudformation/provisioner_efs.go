@@ -172,10 +172,8 @@ func (h *efsFileSystemHandler) Stabilize(ctx context.Context, router http.Handle
 }
 
 func (h *efsFileSystemHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteFileSystem", map[string]any{"FileSystemId": physicalID}); err != nil {
-		return fmt.Errorf("DeleteFileSystem: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteFileSystem", map[string]any{"FileSystemId": physicalID})
+	return teardownError("DeleteFileSystem", rec, err)
 }
 
 func (h *efsFileSystemHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -322,10 +320,8 @@ func (h *efsMountTargetHandler) Stabilize(ctx context.Context, router http.Handl
 }
 
 func (h *efsMountTargetHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteMountTarget", map[string]any{"MountTargetId": physicalID}); err != nil {
-		return fmt.Errorf("DeleteMountTarget: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteMountTarget", map[string]any{"MountTargetId": physicalID})
+	return teardownError("DeleteMountTarget", rec, err)
 }
 
 func (h *efsMountTargetHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -403,10 +399,8 @@ func (h *efsAccessPointHandler) Stabilize(ctx context.Context, router http.Handl
 }
 
 func (h *efsAccessPointHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteAccessPoint", map[string]any{"AccessPointId": physicalID}); err != nil {
-		return fmt.Errorf("DeleteAccessPoint: %w", err)
-	}
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteAccessPoint", map[string]any{"AccessPointId": physicalID})
+	return teardownError("DeleteAccessPoint", rec, err)
 }
 
 func (h *efsAccessPointHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
