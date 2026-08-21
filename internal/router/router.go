@@ -959,9 +959,17 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// same chi patterns and the last registration silently wins, so the main
 	// router owns the path and dispatches on the ARN's service prefix, exactly
 	// like /v1/tags above.
-	// API Gateway is the fallback owner: its ARN-keyed tag store historically
-	// answered every ARN no other service claims (AppRegistry among them),
-	// and that behavior is preserved.
+	// API Gateway's ARN-keyed tag store answers its own ARNs and AppRegistry's
+	// "servicecatalog" ones — AppRegistry's SDK shares API Gateway's endpoint
+	// and stores tags in the same ARN-keyed map, see
+	// internal/services/appregistry/service.go. It is deliberately NOT the
+	// owner of every other ARN: it used to be, and dozens of services'
+	// unimplemented tag operations read as HTTP 200 {"tags":{}} — #976 found
+	// `aws backup list-tags` succeeding against a service that implements no
+	// tag operations at all, which is #963's failure mode. An ARN no router
+	// claims now falls back to restFallback, exactly as if no /tags route had
+	// matched: a signed caller reaches the generated 501, and unsigned traffic
+	// gets S3's answer, the router-wide design for unclaimed paths.
 	{
 		tagRouters := map[string]http.Handler{}
 		if registeredForTest(cfg, "pipes") {
@@ -984,15 +992,16 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			tagRouters["appconfig"] = routes
 			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "appconfig", routes)
 		}
-		var apigwTags http.Handler
 		if registeredForTest(cfg, "apigateway") {
 			routes := apigwSvc.TagsRouter()
-			apigwTags = routes
-			dispatchMounts = recordDispatchFallback(dispatchMounts, "/tags", "apigateway", routes)
+			tagRouters["apigateway"] = routes
+			tagRouters["servicecatalog"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "apigateway", routes)
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "appregistry", routes)
 		}
-		if len(tagRouters) > 0 || apigwTags != nil {
+		if len(tagRouters) > 0 {
 			r.Route("/tags", func(sub chi.Router) {
-				sub.HandleFunc("/*", tagsDispatch(tagRouters, apigwTags))
+				sub.HandleFunc("/*", tagsDispatch(tagRouters, restFallback(operationRegistry, s3Router)))
 			})
 		}
 	}
@@ -1662,9 +1671,11 @@ func delegateUnmatched(sub chi.Router, fallback http.HandlerFunc) {
 // (/v1/tags/{resourceArn}, /tags/{resourceArn}) to whichever service's tag
 // router owns the resourceArn, as identified by protocol.ServiceFromARN.
 // A resourceArn that doesn't parse, or whose service isn't one of the given
-// routers, goes to fallback when one is provided — API Gateway's ARN-keyed
-// tag store plays that role on /tags — and otherwise gets a 404, so no
-// service silently claims a request it doesn't recognize.
+// routers, goes to fallback when one is provided — restFallback plays that
+// role on /tags, so a signed caller addressing a service whose tag operations
+// Overcast does not implement gets the generated 501 rather than a plausible
+// answer from a service it never addressed (#976) — and otherwise gets a 404,
+// so no service silently claims a request it doesn't recognize.
 func tagsDispatch(routers map[string]http.Handler, fallback http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceArn := chi.URLParam(r, "*")

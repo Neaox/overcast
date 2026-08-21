@@ -1713,11 +1713,12 @@ func TestEKSLiveModeUntagLegacyMockAccessEntryArnMissingTagKeysStillReturnsNotIm
 }
 
 // The /tags path space is owned by the main router, which dispatches on the
-// ARN's service prefix (pipes → Pipes, eks → EKS, everything else → API
-// Gateway's ARN-keyed fallback store). The tests below pin that a non-EKS
-// ARN never reaches the EKS handlers — EKS live-mode gating must not swallow
-// foreign-ARN tag traffic, which keeps flowing to the fallback owner with
-// API Gateway's semantics (PUT/POST/DELETE answer 204, GET answers 200).
+// ARN's service prefix (pipes → Pipes, eks → EKS, apigateway/servicecatalog →
+// API Gateway's ARN-keyed store, anything else → the router's REST fallback
+// since #976). The tests below pin that a non-EKS ARN never reaches the EKS
+// handlers — EKS live-mode gating must not swallow foreign-ARN tag traffic,
+// which keeps flowing to its owner with API Gateway's semantics (PUT/POST/
+// DELETE answer 204, GET answers 200).
 
 func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
@@ -1726,7 +1727,7 @@ func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	arn := "arn:aws:s3:::example-bucket"
+	arn := "arn:aws:apigateway:us-east-1::/restapis/live-abc"
 	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
 		"tags": map[string]string{"env": "live"},
 	})
@@ -1747,10 +1748,10 @@ func TestEKSLiveModeTagNonEKSArnStillAllowed(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	// An empty tags map would trip EKS's InvalidParameterException; the
-	// fallback owner accepts it as a 204 no-op — proof the request is
+	// An empty tags map would trip EKS's InvalidParameterException; API
+	// Gateway's store accepts it as a 204 no-op — proof the request is
 	// answered outside EKS regardless of its live-mode gating.
-	arn := "arn:aws:s3:::example-bucket"
+	arn := "arn:aws:apigateway:us-east-1::/restapis/live-abc"
 	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
 		"tags": map[string]string{"env": "live"},
 	})
@@ -1774,7 +1775,7 @@ func TestEKSLiveModeUntagNonEKSArnStillAllowed(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	arn := "arn:aws:s3:::example-bucket"
+	arn := "arn:aws:apigateway:us-east-1::/restapis/live-abc"
 	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
 		"tags": map[string]string{"env": "live", "owner": "ci"},
 	})

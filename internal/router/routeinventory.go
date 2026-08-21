@@ -27,9 +27,12 @@ type dispatchMount struct {
 	// mismatch names a package rather than a path.
 	Owner string
 	// Fallback marks the sub-router a dispatcher falls back to when no owner
-	// claims the request. Only API Gateway's ARN-keyed tag store is one: it
-	// answers /tags for every ARN no other service claims, which is how
-	// AppRegistry's tag operations are served at all.
+	// claims the request. AppRegistry's /applications router is one: it
+	// answers unsigned and servicecatalog-scoped traffic on the path it
+	// shares with AppConfig. API Gateway's ARN-keyed tag store used to be
+	// one too, answering /tags for every ARN no other service claimed, until
+	// #976 replaced that with keyed ownership ("apigateway" and
+	// "servicecatalog" ARNs) plus restFallback for the rest.
 	Fallback bool
 	Routes   chi.Routes
 }
