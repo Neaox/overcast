@@ -206,6 +206,219 @@ def DeleteDBParameterGroup(ctx: TestContext) -> None:
     rds.delete_db_parameter_group(DBParameterGroupName=name)
 
 
+# ── rds-clusters ─────────────────────────────────────────────────────────────
+#
+# Aurora DB clusters. A cluster is a logical record in Overcast — member
+# instances are what start engine containers — so the waits here are for the
+# emulator's own status transitions rather than for a database to boot. They
+# still have to be waited for: StopDBCluster refuses a cluster that is not
+# "available" and StartDBCluster refuses one that is not "stopped", here and on
+# AWS, so going straight from create to stop asks for InvalidDBClusterStateFault.
+#
+# The poll interval is tighter than the instance one for the same reason: there
+# is no container boot to wait on, only a scheduled transition, so a coarser
+# interval would spend seconds observing something that had already happened.
+RDS_CLUSTER_POLL_INTERVAL_SECONDS = 0.5
+
+RDS_CLUSTER_ENGINE = "aurora-mysql"
+RDS_CLUSTER_MASTER_USERNAME = "admin"
+RDS_CLUSTER_MASTER_PASSWORD = "Password1!"
+# The retention period ModifyDBCluster sets. Non-zero so it is distinguishable
+# from the create-time default, and echoed back by DescribeDBClusters so the
+# change can be observed rather than assumed.
+RDS_CLUSTER_BACKUP_RETENTION = 7
+
+
+def _describe_cluster(rds, cluster_id: str) -> dict:
+    """Return this group's cluster, or raise naming what came back instead.
+
+    Every assertion below reads through it, so a describe that comes back empty
+    reports as a missing cluster rather than an IndexError.
+    """
+    resp = rds.describe_db_clusters(DBClusterIdentifier=cluster_id)
+    clusters = resp.get("DBClusters") or []
+    if not clusters:
+        raise AssertionError(
+            f"DescribeDBClusters: no cluster returned for {cluster_id}"
+        )
+    return clusters[0]
+
+
+def _wait_for_cluster_status(
+    rds, cluster_id: str, target: str, budget: float = RDS_WAIT_BUDGET_SECONDS
+) -> None:
+    """Poll until the DB cluster reaches *target* status, or raise once the budget is spent."""
+    deadline = time.monotonic() + budget
+    last = "(none reported)"
+    while True:
+        status = _describe_cluster(rds, cluster_id).get("Status", "")
+        if status:
+            last = status
+            if status == target:
+                return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"DB cluster {cluster_id} did not reach '{target}' within {budget:.0f}s "
+                f"(last status '{last}')"
+            )
+        time.sleep(RDS_CLUSTER_POLL_INTERVAL_SECONDS)
+
+
+def _wait_for_cluster_gone(
+    rds, cluster_id: str, budget: float = RDS_WAIT_BUDGET_SECONDS
+) -> None:
+    """Poll the unfiltered DescribeDBClusters until this run's cluster is gone.
+
+    Deletion is asynchronous — the call marks the cluster "deleting" and the
+    record goes shortly after — so absence is what has to be waited for. The
+    unfiltered form rather than a lookup by identifier, so the check does not
+    depend on which not-found shape botocore raises.
+    """
+    deadline = time.monotonic() + budget
+    while True:
+        resp = rds.describe_db_clusters()
+        found = any(
+            c.get("DBClusterIdentifier") == cluster_id
+            for c in resp.get("DBClusters") or []
+        )
+        if not found:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"DB cluster {cluster_id} still listed {budget:.0f}s after DeleteDBCluster"
+            )
+        time.sleep(RDS_CLUSTER_POLL_INTERVAL_SECONDS)
+
+
+def CreateDBCluster(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    # Named apart from the instance group's resource so the two never collide
+    # when both run against the same emulator.
+    cluster_id = f"compat-cluster-{ctx.run_id}"
+    # Recorded before the call, not after it: a create that fails partway still
+    # leaves something for teardown to remove.
+    ctx["rds_cluster_id"] = cluster_id
+    resp = rds.create_db_cluster(
+        DBClusterIdentifier=cluster_id,
+        Engine=RDS_CLUSTER_ENGINE,
+        MasterUsername=RDS_CLUSTER_MASTER_USERNAME,
+        MasterUserPassword=RDS_CLUSTER_MASTER_PASSWORD,
+    )
+    cluster = resp.get("DBCluster", {})
+    if cluster.get("DBClusterIdentifier") != cluster_id:
+        raise AssertionError(
+            "CreateDBCluster: DBClusterIdentifier = "
+            f"{cluster.get('DBClusterIdentifier')!r}, want {cluster_id!r}"
+        )
+    if not cluster.get("DBClusterArn"):
+        raise AssertionError("CreateDBCluster: missing DBClusterArn")
+
+
+def DescribeDBClusters(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_cluster_id")
+    if not cluster_id:
+        raise AssertionError("DescribeDBClusters: no cluster from CreateDBCluster")
+    cluster = _describe_cluster(rds, cluster_id)
+    if cluster.get("DBClusterIdentifier") != cluster_id:
+        raise AssertionError(
+            "DescribeDBClusters: DBClusterIdentifier = "
+            f"{cluster.get('DBClusterIdentifier')!r}, want {cluster_id!r}"
+        )
+    if cluster.get("Engine") != RDS_CLUSTER_ENGINE:
+        raise AssertionError(
+            f"DescribeDBClusters: Engine = {cluster.get('Engine')!r}, "
+            f"want {RDS_CLUSTER_ENGINE!r}"
+        )
+    if not cluster.get("Status"):
+        raise AssertionError("DescribeDBClusters: missing Status")
+    # The writer and reader endpoints are what makes a cluster a cluster, and
+    # nothing outside the emulator's own Go tests looked at them until this
+    # group existed. Both must be present and they must differ — a reader
+    # endpoint collapsed onto the writer reads as success everywhere else.
+    # Both stay distinct only while the cluster has no writer member: since
+    # #1076 a host caller that cannot resolve the names is given the loopback
+    # address for each, deliberately. This group creates no members, so it
+    # never reaches that case — one that adds an instance would.
+    writer = cluster.get("Endpoint")
+    reader = cluster.get("ReaderEndpoint")
+    if not writer:
+        raise AssertionError("DescribeDBClusters: missing Endpoint")
+    if not reader:
+        raise AssertionError("DescribeDBClusters: missing ReaderEndpoint")
+    if writer == reader:
+        raise AssertionError(
+            f"DescribeDBClusters: Endpoint and ReaderEndpoint are both {writer!r}"
+        )
+
+
+def ModifyDBCluster(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_cluster_id")
+    if not cluster_id:
+        raise AssertionError("ModifyDBCluster: no cluster from CreateDBCluster")
+    resp = rds.modify_db_cluster(
+        DBClusterIdentifier=cluster_id,
+        BackupRetentionPeriod=RDS_CLUSTER_BACKUP_RETENTION,
+    )
+    cluster = resp.get("DBCluster", {})
+    if cluster.get("BackupRetentionPeriod") != RDS_CLUSTER_BACKUP_RETENTION:
+        raise AssertionError(
+            "ModifyDBCluster: BackupRetentionPeriod = "
+            f"{cluster.get('BackupRetentionPeriod')!r}, "
+            f"want {RDS_CLUSTER_BACKUP_RETENTION}"
+        )
+    # Read it back rather than trusting the modify response to have echoed a
+    # value it never stored.
+    after = _describe_cluster(rds, cluster_id)
+    if after.get("BackupRetentionPeriod") != RDS_CLUSTER_BACKUP_RETENTION:
+        raise AssertionError(
+            "ModifyDBCluster: BackupRetentionPeriod after describe = "
+            f"{after.get('BackupRetentionPeriod')!r}, "
+            f"want {RDS_CLUSTER_BACKUP_RETENTION}"
+        )
+
+
+def StopDBCluster(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_cluster_id")
+    if not cluster_id:
+        raise AssertionError("StopDBCluster: no cluster from CreateDBCluster")
+    # StopDBCluster requires an available cluster, here and on AWS.
+    _wait_for_cluster_status(rds, cluster_id, "available")
+    resp = rds.stop_db_cluster(DBClusterIdentifier=cluster_id)
+    if not resp.get("DBCluster", {}).get("Status"):
+        raise AssertionError("StopDBCluster: missing Status")
+    # The stop is this test's mutation, so this test is where it is confirmed to
+    # have landed — not StartDBCluster's precondition wait.
+    _wait_for_cluster_status(rds, cluster_id, "stopped")
+
+
+def StartDBCluster(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_cluster_id")
+    if not cluster_id:
+        raise AssertionError("StartDBCluster: no cluster from CreateDBCluster")
+    _wait_for_cluster_status(rds, cluster_id, "stopped")
+    resp = rds.start_db_cluster(DBClusterIdentifier=cluster_id)
+    if not resp.get("DBCluster", {}).get("Status"):
+        raise AssertionError("StartDBCluster: missing Status")
+    _wait_for_cluster_status(rds, cluster_id, "available")
+
+
+def DeleteDBCluster(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_cluster_id")
+    if not cluster_id:
+        raise AssertionError("DeleteDBCluster: no cluster from CreateDBCluster")
+    rds.delete_db_cluster(
+        DBClusterIdentifier=cluster_id,
+        SkipFinalSnapshot=True,
+    )
+    _wait_for_cluster_gone(rds, cluster_id)
+    ctx["rds_cluster_id"] = ""
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -222,6 +435,12 @@ IMPLS = {
     "CreateDBParameterGroup": CreateDBParameterGroup,
     "DescribeDBParameterGroups": DescribeDBParameterGroups,
     "DeleteDBParameterGroup": DeleteDBParameterGroup,
+    "CreateDBCluster": CreateDBCluster,
+    "DescribeDBClusters": DescribeDBClusters,
+    "ModifyDBCluster": ModifyDBCluster,
+    "StopDBCluster": StopDBCluster,
+    "StartDBCluster": StartDBCluster,
+    "DeleteDBCluster": DeleteDBCluster,
 }
 
 SETUP = {}
@@ -229,6 +448,7 @@ TEARDOWN = {
     "rds-instances": lambda ctx: _teardown_db_instance(ctx),
     "rds-subnet-groups": lambda ctx: _teardown_subnet_group(ctx),
     "rds-parameter-groups": lambda ctx: _teardown_param_group(ctx),
+    "rds-clusters": lambda ctx: _teardown_cluster(ctx),
 }
 
 
@@ -258,5 +478,17 @@ def _teardown_param_group(ctx: TestContext) -> None:
     if name:
         try:
             _rds(ctx).delete_db_parameter_group(DBParameterGroupName=name)
+        except Exception:
+            pass
+
+
+def _teardown_cluster(ctx: TestContext) -> None:
+    cluster_id = ctx.get("rds_cluster_id")
+    if cluster_id:
+        try:
+            _rds(ctx).delete_db_cluster(
+                DBClusterIdentifier=cluster_id,
+                SkipFinalSnapshot=True,
+            )
         except Exception:
             pass

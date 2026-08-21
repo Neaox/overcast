@@ -74,6 +74,23 @@ operations:
           cluster-{hash} reduces to once the account-specific hash every Overcast endpoint name drops is
           removed. Changed in 0.0.1-alpha.37 while the project is pre-1.0. AWS documents the endpoint shapes at
           https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Endpoints.html.
+      - name: Aurora cluster lifecycle over the AWS SDKs and the CLI
+        status: fixed
+        tests: [rds-clusters/CreateDBCluster, rds-clusters/DescribeDBClusters, rds-clusters/ModifyDBCluster, rds-clusters/StopDBCluster, rds-clusters/StartDBCluster, rds-clusters/DeleteDBCluster]
+        evidence: >-
+          The rds-clusters compat group exercises CreateDBCluster, DescribeDBClusters, ModifyDBCluster,
+          StopDBCluster, StartDBCluster and DeleteDBCluster through five unmodified AWS clients — the
+          Java, Go, Python and Node SDKs and the AWS CLI — so the Query XML the Aurora cluster
+          operations emit is now parsed by real SDK deserializers rather than only by Overcast's own Go
+          tests. The group asserts the created identifier and ARN, that DescribeDBClusters echoes the
+          engine and reports distinct non-empty writer and reader endpoints, that ModifyDBCluster's
+          BackupRetentionPeriod survives a read-back, that the available -> stopped -> available
+          transitions are observable, and that the cluster is absent from DescribeDBClusters after
+          delete. Endpoint assertions check shape rather than literal hostnames, since the hostname
+          suffix depends on the host the caller reached Overcast on.
+        notes: >-
+          Coverage only. This does not constitute an AWS-docs review of CreateDBCluster's optional
+          parameters, defaults, or validation error codes — see findings.remaining_gaps.
   DeleteDBInstance:
     status: in_progress
     scenarios:
@@ -101,6 +118,24 @@ operations:
           connections on those planes drop across the rejoin, matching the interruption an AWS failover causes.
           Nothing detaches the outgoing writer: DeleteDBInstance has already stopped its container and queued it
           for removal.
+  StopDBCluster:
+    status: fixed
+    scenarios:
+      - name: Stop and Start answer in their own response envelope
+        status: fixed
+        tests: [TestClusterResponses_useTheirOwnEnvelope, rds-clusters/StopDBCluster, rds-clusters/StartDBCluster]
+        evidence: >-
+          StopDBCluster and StartDBCluster returned an xmlCreateDBClusterResponse, so the wire carried
+          CreateDBClusterResponse/CreateDBClusterResult for both. Every AWS SDK refused the answer
+          outright — "deserialization failed, failed to decode response body, StopDBClusterResult node
+          not found" — while the state transition itself was correct, so no assertion on the stored
+          record could see it. AWS documents StopDBClusterResult and StartDBClusterResult at
+          https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StopDBCluster.html and
+          https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StartDBCluster.html.
+          Both operations now have their own envelope types, the duplicate raw Query handlers were
+          collapsed onto the typed implementations as Create/Modify/Delete already were, and
+          TestClusterResponses_useTheirOwnEnvelope pins the root and result element names for all six
+          cluster operations. Found by the rds-clusters compat group on its first run.
 findings:
   fixed:
     - CreateDBParameterGroup accepts the advertised aurora-mysql8.0 family used by Aurora MySQL 3 instance parameter groups while still rejecting unknown families.
@@ -110,10 +145,12 @@ findings:
     - Initial database creation and password validation follow the supported engine's AWS-specific rules, including Aurora DatabaseName inheritance.
     - Aurora cluster endpoints resolve to the writer member's container from sibling containers, and carry a port the caller can actually dial.
     - DeleteDBInstance removes the instance from its cluster's DBClusterMembers, and deleting the writer promotes a surviving member and moves the cluster endpoints onto its container.
+    - Aurora DB cluster create/describe/modify/stop/start/delete are exercised by five unmodified AWS clients through the rds-clusters compat group, so the cluster Query XML is parsed by real SDK deserializers instead of only by Overcast's own Go tests.
+    - StopDBCluster and StartDBCluster return their own response envelopes rather than CreateDBClusterResponse, which every AWS SDK had been refusing to deserialize.
   remaining_gaps:
-    - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
-    - No compat suite group covers Aurora clusters; rds-instances is the only lifecycle group, so cluster create/describe/delete parity is unexercised from the SDKs.
+    - Review CreateDBInstance/CreateDBCluster optional parameters, defaults, and validation error codes against the AWS docs. Happy-path lifecycle and XML response parity are now covered cross-suite by rds-instances and rds-clusters; what is untested is the negative space.
     - FailoverDBCluster is not implemented, so a promotion can only be triggered by deleting the writer, not asked for directly.
+    - The rds-clusters compat group covers clusters with no member instances. DBClusterMembers, and the interaction between cluster-owned settings and a member added by CreateDBInstance, are still only covered by Go tests.
   intentionally_partial:
     - The Aurora reader endpoint resolves to the writer rather than load-balancing across replicas, because members do not share storage.
     - Cluster endpoint hostnames drop AWS's account-specific hash, as every Overcast endpoint name does: AWS's cluster-{hash} and cluster-ro-{hash} reduce to cluster and cluster-ro. The hash is service-assigned and not derivable, so a name carrying one could not be registered as a Docker alias ahead of the first lookup.
@@ -123,6 +160,6 @@ findings:
     - PostgreSQL extension availability follows the backing image rather than AWS's RDS extension allowlist.
     - Reserved-word validation covers common SQL keywords and engine system schemas, not every version-specific engine reserved word.
 handoff:
-  start_with: [CreateDBInstance, CreateDBCluster, lifecycle states]
-  do_not_redo: [Aurora MySQL 3 instance parameter group family, Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, master-account initialization and initial database semantics]
+  start_with: [CreateDBInstance validation errors, CreateDBCluster optional parameters and defaults, DBClusterMembers]
+  do_not_redo: [Aurora MySQL 3 instance parameter group family, Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, master-account initialization and initial database semantics, Aurora cluster happy-path lifecycle and cluster XML response parity across the SDK/CLI compat suites]
   commands: [go test -count=1 ./internal/services/rds/... ./tests/integration/rds/...]

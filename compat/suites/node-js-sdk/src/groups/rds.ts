@@ -1,11 +1,9 @@
 /**
  * groups/rds.ts — RDS and Aurora compatibility test groups for the Node.js suite.
  *
- * Status: NOT implemented in Overcast. All tests expected to fail with 501.
- * These tests define the coverage target for future RDS/Aurora implementation.
- *
  * Groups:
  *   rds-instances        — DB instance lifecycle (create, describe, stop, start, modify, delete)
+ *   rds-clusters         — Aurora DB cluster lifecycle (create, describe, modify, stop, start, delete)
  *   rds-subnet-groups    — DB subnet group lifecycle
  *   rds-parameter-groups — DB parameter group lifecycle
  */
@@ -19,6 +17,12 @@ import {
   StartDBInstanceCommand,
   ModifyDBInstanceCommand,
   RDSClient,
+  CreateDBClusterCommand,
+  DescribeDBClustersCommand,
+  ModifyDBClusterCommand,
+  StopDBClusterCommand,
+  StartDBClusterCommand,
+  DeleteDBClusterCommand,
   CreateDBSubnetGroupCommand,
   DescribeDBSubnetGroupsCommand,
   DeleteDBSubnetGroupCommand,
@@ -77,6 +81,104 @@ async function waitForDBStatus(
     }
     await new Promise<void>((r) =>
       globalThis.setTimeout(r, RDS_POLL_INTERVAL_MS),
+    );
+  }
+}
+
+// ── rds-clusters helpers ─────────────────────────────────────────────────────
+//
+// Aurora DB clusters. A cluster is a logical record in Overcast — member
+// instances are what start engine containers — so the waits below are for the
+// emulator's own status transitions rather than for a database to boot. They
+// still have to be waited for: StopDBCluster refuses a cluster that is not
+// "available" and StartDBCluster refuses one that is not "stopped", here and on
+// AWS, so going straight from create to stop asks for InvalidDBClusterStateFault.
+//
+// The poll interval is tighter than the instance one for the same reason: there
+// is no container boot to wait on, only a scheduled transition, so a coarser
+// interval would spend seconds observing something that had already happened.
+const RDS_CLUSTER_POLL_INTERVAL_MS = 500;
+
+const RDS_CLUSTER_ENGINE = "aurora-mysql";
+const RDS_CLUSTER_MASTER_USERNAME = "admin";
+const RDS_CLUSTER_MASTER_PASSWORD = "Password1!";
+/**
+ * The retention period ModifyDBCluster sets. Non-zero so it is distinguishable
+ * from the create-time default, and echoed back by DescribeDBClusters so the
+ * change can be observed rather than assumed.
+ */
+const RDS_CLUSTER_BACKUP_RETENTION = 7;
+
+/**
+ * Describe this group's cluster, failing with a message that names the cluster
+ * when nothing comes back. Every assertion reads through it, so an empty
+ * describe reports as a missing cluster rather than a property access on
+ * undefined.
+ */
+async function describeCluster(rds: RDSClient, clusterId: string) {
+  const resp = await rds.send(
+    new DescribeDBClustersCommand({ DBClusterIdentifier: clusterId }),
+  );
+  const cluster = resp.DBClusters?.[0];
+  assert.ok(cluster, `DescribeDBClusters: no cluster returned for ${clusterId}`);
+  return cluster;
+}
+
+/** Poll until the DB cluster reaches `targetStatus`, or throw once the budget is spent. */
+async function waitForClusterStatus(
+  rds: RDSClient,
+  clusterId: string,
+  targetStatus: string,
+  budgetMs = RDS_WAIT_BUDGET_MS,
+): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  let last = "(none reported)";
+  for (;;) {
+    const resp = await rds.send(
+      new DescribeDBClustersCommand({ DBClusterIdentifier: clusterId }),
+    );
+    const status = resp.DBClusters?.[0]?.Status;
+    if (status) {
+      last = status;
+      if (status === targetStatus) return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `DB cluster ${clusterId} did not reach "${targetStatus}" within ${budgetMs}ms (last status "${last}")`,
+      );
+    }
+    await new Promise<void>((r) =>
+      globalThis.setTimeout(r, RDS_CLUSTER_POLL_INTERVAL_MS),
+    );
+  }
+}
+
+/**
+ * Poll the unfiltered DescribeDBClusters until this run's cluster is no longer
+ * listed. Deletion is asynchronous — the call marks the cluster "deleting" and
+ * the record goes shortly after — so absence is what has to be waited for. The
+ * unfiltered form rather than a lookup by identifier, so the check does not
+ * depend on which not-found shape the SDK surfaces.
+ */
+async function waitForClusterGone(
+  rds: RDSClient,
+  clusterId: string,
+  budgetMs = RDS_WAIT_BUDGET_MS,
+): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const resp = await rds.send(new DescribeDBClustersCommand({}));
+    const found = (resp.DBClusters ?? []).some(
+      (c) => c.DBClusterIdentifier === clusterId,
+    );
+    if (!found) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `DB cluster ${clusterId} still listed ${budgetMs}ms after DeleteDBCluster`,
+      );
+    }
+    await new Promise<void>((r) =>
+      globalThis.setTimeout(r, RDS_CLUSTER_POLL_INTERVAL_MS),
     );
   }
 }
@@ -207,6 +309,198 @@ export function makeRDSGroups(suite: string): TestGroup[] {
           await rds.send(
             new DeleteDBInstanceCommand({
               DBInstanceIdentifier: dbId,
+              SkipFinalSnapshot: true,
+            }),
+          );
+        } catch {}
+      },
+    },
+
+    // ── rds-clusters ───────────────────────────────────────────────────────
+    {
+      suite,
+      service: "rds",
+      name: "rds-clusters",
+      tests: [
+        {
+          name: "CreateDBCluster",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            // Named apart from the instance group's resource so the two never
+            // collide when both run against the same emulator.
+            const clusterId = `compat-cluster-${ctx.runId}`;
+            // Recorded before the call, not after it: a create that fails
+            // partway still leaves something for teardown to remove.
+            (ctx as Record<string, unknown>)["_clusterId"] = clusterId;
+            const resp = await rds.send(
+              new CreateDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                Engine: RDS_CLUSTER_ENGINE,
+                MasterUsername: RDS_CLUSTER_MASTER_USERNAME,
+                MasterUserPassword: RDS_CLUSTER_MASTER_PASSWORD,
+              }),
+            );
+            assert.strictEqual(
+              resp.DBCluster?.DBClusterIdentifier,
+              clusterId,
+              "CreateDBCluster: DBClusterIdentifier mismatch",
+            );
+            assert.ok(
+              resp.DBCluster.DBClusterArn,
+              "CreateDBCluster: missing DBClusterArn",
+            );
+          },
+        },
+        {
+          name: "DescribeDBClusters",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_clusterId"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "DescribeDBClusters: no cluster from CreateDBCluster",
+            );
+            const cluster = await describeCluster(rds, clusterId);
+            assert.strictEqual(
+              cluster.DBClusterIdentifier,
+              clusterId,
+              "DescribeDBClusters: DBClusterIdentifier mismatch",
+            );
+            assert.strictEqual(
+              cluster.Engine,
+              RDS_CLUSTER_ENGINE,
+              "DescribeDBClusters: Engine mismatch",
+            );
+            assert.ok(cluster.Status, "DescribeDBClusters: missing Status");
+            // The writer and reader endpoints are what makes a cluster a
+            // cluster, and nothing outside the emulator's own Go tests looked
+            // at them until this group existed. Both must be present and they
+            // must differ — a reader endpoint collapsed onto the writer reads
+            // as success everywhere else.
+            // Both stay distinct only while the cluster has no writer member:
+            // since #1076 a host caller that cannot resolve the names is given
+            // the loopback address for each, deliberately. This group creates
+            // no members, so it never reaches that case — one that adds an
+            // instance would.
+            assert.ok(cluster.Endpoint, "DescribeDBClusters: missing Endpoint");
+            assert.ok(
+              cluster.ReaderEndpoint,
+              "DescribeDBClusters: missing ReaderEndpoint",
+            );
+            assert.notStrictEqual(
+              cluster.Endpoint,
+              cluster.ReaderEndpoint,
+              "DescribeDBClusters: Endpoint and ReaderEndpoint are the same name",
+            );
+          },
+        },
+        {
+          name: "ModifyDBCluster",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_clusterId"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "ModifyDBCluster: no cluster from CreateDBCluster",
+            );
+            const resp = await rds.send(
+              new ModifyDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                BackupRetentionPeriod: RDS_CLUSTER_BACKUP_RETENTION,
+              }),
+            );
+            assert.strictEqual(
+              resp.DBCluster?.BackupRetentionPeriod,
+              RDS_CLUSTER_BACKUP_RETENTION,
+              "ModifyDBCluster: BackupRetentionPeriod not applied in the response",
+            );
+            // Read it back rather than trusting the modify response to have
+            // echoed a value it never stored.
+            const after = await describeCluster(rds, clusterId);
+            assert.strictEqual(
+              after.BackupRetentionPeriod,
+              RDS_CLUSTER_BACKUP_RETENTION,
+              "ModifyDBCluster: BackupRetentionPeriod not persisted",
+            );
+          },
+        },
+        {
+          name: "StopDBCluster",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_clusterId"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "StopDBCluster: no cluster from CreateDBCluster",
+            );
+            // StopDBCluster requires an available cluster, here and on AWS.
+            await waitForClusterStatus(rds, clusterId, "available");
+            const resp = await rds.send(
+              new StopDBClusterCommand({ DBClusterIdentifier: clusterId }),
+            );
+            assert.ok(resp.DBCluster?.Status, "StopDBCluster: missing Status");
+            // The stop is this test's mutation, so this test is where it is
+            // confirmed to have landed — not StartDBCluster's precondition wait.
+            await waitForClusterStatus(rds, clusterId, "stopped");
+          },
+        },
+        {
+          name: "StartDBCluster",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_clusterId"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "StartDBCluster: no cluster from CreateDBCluster",
+            );
+            await waitForClusterStatus(rds, clusterId, "stopped");
+            const resp = await rds.send(
+              new StartDBClusterCommand({ DBClusterIdentifier: clusterId }),
+            );
+            assert.ok(resp.DBCluster?.Status, "StartDBCluster: missing Status");
+            await waitForClusterStatus(rds, clusterId, "available");
+          },
+        },
+        {
+          name: "DeleteDBCluster",
+          fn: async (ctx) => {
+            const { rds } = makeClients(ctx);
+            const clusterId = (ctx as Record<string, unknown>)[
+              "_clusterId"
+            ] as string;
+            assert.ok(
+              clusterId,
+              "DeleteDBCluster: no cluster from CreateDBCluster",
+            );
+            await rds.send(
+              new DeleteDBClusterCommand({
+                DBClusterIdentifier: clusterId,
+                SkipFinalSnapshot: true,
+              }),
+            );
+            await waitForClusterGone(rds, clusterId);
+            (ctx as Record<string, unknown>)["_clusterId"] = undefined;
+          },
+        },
+      ],
+      teardown: async (ctx) => {
+        const { rds } = makeClients(ctx);
+        const clusterId = (ctx as Record<string, unknown>)[
+          "_clusterId"
+        ] as string;
+        if (!clusterId) return;
+        try {
+          await rds.send(
+            new DeleteDBClusterCommand({
+              DBClusterIdentifier: clusterId,
               SkipFinalSnapshot: true,
             }),
           );

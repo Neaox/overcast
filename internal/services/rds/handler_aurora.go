@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/xml"
 	"net/http"
-	"time"
 
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -36,6 +35,31 @@ type xmlModifyDBClusterResponse struct {
 	XMLName          xml.Name                  `xml:"ModifyDBClusterResponse"`
 	Xmlns            string                    `xml:"xmlns,attr"`
 	Result           xmlCreateDBClusterResult  `xml:"ModifyDBClusterResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// xmlStopDBClusterResponse and xmlStartDBClusterResponse are Stop's and Start's
+// own envelopes, for the reason given on xmlModifyDBClusterResponse. Both typed
+// implementations used to answer with a CreateDBClusterResponse, and the raw
+// Query handlers below declared the right element names in local types that the
+// typed path never reached — so reading either handler in isolation showed a
+// correct answer while the wire carried CreateDBClusterResponse for a stop.
+//
+// Nothing caught it because the state change was right: the cluster really did
+// go to "stopping", so every assertion on the stored record passed. Only a
+// client that parses the envelope sees the fault, and until compat grew an
+// rds-clusters group no client did.
+type xmlStopDBClusterResponse struct {
+	XMLName          xml.Name                  `xml:"StopDBClusterResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           xmlCreateDBClusterResult  `xml:"StopDBClusterResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlStartDBClusterResponse struct {
+	XMLName          xml.Name                  `xml:"StartDBClusterResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           xmlCreateDBClusterResult  `xml:"StartDBClusterResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
@@ -181,97 +205,20 @@ func (h *Handler) ModifyDBCluster(w http.ResponseWriter, r *http.Request) {
 // ── StartDBCluster / StopDBCluster ────────────────────────────────────────────
 
 // StartDBCluster starts a stopped Aurora DB cluster.
+//
+// An adapter, for the reason given on the other four: this was a second full
+// implementation, and the two disagreed about the one thing neither could see.
+// The typed one answered in a CreateDBClusterResponse envelope; this one built
+// the right envelope from a locally declared type, so whichever you read looked
+// correct and only the dispatch path decided which an SDK got.
 func (h *Handler) StartDBCluster(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBClusterIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBClusterIdentifier is required"))
-		return
-	}
-
-	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
-		if cluster.Status != "stopped" {
-			return &protocol.AWSError{
-				Code:       "InvalidDBClusterStateFault",
-				Message:    "Cluster " + id + " is not in a stopped state.",
-				HTTPStatus: http.StatusBadRequest,
-			}
-		}
-		cluster.Status = "starting"
-		return nil
-	})
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// Transition starting → available.
-	clID := id
-	region := h.store.region(r.Context())
-	h.scheduler.AfterScoped(region, clID, "start", 500*time.Millisecond, func(ctx context.Context) {
-		h.transitionCluster(ctx, clID, "starting", "available")
-	})
-
-	type xmlStartDBClusterResponse struct {
-		XMLName          xml.Name                  `xml:"StartDBClusterResponse"`
-		Xmlns            string                    `xml:"xmlns,attr"`
-		Result           xmlCreateDBClusterResult  `xml:"StartDBClusterResult"`
-		ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStartDBClusterResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlCreateDBClusterResult{
-			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("StartDBCluster", w, r)
 }
 
-// StopDBCluster stops a running Aurora DB cluster.
+// StopDBCluster stops a running Aurora DB cluster. An adapter, for the reason
+// given on StartDBCluster.
 func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBClusterIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBClusterIdentifier is required"))
-		return
-	}
-
-	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
-		if cluster.Status != "available" {
-			return &protocol.AWSError{
-				Code:       "InvalidDBClusterStateFault",
-				Message:    "Cluster " + id + " is not in an available state.",
-				HTTPStatus: http.StatusBadRequest,
-			}
-		}
-		cluster.Status = "stopping"
-		return nil
-	})
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// Transition stopping → stopped.
-	clID := id
-	region := h.store.region(r.Context())
-	h.scheduler.AfterScoped(region, clID, "stop", 500*time.Millisecond, func(ctx context.Context) {
-		h.transitionCluster(ctx, clID, "stopping", "stopped")
-	})
-
-	type xmlStopDBClusterResponse struct {
-		XMLName          xml.Name                  `xml:"StopDBClusterResponse"`
-		Xmlns            string                    `xml:"xmlns,attr"`
-		Result           xmlCreateDBClusterResult  `xml:"StopDBClusterResult"`
-		ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStopDBClusterResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlCreateDBClusterResult{
-			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("StopDBCluster", w, r)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
