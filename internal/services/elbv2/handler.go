@@ -6,8 +6,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +17,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -46,21 +45,24 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"CreateLoadBalancer":    h.CreateLoadBalancer,
-		"DescribeLoadBalancers": h.DescribeLoadBalancers,
-		"DeleteLoadBalancer":    h.DeleteLoadBalancer,
-		"CreateTargetGroup":     h.CreateTargetGroup,
-		"DescribeTargetGroups":  h.DescribeTargetGroups,
-		"DeleteTargetGroup":     h.DeleteTargetGroup,
-		"CreateListener":        h.CreateListener,
-		"DescribeListeners":     h.DescribeListeners,
-		"DeleteListener":        h.DeleteListener,
-		"RegisterTargets":       h.RegisterTargets,
-		"DeregisterTargets":     h.DeregisterTargets,
-		"DescribeTargetHealth":  h.DescribeTargetHealth,
-		"AddTags":               h.AddTags,
-		"RemoveTags":            h.RemoveTags,
-		"DescribeTags":          h.DescribeTags,
+		"CreateLoadBalancer":            h.CreateLoadBalancer,
+		"DescribeLoadBalancers":         h.DescribeLoadBalancers,
+		"DeleteLoadBalancer":            h.DeleteLoadBalancer,
+		"CreateTargetGroup":             h.CreateTargetGroup,
+		"DescribeTargetGroups":          h.DescribeTargetGroups,
+		"DeleteTargetGroup":             h.DeleteTargetGroup,
+		"ModifyTargetGroup":             h.ModifyTargetGroup,
+		"ModifyTargetGroupAttributes":   h.ModifyTargetGroupAttributes,
+		"DescribeTargetGroupAttributes": h.DescribeTargetGroupAttributes,
+		"CreateListener":                h.CreateListener,
+		"DescribeListeners":             h.DescribeListeners,
+		"DeleteListener":                h.DeleteListener,
+		"RegisterTargets":               h.RegisterTargets,
+		"DeregisterTargets":             h.DeregisterTargets,
+		"DescribeTargetHealth":          h.DescribeTargetHealth,
+		"AddTags":                       h.AddTags,
+		"RemoveTags":                    h.RemoveTags,
+		"DescribeTags":                  h.DescribeTags,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -77,6 +79,25 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.NotImplementedQueryXML(w, r)
+}
+
+// invokeTypedAsQuery runs a typed operation on the raw Query dispatch path.
+//
+// Service.DispatchQuery prefers the typed operation whenever a codec is in
+// context and otherwise falls back to h.dispatch, so every operation
+// reachable both ways needs one implementation, not two — see the identical
+// adapter in internal/services/rds/handler.go for the drift bug this
+// pattern exists to prevent. Registering each h.ops entry as this adapter
+// keeps ownsAction working — the router asks h.ops what ELBv2 claims —
+// while leaving exactly one place where the behaviour lives:
+// typed_logic.go.
+func (h *Handler) invokeTypedAsQuery(action string, w http.ResponseWriter, r *http.Request) {
+	typed, ok := h.typedOp[action]
+	if !ok {
+		protocol.NotImplementedQueryXML(w, r)
+		return
+	}
+	typed.Invoke(w, r, codec.QueryXML)
 }
 
 func (h *Handler) region(ctx context.Context) string {
@@ -340,24 +361,6 @@ func (h *Handler) listListenersByLB(ctx context.Context, region, lbArn string) (
 	return out, nil
 }
 
-// parseActions reads a Query-protocol action list ("DefaultActions.member.N.*").
-// AWS numbers members from 1 and allows no gaps, so the first absent Type ends
-// the list.
-func parseActions(r *http.Request, prefix string) []Action {
-	var actions []Action
-	for i := 1; ; i++ {
-		typ := r.FormValue(fmt.Sprintf("%s.member.%d.Type", prefix, i))
-		if typ == "" {
-			return actions
-		}
-		actions = append(actions, Action{
-			Type:           typ,
-			TargetGroupArn: r.FormValue(fmt.Sprintf("%s.member.%d.TargetGroupArn", prefix, i)),
-			Order:          formInt(r, fmt.Sprintf("%s.member.%d.Order", prefix, i), 0),
-		})
-	}
-}
-
 // forwardTargetGroups returns the target groups a listener forwards to, in
 // action order.
 func (l *Listener) forwardTargetGroups() []string {
@@ -406,6 +409,7 @@ func toLBXML(lb *LoadBalancer) xmlLB {
 		DNSName:          lb.DNSName,
 		Type:             lb.Type,
 		Scheme:           lb.Scheme,
+		IpAddressType:    lb.IpAddressType,
 		VpcId:            lb.VpcId,
 		CreatedTime:      lb.CreatedTime.UTC().Format(time.RFC3339),
 	}
@@ -415,12 +419,23 @@ func toLBXML(lb *LoadBalancer) xmlLB {
 
 func toTGXML(tg *TargetGroup) xmlTG {
 	return xmlTG{
-		TargetGroupArn:  tg.TargetGroupArn,
-		TargetGroupName: tg.TargetGroupName,
-		Protocol:        tg.Protocol,
-		Port:            tg.Port,
-		VpcId:           tg.VpcId,
-		TargetType:      tg.TargetType,
+		TargetGroupArn:             tg.TargetGroupArn,
+		TargetGroupName:            tg.TargetGroupName,
+		Protocol:                   tg.Protocol,
+		ProtocolVersion:            tg.ProtocolVersion,
+		Port:                       tg.Port,
+		VpcId:                      tg.VpcId,
+		TargetType:                 tg.TargetType,
+		IpAddressType:              tg.IpAddressType,
+		HealthCheckEnabled:         tg.HealthCheckEnabled,
+		HealthCheckProtocol:        tg.HealthCheckProtocol,
+		HealthCheckPort:            tg.HealthCheckPort,
+		HealthCheckPath:            tg.HealthCheckPath,
+		HealthCheckIntervalSeconds: tg.HealthCheckIntervalSeconds,
+		HealthCheckTimeoutSeconds:  tg.HealthCheckTimeoutSeconds,
+		HealthyThresholdCount:      tg.HealthyThresholdCount,
+		UnhealthyThresholdCount:    tg.UnhealthyThresholdCount,
+		Matcher:                    tg.Matcher,
 	}
 }
 
@@ -432,35 +447,7 @@ func toListenerXML(l *Listener) xmlListener {
 		Port:            l.Port,
 	}
 	if len(l.DefaultActions) > 0 {
-		members := make([]xmlAction, 0, len(l.DefaultActions))
-		for _, a := range l.DefaultActions {
-			members = append(members, xmlAction(a))
-		}
-		out.DefaultActions = &xmlActionMembers{Member: members}
-	}
-	return out
-}
-
-func formInt(r *http.Request, key string, defaultVal int) int {
-	v := r.FormValue(key)
-	if v == "" {
-		return defaultVal
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return defaultVal
-	}
-	return n
-}
-
-func collectMemberParams(r *http.Request, prefix string) []string {
-	var out []string
-	for i := 1; ; i++ {
-		v := r.FormValue(fmt.Sprintf("%s.member.%d", prefix, i))
-		if v == "" {
-			break
-		}
-		out = append(out, v)
+		out.DefaultActions = &xmlActionMembers{Member: l.DefaultActions}
 	}
 	return out
 }
@@ -494,352 +481,85 @@ var _ = uuid.NewString
 var _ = zap.NewNop
 var _ = xml.Unmarshal
 
+// The raw Query entry points below used to be full second implementations
+// of every operation, reachable whenever Service.DispatchQuery found no
+// codec in context and fell back to h.dispatch. Two implementations of the
+// same operation is two chances to be wrong; they are adapters now, so the
+// behaviour lives once, in typed_logic.go. See invokeTypedAsQuery.
+
+// CreateLoadBalancer creates a load balancer.
 func (h *Handler) CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("Name")
-	if name == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("Name"))
-		return
-	}
-	lbType := r.FormValue("Type")
-	if lbType == "" {
-		lbType = "application"
-	}
-	scheme := r.FormValue("Scheme")
-	if scheme == "" {
-		scheme = "internet-facing"
-	}
-	vpcID := r.FormValue("VpcId")
-	region := h.region(r.Context())
-	account := h.accountID()
-
-	lbID := uuid.NewString()
-	arn := loadBalancerARN(region, account, lbType, name, lbID[:8])
-	dnsName := h.loadBalancerDNSName(name, lbID, region)
-
-	lb := &LoadBalancer{
-		LoadBalancerArn:  arn,
-		LoadBalancerName: name,
-		DNSName:          dnsName,
-		Type:             lbType,
-		Scheme:           scheme,
-		State:            "active",
-		VpcId:            vpcID,
-		CreatedTime:      h.clk.Now(),
-		Region:           region,
-	}
-	if err := h.putLB(r.Context(), region, lb); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	resp := &xmlCreateLoadBalancerResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.LoadBalancers.Member = []xmlLB{toLBXML(lb)}
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("CreateLoadBalancer", w, r)
 }
 
+// DescribeLoadBalancers describes load balancers.
 func (h *Handler) DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) {
-	region := h.region(r.Context())
-	lbs, err := h.listLBs(r.Context(), region)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	lbs = selectLBs(lbs, collectMemberParams(r, "LoadBalancerArns"), collectMemberParams(r, "Names"))
-	sort.Slice(lbs, func(i, j int) bool { return lbs[i].LoadBalancerName < lbs[j].LoadBalancerName })
-
-	xmlLBs := make([]xmlLB, 0, len(lbs))
-	for _, lb := range lbs {
-		xmlLBs = append(xmlLBs, toLBXML(lb))
-	}
-	resp := &xmlDescribeLoadBalancersResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.LoadBalancers.Member = xmlLBs
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("DescribeLoadBalancers", w, r)
 }
 
+// DeleteLoadBalancer deletes a load balancer.
 func (h *Handler) DeleteLoadBalancer(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("LoadBalancerArn")
-	region := h.region(r.Context())
-	if arn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("LoadBalancerArn"))
-		return
-	}
-	if _, found, err := h.getLB(r.Context(), region, arn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	} else if !found {
-		protocol.WriteQueryXMLError(w, r, errNotFound("LoadBalancer", arn))
-		return
-	}
-	if err := h.deleteLB(r.Context(), region, arn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteLoadBalancerResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("DeleteLoadBalancer", w, r)
 }
 
+// CreateTargetGroup creates a target group.
 func (h *Handler) CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("Name")
-	if name == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("Name"))
-		return
-	}
-	proto := r.FormValue("Protocol")
-	port := formInt(r, "Port", 80)
-	vpcID := r.FormValue("VpcId")
-	tgType := r.FormValue("TargetType")
-	if tgType == "" {
-		tgType = "instance"
-	}
-	region := h.region(r.Context())
-	account := h.accountID()
-
-	tgID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:targetgroup/%s/%s",
-		region, account, name, tgID[:12])
-
-	tg := &TargetGroup{
-		TargetGroupArn:  arn,
-		TargetGroupName: name,
-		Protocol:        proto,
-		Port:            port,
-		VpcId:           vpcID,
-		TargetType:      tgType,
-		Region:          region,
-	}
-	if err := h.putTG(r.Context(), region, tg); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	resp := &xmlCreateTargetGroupResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.TargetGroups.Member = []xmlTG{toTGXML(tg)}
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("CreateTargetGroup", w, r)
 }
 
+// DescribeTargetGroups describes target groups.
 func (h *Handler) DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
-	region := h.region(r.Context())
-	tgs, err := h.listTGs(r.Context(), region)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	tgs = selectTGs(tgs, collectMemberParams(r, "TargetGroupArns"), collectMemberParams(r, "Names"))
-	sort.Slice(tgs, func(i, j int) bool { return tgs[i].TargetGroupName < tgs[j].TargetGroupName })
-
-	xmlTGs := make([]xmlTG, 0, len(tgs))
-	for _, tg := range tgs {
-		xmlTGs = append(xmlTGs, toTGXML(tg))
-	}
-	resp := &xmlDescribeTargetGroupsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.TargetGroups.Member = xmlTGs
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("DescribeTargetGroups", w, r)
 }
 
+// DeleteTargetGroup deletes a target group.
 func (h *Handler) DeleteTargetGroup(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("TargetGroupArn")
-	region := h.region(r.Context())
-	if arn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("TargetGroupArn"))
-		return
-	}
-	if _, found, err := h.getTG(r.Context(), region, arn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	} else if !found {
-		protocol.WriteQueryXMLError(w, r, errTGNotFound(arn))
-		return
-	}
-	if err := h.deleteTG(r.Context(), region, arn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteTargetGroupResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("DeleteTargetGroup", w, r)
 }
 
+// ModifyTargetGroup updates a target group's health-check configuration.
+func (h *Handler) ModifyTargetGroup(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("ModifyTargetGroup", w, r)
+}
+
+// ModifyTargetGroupAttributes updates a target group's Attributes map.
+func (h *Handler) ModifyTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("ModifyTargetGroupAttributes", w, r)
+}
+
+// DescribeTargetGroupAttributes describes a target group's Attributes map.
+func (h *Handler) DescribeTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("DescribeTargetGroupAttributes", w, r)
+}
+
+// CreateListener creates a listener.
 func (h *Handler) CreateListener(w http.ResponseWriter, r *http.Request) {
-	lbArn := r.FormValue("LoadBalancerArn")
-	if lbArn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("LoadBalancerArn"))
-		return
-	}
-	proto := r.FormValue("Protocol")
-	port := formInt(r, "Port", 80)
-	region := h.region(r.Context())
-
-	if _, found, err := h.getLB(r.Context(), region, lbArn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	} else if !found {
-		protocol.WriteQueryXMLError(w, r, errNotFound("LoadBalancer", lbArn))
-		return
-	}
-
-	lID := uuid.NewString()
-
-	l := &Listener{
-		ListenerArn:     listenerARN(lbArn, lID[:12]),
-		LoadBalancerArn: lbArn,
-		Protocol:        proto,
-		Port:            port,
-		Region:          region,
-		DefaultActions:  parseActions(r, "DefaultActions"),
-	}
-	if err := h.putListener(r.Context(), region, l); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	resp := &xmlCreateListenerResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.Listeners.Member = []xmlListener{toListenerXML(l)}
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("CreateListener", w, r)
 }
 
+// DescribeListeners describes listeners.
 func (h *Handler) DescribeListeners(w http.ResponseWriter, r *http.Request) {
-	lbArn := r.FormValue("LoadBalancerArn")
-	region := h.region(r.Context())
-
-	listeners, err := h.listListenersByLB(r.Context(), region, lbArn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	f := newIdentifierFilter(collectMemberParams(r, "ListenerArns"))
-
-	xmlLs := make([]xmlListener, 0, len(listeners))
-	for _, l := range listeners {
-		if !f.matches(l.ListenerArn) {
-			continue
-		}
-		xmlLs = append(xmlLs, toListenerXML(l))
-	}
-	resp := &xmlDescribeListenersResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.Listeners.Member = xmlLs
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("DescribeListeners", w, r)
 }
 
+// DeleteListener deletes a listener.
 func (h *Handler) DeleteListener(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("ListenerArn")
-	region := h.region(r.Context())
-	if arn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("ListenerArn"))
-		return
-	}
-	if _, found, err := h.getListener(r.Context(), region, arn); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	} else if !found {
-		protocol.WriteQueryXMLError(w, r, errNotFound("Listener", arn))
-		return
-	}
-	if err := h.store.Delete(r.Context(), nsListeners, listenerKey(region, arn)); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteListenerResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("DeleteListener", w, r)
 }
 
+// RegisterTargets registers targets with a target group.
 func (h *Handler) RegisterTargets(w http.ResponseWriter, r *http.Request) {
-	tgArn := r.FormValue("TargetGroupArn")
-	if tgArn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("TargetGroupArn"))
-		return
-	}
-	region := h.region(r.Context())
-
-	for i := 1; ; i++ {
-		id := r.FormValue(fmt.Sprintf("Targets.member.%d.Id", i))
-		if id == "" {
-			break
-		}
-		port := formInt(r, fmt.Sprintf("Targets.member.%d.Port", i), 0)
-		t := &Target{TargetGroupArn: tgArn, Id: id, Port: port}
-		if err := h.putTarget(r.Context(), region, t); err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		}
-	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlRegisterTargetsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("RegisterTargets", w, r)
 }
 
+// DeregisterTargets deregisters targets from a target group.
 func (h *Handler) DeregisterTargets(w http.ResponseWriter, r *http.Request) {
-	tgArn := r.FormValue("TargetGroupArn")
-	if tgArn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("TargetGroupArn"))
-		return
-	}
-	region := h.region(r.Context())
-
-	for i := 1; ; i++ {
-		id := r.FormValue(fmt.Sprintf("Targets.member.%d.Id", i))
-		if id == "" {
-			break
-		}
-		_ = h.removeTarget(r.Context(), region, tgArn, id)
-	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeregisterTargetsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("DeregisterTargets", w, r)
 }
 
+// DescribeTargetHealth describes the health of a target group's targets.
 func (h *Handler) DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
-	tgArn := r.FormValue("TargetGroupArn")
-	if tgArn == "" {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("TargetGroupArn"))
-		return
-	}
-	region := h.region(r.Context())
-
-	targets, err := h.listTargets(r.Context(), region, tgArn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	members := make([]xmlTargetHealthDescription, 0, len(targets))
-	for _, t := range targets {
-		var desc xmlTargetHealthDescription
-		desc.Target.Id = t.Id
-		desc.Target.Port = t.Port
-		desc.TargetHealth.State = "healthy"
-		members = append(members, desc)
-	}
-	resp := &xmlDescribeTargetHealthResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.TargetHealthDescriptions.Member = members
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("DescribeTargetHealth", w, r)
 }
 
 var elbv2TagCfg = serviceutil.TagValidationConfig{
@@ -848,189 +568,19 @@ var elbv2TagCfg = serviceutil.TagValidationConfig{
 	ExceededMessage: "Tag count exceeded the maximum of 50 tags per resource.",
 }
 
+// AddTags adds tags to load balancers and target groups.
 func (h *Handler) AddTags(w http.ResponseWriter, r *http.Request) {
-	arns := collectMemberParams(r, "ResourceArns")
-	if len(arns) == 0 {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("ResourceArns"))
-		return
-	}
-	region := h.region(r.Context())
-
-	tags := map[string]string{}
-	for i := 1; ; i++ {
-		k := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		if k == "" {
-			break
-		}
-		if _, exists := tags[k]; exists {
-			protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-				Code: "DuplicateTagKeys", Message: "Duplicate tag keys: " + k,
-				HTTPStatus: http.StatusBadRequest,
-			})
-			return
-		}
-		tags[k] = r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-	}
-
-	ctx := r.Context()
-	for _, arn := range arns {
-		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		} else if found {
-			if lb.Tags == nil {
-				lb.Tags = map[string]string{}
-			}
-			for k, v := range tags {
-				lb.Tags[k] = v
-			}
-			if aerr := serviceutil.ValidateTags(elbv2TagCfg, lb.Tags); aerr != nil {
-				protocol.WriteQueryXMLError(w, r, aerr)
-				return
-			}
-			if err := h.putLB(ctx, region, lb); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			}
-			continue
-		}
-		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		} else if found {
-			if tg.Tags == nil {
-				tg.Tags = map[string]string{}
-			}
-			for k, v := range tags {
-				tg.Tags[k] = v
-			}
-			if aerr := serviceutil.ValidateTags(elbv2TagCfg, tg.Tags); aerr != nil {
-				protocol.WriteQueryXMLError(w, r, aerr)
-				return
-			}
-			if err := h.putTG(ctx, region, tg); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			}
-			continue
-		}
-		protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
-		return
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAddTagsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("AddTags", w, r)
 }
 
+// RemoveTags removes tags from load balancers and target groups.
 func (h *Handler) RemoveTags(w http.ResponseWriter, r *http.Request) {
-	arns := collectMemberParams(r, "ResourceArns")
-	if len(arns) == 0 {
-		protocol.WriteQueryXMLError(w, r, errMissingParam("ResourceArns"))
-		return
-	}
-	tagKeys := collectMemberParams(r, "TagKeys")
-
-	ctx := r.Context()
-	region := h.region(ctx)
-	for _, arn := range arns {
-		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		} else if found {
-			if lb.Tags != nil {
-				for _, k := range tagKeys {
-					delete(lb.Tags, k)
-				}
-			}
-			if err := h.putLB(ctx, region, lb); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			}
-			continue
-		}
-		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		} else if found {
-			if tg.Tags != nil {
-				for _, k := range tagKeys {
-					delete(tg.Tags, k)
-				}
-			}
-			if err := h.putTG(ctx, region, tg); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			}
-			continue
-		}
-		protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
-		return
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlRemoveTagsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("RemoveTags", w, r)
 }
 
+// DescribeTags describes tags on load balancers and target groups.
 func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
-	arns := collectMemberParams(r, "ResourceArns")
-
-	ctx := r.Context()
-	region := h.region(ctx)
-
-	var descs []xmlTagDescription
-
-	if len(arns) == 0 {
-		lbs, err := h.listLBs(ctx, region)
-		if err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		}
-		tgs, err := h.listTGs(ctx, region)
-		if err != nil {
-			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-			return
-		}
-		for _, lb := range lbs {
-			descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
-		}
-		for _, tg := range tgs {
-			descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
-		}
-	} else {
-		for _, arn := range arns {
-			if lb, found, err := h.getLB(ctx, region, arn); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			} else if found {
-				descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
-				continue
-			}
-			if tg, found, err := h.getTG(ctx, region, arn); err != nil {
-				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-				return
-			} else if found {
-				descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
-				continue
-			}
-			protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
-			return
-		}
-	}
-
-	if descs == nil {
-		descs = []xmlTagDescription{}
-	}
-
-	resp := &xmlDescribeTagsResponse{
-		Xmlns:            elbv2XMLNS,
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	}
-	resp.Result.TagDescriptions.Member = descs
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	h.invokeTypedAsQuery("DescribeTags", w, r)
 }
 
 func tagDescXML(arn string, tags map[string]string) xmlTagDescription {

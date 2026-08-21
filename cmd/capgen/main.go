@@ -166,14 +166,14 @@ func main() {
 			if len(svcCaps) == 0 {
 				continue
 			}
-			docPath := filepath.Join(root, "docs", "services", svc+".md")
+			docPath := filepath.Join(root, "docs", "services", serviceDocFile(svc)+".md")
 			if _, statErr := os.Stat(docPath); os.IsNotExist(statErr) {
 				continue
 			}
 			if writeErr := writeDocTable(docPath, svc, svcCaps); writeErr != nil {
 				fmt.Fprintf(os.Stderr, "capgen: %s: write docs: %v\n", svc, writeErr)
 			} else {
-				fmt.Printf("capgen: updated docs/services/%s.md\n", svc)
+				fmt.Printf("capgen: updated docs/services/%s.md\n", serviceDocFile(svc))
 			}
 		}
 		if changed, err := updateStatusMd(root, allCaps); err != nil {
@@ -231,14 +231,14 @@ func main() {
 
 	if *initDocs {
 		for _, svc := range services {
-			docPath := filepath.Join(root, "docs", "services", svc+".md")
+			docPath := filepath.Join(root, "docs", "services", serviceDocFile(svc)+".md")
 			if _, statErr := os.Stat(docPath); os.IsNotExist(statErr) {
 				continue
 			}
 			if err := addSentinelMarkers(docPath, svc); err != nil {
 				fmt.Fprintf(os.Stderr, "capgen: %s: add sentinels: %v\n", svc, err)
 			} else {
-				fmt.Printf("capgen: added sentinels to docs/services/%s.md\n", svc)
+				fmt.Printf("capgen: added sentinels to docs/services/%s.md\n", serviceDocFile(svc))
 			}
 		}
 	}

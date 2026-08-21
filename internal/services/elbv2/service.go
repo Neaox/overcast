@@ -35,6 +35,7 @@ type LoadBalancer struct {
 	DNSName          string            `json:"DNSName"`
 	Type             string            `json:"Type"`
 	Scheme           string            `json:"Scheme"`
+	IpAddressType    string            `json:"IpAddressType,omitempty"`
 	State            string            `json:"State"`
 	VpcId            string            `json:"VpcId,omitempty"`
 	CreatedTime      time.Time         `json:"CreatedTime"`
@@ -43,15 +44,46 @@ type LoadBalancer struct {
 }
 
 type TargetGroup struct {
-	TargetGroupArn  string            `json:"TargetGroupArn"`
-	TargetGroupName string            `json:"TargetGroupName"`
-	Protocol        string            `json:"Protocol"`
-	Port            int               `json:"Port"`
-	VpcId           string            `json:"VpcId,omitempty"`
-	TargetType      string            `json:"TargetType"`
-	HealthCheckPath string            `json:"HealthCheckPath,omitempty"`
-	Region          string            `json:"Region"`
-	Tags            map[string]string `json:"Tags,omitempty"`
+	TargetGroupArn  string `json:"TargetGroupArn"`
+	TargetGroupName string `json:"TargetGroupName"`
+	Protocol        string `json:"Protocol"`
+	ProtocolVersion string `json:"ProtocolVersion,omitempty"`
+	Port            int    `json:"Port"`
+	VpcId           string `json:"VpcId,omitempty"`
+	TargetType      string `json:"TargetType"`
+	IpAddressType   string `json:"IpAddressType,omitempty"`
+
+	// Health check block. CDK/CloudFormation templates set this via the
+	// HealthCheck* properties on AWS::ElasticLoadBalancingV2::TargetGroup;
+	// it round-trips through DescribeTargetGroups but is not evaluated
+	// against registered targets — DescribeTargetHealth always answers
+	// "healthy" (handler.go). Storage is faithful; enforcement is not
+	// implemented.
+	HealthCheckEnabled         bool     `json:"HealthCheckEnabled"`
+	HealthCheckProtocol        string   `json:"HealthCheckProtocol,omitempty"`
+	HealthCheckPort            string   `json:"HealthCheckPort,omitempty"`
+	HealthCheckPath            string   `json:"HealthCheckPath,omitempty"`
+	HealthCheckIntervalSeconds int      `json:"HealthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  int      `json:"HealthCheckTimeoutSeconds,omitempty"`
+	HealthyThresholdCount      int      `json:"HealthyThresholdCount,omitempty"`
+	UnhealthyThresholdCount    int      `json:"UnhealthyThresholdCount,omitempty"`
+	Matcher                    *Matcher `json:"Matcher,omitempty"`
+
+	// Attributes holds ModifyTargetGroupAttributes settings (e.g.
+	// deregistration_delay.timeout_seconds, stickiness.enabled) keyed by
+	// their AWS attribute name. Stored and echoed by
+	// DescribeTargetGroupAttributes; not enforced by the data plane.
+	Attributes map[string]string `json:"Attributes,omitempty"`
+
+	Region string            `json:"Region"`
+	Tags   map[string]string `json:"Tags,omitempty"`
+}
+
+// Matcher is the target group health-check success matcher
+// (HealthCheck's Matcher property).
+type Matcher struct {
+	HttpCode string `json:"HttpCode,omitempty" xml:"HttpCode,omitempty"`
+	GrpcCode string `json:"GrpcCode,omitempty" xml:"GrpcCode,omitempty"`
 }
 
 type Listener struct {
@@ -66,12 +98,48 @@ type Listener struct {
 	DefaultActions []Action `json:"DefaultActions,omitempty"`
 }
 
-// Action is a listener action. Only "forward" has a data-plane effect; the
-// others are stored and echoed back.
+// Action is a listener action. Only "forward" (via TargetGroupArn) has a
+// data-plane effect — pickTarget (handler_proxy.go) only knows how to reach
+// a plain forward. RedirectConfig and FixedResponseConfig round-trip through
+// DescribeListeners so a CDK-authored redirect or fixed-response listener
+// keeps its shape, but Overcast does not act on either: a request against
+// such a listener still resolves through forwardTargetGroups rather than
+// actually redirecting or returning the fixed body. ForwardConfig's weighted
+// multi-target-group form, Certificates/SslPolicy/AlpnPolicy/
+// MutualAuthentication, and the Cognito/OIDC auth actions are not modelled
+// at all — a template using them keeps whatever it set at the CFN layer
+// only if the emulator's caller reads it back from the template, not from
+// DescribeListeners.
+//
+// json tags double as both the storage encoding (putListener) and the
+// Query-form decode key (query.go's decodeStruct reads the json tag); xml
+// tags on the nested config types double as the DescribeListeners/
+// CreateListener response encoding, so one type serves all three without a
+// second "xmlAction" mirror.
 type Action struct {
-	Type           string `json:"Type"`
-	TargetGroupArn string `json:"TargetGroupArn,omitempty"`
-	Order          int    `json:"Order,omitempty"`
+	Type                string               `json:"Type" xml:"Type"`
+	TargetGroupArn      string               `json:"TargetGroupArn,omitempty" xml:"TargetGroupArn,omitempty"`
+	Order               int                  `json:"Order,omitempty" xml:"Order,omitempty"`
+	RedirectConfig      *RedirectConfig      `json:"RedirectConfig,omitempty" xml:"RedirectConfig,omitempty"`
+	FixedResponseConfig *FixedResponseConfig `json:"FixedResponseConfig,omitempty" xml:"FixedResponseConfig,omitempty"`
+}
+
+// RedirectConfig is a listener action's RedirectConfig member — the shape a
+// CDK HTTP→HTTPS redirect listener sends.
+type RedirectConfig struct {
+	Protocol   string `json:"Protocol,omitempty" xml:"Protocol,omitempty"`
+	Port       string `json:"Port,omitempty" xml:"Port,omitempty"`
+	Host       string `json:"Host,omitempty" xml:"Host,omitempty"`
+	Path       string `json:"Path,omitempty" xml:"Path,omitempty"`
+	Query      string `json:"Query,omitempty" xml:"Query,omitempty"`
+	StatusCode string `json:"StatusCode,omitempty" xml:"StatusCode,omitempty"`
+}
+
+// FixedResponseConfig is a listener action's FixedResponseConfig member.
+type FixedResponseConfig struct {
+	MessageBody string `json:"MessageBody,omitempty" xml:"MessageBody,omitempty"`
+	StatusCode  string `json:"StatusCode,omitempty" xml:"StatusCode,omitempty"`
+	ContentType string `json:"ContentType,omitempty" xml:"ContentType,omitempty"`
 }
 
 type Target struct {
@@ -147,6 +215,7 @@ type xmlLB struct {
 	DNSName          string `xml:"DNSName"`
 	Type             string `xml:"Type"`
 	Scheme           string `xml:"Scheme"`
+	IpAddressType    string `xml:"IpAddressType,omitempty"`
 	State            struct {
 		Code string `xml:"Code"`
 	} `xml:"State"`
@@ -155,12 +224,23 @@ type xmlLB struct {
 }
 
 type xmlTG struct {
-	TargetGroupArn  string `xml:"TargetGroupArn"`
-	TargetGroupName string `xml:"TargetGroupName"`
-	Protocol        string `xml:"Protocol"`
-	Port            int    `xml:"Port"`
-	VpcId           string `xml:"VpcId,omitempty"`
-	TargetType      string `xml:"TargetType"`
+	TargetGroupArn             string   `xml:"TargetGroupArn"`
+	TargetGroupName            string   `xml:"TargetGroupName"`
+	Protocol                   string   `xml:"Protocol,omitempty"`
+	ProtocolVersion            string   `xml:"ProtocolVersion,omitempty"`
+	Port                       int      `xml:"Port,omitempty"`
+	VpcId                      string   `xml:"VpcId,omitempty"`
+	TargetType                 string   `xml:"TargetType"`
+	IpAddressType              string   `xml:"IpAddressType,omitempty"`
+	HealthCheckEnabled         bool     `xml:"HealthCheckEnabled"`
+	HealthCheckProtocol        string   `xml:"HealthCheckProtocol,omitempty"`
+	HealthCheckPort            string   `xml:"HealthCheckPort,omitempty"`
+	HealthCheckPath            string   `xml:"HealthCheckPath,omitempty"`
+	HealthCheckIntervalSeconds int      `xml:"HealthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  int      `xml:"HealthCheckTimeoutSeconds,omitempty"`
+	HealthyThresholdCount      int      `xml:"HealthyThresholdCount,omitempty"`
+	UnhealthyThresholdCount    int      `xml:"UnhealthyThresholdCount,omitempty"`
+	Matcher                    *Matcher `xml:"Matcher,omitempty"`
 }
 
 type xmlListener struct {
@@ -172,114 +252,14 @@ type xmlListener struct {
 }
 
 type xmlActionMembers struct {
-	Member []xmlAction `xml:"member"`
+	Member []Action `xml:"member"`
 }
 
-type xmlAction struct {
-	Type           string `xml:"Type"`
-	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
-	Order          int    `xml:"Order,omitempty"`
-}
-
-type xmlCreateLoadBalancerResponse struct {
-	XMLName xml.Name `xml:"CreateLoadBalancerResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		LoadBalancers struct {
-			Member []xmlLB `xml:"member"`
-		} `xml:"LoadBalancers"`
-	} `xml:"CreateLoadBalancerResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDescribeLoadBalancersResponse struct {
-	XMLName xml.Name `xml:"DescribeLoadBalancersResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		LoadBalancers struct {
-			Member []xmlLB `xml:"member"`
-		} `xml:"LoadBalancers"`
-	} `xml:"DescribeLoadBalancersResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDeleteLoadBalancerResponse struct {
-	XMLName          xml.Name                  `xml:"DeleteLoadBalancerResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"DeleteLoadBalancerResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlCreateTargetGroupResponse struct {
-	XMLName xml.Name `xml:"CreateTargetGroupResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		TargetGroups struct {
-			Member []xmlTG `xml:"member"`
-		} `xml:"TargetGroups"`
-	} `xml:"CreateTargetGroupResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDescribeTargetGroupsResponse struct {
-	XMLName xml.Name `xml:"DescribeTargetGroupsResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		TargetGroups struct {
-			Member []xmlTG `xml:"member"`
-		} `xml:"TargetGroups"`
-	} `xml:"DescribeTargetGroupsResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDeleteTargetGroupResponse struct {
-	XMLName          xml.Name                  `xml:"DeleteTargetGroupResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"DeleteTargetGroupResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlCreateListenerResponse struct {
-	XMLName xml.Name `xml:"CreateListenerResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		Listeners struct {
-			Member []xmlListener `xml:"member"`
-		} `xml:"Listeners"`
-	} `xml:"CreateListenerResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDescribeListenersResponse struct {
-	XMLName xml.Name `xml:"DescribeListenersResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		Listeners struct {
-			Member []xmlListener `xml:"member"`
-		} `xml:"Listeners"`
-	} `xml:"DescribeListenersResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDeleteListenerResponse struct {
-	XMLName          xml.Name                  `xml:"DeleteListenerResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"DeleteListenerResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlRegisterTargetsResponse struct {
-	XMLName          xml.Name                  `xml:"RegisterTargetsResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"RegisterTargetsResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDeregisterTargetsResponse struct {
-	XMLName          xml.Name                  `xml:"DeregisterTargetsResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"DeregisterTargetsResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+// xmlAttribute is one Key/Value entry in a target group Attributes list
+// (ModifyTargetGroupAttributes/DescribeTargetGroupAttributes).
+type xmlAttribute struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value,omitempty"`
 }
 
 type xmlTargetHealthDescription struct {
@@ -290,17 +270,6 @@ type xmlTargetHealthDescription struct {
 	TargetHealth struct {
 		State string `xml:"State"`
 	} `xml:"TargetHealth"`
-}
-
-type xmlDescribeTargetHealthResponse struct {
-	XMLName xml.Name `xml:"DescribeTargetHealthResponse"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	Result  struct {
-		TargetHealthDescriptions struct {
-			Member []xmlTargetHealthDescription `xml:"member"`
-		} `xml:"TargetHealthDescriptions"`
-	} `xml:"DescribeTargetHealthResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 // Tag XML wire types.
@@ -319,27 +288,37 @@ type xmlTags struct {
 	Member []xmlTag `xml:"member"`
 }
 
-type xmlAddTagsResponse struct {
-	XMLName          xml.Name                  `xml:"AddTagsResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"AddTagsResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
+// ── ModifyTargetGroup / TargetGroupAttributes wire types ───────────────────
 
-type xmlRemoveTagsResponse struct {
-	XMLName          xml.Name                  `xml:"RemoveTagsResponse"`
-	Xmlns            string                    `xml:"xmlns,attr"`
-	Result           struct{}                  `xml:"RemoveTagsResult"`
-	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-}
-
-type xmlDescribeTagsResponse struct {
-	XMLName xml.Name `xml:"DescribeTagsResponse"`
+type xmlModifyTargetGroupResponse struct {
+	XMLName xml.Name `xml:"ModifyTargetGroupResponse"`
 	Xmlns   string   `xml:"xmlns,attr"`
 	Result  struct {
-		TagDescriptions struct {
-			Member []xmlTagDescription `xml:"member"`
-		} `xml:"TagDescriptions"`
-	} `xml:"DescribeTagsResult"`
+		TargetGroups struct {
+			Member []xmlTG `xml:"member"`
+		} `xml:"TargetGroups"`
+	} `xml:"ModifyTargetGroupResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlModifyTargetGroupAttributesResponse struct {
+	XMLName xml.Name `xml:"ModifyTargetGroupAttributesResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Attributes struct {
+			Member []xmlAttribute `xml:"member"`
+		} `xml:"Attributes"`
+	} `xml:"ModifyTargetGroupAttributesResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlDescribeTargetGroupAttributesResponse struct {
+	XMLName xml.Name `xml:"DescribeTargetGroupAttributesResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Attributes struct {
+			Member []xmlAttribute `xml:"member"`
+		} `xml:"Attributes"`
+	} `xml:"DescribeTargetGroupAttributesResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }

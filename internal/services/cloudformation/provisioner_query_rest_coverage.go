@@ -36,6 +36,16 @@ func (h *elbv2LoadBalancerHandler) Create(ctx context.Context, router http.Handl
 	} else {
 		params["Type"] = "application"
 	}
+	// Scheme defaults to internet-facing on the service side too (handler.go),
+	// but only when the parameter is entirely absent — sending nothing here
+	// for a template that asked for "internal" silently promoted every ALB to
+	// internet-facing regardless of what it declared.
+	if v, _ := props["Scheme"].(string); v != "" {
+		params["Scheme"] = v
+	}
+	if v, _ := props["IpAddressType"].(string); v != "" {
+		params["IpAddressType"] = v
+	}
 	if subnets, ok := props["Subnets"].([]any); ok {
 		for i, sn := range subnets {
 			if s, _ := sn.(string); s != "" {
@@ -50,6 +60,7 @@ func (h *elbv2LoadBalancerHandler) Create(ctx context.Context, router http.Handl
 			}
 		}
 	}
+	addELBv2TagParams(params, props, "Tags")
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -90,6 +101,15 @@ func (h *elbv2LoadBalancerHandler) Update(ctx context.Context, router http.Handl
 				return "", nil, errReplacementRequired
 			}
 		}
+		// Type and Scheme cannot be changed on a live load balancer in real
+		// AWS — both require a new resource.
+		for _, immutable := range []string{"Type", "Scheme"} {
+			newV, _ := props[immutable].(string)
+			oldV, _ := oldProps[immutable].(string)
+			if newV != "" && oldV != "" && newV != oldV {
+				return "", nil, errReplacementRequired
+			}
+		}
 	}
 
 	params := map[string]string{
@@ -122,6 +142,113 @@ func (h *elbv2LoadBalancerHandler) Update(ctx context.Context, router http.Handl
 
 type elbv2TargetGroupHandler struct{}
 
+// elbv2TargetGroupCreateOnlyProps are the TargetGroup properties AWS
+// requires replacement for — CreateTargetGroup accepts them but
+// ModifyTargetGroup has no field for any of them.
+var elbv2TargetGroupCreateOnlyProps = []string{"TargetType", "Protocol", "Port", "VpcId"}
+
+// addELBv2TargetGroupHealthCheckParams copies the CFN HealthCheck*/Matcher
+// properties onto a CreateTargetGroup or ModifyTargetGroup params map. A
+// property that is absent from props is left out of params entirely — both
+// operations treat an absent parameter as "leave the service default (on
+// Create) or leave it unchanged (on Modify)", so a zero value has to reach
+// the wire distinctly from "not set" for HealthCheckEnabled and the
+// interval/threshold counts, which is why this checks presence with `ok`
+// rather than testing for a zero value.
+func addELBv2TargetGroupHealthCheckParams(params map[string]string, props map[string]any) {
+	if _, ok := props["HealthCheckEnabled"]; ok {
+		params["HealthCheckEnabled"] = fmtPropString(props, "HealthCheckEnabled")
+	}
+	if v, _ := props["HealthCheckProtocol"].(string); v != "" {
+		params["HealthCheckProtocol"] = v
+	}
+	if v := fmtPropString(props, "HealthCheckPort"); v != "" {
+		params["HealthCheckPort"] = v
+	}
+	if v, _ := props["HealthCheckPath"].(string); v != "" {
+		params["HealthCheckPath"] = v
+	}
+	if _, ok := props["HealthCheckIntervalSeconds"]; ok {
+		params["HealthCheckIntervalSeconds"] = fmtPropString(props, "HealthCheckIntervalSeconds")
+	}
+	if _, ok := props["HealthCheckTimeoutSeconds"]; ok {
+		params["HealthCheckTimeoutSeconds"] = fmtPropString(props, "HealthCheckTimeoutSeconds")
+	}
+	if _, ok := props["HealthyThresholdCount"]; ok {
+		params["HealthyThresholdCount"] = fmtPropString(props, "HealthyThresholdCount")
+	}
+	if _, ok := props["UnhealthyThresholdCount"]; ok {
+		params["UnhealthyThresholdCount"] = fmtPropString(props, "UnhealthyThresholdCount")
+	}
+	if m, ok := props["Matcher"].(map[string]any); ok {
+		if v, _ := m["HttpCode"].(string); v != "" {
+			params["Matcher.HttpCode"] = v
+		}
+		if v, _ := m["GrpcCode"].(string); v != "" {
+			params["Matcher.GrpcCode"] = v
+		}
+	}
+}
+
+// addELBv2TagParams copies a CFN Tags property (a list of {Key, Value}
+// objects) onto params as a Query-protocol Tags.member.N list under the
+// given field name.
+func addELBv2TagParams(params map[string]string, props map[string]any, field string) {
+	tags, ok := props[field].([]any)
+	if !ok {
+		return
+	}
+	idx := 1
+	for _, raw := range tags {
+		tag, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := tag["Key"].(string)
+		if key == "" {
+			continue
+		}
+		params[fmt.Sprintf("Tags.member.%d.Key", idx)] = key
+		params[fmt.Sprintf("Tags.member.%d.Value", idx)] = fmtPropString(tag, "Value")
+		idx++
+	}
+}
+
+// modifyELBv2TargetGroupAttributes applies a CFN TargetGroupAttributes
+// property (a list of {Key, Value} objects) via ModifyTargetGroupAttributes.
+// CreateTargetGroup has no field for attributes in the real API — they only
+// ever reach a target group through this call, so a template that sets
+// TargetGroupAttributes needs it run once right after Create too.
+func modifyELBv2TargetGroupAttributes(ctx context.Context, router http.Handler, region, tgArn string, props map[string]any) error {
+	attrs, ok := props["TargetGroupAttributes"].([]any)
+	if !ok || len(attrs) == 0 {
+		return nil
+	}
+	params := map[string]string{
+		"Action":         "ModifyTargetGroupAttributes",
+		"Version":        "2015-12-01",
+		"TargetGroupArn": tgArn,
+	}
+	idx := 1
+	for _, raw := range attrs {
+		a, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := a["Key"].(string)
+		if key == "" {
+			continue
+		}
+		params[fmt.Sprintf("Attributes.member.%d.Key", idx)] = key
+		params[fmt.Sprintf("Attributes.member.%d.Value", idx)] = fmtPropString(a, "Value")
+		idx++
+	}
+	if _, err := internalQuery(ctx, router, region, params); err != nil {
+		return fmt.Errorf("ModifyTargetGroupAttributes: %w", err)
+	}
+	return nil
+}
+
 func (h *elbv2TargetGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["Name"].(string)
 	if name == "" {
@@ -138,6 +265,9 @@ func (h *elbv2TargetGroupHandler) Create(ctx context.Context, router http.Handle
 	} else {
 		params["Protocol"] = "HTTP"
 	}
+	if v, _ := props["ProtocolVersion"].(string); v != "" {
+		params["ProtocolVersion"] = v
+	}
 	if v := fmtPropString(props, "Port"); v != "" {
 		params["Port"] = v
 	} else {
@@ -146,6 +276,18 @@ func (h *elbv2TargetGroupHandler) Create(ctx context.Context, router http.Handle
 	if v, _ := props["VpcId"].(string); v != "" {
 		params["VpcId"] = v
 	}
+	// TargetType matters for the Fargate path specifically: an awsvpc
+	// service registers "ip" targets, and a target group provisioned
+	// without TargetType came back as the "instance" default regardless of
+	// what the template asked for.
+	if v, _ := props["TargetType"].(string); v != "" {
+		params["TargetType"] = v
+	}
+	if v, _ := props["IpAddressType"].(string); v != "" {
+		params["IpAddressType"] = v
+	}
+	addELBv2TargetGroupHealthCheckParams(params, props)
+	addELBv2TagParams(params, props, "Tags")
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -156,6 +298,10 @@ func (h *elbv2TargetGroupHandler) Create(ctx context.Context, router http.Handle
 	arn := extractXMLValue(body, "TargetGroupArn")
 	if arn == "" {
 		arn = fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:targetgroup/%s", rCtx.Region, rCtx.AccountID, name)
+	}
+
+	if err := modifyELBv2TargetGroupAttributes(ctx, router, rCtx.Region, arn, props); err != nil {
+		return "", nil, err
 	}
 
 	return arn, map[string]string{"TargetGroupArn": arn}, nil
@@ -178,13 +324,76 @@ func (h *elbv2TargetGroupHandler) Update(ctx context.Context, router http.Handle
 				return "", nil, errReplacementRequired
 			}
 		}
+		for _, immutable := range elbv2TargetGroupCreateOnlyProps {
+			newV := fmtPropString(props, immutable)
+			oldV := fmtPropString(oldProps, immutable)
+			if newV != "" && oldV != "" && newV != oldV {
+				return "", nil, errReplacementRequired
+			}
+		}
 	}
-	return "", nil, errReplacementRequired
+
+	params := map[string]string{
+		"Action":         "ModifyTargetGroup",
+		"Version":        "2015-12-01",
+		"TargetGroupArn": physicalID,
+	}
+	addELBv2TargetGroupHealthCheckParams(params, props)
+	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
+		return "", nil, fmt.Errorf("ModifyTargetGroup: %w", err)
+	}
+
+	if err := modifyELBv2TargetGroupAttributes(ctx, router, rCtx.Region, physicalID, props); err != nil {
+		return "", nil, err
+	}
+
+	return physicalID, nil, nil
 }
 
 // ── AWS::ElasticLoadBalancingV2::Listener ──────────────────────────────────
 
 type elbv2ListenerHandler struct{}
+
+// addELBv2ListenerActionParams forwards a CFN DefaultActions property onto
+// params. Type, TargetGroupArn and Order thread through as before;
+// RedirectConfig and FixedResponseConfig now forward every member of their
+// object wholesale instead of being dropped, which is what turned a CDK
+// HTTP→HTTPS redirect listener into a bare "redirect" action with nowhere
+// to redirect to. ForwardConfig's weighted-target-group form and the
+// Cognito/OIDC auth actions are not modelled — see the Action doc comment
+// in service.go.
+func addELBv2ListenerActionParams(params map[string]string, actions []any) {
+	for i, a := range actions {
+		am, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+		prefix := fmt.Sprintf("DefaultActions.member.%d.", i+1)
+		if t, _ := am["Type"].(string); t != "" {
+			params[prefix+"Type"] = t
+		}
+		if targetGroupArn, _ := am["TargetGroupArn"].(string); targetGroupArn != "" {
+			params[prefix+"TargetGroupArn"] = targetGroupArn
+		}
+		if order := fmtPropString(am, "Order"); order != "" {
+			params[prefix+"Order"] = order
+		}
+		if rc, ok := am["RedirectConfig"].(map[string]any); ok {
+			for _, field := range []string{"Protocol", "Port", "Host", "Path", "Query", "StatusCode"} {
+				if v, _ := rc[field].(string); v != "" {
+					params[prefix+"RedirectConfig."+field] = v
+				}
+			}
+		}
+		if fr, ok := am["FixedResponseConfig"].(map[string]any); ok {
+			for _, field := range []string{"MessageBody", "StatusCode", "ContentType"} {
+				if v, _ := fr[field].(string); v != "" {
+					params[prefix+"FixedResponseConfig."+field] = v
+				}
+			}
+		}
+	}
+}
 
 func (h *elbv2ListenerHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	params := map[string]string{
@@ -201,16 +410,7 @@ func (h *elbv2ListenerHandler) Create(ctx context.Context, router http.Handler, 
 		params["Port"] = v
 	}
 	if actions, ok := props["DefaultActions"].([]any); ok {
-		for i, a := range actions {
-			if am, ok := a.(map[string]any); ok {
-				if t, _ := am["Type"].(string); t != "" {
-					params[fmt.Sprintf("DefaultActions.member.%d.Type", i+1)] = t
-				}
-				if targetGroupArn, _ := am["TargetGroupArn"].(string); targetGroupArn != "" {
-					params[fmt.Sprintf("DefaultActions.member.%d.TargetGroupArn", i+1)] = targetGroupArn
-				}
-			}
-		}
+		addELBv2ListenerActionParams(params, actions)
 	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
@@ -258,16 +458,7 @@ func (h *elbv2ListenerHandler) Update(ctx context.Context, router http.Handler, 
 		params["Port"] = v
 	}
 	if actions, ok := props["DefaultActions"].([]any); ok {
-		for i, a := range actions {
-			if am, ok := a.(map[string]any); ok {
-				if t, _ := am["Type"].(string); t != "" {
-					params[fmt.Sprintf("DefaultActions.member.%d.Type", i+1)] = t
-				}
-				if targetGroupArn, _ := am["TargetGroupArn"].(string); targetGroupArn != "" {
-					params[fmt.Sprintf("DefaultActions.member.%d.TargetGroupArn", i+1)] = targetGroupArn
-				}
-			}
-		}
+		addELBv2ListenerActionParams(params, actions)
 	}
 
 	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {

@@ -143,7 +143,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 12  | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 50  | IaC/discovery-oriented stub   |
-| ELBv2            | [elb.md](./services/elb.md)                         | 18  | IaC/discovery-oriented stub   |
+| ELBv2            | [elb.md](./services/elb.md)                         | 21  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 30  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
 | Transfer Family  | [transfer.md](./services/transfer.md)               | 13  | IaC/discovery-oriented stub   |

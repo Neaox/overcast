@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1443,
+  "total_ops": 1446,
   "services": [
     {
       "service": "s3",
@@ -8351,13 +8351,14 @@
     {
       "service": "elbv2",
       "display_name": "ELBv2",
-      "total_ops": 18,
-      "implemented_ops": 15,
+      "total_ops": 21,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateLoadBalancer",
           "category": "Load Balancers",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Threads Type, Scheme, IpAddressType, Subnets, SecurityGroups and Tags"
         },
         {
           "operation": "DescribeLoadBalancers",
@@ -8372,7 +8373,8 @@
         {
           "operation": "CreateTargetGroup",
           "category": "Target Groups",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Threads TargetType, ProtocolVersion, IpAddressType, the HealthCheck* family, Matcher and Tags; health checks are stored and echoed but not evaluated against targets"
         },
         {
           "operation": "DescribeTargetGroups",
@@ -8385,9 +8387,27 @@
           "status": "✅ Supported"
         },
         {
+          "operation": "ModifyTargetGroup",
+          "category": "Target Groups",
+          "status": "✅ Supported",
+          "notes": "Updates the HealthCheck* family and Matcher; TargetType/Protocol/Port/VpcId require replacement"
+        },
+        {
+          "operation": "ModifyTargetGroupAttributes",
+          "category": "Target Groups",
+          "status": "✅ Supported",
+          "notes": "Stores and echoes attributes such as deregistration_delay.timeout_seconds; not enforced by the data plane"
+        },
+        {
+          "operation": "DescribeTargetGroupAttributes",
+          "category": "Target Groups",
+          "status": "✅ Supported"
+        },
+        {
           "operation": "CreateListener",
           "category": "Listeners",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Forwards each DefaultActions member's Type, TargetGroupArn, Order, RedirectConfig and FixedResponseConfig; weighted ForwardConfig, Certificates/SslPolicy/AlpnPolicy/MutualAuthentication and the Cognito/OIDC auth actions are not modelled"
         },
         {
           "operation": "DescribeListeners",
@@ -8412,7 +8432,8 @@
         {
           "operation": "DescribeTargetHealth",
           "category": "Targets",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Always reports \"healthy\"; the stored HealthCheck* block is not evaluated against targets"
         },
         {
           "operation": "CreateRule",
