@@ -2908,6 +2908,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Containers in an awsvpc task share one network namespace",
+        "id": "containers-in-an-awsvpc-task-share-one-network-namespace"
+      },
+      {
+        "depth": 3,
         "text": "A task in a VPC is restricted to it",
         "id": "a-task-in-a-vpc-is-restricted-to-it"
       },

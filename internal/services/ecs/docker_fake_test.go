@@ -46,7 +46,7 @@ type fakeECSDockerDaemon struct {
 
 	mu      sync.Mutex
 	started []string
-	created []docker.CreateContainerRequest
+	created []createdContainer
 	onStart func(string)
 
 	// logs and removed model the one thing the retention paths turn on: a
@@ -55,6 +55,23 @@ type fakeECSDockerDaemon struct {
 	// ordering bug.
 	logs    map[string][]byte
 	removed map[string]bool
+}
+
+// createdContainer is one container create the daemon answered, paired with the
+// name it was asked for and the ID it was given — which is how a test tells one
+// created container from another, a task's namespace container from the
+// application containers that join it most of all.
+type createdContainer struct {
+	name string
+	id   string
+	req  docker.CreateContainerRequest
+}
+
+// createdContainers returns the creates the daemon has answered, in order.
+func (fd *fakeECSDockerDaemon) createdContainers() []createdContainer {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return append([]createdContainer(nil), fd.created...)
 }
 
 // startedCount reports how many containers have been started.
@@ -70,7 +87,7 @@ func (fd *fakeECSDockerDaemon) createdEnvironments() [][]string {
 	defer fd.mu.Unlock()
 	envs := make([][]string, len(fd.created))
 	for i := range fd.created {
-		envs[i] = append([]string(nil), fd.created[i].Env...)
+		envs[i] = append([]string(nil), fd.created[i].req.Env...)
 	}
 	return envs
 }
@@ -100,10 +117,10 @@ func (fd *fakeECSDockerDaemon) wasRemoved(containerID string) bool {
 func (fd *fakeECSDockerDaemon) latestResourceID() string {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
-	if len(fd.created) == 0 || fd.created[len(fd.created)-1].Labels == nil {
+	if len(fd.created) == 0 || fd.created[len(fd.created)-1].req.Labels == nil {
 		return ""
 	}
-	return fd.created[len(fd.created)-1].Labels[docker.LabelResourceID]
+	return fd.created[len(fd.created)-1].req.Labels[docker.LabelResourceID]
 }
 
 func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
@@ -134,7 +151,9 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			fd.mu.Lock()
 			seq++
 			id := fmt.Sprintf("ecsfakecontainer%04d", seq)
-			fd.created = append(fd.created, create)
+			fd.created = append(fd.created, createdContainer{
+				name: r.URL.Query().Get("name"), id: id, req: create,
+			})
 			fd.mu.Unlock()
 			w.Write([]byte(`{"Id":"` + id + `"}`)) //nolint:errcheck
 

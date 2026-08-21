@@ -238,6 +238,12 @@ func markTaskFailedToStart(task *Task, now int64, err error) {
 func stoppedReasonFor(err error) string {
 	msg := err.Error()
 	switch {
+	// Before the image and container checks: a task's networking failing to
+	// come up is a ResourceInitializationError on AWS whatever the cause, and
+	// the cause here can be the utility image failing to pull — which is not
+	// the user's own image failing to pull, and must not be reported as it.
+	case errors.Is(err, errTaskNetworkNamespace):
+		return "ResourceInitializationError: " + msg
 	case strings.Contains(msg, "pull image"):
 		return "CannotPullContainerError: " + msg
 	case strings.Contains(msg, "create container"), strings.Contains(msg, "start container"):

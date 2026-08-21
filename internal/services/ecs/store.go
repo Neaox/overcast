@@ -321,6 +321,15 @@ type Task struct {
 	Overrides            *TaskOverride         `json:"overrides,omitempty"`
 	NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration,omitempty"`
 	Attachments          []Attachment          `json:"attachments,omitempty"`
+	// NetworkNamespaceID is the Docker container whose network namespace every
+	// container in an awsvpc task shares — Overcast's equivalent of the
+	// `~internal~ecs~pause` container the ECS agent runs, and empty for a task
+	// in any other network mode. See task_netns.go.
+	//
+	// Overcast-internal, like Container.DockerID: AWS has no counterpart to
+	// report, and the containers a task is made of are the ones the user
+	// declared.
+	NetworkNamespaceID string `json:"networkNamespaceId,omitempty"`
 }
 
 // Container represents a container within a running task.

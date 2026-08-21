@@ -529,16 +529,32 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	// Pre-warm container images in the background so the first RunTask does
-	// not pay the cold-pull cost on the request path. The sync.Once inside
-	// the puller coalesces with any concurrent RunTask pull.
-	if h.puller != nil {
-		for _, c := range td.ContainerDefinitions {
-			h.puller.Prewarm(c.Image)
-		}
-	}
+	h.prewarmTaskImages(td)
 	h.publish(r, events.ECSTaskDefinitionRegistered, events.ResourcePayload{Name: req.Family})
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskDefinition": td}, "application/x-amz-json-1.1")
+}
+
+// prewarmTaskImages pulls everything a task definition will need to start, in
+// the background, so the first RunTask does not pay the cold-pull cost on the
+// request path. The sync.Once inside the puller coalesces each one with any
+// concurrent RunTask pull.
+//
+// Both RegisterTaskDefinition paths — the JSON one and the typed one — come
+// through here, so a definition registered over CBOR is prewarmed like one
+// registered over JSON.
+func (h *Handler) prewarmTaskImages(td *TaskDefinition) {
+	if h.puller == nil {
+		return
+	}
+	for _, c := range td.ContainerDefinitions {
+		h.puller.Prewarm(c.Image)
+	}
+	// An awsvpc task needs one more image than it declares: the one its network
+	// namespace container runs from. Left to the launch path it would be a cold
+	// pull on the very first task, before any application container is created.
+	if taskSharesNetworkNamespace(td, "") {
+		h.puller.Prewarm(docker.UtilityImage)
+	}
 }
 
 // DescribeTaskDefinition handles AmazonEC2ContainerServiceV20141113.DescribeTaskDefinition.

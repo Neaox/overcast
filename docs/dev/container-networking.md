@@ -184,6 +184,15 @@ Three more things worth knowing:
   dials resolves. The one exception is ECS's `awsvpc` attachment, which reads
   back the address Docker assigned and therefore cannot run until the container
   does; the same task joins the default plane first, if it is entitled to one.
+- **An ECS task is attached once, not once per container.** Every container in
+  an `awsvpc` task shares one network namespace, held open by a container of its
+  own (`internal/services/ecs/task_netns.go`) the way the ECS agent's
+  `~internal~ecs~pause` does. That container is the one attached to the planes
+  and the one carrying the task's ENI; the application containers are created
+  with `NetworkMode: container:<id>` and inherit all of it, which is what makes
+  `127.0.0.1` reach across a task as it does on AWS. Docker rejects a container
+  in that mode that declares ports, resolvers, hosts entries or network
+  endpoints of its own, so all four belong to the namespace container.
 - **A VPC-placed resource gets its VPC network and nothing else.** That is the
   restriction, and `dataplane.DataNetworks` is where it lives. Two things widen
   it back: `Placement.Public`, set from AWS's own `PubliclyAccessible` and

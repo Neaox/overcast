@@ -4185,7 +4185,7 @@
           "operation": "RunTask",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST"
+          "notes": "Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST; awsvpc task containers share one network namespace and address"
         },
         {
           "operation": "StartTask",

@@ -705,11 +705,7 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 	if aerr := h.storeTaskDefinitionTags(ctx, td.TaskDefinitionArn, req.Tags); aerr != nil {
 		return nil, aerr
 	}
-	if h.puller != nil {
-		for _, c := range td.ContainerDefinitions {
-			h.puller.Prewarm(c.Image)
-		}
-	}
+	h.prewarmTaskImages(td)
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSTaskDefinitionRegistered, Payload: events.ResourcePayload{Name: req.Family}})
 	}
@@ -869,27 +865,7 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 		}
 	}
 	h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
-	if h.dockerReady.Load() {
-		for _, c := range task.Containers {
-			if c.DockerID == "" {
-				continue
-			}
-			if h.gc != nil {
-				// The GC captures the container's output before it removes
-				// it — see SetBeforeRemove, wired in SetDocker.
-				h.gc.StopNow(c.DockerID)
-				h.gc.ScheduleRemove(c.DockerID)
-			} else {
-				// Without one, this path owns the ordering itself, as
-				// retireTaskContainers does: stop, capture, then remove.
-				_ = h.docker.StopContainer(ctx, c.DockerID, 10)
-				h.captureContainerLogs(ctx, task, c.DockerID)
-				if !h.cfg.ECSKeepContainers {
-					_ = h.docker.RemoveContainerForce(c.DockerID)
-				}
-			}
-		}
-	}
+	h.stopTaskContainers(ctx, task)
 	task, _, aerr = h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
 		reason: req.Reason, code: "UserInitiated",
 	})
