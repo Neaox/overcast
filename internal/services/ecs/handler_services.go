@@ -42,6 +42,20 @@ func (h *Handler) addServiceEvent(svc *ecsService, msg string) {
 	h.addServiceEventAt(svc, msg, h.clk.Now())
 }
 
+// addServiceEventOnce records msg unless the service has just said it. It is
+// for the events a repeating scheduler pass would otherwise duplicate until
+// they had pushed everything explaining how the service got there out of the
+// list — a state that has not changed is not news a second time.
+//
+// Only the newest event is compared, deliberately: anything the service said in
+// between is a change of state, and the same sentence after it is news again.
+func (h *Handler) addServiceEventOnce(svc *ecsService, msg string) {
+	if len(svc.Events) > 0 && svc.Events[0].Message == msg {
+		return
+	}
+	h.addServiceEvent(svc, msg)
+}
+
 func (h *Handler) addServiceEventAt(svc *ecsService, msg string, occurredAt time.Time) {
 	if occurredAt.IsZero() {
 		occurredAt = h.clk.Now()
@@ -561,6 +575,57 @@ func usesECSController(svc *ecsService) bool {
 	return svc.DeploymentController == nil || svc.DeploymentController.Type == "" || svc.DeploymentController.Type == "ECS"
 }
 
+// AWS's defaults for a service that sends no deploymentConfiguration: a
+// rollout may run to twice the desired count, and may not drop below it.
+// Together they are what makes the default deploy a start-then-stop —
+// the replacement is placed before the task it replaces is retired.
+// https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeploymentConfiguration.html
+const (
+	defaultMaximumPercent        = 200
+	defaultMinimumHealthyPercent = 100
+)
+
+// deploymentBounds is what a rolling deployment is allowed to run at once,
+// resolved from the service's percentages against its desired count.
+type deploymentBounds struct {
+	// maxTasks is the ceiling on tasks that have not stopped, across every
+	// deployment of the service. AWS rounds maximumPercent down.
+	maxTasks int
+	// minRunning is the floor on tasks reporting RUNNING, which is what
+	// decides how many of a superseded deployment's tasks have to stay up
+	// while the new one comes in. AWS rounds minimumHealthyPercent up.
+	minRunning int
+}
+
+// deploymentBoundsFor resolves a service's deploymentConfiguration.
+//
+// Only the ECS deployment controller runs a rolling update, so only it reads
+// these: CODE_DEPLOY and EXTERNAL place tasks by their own rules and AWS
+// ignores the percentages for them.
+//
+// The two settings are the only lever a caller has over how many copies of a
+// service exist at once, and locally that is not a capacity question. A task
+// whose port mapping carries a hostPort publishes it on the one Docker host, so
+// a second task of the same service cannot start while the first holds it —
+// where on AWS each task has an ENI of its own and never contends. Setting
+// maximumPercent to 100 is how a caller says "one at a time", and it is the
+// supported way to deploy such a service here.
+func deploymentBoundsFor(svc *ecsService, desired int) deploymentBounds {
+	maxPercent, minPercent := defaultMaximumPercent, defaultMinimumHealthyPercent
+	if usesECSController(svc) && svc.DeploymentConfiguration != nil {
+		if p := svc.DeploymentConfiguration.MaximumPercent; p != nil && *p >= 0 {
+			maxPercent = *p
+		}
+		if p := svc.DeploymentConfiguration.MinimumHealthyPercent; p != nil && *p >= 0 {
+			minPercent = *p
+		}
+	}
+	return deploymentBounds{
+		maxTasks:   desired * maxPercent / 100,
+		minRunning: (desired*minPercent + 99) / 100,
+	}
+}
+
 // lockService serialises the read-modify-write of one service's record,
 // returning the function that releases it. A service is stored as one JSON
 // blob, so every writer reads the whole record, edits it and writes the whole
@@ -1003,6 +1068,21 @@ func (h *Handler) recordDeploymentFailureAt(svc *ecsService, n int, occurredAt t
 	h.addServiceEventAt(svc, fmt.Sprintf(ServiceEventDeploymentFailedFormat, svc.ServiceName, d.ID), occurredAt)
 }
 
+// noteRolloutHeldAtCeiling says once why a rollout has stopped moving: it is at
+// the ceiling maximumPercent puts on it and minimumHealthyPercent will not let
+// it retire anything to make room. The classic pair is 100/100, which cannot
+// make progress at any desired count — AWS's rollout stalls there too, silently.
+//
+// Said once, not once per reconcile: the scheduler comes back on a timer, and a
+// stalled service would otherwise fill its whole event list with one sentence
+// and push out the events that explain how it got there. Repeating the newest
+// event is the only case worth suppressing — anything the service says in
+// between is a change of state, and a second copy after it is news again.
+func (h *Handler) noteRolloutHeldAtCeiling(svc *ecsService, bounds deploymentBounds, live int) {
+	h.addServiceEventOnce(svc, fmt.Sprintf(ServiceEventRolloutHeldAtCeilingFormat,
+		svc.ServiceName, live, bounds.maxTasks, bounds.minRunning))
+}
+
 // recordPlacementFailure records n tasks the scheduler could not place.
 func (h *Handler) recordPlacementFailure(svc *ecsService, reason string, n int) {
 	h.addServiceEvent(svc, fmt.Sprintf(ServiceEventUnableToPlaceTaskFormat, svc.ServiceName, reason))
@@ -1272,24 +1352,40 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 	}
 
 	desired := svc.DesiredCount
+	bounds := deploymentBoundsFor(svc, desired)
 
-	// Scale up: place tasks to reach desired count.
+	// Retire the superseded deployment's tasks as the new deployment takes
+	// over, keeping enough of them to satisfy minimumHealthyPercent in the
+	// meantime. A new deployment that never starts anything therefore leaves
+	// the old tasks serving, which is what ECS does with a rollout that fails.
+	//
+	// This runs *before* the scale-up, and that ordering is the whole of what
+	// maximumPercent buys. On the AWS defaults it changes nothing — the floor
+	// is the full desired count, so nothing is retired until the replacements
+	// are up, and the two orderings are the same. Below the floor it is the
+	// difference between a stop-then-start and a start-then-stop, and a service
+	// whose tasks contend for a host port can only be deployed the first way.
+	if len(superseded) > 0 {
+		retain := min(max(bounds.minRunning-runningCurrent, 0), len(superseded))
+		h.stopServiceTasks(ctx, clusterName, svc, superseded[retain:], stopReasonSuperseded)
+		superseded = superseded[:retain]
+	}
+
+	// Scale up: place tasks to reach desired count, within the ceiling
+	// maximumPercent puts on the whole service — tasks still draining from the
+	// superseded deployment included, because AWS counts them too.
 	if len(current) < desired {
-		h.scaleUp(ctx, clusterName, svc, desired-len(current))
+		room := bounds.maxTasks - (len(current) + len(superseded))
+		if n := min(desired-len(current), room); n > 0 {
+			h.scaleUp(ctx, clusterName, svc, n)
+		} else {
+			h.noteRolloutHeldAtCeiling(svc, bounds, len(current)+len(superseded))
+		}
 	}
 
 	// Scale down: stop excess tasks.
 	if len(current) > desired {
 		h.stopServiceTasks(ctx, clusterName, svc, current[desired:], stopReasonScaling)
-	}
-
-	// Retire the superseded deployment's tasks as the new deployment takes
-	// over, keeping enough of them to hold the desired count in the meantime.
-	// A new deployment that never starts anything therefore leaves the old
-	// tasks serving, which is what ECS does with a rollout that fails.
-	if len(superseded) > 0 {
-		retain := min(max(desired-runningCurrent, 0), len(superseded))
-		h.stopServiceTasks(ctx, clusterName, svc, superseded[retain:], stopReasonSuperseded)
 	}
 
 	// Recount from store and update service.

@@ -76,6 +76,15 @@ const (
 	// ServiceEventSteadyStateFormat reports a deployment that has finished:
 	// desired count running, nothing left to replace.
 	ServiceEventSteadyStateFormat = "(service %s) has reached a steady state."
+	// ServiceEventRolloutHeldAtCeilingFormat reports a rollout that cannot
+	// place its next task without breaching its own maximumPercent, while
+	// minimumHealthyPercent forbids retiring anything to make room. AWS has no
+	// event for this — the rollout simply stops moving, which is the least
+	// diagnosable failure a service has, so Overcast says so instead. It is
+	// routine rather than failure-shaped on purpose: the configuration is the
+	// caller's own, nothing has failed, and CloudFormation must not report a
+	// stack failure over a deployment that is doing exactly as it was told.
+	ServiceEventRolloutHeldAtCeilingFormat = "(service %s) is holding at %d task(s): its deployment configuration permits at most %d and requires %d running."
 )
 
 // FailureServiceEventFormats returns every service-event message that reports a
@@ -103,5 +112,6 @@ func RoutineServiceEventFormats() []string {
 		ServiceEventStartedTasksFormat,
 		ServiceEventStoppedTasksFormat,
 		ServiceEventSteadyStateFormat,
+		ServiceEventRolloutHeldAtCeilingFormat,
 	}
 }

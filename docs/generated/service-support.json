@@ -4245,7 +4245,7 @@
           "operation": "UpdateService",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion"
+          "notes": "Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion; the rollout honours deploymentConfiguration maximumPercent/minimumHealthyPercent"
         },
         {
           "operation": "UpdateServicePrimaryTaskSet",

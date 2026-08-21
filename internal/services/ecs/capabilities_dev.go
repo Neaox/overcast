@@ -51,7 +51,7 @@ func init() {
 		capabilities.Capability{Service: "ecs", Operation: "UpdateClusterSettings", Category: "General", Status: capabilities.StatusSupported, Notes: "Accepts settings array (metadata only)"},
 		capabilities.Capability{Service: "ecs", Operation: "UpdateContainerAgent", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "ecs", Operation: "UpdateContainerInstancesState", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
-		capabilities.Capability{Service: "ecs", Operation: "UpdateService", Category: "General", Status: capabilities.StatusSupported, Notes: "Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion"},
+		capabilities.Capability{Service: "ecs", Operation: "UpdateService", Category: "General", Status: capabilities.StatusSupported, Notes: "Update desiredCount and/or taskDefinition; task definition changes and forceNewDeployment start a new deployment whose tasks refresh launch-time secrets and mutable image tags; propagates networkConfiguration/platformVersion; the rollout honours deploymentConfiguration maximumPercent/minimumHealthyPercent"},
 		capabilities.Capability{Service: "ecs", Operation: "UpdateServicePrimaryTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Promotes target to PRIMARY; demotes all other task sets to ACTIVE"},
 		capabilities.Capability{Service: "ecs", Operation: "UpdateTaskSet", Category: "General", Status: capabilities.StatusSupported, Notes: "Updates Scale and recalculates ComputedDesiredCount"},
 	)
