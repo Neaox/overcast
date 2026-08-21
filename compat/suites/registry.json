@@ -4017,6 +4017,21 @@
       ]
     },
     {
+      "service": "backup",
+      "name": "backup-tags",
+      "tests": [
+        {
+          "name": "TagResource"
+        },
+        {
+          "name": "ListTags"
+        },
+        {
+          "name": "UntagResource"
+        }
+      ]
+    },
+    {
       "service": "cdk",
       "name": "cdk-lifecycle",
       "suites": [
