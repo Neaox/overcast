@@ -992,6 +992,7 @@ operations:
       - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignInPolicyType.html
     tests:
       - tests/integration/cognito/cognito_user_auth_test.go
+      - tests/integration/cloudformation/cognito_properties_test.go
     scenarios:
       - name: SignInPolicy.AllowedFirstAuthFactors response shape
         status: fixed
@@ -1008,11 +1009,18 @@ operations:
         tests:
           - tests/integration/cognito/cognito_attributes_test.go
         notes: Stores and returns AttributesRequireVerificationBeforeUpdate for email/phone_number.
+      - name: AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SMS/email message properties, and LambdaConfig
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cognito_properties_test.go
+        notes: Stores and returns AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig (issue #536). LambdaConfig is stored/echoed only — no trigger is invoked, see intentionally_partial and issue #1171.
     evidence:
       - AWS UserPoolPolicyType docs include SignInPolicy and AWS SignInPolicyType docs define AllowedFirstAuthFactors.
       - AWS UserAttributeUpdateSettingsType docs define AttributesRequireVerificationBeforeUpdate as a CreateUserPool request/response setting.
+      - AWS CreateUserPoolRequest docs include AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig.
     gaps:
       - Essentials-tier restrictions are not reviewed.
+      - AutoVerifiedAttributes and Schema are threaded onto the CreateUserPool wire call by the CloudFormation UserPool handler but the Cognito service does not yet store either.
     next_action: Review app-tier restrictions.
   UpdateUserPool:
     status: fixed
@@ -1022,6 +1030,7 @@ operations:
       - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_SignInPolicyType.html
     tests:
       - tests/integration/cognito/cognito_user_auth_test.go
+      - tests/integration/cloudformation/cognito_properties_test.go
     scenarios:
       - name: SignInPolicy.AllowedFirstAuthFactors update
         status: fixed
@@ -1038,9 +1047,20 @@ operations:
         tests:
           - tests/integration/cognito/cognito_attributes_test.go
         notes: Updates AttributesRequireVerificationBeforeUpdate and returns it in DescribeUserPool.
+      - name: DeviceConfiguration, AccountRecoverySetting, SMS/email message properties, and LambdaConfig reconciled in place
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cognito_properties_test.go
+        notes: A CloudFormation template change to these properties updates the existing pool via UpdateUserPool instead of replacing it (issue #536).
+      - name: AliasAttributes/UsernameAttributes change requires replacement
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cognito_properties_test.go
+        notes: Neither is a member of UpdateUserPoolRequest on real Cognito, so the CloudFormation UserPool handler replaces the pool instead of reconciling it (issue #536).
     evidence:
       - AWS UserPoolPolicyType docs include SignInPolicy and AWS SignInPolicyType docs define AllowedFirstAuthFactors.
       - AWS UserAttributeUpdateSettingsType docs define AttributesRequireVerificationBeforeUpdate as an UpdateUserPool request setting and DescribeUserPool response setting.
+      - AWS UpdateUserPoolRequest docs include DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig, and omit AliasAttributes and UsernameAttributes.
     gaps:
       - Essentials-tier restrictions are not reviewed.
     next_action: Review app-tier restrictions.
@@ -1050,6 +1070,7 @@ operations:
       - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateUserPoolClient.html
     tests:
       - tests/integration/cognito/cognito_user_auth_test.go
+      - tests/integration/cloudformation/cognito_properties_test.go
     scenarios:
       - name: ExplicitAuthFlows storage and response shape
         status: fixed
@@ -1066,8 +1087,14 @@ operations:
         tests:
           - tests/integration/cognito/cognito_user_auth_test.go
         notes: Mixing legacy flow names with ALLOW_ flow names returns InvalidParameterException.
+      - name: PreventUserExistenceErrors, ReadAttributes, WriteAttributes
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cognito_properties_test.go
+        notes: Stores and returns PreventUserExistenceErrors, ReadAttributes, and WriteAttributes (issue #536).
     evidence:
       - AWS CreateUserPoolClient docs include ExplicitAuthFlows in request and response and document default auth flows.
+      - AWS CreateUserPoolClientRequest docs include PreventUserExistenceErrors, ReadAttributes, and WriteAttributes.
     gaps:
       - App-tier restrictions for ALLOW_USER_AUTH are not reviewed.
     next_action: Review full app-client auth flow validation.
@@ -1077,6 +1104,7 @@ operations:
       - https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolClient.html
     tests:
       - tests/integration/cognito/cognito_user_auth_test.go
+      - tests/integration/cloudformation/cognito_properties_test.go
     scenarios:
       - name: ExplicitAuthFlows storage and enforcement
         status: fixed
@@ -1088,8 +1116,14 @@ operations:
         tests:
           - tests/integration/cognito/cognito_user_auth_test.go
         notes: Unknown flow values return InvalidParameterException.
+      - name: PreventUserExistenceErrors, ReadAttributes, WriteAttributes update
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/cognito_properties_test.go
+        notes: Updates PreventUserExistenceErrors, ReadAttributes, and WriteAttributes and returns them in UserPoolClient response (issue #536).
     evidence:
       - AWS UpdateUserPoolClient docs include ExplicitAuthFlows in request and response and document default auth flows.
+      - AWS UpdateUserPoolClientRequest docs include PreventUserExistenceErrors, ReadAttributes, and WriteAttributes.
     gaps:
       - App-tier restrictions for ALLOW_USER_AUTH are not reviewed.
     next_action: Review full app-client auth flow validation.
@@ -1187,6 +1221,8 @@ findings:
     - ListUsers now supports documented standard-attribute filters, AttributesToGet shaping/validation, and Limit/PaginationToken pagination.
     - ListGroups, AdminListGroupsForUser, and ListUsersInGroup now support Limit/NextToken pagination.
     - Malformed persisted pool, client, or user records are isolated so they do not turn Cognito list/admin APIs into service-wide InternalError responses.
+    - CreateUserPool/UpdateUserPool now store, validate, and return AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig; the AWS::Cognito::UserPool CloudFormation handler threads all of them on Create and reconciles the mutable ones on Update, replacing the pool only for AliasAttributes/UsernameAttributes changes (issue #536).
+    - CreateUserPoolClient/UpdateUserPoolClient now store and return PreventUserExistenceErrors, ReadAttributes, and WriteAttributes; the AWS::Cognito::UserPoolClient CloudFormation handler threads and reconciles them, and now has an Update handler at all (previously every template change replaced the client) (issue #536).
   remaining_gaps:
     - SRP challenge parameters and verifier response shape are emulated, but full cryptographic SRP proof validation is intentionally partial.
     - Device SRP challenge parameters and verifier response shape are emulated, but full cryptographic device SRP proof validation is intentionally partial.
@@ -1199,14 +1235,16 @@ findings:
     - Review SECRET_HASH expectations when username aliases are used.
     - Review all challenge flows, including MFA and NEW_PASSWORD_REQUIRED, against AWS docs.
     - Review every admin user operation that accepts Username for validation, errors, and response shape.
+    - AutoVerifiedAttributes and Schema are threaded onto the CreateUserPool wire call by the CloudFormation UserPool handler (they always were) but the Cognito service itself does not yet store either, so both still round-trip as dropped.
   intentionally_partial:
     - SRP proof validation is not cryptographically verified; verifier responses are shape-checked and complete authentication for SDK-compatible local testing.
     - Device SRP proof validation is not cryptographically verified; DEVICE_PASSWORD_VERIFIER responses are shape-checked and complete authentication for SDK-compatible local testing.
     - CUSTOM_AUTH Lambda Define/Create/Verify triggers, challenge answer verification, and repeated custom-challenge loops are not executed; Overcast emits AWS-shaped challenge/session responses and accepts ANSWER for SDK-compatible local testing.
     - WebAuthn attestation/assertion signatures, origin validation, and relying-party mismatch validation are not cryptographically verified; credential metadata and challenge shapes are emulated for SDK-compatible local testing.
+    - LambdaConfig (PreSignUp, PostConfirmation, CustomMessage, PreAuthentication, PostAuthentication, PreTokenGeneration, UserMigration, and the rest) is stored by CreateUserPool/UpdateUserPool and returned by DescribeUserPool so a CDK pool's triggers round-trip visibly, but none of them are invoked by SignUp, AdminCreateUser, ConfirmSignUp, AdminConfirmSignUp, InitiateAuth, or AdminInitiateAuth — see issue #1171.
 verification:
   commands:
-    - go test -count=1 ./internal/services/cognito/... ./tests/integration/cognito/...
+    - go test -count=1 ./internal/services/cognito/... ./tests/integration/cognito/... ./internal/services/cloudformation/... ./tests/integration/cloudformation/...
     - go vet ./internal/services/cognito/... ./tests/integration/cognito/...
     - go build ./...
     - go vet ./...

@@ -73,6 +73,80 @@ type UserPool struct {
 
 	// Tags are resource tags on the user pool.
 	Tags map[string]string `json:"Tags,omitempty"`
+
+	// AccountRecoverySetting configures the priority order of account-recovery
+	// mechanisms (verified_email, verified_phone_number, admin_only).
+	AccountRecoverySetting *AccountRecoverySetting `json:"AccountRecoverySetting,omitempty"`
+
+	// SmsConfiguration configures the IAM role Cognito assumes to send SMS
+	// messages through SNS.
+	SmsConfiguration *SmsConfiguration `json:"SmsConfiguration,omitempty"`
+
+	// SmsAuthenticationMessage is the SMS body template for SMS_MFA challenges.
+	// Must contain {####}.
+	SmsAuthenticationMessage string `json:"SmsAuthenticationMessage,omitempty"`
+
+	// SmsVerificationMessage is the legacy top-level SMS verification message
+	// template. Must contain {####}. Superseded by
+	// VerificationMessageTemplate.SmsMessage but still accepted and echoed
+	// separately by real Cognito.
+	SmsVerificationMessage string `json:"SmsVerificationMessage,omitempty"`
+
+	// EmailVerificationMessage is the legacy top-level email verification
+	// message template. Must contain {####}. Superseded by
+	// VerificationMessageTemplate.EmailMessage but still accepted and echoed
+	// separately by real Cognito.
+	EmailVerificationMessage string `json:"EmailVerificationMessage,omitempty"`
+
+	// EmailVerificationSubject is the legacy top-level email verification
+	// subject line. Superseded by VerificationMessageTemplate.EmailSubject but
+	// still accepted and echoed separately by real Cognito.
+	EmailVerificationSubject string `json:"EmailVerificationSubject,omitempty"`
+
+	// LambdaConfig lists the Lambda triggers configured for this pool. Stored
+	// and echoed for template fidelity; the emulator does not invoke any of
+	// these triggers during sign-up, confirmation, or auth flows (see
+	// capabilities_dev.go and docs/dev/compatibility/services/cognito.yaml).
+	LambdaConfig *LambdaConfig `json:"LambdaConfig,omitempty"`
+}
+
+// AccountRecoverySetting configures the priority order of account-recovery
+// mechanisms available to users of the pool.
+type AccountRecoverySetting struct {
+	RecoveryMechanisms []RecoveryOption `json:"RecoveryMechanisms,omitempty"`
+}
+
+// RecoveryOption is a single account-recovery mechanism and its priority.
+// Valid Name values: "verified_email", "verified_phone_number", "admin_only".
+type RecoveryOption struct {
+	Name     string `json:"Name"`
+	Priority int    `json:"Priority"`
+}
+
+// SmsConfiguration configures the IAM role Cognito assumes to send SMS
+// messages through SNS.
+type SmsConfiguration struct {
+	SnsCallerArn string `json:"SnsCallerArn,omitempty"`
+	ExternalId   string `json:"ExternalId,omitempty"`
+	SnsRegion    string `json:"SnsRegion,omitempty"`
+}
+
+// LambdaConfig lists the Lambda trigger ARNs configured for a user pool. Every
+// field is stored and returned by CreateUserPool/DescribeUserPool/
+// UpdateUserPool for CDK/CloudFormation template fidelity, but none of these
+// triggers are invoked — see capabilities_dev.go.
+type LambdaConfig struct {
+	PreSignUp                   string `json:"PreSignUp,omitempty"`
+	CustomMessage               string `json:"CustomMessage,omitempty"`
+	PostConfirmation            string `json:"PostConfirmation,omitempty"`
+	PreAuthentication           string `json:"PreAuthentication,omitempty"`
+	PostAuthentication          string `json:"PostAuthentication,omitempty"`
+	DefineAuthChallenge         string `json:"DefineAuthChallenge,omitempty"`
+	CreateAuthChallenge         string `json:"CreateAuthChallenge,omitempty"`
+	VerifyAuthChallengeResponse string `json:"VerifyAuthChallengeResponse,omitempty"`
+	PreTokenGeneration          string `json:"PreTokenGeneration,omitempty"`
+	UserMigration               string `json:"UserMigration,omitempty"`
+	KMSKeyID                    string `json:"KMSKeyID,omitempty"`
 }
 
 // UserPoolPolicies holds the password and other policy settings for a user pool.
@@ -218,6 +292,15 @@ type UserPoolClient struct {
 	AllowedOAuthFlowsUserPoolClient bool     `json:"AllowedOAuthFlowsUserPoolClient"`
 	ExplicitAuthFlows               []string `json:"ExplicitAuthFlows,omitempty"`
 	SupportedIdentityProviders      []string `json:"SupportedIdentityProviders,omitempty"`
+
+	// PreventUserExistenceErrors controls whether auth/forgot-password errors
+	// reveal that a username does not exist. "ENABLED" or "LEGACY".
+	PreventUserExistenceErrors string `json:"PreventUserExistenceErrors,omitempty"`
+
+	// ReadAttributes/WriteAttributes restrict which user attributes this
+	// client can read/write via GetUser and Update*Attributes calls.
+	ReadAttributes  []string `json:"ReadAttributes,omitempty"`
+	WriteAttributes []string `json:"WriteAttributes,omitempty"`
 }
 
 // User is the stored representation of a Cognito user within a pool.
@@ -357,6 +440,13 @@ type userPoolWire struct {
 	EmailConfiguration          *emailConfigurationWire          `json:"EmailConfiguration,omitempty"`
 	UserAttributeUpdateSettings *userAttributeUpdateSettingsWire `json:"UserAttributeUpdateSettings,omitempty"`
 	DeviceConfiguration         *DeviceConfiguration             `json:"DeviceConfiguration,omitempty"`
+	AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting,omitempty"`
+	SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration,omitempty"`
+	SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage,omitempty"`
+	SmsVerificationMessage      string                           `json:"SmsVerificationMessage,omitempty"`
+	EmailVerificationMessage    string                           `json:"EmailVerificationMessage,omitempty"`
+	EmailVerificationSubject    string                           `json:"EmailVerificationSubject,omitempty"`
+	LambdaConfig                *LambdaConfig                    `json:"LambdaConfig,omitempty"`
 }
 
 type webAuthnConfigurationWire struct {
@@ -497,6 +587,13 @@ func toUserPoolWire(p *UserPool) userPoolWire {
 	if d := p.DeviceConfiguration; d != nil {
 		w.DeviceConfiguration = d
 	}
+	w.AccountRecoverySetting = p.AccountRecoverySetting
+	w.SmsConfiguration = p.SmsConfiguration
+	w.SmsAuthenticationMessage = p.SmsAuthenticationMessage
+	w.SmsVerificationMessage = p.SmsVerificationMessage
+	w.EmailVerificationMessage = p.EmailVerificationMessage
+	w.EmailVerificationSubject = p.EmailVerificationSubject
+	w.LambdaConfig = p.LambdaConfig
 	return w
 }
 
@@ -554,6 +651,9 @@ type clientWire struct {
 	AllowedOAuthFlowsUserPoolClient bool                    `json:"AllowedOAuthFlowsUserPoolClient"`
 	ExplicitAuthFlows               []string                `json:"ExplicitAuthFlows,omitempty"`
 	SupportedIdentityProviders      []string                `json:"SupportedIdentityProviders,omitempty"`
+	PreventUserExistenceErrors      string                  `json:"PreventUserExistenceErrors,omitempty"`
+	ReadAttributes                  []string                `json:"ReadAttributes,omitempty"`
+	WriteAttributes                 []string                `json:"WriteAttributes,omitempty"`
 }
 
 func toClientWire(c *UserPoolClient) clientWire {
@@ -574,6 +674,9 @@ func toClientWire(c *UserPoolClient) clientWire {
 		AllowedOAuthFlowsUserPoolClient: c.AllowedOAuthFlowsUserPoolClient,
 		ExplicitAuthFlows:               c.ExplicitAuthFlows,
 		SupportedIdentityProviders:      c.SupportedIdentityProviders,
+		PreventUserExistenceErrors:      c.PreventUserExistenceErrors,
+		ReadAttributes:                  c.ReadAttributes,
+		WriteAttributes:                 c.WriteAttributes,
 	}
 }
 

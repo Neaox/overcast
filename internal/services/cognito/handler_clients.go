@@ -30,6 +30,9 @@ func (s *Service) createUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		AllowedOAuthFlowsUserPoolClient bool                    `json:"AllowedOAuthFlowsUserPoolClient"`
 		ExplicitAuthFlows               []string                `json:"ExplicitAuthFlows"`
 		SupportedIdentityProviders      []string                `json:"SupportedIdentityProviders"`
+		PreventUserExistenceErrors      string                  `json:"PreventUserExistenceErrors"`
+		ReadAttributes                  []string                `json:"ReadAttributes"`
+		WriteAttributes                 []string                `json:"WriteAttributes"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -74,6 +77,9 @@ func (s *Service) createUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		AllowedOAuthFlowsUserPoolClient: req.AllowedOAuthFlowsUserPoolClient,
 		ExplicitAuthFlows:               req.ExplicitAuthFlows,
 		SupportedIdentityProviders:      req.SupportedIdentityProviders,
+		PreventUserExistenceErrors:      req.PreventUserExistenceErrors,
+		ReadAttributes:                  req.ReadAttributes,
+		WriteAttributes:                 req.WriteAttributes,
 	}
 	applyClientDefaults(c)
 	if err := s.saveClient(r.Context(), c); err != nil {
@@ -205,6 +211,9 @@ func (s *Service) updateUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		AllowedOAuthFlowsUserPoolClient *bool                   `json:"AllowedOAuthFlowsUserPoolClient"`
 		ExplicitAuthFlows               *[]string               `json:"ExplicitAuthFlows"`
 		SupportedIdentityProviders      *[]string               `json:"SupportedIdentityProviders"`
+		PreventUserExistenceErrors      string                  `json:"PreventUserExistenceErrors"`
+		ReadAttributes                  *[]string               `json:"ReadAttributes"`
+		WriteAttributes                 *[]string               `json:"WriteAttributes"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -287,6 +296,15 @@ func (s *Service) updateUserPoolClient(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SupportedIdentityProviders != nil {
 		c.SupportedIdentityProviders = *req.SupportedIdentityProviders
+	}
+	if req.PreventUserExistenceErrors != "" {
+		c.PreventUserExistenceErrors = req.PreventUserExistenceErrors
+	}
+	if req.ReadAttributes != nil {
+		c.ReadAttributes = *req.ReadAttributes
+	}
+	if req.WriteAttributes != nil {
+		c.WriteAttributes = *req.WriteAttributes
 	}
 
 	if err := s.saveClient(r.Context(), c); err != nil {

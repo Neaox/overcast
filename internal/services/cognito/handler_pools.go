@@ -25,6 +25,13 @@ func (s *Service) createUserPool(w http.ResponseWriter, r *http.Request) {
 		UsernameAttributes          []string                         `json:"UsernameAttributes"`
 		AliasAttributes             []string                         `json:"AliasAttributes"`
 		Policies                    *userPoolPoliciesWire            `json:"Policies"`
+		AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting"`
+		SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration"`
+		SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage"`
+		SmsVerificationMessage      string                           `json:"SmsVerificationMessage"`
+		EmailVerificationMessage    string                           `json:"EmailVerificationMessage"`
+		EmailVerificationSubject    string                           `json:"EmailVerificationSubject"`
+		LambdaConfig                *LambdaConfig                    `json:"LambdaConfig"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -100,6 +107,13 @@ func (s *Service) createUserPool(w http.ResponseWriter, r *http.Request) {
 	if req.Policies != nil {
 		pool.Policies = mergeUserPoolPolicies(nil, req.Policies)
 	}
+	pool.AccountRecoverySetting = req.AccountRecoverySetting
+	pool.SmsConfiguration = req.SmsConfiguration
+	pool.SmsAuthenticationMessage = req.SmsAuthenticationMessage
+	pool.SmsVerificationMessage = req.SmsVerificationMessage
+	pool.EmailVerificationMessage = req.EmailVerificationMessage
+	pool.EmailVerificationSubject = req.EmailVerificationSubject
+	pool.LambdaConfig = req.LambdaConfig
 
 	if err := s.savePool(r.Context(), pool); err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
@@ -199,6 +213,13 @@ func (s *Service) updateUserPool(w http.ResponseWriter, r *http.Request) {
 		UsernameAttributes          []string                         `json:"UsernameAttributes"`
 		AliasAttributes             []string                         `json:"AliasAttributes"`
 		Policies                    *userPoolPoliciesWire            `json:"Policies"`
+		AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting"`
+		SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration"`
+		SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage"`
+		SmsVerificationMessage      string                           `json:"SmsVerificationMessage"`
+		EmailVerificationMessage    string                           `json:"EmailVerificationMessage"`
+		EmailVerificationSubject    string                           `json:"EmailVerificationSubject"`
+		LambdaConfig                *LambdaConfig                    `json:"LambdaConfig"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -285,6 +306,27 @@ func (s *Service) updateUserPool(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.UserPoolTier != "" {
 		pool.UserPoolTier = req.UserPoolTier
+	}
+	if req.AccountRecoverySetting != nil {
+		pool.AccountRecoverySetting = req.AccountRecoverySetting
+	}
+	if req.SmsConfiguration != nil {
+		pool.SmsConfiguration = req.SmsConfiguration
+	}
+	if req.SmsAuthenticationMessage != "" {
+		pool.SmsAuthenticationMessage = req.SmsAuthenticationMessage
+	}
+	if req.SmsVerificationMessage != "" {
+		pool.SmsVerificationMessage = req.SmsVerificationMessage
+	}
+	if req.EmailVerificationMessage != "" {
+		pool.EmailVerificationMessage = req.EmailVerificationMessage
+	}
+	if req.EmailVerificationSubject != "" {
+		pool.EmailVerificationSubject = req.EmailVerificationSubject
+	}
+	if req.LambdaConfig != nil {
+		pool.LambdaConfig = req.LambdaConfig
 	}
 
 	if err := s.savePool(r.Context(), pool); err != nil {

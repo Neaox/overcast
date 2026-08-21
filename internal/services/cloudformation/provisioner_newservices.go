@@ -1010,6 +1010,28 @@ func reconcileKinesisStreamMode(ctx context.Context, router http.Handler, region
 
 // ── AWS::Cognito::UserPool ────────────────────────────────────────────────
 
+// cognitoUserPoolMutableProps lists the AWS::Cognito::UserPool properties
+// that CreateUserPool and UpdateUserPool both accept (per the CreateUserPool/
+// UpdateUserPool API shapes), so a template change reconciles onto the
+// existing pool instead of forcing replacement. AliasAttributes,
+// UsernameAttributes, Schema, and UsernameConfiguration are absent from
+// UpdateUserPoolRequest on real Cognito and are handled separately.
+var cognitoUserPoolMutableProps = []string{
+	"Policies",
+	"VerificationMessageTemplate",
+	"AdminCreateUserConfig",
+	"EmailConfiguration",
+	"UserAttributeUpdateSettings",
+	"DeviceConfiguration",
+	"AccountRecoverySetting",
+	"SmsConfiguration",
+	"SmsAuthenticationMessage",
+	"SmsVerificationMessage",
+	"EmailVerificationMessage",
+	"EmailVerificationSubject",
+	"LambdaConfig",
+}
+
 type cognitoUserPoolHandler struct{}
 
 func (h *cognitoUserPoolHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1021,26 +1043,29 @@ func (h *cognitoUserPoolHandler) Create(ctx context.Context, router http.Handler
 	body := map[string]any{
 		"PoolName": poolName,
 	}
-	if v, ok := props["Policies"]; ok {
-		body["Policies"] = v
+	for _, prop := range cognitoUserPoolMutableProps {
+		if v, ok := props[prop]; ok {
+			body[prop] = v
+		}
 	}
+	// AliasAttributes and UsernameAttributes are create-only on real Cognito —
+	// UpdateUserPool does not accept either — so they are threaded here but not
+	// reconciled by Update (see cognitoUserPoolHandler.Update).
 	if v, ok := props["UsernameAttributes"]; ok {
 		body["UsernameAttributes"] = v
 	}
+	if v, ok := props["AliasAttributes"]; ok {
+		body["AliasAttributes"] = v
+	}
+	// AutoVerifiedAttributes and Schema are threaded onto the wire for
+	// forward-compatibility, but the Cognito service does not yet store them
+	// (see issue #536 disposition notes in capabilities_dev.go); they still
+	// round-trip as dropped today.
 	if v, ok := props["AutoVerifiedAttributes"]; ok {
 		body["AutoVerifiedAttributes"] = v
 	}
 	if v, ok := props["Schema"]; ok {
 		body["Schema"] = v
-	}
-	if v, ok := props["VerificationMessageTemplate"]; ok {
-		body["VerificationMessageTemplate"] = v
-	}
-	if v, ok := props["AdminCreateUserConfig"]; ok {
-		body["AdminCreateUserConfig"] = v
-	}
-	if v, ok := props["EmailConfiguration"]; ok {
-		body["EmailConfiguration"] = v
 	}
 	if v, ok := props["MfaConfiguration"]; ok {
 		body["MfaConfiguration"] = v
@@ -1081,7 +1106,68 @@ func (h *cognitoUserPoolHandler) Delete(ctx context.Context, router http.Handler
 	return teardownError("DeleteUserPool", rec, err)
 }
 
+// Update reconciles the mutable AWS::Cognito::UserPool properties in place.
+// AliasAttributes and UsernameAttributes are create-only on real Cognito —
+// UpdateUserPoolRequest has no member for either — so a template change to
+// them replaces the pool, matching real CloudFormation.
+func (h *cognitoUserPoolHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	for _, immutable := range []string{"AliasAttributes", "UsernameAttributes"} {
+		changed, err := cfnPropertyChanged(props, oldProps, immutable)
+		if err != nil {
+			return "", nil, failUpdate(err)
+		}
+		if changed {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	body := map[string]any{"UserPoolId": physicalID}
+	haveMutable := false
+	for _, prop := range cognitoUserPoolMutableProps {
+		if v, ok := props[prop]; ok {
+			body[prop] = v
+			haveMutable = true
+		}
+	}
+	if haveMutable {
+		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.UpdateUserPool", body); err != nil {
+			return "", nil, fmt.Errorf("UpdateUserPool: %w", err)
+		}
+	}
+
+	providerName := fmt.Sprintf("cognito-idp.%s.amazonaws.com/%s", rCtx.Region, physicalID)
+	attrs := map[string]string{
+		"ProviderName": providerName,
+		"ProviderURL":  fmt.Sprintf("https://%s", providerName),
+		"Arn":          fmt.Sprintf("arn:aws:cognito-idp:%s:%s:userpool/%s", rCtx.Region, cfg.AccountID, physicalID),
+		"UserPoolId":   physicalID,
+	}
+	return physicalID, attrs, nil
+}
+
 // ── AWS::Cognito::UserPoolClient ──────────────────────────────────────────
+
+// cognitoUserPoolClientMutableProps lists the AWS::Cognito::UserPoolClient
+// properties that both CreateUserPoolClient and UpdateUserPoolClient accept.
+// Every UserPoolClient property CloudFormation exposes is mutable on real
+// Cognito except GenerateSecret (secret generation only happens at create).
+var cognitoUserPoolClientMutableProps = []string{
+	"ClientName",
+	"ExplicitAuthFlows",
+	"SupportedIdentityProviders",
+	"CallbackURLs",
+	"LogoutURLs",
+	"AllowedOAuthFlows",
+	"AllowedOAuthScopes",
+	"AllowedOAuthFlowsUserPoolClient",
+	"AccessTokenValidity",
+	"IdTokenValidity",
+	"RefreshTokenValidity",
+	"TokenValidityUnits",
+	"PreventUserExistenceErrors",
+	"ReadAttributes",
+	"WriteAttributes",
+}
 
 type cognitoUserPoolClientHandler struct{}
 
@@ -1099,38 +1185,10 @@ func (h *cognitoUserPoolClientHandler) Create(ctx context.Context, router http.H
 	if v, ok := props["GenerateSecret"]; ok {
 		body["GenerateSecret"] = v
 	}
-	if v, ok := props["ExplicitAuthFlows"]; ok {
-		body["ExplicitAuthFlows"] = v
-	}
-	if v, ok := props["SupportedIdentityProviders"]; ok {
-		body["SupportedIdentityProviders"] = v
-	}
-	if v, ok := props["CallbackURLs"]; ok {
-		body["CallbackURLs"] = v
-	}
-	if v, ok := props["LogoutURLs"]; ok {
-		body["LogoutURLs"] = v
-	}
-	if v, ok := props["AllowedOAuthFlows"]; ok {
-		body["AllowedOAuthFlows"] = v
-	}
-	if v, ok := props["AllowedOAuthScopes"]; ok {
-		body["AllowedOAuthScopes"] = v
-	}
-	if v, ok := props["AllowedOAuthFlowsUserPoolClient"]; ok {
-		body["AllowedOAuthFlowsUserPoolClient"] = v
-	}
-	if v, ok := props["AccessTokenValidity"]; ok {
-		body["AccessTokenValidity"] = v
-	}
-	if v, ok := props["IdTokenValidity"]; ok {
-		body["IdTokenValidity"] = v
-	}
-	if v, ok := props["RefreshTokenValidity"]; ok {
-		body["RefreshTokenValidity"] = v
-	}
-	if v, ok := props["TokenValidityUnits"]; ok {
-		body["TokenValidityUnits"] = v
+	for _, prop := range cognitoUserPoolClientMutableProps {
+		if v, ok := props[prop]; ok {
+			body[prop] = v
+		}
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.CreateUserPoolClient", body)
@@ -1158,6 +1216,51 @@ func (h *cognitoUserPoolClientHandler) Create(ctx context.Context, router http.H
 	}
 	// Encode UserPoolId in physicalID so Delete can recover it.
 	physicalID := userPoolID + "/" + clientID
+	return physicalID, attrs, nil
+}
+
+// Update reconciles the mutable AWS::Cognito::UserPoolClient properties in
+// place. Every property CloudFormation exposes for this resource maps to an
+// UpdateUserPoolClient member except GenerateSecret, which only applies at
+// creation, so no property change forces replacement.
+func (h *cognitoUserPoolClientHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	parts := strings.SplitN(physicalID, "/", 2)
+	if len(parts) != 2 {
+		return "", nil, failUpdate(fmt.Errorf("malformed UserPoolClient physical ID %q", physicalID))
+	}
+	userPoolID, clientID := parts[0], parts[1]
+
+	body := map[string]any{
+		"UserPoolId": userPoolID,
+		"ClientId":   clientID,
+	}
+	for _, prop := range cognitoUserPoolClientMutableProps {
+		if v, ok := props[prop]; ok {
+			body[prop] = v
+		}
+	}
+
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.UpdateUserPoolClient", body)
+	if err != nil {
+		return "", nil, fmt.Errorf("UpdateUserPoolClient: %w", err)
+	}
+
+	var resp struct {
+		UserPoolClient struct {
+			ClientID     string `json:"ClientId"`
+			ClientName   string `json:"ClientName"`
+			ClientSecret string `json:"ClientSecret"`
+		} `json:"UserPoolClient"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return "", nil, fmt.Errorf("UpdateUserPoolClient: parse response: %w", err)
+	}
+	attrs := map[string]string{
+		"ClientId":     clientID,
+		"Name":         resp.UserPoolClient.ClientName,
+		"ClientSecret": resp.UserPoolClient.ClientSecret,
+		"Ref":          clientID,
+	}
 	return physicalID, attrs, nil
 }
 
