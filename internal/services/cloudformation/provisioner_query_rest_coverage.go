@@ -1666,9 +1666,16 @@ func (h *pipesPipeHandler) Update(ctx context.Context, router http.Handler, _ *c
 type iamUserHandler struct{}
 
 func (h *iamUserHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidatePrincipalProperties(props, true); err != nil {
+		return "", nil, err
+	}
 	userName, _ := props["UserName"].(string)
 	if userName == "" {
 		userName = rCtx.generatedNameWithin(maxNameLenIAM)
+	}
+	loginParams, err := iamLoginProfileParams(userName, props)
+	if err != nil {
+		return "", nil, err
 	}
 
 	params := map[string]string{
@@ -1682,25 +1689,66 @@ func (h *iamUserHandler) Create(ctx context.Context, router http.Handler, cfg *c
 	if v, _ := props["PermissionsBoundary"].(string); v != "" {
 		params["PermissionsBoundary"] = v
 	}
-	if tags, ok := props["Tags"].([]any); ok {
-		for i, t := range tags {
-			if tm, ok := t.(map[string]any); ok {
-				if k, _ := tm["Key"].(string); k != "" {
-					if v, _ := tm["Value"].(string); v != "" {
-						params[fmt.Sprintf("Tags.member.%d.Key", i+1)] = k
-						params[fmt.Sprintf("Tags.member.%d.Value", i+1)] = v
-					}
-				}
-			}
-		}
-	}
-
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
+	tags, err := iamTags(props)
 	if err != nil {
+		return "", nil, err
+	}
+	iamTagParams(params, tags)
+
+	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
 		return "", nil, fmt.Errorf("CreateUser: %w", err)
 	}
 
+	// The user's memberships and permissions (#521): AddUserToGroup per Groups
+	// entry, AttachUserPolicy per ManagedPolicyArns entry, PutUserPolicy per
+	// Policies entry. LoginProfile is dispatched too — IAM does not emulate
+	// login profiles, so the create fails loudly instead of silently dropping
+	// a property the template set.
+	mutations, err := iamUserGroupMutations(userName, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	managed, err := iamManagedPolicyMutations("User", userName, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	inline, err := iamInlinePolicyMutations("User", userName, props, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	mutations = append(mutations, managed...)
+	mutations = append(mutations, inline...)
+	if loginParams != nil {
+		mutations = append(mutations, iamMutation{action: "CreateLoginProfile", params: loginParams, undoAction: "DeleteLoginProfile", undoParams: map[string]string{"UserName": userName}})
+	}
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(mutations); err != nil {
+		if cleanupErr := iamQuery(ctx, router, rCtx.Region, "DeleteUser", map[string]string{"UserName": userName}); cleanupErr != nil {
+			return "", nil, fmt.Errorf("%w; cleanup newly-created user: %v", err, cleanupErr)
+		}
+		return "", nil, err
+	}
 	return userName, nil, nil
+}
+
+// iamLoginProfileParams renders the LoginProfile property as CreateLoginProfile
+// parameters, or nil when the template does not set one.
+func iamLoginProfileParams(userName string, props map[string]any) (map[string]string, error) {
+	raw, present := props["LoginProfile"]
+	if !present || raw == nil {
+		return nil, nil
+	}
+	profile, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("LoginProfile must be an object")
+	}
+	params := map[string]string{"UserName": userName}
+	if password, _ := profile["Password"].(string); password != "" {
+		params["Password"] = password
+	}
+	if reset, ok := profile["PasswordResetRequired"]; ok {
+		params["PasswordResetRequired"] = cfnScalarString(reset)
+	}
+	return params, nil
 }
 
 func (h *iamUserHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -1713,7 +1761,38 @@ func (h *iamUserHandler) Delete(ctx context.Context, router http.Handler, cfg *c
 	return iamTeardownError("DeleteUser", physicalID, rec, err)
 }
 
+// DeleteWithProperties removes the user's template-declared group memberships,
+// managed-policy attachments and inline policies before deleting it — IAM
+// answers DeleteConflict while any remain (#710). Out-of-band relationships
+// are untouched: only what the stored properties record is removed.
+func (h *iamUserHandler) DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	return iamPrincipalTeardown(ctx, router, rCtx, func() error {
+		return h.Delete(ctx, router, cfg, physicalID, rCtx)
+	}, func() ([]iamMutation, error) {
+		mutations, err := iamUserGroupMutations(physicalID, nil, props)
+		if err != nil {
+			return nil, err
+		}
+		managed, err := iamManagedPolicyMutations("User", physicalID, nil, props)
+		if err != nil {
+			return nil, err
+		}
+		inline, err := iamInlinePolicyMutations("User", physicalID, nil, props)
+		if err != nil {
+			return nil, err
+		}
+		mutations = append(mutations, managed...)
+		return append(mutations, inline...), nil
+	})
+}
+
 func (h *iamUserHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := iamValidatePrincipalProperties(props, true); err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if _, err := iamLoginProfileParams(physicalID, props); err != nil {
+		return "", nil, failUpdate(err)
+	}
 	if oldProps != nil {
 		if newName, _ := props["UserName"].(string); newName != "" {
 			if oldName, _ := oldProps["UserName"].(string); oldName != "" && newName != oldName {
@@ -1722,17 +1801,57 @@ func (h *iamUserHandler) Update(ctx context.Context, router http.Handler, _ *con
 		}
 	}
 
-	params := map[string]string{
-		"Action":   "UpdateUser",
-		"Version":  "2010-05-08",
-		"UserName": physicalID,
+	mutations := make([]iamMutation, 0)
+	if iamJSONPropertyChanged(props, oldProps, "Path") {
+		newPath, _ := props["Path"].(string)
+		if newPath == "" {
+			newPath = "/"
+		}
+		oldPath, _ := oldProps["Path"].(string)
+		if oldPath == "" {
+			oldPath = "/"
+		}
+		mutations = append(mutations, iamMutation{
+			action: "UpdateUser", params: map[string]string{"UserName": physicalID, "NewPath": newPath},
+			undoAction: "UpdateUser", undoParams: map[string]string{"UserName": physicalID, "NewPath": oldPath},
+		})
 	}
-	if v, _ := props["NewPath"].(string); v != "" {
-		params["NewPath"] = v
+	if iamJSONPropertyChanged(props, oldProps, "PermissionsBoundary") {
+		mutations = append(mutations, iamBoundaryMutation("User", physicalID, props, oldProps))
 	}
-
-	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
-		return "", nil, fmt.Errorf("UpdateUser: %w", err)
+	groups, err := iamUserGroupMutations(physicalID, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	managed, err := iamManagedPolicyMutations("User", physicalID, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	inline, err := iamInlinePolicyMutations("User", physicalID, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	tags, err := iamTagMutations("User", physicalID, props, oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	mutations = append(mutations, groups...)
+	mutations = append(mutations, managed...)
+	mutations = append(mutations, inline...)
+	mutations = append(mutations, tags...)
+	// A LoginProfile change dispatches the modeled IAM operations; the
+	// emulator does not implement them, so the change fails loudly rather
+	// than being silently dropped.
+	if iamJSONPropertyChanged(props, oldProps, "LoginProfile") {
+		loginParams, _ := iamLoginProfileParams(physicalID, props)
+		if loginParams != nil {
+			mutations = append(mutations, iamMutation{action: "UpdateLoginProfile", params: loginParams})
+		} else {
+			mutations = append(mutations, iamMutation{action: "DeleteLoginProfile", params: map[string]string{"UserName": physicalID}})
+		}
+	}
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(mutations); err != nil {
+		return "", nil, classifyIAMTransactionFailure(err)
 	}
 	return physicalID, nil, nil
 }

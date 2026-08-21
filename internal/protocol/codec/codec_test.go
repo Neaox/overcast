@@ -584,3 +584,44 @@ func TestQueryXML_DecodeRequest_nestedListInsideListMember(t *testing.T) {
 		t.Fatalf("second entry values = %#v, want one", got.ContextEntries[1].ContextKeyValues)
 	}
 }
+
+func TestQueryXML_DecodeRequest_explicitEmptyStringPointer(t *testing.T) {
+	// Given: an optional Query string explicitly present with an empty value.
+	type request struct {
+		Description *string `json:"Description" queryEmpty:"set"`
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("Description="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// When: it is decoded.
+	var got request
+	if aerr := QueryXML.Decode(req, &got); aerr != nil {
+		t.Fatalf("DecodeRequest: %v", aerr)
+	}
+
+	// Then: presence is retained so update APIs can distinguish clear from omit.
+	if got.Description == nil || *got.Description != "" {
+		t.Fatalf("Description = %#v, want pointer to empty string", got.Description)
+	}
+}
+
+func TestQueryXML_DecodeRequest_absentEmptyTaggedFieldStaysNil(t *testing.T) {
+	// Given: a request that does not mention the queryEmpty-tagged field.
+	type request struct {
+		RoleName    string  `json:"RoleName"`
+		Description *string `json:"Description" queryEmpty:"set"`
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("RoleName=app"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// When: it is decoded.
+	var got request
+	if aerr := QueryXML.Decode(req, &got); aerr != nil {
+		t.Fatalf("DecodeRequest: %v", aerr)
+	}
+
+	// Then: the absent parameter stays nil — omit, not clear.
+	if got.Description != nil {
+		t.Fatalf("Description = %#v, want nil", got.Description)
+	}
+}

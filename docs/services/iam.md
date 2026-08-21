@@ -30,8 +30,10 @@ validated**.
 
 ## Notes
 
-- **No policy versions.** `CreatePolicy` stores the document but there is no `CreatePolicyVersion`
-  or version history.
+- **Policy versions are counters, not history.** `CreatePolicyVersion` with `SetAsDefault=true`
+  replaces the operative document and bumps `DefaultVersionId` (which is what CloudFormation's
+  `AWS::IAM::ManagedPolicy` update dispatches), but superseded documents are not retained —
+  there is no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion`.
 - **`GetGroup` returns the group's members.** Membership recorded by `AddUserToGroup` /
   `RemoveUserFromGroup` is resolved into the response's `Users` collection, paginated with
   `Marker` / `MaxItems` (AWS's documented default of 100 and cap of 1000). A membership entry
@@ -76,8 +78,10 @@ devices, so the AWS conflicts for those cannot arise here.
 > `RemoveRoleFromInstanceProfile`, `DeleteRolePolicy`, `DetachRolePolicy`,
 > `DeleteGroupPolicy`, `DetachGroupPolicy` — exactly as you would against AWS. CloudFormation
 > stack teardown handles the dependencies a stack owns itself: `AWS::IAM::Policy` removes its
-> inline document from the entities it named, and reverse dependency order puts instance
-> profiles before their roles.
+> inline document from the entities it named, roles, users, groups and managed policies detach
+> the `ManagedPolicyArns` / `Policies` / `Groups` / attachment-list relationships their own
+> template properties declared, and reverse dependency order puts instance profiles before
+> their roles.
 
 A `DeleteConflict` a stack cannot clear for itself — something outside the stack attached a
 policy, minted an access key, or added the user to a group — fails the stack. `DeleteStack`
@@ -197,27 +201,27 @@ for catching missing permissions early, not a security control.
 
 ## Summary
 
-| Category                 | ✅ Supported |
-| ------------------------ | ------------ |
-| Users                    | 5            |
-| Access keys              | 3            |
-| User inline policies     | 4            |
-| User managed policies    | 3            |
-| Permissions boundaries   | 4            |
-| User tagging             | 3            |
-| Roles                    | 6            |
-| Role inline policies     | 4            |
-| Role managed policies    | 3            |
-| Role tagging             | 3            |
-| Managed policy tagging   | 3            |
-| Instance profile tagging | 3            |
-| Instance profiles        | 7            |
-| Managed policies         | 4            |
-| Groups                   | 7            |
-| Group inline policies    | 4            |
-| Group managed policies   | 3            |
-| Policy simulation        | 2            |
-| Account details          | 1            |
+| Category                 | ✅ Supported | ⚠️ Partial |
+| ------------------------ | ------------ | ---------- |
+| Users                    | 5            |            |
+| Access keys              | 3            |            |
+| User inline policies     | 4            |            |
+| User managed policies    | 3            |            |
+| Permissions boundaries   | 4            |            |
+| User tagging             | 3            |            |
+| Roles                    | 7            |            |
+| Role inline policies     | 4            |            |
+| Role managed policies    | 3            |            |
+| Role tagging             | 3            |            |
+| Managed policy tagging   | 3            |            |
+| Instance profile tagging | 3            |            |
+| Instance profiles        | 7            |            |
+| Managed policies         | 4            | 1          |
+| Groups                   | 7            |            |
+| Group inline policies    | 4            |            |
+| Group managed policies   | 3            |            |
+| Policy simulation        | 2            |            |
+| Account details          | 1            |            |
 
 ---
 
@@ -283,6 +287,7 @@ for catching missing permissions early, not a security control.
 | `GetRole`                 | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRole.html)                 |
 | `ListRoles`               | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListRoles.html)               |
 | `DeleteRole`              | ✅ Supported | DeleteConflict (409) while an instance profile association or inline/attached policies remain | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRole.html)              |
+| `UpdateRole`              | ✅ Supported | An empty `Description` clears it; an omitted one is left unchanged                            | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateRole.html)              |
 | `UpdateAssumeRolePolicy`  | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateAssumeRolePolicy.html)  |
 | `CreateServiceLinkedRole` | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateServiceLinkedRole.html) |
 
@@ -341,12 +346,13 @@ for catching missing permissions early, not a security control.
 
 ### Managed policies
 
-| Operation      | Status       | Notes                                                                                                                        | AWS Docs                                                                          |
-| -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `CreatePolicy` | ✅ Supported | Inline `Tags` applied at creation                                                                                            | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
-| `GetPolicy`    | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
-| `ListPolicies` | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
-| `DeletePolicy` | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |
+| Operation             | Status       | Notes                                                                                                                                          | AWS Docs                                                                                 |
+| --------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `CreatePolicy`        | ✅ Supported | Inline `Tags` applied at creation                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html)        |
+| `GetPolicy`           | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)           |
+| `ListPolicies`        | ✅ Supported |                                                                                                                                                | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html)        |
+| `DeletePolicy`        | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html)        |
+| `CreatePolicyVersion` | ⚠️ Partial   | `SetAsDefault=true` replaces the operative document and bumps `DefaultVersionId`; superseded versions are not retained and cannot be read back | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicyVersion.html) |
 
 ### Groups
 

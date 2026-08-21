@@ -39,6 +39,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "GetRole", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListRoles", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DeleteRole", Category: "Roles", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while an instance profile association or inline/attached policies remain"},
+		capabilities.Capability{Service: "iam", Operation: "UpdateRole", Category: "Roles", Status: capabilities.StatusSupported, Notes: "An empty `Description` clears it; an omitted one is left unchanged"},
 		capabilities.Capability{Service: "iam", Operation: "UpdateAssumeRolePolicy", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "CreateServiceLinkedRole", Category: "Roles", Status: capabilities.StatusSupported},
 		// Role inline policies
@@ -75,6 +76,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "GetPolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListPolicies", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries"},
+		capabilities.Capability{Service: "iam", Operation: "CreatePolicyVersion", Category: "Managed policies", Status: capabilities.StatusPartial, Notes: "`SetAsDefault=true` replaces the operative document and bumps `DefaultVersionId`; superseded versions are not retained and cannot be read back"},
 		// Groups
 		capabilities.Capability{Service: "iam", Operation: "CreateGroup", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported, Notes: "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"},

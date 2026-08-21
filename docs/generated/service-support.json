@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1434,
+  "total_ops": 1436,
   "services": [
     {
       "service": "s3",
@@ -3586,8 +3586,8 @@
     {
       "service": "iam",
       "display_name": "IAM",
-      "total_ops": 72,
-      "implemented_ops": 72,
+      "total_ops": 74,
+      "implemented_ops": 74,
       "operations": [
         {
           "operation": "CreateUser",
@@ -3725,6 +3725,12 @@
           "category": "Roles",
           "status": "✅ Supported",
           "notes": "DeleteConflict (409) while an instance profile association or inline/attached policies remain"
+        },
+        {
+          "operation": "UpdateRole",
+          "category": "Roles",
+          "status": "✅ Supported",
+          "notes": "An empty `Description` clears it; an omitted one is left unchanged"
         },
         {
           "operation": "UpdateAssumeRolePolicy",
@@ -3873,6 +3879,12 @@
           "category": "Managed policies",
           "status": "✅ Supported",
           "notes": "DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries"
+        },
+        {
+          "operation": "CreatePolicyVersion",
+          "category": "Managed policies",
+          "status": "⚠️ Partial",
+          "notes": "`SetAsDefault=true` replaces the operative document and bumps `DefaultVersionId`; superseded versions are not retained and cannot be read back"
         },
         {
           "operation": "CreateGroup",

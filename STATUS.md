@@ -29,7 +29,7 @@
 
 | Service         | Ops | Highlights                                                                                                                                                                                                 |
 | --------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IAM             | 72  | Users, roles, groups, policies, instance profiles; real policy simulation, **opt-in** request-time enforcement (`OVERCAST_ENFORCE_IAM`, default off)                                                                                                                                    |
+| IAM             | 74  | Users, roles, groups, policies, instance profiles; real policy simulation, **opt-in** request-time enforcement (`OVERCAST_ENFORCE_IAM`, default off)                                                                                                                                    |
 | ECS             | 48  | Clusters, task definitions, tasks (Docker), services with reconciler                                                                                                                                       |
 | ECR             | 20  | Repository CRUD + registry metadata (DescribeRegistry), image metadata (PutImage/DescribeImages/BatchGetImage/BatchDeleteImage/DescribeImageScanFindings), auth token, repository+lifecycle policies, tags |
 | KMS             | 33  | Keys, aliases, symmetric AES-256-GCM + RSA-2048 signing                                                                                                                                                    |
@@ -75,7 +75,7 @@
 | Cognito         | 70  |
 | EC2 / VPC       | 72  |
 | SNS             | 29  |
-| IAM             | 72  |
+| IAM             | 74  |
 | ECS             | 48  |
 | ECR             | 20  |
 | KMS             | 33  |

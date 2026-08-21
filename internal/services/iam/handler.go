@@ -37,6 +37,7 @@ var iamMutateActions = map[string]bool{
 	"DetachGroupPolicy":      true,
 	"CreatePolicy":           true,
 	"DeletePolicy":           true,
+	"CreatePolicyVersion":    true,
 	"CreateUser":             true,
 	"DeleteUser":             true,
 	"UpdateUser":             true,
@@ -101,6 +102,7 @@ func (h *Handler) initOps() {
 		"GetRole":    h.GetRole,
 		"ListRoles":  h.ListRoles,
 		"DeleteRole": h.DeleteRole,
+		"UpdateRole": h.typedHandler("UpdateRole"),
 		// Inline role policies
 		"PutRolePolicy":    h.PutRolePolicy,
 		"GetRolePolicy":    h.GetRolePolicy,
@@ -117,10 +119,11 @@ func (h *Handler) initOps() {
 		"AddRoleToInstanceProfile":      h.AddRoleToInstanceProfile,
 		"RemoveRoleFromInstanceProfile": h.RemoveRoleFromInstanceProfile,
 		// Managed policies
-		"CreatePolicy": h.CreatePolicy,
-		"GetPolicy":    h.GetPolicy,
-		"ListPolicies": h.ListPolicies,
-		"DeletePolicy": h.DeletePolicy,
+		"CreatePolicy":        h.CreatePolicy,
+		"GetPolicy":           h.GetPolicy,
+		"ListPolicies":        h.ListPolicies,
+		"DeletePolicy":        h.DeletePolicy,
+		"CreatePolicyVersion": h.typedHandler("CreatePolicyVersion"),
 		// Groups
 		"CreateGroup":         h.CreateGroup,
 		"GetGroup":            h.GetGroup,
@@ -528,6 +531,11 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	duration, aerr := parseMaxSessionDuration(r.FormValue("MaxSessionDuration"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	role := &Role{
 		RoleName:                 name,
 		RoleId:                   iamID("AROA", 17),
@@ -537,6 +545,8 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      boundary,
 		Tags:                     createTags(formTagEntries(r)),
+		Description:              r.FormValue("Description"),
+		MaxSessionDuration:       duration,
 	}
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -830,13 +840,14 @@ func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := &Policy{
-		PolicyName: name,
-		PolicyId:   iamID("ANPA", 17),
-		Arn:        arn,
-		Path:       path,
-		Document:   doc,
-		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:       createTags(formTagEntries(r)),
+		PolicyName:  name,
+		PolicyId:    iamID("ANPA", 17),
+		Arn:         arn,
+		Path:        path,
+		Document:    doc,
+		CreateDate:  h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        createTags(formTagEntries(r)),
+		Description: r.FormValue("Description"),
 	}
 	if aerr := h.store.putPolicy(r.Context(), p); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -1855,6 +1866,8 @@ type roleXML struct {
 	Arn                      string                          `xml:"Arn"`
 	CreateDate               string                          `xml:"CreateDate"`
 	AssumeRolePolicyDocument string                          `xml:"AssumeRolePolicyDocument"`
+	Description              string                          `xml:"Description,omitempty"`
+	MaxSessionDuration       int                             `xml:"MaxSessionDuration"`
 	PermissionsBoundary      *attachedPermissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
 }
 
@@ -1863,6 +1876,7 @@ type policyXML struct {
 	PolicyId         string `xml:"PolicyId"`
 	Arn              string `xml:"Arn"`
 	Path             string `xml:"Path"`
+	Description      string `xml:"Description,omitempty"`
 	DefaultVersionId string `xml:"DefaultVersionId"`
 	AttachmentCount  int    `xml:"AttachmentCount"`
 	IsAttachable     bool   `xml:"IsAttachable"`
@@ -1944,6 +1958,11 @@ func toAccessKeyXML(ak *AccessKey) accessKeyXML {
 }
 
 func toRoleXML(r *Role) roleXML {
+	duration := r.MaxSessionDuration
+	if duration == 0 {
+		// A record persisted before the field existed carries AWS's default.
+		duration = defaultMaxSessionDuration
+	}
 	return roleXML{
 		Path:                     r.Path,
 		RoleName:                 r.RoleName,
@@ -1951,6 +1970,8 @@ func toRoleXML(r *Role) roleXML {
 		Arn:                      r.Arn,
 		CreateDate:               r.CreateDate,
 		AssumeRolePolicyDocument: r.AssumeRolePolicyDocument,
+		Description:              r.Description,
+		MaxSessionDuration:       duration,
 		PermissionsBoundary:      toPermissionsBoundaryXML(r.PermissionsBoundary),
 	}
 }
@@ -1961,7 +1982,8 @@ func toPolicyXML(p *Policy) policyXML {
 		PolicyId:         p.PolicyId,
 		Arn:              p.Arn,
 		Path:             p.Path,
-		DefaultVersionId: "v1",
+		Description:      p.Description,
+		DefaultVersionId: policyDefaultVersionID(p),
 		AttachmentCount:  p.AttachmentCount,
 		IsAttachable:     true,
 		CreateDate:       p.CreateDate,

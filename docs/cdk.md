@@ -93,7 +93,7 @@ All of these operations are implemented.
 <!--
   Derivation: the counts and tables in this section are transcribed from the
   resourceHandlers map in internal/services/cloudformation/provisioner.go —
-  132 registered entries (122 real handlers + 10 stubResourceHandler entries),
+  133 registered entries (123 real handlers + 10 stubResourceHandler entries),
   plus the dynamically resolved Custom::* / AWS::CloudFormation::CustomResource
   and AWS::CloudFormation::Stack (see resolveHandler in the same file).
   Re-derive with:  grep -c '"AWS::' on the map literal (stubs are the entries
@@ -101,8 +101,8 @@ All of these operations are implemented.
   map changes.
 -->
 
-Overcast's CloudFormation provisioner has handlers for **132 resource types**
-(122 provisioned for real, 10 recognised as stubs), plus custom resources and
+Overcast's CloudFormation provisioner has handlers for **133 resource types**
+(123 provisioned for real, 10 recognised as stubs), plus custom resources and
 nested stacks, which are resolved dynamically. The count comes from the
 `resourceHandlers` map in `internal/services/cloudformation/provisioner.go`.
 Resources with real handlers are provisioned through the emulated services —
@@ -117,7 +117,7 @@ they create real state that you can query via the AWS APIs.
 | SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                                       |
 | DynamoDB        | `AWS::DynamoDB::Table`                                                                                                                                                                                                                                                            |
 | Lambda          | `AWS::Lambda::Function`, `AWS::Lambda::Alias`, `AWS::Lambda::Url`, `AWS::Lambda::EventSourceMapping`, `AWS::Lambda::Permission`, `AWS::Lambda::LayerVersion`, `AWS::Lambda::CodeSigningConfig`                                                                                    |
-| IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`, `AWS::IAM::User`, `AWS::IAM::AccessKey`                                                                                                              |
+| IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`, `AWS::IAM::User`, `AWS::IAM::Group`, `AWS::IAM::AccessKey`                                                                                           |
 | EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPNGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
 | ECS             | `AWS::ECS::Cluster`, `AWS::ECS::TaskDefinition`, `AWS::ECS::Service`                                                                                                                                                                                                              |
 | ECR             | `AWS::ECR::Repository`                                                                                                                                                                                                                                                            |

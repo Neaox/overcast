@@ -274,6 +274,7 @@ type resolveContext struct {
 	StackTags          []Tag
 	PreviousStackTags  []Tag
 	Params             map[string]string            // parameter name → value
+	ParamTypes         map[string]string            // parameter name → CloudFormation type
 	Resources          map[string]string            // logical ID → physical ID
 	Conditions         map[string]bool              // condition name → evaluated value
 	Mappings           map[string]any               // raw mappings from template
@@ -426,7 +427,7 @@ func resolveRef(ref any, ctx *resolveContext) any {
 
 	// Template parameters
 	if v, ok := ctx.Params[name]; ok {
-		return v
+		return resolveParameterValue(v, ctx.ParamTypes[name])
 	}
 
 	// Logical resource → Ref value.
@@ -444,6 +445,26 @@ func resolveRef(ref any, ctx *resolveContext) any {
 	}
 
 	return name
+}
+
+// resolveParameterValue gives a parameter's stored string the shape its
+// declared type promises: a CommaDelimitedList or List<...> parameter resolves
+// to a list, as AWS's Ref does, and an empty value to the empty list. CDK's
+// bootstrap template depends on this — its CloudFormationExecutionPolicies
+// parameter is a CommaDelimitedList that feeds ManagedPolicyArns directly.
+func resolveParameterValue(value, parameterType string) any {
+	if parameterType != "CommaDelimitedList" && !strings.HasPrefix(parameterType, "List<") {
+		return value
+	}
+	if strings.TrimSpace(value) == "" {
+		return []any{}
+	}
+	items := strings.Split(value, ",")
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, strings.TrimSpace(item))
+	}
+	return out
 }
 
 // resolveSub handles Fn::Sub — either a string or [string, map].

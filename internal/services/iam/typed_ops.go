@@ -26,6 +26,7 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"GetRole":    op.NewTyped("GetRole", h.getRoleTyped),
 		"ListRoles":  op.NewTyped("ListRoles", h.listRolesTyped),
 		"DeleteRole": op.NewTyped("DeleteRole", h.deleteRoleTyped),
+		"UpdateRole": op.NewTyped("UpdateRole", h.updateRoleTyped),
 		// Inline role policies
 		"PutRolePolicy":    op.NewTyped("PutRolePolicy", h.putRolePolicyTyped),
 		"GetRolePolicy":    op.NewTyped("GetRolePolicy", h.getRolePolicyTyped),
@@ -42,10 +43,11 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"AddRoleToInstanceProfile":      op.NewTyped("AddRoleToInstanceProfile", h.addRoleToInstanceProfileTyped),
 		"RemoveRoleFromInstanceProfile": op.NewTyped("RemoveRoleFromInstanceProfile", h.removeRoleFromInstanceProfileTyped),
 		// Managed policies
-		"CreatePolicy": op.NewTyped("CreatePolicy", h.createPolicyTyped),
-		"GetPolicy":    op.NewTyped("GetPolicy", h.getPolicyTyped),
-		"ListPolicies": op.NewTyped("ListPolicies", h.listPoliciesTyped),
-		"DeletePolicy": op.NewTyped("DeletePolicy", h.deletePolicyTyped),
+		"CreatePolicy":        op.NewTyped("CreatePolicy", h.createPolicyTyped),
+		"GetPolicy":           op.NewTyped("GetPolicy", h.getPolicyTyped),
+		"ListPolicies":        op.NewTyped("ListPolicies", h.listPoliciesTyped),
+		"DeletePolicy":        op.NewTyped("DeletePolicy", h.deletePolicyTyped),
+		"CreatePolicyVersion": op.NewTyped("CreatePolicyVersion", h.createPolicyVersionTyped),
 		// Groups
 		"CreateGroup":         op.NewTyped("CreateGroup", h.createGroupTyped),
 		"GetGroup":            op.NewTyped("GetGroup", h.getGroupTyped),

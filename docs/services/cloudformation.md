@@ -209,7 +209,9 @@ most commonly used types. It is **not** the complete registry — for the full
 | `AWS::Lambda::EventSourceMapping`          | Provisioned | UUID                      | —                                               |
 | `AWS::Lambda::LayerVersion`                | Provisioned | Layer version ARN         | LayerVersionArn                                 |
 | `AWS::Lambda::Permission`                  | Provisioned | `functionName\|statementId` | —                                             |
-| `AWS::IAM::Role`                           | Provisioned | ARN                       | Arn, RoleId, RoleName                           |
+| `AWS::IAM::Role`                           | Provisioned | Role name                 | Arn, RoleId, RoleName                           |
+| `AWS::IAM::User`                           | Provisioned | User name                 | —                                               |
+| `AWS::IAM::Group`                          | Provisioned | Group name                | Arn, GroupName                                  |
 | `AWS::IAM::Policy`                         | Provisioned | Stack-scoped name         | —                                               |
 | `AWS::IAM::ManagedPolicy`                  | Provisioned | Policy ARN                | Arn                                             |
 | `AWS::IAM::InstanceProfile`                | Provisioned | Instance profile ARN      | Arn                                             |
@@ -299,7 +301,10 @@ with unsupported resources can still partially deploy.
      - `AWS::SSM::Parameter` — `PutParameter` with `Overwrite=true`
      - `AWS::Logs::LogGroup` — `PutRetentionPolicy` / `DeleteRetentionPolicy`
      - `AWS::CloudWatch::Alarm` — `PutMetricAlarm`, plus `TagResource` / `UntagResource` for tag changes. The tag calls are not redundant: `PutMetricAlarm` applies `Tags` only when it creates an alarm and ignores them when it updates one, as on AWS (see [CloudWatch](./cloudwatch.md)), so an update that changed only the tags would otherwise change nothing
-     - `AWS::IAM::Role` — `UpdateAssumeRolePolicy` + `UpdateRole` (Description)
+     - `AWS::IAM::Role` — `UpdateAssumeRolePolicy`, `UpdateRole` (Description, MaxSessionDuration), `Put`/`DeleteRolePermissionsBoundary`, `Tag`/`UntagRole`, and add/remove reconciliation of `ManagedPolicyArns` (`Attach`/`DetachRolePolicy`) and inline `Policies` (`Put`/`DeleteRolePolicy`); a mutation that fails is compensated so the role is left as it was
+     - `AWS::IAM::User` — `UpdateUser` (Path), `Put`/`DeleteUserPermissionsBoundary`, `Tag`/`UntagUser`, and add/remove reconciliation of `Groups`, `ManagedPolicyArns` and inline `Policies`
+     - `AWS::IAM::Group` — add/remove reconciliation of `ManagedPolicyArns` and inline `Policies`
+     - `AWS::IAM::ManagedPolicy` — add/remove reconciliation of the `Roles`/`Users`/`Groups` attachment lists, and `CreatePolicyVersion` (`SetAsDefault=true`) for `PolicyDocument` changes
      - `AWS::AppSync::GraphQLApi` — `UpdateGraphqlApi` for mutable API config
      - `AWS::AppSync::GraphQLSchema` — `StartSchemaCreation` for schema definition changes
      - `AWS::AppSync::ApiKey` — `UpdateApiKey` for description/expiration changes
