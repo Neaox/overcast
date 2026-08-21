@@ -10,6 +10,7 @@ package inithooks
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,6 +58,17 @@ type Runner struct {
 	timeout time.Duration
 	logger  *zap.Logger
 
+	// Stdout and Stderr receive hook script output. They default to
+	// os.Stdout and os.Stderr, but callers (notably tests) may override them.
+	// A hook script that leaves an orphaned descendant behind on timeout can
+	// hold whichever handle it inherited open indefinitely; pointing these at
+	// something other than the process's real stdout/stderr keeps such an
+	// orphan from blocking unrelated readers of those streams — including,
+	// under `go test` on Windows, the test binary's own output pipe. See
+	// https://github.com/Neaox/overcast/issues/947.
+	Stdout io.Writer
+	Stderr io.Writer
+
 	mu        sync.RWMutex
 	scripts   []ScriptResult // all discovered scripts, in order
 	completed map[Stage]bool // whether each stage has finished running
@@ -75,6 +87,8 @@ func NewRunner(dirs []string, env []string, timeout time.Duration, logger *zap.L
 		env:       env,
 		timeout:   timeout,
 		logger:    logger,
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
 		completed: make(map[Stage]bool),
 	}
 }
@@ -226,19 +240,22 @@ func (r *Runner) findScripts(stage Stage) []string {
 }
 
 // execScript runs a single shell script with a per-script timeout.
-// The platform-specific part (process group management, kill signal) is
-// implemented in hooks_unix.go and hooks_windows.go.
+// The platform-specific part (process tree management, kill mechanism) is
+// implemented in hooks_unix.go and hooks_windows.go: buildScriptCmd sets up
+// how the process tree is tracked, and runScriptCmd starts and waits for it
+// while making sure that a timeout takes the whole tree down, not just the
+// shell.
 func (r *Runner) execScript(ctx context.Context, path string) error {
 	scriptCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	cmd := buildScriptCmd(scriptCtx, path)
 	cmd.Env = append(os.Environ(), r.env...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = r.Stdout
+	cmd.Stderr = r.Stderr
 	cmd.WaitDelay = 500 * time.Millisecond
 
-	if err := cmd.Run(); err != nil {
+	if err := runScriptCmd(cmd); err != nil {
 		if scriptCtx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("timed out after %s", r.timeout)
 		}
