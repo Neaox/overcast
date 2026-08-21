@@ -246,9 +246,10 @@ func (s *Service) ApplicationsRouter() chi.Router {
 }
 
 // TagsRouter returns AppConfig's handlers for /tags/{ResourceArn}, for the main
-// router's ARN-keyed tag dispatcher. Without it an AppConfig ARN falls to API
-// Gateway's service-agnostic tag store, which answers 200 with someone else's
-// tags.
+// router's ARN-keyed tag dispatcher. Without it an AppConfig ARN would fall to
+// the dispatcher's fallback — historically API Gateway's service-agnostic tag
+// store, which answered 200 with someone else's tags; since #976 the router's
+// generated 501.
 func (s *Service) TagsRouter() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/*", s.tagResource)

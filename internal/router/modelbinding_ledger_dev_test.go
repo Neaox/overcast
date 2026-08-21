@@ -93,16 +93,13 @@ var weaklyServedBindings = map[string]string{
 	"msk/GetBootstrapBrokers":        "a route broader than the modeled binding",
 	"msk/UpdateClusterConfiguration": "a route broader than the modeled binding",
 
-	// AppRegistry has no tag routes of its own: API Gateway's ARN-keyed store
-	// is the declared fallback owner for every ARN no service claims, and has
-	// answered AppRegistry's since before either had a capability table.
-	"appregistry/ListTagsForResource": "another service's fallback handler",
-	"appregistry/TagResource":         "another service's fallback handler",
-	"appregistry/UntagResource":       "another service's fallback handler",
-
-	// AppConfig's three tag rows were here too, for the same reason, until
-	// #854 gave it a TagsRouter in the /tags dispatcher. It now serves its own
-	// ARNs and its rows are proven exactly.
+	// AppRegistry's three tag rows were here as "another service's fallback
+	// handler" until #976: API Gateway's ARN-keyed store answered every ARN no
+	// service claimed, AppRegistry's among them. The /tags dispatcher now
+	// routes "servicecatalog" ARNs to that store by name — the store is the
+	// same, so the rows still work, and the mount recorded for it proves them
+	// exactly. AppConfig's three were here too until #854 gave it a TagsRouter
+	// of its own.
 }
 
 // protocolAsymmetries records operations reachable over one of their service's

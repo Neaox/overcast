@@ -122,9 +122,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	})
 
 	// NOTE: AppRegistry's tag APIs (POST/DELETE/GET /tags/{resourceArn}) share
-	// a path with API Gateway's generic tag store, which is already mounted on
-	// this router. API Gateway's handlers store tags by ARN in a shared,
-	// service-agnostic namespace, so the AppRegistry SDK's tag calls work
-	// transparently — we only register the POST verb there (API Gateway uses
-	// PUT for TagResource) to cover the last method gap.
+	// a path with API Gateway's generic tag store. The main router's /tags
+	// dispatcher routes "servicecatalog" ARNs to that store by name (#976), and
+	// its handlers keep tags in an ARN-keyed map, so the AppRegistry SDK's tag
+	// calls work transparently — API Gateway's TagsRouter registers the POST
+	// verb (its own SDK uses PUT for TagResource) to cover the last method gap.
 }
