@@ -363,3 +363,82 @@ func (s stubInspector) InspectContainer(context.Context, string) (*docker.Contai
 	}
 	return info, nil
 }
+
+// fakeReconnector records the detach/attach ordering Reattach depends on: an
+// alias set only changes if the container leaves the network before it rejoins.
+type fakeReconnector struct {
+	fakeConnector
+	order         []string
+	disconnectErr error
+	disconnected  []string
+}
+
+func (f *fakeReconnector) ConnectNetworkWithAliases(ctx context.Context, network, container string, aliases []string) error {
+	f.order = append(f.order, "connect "+network)
+	return f.fakeConnector.ConnectNetworkWithAliases(ctx, network, container, aliases)
+}
+
+func (f *fakeReconnector) DisconnectNetwork(_ context.Context, network, _ string) error {
+	f.order = append(f.order, "disconnect "+network)
+	f.disconnected = append(f.disconnected, network)
+	return f.disconnectErr
+}
+
+// Attach cannot change an alias set — Docker fixes aliases when a container
+// joins a network and ConnectNetworkWithConfig swallows the second connect as
+// success. Reattach exists to leave and rejoin, and the order is the whole
+// point: disconnect must precede connect on each plane.
+func TestReattach_leavesThePlaneBeforeRejoiningIt(t *testing.T) {
+	f := &fakeReconnector{}
+	cfg := testConfig()
+
+	if err := Reattach(context.Background(), f, cfg, "c1",
+		Placement{Aliases: []string{"orders.cluster.localhost"}}); err != nil {
+		t.Fatalf("Reattach: %v", err)
+	}
+
+	want := []string{"disconnect overcast", "connect overcast"}
+	if !slices.Equal(f.order, want) {
+		t.Errorf("call order = %v, want %v", f.order, want)
+	}
+	if !slices.Equal(f.aliases, []string{"orders.cluster.localhost"}) {
+		t.Errorf("aliases = %v, want the new set to be advertised on the rejoin", f.aliases)
+	}
+}
+
+// A VPC-placed public container sits on two planes, and both carry the names.
+// Reattach has to visit every one of them or the container answers to the new
+// set on one plane and the old set on another.
+func TestReattach_coversEveryPlaneThePlacementPutsItOn(t *testing.T) {
+	f := &fakeReconnector{}
+	cfg := testConfig()
+
+	if err := Reattach(context.Background(), f, cfg, "c1",
+		Placement{VPCNetwork: "overcast-vpc-vpc-abc", Public: true, Aliases: []string{"db.localhost"}}); err != nil {
+		t.Fatalf("Reattach: %v", err)
+	}
+
+	want := []string{"overcast-vpc-vpc-abc", "overcast"}
+	if !slices.Equal(f.disconnected, want) {
+		t.Errorf("disconnected = %v, want %v", f.disconnected, want)
+	}
+	if !slices.Equal(f.networks, want) {
+		t.Errorf("reconnected = %v, want %v", f.networks, want)
+	}
+}
+
+// A container that is not on the plane has nothing to leave, and that is not a
+// failure — it is the state a caller is trying to reach. Rejoining still has to
+// happen, or a promotion that raced a restart would leave the name nowhere.
+func TestReattach_toleratesAContainerThatIsNotOnThePlane(t *testing.T) {
+	f := &fakeReconnector{disconnectErr: errors.New("container c1 is not connected to network overcast")}
+	cfg := testConfig()
+
+	if err := Reattach(context.Background(), f, cfg, "c1",
+		Placement{Aliases: []string{"db.localhost"}}); err != nil {
+		t.Fatalf("Reattach: %v", err)
+	}
+	if f.calls != 1 {
+		t.Errorf("connect calls = %d, want the rejoin to happen anyway", f.calls)
+	}
+}

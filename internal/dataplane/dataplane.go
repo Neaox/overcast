@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
@@ -38,6 +39,14 @@ import (
 // than the concrete client.
 type connector interface {
 	ConnectNetworkWithAliases(ctx context.Context, networkID, containerID string, aliases []string) error
+}
+
+// reconnector is a connector that can also take a container off a network,
+// which is what changing an alias set requires. Kept separate from connector so
+// the many callers that only ever attach are not made to grow a method.
+type reconnector interface {
+	connector
+	DisconnectNetwork(ctx context.Context, networkID, containerID string) error
 }
 
 // inspector is the slice of *docker.Client ContainerAddr needs.
@@ -268,6 +277,48 @@ func Attach(ctx context.Context, dc connector, cfg *config.Config, containerID s
 		}
 	}
 	return nil
+}
+
+// Reattach replaces the set of DNS names a running container answers to on its
+// data planes.
+//
+// Attach cannot do this, and cannot be made to. Docker fixes a container's
+// aliases when it joins a network and rejects a second connect for one that is
+// already there — which Attach deliberately swallows as success, so calling it
+// again with a different set silently keeps the old one. Leaving the network
+// and rejoining it is the only way to change them.
+//
+// The container keeps running throughout, but it is off the plane for the
+// moment between the two calls, and Docker drops its existing connections on
+// that plane when it leaves. That is deliberate rather than tolerated: this is
+// for moving a name from one container to another — an Aurora writer promotion
+// — and on AWS a failover breaks open connections in exactly the same way. A
+// caller that only needs to add a container to a plane wants Attach.
+//
+// A container that is not on a plane it was expected to be on is not an error.
+// There is nothing to leave, and the rejoin is what the caller actually wants;
+// refusing here would turn a promotion that raced a container restart into a
+// name that resolves nowhere.
+func Reattach(ctx context.Context, dc reconnector, cfg *config.Config, containerID string, p Placement) error {
+	if dc == nil || containerID == "" {
+		return nil
+	}
+	for _, network := range DataNetworks(cfg, p) {
+		if network == "" {
+			continue
+		}
+		if err := dc.DisconnectNetwork(ctx, network, containerID); err != nil && !isNotConnected(err) {
+			return fmt.Errorf("detach container from data plane %s: %w", network, err)
+		}
+	}
+	return Attach(ctx, dc, cfg, containerID, p)
+}
+
+// isNotConnected reports whether err is Docker refusing a disconnect because
+// the container was not on that network — the mirror of the client's tolerance
+// for a connect that finds it already there.
+func isNotConnected(err error) bool {
+	return strings.Contains(err.Error(), "is not connected to network")
 }
 
 // Networks returns every plane a container placed by p sits on, control first.

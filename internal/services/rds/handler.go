@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -570,6 +571,87 @@ func (h *Handler) addInstanceToCluster(ctx context.Context, clusterID, instanceI
 		h.log.Warn("addInstanceToCluster: failed to update cluster",
 			zap.String("cluster", clusterID), zap.String("error", aerr.Message))
 	}
+}
+
+// removeInstanceFromCluster is addInstanceToCluster's counterpart: it drops
+// instanceID from clusterID's member list and, when the member being dropped
+// was the writer, promotes a survivor in its place.
+//
+// AWS treats losing the writer as a failover — "If the DB cluster has one or
+// more Aurora Replicas, then an Aurora Replica is promoted to the primary
+// instance during a failure event" — and picks by promotion tier: 0 is the
+// highest priority and 15 the lowest, with ties inside a tier going to the
+// largest instance and then to "an arbitrary replica in the same promotion
+// tier".
+// https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Concepts.AuroraHighAvailability.html
+//
+// Overcast honours the tier and settles the rest of that tie on the oldest
+// surviving member, which is the head of the list because addInstanceToCluster
+// appends in creation order. Size is not a factor: every member runs the same
+// container whatever its DBInstanceClass. AWS's own answer at that point is
+// explicitly arbitrary, and a reproducible one is worth more locally — a test
+// that deletes a writer should not have to guess which replica it can dial
+// afterwards.
+//
+// Returns the identifier of the promoted instance, or "" when nothing was
+// promoted: the member was not the writer, was not a member at all, or was the
+// last one standing. A cluster with no members has no writer, which is the
+// honest answer and the one clusterEndpointsFor is already written to expect.
+//
+// Errors are logged rather than surfaced, for addInstanceToCluster's reason —
+// the caller's response is committed by the time this runs.
+func (h *Handler) removeInstanceFromCluster(ctx context.Context, clusterID, instanceID string) (promoted string) {
+	if clusterID == "" {
+		return ""
+	}
+	// Under the cluster lock for addInstanceToCluster's reason, and one more:
+	// the read-modify-write that promotes a survivor must not interleave with
+	// the one that admits a new member, or a cluster briefly ends up with two
+	// writers — and both of them claim the cluster endpoint aliases.
+	if _, aerr := h.mutateCluster(ctx, clusterID, func(cluster *DBCluster) *protocol.AWSError {
+		idx := slices.IndexFunc(cluster.DBClusterMembers, func(m DBClusterMember) bool {
+			return m.DBInstanceIdentifier == instanceID
+		})
+		if idx < 0 {
+			return nil
+		}
+		lostWriter := cluster.DBClusterMembers[idx].IsClusterWriter
+		cluster.DBClusterMembers = slices.Delete(cluster.DBClusterMembers, idx, idx+1)
+		if !lostWriter {
+			return nil
+		}
+		// Flip the flag explicitly rather than leaving the role to be inferred.
+		// isClusterWriter treats an instance it cannot find as the writer when
+		// the cluster has none — that is deliberate, and it covers the window
+		// during creation before the first member is recorded, but it would
+		// hand the cluster endpoints to whichever unlisted instance asked first
+		// if a promotion left the seat empty.
+		if w := electWriter(cluster.DBClusterMembers); w >= 0 {
+			cluster.DBClusterMembers[w].IsClusterWriter = true
+			promoted = cluster.DBClusterMembers[w].DBInstanceIdentifier
+		}
+		return nil
+	}); aerr != nil {
+		h.log.Warn("removeInstanceFromCluster: failed to update cluster",
+			zap.String("cluster", clusterID),
+			zap.String("instance", instanceID),
+			zap.String("error", aerr.Message))
+		return ""
+	}
+	return promoted
+}
+
+// electWriter is the index of the member to promote — the lowest promotion
+// tier, the earliest-created member breaking the tie — or -1 when the cluster
+// has no members left to promote.
+func electWriter(members []DBClusterMember) int {
+	best := -1
+	for i, m := range members {
+		if best < 0 || m.PromotionTier < members[best].PromotionTier {
+			best = i
+		}
+	}
+	return best
 }
 
 // ── Docker helpers ───────────────────────────────────────────────────────────

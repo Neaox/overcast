@@ -74,6 +74,33 @@ operations:
           cluster-{hash} reduces to once the account-specific hash every Overcast endpoint name drops is
           removed. Changed in 0.0.1-alpha.37 while the project is pre-1.0. AWS documents the endpoint shapes at
           https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Endpoints.html.
+  DeleteDBInstance:
+    status: in_progress
+    scenarios:
+      - name: Cluster membership and writer re-election
+        status: fixed
+        tests: [TestDeleteDBInstance_dropsTheMemberFromItsCluster, TestDeleteDBInstance_promotesASurvivorWhenTheWriterIsDeleted, TestDeleteDBInstance_deletingAReplicaLeavesTheWriterInPlace, TestDeleteDBInstance_lastMemberLeavesTheClusterEmpty, TestDeleteDBInstance_promotesTheHighestPriorityTier, TestRemoveInstanceFromCluster_unknownClusterIsANoOp, TestRemoveInstanceFromCluster_unknownMemberLeavesTheWriterAlone]
+        evidence: >-
+          addInstanceToCluster had no counterpart, so DeleteDBInstance dropped the instance record and left the
+          membership entry — DescribeDBClusters kept reporting a member that no longer existed, and deleting the
+          writer left IsClusterWriter false on every member. Members are now pruned, and losing the writer promotes
+          a survivor: AWS documents deleting or losing the primary as a failover that promotes an Aurora Replica
+          chosen by promotion tier, 0 being the highest priority and 15 the lowest, at
+          https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Concepts.AuroraHighAvailability.html.
+          Ties within a tier are settled on the oldest surviving member, which sits inside AWS's own allowance to
+          promote "an arbitrary replica in the same promotion tier" while staying reproducible across runs.
+      - name: Cluster endpoints follow a promoted writer
+        status: fixed
+        tests: [TestAdoptClusterEndpoints_movesTheClusterNamesOntoTheNewWriter, TestDeleteDBInstance_clusterEndpointFollowsThePromotedWriter, TestDeleteDBInstance_lastMemberMovesNoAliases, TestReattach_leavesThePlaneBeforeRejoiningIt, TestReattach_coversEveryPlaneThePlacementPutsItOn, TestReattach_toleratesAContainerThatIsNotOnThePlane]
+        evidence: >-
+          Both cluster endpoint names are Docker aliases on the writer's engine container, and Docker fixes a
+          container's aliases when it joins a network — so a promotion that only rewrote the record left both names
+          resolving to the container that had just been deleted. The promoted member's container now leaves its
+          data planes and rejoins them advertising the cluster names, which is the only way an alias set changes;
+          dataplane.Attach treats a repeat connect as success and would silently keep the old set. Existing
+          connections on those planes drop across the rejoin, matching the interruption an AWS failover causes.
+          Nothing detaches the outgoing writer: DeleteDBInstance has already stopped its container and queued it
+          for removal.
 findings:
   fixed:
     - CreateDBParameterGroup accepts the advertised aurora-mysql8.0 family used by Aurora MySQL 3 instance parameter groups while still rejecting unknown families.
@@ -82,13 +109,16 @@ findings:
     - Master accounts have version-specific cross-database bootstrap privileges without exposing a remote root credential; Aurora MySQL 3 uses mysql_native_password, newer role models are represented, and PostgreSQL masters are NOSUPERUSER members of rds_superuser.
     - Initial database creation and password validation follow the supported engine's AWS-specific rules, including Aurora DatabaseName inheritance.
     - Aurora cluster endpoints resolve to the writer member's container from sibling containers, and carry a port the caller can actually dial.
+    - DeleteDBInstance removes the instance from its cluster's DBClusterMembers, and deleting the writer promotes a surviving member and moves the cluster endpoints onto its container.
   remaining_gaps:
     - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
     - No compat suite group covers Aurora clusters; rds-instances is the only lifecycle group, so cluster create/describe/delete parity is unexercised from the SDKs.
-    - DeleteDBInstance does not remove the instance from its cluster's DBClusterMembers, so a deleted writer stays listed.
+    - FailoverDBCluster is not implemented, so a promotion can only be triggered by deleting the writer, not asked for directly.
   intentionally_partial:
     - The Aurora reader endpoint resolves to the writer rather than load-balancing across replicas, because members do not share storage.
     - Cluster endpoint hostnames drop AWS's account-specific hash, as every Overcast endpoint name does: AWS's cluster-{hash} and cluster-ro-{hash} reduce to cluster and cluster-ro. The hash is service-assigned and not derivable, so a name carrying one could not be registered as a Docker alias ahead of the first lookup.
+    - A member is dropped from DBClusterMembers when DeleteDBInstance is accepted rather than when the instance record finally goes; AWS keeps it listed while the instance is "deleting". The window is one scheduler tick, and closing it early keeps the cluster from advertising a container that has already been stopped.
+    - Writer promotion honours PromotionTier and breaks ties on the oldest surviving member. AWS breaks the same tie on instance size and then arbitrarily; Overcast runs every member as the same container whatever its DBInstanceClass, so there is no size to compare.
     - Protected internal-account enforcement and the complete catalog of AWS-managed rds_* procedures are not emulated by stock engine images.
     - PostgreSQL extension availability follows the backing image rather than AWS's RDS extension allowlist.
     - Reserved-word validation covers common SQL keywords and engine system schemas, not every version-specific engine reserved word.
