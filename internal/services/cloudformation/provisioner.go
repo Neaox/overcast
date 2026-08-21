@@ -485,7 +485,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			}
 
 			// Properties changed — attempt update.
-			props, refErr := expandRecordedProperties(recordedProps, rCtx)
+			props, refErr := expandResourceProperties(res.Type, recordedProps, rCtx)
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateInProgress, "")
 			outcome, updErr := resourceUpdateOutcome{}, refErr
 			if updErr == nil {
@@ -577,7 +577,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			continue
 		}
 
-		props, refErr := expandRecordedProperties(recordedProps, rCtx)
+		props, refErr := expandResourceProperties(res.Type, recordedProps, rCtx)
 
 		// New (or different type) — emit CREATE_IN_PROGRESS before provisioning.
 		p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateInProgress, "")
@@ -858,7 +858,7 @@ func (p *provisioner) resolveHandler(resType string) (resourceHandler, bool) {
 	}
 	// Custom::* and AWS::CloudFormation::CustomResource both use the custom
 	// resource protocol (Lambda invocation via ServiceToken).
-	if strings.HasPrefix(resType, "Custom::") || resType == "AWS::CloudFormation::CustomResource" {
+	if isCustomResourceType(resType) {
 		return &customResourceHandler{p: p}, true
 	}
 	// Nested stacks require synchronous provisioning through the provisioner.
@@ -866,6 +866,12 @@ func (p *provisioner) resolveHandler(resType string) (resourceHandler, bool) {
 		return &nestedStackHandler{p: p}, true
 	}
 	return nil, false
+}
+
+// isCustomResourceType reports whether resType is provisioned through the
+// custom resource protocol (Custom::* or AWS::CloudFormation::CustomResource).
+func isCustomResourceType(resType string) bool {
+	return strings.HasPrefix(resType, "Custom::") || resType == "AWS::CloudFormation::CustomResource"
 }
 
 // provisionResource creates a resource by dispatching an internal HTTP request.
@@ -1283,13 +1289,17 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 // failure cannot be attributed to whichever resource is processed next.
 func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveContext) (expanded, recorded map[string]any, err error) {
 	recorded = resolveAllProperties(res.Properties, rCtx)
-	expanded, err = expandRecordedProperties(recorded, rCtx)
+	expanded, err = expandResourceProperties(res.Type, recorded, rCtx)
 	return expanded, recorded, err
 }
 
 // expandRecordedProperties resolves dynamic references only after
 // CloudFormation has selected the containing resource for creation or update.
 // No-op stack updates therefore avoid both expansion work and secret reads.
+//
+// Callers that know they may be handling a custom resource should go through
+// expandResourceProperties instead, which routes a secure reference to a
+// rejection rather than resolving it.
 func expandRecordedProperties(recorded map[string]any, rCtx *resolveContext) (expanded map[string]any, err error) {
 	expanded, _ = expandDynamicRefs(recorded, rCtx).(map[string]any)
 	if expanded == nil {
@@ -5835,8 +5845,19 @@ func (h *customResourceHandler) Delete(ctx context.Context, router http.Handler,
 	return err
 }
 
-func (h *customResourceHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return h.invoke(ctx, router, cfg, "Update", physicalID, props, map[string]any{}, rCtx)
+func (h *customResourceHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// oldProps arrives in recorded form — the literal dynamic-reference text,
+	// the same form props was in before the provisioner expanded it (see
+	// expandResourceProperties) ahead of this call. Expanding oldProps here
+	// with the same reject-secure/resolve-plain rule keeps
+	// OldResourceProperties in the same form as ResourceProperties, so an
+	// update whose properties did not change produces no difference between
+	// the two payload halves.
+	expandedOld, err := expandCustomResourceProperties(oldProps, rCtx)
+	if err != nil {
+		return "", nil, err
+	}
+	return h.invoke(ctx, router, cfg, "Update", physicalID, props, expandedOld, rCtx)
 }
 
 func (h *customResourceHandler) invoke(ctx context.Context, router http.Handler, _ *config.Config, reqType, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

@@ -158,6 +158,88 @@ func (c *resolveContext) expandDynamicRefsInString(s string) string {
 	})
 }
 
+// secure reports whether the reference names one of the "secure values" AWS
+// documents as unsupported in custom resources: a Secrets Manager secret or an
+// SSM SecureString parameter. Plain ssm is not secure and is unaffected.
+func (r dynamicRef) secure() bool {
+	return r.Service == "secretsmanager" || r.Service == "ssm-secure"
+}
+
+// findSecureDynamicRef reports the first secure dynamic reference
+// ({{resolve:secretsmanager:...}} or {{resolve:ssm-secure:...}}) found
+// anywhere in v, without resolving anything — used to reject a secure
+// reference in a custom resource's properties before expansion is attempted,
+// so the secret is never read. See rejectSecureCustomResourceRefs.
+func findSecureDynamicRef(v any) (dynamicRef, bool) {
+	switch val := v.(type) {
+	case map[string]any:
+		for _, item := range val {
+			if ref, ok := findSecureDynamicRef(item); ok {
+				return ref, true
+			}
+		}
+	case []any:
+		for _, item := range val {
+			if ref, ok := findSecureDynamicRef(item); ok {
+				return ref, true
+			}
+		}
+	case string:
+		if !strings.Contains(val, "{{resolve:") {
+			return dynamicRef{}, false
+		}
+		for _, raw := range dynamicRefPattern.FindAllString(val, -1) {
+			if ref, ok := parseDynamicRef(raw); ok && ref.secure() {
+				return ref, true
+			}
+		}
+	}
+	return dynamicRef{}, false
+}
+
+// rejectSecureCustomResourceRefs fails with a named restriction when props
+// contains a secure dynamic reference. AWS's general considerations for
+// dynamic references state: "Dynamic references can't be used for secure
+// values (like those stored in Parameter Store or Secrets Manager) in custom
+// resources." — the same restriction UserData and AWS::CloudFormation::Init
+// carry, for the same reason: the value would become visible somewhere it
+// should not (a custom resource's Lambda may log its own event payload).
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references.html#dynamic-references-considerations
+func rejectSecureCustomResourceRefs(props map[string]any) error {
+	ref, ok := findSecureDynamicRef(props)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("%s: secure dynamic references (secretsmanager, ssm-secure) are not supported in custom resource properties", ref.Raw)
+}
+
+// expandCustomResourceProperties resolves the dynamic references in a custom
+// resource's recorded properties for the request sent to its Lambda function,
+// rejecting a secure one instead of resolving it (see
+// rejectSecureCustomResourceRefs). A plain {{resolve:ssm:...}} reference is
+// still resolved, matching what a template author would expect.
+//
+// Used for both ResourceProperties and OldResourceProperties so an update
+// whose properties did not change produces the same value on both sides of
+// the payload — see customResourceHandler.Update.
+func expandCustomResourceProperties(recorded map[string]any, rCtx *resolveContext) (map[string]any, error) {
+	if err := rejectSecureCustomResourceRefs(recorded); err != nil {
+		return recorded, err
+	}
+	return expandRecordedProperties(recorded, rCtx)
+}
+
+// expandResourceProperties resolves the dynamic references in a resource's
+// recorded properties ahead of handler dispatch, routing custom resource
+// types through expandCustomResourceProperties so a secure reference fails
+// the resource instead of being resolved into it.
+func expandResourceProperties(resType string, recorded map[string]any, rCtx *resolveContext) (map[string]any, error) {
+	if isCustomResourceType(resType) {
+		return expandCustomResourceProperties(recorded, rCtx)
+	}
+	return expandRecordedProperties(recorded, rCtx)
+}
+
 // recordDynamicRefErr keeps the first failure. The first one is the one worth
 // reporting: later references in the same resource are usually collateral.
 func (c *resolveContext) recordDynamicRefErr(err error) {
