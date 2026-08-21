@@ -79,8 +79,8 @@ func (h *elbv2LoadBalancerHandler) Delete(ctx context.Context, router http.Handl
 		"Version":         "2015-12-01",
 		"LoadBalancerArn": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteLoadBalancer", rec, err)
 }
 
 func (h *elbv2LoadBalancerHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -167,8 +167,8 @@ func (h *elbv2TargetGroupHandler) Delete(ctx context.Context, router http.Handle
 		"Version":        "2015-12-01",
 		"TargetGroupArn": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteTargetGroup", rec, err)
 }
 
 func (h *elbv2TargetGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -233,8 +233,8 @@ func (h *elbv2ListenerHandler) Delete(ctx context.Context, router http.Handler, 
 		"Version":     "2015-12-01",
 		"ListenerArn": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteListener", rec, err)
 }
 
 func (h *elbv2ListenerHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -384,8 +384,8 @@ func (h *autoscalingASGHandler) Delete(ctx context.Context, router http.Handler,
 		"AutoScalingGroupName": physicalID,
 		"ForceDelete":          "true",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteAutoScalingGroup", rec, err)
 }
 
 func (h *autoscalingASGHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -475,8 +475,8 @@ func (h *autoscalingLaunchConfigHandler) Delete(ctx context.Context, router http
 		"Version":                 "2011-01-01",
 		"LaunchConfigurationName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteLaunchConfiguration", rec, err)
 }
 
 func (h *autoscalingLaunchConfigHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1815,8 +1815,8 @@ func (h *iamAccessKeyHandler) Delete(ctx context.Context, router http.Handler, c
 		params["UserName"] = userName
 	}
 
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteAccessKey", rec, err)
 }
 
 func (h *iamAccessKeyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

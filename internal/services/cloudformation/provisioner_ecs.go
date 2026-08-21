@@ -450,7 +450,9 @@ func (h *ecsServiceHandler) Delete(ctx context.Context, router http.Handler, cfg
 	if cluster != "" {
 		updateBody["cluster"] = cluster
 	}
-	// Best-effort update; ignore errors.
+	// Best-effort: the scale-down only smooths the delete that follows, and
+	// DeleteService is the call whose outcome decides whether the service is
+	// gone.
 	_, _ = internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.UpdateService", updateBody)
 
 	deleteBody := map[string]any{
@@ -459,8 +461,8 @@ func (h *ecsServiceHandler) Delete(ctx context.Context, router http.Handler, cfg
 	if cluster != "" {
 		deleteBody["cluster"] = cluster
 	}
-	_, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeleteService", deleteBody)
-	return err
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.DeleteService", deleteBody)
+	return teardownError("DeleteService", rec, err)
 }
 
 func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {

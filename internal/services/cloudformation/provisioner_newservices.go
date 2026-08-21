@@ -349,8 +349,8 @@ func (h *rdsDBInstanceHandler) Delete(ctx context.Context, router http.Handler, 
 		"DBInstanceIdentifier": physicalID,
 		"SkipFinalSnapshot":    "true",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteDBInstance", rec, err)
 }
 
 // rdsInstanceReplaceOnChange are the AWS::RDS::DBInstance properties AWS
@@ -654,8 +654,8 @@ func (h *rdsDBSubnetGroupHandler) Delete(ctx context.Context, router http.Handle
 		"Version":           "2014-10-31",
 		"DBSubnetGroupName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteDBSubnetGroup", rec, err)
 }
 
 func (h *rdsDBSubnetGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -705,8 +705,8 @@ func (h *rdsDBParameterGroupHandler) Delete(ctx context.Context, router http.Han
 		"Version":              "2014-10-31",
 		"DBParameterGroupName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteDBParameterGroup", rec, err)
 }
 
 func (h *rdsDBParameterGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -794,8 +794,8 @@ func (h *kinesisStreamHandler) Create(ctx context.Context, router http.Handler, 
 
 func (h *kinesisStreamHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"StreamName": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "Kinesis_20131202.DeleteStream", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Kinesis_20131202.DeleteStream", body)
+	return teardownError("DeleteStream", rec, err)
 }
 
 func (h *kinesisStreamHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -878,8 +878,8 @@ func (h *cognitoUserPoolHandler) Create(ctx context.Context, router http.Handler
 
 func (h *cognitoUserPoolHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	body := map[string]any{"UserPoolId": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.DeleteUserPool", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.DeleteUserPool", body)
+	return teardownError("DeleteUserPool", rec, err)
 }
 
 // ── AWS::Cognito::UserPoolClient ──────────────────────────────────────────
@@ -971,8 +971,8 @@ func (h *cognitoUserPoolClientHandler) Delete(ctx context.Context, router http.H
 		"UserPoolId": parts[0],
 		"ClientId":   parts[1],
 	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.DeleteUserPoolClient", body)
-	return nil
+	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSCognitoIdentityProviderService.DeleteUserPoolClient", body)
+	return teardownError("DeleteUserPoolClient", rec, err)
 }
 
 // ── AWS::AppSync::GraphQLApi ──────────────────────────────────────────────
@@ -2238,8 +2238,8 @@ func (h *sesTemplateHandler) Delete(ctx context.Context, router http.Handler, cf
 		"Action":       "DeleteTemplate",
 		"TemplateName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteTemplate", rec, err)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -2478,8 +2478,8 @@ func (h *elastiCacheCacheClusterHandler) Delete(ctx context.Context, router http
 		"Version":        "2015-02-02",
 		"CacheClusterId": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteCacheCluster", rec, err)
 }
 
 // ── AWS::ElastiCache::ServerlessCache ────────────────────────────────────────
@@ -2555,8 +2555,8 @@ func (h *elastiCacheServerlessCacheHandler) Delete(ctx context.Context, router h
 	if v := fmtPropString(map[string]any{}, "FinalSnapshotName"); v != "" {
 		params["FinalSnapshotName"] = v
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteServerlessCache", rec, err)
 }
 
 func (h *elastiCacheServerlessCacheHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -2724,8 +2724,8 @@ func (h *elastiCacheReplicationGroupHandler) Delete(ctx context.Context, router 
 		"Version":            "2015-02-02",
 		"ReplicationGroupId": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteReplicationGroup", rec, err)
 }
 
 func (h *elastiCacheReplicationGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -2830,8 +2830,8 @@ func (h *elastiCacheSubnetGroupHandler) Delete(ctx context.Context, router http.
 		"Version":              "2015-02-02",
 		"CacheSubnetGroupName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
-	return nil
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return teardownError("DeleteCacheSubnetGroup", rec, err)
 }
 
 func (h *elastiCacheSubnetGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
