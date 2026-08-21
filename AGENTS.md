@@ -142,7 +142,7 @@ than silently narrowing the supported development stack.
 Before implementing anything, check these constraints. If a request conflicts, push back.
 
 - **Not a staging environment.** No 100% API parity. Do not base production go/no-go decisions on Overcast tests.
-- **Not a security boundary.** Credentials accepted but not validated. Never expose on a public network.
+- **Not a security boundary.** Credentials accepted but not validated. Never expose on a public network. `OVERCAST_LISTEN` defaults to `0.0.0.0` when containerised (required for Docker's `-p` publishing) and to `127.0.0.1` natively (#761) — an explicit `OVERCAST_LISTEN` always wins over either default, in both directions.
 - **Not a performance testing tool.** No latency emulation, no request-rate limits, no per-service quotas. Lambda concurrency is the one place Overcast does refuse work, in two forms:
   - **Reserved concurrency** — set explicitly per function. Exceeding it throttles immediately with AWS's 429 `TooManyRequestsException` (`Reason: ReservedFunctionConcurrentInvocationLimitExceeded`), because that is behaviour applications are written against: retry policies, DLQs, ESM back-off, and the "set it to 0 to disable a function" idiom.
   - **Instance limits** (`LAMBDA_MAX_INSTANCES`, `LAMBDA_MAX_INSTANCES_PER_FUNCTION`) — host protection, not quota emulation. An invocation that cannot get a container first reclaims an idle one, then queues; **if it is still queued when the function's timeout expires it is throttled** with `Reason: ConcurrentInvocationLimitExceeded`, the same reason AWS gives when the account pool is exhausted. Raise the limits if you are hitting this rather than treating it as an AWS behaviour.

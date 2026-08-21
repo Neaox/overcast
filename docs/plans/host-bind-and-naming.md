@@ -5,15 +5,17 @@ description: Decision record for #761 (OVERCAST_HOST defaults to 0.0.0.0 while t
 
 # Bind address: default, name, and the docs that contradict it
 
-> Status: **decided 2026-08-22 — A + C, sequenced per §4** (maintainer approval:
-> "pick both up"). Revised same day: **C ships as a straight rename with the
-> old name *removed*, not kept as a permanent alias** — Overcast is alpha
-> software and the standing policy is that a removed setting fails loudly
-> naming its replacement rather than being silently accepted. #870 (rename,
-> `OVERCAST_HOST` removed) ships in
+> Status: **complete, 2026-08-22.** Decided as A + C, sequenced per §4
+> (maintainer approval: "pick both up"), revised same day: **C shipped as a
+> straight rename with the old name *removed*, not kept as a permanent
+> alias** — Overcast is alpha software and the standing policy is that a
+> removed setting fails loudly naming its replacement rather than being
+> silently accepted. #870 (rename, `OVERCAST_HOST` removed) shipped in
 > [#1176](https://github.com/Neaox/overcast/pull/1176); #761
-> (environment-dependent native default) follows once it merges. Owner: in
-> flight.
+> (environment-dependent native default) shipped in
+> the PR that carries this commit, sequenced after it as §4 planned. This doc
+> is kept (rather than deleted) because both issues' comment threads
+> reference it directly.
 > Tracks: [#761](https://github.com/Neaox/overcast/issues/761) (default vs docs),
 > [#870](https://github.com/Neaox/overcast/issues/870) (naming vs LocalStack convention).
 > The two issues carry the full evidence; this doc exists so the *combined* decision
@@ -48,7 +50,7 @@ These are decision-free and should ship regardless of everything below:
 
 | Option | What ships | Cost | Benefit |
 |---|---|---|---|
-| **A. Environment-dependent default** (the issue's proposal) | Container → `0.0.0.0` (unchanged); native → `127.0.0.1`; detection via the same signal storage-mode resolution uses (`OVERCAST_DATA_DIR_SOURCE=image` + mountpoint detection, `internal/config/state_auto.go`) | **Breaking for native users** reaching the instance from a VM / second machine / phone — and it breaks *quietly* (connection refused). Needs a `*!` changelog entry and a loud startup log | The default finally matches the documented advice; laptop-on-hotel-wifi exposure (full unauthenticated AWS surface; with `OVERCAST_DEBUG` also `/_debug/state` dump and `/_debug/reset` wipe) closes by default |
+| **A. Environment-dependent default** (the issue's proposal; **shipped**) | Container → `0.0.0.0` (unchanged); native → `127.0.0.1`; detection reuses the `OVERCAST_DATA_DIR_SOURCE=image` marker storage-mode auto-detection already keys off (`isDockerImage` in `internal/config/state_auto.go`) — the mountpoint check that heuristic *also* uses is a separate signal for a different question ("is this data dir a mounted volume") and is not part of the containerised/native decision here | **Breaking for native users** reaching the instance from a VM / second machine / phone — and it breaks *quietly* (connection refused). Needs a `*!` changelog entry and a loud startup log | The default finally matches the documented advice; laptop-on-hotel-wifi exposure (full unauthenticated AWS surface; with `OVERCAST_DEBUG` also `/_debug/state` dump and `/_debug/reset` wipe) closes by default |
 | **B. Docs-only** | Default unchanged; README/AGENTS/architecture doc say plainly that the default listens on all interfaces and to set `OVERCAST_HOST=127.0.0.1` on untrusted networks | The exposure stays; every reader must notice and act | Zero breakage; contradiction still removed (the issue accepts this as a valid resolution) |
 
 The issue is explicit that **either** resolution is acceptable; only the
@@ -58,7 +60,7 @@ contradiction is not.
 
 | Option | What ships | Cost | Benefit |
 |---|---|---|---|
-| **C. Rename, old name removed** (revised from the issue's alias proposal — see below) | `OVERCAST_LISTEN` is the only bind-address variable (LocalStack's `GATEWAY_LISTEN` idiom; value format already matches); `OVERCAST_HOST` is removed rather than kept as a permanent alias — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN`, so a straggler cannot be silently ignored; docs use the new name throughout | A breaking change (`*!` changelog entry with migration steps); every compose file, `.env`, test, and workflow setting `OVERCAST_HOST` must be updated in the same change | The `docs/dev/networking.md` disambiguation section becomes deletable; the `*_HOST`-means-advertised-name collision with LocalStack/Floci convention ends; no second name to keep supporting forever |
+| **C. Rename, old name removed** (revised from the issue's alias proposal — see below; **shipped**) | `OVERCAST_LISTEN` is the only bind-address variable (LocalStack's `GATEWAY_LISTEN` idiom; value format already matches); `OVERCAST_HOST` is removed rather than kept as a permanent alias — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN`, so a straggler cannot be silently ignored; docs use the new name throughout | A breaking change (`*!` changelog entry with migration steps); every compose file, `.env`, test, and workflow setting `OVERCAST_HOST` must be updated in the same change | The `docs/dev/networking.md` disambiguation section becomes deletable; the `*_HOST`-means-advertised-name collision with LocalStack/Floci convention ends; no second name to keep supporting forever |
 | **D. Keep the name** | Comment fix + docs clarity only | The silent wrong-variable failure modes #870 documents stay live (worst: someone tightening exposure gets no tightening and a broken URL surface, with no error) | No churn |
 
 **Revision, 2026-08-22:** the issue's original proposal kept `OVERCAST_HOST`
@@ -97,15 +99,16 @@ in A is real but one changelog entry plus the startup log line makes it
 diagnosable in seconds. This is written as advice, not a decision: the
 security-posture trade-off in §3.1 is the maintainer's call.
 
-## 6. Definition of done (once decided)
+## 6. Definition of done — complete, 2026-08-22
 
-- The §2 decision-free items are merged.
-- The chosen option(s) from §3 are implemented with their issues' own
-  acceptance criteria, as revised 2026-08-22 (#761: default or docs + log
-  line; #870: `OVERCAST_LISTEN` is the only bind-address variable,
-  `OVERCAST_HOST` removed and fails loudly rather than kept as an alias, docs
-  rename, disambiguation section deleted).
-- README.md, AGENTS.md, the architecture doc, `docs/README.md`'s configuration
-  reference, and `docs/dev/networking.md` agree with the shipped behaviour.
-- This doc's status line records the decision and the shipping PRs, or the doc
-  is deleted once fully implemented and nothing references it.
+- [x] The §2 decision-free items are merged (both PRs).
+- [x] The chosen option(s) from §3 are implemented with their issues' own
+  acceptance criteria, as revised 2026-08-22 (#761: environment-dependent
+  default + log line; #870: `OVERCAST_LISTEN` is the only bind-address
+  variable, `OVERCAST_HOST` removed and fails loudly rather than kept as an
+  alias, docs rename, disambiguation section deleted).
+- [x] README.md, AGENTS.md, the architecture doc, `docs/README.md`'s
+  configuration reference, `docs/migration-from-localstack.md`, and
+  `docs/dev/networking.md` agree with the shipped behaviour.
+- [x] This doc's status line records the decision and the shipping PRs. Kept
+  rather than deleted: both #761 and #870's comment threads cite it directly.

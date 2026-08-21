@@ -255,13 +255,9 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// running READY hooks and before entering the select loop. OVERCAST_LISTEN
 	// usually names one address; when it names several they all front the same
 	// http.Server, so a request is answered identically whichever it arrives
-	// on. logListenResolution above names which addresses these actually bound.
-	//
-	// Outside the compat-managed case this still defaults to 0.0.0.0, so an
-	// ordinary native run listens on every interface while the docs say not to
-	// expose Overcast on an untrusted network. See
-	// https://github.com/Neaox/overcast/issues/761, which covers whether the
-	// native default should narrow to loopback.
+	// on. logListenResolution above names which addresses these actually bound
+	// and, when defaulted, why (#761: containerised binds every interface —
+	// required for Docker's -p publishing — a native run narrows to loopback).
 	lns, err := listenAll(cfg.Addrs())
 	if err != nil {
 		return err
@@ -706,9 +702,23 @@ func logStoreMode(logger *zap.Logger, cfg *config.Config) {
 // "the interesting case is auto-detection" — an operator who set the bind
 // address explicitly still benefits from a single line confirming what
 // actually got bound.
+//
+// When the value was defaulted (cfg.ListenSource == ListenSourceAuto), the
+// line also says *why* — containerised or native (#761) — since that default
+// is now environment-dependent rather than a single constant, so "what did it
+// bind, and why" stops being answerable by reading the env alone.
 func logListenResolution(logger *zap.Logger, cfg *config.Config) {
+	addrs := strings.Join(cfg.Addrs(), ", ")
+	if cfg.ListenSource == config.ListenSourceAuto {
+		logger.Info(
+			fmt.Sprintf("listening on %s (default: %s) — set OVERCAST_LISTEN to change this", addrs, cfg.ListenAutoReason),
+			zap.Strings("addrs", cfg.Hosts),
+			zap.String("listenAutoSignal", cfg.ListenAutoSignal),
+		)
+		return
+	}
 	logger.Info(
-		fmt.Sprintf("listening on %s — set OVERCAST_LISTEN to change this", strings.Join(cfg.Addrs(), ", ")),
+		fmt.Sprintf("listening on %s — set OVERCAST_LISTEN to change this", addrs),
 		zap.Strings("addrs", cfg.Hosts),
 	)
 }

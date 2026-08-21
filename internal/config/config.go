@@ -106,7 +106,12 @@ type Config struct {
 	// leftover OVERCAST_HOST is a hard startup error naming the replacement
 	// (see resolveListen) rather than a silently-honoured fallback.
 	// Use "127.0.0.1" to restrict to localhost only.
-	// Defaults to "0.0.0.0" (all interfaces).
+	//
+	// Defaults to "0.0.0.0" when Overcast is containerised (required for
+	// Docker's -p publishing to reach it) and "127.0.0.1" natively (#761) — an
+	// explicit OVERCAST_LISTEN always wins over either default. See
+	// ListenSource/ListenAutoReason/ListenAutoSignal for why a given run
+	// resolved the way it did.
 	// When several addresses are configured this is the first of them — see
 	// Hosts.
 	Host string
@@ -127,6 +132,22 @@ type Config struct {
 	// container-side clients can reach the API, and the UI is a browser
 	// surface on the machine itself.
 	Hosts []string
+
+	// ListenSource reports whether Host/Hosts came from an explicit
+	// OVERCAST_LISTEN (ListenSourceExplicit) or from the environment-dependent
+	// default (ListenSourceAuto) — see resolveListen. Drives the startup log
+	// line's wording of *why* a run bound what it bound.
+	ListenSource ListenSource
+
+	// ListenAutoReason is a short, human-readable explanation of why the
+	// default was chosen. Empty when ListenSource is ListenSourceExplicit.
+	ListenAutoReason string
+
+	// ListenAutoSignal is the stable code identifying which default fired:
+	// "containerised" or "native". Empty when ListenSource is
+	// ListenSourceExplicit. Safe to key tests or logs off of, unlike
+	// ListenAutoReason's free text.
+	ListenAutoSignal string
 
 	// Port is the TCP port the HTTP server listens on.
 	Port int
@@ -835,8 +856,51 @@ func parseHosts(raw string) ([]string, error) {
 	return hosts, nil
 }
 
+// ListenSource identifies whether the effective bind address (Config.Host /
+// Config.Hosts) was chosen explicitly (OVERCAST_LISTEN set) or resolved by
+// the environment-dependent default (#761 — see resolveListenDefault). Mirrors
+// StateSource's role for the storage backend.
+type ListenSource string
+
+const (
+	// ListenSourceExplicit means OVERCAST_LISTEN was set.
+	ListenSourceExplicit ListenSource = "explicit"
+
+	// ListenSourceAuto means OVERCAST_LISTEN was unset, and the bind address
+	// was resolved by resolveListenDefault.
+	ListenSourceAuto ListenSource = "auto"
+)
+
+// Bind-address auto-detection signal codes — stable identifiers safe to key
+// tests or logs off of, unlike ListenAutoReason's free text.
+const (
+	listenAutoSignalContainerised = "containerised"
+	listenAutoSignalNative        = "native"
+)
+
+// resolveListenDefault picks the bind-address default for when
+// OVERCAST_LISTEN is unset (#761): "0.0.0.0" when Overcast is containerised —
+// Docker's -p publishing requires binding every interface, and the container
+// case is a hard constraint, not a preference — "127.0.0.1" natively, since
+// nothing about a native `overcast serve` requires listening beyond loopback
+// unless OVERCAST_LISTEN says otherwise.
+//
+// dataDirSource is the literal (undefaulted) value of OVERCAST_DATA_DIR_SOURCE,
+// read once by the caller (Load) before Host resolution and reused again for
+// detectAutoStateSignals below — isDockerImage is the single source of truth
+// for "containerised" both places share, so the two decisions can never
+// disagree about what that means.
+func resolveListenDefault(dataDirSource string) (addr, signal, reason string) {
+	if isDockerImage(dataDirSource) {
+		return "0.0.0.0", listenAutoSignalContainerised,
+			"containerised (OVERCAST_DATA_DIR_SOURCE=image) — Docker's -p publishing requires binding every interface"
+	}
+	return "127.0.0.1", listenAutoSignalNative,
+		"native — nothing requires listening beyond loopback unless OVERCAST_LISTEN says otherwise"
+}
+
 // resolveListen determines the raw (comma-separated, undefaulted) bind
-// address list from OVERCAST_LISTEN.
+// address list from OVERCAST_LISTEN, and whether it was set explicitly.
 //
 // OVERCAST_HOST, the pre-rename name (#870), has been removed rather than
 // kept as an alias: Overcast is alpha software, and the project's policy for
@@ -847,14 +911,20 @@ func parseHosts(raw string) ([]string, error) {
 // fall through to the OVERCAST_LISTEN default, changing nothing about the
 // bind address while looking, to the operator, like it took effect).
 //
-// defaultListen is the fallback when OVERCAST_LISTEN is unset — always
-// "0.0.0.0" today; #761 makes it depend on whether Overcast is containerised.
-func resolveListen(defaultListen string) (string, error) {
+// defaultListen is the fallback when OVERCAST_LISTEN is unset — see
+// resolveListenDefault. An explicit OVERCAST_LISTEN always wins over it, in
+// both directions: it can name the wildcard even when the default would have
+// been loopback, or loopback even when the default would have been the
+// wildcard.
+func resolveListen(defaultListen string) (raw string, explicit bool, err error) {
 	if _, hostSet := os.LookupEnv("OVERCAST_HOST"); hostSet {
-		return "", fmt.Errorf(
+		return "", false, fmt.Errorf(
 			"config: OVERCAST_HOST has been removed; use OVERCAST_LISTEN instead (same value format)")
 	}
-	return envOr("OVERCAST_LISTEN", defaultListen), nil
+	if v, ok := os.LookupEnv("OVERCAST_LISTEN"); ok {
+		return v, true, nil
+	}
+	return defaultListen, false, nil
 }
 
 // WildcardDNSDomains are the public domains whose every subdomain resolves to
@@ -1226,8 +1296,13 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 func Load() (*Config, error) {
 	cfg := &Config{}
 
-	// Host — OVERCAST_LISTEN (OVERCAST_HOST removed, #870)
-	rawListen, err := resolveListen("0.0.0.0")
+	// Host — OVERCAST_LISTEN (OVERCAST_HOST removed, #870); the default
+	// depends on whether Overcast is containerised (#761), so the
+	// OVERCAST_DATA_DIR_SOURCE marker is read here, ahead of the data
+	// directory section below, which reuses this same variable.
+	dataDirSource := os.Getenv("OVERCAST_DATA_DIR_SOURCE")
+	defaultListen, listenAutoSignal, listenAutoReason := resolveListenDefault(dataDirSource)
+	rawListen, listenExplicit, err := resolveListen(defaultListen)
 	if err != nil {
 		return nil, err
 	}
@@ -1237,6 +1312,13 @@ func Load() (*Config, error) {
 	}
 	cfg.Hosts = hosts
 	cfg.Host = hosts[0]
+	if listenExplicit {
+		cfg.ListenSource = ListenSourceExplicit
+	} else {
+		cfg.ListenSource = ListenSourceAuto
+		cfg.ListenAutoSignal = listenAutoSignal
+		cfg.ListenAutoReason = listenAutoReason
+	}
 
 	// Hostname (external — for client-facing URLs)
 	cfg.Hostname = os.Getenv("OVERCAST_HOSTNAME")
@@ -1258,11 +1340,12 @@ func Load() (*Config, error) {
 
 	// Data directory — resolved before the state backend below, since
 	// OVERCAST_STATE=auto inspects it (mountpoint check, existing-database
-	// check). dataDirEnvRaw/dataDirSource are read raw (undefaulted) because
-	// detecting "was this actually configured" requires knowing whether the
-	// env var was empty before envOr fills in the default.
+	// check). dataDirEnvRaw is read raw (undefaulted) because detecting "was
+	// this actually configured" requires knowing whether the env var was
+	// empty before envOr fills in the default. dataDirSource was already read
+	// above, for the OVERCAST_LISTEN default (#761) — reused here rather than
+	// read twice.
 	dataDirEnvRaw := os.Getenv("OVERCAST_DATA_DIR")
-	dataDirSource := os.Getenv("OVERCAST_DATA_DIR_SOURCE")
 	cfg.DataDir = envOr("OVERCAST_DATA_DIR", defaultDataDir())
 	// Defaults under the data dir, so an unset OVERCAST_CA_DIR keeps the
 	// historical <data dir>/ca layout byte for byte.
