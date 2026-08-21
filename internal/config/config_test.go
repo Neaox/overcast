@@ -114,6 +114,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.LambdaSeedRuntimeImages {
 		t.Error("LambdaSeedRuntimeImages: expected false by default")
 	}
+	if !cfg.LambdaProactiveInit {
+		t.Error("LambdaProactiveInit: expected true by default (issue #1099)")
+	}
 	if cfg.LambdaInitTimeout != 10*time.Second {
 		t.Errorf("LambdaInitTimeout: expected 10s, got %v", cfg.LambdaInitTimeout)
 	}
@@ -217,6 +220,46 @@ func TestLoad_lambdaSeedRuntimeImages(t *testing.T) {
 	}
 	if !cfg.LambdaSeedRuntimeImages {
 		t.Fatal("LambdaSeedRuntimeImages = false, want true")
+	}
+}
+
+// TestLoad_lambdaProactiveInitOptOut pins the opt-out direction: the default
+// flipped to true in issue #1099, so LAMBDA_PROACTIVE_INIT=false must still
+// disable it.
+func TestLoad_lambdaProactiveInitOptOut(t *testing.T) {
+	// Given: LAMBDA_PROACTIVE_INIT is explicitly disabled.
+	clearEnv(t)
+	t.Setenv("LAMBDA_PROACTIVE_INIT", "false")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: proactive init is off despite the new default.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaProactiveInit {
+		t.Fatal("LambdaProactiveInit = true, want false (explicit opt-out)")
+	}
+}
+
+// TestLoad_lambdaProactiveInitExplicitTrue pins that an explicit "true" is
+// equivalent to the default, so the opt-in spelling used before the flip
+// keeps working unchanged.
+func TestLoad_lambdaProactiveInitExplicitTrue(t *testing.T) {
+	// Given: LAMBDA_PROACTIVE_INIT is explicitly enabled.
+	clearEnv(t)
+	t.Setenv("LAMBDA_PROACTIVE_INIT", "true")
+
+	// When: we load config.
+	cfg, err := config.Load()
+
+	// Then: proactive init is on.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LambdaProactiveInit {
+		t.Fatal("LambdaProactiveInit = false, want true (explicit opt-in)")
 	}
 }
 

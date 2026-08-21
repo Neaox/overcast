@@ -1,19 +1,23 @@
 # Lambda cold-start & invoke-path latency — plan
 
-> Status: **complete** 2026-07-31 (PRs #403–#411, #413; investigation and
-> every phase executed the same day). Phase 0 (instrumentation + paced bench
-> harness + baselines), Phase 1 (warm-path hot spots; 1.5 measured and
-> dropped — the CloudFront loopback hop costs less than run noise), Phase 2
-> (cold-path Docker work; 2.4 measured and closed — nothing marginal left),
-> Phase 3 (proactive initialization, opt-in `LAMBDA_PROACTIVE_INIT`, with
-> cross-service trigger evidence). Measured on the same machine and
-> protocol throughout: hello-world cold p50 ~1.5–2.1 s → **~300 ms**
-> (decomposed in the cold-start anatomy table — the remainder is inherent
-> daemon create/start plus real INIT), warm p50 2004 ms → **~6 ms**; 30 MiB
-> packages cold 4007 → 1601 ms with warm flat at ~5 ms. Remaining, in order:
-> flip `LAMBDA_PROACTIVE_INIT` on by default after a release of opt-in soak;
-> Phase 4 (pre-created containers) stays deferred unless post-flip cold
-> starts are still judged too slow.
+> Status: **complete** 2026-08-21 (PRs #403–#411, #413; investigation and
+> every phase executed the same day; default flip closed by issue #1099).
+> Phase 0 (instrumentation + paced bench harness + baselines), Phase 1
+> (warm-path hot spots; 1.5 measured and dropped — the CloudFront loopback
+> hop costs less than run noise), Phase 2 (cold-path Docker work; 2.4
+> measured and closed — nothing marginal left), Phase 3 (proactive
+> initialization, **on by default since 2026-08-21** — `LAMBDA_PROACTIVE_INIT`
+> now defaults to `true`, opt out with `false` — with cross-service trigger
+> evidence). Measured on the same machine and protocol throughout:
+> hello-world cold p50 ~1.5–2.1 s → **~300 ms** (decomposed in the
+> cold-start anatomy table — the remainder is inherent daemon create/start
+> plus real INIT), warm p50 2004 ms → **~6 ms**; 30 MiB packages cold 4007 →
+> 1601 ms with warm flat at ~5 ms. Phase 4 (pre-created containers) judged
+> **not needed**: the default flip changes no mechanism — the same
+> admission-budget-bounded code path that shipped opt-in in Phase 3 now
+> just runs for more functions — and the opt-in soak (several releases
+> since 2026-07-31) surfaced no regressions to react to. No items remain
+> open.
 > Goal (as executed): cut Lambda cold-start latency and per-invoke overhead
 > **without** sacrificing fidelity — all observable behavior keeps matching
 > AWS — and **without** granting functions more memory/CPU than AWS does.
@@ -477,11 +481,11 @@ only if a future phase-timer reading disagrees.
 
 ---
 
-## 7. Phase 3 — proactive initialization — DONE v1 (2026-07-31, opt-in)
+## 7. Phase 3 — proactive initialization — DONE (2026-08-21, on by default)
 
 Landed (`proactive.go`, `InstancePool.ProactiveInit`,
-`ContainerRuntime.AcquireProactive`; opt-in via `LAMBDA_PROACTIVE_INIT`,
-default off): 10 s after a function's last identity-changing write
+`ContainerRuntime.AcquireProactive`; `LAMBDA_PROACTIVE_INIT`, default `true`
+since issue #1099 — opt out with `false`): 10 s after a function's last identity-changing write
 (`retireExecutionEnvironment` and CreateFunction's Active transition feed the
 debounce; deletes cancel it), one environment is created in the background
 when there is trigger evidence — invoked this process (the pool reports every
@@ -516,12 +520,24 @@ throttled-to-zero functions skipped.
   warm in a fresh process too. CloudFront needs no source of its own: its
   local origins route through function URLs or API Gateway, both covered.
 - The §2.2 background tar pre-fill hooks the same settle signal (landed).
-- Remaining before the default flips on: a release of soak with
-  `LAMBDA_PROACTIVE_INIT=true`.
+- **Closed 2026-08-21 (issue #1099):** the default flip. Several releases of
+  opt-in soak since 2026-07-31 surfaced no regressions in the issue tracker
+  or compat runs, so `LAMBDA_PROACTIVE_INIT` now defaults to `true`
+  (`internal/config/config.go`); `LAMBDA_PROACTIVE_INIT=false` remains a
+  full opt-out. The guardrails that made the opt-in version safe are
+  unchanged by the flip and are what make the default safe too:
+  `InstancePool.ProactiveInit` (runtime_pool.go) try-acquires the exact same
+  admission budgets a real invocation would — per-function existing
+  environment, `maxInstances`, and the memory budget including the
+  high-water margin — non-blockingly, so contention returns `proactiveBusy`
+  and reschedules (+15 s) rather than ever queueing ahead of real traffic;
+  it is skipped outright for functions with provisioned concurrency, an
+  existing environment, or reserved concurrency of zero. No new cap was
+  needed. Judgement on Phase 4 below.
 
 ---
 
-## 8. Phase 4 (deferred) — pre-created, not-started containers
+## 8. Phase 4 — pre-created, not-started containers — judged not needed (2026-08-21)
 
 Pre-pay `CreateContainer` + copies at idle (container in `created` state,
 env/code baked), `StartContainer` only at invoke so INIT still happens on the
@@ -529,6 +545,22 @@ request and a future `Init Duration` stays truthful for genuinely-cold
 invokes. This is the fallback lever if, after Phases 1–3, genuinely-cold
 starts (proactive init disabled, or first-ever invoke) are still judged too
 slow.
+
+**Judgement (issue #1099):** stays deferred. The default flip changes no
+mechanism — it is the same admission-budget-bounded code path introduced
+opt-in in Phase 3, now just running for more functions — so it carries no
+new performance data of its own to react to, and the opt-in soak period
+(several releases since 2026-07-31) surfaced no report of cold starts still
+being too slow with proactive init on. A fresh bench-harness run to record
+a post-flip "first request after deploy+settle hits warm" number (the
+acceptance target in §10) was not captured with this change: host-mode
+Lambda invoke is broken on the machine that made it (fails at `INIT`,
+pre-existing, unrelated to this change), so no real container invoke could
+be driven locally. `proactive_test.go`'s injected-clock unit coverage and
+CI's Docker-gated Lambda suite are the available proof for this change; a
+real bench-harness run remains a nice-to-have follow-up, not a blocker —
+Phase 3's original qualitative behavior (pinned by tests, unchanged by the
+flip) is the evidence Phase 4's deferral rests on.
 
 Deferred because: proactive init covers the common case with less machinery;
 this adds a third container lifecycle state the pool/GC/tracker must model

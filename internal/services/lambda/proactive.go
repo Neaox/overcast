@@ -17,7 +17,8 @@ package lambda
 // proactive initialization looks like from inside and outside the function.
 //
 // Candidacy (all required):
-//   - LAMBDA_PROACTIVE_INIT is enabled (default off while the feature beds in);
+//   - LAMBDA_PROACTIVE_INIT is enabled (default true since issue #1099's
+//     flip; LAMBDA_PROACTIVE_INIT=false opts back out);
 //   - the function is Active;
 //   - there is evidence it will be invoked: it was invoked at least once this
 //     process, or it has a function URL or event source mapping. (Detecting

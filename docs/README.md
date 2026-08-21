@@ -232,7 +232,7 @@ itself reads is below.
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `LAMBDA_TAR_CACHE_MB`            | `256`                  | In-memory cache of pre-built cold-start code and layer tars; `0` disables it         |
-| `LAMBDA_PROACTIVE_INIT`          | `false`                | Pre-initialize one execution environment once a function's configuration settles     |
+| `LAMBDA_PROACTIVE_INIT`          | `true`                 | Pre-initialize one execution environment once a function's configuration settles; set `false` to opt out |
 | `LAMBDA_FETCH_REMOTE_LAYERS`     | `false`                | Download layers missing locally from real AWS (needs the `LAMBDA_REMOTE_AWS_*` credentials) |
 | `LAMBDA_LAYER_CACHE_DIR`         | `$OVERCAST_DATA_DIR/layers` | Where layer zips are looked up and cached, named `{sha256(arn)}.zip`            |
 | `LAMBDA_REMOTE_AWS_ACCESS_KEY_ID` | —                     | AWS access key ID used by `LAMBDA_FETCH_REMOTE_LAYERS`                               |
