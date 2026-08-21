@@ -313,7 +313,7 @@
           "operation": "CreateQueue",
           "category": "Queue management",
           "status": "✅ Supported",
-          "notes": "Idempotent; FIFO queues supported (.fifo suffix)"
+          "notes": "Idempotent; FIFO queues supported (.fifo suffix); accepts tags inline"
         },
         {
           "operation": "DeleteQueue",
@@ -340,7 +340,8 @@
         {
           "operation": "SetQueueAttributes",
           "category": "Queue management",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "RedriveAllowPolicy accepted, validated, and round-tripped; the redrivePermission restriction itself is not enforced against StartMessageMoveTask or automatic DLQ redrive"
         },
         {
           "operation": "PurgeQueue",

@@ -1137,7 +1137,7 @@ func hashProps(props map[string]any) string {
 // merging here also avoids updates when they override a changed stack tag.
 func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
 	switch resourceType {
-	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret":
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret", "AWS::SQS::Queue":
 		return hashProps(map[string]any{
 			"Properties":    props,
 			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
@@ -1159,7 +1159,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	// Hashes written before propagated-tag tracking contained only the property
 	// map. Preserve their no-op behavior when effective tags did not change,
 	// while still reconciling a real stack-only tag delta.
-	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::CloudFormation::Stack" {
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::SQS::Queue" && resourceType != "AWS::CloudFormation::Stack" {
 		return oldHash == ""
 	}
 	var currentTags, previousTags any
@@ -3353,6 +3353,11 @@ func sqsQueueAttributesFromProps(props map[string]any) map[string]string {
 			attrs["RedrivePolicy"] = string(b)
 		}
 	}
+	if rap, ok := props["RedriveAllowPolicy"]; ok {
+		if b, err := json.Marshal(rap); err == nil {
+			attrs["RedriveAllowPolicy"] = string(b)
+		}
+	}
 	if raw, ok := props["Attributes"].(map[string]any); ok {
 		for k, v := range raw {
 			if s, ok := v.(string); ok {
@@ -3363,7 +3368,7 @@ func sqsQueueAttributesFromProps(props map[string]any) map[string]string {
 	return attrs
 }
 
-func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// Extract current queue name from ARN (last segment).
 	oldName := physicalID
 	if parts := strings.Split(physicalID, ":"); len(parts) > 0 {
@@ -3381,16 +3386,18 @@ func (h *sqsQueueHandler) Update(ctx context.Context, router http.Handler, cfg *
 	}
 
 	attrs := sqsQueueAttributesFromProps(props)
+	queueURL := fmt.Sprintf("%s/%s/%s", cfg.ExternalBaseURL(), cfg.AccountID, oldName)
 
 	if len(attrs) > 0 {
-		queueURL := fmt.Sprintf("%s/%s/%s", cfg.ExternalBaseURL(), cfg.AccountID, oldName)
 		body := map[string]any{"QueueUrl": queueURL, "Attributes": attrs}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "AmazonSQS.SetQueueAttributes", body); err != nil {
 			return "", nil, fmt.Errorf("sqs SetQueueAttributes: %w", err)
 		}
 	}
+	if err := updateSQSQueueTags(ctx, router, rCtx.Region, queueURL, rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], oldProps["Tags"]); err != nil {
+		return "", nil, err
+	}
 	arn := protocol.ARN(rCtx.Region, cfg.AccountID, "sqs", oldName)
-	queueURL := fmt.Sprintf("%s/%s/%s", cfg.ExternalBaseURL(), cfg.AccountID, oldName)
 	return arn, map[string]string{"Ref": queueURL, "QueueName": oldName, "Arn": arn, "QueueUrl": queueURL}, nil
 }
 
@@ -3410,6 +3417,9 @@ func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *
 	attrs := sqsQueueAttributesFromProps(props)
 	if len(attrs) > 0 {
 		body["Attributes"] = attrs
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["tags"] = tags
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "AmazonSQS.CreateQueue", body)
@@ -3433,6 +3443,42 @@ func (h *sqsQueueHandler) Create(ctx context.Context, router http.Handler, cfg *
 		"QueueUrl":  queueURL,
 	}
 	return arn, cfnAttrs, nil
+}
+
+// updateSQSQueueTags reconciles a queue's tags on Update: added/changed keys
+// go through TagQueue, keys dropped from the template go through UntagQueue.
+// Mirrors updateLambdaTags's diff shape for the SQS JSON protocol.
+func updateSQSQueueTags(ctx context.Context, router http.Handler, region, queueURL string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) error {
+	tags := mergeResourceTags(stackTags, rawTags)
+	prior := mergeResourceTags(priorStackTags, rawPrior)
+
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+
+	if len(added) > 0 {
+		body := map[string]any{"QueueUrl": queueURL, "Tags": added}
+		if _, err := internalJSON(ctx, router, region, "AmazonSQS.TagQueue", body); err != nil {
+			return fmt.Errorf("sqs TagQueue: %w", err)
+		}
+	}
+	if len(removed) > 0 {
+		body := map[string]any{"QueueUrl": queueURL, "TagKeys": removed}
+		if _, err := internalJSON(ctx, router, region, "AmazonSQS.UntagQueue", body); err != nil {
+			return fmt.Errorf("sqs UntagQueue: %w", err)
+		}
+	}
+	return nil
 }
 
 func (h *sqsQueueHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {

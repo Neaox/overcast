@@ -8,7 +8,7 @@ func init() {
 	capabilities.Default.Register(
 		// Queue management
 		capabilities.Capability{Service: "sqs", Operation: "CreateQueue", Category: "Queue management",
-			Status: capabilities.StatusSupported, Notes: "Idempotent; FIFO queues supported (.fifo suffix)"},
+			Status: capabilities.StatusSupported, Notes: "Idempotent; FIFO queues supported (.fifo suffix); accepts tags inline"},
 		capabilities.Capability{Service: "sqs", Operation: "DeleteQueue", Category: "Queue management",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sqs", Operation: "GetQueueUrl", Category: "Queue management",
@@ -18,7 +18,7 @@ func init() {
 		capabilities.Capability{Service: "sqs", Operation: "GetQueueAttributes", Category: "Queue management",
 			Status: capabilities.StatusSupported, Notes: "All standard attributes; All wildcard supported"},
 		capabilities.Capability{Service: "sqs", Operation: "SetQueueAttributes", Category: "Queue management",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusSupported, Notes: "RedriveAllowPolicy accepted, validated, and round-tripped; the redrivePermission restriction itself is not enforced against StartMessageMoveTask or automatic DLQ redrive"},
 		capabilities.Capability{Service: "sqs", Operation: "PurgeQueue", Category: "Queue management",
 			Status: capabilities.StatusSupported, Notes: "Deletes all messages immediately"},
 		capabilities.Capability{Service: "sqs", Operation: "ListQueueTags", Category: "Queue management",

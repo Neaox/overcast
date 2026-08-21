@@ -269,14 +269,14 @@ func TestLambdaProvisionerUpdateRollsBackStackOnlyTagChanges(t *testing.T) {
 
 func TestLambdaResourcePropertiesHashIncludesEffectiveStackTags(t *testing.T) {
 	props := map[string]any{"Code": map[string]any{"ZipFile": "same"}}
-	for _, resourceType := range []string{"AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping"} {
+	for _, resourceType := range []string{"AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::SQS::Queue"} {
 		oldHash := hashResourceProperties(resourceType, props, []Tag{{Key: "stage", Value: "old"}})
 		newHash := hashResourceProperties(resourceType, props, []Tag{{Key: "stage", Value: "new"}})
 		if oldHash == newHash {
 			t.Errorf("%s resource hash did not change with propagated stack tags", resourceType)
 		}
 	}
-	if got, want := hashResourceProperties("AWS::SQS::Queue", props, []Tag{{Key: "stage", Value: "old"}}), hashResourceProperties("AWS::SQS::Queue", props, []Tag{{Key: "stage", Value: "new"}}); got != want {
+	if got, want := hashResourceProperties("AWS::DynamoDB::Table", props, []Tag{{Key: "stage", Value: "old"}}), hashResourceProperties("AWS::DynamoDB::Table", props, []Tag{{Key: "stage", Value: "new"}}); got != want {
 		t.Fatalf("unrelated resource hash changed with stack tags: %q != %q", got, want)
 	}
 }
