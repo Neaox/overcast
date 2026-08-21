@@ -333,3 +333,35 @@ func TestGeneratedNameWithin_capsLengthAndKeepsTheSuffix(t *testing.T) {
 		t.Errorf("truncated name %q lost its uniqueness suffix", name)
 	}
 }
+
+// A generated physical ID must never contain two consecutive hyphens, whatever
+// the cap truncates it to. RDS documents "Can't end with a hyphen or contain
+// two consecutive hyphens" for DBClusterIdentifier and DBInstanceIdentifier
+// alike, so a name the truncation malformed would be refused at create — and
+// the template that produced it would have been perfectly legal. Before the
+// trim, a stack/logical pair whose cut landed on the separator produced
+// "my--CJQFCI2RZDT3".
+func TestGeneratedNameWithin_neverMintsConsecutiveHyphens(t *testing.T) {
+	contexts := []*resolveContext{
+		{StackName: "my-production-stack", LogicalID: "DatabaseCluster"},
+		{StackName: "a-b-c-d-e-f-g-h", LogicalID: "X"},
+		{StackName: "trailing-", LogicalID: "Thing"},
+		{StackName: "NoHyphensHere", LogicalID: "Resource"},
+	}
+	for _, c := range contexts {
+		for max := physicalIDSuffixLen + 2; max <= 80; max++ {
+			got := c.generatedNameWithin(max)
+			if strings.Contains(got, "--") {
+				t.Errorf("generatedNameWithin(%d) for %s/%s = %q, which contains two consecutive hyphens",
+					max, c.StackName, c.LogicalID, got)
+			}
+			if strings.HasSuffix(got, "-") {
+				t.Errorf("generatedNameWithin(%d) for %s/%s = %q, which ends with a hyphen",
+					max, c.StackName, c.LogicalID, got)
+			}
+			if len(got) > max {
+				t.Errorf("generatedNameWithin(%d) for %s/%s = %q, longer than the cap", max, c.StackName, c.LogicalID, got)
+			}
+		}
+	}
+}

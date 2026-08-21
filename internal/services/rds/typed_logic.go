@@ -187,9 +187,12 @@ type stopDBClusterReq struct {
 // --- CreateDBInstance ---
 
 func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstanceReq) (*xmlCreateDBInstanceResponse, *protocol.AWSError) {
-	id := req.DBInstanceIdentifier
+	id := normalizeDBIdentifier(req.DBInstanceIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
+	}
+	if aerr := validateDBIdentifier("DBInstanceIdentifier", id); aerr != nil {
+		return nil, aerr
 	}
 
 	engine := req.Engine
@@ -227,6 +230,12 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		port = cluster.Port
 		dbName = cluster.DatabaseName
 		dbSubnetGroupName = cluster.DBSubnetGroupName
+	}
+
+	if clusterID == "" && req.Port != 0 {
+		if aerr := validateDBPort(req.Port); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	if masterUser == "" {
@@ -399,7 +408,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 // --- DescribeDBInstances ---
 
 func (h *Handler) describeDBInstancesTyped(ctx context.Context, req *describeDBInstancesReq) (*xmlDescribeDBInstancesResponse, *protocol.AWSError) {
-	filterID := req.DBInstanceIdentifier
+	filterID := normalizeDBIdentifier(req.DBInstanceIdentifier)
 
 	if filterID != "" {
 		inst, aerr := h.store.getDBInstance(ctx, filterID)
@@ -437,7 +446,7 @@ func (h *Handler) describeDBInstancesTyped(ctx context.Context, req *describeDBI
 // --- DeleteDBInstance ---
 
 func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstanceReq) (*xmlDeleteDBInstanceResponse, *protocol.AWSError) {
-	id := req.DBInstanceIdentifier
+	id := normalizeDBIdentifier(req.DBInstanceIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
@@ -537,7 +546,7 @@ func (h *Handler) describeDBEngineVersionsTyped(ctx context.Context, req *descri
 // --- StopDBInstance ---
 
 func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceReq) (*xmlStopDBInstanceResponse, *protocol.AWSError) {
-	id := req.DBInstanceIdentifier
+	id := normalizeDBIdentifier(req.DBInstanceIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
@@ -597,7 +606,7 @@ func (h *Handler) completeInstanceStop(ctx context.Context, instanceID string) {
 // --- StartDBInstance ---
 
 func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstanceReq) (*xmlStartDBInstanceResponse, *protocol.AWSError) {
-	id := req.DBInstanceIdentifier
+	id := normalizeDBIdentifier(req.DBInstanceIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
@@ -647,7 +656,7 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 // --- ModifyDBInstance ---
 
 func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstanceReq) (*xmlModifyDBInstanceResponse, *protocol.AWSError) {
-	id := req.DBInstanceIdentifier
+	id := normalizeDBIdentifier(req.DBInstanceIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
@@ -981,9 +990,12 @@ func (h *Handler) describeOrderableDBInstanceOptionsTyped(ctx context.Context, r
 // --- CreateDBCluster ---
 
 func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBClusterReq) (*xmlCreateDBClusterResponse, *protocol.AWSError) {
-	id := req.DBClusterIdentifier
+	id := normalizeDBIdentifier(req.DBClusterIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
+	}
+	if aerr := validateDBIdentifier("DBClusterIdentifier", id); aerr != nil {
+		return nil, aerr
 	}
 
 	engine := req.Engine
@@ -1006,6 +1018,28 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	}
 	if aerr := validateInitialDatabaseName(engine, req.DatabaseName); aerr != nil {
 		return nil, aerr
+	}
+	// Port 0 is "not sent" over the Query protocol, so only a value the caller
+	// actually chose is range-checked; the engine default fills the rest in.
+	if req.Port != 0 {
+		if aerr := validateDBPort(req.Port); aerr != nil {
+			return nil, aerr
+		}
+	}
+	backupRetention := clusterBackupRetentionDefault
+	if req.BackupRetentionPeriod != nil {
+		if aerr := validateClusterBackupRetentionPeriod(*req.BackupRetentionPeriod); aerr != nil {
+			return nil, aerr
+		}
+		backupRetention = *req.BackupRetentionPeriod
+	}
+	// AWS: "Must match the name of an existing DB subnet group." Accepting a
+	// name nothing backs is the divergence that provisions here and fails in
+	// the account.
+	if req.DBSubnetGroupName != "" {
+		if _, aerr := h.store.getDBSubnetGroup(ctx, req.DBSubnetGroupName); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	if _, aerr := h.store.getDBCluster(ctx, id); aerr == nil {
@@ -1062,9 +1096,7 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 		VpcSecurityGroupIds:          req.VpcSecurityGroupIds,
 		EnabledCloudwatchLogsExports: logExports,
 	}
-	if req.BackupRetentionPeriod != nil {
-		cluster.BackupRetentionPeriod = *req.BackupRetentionPeriod
-	}
+	cluster.BackupRetentionPeriod = backupRetention
 	if req.DeletionProtection != nil {
 		cluster.DeletionProtection = *req.DeletionProtection
 	}
@@ -1090,7 +1122,7 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 // --- DescribeDBClusters ---
 
 func (h *Handler) describeDBClustersTyped(ctx context.Context, req *describeDBClustersReq) (*xmlDescribeDBClustersResponse, *protocol.AWSError) {
-	filterID := req.DBClusterIdentifier
+	filterID := normalizeDBIdentifier(req.DBClusterIdentifier)
 
 	if filterID != "" {
 		cluster, aerr := h.store.getDBCluster(ctx, filterID)
@@ -1128,7 +1160,7 @@ func (h *Handler) describeDBClustersTyped(ctx context.Context, req *describeDBCl
 // --- DeleteDBCluster ---
 
 func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBClusterReq) (*xmlDeleteDBClusterResponse, *protocol.AWSError) {
-	id := req.DBClusterIdentifier
+	id := normalizeDBIdentifier(req.DBClusterIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
@@ -1176,9 +1208,22 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 // --- ModifyDBCluster ---
 
 func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBClusterReq) (*xmlModifyDBClusterResponse, *protocol.AWSError) {
-	id := req.DBClusterIdentifier
+	id := normalizeDBIdentifier(req.DBClusterIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
+	}
+	// The same bounds create enforces. Without them a cluster could be created
+	// at a legal retention and then modified to one AWS would refuse, which
+	// makes the create-time check theatre.
+	if req.Port != 0 {
+		if aerr := validateDBPort(req.Port); aerr != nil {
+			return nil, aerr
+		}
+	}
+	if req.BackupRetentionPeriod != nil {
+		if aerr := validateClusterBackupRetentionPeriod(*req.BackupRetentionPeriod); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	// The password goes first, and nothing else is applied unless it lands —
@@ -1280,7 +1325,7 @@ func applyLogExportConfiguration(current []string, cfg *cloudwatchLogsExportConf
 // --- StartDBCluster ---
 
 func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterReq) (*xmlStartDBClusterResponse, *protocol.AWSError) {
-	id := req.DBClusterIdentifier
+	id := normalizeDBIdentifier(req.DBClusterIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
@@ -1317,7 +1362,7 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 // --- StopDBCluster ---
 
 func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq) (*xmlStopDBClusterResponse, *protocol.AWSError) {
-	id := req.DBClusterIdentifier
+	id := normalizeDBIdentifier(req.DBClusterIdentifier)
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}

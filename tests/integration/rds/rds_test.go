@@ -721,8 +721,9 @@ func TestDescribeDBSubnetGroups_notFound(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 400 error with DBSubnetGroupNotFoundFault
-	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	// Then: 404 with DBSubnetGroupNotFoundFault, the status AWS documents for
+	// this fault on every operation that raises it.
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
 	assertQueryXMLError(t, resp, "DBSubnetGroupNotFoundFault")
 }
 
@@ -752,7 +753,7 @@ func TestDeleteDBSubnetGroup_success(t *testing.T) {
 		"DBSubnetGroupName": []string{"del-group"},
 	})
 	defer resp2.Body.Close()
-	helpers.AssertStatus(t, resp2, http.StatusBadRequest)
+	helpers.AssertStatus(t, resp2, http.StatusNotFound)
 }
 
 func TestDeleteDBSubnetGroup_notFound(t *testing.T) {
@@ -765,8 +766,8 @@ func TestDeleteDBSubnetGroup_notFound(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 400 error
-	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	// Then: 404, per AWS's documented status for DBSubnetGroupNotFoundFault.
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
 	assertQueryXMLError(t, resp, "DBSubnetGroupNotFoundFault")
 }
 

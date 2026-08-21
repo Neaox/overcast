@@ -342,9 +342,11 @@ func (c *resolveContext) generatedNameWithin(max int) string {
 	if c == nil {
 		return ""
 	}
-	base := c.StackName
+	// Trimmed before the join as well as after the truncation below: both are
+	// ways the assembled name can end up with two consecutive hyphens in it.
+	base := strings.TrimRight(c.StackName, "-")
 	if c.LogicalID != "" {
-		base = c.StackName + "-" + c.LogicalID
+		base = base + "-" + c.LogicalID
 	}
 	suffix := randomPhysicalIDSuffix()
 	if max <= 0 {
@@ -361,6 +363,16 @@ func (c *resolveContext) generatedNameWithin(max int) string {
 	}
 	if len(base) > keep {
 		base = base[:keep]
+		// Truncation can land on a separator, and "stack-" + "-" + suffix is a
+		// name with two consecutive hyphens in it. CloudFormation does not mint
+		// those, and several services reject them outright — RDS documents
+		// "can't end with a hyphen or contain two consecutive hyphens" for both
+		// DB identifiers, so the truncation, not the template, would be what
+		// made the stack undeployable.
+		base = strings.TrimRight(base, "-")
+	}
+	if base == "" {
+		return suffix
 	}
 	return base + "-" + suffix
 }

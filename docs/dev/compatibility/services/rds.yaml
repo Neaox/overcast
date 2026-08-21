@@ -91,6 +91,25 @@ operations:
         notes: >-
           Coverage only. This does not constitute an AWS-docs review of CreateDBCluster's optional
           parameters, defaults, or validation error codes — see findings.remaining_gaps.
+      - name: Documented parameter constraints and defaults
+        status: fixed
+        tests: [TestCreateDB_identifierShape, TestCreateDB_identifierIsStoredLowercase, TestCreateDBCluster_backupRetentionPeriod, TestCreateDB_portRange, TestCreateDB_subnetGroupMustExist, TestModifyDBCluster_zeroValuesAreRequestsNotAbsences]
+        evidence: >-
+          Four constraints AWS documents were unenforced, every one of them permissive — the direction that
+          provisions here and fails in the account. DBClusterIdentifier and DBInstanceIdentifier now follow
+          "Must contain from 1 to 63 letters, numbers, or hyphens. First character must be a letter. Can't end
+          with a hyphen or contain two consecutive hyphens", and are stored lowercase as
+          "This parameter is stored as a lowercase string" requires; store keys are normalised too, so a
+          describe for the name the caller sent finds the record the create made. BackupRetentionPeriod on a
+          cluster defaults to 1 and is held to 1-35 on CreateDBCluster and ModifyDBCluster alike, both of which
+          document that range. Port is held to the documented 1150-65535 on both operations. DBSubnetGroupName
+          must "match the name of an existing DB subnet group", and DBSubnetGroupNotFoundFault is now the 404
+          AWS documents rather than a 400.
+        notes: >-
+          Instance-level BackupRetentionPeriod is not modelled at all — CreateDBInstance documents 0-35 there,
+          0 meaning backups disabled, which has no counterpart in the cluster range. DBClusterParameterGroupName
+          existence is unverifiable while no cluster parameter group operations exist; see
+          findings.remaining_gaps.
   DeleteDBInstance:
     status: in_progress
     scenarios:
@@ -147,8 +166,13 @@ findings:
     - DeleteDBInstance removes the instance from its cluster's DBClusterMembers, and deleting the writer promotes a surviving member and moves the cluster endpoints onto its container.
     - Aurora DB cluster create/describe/modify/stop/start/delete are exercised by five unmodified AWS clients through the rds-clusters compat group, so the cluster Query XML is parsed by real SDK deserializers instead of only by Overcast's own Go tests.
     - StopDBCluster and StartDBCluster return their own response envelopes rather than CreateDBClusterResponse, which every AWS SDK had been refusing to deserialize.
+    - CreateDBCluster and CreateDBInstance enforce the documented identifier shape, store identifiers lowercase, and reject a DBSubnetGroupName that does not exist; DBSubnetGroupNotFoundFault is a 404 as AWS documents.
+    - Cluster BackupRetentionPeriod defaults to 1 and is held to the documented 1-35 on create and modify; Port is held to 1150-65535 on both.
+    - CloudFormation no longer mints a physical ID containing two consecutive hyphens when truncation lands on a separator, which several services — RDS among them — refuse.
   remaining_gaps:
-    - Review CreateDBInstance/CreateDBCluster optional parameters, defaults, and validation error codes against the AWS docs. Happy-path lifecycle and XML response parity are now covered cross-suite by rds-instances and rds-clusters; what is untested is the negative space.
+    - DBClusterParameterGroupName and DBInstanceParameterGroupName are recorded without an existence check. AWS answers DBClusterParameterGroupNotFound (404) for a name that does not exist, which Overcast cannot do while it implements no cluster parameter group operations at all — CreateDBClusterParameterGroup would have to come first.
+    - Instance-level BackupRetentionPeriod is not modelled, so CreateDBInstance's documented 0-35 range has nothing to validate and automated backups cannot be disabled per instance.
+    - The remaining CreateDBInstance/CreateDBCluster optional parameters beyond identifier, port, retention and subnet group — AllocatedStorage, StorageType, EngineVersion, PreferredBackupWindow and PreferredMaintenanceWindow among them — are still accepted without range or format checks.
     - FailoverDBCluster is not implemented, so a promotion can only be triggered by deleting the writer, not asked for directly.
     - The rds-clusters compat group covers clusters with no member instances. DBClusterMembers, and the interaction between cluster-owned settings and a member added by CreateDBInstance, are still only covered by Go tests.
   intentionally_partial:
