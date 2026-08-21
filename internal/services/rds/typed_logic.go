@@ -347,6 +347,15 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		return nil, aerr
 	}
 
+	// Before the container starts, not after: the alias set the container is
+	// attached with depends on whether this instance is its cluster's writer,
+	// and that is what membership records. startDBContainer can infer a first
+	// member's role without it, but only registering it first makes the answer
+	// certain.
+	if clusterID != "" {
+		h.addInstanceToCluster(ctx, clusterID, id)
+	}
+
 	launchingContainer := h.dockerReady.Load()
 	if launchingContainer {
 		if image, _, ok := resolveEngineImage(inst.Engine, inst.EngineVersion); ok && h.puller != nil {
@@ -377,10 +386,6 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceCreated, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
 	}
 	h.recordInstanceEvent(ctx, id, "DB instance created.", "creation")
-
-	if clusterID != "" {
-		h.addInstanceToCluster(ctx, clusterID, id)
-	}
 
 	return &xmlCreateDBInstanceResponse{
 		Xmlns: rdsXMLNS,
@@ -1010,17 +1015,20 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	}
 
 	cluster := &DBCluster{
-		DBClusterIdentifier:          id,
-		DBClusterArn:                 arn,
-		Engine:                       engine,
-		EngineVersion:                engineVersion,
-		Status:                       "creating",
-		MasterUsername:               req.MasterUsername,
-		MasterUserPassword:           req.MasterUserPassword,
-		DatabaseName:                 req.DatabaseName,
-		Port:                         port,
-		Endpoint:                     id + ".cluster-rw." + region + ".rds." + h.cfg.ExternalHostname(),
-		ReaderEndpoint:               id + ".cluster-ro." + region + ".rds." + h.cfg.ExternalHostname(),
+		DBClusterIdentifier: id,
+		DBClusterArn:        arn,
+		Engine:              engine,
+		EngineVersion:       engineVersion,
+		Status:              "creating",
+		MasterUsername:      req.MasterUsername,
+		MasterUserPassword:  req.MasterUserPassword,
+		DatabaseName:        req.DatabaseName,
+		Port:                port,
+		// Built through the same helper the alias set and the wire response
+		// use. Spelling the roles inline here is how the stored record and the
+		// names actually registered in DNS were free to drift apart.
+		Endpoint:                     clusterEndpointHostname(id, clusterRoleWriter, region, h.cfg.ExternalHostname()),
+		ReaderEndpoint:               clusterEndpointHostname(id, clusterRoleReader, region, h.cfg.ExternalHostname()),
 		MultiAZ:                      req.MultiAZ,
 		StorageType:                  storageType,
 		ClusterCreateTime:            now,

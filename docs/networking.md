@@ -278,7 +278,7 @@ to resolve is different, and so is the port.
 
 ```
 {dbInstanceIdentifier}.{region}.rds.{base}      # RDS DB instance
-{dbClusterIdentifier}.cluster-rw.{region}.rds.{base}   # Aurora writer
+{dbClusterIdentifier}.cluster.{region}.rds.{base}      # Aurora writer
 {dbClusterIdentifier}.cluster-ro.{region}.rds.{base}   # Aurora reader
 ```
 
@@ -308,6 +308,30 @@ taken by a local install). So:
 | --- | --- | --- |
 | Lambda function, ECS task, any sibling container | the endpoint hostname | the engine port (3306/5432), as on AWS |
 | The host (CLI, SDK, `cdk deploy`) | the endpoint hostname, or `127.0.0.1` when `{base}` has no wildcard DNS | the published host port |
+
+**Aurora's cluster endpoints follow the same table**, because they name the same
+thing. A cluster has no container of its own: `Endpoint` and `ReaderEndpoint`
+both point at the writer member's engine, so `DescribeDBClusters` answers with
+that instance's address and port, on the rules above. Both names — not only the
+writer's — are registered as aliases on the writer's container, so
+`cluster.clusterEndpoint.hostname` in a CDK stack resolves from inside a task
+exactly as the instance endpoint does.
+
+That last part is where Overcast diverges from AWS on purpose. On AWS the reader
+endpoint load-balances across the Aurora Replicas and serves the writer only
+when the cluster has none. Overcast gives every cluster member its own engine
+container with its own storage — there is no shared Aurora volume to replicate
+from — so a reader endpoint spread across the replicas would answer from an
+empty database. It points at the writer instead: reads are not distributed, but
+they return the data that was written.
+
+The names themselves drop AWS's account-specific hash, as every Overcast
+endpoint name does: AWS's `{cluster}.cluster-{hash}.…` and
+`{cluster}.cluster-ro-{hash}.…` reduce to the two above. Overcast minted
+`cluster-rw` for the writer until 0.0.1-alpha.37 — a label AWS has never used.
+A cluster created by an older Overcast keeps answering to the name in its stored
+record, so an upgrade in place does not strand one; a cluster created after it
+answers only to `cluster`.
 
 Both pairs connect. Which one you were given is decided by the source address of
 your request, since a split-horizon hostname is used from both sides of the

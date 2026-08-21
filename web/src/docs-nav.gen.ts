@@ -4158,6 +4158,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Connecting to a cluster",
+        "id": "connecting-to-a-cluster"
+      },
+      {
+        "depth": 3,
         "text": "Aurora emulation",
         "id": "aurora-emulation"
       },

@@ -2,7 +2,7 @@ service: rds
 status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-14
+last_updated: 2026-08-21
 protocols: [query]
 implementation: [internal/services/rds]
 integration_tests: [tests/integration/rds]
@@ -42,6 +42,38 @@ operations:
         tests: [TestMasterUser_realAuroraMySQLCanBootstrapDatabaseAndUser, TestMasterUser_realPostgresHasRDSSuperuserSemantics, TestCreateAuroraMySQL3Container_bootstrapsAWSMasterCredentialsBeforeStart, TestCredentialInitializersGiveEveryRequestedMasterAWSBootstrapPrivileges, TestMySQLMasterAccountSpec_engineVersionSemantics, TestCreateMySQLContainer_withoutDBNameDoesNotCreateTestDatabase, TestCreateDBInstance_auroraMemberUsesClusterOwnedSettings, TestValidateMasterUserPassword]
         evidence: >-
           Docker-backed Aurora MySQL and PostgreSQL tests connect as the requested master and create databases and users. MySQL-family privileges and roles vary by the selected AWS engine version; PostgreSQL exposes a non-superuser master with the documented rds_superuser memberships. Readiness waits for completed initialization and the final engine server without depending on mutable master credentials, and a SQL-side password change survives stop/start. Aurora members always use cluster-owned credentials, engine version, port, database, and subnet placement. Password and identifier shape constraints follow the supported AWS request forms.
+  CreateDBCluster:
+    status: in_progress
+    scenarios:
+      - name: Container DNS and dialable port for Aurora cluster endpoints
+        status: fixed
+        tests: [TestClusterEndpointAliases_coverBothRolesOnEveryMintableHostname, TestClusterAliasesForInstance_onlyTheWriterCarriesThem, TestClusterAliasesForInstance_anticipatesTheFirstMembersWriterRole, TestContainerAliases_carryBothTheInstanceAndClusterEndpoints, TestContainerAliases_standaloneInstanceCarriesOnlyItsOwn, TestClusterEndpoints_containerCallerGetsTheNamesAndEnginePort, TestClusterEndpoints_hostCallerGetsThePublishedPort, TestClusterEndpoints_withoutAWriterKeepTheNameAndClusterPort]
+        evidence: >-
+          The writer member's engine container now registers both cluster endpoint hostnames as Docker network
+          aliases alongside its own, so cluster.clusterEndpoint.hostname — the property CDK's rds.DatabaseCluster
+          exposes and the idiomatic way to reference a cluster — resolves from sibling containers instead of
+          falling through to public DNS and answering loopback. DescribeDBClusters renders Endpoint,
+          ReaderEndpoint and Port from the writer instance on the same per-caller rules as
+          DescribeDBInstances, so a host caller is given the published port rather than the engine port
+          nothing binds on the host. AWS documents the two cluster endpoints at
+          https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Endpoints.html.
+      - name: Reader endpoint instance selection
+        status: intentionally_partial
+        evidence: >-
+          AWS load-balances the reader endpoint across the Aurora Replicas and serves the writer only when the
+          cluster has none. Overcast gives every member its own engine container with its own storage — there is
+          no shared Aurora volume — so the reader endpoint resolves to the writer. Distributing it across
+          replicas would return an empty result set for data the writer holds. Consequence for users: replica
+          lag is not reproducible locally, so a read-after-write race against the reader endpoint passes here
+          and can still fail on AWS.
+      - name: Cluster endpoint hostname shape
+        status: fixed
+        tests: [TestClusterEndpointAliases_coverBothRolesOnEveryMintableHostname, TestClusterEndpoints_containerCallerGetsTheNamesAndEnginePort]
+        evidence: >-
+          The writer endpoint label was cluster-rw, which AWS has never used, and is now cluster — what AWS's
+          cluster-{hash} reduces to once the account-specific hash every Overcast endpoint name drops is
+          removed. Changed in 0.0.1-alpha.37 while the project is pre-1.0. AWS documents the endpoint shapes at
+          https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Endpoints.html.
 findings:
   fixed:
     - CreateDBParameterGroup accepts the advertised aurora-mysql8.0 family used by Aurora MySQL 3 instance parameter groups while still rejecting unknown families.
@@ -49,9 +81,14 @@ findings:
     - Missing, crashed, or externally stopped DB instance containers are recovered with bounded backoff, after Docker reconnects, and at startup without overriding an explicit StopDBInstance; repeated crash loops settle to failed.
     - Master accounts have version-specific cross-database bootstrap privileges without exposing a remote root credential; Aurora MySQL 3 uses mysql_native_password, newer role models are represented, and PostgreSQL masters are NOSUPERUSER members of rds_superuser.
     - Initial database creation and password validation follow the supported engine's AWS-specific rules, including Aurora DatabaseName inheritance.
+    - Aurora cluster endpoints resolve to the writer member's container from sibling containers, and carry a port the caller can actually dial.
   remaining_gaps:
     - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
+    - No compat suite group covers Aurora clusters; rds-instances is the only lifecycle group, so cluster create/describe/delete parity is unexercised from the SDKs.
+    - DeleteDBInstance does not remove the instance from its cluster's DBClusterMembers, so a deleted writer stays listed.
   intentionally_partial:
+    - The Aurora reader endpoint resolves to the writer rather than load-balancing across replicas, because members do not share storage.
+    - Cluster endpoint hostnames drop AWS's account-specific hash, as every Overcast endpoint name does: AWS's cluster-{hash} and cluster-ro-{hash} reduce to cluster and cluster-ro. The hash is service-assigned and not derivable, so a name carrying one could not be registered as a Docker alias ahead of the first lookup.
     - Protected internal-account enforcement and the complete catalog of AWS-managed rds_* procedures are not emulated by stock engine images.
     - PostgreSQL extension availability follows the backing image rather than AWS's RDS extension allowlist.
     - Reserved-word validation covers common SQL keywords and engine system schemas, not every version-specific engine reserved word.
