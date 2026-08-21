@@ -324,6 +324,7 @@ type createScheduleRequest struct {
 	State                      string             `json:"State" cbor:"State"`
 	StartDate                  *time.Time         `json:"StartDate" cbor:"StartDate"`
 	EndDate                    *time.Time         `json:"EndDate" cbor:"EndDate"`
+	KmsKeyArn                  string             `json:"KmsKeyArn" cbor:"KmsKeyArn"`
 }
 
 func (r *createScheduleRequest) write() scheduleWrite {
@@ -358,6 +359,7 @@ func (s *Service) createScheduleTyped(ctx context.Context, req *createScheduleRe
 		ScheduleExpressionTimezone: req.ScheduleExpressionTimezone,
 		Description:                req.Description, FlexibleTimeWindow: req.FlexibleTimeWindow,
 		Target: req.Target, StartDate: req.StartDate, EndDate: req.EndDate,
+		KmsKeyArn:    req.KmsKeyArn,
 		CreationDate: now, LastModificationDate: now,
 	}
 	if err := s.saveSchedule(ctx, region, sc); err != nil {
@@ -436,6 +438,7 @@ func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRe
 		ScheduleExpressionTimezone: req.ScheduleExpressionTimezone,
 		Description:                req.Description, FlexibleTimeWindow: req.FlexibleTimeWindow,
 		Target: req.Target, StartDate: req.StartDate, EndDate: req.EndDate,
+		KmsKeyArn:    req.KmsKeyArn,
 		CreationDate: existing.CreationDate, LastModificationDate: s.clk.Now(),
 	}
 

@@ -1052,12 +1052,14 @@ func cloudwatchAlarmTagMap(raw any) map[string]string {
 
 type schedulerScheduleHandler struct{}
 
-func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	name, _ := props["Name"].(string)
-	groupName, _ := props["GroupName"].(string)
-	if groupName == "" {
-		groupName = "default"
-	}
+// schedulerScheduleBody builds the CreateSchedule/UpdateSchedule request body
+// shared by Create and Update: the four scalars every schedule carries, plus
+// every optional property #537 found being parsed into nothing —
+// Description, ScheduleExpressionTimezone, StartDate, EndDate and
+// KmsKeyArn — despite the scheduler service already storing and returning
+// all five (see docs/services/scheduler.md). FlexibleTimeWindow and Target
+// are threaded whole; the service validates their shape itself.
+func schedulerScheduleBody(name, groupName string, props map[string]any) map[string]any {
 	scheduleExpression, _ := props["ScheduleExpression"].(string)
 	state, _ := props["State"].(string)
 	if state == "" {
@@ -1076,8 +1078,22 @@ func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handl
 	if v, ok := props["Target"]; ok {
 		body["Target"] = v
 	}
+	copyStringProp(body, props, "Description", "Description")
+	copyStringProp(body, props, "ScheduleExpressionTimezone", "ScheduleExpressionTimezone")
+	copyStringProp(body, props, "KmsKeyArn", "KmsKeyArn")
+	copyAnyProp(body, props, "StartDate", "StartDate")
+	copyAnyProp(body, props, "EndDate", "EndDate")
+	return body
+}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateSchedule", body)
+func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	name, _ := props["Name"].(string)
+	groupName, _ := props["GroupName"].(string)
+	if groupName == "" {
+		groupName = "default"
+	}
+
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateSchedule", schedulerScheduleBody(name, groupName, props))
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateSchedule: %w", err)
 	}
@@ -1109,8 +1125,42 @@ func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handl
 	return teardownError("DeleteSchedule", rec, err)
 }
 
+// Update applies in place through UpdateSchedule. Name and GroupName are the
+// resource's only createOnly properties on real AWS, and the emulator's
+// UpdateSchedule locates the record it is replacing by exactly those two
+// fields, so there is nothing to update once either changes: the old
+// physical ID no longer names anything UpdateSchedule can find.
 func (h *schedulerScheduleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	name, _ := props["Name"].(string)
+	groupName, _ := props["GroupName"].(string)
+	if groupName == "" {
+		groupName = "default"
+	}
+	oldName, _ := oldProps["Name"].(string)
+	oldGroupName, _ := oldProps["GroupName"].(string)
+	if oldGroupName == "" {
+		oldGroupName = "default"
+	}
+	if name != oldName || groupName != oldGroupName {
+		return "", nil, errReplacementRequired
+	}
+
+	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.UpdateSchedule", schedulerScheduleBody(name, groupName, props))
+	if err != nil {
+		return "", nil, fmt.Errorf("UpdateSchedule: %w", err)
+	}
+
+	var resp struct {
+		ScheduleArn string `json:"ScheduleArn"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	attrs := map[string]string{
+		"Arn":       resp.ScheduleArn,
+		"GroupName": groupName,
+		"Name":      name,
+	}
+	return physicalID, attrs, nil
 }
 
 // ── AWS::Scheduler::ScheduleGroup ───────────────────────────────────────────

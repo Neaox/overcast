@@ -338,6 +338,7 @@ func TestUpdateSchedule_replacesRatherThanMerges(t *testing.T) {
 		"ScheduleExpression":         "rate(5 minutes)",
 		"ScheduleExpressionTimezone": "Europe/London",
 		"Description":                "the original description",
+		"KmsKeyArn":                  "arn:aws:kms:us-east-1:000000000000:key/original-key",
 		"State":                      "DISABLED",
 		"FlexibleTimeWindow":         map[string]any{"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 15},
 		"Target": map[string]any{
@@ -348,6 +349,17 @@ func TestUpdateSchedule_replacesRatherThanMerges(t *testing.T) {
 	})
 	resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And: GetSchedule reflects every one of them, KmsKeyArn included, before
+	// the replacement below ever has a chance to clear it.
+	preGet := schDo(t, srv, http.MethodGet, "/schedules/replaceable?groupName=g3r", nil)
+	var preResult struct {
+		KmsKeyArn string `json:"KmsKeyArn"`
+	}
+	helpers.DecodeJSON(t, preGet, &preResult)
+	if preResult.KmsKeyArn != "arn:aws:kms:us-east-1:000000000000:key/original-key" {
+		t.Fatalf("KmsKeyArn = %q, want it stored from CreateSchedule", preResult.KmsKeyArn)
+	}
 
 	// When: UpdateSchedule sends only the members AWS marks required
 	resp = schDo(t, srv, http.MethodPut, "/schedules/replaceable", map[string]any{
@@ -369,6 +381,7 @@ func TestUpdateSchedule_replacesRatherThanMerges(t *testing.T) {
 		ScheduleExpression         string `json:"ScheduleExpression"`
 		ScheduleExpressionTimezone string `json:"ScheduleExpressionTimezone"`
 		Description                string `json:"Description"`
+		KmsKeyArn                  string `json:"KmsKeyArn"`
 		State                      string `json:"State"`
 		FlexibleTimeWindow         struct {
 			Mode                   string `json:"Mode"`
@@ -389,6 +402,9 @@ func TestUpdateSchedule_replacesRatherThanMerges(t *testing.T) {
 	}
 	if result.Description != "" {
 		t.Errorf("Description = %q, want it cleared by the replacement", result.Description)
+	}
+	if result.KmsKeyArn != "" {
+		t.Errorf("KmsKeyArn = %q, want it cleared by the replacement", result.KmsKeyArn)
 	}
 	if result.State != "ENABLED" {
 		t.Errorf("State = %q, want ENABLED — an omitted State takes the default rather than the stored value", result.State)
