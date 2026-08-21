@@ -294,8 +294,13 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 
 			// Default behaviour: roll back already-created resources, then set
 			// status to ROLLBACK_COMPLETE (matching real AWS CloudFormation).
+			// The operation's RetainExceptOnCreate rides along: it is what
+			// decides whether a resource this create made and marked Retain is
+			// deleted here or left behind for the next deploy to collide with.
 			p.rollbackCreate(ctx, stack, rCtx,
-				fmt.Sprintf("resource %s failed: %v", logicalID, provErr), createRollbackOptions{})
+				fmt.Sprintf("resource %s failed: %v", logicalID, provErr), createRollbackOptions{
+					retainExceptOnCreate: stack.RetainExceptOnCreate,
+				})
 			return
 		}
 
@@ -1476,6 +1481,15 @@ func (p *provisioner) rollbackCreate(
 //
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
+//
+// The operation's RetainExceptOnCreate is deliberately absent here, where the
+// create path threads it into createRollbackOptions. Deleting the resources
+// this update created is already unconditional — the first case above consults
+// no DeletionPolicy — so the flag would ask for what already happens. The
+// divergence it hides is the other way round: AWS retains a Retain-marked
+// resource a failed update created unless the flag is set, and Overcast deletes
+// it either way. Honouring Retain here is a change to what an update rollback
+// leaves behind, not to what this flag does, and belongs with that.
 func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, previousGeneration stackGeneration, reason string) {
 	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusUpdateRollbackInProgress

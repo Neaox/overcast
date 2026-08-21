@@ -238,24 +238,31 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(r.FormValue("RetainExceptOnCreate"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	params := collectParameters(r)
 	tags := collectTags(r)
 	caps := collectCapabilities(r)
 
 	stack := &Stack{
-		StackName:          stackName,
-		StackID:            stackID,
-		Region:             region,
-		TemplateBody:       templateBody,
-		Parameters:         params,
-		Tags:               tags,
-		Capabilities:       caps,
-		RoleARN:            r.FormValue("RoleARN"),
-		DisableRollback:    disableRollback,
-		Status:             StatusCreateInProgress,
-		StatusReason:       "User Initiated",
-		CreatedAt:          h.clk.Now(),
-		ClientRequestToken: stackOperationToken(r.Context(), r.FormValue("ClientRequestToken")),
+		StackName:            stackName,
+		StackID:              stackID,
+		Region:               region,
+		TemplateBody:         templateBody,
+		Parameters:           params,
+		Tags:                 tags,
+		Capabilities:         caps,
+		RoleARN:              r.FormValue("RoleARN"),
+		DisableRollback:      disableRollback,
+		RetainExceptOnCreate: retainExceptOnCreate,
+		Status:               StatusCreateInProgress,
+		StatusReason:         "User Initiated",
+		CreatedAt:            h.clk.Now(),
+		ClientRequestToken:   stackOperationToken(r.Context(), r.FormValue("ClientRequestToken")),
 	}
 
 	if err := h.store.putStack(ctx, stack); err != nil {
@@ -296,6 +303,11 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, stackNotUpdatableErr(stack))
 		return
 	}
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(r.FormValue("RetainExceptOnCreate"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	previous := captureStackGeneration(stack)
 
 	templateBody, tplErr := h.resolveTemplateBody(r)
@@ -319,6 +331,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stack.DisableRollback = disableRollback
+	stack.RetainExceptOnCreate = retainExceptOnCreate
 	stack.TemplateBody = templateBody
 	beginStackOperation(ctx, stack, StatusUpdateInProgress, r.FormValue("ClientRequestToken"))
 	now := h.clk.Now()
@@ -714,6 +727,13 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		applyStackTags(stack, cs.Tags, true)
 	}
 	stack.TemplateBody = cs.TemplateBody
+
+	retainExceptOnCreate, aerr := parseRetainExceptOnCreate(r.FormValue("RetainExceptOnCreate"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	stack.RetainExceptOnCreate = retainExceptOnCreate
 
 	cs.ExecutionStatus = ExecStatusExecuteInProgress
 	_ = h.store.putChangeSet(ctx, cs)
@@ -1214,6 +1234,31 @@ func parseDisableRollback(raw string) (bool, *protocol.AWSError) {
 	return parseOptionalBoolean(raw, "disableRollback")
 }
 
+// parseRetainExceptOnCreate resolves one operation's RetainExceptOnCreate
+// member from its wire value, empty meaning absent.
+//
+// It decides what a rollback does with resources the failed operation had
+// already created, and it exists because DeletionPolicy alone answers that
+// question badly. A resource marked Retain is kept when a create rolls back,
+// which leaves an orphan holding a name nothing in the stack records any more —
+// and every later deploy of the same template then collides with it. AWS
+// documents the flag as the way out:
+//
+//	"When set to true, newly created resources are deleted when an operation
+//	rolls back. This includes newly created resources marked with a deletion
+//	policy of Retain."
+//	https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html
+//
+// The default is False, so an operation that omits it retains those resources —
+// the orphan is AWS's default behaviour, not a defect, and Overcast keeps it.
+// What Overcast has to honour is the request to opt out of it, which AWS
+// accepts on CreateStack, UpdateStack, ExecuteChangeSet and RollbackStack.
+// CreateChangeSet is deliberately not in that list: the member is absent from
+// its request shape, so a change set carries no value of its own and the
+// decision belongs entirely to the execution.
+//
+// Like DisableRollback it belongs to the operation rather than to the stack: a
+// later update that omits it does not inherit an earlier create's value.
 func parseRetainExceptOnCreate(raw string) (bool, *protocol.AWSError) {
 	return parseOptionalBoolean(raw, "retainExceptOnCreate")
 }
