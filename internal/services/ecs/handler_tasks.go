@@ -1043,28 +1043,44 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-	clusterName := extractClusterName(req.Cluster)
-	taskID := extractTaskID(req.Task)
-
-	task, aerr := h.store.getTask(r.Context(), clusterName, taskID)
+	task, aerr := h.stopTaskCore(r.Context(), req.Cluster, req.Task, req.Reason)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task}, "application/x-amz-json-1.1")
+}
+
+// stopTaskCore is what StopTask does, for both the JSON 1.1 handler above and
+// the RPC v2 CBOR one in typed_logic.go.
+//
+// It is one function because it was two, and the two drifted. The CBOR copy
+// tore the containers down before it recorded the stop — the ordering the
+// comment below exists to prevent — and never did the service handling at all,
+// so a task stopped over CBOR could come back as EssentialContainerExited,
+// count against its deployment, and leave its targets registered. Newer SDK
+// releases put ECS on CBOR, which makes a divergence here something a user hits
+// by upgrading rather than by changing their code. Sharing stopTaskContainers
+// was not enough to keep the two in step; sharing the order they call it in is.
+// See wire_parity_test.go.
+func (h *Handler) stopTaskCore(ctx context.Context, cluster, taskRef, reason string) (*Task, *protocol.AWSError) {
+	if cluster == "" {
+		cluster = "default"
+	}
+	clusterName := extractClusterName(cluster)
+	taskID := extractTaskID(taskRef)
+
+	task, aerr := h.store.getTask(ctx, clusterName, taskID)
+	if aerr != nil {
+		return nil, aerr
+	}
 	if task == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "The referenced task was not found.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
+		return nil, errTaskNotFound()
 	}
 
 	// Cancel any pending scheduler transition.
-	h.scheduler.CancelScoped(h.store.region(r.Context()), taskID, "pending")
+	h.scheduler.CancelScoped(h.store.region(ctx), taskID, "pending")
 
 	// A task a service owns leaves that service's target groups before it is
 	// torn down, and the service then replaces it — its desired count has not
@@ -1073,37 +1089,43 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	// leaves a task the caller already stopped alone.
 	serviceName, ownedByService := serviceNameFromGroup(task.Group)
 	if ownedByService {
-		if svc, aerr := h.store.getService(r.Context(), clusterName, serviceName); aerr == nil && svc != nil {
-			h.deregisterTaskTargets(r.Context(), svc, task)
+		if svc, aerr := h.store.getService(ctx, clusterName, serviceName); aerr == nil && svc != nil {
+			h.deregisterTaskTargets(ctx, svc, task)
 		}
 	}
 
 	// Record the stop before touching the containers: killing them raises a
 	// Docker die event whose handler races this write, and a caller-initiated
 	// stop that loses the race is reported as a task that died on its own.
-	task, _, aerr = h.stopTaskRecord(r.Context(), clusterName, taskID, taskStop{
-		reason: req.Reason, code: "UserInitiated",
+	task, _, aerr = h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
+		reason: reason, code: "UserInitiated",
 	})
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 	if task == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "The referenced task was not found.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
+		return nil, errTaskNotFound()
 	}
 
-	h.stopTaskContainers(r.Context(), task)
-	h.publish(r, events.ECSTaskStopped, events.ResourcePayload{Name: taskID})
+	h.stopTaskContainers(ctx, task)
+
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStopped, Payload: events.ResourcePayload{Name: taskID}})
+	}
 	if ownedByService {
-		h.scheduleServiceReplacement(r.Context(), h.store.region(r.Context()), clusterName, serviceName)
+		h.scheduleServiceReplacement(ctx, h.store.region(ctx), clusterName, serviceName)
 	}
+	return task, nil
+}
 
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task}, "application/x-amz-json-1.1")
+// errTaskNotFound is what both StopTask paths answer a task reference that
+// resolves to nothing.
+func errTaskNotFound() *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameterException",
+		Message:    "The referenced task was not found.",
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // DescribeTasks handles AmazonEC2ContainerServiceV20141113.DescribeTasks.
