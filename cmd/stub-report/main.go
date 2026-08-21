@@ -58,9 +58,25 @@ func main() {
 	}
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].name < svcs[j].name })
 
+	excluded, err := excludedServices(filepath.Join(root, "internal", "services"), svcs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "excluded services: %v\n", err)
+		os.Exit(1)
+	}
+
 	total := 0
 	modeled := modeledOperationCounts()
 	fmt.Println("# Overcast Operation Manifest")
+	fmt.Println()
+	fmt.Println("This manifest counts **typed-dispatch operation registrations** — one row " +
+		"per `op.NewTyped`/`op.NewRaw`/`op.NewTypedAny` call in a service's `typed_ops.go` " +
+		"— not Overcast's overall implementation coverage. That is a different metric from " +
+		"the \"Ops\" column in [docs/README.md](./README.md)'s service index and from " +
+		"[docs/generated/service-support.json](./generated/service-support.json), which both " +
+		"count capability-registry entries (implemented operations plus explicit stubs) for " +
+		"every service, including the ones below that have no typed dispatch at all. The two " +
+		"kinds of counts are expected to disagree with each other; neither is wrong, they are " +
+		"answering different questions.")
 	fmt.Println()
 	for _, s := range svcs {
 		total += len(s.ops)
@@ -74,11 +90,120 @@ func main() {
 		}
 		fmt.Println()
 	}
+
+	details := excludedServiceDetails(excluded)
+	fmt.Println("## Services outside this manifest")
+	fmt.Println()
+	fmt.Printf("The %d service(s) below implement operations through the REST router or a "+
+		"not-yet-migrated legacy dispatcher, so they have no `typed_ops.go` and get no "+
+		"section above. Their modeled operation counts (from the pinned AWS model corpus) "+
+		"are shown for reference; see docs/generated/service-support.json for what Overcast "+
+		"actually implements per service.\n", len(details))
+	fmt.Println()
+	fmt.Println("| Service | Modeled ops | Why excluded |")
+	fmt.Println("|---|---|---|")
+	for _, d := range details {
+		fmt.Printf("| %s | %d | %s |\n", d.name, d.modeled, exclusionReason(d.protocols))
+	}
+	fmt.Println()
+
 	modeledTotal := 0
 	for _, count := range modeled {
 		modeledTotal += count
 	}
-	fmt.Printf("---\nModel corpus: %d operations across %d services; typed registrations: %d across %d services\n", modeledTotal, len(modeled), total, len(svcs))
+	fmt.Printf("---\nModel corpus: %d operations across %d services; typed registrations: %d across %d services (%d services outside typed dispatch, listed above)\n",
+		modeledTotal, len(modeled), total, len(svcs), len(details))
+}
+
+// excludedServices returns the sorted names of top-level directories under
+// root that were not selected by scanServices — i.e. services (or bare
+// parent directories of a nested service, like cloudwatch/) with no
+// typed_ops.go of their own. This is what makes the manifest's omissions
+// explicit instead of silent (#748): every service Overcast registers either
+// gets a typed-dispatch section above, or an entry in this list with a
+// reason.
+func excludedServices(root string, included []serviceOps) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	includedSet := make(map[string]bool, len(included))
+	for _, s := range included {
+		includedSet[s.name] = true
+	}
+	var excluded []string
+	for _, e := range entries {
+		if !e.IsDir() || includedSet[e.Name()] {
+			continue
+		}
+		excluded = append(excluded, e.Name())
+	}
+	sort.Strings(excluded)
+	return excluded, nil
+}
+
+// excludedInfo carries the pinned-model-corpus facts stub-report can derive
+// about a service that has no typed_ops.go, so the manifest can explain why
+// it's missing instead of just naming it.
+type excludedInfo struct {
+	name      string
+	modeled   int
+	protocols []string
+}
+
+// excludedServiceDetails looks up each excluded service's modeled operation
+// count and protocol set in the pinned AWS model corpus (the same corpus
+// modeledOperationCounts reads), so the reason a service is excluded is
+// derived from data rather than a hand-maintained list that can go stale the
+// same way the manifest itself did.
+func excludedServiceDetails(names []string) []excludedInfo {
+	nameSet := make(map[string]bool, len(names))
+	protoSets := make(map[string]map[string]bool, len(names))
+	counts := make(map[string]int, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+		protoSets[n] = make(map[string]bool)
+	}
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		key := awsapi.ServiceKey(op.Service)
+		if !nameSet[key] {
+			return true
+		}
+		counts[key]++
+		if op.Protocol != "" {
+			protoSets[key][string(op.Protocol)] = true
+		}
+		return true
+	})
+
+	out := make([]excludedInfo, 0, len(names))
+	for _, n := range names {
+		protos := make([]string, 0, len(protoSets[n]))
+		for p := range protoSets[n] {
+			protos = append(protos, p)
+		}
+		sort.Strings(protos)
+		out = append(out, excludedInfo{name: n, modeled: counts[n], protocols: protos})
+	}
+	return out
+}
+
+// exclusionReason turns a service's modeled protocol set into a plain-English
+// reason it has no typed_ops.go. Services modeled with a REST protocol are
+// routed by chi on path/method rather than a target header, which is the
+// architectural reason typed dispatch does not apply to them; everything else
+// with modeled operations is a service that could migrate to typed dispatch
+// but has not yet.
+func exclusionReason(protocols []string) string {
+	for _, p := range protocols {
+		if p == string(awsapi.ProtocolRESTJSON) || p == string(awsapi.ProtocolRESTXML) {
+			return "REST-routed (chi router, path/method dispatch), not target-header typed dispatch"
+		}
+	}
+	if len(protocols) > 0 {
+		return "not yet migrated to the typed op registry"
+	}
+	return "no protocol data in the pinned model corpus"
 }
 
 // modeledOperationCounts reads the generated AWS corpus rather than treating

@@ -804,7 +804,7 @@ export const DOCS_NAV = [
     "path": "docs/operation-manifest.md",
     "href": "operation-manifest.md",
     "title": "Overcast Operation Manifest",
-    "description": "Total: 834 operations across 43 services",
+    "description": "Typed-dispatch: 809 ops across 37 services; 13 more services are REST-routed or not yet migrated (see below)",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -820,218 +820,193 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "acm — 7 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "acm-7-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "acm — 10 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "acm-10-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "appconfig — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appconfig-16-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "appregistry — 17 ops, modeled: 24, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "appregistry-17-ops-modeled-24-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "appconfigdata — 2 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appconfigdata-2-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "athena — 11 ops, modeled: 70, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "athena-11-ops-modeled-70-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "appregistry — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appregistry-17-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "autoscaling — 25 ops, modeled: 66, protocols: QueryXML",
+        "id": "autoscaling-25-ops-modeled-66-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "appsync — 70 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appsync-70-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "cloudformation — 18 ops, modeled: 90, protocols: QueryXML",
+        "id": "cloudformation-18-ops-modeled-90-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "athena — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "athena-8-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "cloudtrail — 12 ops, modeled: 60, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cloudtrail-12-ops-modeled-60-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "autoscaling — 19 ops, protocols: QueryXML",
-        "id": "autoscaling-19-ops-protocols-queryxml"
+        "text": "cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cloudwatch-logs-14-ops-modeled-118-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "backup — 9 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "backup-9-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "cognito — 70 ops, modeled: 129, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cognito-70-ops-modeled-129-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "bedrock — 2 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "bedrock-2-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "dynamodb — 20 ops, modeled: 57, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "dynamodb-20-ops-modeled-57-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "cloudformation — 18 ops, protocols: QueryXML",
-        "id": "cloudformation-18-ops-protocols-queryxml"
+        "text": "dynamodbstreams — 4 ops, modeled: 4, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "dynamodbstreams-4-ops-modeled-4-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "cloudtrail — 9 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cloudtrail-9-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "ec2 — 69 ops, modeled: 772, protocols: QueryXML",
+        "id": "ec2-69-ops-modeled-772-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "cloudwatch-logs — 14 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cloudwatch-logs-14-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "ecr — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "ecr-20-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "cognito — 67 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cognito-67-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "ecs — 48 ops, modeled: 77, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "ecs-48-ops-modeled-77-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "dynamodb — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "dynamodb-17-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "efs — 28 ops, modeled: 31, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "efs-28-ops-modeled-31-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "dynamodbstreams — 4 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "dynamodbstreams-4-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "eks — 50 ops, modeled: 65, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "eks-50-ops-modeled-65-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "ec2 — 69 ops, protocols: QueryXML",
-        "id": "ec2-69-ops-protocols-queryxml"
+        "text": "elasticache — 24 ops, modeled: 75, protocols: QueryXML",
+        "id": "elasticache-24-ops-modeled-75-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "ecr — 20 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "ecr-20-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "elbv2 — 15 ops, modeled: 51, protocols: QueryXML",
+        "id": "elbv2-15-ops-modeled-51-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "ecs — 48 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "ecs-48-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "eventbridge — 17 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "eventbridge-17-ops-modeled-108-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "eks — 52 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eks-52-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "firehose — 9 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "firehose-9-ops-modeled-12-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "elasticache — 24 ops, protocols: QueryXML",
-        "id": "elasticache-24-ops-protocols-queryxml"
+        "text": "glue — 11 ops, modeled: 297, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "glue-11-ops-modeled-297-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "elbv2 — 12 ops, protocols: QueryXML",
-        "id": "elbv2-12-ops-protocols-queryxml"
+        "text": "iam — 74 ops, modeled: 176, protocols: QueryXML",
+        "id": "iam-74-ops-modeled-176-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "eventbridge — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eventbridge-16-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "kinesis — 20 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "kinesis-20-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "firehose — 6 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "firehose-6-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "kms — 33 ops, modeled: 54, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "kms-33-ops-modeled-54-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "glue — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "glue-8-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "organizations — 1 ops, modeled: 63, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "organizations-1-ops-modeled-63-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "iam — 61 ops, protocols: QueryXML",
-        "id": "iam-61-ops-protocols-queryxml"
+        "text": "rds — 34 ops, modeled: 164, protocols: QueryXML",
+        "id": "rds-34-ops-modeled-164-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "kinesis — 17 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "kinesis-17-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "route53 — 6 ops, modeled: 71, protocols: QueryXML",
+        "id": "route53-6-ops-modeled-71-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "kms — 32 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "kms-32-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "scheduler — 12 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "scheduler-12-ops-modeled-12-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "msk — 16 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "msk-16-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "secretsmanager — 22 ops, modeled: 23, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "secretsmanager-22-ops-modeled-23-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "opensearch — 8 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "opensearch-8-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "ses — 19 ops, modeled: 183, protocols: QueryXML",
+        "id": "ses-19-ops-modeled-183-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "organizations — 1 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "organizations-1-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "shield — 8 ops, modeled: 36, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "shield-8-ops-modeled-36-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "rds — 33 ops, protocols: QueryXML",
-        "id": "rds-33-ops-protocols-queryxml"
+        "text": "sns — 17 ops, modeled: 42, protocols: QueryXML",
+        "id": "sns-17-ops-modeled-42-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "route53 — 6 ops, protocols: QueryXML",
-        "id": "route53-6-ops-protocols-queryxml"
+        "text": "sqs — 21 ops, modeled: 23, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML",
+        "id": "sqs-21-ops-modeled-23-protocols-json10-json11-rpcv2cbor-queryxml"
       },
       {
         "depth": 2,
-        "text": "scheduler — 12 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "scheduler-12-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "ssm — 11 ops, modeled: 152, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "ssm-11-ops-modeled-152-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "secretsmanager — 21 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "secretsmanager-21-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "stepfunctions — 14 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "stepfunctions-14-ops-modeled-37-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "ses — 19 ops, protocols: QueryXML",
-        "id": "ses-19-ops-protocols-queryxml"
+        "text": "sts — 5 ops, modeled: 11, protocols: QueryXML",
+        "id": "sts-5-ops-modeled-11-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "shield — 5 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "shield-5-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "transfer — 13 ops, modeled: 71, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "transfer-13-ops-modeled-71-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "sns — 14 ops, protocols: QueryXML",
-        "id": "sns-14-ops-protocols-queryxml"
+        "text": "waf — 7 ops, modeled: 59, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "waf-7-ops-modeled-59-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "sqs — 21 ops, protocols: JSON10, JSON11, RPCv2CBOR, QueryXML",
-        "id": "sqs-21-ops-protocols-json10-json11-rpcv2cbor-queryxml"
-      },
-      {
-        "depth": 2,
-        "text": "ssm — 10 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "ssm-10-ops-protocols-json10-json11-rpcv2cbor"
-      },
-      {
-        "depth": 2,
-        "text": "stepfunctions — 5 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "stepfunctions-5-ops-protocols-json10-json11-rpcv2cbor"
-      },
-      {
-        "depth": 2,
-        "text": "sts — 5 ops, protocols: QueryXML",
-        "id": "sts-5-ops-protocols-queryxml"
-      },
-      {
-        "depth": 2,
-        "text": "transfer — 10 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "transfer-10-ops-protocols-json10-json11-rpcv2cbor"
-      },
-      {
-        "depth": 2,
-        "text": "waf — 4 ops, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "waf-4-ops-protocols-json10-json11-rpcv2cbor"
+        "text": "Services outside this manifest",
+        "id": "services-outside-this-manifest"
       }
     ]
   },
