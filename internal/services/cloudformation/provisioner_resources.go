@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
@@ -868,6 +869,61 @@ func kmsKeyPolicyString(keyPolicy any) (string, error) {
 	return string(policy), nil
 }
 
+// kmsTagsFromMap renders a merged tag map as the {TagKey, TagValue} shape
+// KMS's TagResource/CreateKey Tags parameter uses (distinct from the
+// {Key, Value} shape the CloudFormation Tags property itself carries).
+func kmsTagsFromMap(tags map[string]string) []map[string]string {
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, map[string]string{"TagKey": key, "TagValue": tags[key]})
+	}
+	return out
+}
+
+// updateKmsTags reconciles a KMS key's tags to the template's current set via
+// TagResource/UntagResource, the same add/remove diff every other tag-aware
+// CloudFormation handler here uses.
+func updateKmsTags(ctx context.Context, router http.Handler, region, keyID string, tags, prior map[string]string) (bool, error) {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	applied := false
+	if len(added) > 0 {
+		if _, err := internalJSON(ctx, router, region, "TrentService.TagResource", map[string]any{
+			"KeyId": keyID,
+			"Tags":  kmsTagsFromMap(added),
+		}); err != nil {
+			return false, fmt.Errorf("TagResource: %w", err)
+		}
+		applied = true
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, exists := tags[key]; !exists {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if len(removed) > 0 {
+		if _, err := internalJSON(ctx, router, region, "TrentService.UntagResource", map[string]any{
+			"KeyId":   keyID,
+			"TagKeys": removed,
+		}); err != nil {
+			return applied, fmt.Errorf("UntagResource: %w", err)
+		}
+		applied = true
+	}
+	return applied, nil
+}
+
 func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := map[string]any{}
 	if v, _ := props["Description"].(string); v != "" {
@@ -889,6 +945,20 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
 		body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
 	}
+	// Origin and MultiRegion are forwarded rather than validated here: the KMS
+	// service is the one place that knows what it can and cannot honour
+	// (AWS_KMS-origin material only, no replica-key relationship), and it
+	// rejects anything else loudly instead of the emulator silently keeping
+	// the AWS default.
+	if v, _ := props["Origin"].(string); v != "" {
+		body["Origin"] = v
+	}
+	if v, ok := props["MultiRegion"]; ok {
+		body["MultiRegion"] = asBool(v)
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = kmsTagsFromMap(tags)
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.CreateKey", body)
 	if err != nil {
@@ -909,31 +979,62 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 		"KeyId": resp.KeyMetadata.KeyID,
 		"Arn":   resp.KeyMetadata.Arn,
 	}
+
+	// cleanupOnFailure schedules deletion of the key CreateKey already
+	// persisted: this Create method cannot return a physical ID on failure
+	// for the provisioner to clean up otherwise.
+	cleanupOnFailure := func(cause error) (string, map[string]string, error) {
+		if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", map[string]any{
+			"KeyId":               resp.KeyMetadata.KeyID,
+			"PendingWindowInDays": 7,
+		}); cleanupErr != nil {
+			return "", nil, fmt.Errorf("%w; ScheduleKeyDeletion cleanup: %v", cause, cleanupErr)
+		}
+		return "", nil, cause
+	}
+
 	if enabled, ok := props["Enabled"]; ok && !asBool(enabled) {
 		keyBody := map[string]any{"KeyId": resp.KeyMetadata.KeyID}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DisableKey", keyBody); err != nil {
-			// CreateKey already persisted the key, but this Create method cannot
-			// return a physical ID on failure for the provisioner to clean up.
-			// Schedule deletion so the failed resource is not reported as created.
-			if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", map[string]any{
-				"KeyId":               resp.KeyMetadata.KeyID,
-				"PendingWindowInDays": 7,
-			}); cleanupErr != nil {
-				return "", nil, fmt.Errorf("DisableKey: %w; ScheduleKeyDeletion cleanup: %v", err, cleanupErr)
-			}
-			return "", nil, fmt.Errorf("DisableKey: %w", err)
+			return cleanupOnFailure(fmt.Errorf("DisableKey: %w", err))
+		}
+	}
+	// EnableKeyRotation is dispatched to the real (currently unmodeled)
+	// operation rather than silently dropped — this KMS emulation does not
+	// track rotation state at all, so a template that turns rotation on
+	// deserves a loud failure telling the CDK user that, not a key that
+	// quietly reports rotation off forever.
+	if rotation, ok := props["EnableKeyRotation"]; ok && asBool(rotation) {
+		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.EnableKeyRotation", map[string]any{"KeyId": resp.KeyMetadata.KeyID}); err != nil {
+			return cleanupOnFailure(fmt.Errorf("EnableKeyRotation: %w", err))
 		}
 	}
 	return resp.KeyMetadata.KeyID, attrs, nil
 }
 
-func (h *kmsKeyHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{
-		"KeyId":               physicalID,
-		"PendingWindowInDays": 7,
+// DeleteWithProperties tears down the key, carrying the template's
+// PendingWindowInDays through to ScheduleKeyDeletion so a CDK key that asked
+// for a short (or long) retention window actually gets it instead of the
+// emulator's own compensating-cleanup default.
+func (h *kmsKeyHandler) DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	body := map[string]any{"KeyId": physicalID}
+	if raw, ok := props["PendingWindowInDays"]; ok {
+		days, err := cfnInt64(raw)
+		if err != nil {
+			return fmt.Errorf("ScheduleKeyDeletion: PendingWindowInDays: %w", err)
+		}
+		body["PendingWindowInDays"] = days
 	}
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", body)
 	return teardownError("ScheduleKeyDeletion", rec, err)
+}
+
+// Delete satisfies resourceHandler for callers that reach a KMS key without
+// its stored properties (invokeDelete always prefers DeleteWithProperties
+// above when they are available). It omits PendingWindowInDays, so the KMS
+// service applies its own documented default (30 days).
+func (h *kmsKeyHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	return h.DeleteWithProperties(ctx, router, cfg, physicalID, nil, rCtx)
 }
 
 func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -947,6 +1048,16 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 			if oldUsage, _ := oldProps["KeyUsage"].(string); oldUsage != "" && newUsage != oldUsage {
 				return "", nil, errReplacementRequired
 			}
+		}
+		// Origin and MultiRegion are both "Update requires: Replacement" on the
+		// real resource, and neither has a KMS API to change them in place.
+		newOrigin, _ := props["Origin"].(string)
+		oldOrigin, _ := oldProps["Origin"].(string)
+		if newOrigin != "" && oldOrigin != "" && newOrigin != oldOrigin {
+			return "", nil, errReplacementRequired
+		}
+		if asBool(props["MultiRegion"]) != asBool(oldProps["MultiRegion"]) {
+			return "", nil, errReplacementRequired
 		}
 	}
 
@@ -1044,6 +1155,26 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 		}
 		if transitionErr != nil {
 			return restorePolicy(transitionErr)
+		}
+	}
+
+	newRotation := asBool(props["EnableKeyRotation"])
+	oldRotation := asBool(oldProps["EnableKeyRotation"])
+	if newRotation && !oldRotation {
+		// Dispatched to the real (currently unmodeled) operation so a template
+		// that turns rotation on gets a loud failure instead of a key that
+		// quietly reports rotation off forever — see the matching comment on
+		// Create.
+		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.EnableKeyRotation", map[string]any{"KeyId": physicalID}); err != nil {
+			return restorePolicy(fmt.Errorf("EnableKeyRotation: %w", err))
+		}
+	}
+
+	newTags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	oldTags := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if !reflect.DeepEqual(newTags, oldTags) {
+		if _, err := updateKmsTags(ctx, router, rCtx.Region, physicalID, newTags, oldTags); err != nil {
+			return restorePolicy(err)
 		}
 	}
 

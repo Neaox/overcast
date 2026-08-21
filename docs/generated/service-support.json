@@ -4416,8 +4416,8 @@
         {
           "operation": "CreateKey",
           "category": "Key lifecycle",
-          "status": "✅ Supported",
-          "notes": "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed"
+          "status": "⚠️ Partial",
+          "notes": "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed; accepts `Tags`; rejects `Origin` other than `AWS_KMS` and `MultiRegion=true` (not emulated)"
         },
         {
           "operation": "DescribeKey",

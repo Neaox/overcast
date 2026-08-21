@@ -33,6 +33,9 @@ type updateKeyDescriptionRequest struct {
 
 type createKeyRequest struct {
 	Description                    string  `json:"Description" cbor:"Description"`
+	Tags                           []Tag   `json:"Tags" cbor:"Tags"`
+	Origin                         string  `json:"Origin" cbor:"Origin"`
+	MultiRegion                    bool    `json:"MultiRegion" cbor:"MultiRegion"`
 	KeySpec                        string  `json:"KeySpec" cbor:"KeySpec"`
 	KeyUsage                       string  `json:"KeyUsage" cbor:"KeyUsage"`
 	Policy                         *string `json:"Policy" cbor:"Policy"`
@@ -187,6 +190,12 @@ func (h *Handler) createKeyTyped(ctx context.Context, req *createKeyRequest) (*k
 	if req.KeyUsage == "" {
 		req.KeyUsage = "ENCRYPT_DECRYPT"
 	}
+	if aerr := validateKeyOrigin(req.Origin); aerr != nil {
+		return nil, aerr
+	}
+	if req.MultiRegion {
+		return nil, errMultiRegionNotSupported()
+	}
 
 	keyID := uuid.NewString()
 	arn := fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, keyID)
@@ -209,6 +218,7 @@ func (h *Handler) createKeyTyped(ctx context.Context, req *createKeyRequest) (*k
 		KeyState:    "Enabled",
 		CreatedAt:   h.clk.Now(),
 		Policy:      policy,
+		Tags:        req.Tags,
 	}
 	if err := generateKeyMaterial(k); err != nil {
 		h.log.Warn("kms: generate key material", zap.Error(err))

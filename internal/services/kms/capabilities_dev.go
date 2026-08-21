@@ -6,7 +6,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.Register(
-		capabilities.Capability{Service: "kms", Operation: "CreateKey", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed"},
+		capabilities.Capability{Service: "kms", Operation: "CreateKey", Category: "Key lifecycle", Status: capabilities.StatusPartial, Notes: "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed; accepts `Tags`; rejects `Origin` other than `AWS_KMS` and `MultiRegion=true` (not emulated)"},
 		capabilities.Capability{Service: "kms", Operation: "DescribeKey", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Lookup by UUID, ARN, or alias"},
 		capabilities.Capability{Service: "kms", Operation: "ListKeys", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Excludes `PendingDeletion` keys; no pagination (Truncated=false)"},
 		capabilities.Capability{Service: "kms", Operation: "EnableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
