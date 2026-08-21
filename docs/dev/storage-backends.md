@@ -197,6 +197,22 @@ one sync interval (100 ms by default), recovered by pending-log replay — not t
 See [docs/performance.md](../performance.md) for guidance on when (and when not) to touch these
 knobs from a tuning perspective.
 
+**`Set`/`Delete`/`DeletePrefix` never pin a `TierCached` write into the memory tier.** Only the
+pending overlay above and — once it's durable — SQLite hold a `TierCached` value; the separate
+`mem` layer that backs `TierHot` is written to only for `TierHot` namespaces. Before this was
+fixed (#785), every write landed in `mem` regardless of tier, so a long-running process
+accumulated a permanent, never-evicted, never-read-again copy of everything ever written to a
+`TierCached` namespace — memory scaled with total writes since startup rather than the working
+set, worst on the large-valued namespaces (`lambda:function-code` deployment packages,
+`s3:objects`). The fix costs nothing on the read side: every `TierCached` read already checks the
+pending overlay first and falls through to SQLite once ready (`shouldReadHybridNamespaceFromSQLite`),
+so `mem` was never the path by which a flushed `TierCached` value was actually served — see the
+doc comment on `HybridStore.Set` for the full argument. In degraded mode (below), this still means
+"reads/writes work" per the 1.11 policy: flushes never run while degraded, so the overlay itself —
+not `mem` — is what keeps every write reachable for the rest of the process's life, which is the
+same bounded-by-nothing memory cost 1.11 already accepts for that mode, just paid in the overlay
+instead of a redundant second copy in `mem`.
+
 Replay tolerates real-world crash damage: a torn final line (the signature of a kill
 mid-append) is logged and ignored, a corrupt line anywhere else is logged and skipped, and the
 file is streamed rather than loaded whole, so replay memory is bounded by the largest single
