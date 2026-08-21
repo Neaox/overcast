@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/url"
 
+	"go.uber.org/zap"
+
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -286,6 +288,50 @@ func (h *Handler) instanceEndpointAliases(region string, inst *DBInstance) []str
 func (h *Handler) containerAliases(ctx context.Context, region string, inst *DBInstance) []string {
 	return append(h.instanceEndpointAliases(region, inst),
 		h.clusterAliasesForInstance(ctx, region, inst)...)
+}
+
+// adoptClusterEndpoints makes instanceID's engine container answer to the
+// cluster endpoints it has just been promoted to serve.
+//
+// The record is only half of a failover. clusterEndpointsFor renders
+// DescribeDBClusters' address and port from whichever member is the writer, so
+// the *response* side follows a promotion the moment the member list changes —
+// but the name a client actually dials is a Docker alias, and Docker fixes
+// those when a container joins a network. Without this the cluster endpoint
+// keeps resolving to the container that was just deleted, and the response and
+// DNS disagree about where the cluster is.
+//
+// Nothing strips the names from the outgoing writer. On the path that promotes
+// anyone — DeleteDBInstance — its container has already been stopped and queued
+// for removal, and a stopped container answers no queries. Detaching it as well
+// would mean a second round of Docker calls against a container that is on its
+// way out.
+//
+// Best-effort, and logged rather than surfaced: the promotion itself has
+// already been committed to the store, and the caller's response with it.
+func (h *Handler) adoptClusterEndpoints(ctx context.Context, instanceID string) {
+	if h.docker == nil || !h.dockerReady.Load() {
+		return
+	}
+	inst, aerr := h.store.getDBInstance(ctx, instanceID)
+	if aerr != nil || inst == nil || inst.DockerContainerID == "" {
+		return
+	}
+
+	placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID)
+	if err != nil {
+		h.log.Warn("RDS: promoted instance could not be placed in its VPC — "+
+			"the cluster endpoints still resolve to the old writer",
+			zap.String("instance", instanceID), zap.Error(err))
+		return
+	}
+	placement.Aliases = h.containerAliases(ctx, h.store.region(ctx), inst)
+
+	if err := dataplane.Reattach(ctx, h.docker, h.cfg, inst.DockerContainerID, placement); err != nil {
+		h.log.Warn("RDS: promoted instance could not take over the cluster endpoints — "+
+			"they will not resolve until it is restarted",
+			zap.String("instance", instanceID), zap.Error(err))
+	}
 }
 
 // clusterAliasesForInstance is the set of Aurora cluster endpoint names inst's

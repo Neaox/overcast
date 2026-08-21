@@ -487,6 +487,28 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 		}
 	})
 
+	// The member list loses the instance the same way the instance list does,
+	// and here rather than in the deferred record delete above: the container
+	// has just been stopped, so a cluster that went on calling it the writer
+	// would be advertising a dead engine for as long as the deletion took.
+	//
+	// AWS keeps the member listed while the instance is still "deleting" and
+	// drops it when the instance goes. Overcast's window between the two is a
+	// scheduler tick, and closing it early is the side to err on: what a caller
+	// can observe in between is a cluster that names a live writer instead of
+	// one that names a stopped container.
+	if clusterID := inst.DBClusterIdentifier; clusterID != "" {
+		if promoted := h.removeInstanceFromCluster(ctx, clusterID, id); promoted != "" {
+			h.recordInstanceEvent(ctx, promoted, "Promoted to cluster writer following the deletion of "+id+".", "failover")
+			// Docker work — off the request path. The cluster endpoint aliases
+			// have to move onto the new writer's container, and that is a
+			// detach and re-attach per network, not a store write.
+			h.scheduler.AfterScoped(region, promoted, "promote", 0, func(bgCtx context.Context) {
+				h.adoptClusterEndpoints(bgCtx, promoted)
+			})
+		}
+	}
+
 	return resp, nil
 }
 

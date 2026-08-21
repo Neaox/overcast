@@ -410,6 +410,26 @@ against a reader endpoint will pass here and can still fail on AWS.
 > container *is* recreated also keeps answering to whatever its stored record
 > advertises, which is what carries a pre-alpha.37 `cluster-rw` name forward.
 
+Deleting a member removes it from `DBClusterMembers`, and deleting the **writer**
+promotes one of the survivors — AWS treats losing the primary as a failover, and
+so does Overcast. The replacement is chosen by `PromotionTier` (0 is the highest
+priority, 15 the lowest, 1 the default), with ties going to the oldest surviving
+member; AWS breaks the same tie on instance size and then arbitrarily, which
+Overcast has no equivalent of because every member runs the same container
+whatever its `DBInstanceClass`.
+
+Because both cluster endpoint names live on the writer's container, a promotion
+has to move them, and that means detaching and re-attaching the new writer to its
+Docker networks. **Connections held open to that container over those networks
+are dropped** when it happens — the same interruption a real failover causes.
+Overcast has no `FailoverDBCluster`, so deleting the writer is the only way to
+trigger one.
+
+Deleting the *last* member leaves a cluster with no writer. That is a legitimate
+state — CloudFormation deletes a cluster's instances before the cluster itself —
+and the endpoints keep their names and the cluster's own port rather than
+pointing anywhere.
+
 ### Aurora emulation
 
 `aurora-mysql` and `aurora-postgresql` are emulated using the underlying MySQL and PostgreSQL Docker
