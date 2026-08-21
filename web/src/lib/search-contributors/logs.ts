@@ -1,11 +1,13 @@
 import { logs } from "@/services/api"
+import { logsKeys } from "@/features/cloudwatch/logs/data"
 import type { LogGroup } from "@/types"
 import { createSearchContributor } from "./create-contributor"
 
 createSearchContributor<LogGroup>({
   id: "cloudwatch-logs",
-  // Log group keys don't include baseUrl — see logsKeys in cloudwatch/data.ts
-  cacheKey: () => ["logs", "groups"],
+  // Reuse the feature's own key factory so this can never drift out of sync
+  // with the shape (and endpoint/region scoping) the real query uses.
+  cacheKey: () => logsKeys.groups(),
   fetchAll: () => logs.listGroups(),
   matchFields: (g) => [g.logGroupName ?? "", g.arn ?? ""],
   toResult: (g) => ({
