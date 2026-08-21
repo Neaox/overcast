@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/Neaox/overcast/internal/dataplane"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -36,9 +37,34 @@ func instanceEndpointHostname(id, region, base string) string {
 	return id + "." + region + ".rds." + base
 }
 
+// The discriminators that separate an Aurora cluster's two endpoints.
+//
+// AWS spells them `cluster-{hash}` and `cluster-ro-{hash}`.
+//
+// **Deviation: the hash is dropped**, here and in every other endpoint name
+// Overcast mints. It has to be. On AWS the hash is assigned by the service and
+// is not derivable from anything the caller knows, so a name carrying one can
+// only be *read back* from an API response — which is fine on AWS, where DNS is
+// authoritative, and impossible here, where the name must also be registrable
+// as a Docker network alias before anyone asks for it, and reproducible by any
+// Overcast process that later has to compute the same alias set. Inventing a
+// stable per-cluster hash would satisfy neither goal: it would still be a value
+// nobody could predict, and it would make the name longer for no gain.
+//
+// Dropping it leaves exactly the two labels below — `cluster` reduces from
+// AWS's `cluster-{hash}`, and stays unambiguous against `cluster-ro`.
+//
+// Overcast minted `cluster-rw` for the writer until 0.0.1-alpha.37, on the
+// reasoning that a bare `cluster` looked too plain to be deliberate. It was a
+// label AWS has never used, in the one field whose whole job is to look like
+// AWS's.
+const (
+	clusterRoleWriter = "cluster"
+	clusterRoleReader = "cluster-ro"
+)
+
 // clusterEndpointHostname builds the DNS name for an Aurora cluster endpoint on
-// base. role is AWS's endpoint discriminator — "cluster-rw" for the writer,
-// "cluster-ro" for the reader.
+// base. role is the discriminator: clusterRoleWriter or clusterRoleReader.
 func clusterEndpointHostname(id, role, region, base string) string {
 	return id + "." + role + "." + region + ".rds." + base
 }
@@ -87,35 +113,105 @@ func (h *Handler) instanceEndpointFor(ctx context.Context, inst *DBInstance) (st
 	base := h.endpointBase(ctx)
 	name := instanceEndpointHostname(inst.DBInstanceIdentifier, h.instanceRegion(ctx), base)
 
+	port, loopback := h.callerDialTarget(ctx, inst, base, inst.Port)
+	if loopback {
+		return loopbackAddress, port
+	}
+	return name, port
+}
+
+// loopbackAddress stands in for an endpoint name a host caller cannot resolve.
+const loopbackAddress = "127.0.0.1"
+
+// callerDialTarget decides how this caller reaches inst's engine container: the
+// port to dial, and whether the endpoint hostname has to be replaced by a
+// loopback address because the caller cannot resolve it.
+//
+// declaredPort is the port to fall back to when there is no container to reach
+// — the instance's own for an instance endpoint, the cluster's for a cluster
+// one. Both are the AWS-shaped answer, which is the right one when there is
+// nothing dialable to offer instead.
+//
+// **Deviation: AWS always reports the engine port here, and a host caller is
+// given the published one instead.** The constraint is Docker's, not ours. The
+// engine listens on 3306/5432 inside the network and that port is not bound on
+// the host — only the published mapping is (OVERCAST_RDS_PORT_BASE, 33060
+// upwards, because 3306 is usually taken by a local install). So the AWS-shaped
+// answer is a port nothing accepts a connection on, and the rule this file
+// exists to keep (a value Overcast returns must be dialable by whoever asked
+// for it) leaves one option. docs/networking.md § Data-plane endpoints carries
+// the table, and the one caveat: a host-side deploy that reads Endpoint.Port
+// bakes the host port into container environment.
+//
+// Split out from instanceEndpointFor because a cluster endpoint answers the
+// same question about the same container: an Aurora cluster has no container of
+// its own, so `orders.cluster…` and `orders-writer…` are two names for one
+// engine and must agree on the port behind them. They did not before — the
+// cluster endpoint always carried the cluster's engine port, so on the host it
+// named a port nothing binds while the instance endpoint named the right one.
+func (h *Handler) callerDialTarget(ctx context.Context, inst *DBInstance, base string, declaredPort int) (port int, loopback bool) {
+	if inst == nil {
+		return declaredPort, false
+	}
+
 	if serviceutil.CallerIsSiblingContainer(middleware.ClientAddrFromContext(ctx)) {
 		if inst.DockerContainerID != "" {
 			if ecfg, ok := engineEnvConfig[inst.Engine]; ok && ecfg.ContainerPort > 0 {
-				return name, ecfg.ContainerPort
+				return ecfg.ContainerPort, false
 			}
 		}
-		return name, inst.Port
+		return declaredPort, false
 	}
 
 	if inst.HostPort > 0 {
-		if serviceutil.SupportsHostRouting("http://" + base) {
-			return name, inst.HostPort
-		}
-		return "127.0.0.1", inst.HostPort
+		return inst.HostPort, !serviceutil.SupportsHostRouting("http://" + base)
 	}
-	return name, inst.Port
+	return declaredPort, false
 }
 
-// clusterEndpointsFor returns the writer and reader endpoint names for this
-// caller. A cluster has no container of its own — its member instances do — so
-// only the name is per-caller here; the port is the cluster's.
-func (h *Handler) clusterEndpointsFor(ctx context.Context, c *DBCluster) (writer, reader string) {
+// clusterEndpointsFor returns the writer and reader endpoint addresses for this
+// caller, and the port behind both.
+//
+// A cluster has no container of its own — its writer member's container is what
+// the cluster endpoints point at, so the address and port are that instance's,
+// rendered on exactly the terms instanceEndpointFor uses. Both names resolve to
+// the writer; see clusterAliasesForInstance for why the reader endpoint does
+// not spread over the replicas.
+func (h *Handler) clusterEndpointsFor(ctx context.Context, c *DBCluster) (writer, reader string, port int) {
 	if c == nil {
-		return "", ""
+		return "", "", 0
 	}
 	base := h.endpointBase(ctx)
 	region := h.instanceRegion(ctx)
-	return clusterEndpointHostname(c.DBClusterIdentifier, "cluster-rw", region, base),
-		clusterEndpointHostname(c.DBClusterIdentifier, "cluster-ro", region, base)
+	writer = clusterEndpointHostname(c.DBClusterIdentifier, clusterRoleWriter, region, base)
+	reader = clusterEndpointHostname(c.DBClusterIdentifier, clusterRoleReader, region, base)
+
+	port, loopback := h.callerDialTarget(ctx, h.clusterWriterInstance(ctx, c), base, c.Port)
+	if loopback {
+		return loopbackAddress, loopbackAddress, port
+	}
+	return writer, reader, port
+}
+
+// clusterWriterInstance returns the member whose container backs c's cluster
+// endpoints, or nil when the cluster has no writer on record — a cluster
+// created but not yet given an instance, or one whose members predate the
+// stored record.
+func (h *Handler) clusterWriterInstance(ctx context.Context, c *DBCluster) *DBInstance {
+	if c == nil || h.store == nil {
+		return nil
+	}
+	for _, m := range c.DBClusterMembers {
+		if !m.IsClusterWriter {
+			continue
+		}
+		inst, aerr := h.store.getDBInstance(ctx, m.DBInstanceIdentifier)
+		if aerr != nil {
+			return nil
+		}
+		return inst
+	}
+	return nil
 }
 
 // instanceRegion is the region to render names for: the caller's, which is the
@@ -181,4 +277,101 @@ func (h *Handler) instanceEndpointAliases(region string, inst *DBInstance) []str
 	return dataplane.Hostnames(h.cfg, func(base string) string {
 		return instanceEndpointHostname(inst.DBInstanceIdentifier, region, base)
 	}, advertised...)
+}
+
+// containerAliases is every DNS name inst's engine container must answer to on
+// the networks emulated compute runs on: its own endpoint, plus its cluster's
+// when it is the writer. This is what startDBContainer attaches with, on a
+// fresh container and an adopted one alike.
+func (h *Handler) containerAliases(ctx context.Context, region string, inst *DBInstance) []string {
+	return append(h.instanceEndpointAliases(region, inst),
+		h.clusterAliasesForInstance(ctx, region, inst)...)
+}
+
+// clusterAliasesForInstance is the set of Aurora cluster endpoint names inst's
+// container must additionally answer to, or nil when inst is not the cluster's
+// writer.
+//
+// The cluster endpoint is the name most consumers actually hold: CDK's
+// `rds.DatabaseCluster` exposes `clusterEndpoint`/`clusterReadEndpoint`, and a
+// template referencing anything else is the non-idiomatic path. Registering
+// only the instance name therefore left the standard one resolving nowhere —
+// and, ending in a domain Overcast's own zone claims, not even failing cleanly:
+// the query fell through to public DNS, which answers every subdomain of those
+// domains with a loopback address. The caller resolved the cluster, dialled
+// itself, and got a refused connection.
+//
+// **Deviation: both names go on the writer.** On AWS the reader endpoint
+// load-balances over the Aurora Replicas and falls back to the writer only when
+// there are none. The constraint here is that Aurora's shared storage layer is
+// not emulated: every member gets its own engine container with its own
+// container-local storage (this package mounts no volume and configures no
+// replication), so a replica is not a copy of the writer — it is an empty
+// database that happens to have the same credentials. A reader endpoint spread
+// over the replicas would therefore answer some queries with nothing.
+//
+// Pointing it at the writer diverges from AWS in how reads are *distributed*;
+// pointing it at the replicas would diverge in what they *return*, which is the
+// far worse half to be wrong about — and it fails silently, as a query that
+// finds no rows. The visible cost of this choice is that replica lag cannot be
+// reproduced locally, so a read-after-write race passes here and can still fail
+// on AWS; docs/services/rds.md says so where users will see it.
+//
+// When Aurora storage is really emulated, this is the seam that changes.
+func (h *Handler) clusterAliasesForInstance(ctx context.Context, region string, inst *DBInstance) []string {
+	if inst == nil || inst.DBClusterIdentifier == "" || h.store == nil {
+		return nil
+	}
+	c, aerr := h.store.getDBCluster(ctx, inst.DBClusterIdentifier)
+	if aerr != nil || c == nil {
+		return nil
+	}
+	if !isClusterWriter(c, inst.DBInstanceIdentifier) {
+		return nil
+	}
+	return h.clusterEndpointAliases(region, c)
+}
+
+// clusterEndpointAliases is both cluster endpoint names under every hostname
+// Overcast could mint them on, for the same reason instanceEndpointAliases
+// registers a set rather than the configured name alone.
+func (h *Handler) clusterEndpointAliases(region string, c *DBCluster) []string {
+	if c == nil || c.DBClusterIdentifier == "" {
+		return nil
+	}
+	if region == "" {
+		region = h.region()
+	}
+	// Whatever the record already advertises goes in too, in case it was
+	// minted under a hostname the current configuration no longer lists.
+	names := dataplane.Hostnames(h.cfg, func(base string) string {
+		return clusterEndpointHostname(c.DBClusterIdentifier, clusterRoleWriter, region, base)
+	}, c.Endpoint)
+	names = append(names, dataplane.Hostnames(h.cfg, func(base string) string {
+		return clusterEndpointHostname(c.DBClusterIdentifier, clusterRoleReader, region, base)
+	}, c.ReaderEndpoint)...)
+	// Each half is deduplicated against itself; the advertised names can
+	// collide across the two, so the union is filtered once more.
+	return docker.EndpointAliases(names...)
+}
+
+// isClusterWriter reports whether instanceID is — or is about to become — c's
+// writer.
+//
+// The "about to" matters: CreateDBInstance registers cluster membership around
+// the same moment it starts the container, so the alias set is often computed
+// for an instance the cluster does not list yet. addInstanceToCluster makes the
+// first member the writer, and anticipating that is what keeps the race from
+// costing the cluster its endpoints entirely.
+func isClusterWriter(c *DBCluster, instanceID string) bool {
+	writerExists := false
+	for _, m := range c.DBClusterMembers {
+		if m.DBInstanceIdentifier == instanceID {
+			return m.IsClusterWriter
+		}
+		if m.IsClusterWriter {
+			writerExists = true
+		}
+	}
+	return !writerExists
 }

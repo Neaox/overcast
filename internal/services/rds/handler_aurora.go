@@ -279,7 +279,7 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 // toXMLDBCluster converts a stored DBCluster to the XML response type, with the
 // cluster endpoints re-minted for this caller — see endpoint.go.
 func (h *Handler) toXMLDBCluster(ctx context.Context, c *DBCluster) xmlDBCluster {
-	writer, reader := h.clusterEndpointsFor(ctx, c)
+	writer, reader, port := h.clusterEndpointsFor(ctx, c)
 	members := make([]xmlDBClusterMember, 0, len(c.DBClusterMembers))
 	for _, m := range c.DBClusterMembers {
 		members = append(members, xmlDBClusterMember(m))
@@ -296,7 +296,7 @@ func (h *Handler) toXMLDBCluster(ctx context.Context, c *DBCluster) xmlDBCluster
 		Status:                       c.Status,
 		MasterUsername:               c.MasterUsername,
 		DatabaseName:                 c.DatabaseName,
-		Port:                         c.Port,
+		Port:                         port,
 		Endpoint:                     writer,
 		ReaderEndpoint:               reader,
 		MultiAZ:                      c.MultiAZ,

@@ -369,6 +369,47 @@ name the same database and both connect. Full mechanism, and the one caveat
 about `Endpoint.Port` crossing into container environment, in
 [networking.md](../networking.md#data-plane-endpoints-rds-and-anything-else-that-is-a-container).
 
+### Connecting to a cluster
+
+`Endpoint` and `ReaderEndpoint` on an Aurora cluster follow the same table as an
+instance endpoint, and for the same reason: a cluster has no container of its
+own, so both point at the writer member's engine. `DescribeDBClusters` therefore
+answers with that instance's address and port, per caller, and both names are
+registered on the writer's container — so the value CDK gives you as
+`cluster.clusterEndpoint.hostname` resolves from inside a task exactly as the
+instance endpoint does.
+
+```
+{dbClusterIdentifier}.cluster.{region}.rds.{base}      # writer
+{dbClusterIdentifier}.cluster-ro.{region}.rds.{base}   # reader
+```
+
+These drop AWS's account-specific hash, as every Overcast endpoint name does:
+`{cluster}.cluster-{hash}.…` and `{cluster}.cluster-ro-{hash}.…` reduce to
+exactly the two above.
+
+One deliberate difference from AWS: **the reader endpoint serves the writer**,
+always. On AWS it load-balances across the Aurora Replicas and falls back to the
+writer only when there are none. Overcast gives every member its own engine
+container with its own storage — there is no shared Aurora volume — so a reader
+endpoint spread across the replicas would answer from an empty database. Reads
+are not distributed here; they do return what was written. One consequence worth
+knowing: replica lag cannot be reproduced locally, so a read-after-write race
+against a reader endpoint will pass here and can still fail on AWS.
+
+> **Changed in 0.0.1-alpha.37.** The writer endpoint was
+> `{cluster}.cluster-rw.…`, a label AWS has never used. Re-read the name from
+> `DescribeDBClusters` rather than reconstructing it — anything holding the old
+> spelling will stop resolving once the cluster is recreated.
+>
+> Names are attached to the engine container when Overcast creates it, and
+> Docker treats a second connect for an already-attached container as a no-op.
+> So a container that predates the upgrade and is still running keeps the name
+> set it was created with: cluster endpoints begin resolving once that
+> container is recreated, not the moment Overcast restarts. A cluster whose
+> container *is* recreated also keeps answering to whatever its stored record
+> advertises, which is what carries a pre-alpha.37 `cluster-rw` name forward.
+
 ### Aurora emulation
 
 `aurora-mysql` and `aurora-postgresql` are emulated using the underlying MySQL and PostgreSQL Docker

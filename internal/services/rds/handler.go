@@ -626,7 +626,11 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 	// The DNS names this container must answer to, on every network a caller
 	// might reach it from. Same set for each attachment below.
-	aliases := h.instanceEndpointAliases(h.store.region(ctx), inst)
+	//
+	// An Aurora writer answers to its cluster's endpoints as well as its own:
+	// the cluster endpoint is the name CDK hands an application, and it points
+	// at no container but this one. See containerAliases.
+	aliases := h.containerAliases(ctx, h.store.region(ctx), inst)
 
 	// Check whether a container with this name already exists — this happens
 	// after an overcast restart when RDSKeepContainers=true (or the process
