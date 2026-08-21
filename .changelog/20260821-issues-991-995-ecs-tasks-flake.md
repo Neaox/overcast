@@ -1,0 +1,1 @@
+* [docker/ecs] a task placement no longer fails outright on a registry's transient "too many requests" rate limit — the image pull now retries a few times with backoff before giving up, closing the window where ECS's RunTask (and every other container-backed launch sharing the puller) reported a task STOPPED for a blip that would have cleared a moment later
