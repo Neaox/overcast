@@ -581,6 +581,56 @@ func TestCreateAndDeleteStack_LambdaPermissionMutatesFunctionPolicy(t *testing.T
 	helpers.AssertJSONError(t, removedResp, "ResourceNotFoundException")
 }
 
+const lambdaPermissionMissingQualifierTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "AllowSNSInvoke": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": "arn:aws:lambda:us-east-1:000000000000:function:cfn-lambda-permission-target:missing-alias",
+        "Action": "lambda:InvokeFunction",
+        "Principal": "sns.amazonaws.com"
+      }
+    }
+  }
+}`
+
+// TestCreateStack_LambdaPermissionMissingQualifierRollsBack proves the
+// AddPermission qualified-target validation is not bypassable through
+// CloudFormation: a template's AWS::Lambda::Permission may reference a
+// version or alias qualifier appended to FunctionName (the only way the CFN
+// resource type expresses a qualifier — it has no separate Qualifier
+// property, see
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-permission.html),
+// and Lambda rejects a nonexistent one with ResourceNotFoundException per
+// https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html.
+// CloudFormation must surface that as a failed resource and roll the stack
+// back rather than reporting CREATE_COMPLETE over an invalid template.
+func TestCreateStack_LambdaPermissionMissingQualifierRollsBack(t *testing.T) {
+	// Given: a Lambda function that exists but has no "missing-alias" alias.
+	srv := helpers.NewTestServer(t)
+	createLambdaStack(t, srv, "lambda-permission-qualifier-target-stack", lambdaPermissionTargetTemplate)
+
+	// When: CloudFormation creates an AWS::Lambda::Permission qualified by
+	// that nonexistent alias.
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"lambda-permission-missing-qualifier-stack"},
+		"TemplateBody": []string{lambdaPermissionMissingQualifierTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+
+	// Then: the stack does not silently succeed — it rolls back.
+	waitForStackStatus(t, srv, "lambda-permission-missing-qualifier-stack", "ROLLBACK_COMPLETE")
+
+	// And: the target function's policy was never mutated.
+	policyResp := lambdaRequest(t, srv, http.MethodGet,
+		"/2015-03-31/functions/cfn-lambda-permission-target/policy", nil)
+	defer policyResp.Body.Close()
+	helpers.AssertStatus(t, policyResp, http.StatusNotFound)
+	helpers.AssertJSONError(t, policyResp, "ResourceNotFoundException")
+}
+
 func createLambdaStack(t *testing.T, srv *helpers.TestServer, stackName, template string) {
 	t.Helper()
 	resp := cfnQuery(t, srv, "CreateStack", url.Values{
