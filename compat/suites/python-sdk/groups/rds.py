@@ -419,6 +419,200 @@ def DeleteDBCluster(ctx: TestContext) -> None:
     ctx["rds_cluster_id"] = ""
 
 
+
+# ── rds-cluster-members ──────────────────────────────────────────────────────
+#
+# An Aurora cluster with an instance in it. rds-clusters deliberately has none,
+# which leaves two things nothing outside the emulator's own Go tests looks at:
+# DBClusterMembers, and the settings a member is supposed to take from its
+# cluster rather than from its own request.
+#
+# Kept apart from rds-clusters rather than bolted onto it: a member changes what
+# the cluster endpoints mean — with a writer on record they can collapse onto one
+# loopback address for a host caller, which is deliberate and would break that
+# group's "the two endpoints differ" assertion — and a second group declaring
+# CreateDBCluster would make the bare impl key for it ambiguous in every suite,
+# which aborts the run.
+
+RDS_MEMBER_ENGINE = "aurora-mysql"
+RDS_MEMBER_USERNAME = "clusteradmin"
+RDS_MEMBER_PASSWORD = "Password1!"
+RDS_MEMBER_CLASS = "db.t3.micro"
+
+
+def _cluster_member_ids(cluster: dict) -> list:
+    return [
+        m.get("DBInstanceIdentifier")
+        for m in cluster.get("DBClusterMembers") or []
+    ]
+
+
+def CreateClusterForMembers(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = f"compat-members-{ctx.run_id}"
+    ctx["rds_member_cluster"] = cluster_id
+    resp = rds.create_db_cluster(
+        DBClusterIdentifier=cluster_id,
+        Engine=RDS_MEMBER_ENGINE,
+        MasterUsername=RDS_MEMBER_USERNAME,
+        MasterUserPassword=RDS_MEMBER_PASSWORD,
+    )
+    cluster = resp.get("DBCluster", {})
+    if not cluster.get("DBClusterArn"):
+        raise AssertionError("CreateClusterForMembers: missing DBClusterArn")
+    # The engine version the cluster settled on is what the member must inherit,
+    # so it is recorded here rather than assumed.
+    ctx["rds_member_cluster_engine_version"] = cluster.get("EngineVersion", "")
+
+
+def AddClusterMember(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_member_cluster")
+    if not cluster_id:
+        raise AssertionError("AddClusterMember: no cluster from CreateClusterForMembers")
+    instance_id = f"compat-member-{ctx.run_id}"
+    ctx["rds_member_instance"] = instance_id
+    # No MasterUsername or MasterUserPassword: an Aurora member takes both from
+    # its cluster, and AWS documents them as not applying here.
+    resp = rds.create_db_instance(
+        DBInstanceIdentifier=instance_id,
+        DBClusterIdentifier=cluster_id,
+        Engine=RDS_MEMBER_ENGINE,
+        DBInstanceClass=RDS_MEMBER_CLASS,
+    )
+    db = resp.get("DBInstance", {})
+    if db.get("DBInstanceIdentifier") != instance_id:
+        raise AssertionError(
+            f"AddClusterMember: DBInstanceIdentifier = {db.get('DBInstanceIdentifier')!r}, "
+            f"want {instance_id!r}"
+        )
+    if db.get("DBClusterIdentifier") != cluster_id:
+        raise AssertionError(
+            f"AddClusterMember: DBClusterIdentifier = {db.get('DBClusterIdentifier')!r}, "
+            f"want {cluster_id!r}"
+        )
+
+
+def DescribeClusterMembers(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_member_cluster")
+    instance_id = ctx.get("rds_member_instance")
+    if not cluster_id or not instance_id:
+        raise AssertionError("DescribeClusterMembers: no cluster or member from the earlier tests")
+    cluster = _describe_cluster(rds, cluster_id)
+    members = cluster.get("DBClusterMembers") or []
+    if not members:
+        raise AssertionError(
+            f"DescribeClusterMembers: DBClusterMembers is empty after adding {instance_id}"
+        )
+    entry = next(
+        (m for m in members if m.get("DBInstanceIdentifier") == instance_id), None
+    )
+    if entry is None:
+        raise AssertionError(
+            f"DescribeClusterMembers: {instance_id} is not among the listed members "
+            f"{_cluster_member_ids(cluster)}"
+        )
+    # The first member of a cluster is its writer. A membership recorded with no
+    # writer is the shape that leaves the cluster endpoints pointing at nothing.
+    if not entry.get("IsClusterWriter"):
+        raise AssertionError(
+            f"DescribeClusterMembers: {instance_id} is listed but IsClusterWriter is false, "
+            "and it is the only member"
+        )
+
+
+def DescribeMemberInheritedSettings(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_member_cluster")
+    instance_id = ctx.get("rds_member_instance")
+    if not instance_id:
+        raise AssertionError("DescribeMemberInheritedSettings: no member from AddClusterMember")
+    resp = rds.describe_db_instances(DBInstanceIdentifier=instance_id)
+    instances = resp.get("DBInstances") or []
+    if not instances:
+        raise AssertionError(
+            f"DescribeMemberInheritedSettings: no instance returned for {instance_id}"
+        )
+    member = instances[0]
+
+    # The member never sent a master username; it must be the cluster's.
+    if member.get("MasterUsername") != RDS_MEMBER_USERNAME:
+        raise AssertionError(
+            f"DescribeMemberInheritedSettings: MasterUsername = {member.get('MasterUsername')!r}, "
+            f"want the cluster's {RDS_MEMBER_USERNAME!r}"
+        )
+    if member.get("DBClusterIdentifier") != cluster_id:
+        raise AssertionError(
+            "DescribeMemberInheritedSettings: DBClusterIdentifier = "
+            f"{member.get('DBClusterIdentifier')!r}, want {cluster_id!r}"
+        )
+    want_version = ctx.get("rds_member_cluster_engine_version")
+    if want_version and member.get("EngineVersion") != want_version:
+        raise AssertionError(
+            f"DescribeMemberInheritedSettings: EngineVersion = {member.get('EngineVersion')!r}, "
+            f"want the cluster's {want_version!r}"
+        )
+    # Port is deliberately not asserted: Overcast answers with a port the caller
+    # can actually dial, which differs between a host and a sibling container, so
+    # any fixed expectation here would be wrong for one of them.
+
+
+def RemoveClusterMember(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_member_cluster")
+    instance_id = ctx.get("rds_member_instance")
+    if not cluster_id or not instance_id:
+        raise AssertionError("RemoveClusterMember: no cluster or member from the earlier tests")
+    rds.delete_db_instance(DBInstanceIdentifier=instance_id, SkipFinalSnapshot=True)
+
+    # Deleting the instance must take it out of the cluster too. It did not until
+    # recently: the record went and the membership entry stayed, so
+    # DescribeDBClusters kept reporting a member that no longer existed.
+    deadline = time.monotonic() + RDS_WAIT_BUDGET_SECONDS
+    while True:
+        cluster = _describe_cluster(rds, cluster_id)
+        if instance_id not in _cluster_member_ids(cluster):
+            ctx["rds_member_instance"] = ""
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"DB instance {instance_id} was still listed in {cluster_id}'s DBClusterMembers "
+                f"{RDS_WAIT_BUDGET_SECONDS:.0f}s after DeleteDBInstance"
+            )
+        time.sleep(RDS_CLUSTER_POLL_INTERVAL_SECONDS)
+
+
+def DeleteClusterAfterMembers(ctx: TestContext) -> None:
+    rds = _rds(ctx)
+    cluster_id = ctx.get("rds_member_cluster")
+    if not cluster_id:
+        raise AssertionError("DeleteClusterAfterMembers: no cluster from CreateClusterForMembers")
+    rds.delete_db_cluster(DBClusterIdentifier=cluster_id, SkipFinalSnapshot=True)
+    _wait_for_cluster_gone(rds, cluster_id)
+    ctx["rds_member_cluster"] = ""
+
+
+def _teardown_cluster_members(ctx: TestContext) -> None:
+    # Reverse creation order: the member owns a container, the cluster owns the
+    # member.
+    instance_id = ctx.get("rds_member_instance")
+    if instance_id:
+        try:
+            _rds(ctx).delete_db_instance(
+                DBInstanceIdentifier=instance_id, SkipFinalSnapshot=True
+            )
+        except Exception:
+            pass
+    cluster_id = ctx.get("rds_member_cluster")
+    if cluster_id:
+        try:
+            _rds(ctx).delete_db_cluster(
+                DBClusterIdentifier=cluster_id, SkipFinalSnapshot=True
+            )
+        except Exception:
+            pass
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -441,6 +635,12 @@ IMPLS = {
     "StopDBCluster": StopDBCluster,
     "StartDBCluster": StartDBCluster,
     "DeleteDBCluster": DeleteDBCluster,
+    "CreateClusterForMembers": CreateClusterForMembers,
+    "AddClusterMember": AddClusterMember,
+    "DescribeClusterMembers": DescribeClusterMembers,
+    "DescribeMemberInheritedSettings": DescribeMemberInheritedSettings,
+    "RemoveClusterMember": RemoveClusterMember,
+    "DeleteClusterAfterMembers": DeleteClusterAfterMembers,
 }
 
 SETUP = {}
@@ -449,6 +649,7 @@ TEARDOWN = {
     "rds-subnet-groups": lambda ctx: _teardown_subnet_group(ctx),
     "rds-parameter-groups": lambda ctx: _teardown_param_group(ctx),
     "rds-clusters": lambda ctx: _teardown_cluster(ctx),
+    "rds-cluster-members": lambda ctx: _teardown_cluster_members(ctx),
 }
 
 

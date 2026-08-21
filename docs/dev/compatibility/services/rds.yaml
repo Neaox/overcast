@@ -137,6 +137,23 @@ operations:
           connections on those planes drop across the rejoin, matching the interruption an AWS failover causes.
           Nothing detaches the outgoing writer: DeleteDBInstance has already stopped its container and queued it
           for removal.
+      - name: Cluster membership over the AWS SDKs and the CLI
+        status: fixed
+        tests: [rds-cluster-members/CreateClusterForMembers, rds-cluster-members/AddClusterMember, rds-cluster-members/DescribeClusterMembers, rds-cluster-members/DescribeMemberInheritedSettings, rds-cluster-members/RemoveClusterMember, rds-cluster-members/DeleteClusterAfterMembers]
+        evidence: >-
+          The rds-cluster-members compat group adds an instance to an Aurora cluster through five
+          unmodified AWS clients and asserts what only Go tests had checked: that DBClusterMembers lists
+          the member and records it as the writer, that the member inherits the cluster's MasterUsername
+          and EngineVersion despite sending neither, and that DeleteDBInstance prunes the membership
+          entry rather than leaving a member that no longer exists. Port is deliberately not asserted,
+          since Overcast answers with a dialable port that differs between a host and a sibling
+          container.
+        notes: >-
+          Kept apart from rds-clusters rather than added to it. A writer member changes what the cluster
+          endpoints mean — they can collapse onto one loopback address for a host caller, which is
+          deliberate and would break that group's "the two endpoints differ" assertion. A second group
+          declaring CreateDBCluster would also make the bare impl key ambiguous in every suite and abort
+          the run, hence the distinct test names carrying the real operation in the registry's op field.
   StopDBCluster:
     status: fixed
     scenarios:
@@ -169,12 +186,12 @@ findings:
     - CreateDBCluster and CreateDBInstance enforce the documented identifier shape, store identifiers lowercase, and reject a DBSubnetGroupName that does not exist; DBSubnetGroupNotFoundFault is a 404 as AWS documents.
     - Cluster BackupRetentionPeriod defaults to 1 and is held to the documented 1-35 on create and modify; Port is held to 1150-65535 on both.
     - CloudFormation no longer mints a physical ID containing two consecutive hyphens when truncation lands on a separator, which several services — RDS among them — refuse.
+    - Aurora cluster membership — DBClusterMembers, writer election, cluster-owned settings on a member, and pruning on DeleteDBInstance — is exercised by five unmodified AWS clients through the rds-cluster-members compat group.
   remaining_gaps:
     - DBClusterParameterGroupName and DBInstanceParameterGroupName are recorded without an existence check. AWS answers DBClusterParameterGroupNotFound (404) for a name that does not exist, which Overcast cannot do while it implements no cluster parameter group operations at all — CreateDBClusterParameterGroup would have to come first.
     - Instance-level BackupRetentionPeriod is not modelled, so CreateDBInstance's documented 0-35 range has nothing to validate and automated backups cannot be disabled per instance.
     - The remaining CreateDBInstance/CreateDBCluster optional parameters beyond identifier, port, retention and subnet group — AllocatedStorage, StorageType, EngineVersion, PreferredBackupWindow and PreferredMaintenanceWindow among them — are still accepted without range or format checks.
     - FailoverDBCluster is not implemented, so a promotion can only be triggered by deleting the writer, not asked for directly.
-    - The rds-clusters compat group covers clusters with no member instances. DBClusterMembers, and the interaction between cluster-owned settings and a member added by CreateDBInstance, are still only covered by Go tests.
   intentionally_partial:
     - The Aurora reader endpoint resolves to the writer rather than load-balancing across replicas, because members do not share storage.
     - Cluster endpoint hostnames drop AWS's account-specific hash, as every Overcast endpoint name does: AWS's cluster-{hash} and cluster-ro-{hash} reduce to cluster and cluster-ro. The hash is service-assigned and not derivable, so a name carrying one could not be registered as a Docker alias ahead of the first lookup.

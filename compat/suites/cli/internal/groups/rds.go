@@ -34,18 +34,27 @@ func RDS() ServiceGroup {
 			"StopDBCluster":             g.StopDBCluster,
 			"StartDBCluster":            g.StartDBCluster,
 			"DeleteDBCluster":           g.DeleteDBCluster,
+
+			"CreateClusterForMembers":         g.CreateClusterForMembers,
+			"AddClusterMember":                g.AddClusterMember,
+			"DescribeClusterMembers":          g.DescribeClusterMembers,
+			"DescribeMemberInheritedSettings": g.DescribeMemberInheritedSettings,
+			"RemoveClusterMember":             g.RemoveClusterMember,
+			"DeleteClusterAfterMembers":       g.DeleteClusterAfterMembers,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"rds-instances":        g.setupInstances,
 			"rds-subnet-groups":    g.setupNoop,
 			"rds-parameter-groups": g.setupNoop,
 			"rds-clusters":         g.setupNoop,
+			"rds-cluster-members":  g.setupNoop,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"rds-instances":        g.teardownInstances,
 			"rds-subnet-groups":    g.teardownSubnetGroups,
 			"rds-parameter-groups": g.teardownParameterGroups,
 			"rds-clusters":         g.teardownClusters,
+			"rds-cluster-members":  g.teardownClusterMembers,
 		},
 	}
 }
@@ -639,5 +648,244 @@ func (g *rdsCliGroup) DeleteDBCluster(_ context.Context, t *harness.TestContext)
 		return err
 	}
 	t.Set("cluster_id", "")
+	return nil
+}
+
+// ── rds-cluster-members ────────────────────────────────────────────────────
+//
+// An Aurora cluster with an instance in it. rds-clusters deliberately has none,
+// which leaves two things nothing outside the emulator's own Go tests looks at:
+// DBClusterMembers, and the settings a member is supposed to take from its
+// cluster rather than from its own request.
+//
+// Kept apart from rds-clusters rather than bolted onto it: a member changes
+// what the cluster endpoints mean — with a writer on record they can collapse
+// onto one loopback address for a host caller, which is deliberate and would
+// break that group's "the two endpoints differ" assertion — and a second group
+// declaring create-db-cluster would make the bare impl key for it ambiguous in
+// every suite, which aborts the run.
+
+const (
+	rdsMemberEngine   = "aurora-mysql"
+	rdsMemberUsername = "clusteradmin"
+	rdsMemberPassword = "Password1!"
+	rdsMemberClass    = "db.t3.micro"
+)
+
+func (g *rdsCliGroup) teardownClusterMembers(_ context.Context, t *harness.TestContext) error {
+	// Reverse creation order: the member owns a container, the cluster owns the
+	// member.
+	if id := t.GetString("member_instance"); id != "" {
+		awscli.Run(t.Endpoint, t.Region, "rds", "delete-db-instance", //nolint:errcheck
+			"--db-instance-identifier", id, "--skip-final-snapshot")
+	}
+	if id := t.GetString("member_cluster"); id != "" {
+		awscli.Run(t.Endpoint, t.Region, "rds", "delete-db-cluster", //nolint:errcheck
+			"--db-cluster-identifier", id, "--skip-final-snapshot")
+	}
+	return nil
+}
+
+func (g *rdsCliGroup) CreateClusterForMembers(_ context.Context, t *harness.TestContext) error {
+	clusterID := fmt.Sprintf("compat-members-%s", t.RunID)
+	t.Set("member_cluster", clusterID)
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "create-db-cluster",
+		"--db-cluster-identifier", clusterID,
+		"--engine", rdsMemberEngine,
+		"--master-username", rdsMemberUsername,
+		"--master-user-password", rdsMemberPassword,
+	)
+	if err != nil {
+		return err
+	}
+	cluster, _ := out["DBCluster"].(map[string]any)
+	if cluster == nil {
+		return fmt.Errorf("CreateClusterForMembers: missing DBCluster")
+	}
+	if arn, _ := cluster["DBClusterArn"].(string); arn == "" {
+		return fmt.Errorf("CreateClusterForMembers: missing DBClusterArn")
+	}
+	// The engine version the cluster settled on is what the member must
+	// inherit, so it is recorded here rather than assumed.
+	version, _ := cluster["EngineVersion"].(string)
+	t.Set("member_cluster_engine_version", version)
+	return nil
+}
+
+func (g *rdsCliGroup) AddClusterMember(_ context.Context, t *harness.TestContext) error {
+	clusterID := t.GetString("member_cluster")
+	if clusterID == "" {
+		return fmt.Errorf("AddClusterMember: no cluster from CreateClusterForMembers")
+	}
+	instanceID := fmt.Sprintf("compat-member-%s", t.RunID)
+	t.Set("member_instance", instanceID)
+	// No --master-username or --master-user-password: an Aurora member takes
+	// both from its cluster, and AWS documents them as not applying here.
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "create-db-instance",
+		"--db-instance-identifier", instanceID,
+		"--db-cluster-identifier", clusterID,
+		"--engine", rdsMemberEngine,
+		"--db-instance-class", rdsMemberClass,
+	)
+	if err != nil {
+		return err
+	}
+	db, _ := out["DBInstance"].(map[string]any)
+	if db == nil {
+		return fmt.Errorf("AddClusterMember: missing DBInstance")
+	}
+	if got, _ := db["DBInstanceIdentifier"].(string); got != instanceID {
+		return fmt.Errorf("AddClusterMember: DBInstanceIdentifier = %q, want %q", got, instanceID)
+	}
+	if got, _ := db["DBClusterIdentifier"].(string); got != clusterID {
+		return fmt.Errorf("AddClusterMember: DBClusterIdentifier = %q, want %q", got, clusterID)
+	}
+	return nil
+}
+
+// clusterMemberIdentifiers returns the DBInstanceIdentifier of every member
+// listed on the cluster, and whether the named one is recorded as the writer.
+func clusterMemberIdentifiers(cluster map[string]any, want string) (ids []string, isWriter bool) {
+	members, _ := cluster["DBClusterMembers"].([]any)
+	for _, entry := range members {
+		m, _ := entry.(map[string]any)
+		if m == nil {
+			continue
+		}
+		id, _ := m["DBInstanceIdentifier"].(string)
+		ids = append(ids, id)
+		if id == want {
+			isWriter, _ = m["IsClusterWriter"].(bool)
+		}
+	}
+	return ids, isWriter
+}
+
+func (g *rdsCliGroup) DescribeClusterMembers(_ context.Context, t *harness.TestContext) error {
+	clusterID := t.GetString("member_cluster")
+	instanceID := t.GetString("member_instance")
+	if clusterID == "" || instanceID == "" {
+		return fmt.Errorf("DescribeClusterMembers: no cluster or member from the earlier tests")
+	}
+	cluster, err := describeDBClusterByID(t, clusterID)
+	if err != nil {
+		return err
+	}
+	ids, isWriter := clusterMemberIdentifiers(cluster, instanceID)
+	if len(ids) == 0 {
+		return fmt.Errorf("DescribeClusterMembers: DBClusterMembers is empty after adding %s", instanceID)
+	}
+	found := false
+	for _, id := range ids {
+		if id == instanceID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("DescribeClusterMembers: %s is not among the listed members %v", instanceID, ids)
+	}
+	// The first member of a cluster is its writer. A membership recorded with
+	// no writer is the shape that leaves the cluster endpoints pointing at
+	// nothing.
+	if !isWriter {
+		return fmt.Errorf("DescribeClusterMembers: %s is listed but IsClusterWriter is false, and it is the only member", instanceID)
+	}
+	return nil
+}
+
+func (g *rdsCliGroup) DescribeMemberInheritedSettings(_ context.Context, t *harness.TestContext) error {
+	clusterID := t.GetString("member_cluster")
+	instanceID := t.GetString("member_instance")
+	if instanceID == "" {
+		return fmt.Errorf("DescribeMemberInheritedSettings: no member from AddClusterMember")
+	}
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "describe-db-instances",
+		"--db-instance-identifier", instanceID,
+	)
+	if err != nil {
+		return err
+	}
+	instances, _ := out["DBInstances"].([]any)
+	if len(instances) == 0 {
+		return fmt.Errorf("DescribeMemberInheritedSettings: no instance returned for %s", instanceID)
+	}
+	member, _ := instances[0].(map[string]any)
+	if member == nil {
+		return fmt.Errorf("DescribeMemberInheritedSettings: malformed DBInstances entry for %s", instanceID)
+	}
+
+	// The member never sent a master username; it must be the cluster's.
+	if got, _ := member["MasterUsername"].(string); got != rdsMemberUsername {
+		return fmt.Errorf("DescribeMemberInheritedSettings: MasterUsername = %q, want the cluster's %q",
+			got, rdsMemberUsername)
+	}
+	if got, _ := member["DBClusterIdentifier"].(string); got != clusterID {
+		return fmt.Errorf("DescribeMemberInheritedSettings: DBClusterIdentifier = %q, want %q", got, clusterID)
+	}
+	if want := t.GetString("member_cluster_engine_version"); want != "" {
+		if got, _ := member["EngineVersion"].(string); got != want {
+			return fmt.Errorf("DescribeMemberInheritedSettings: EngineVersion = %q, want the cluster's %q", got, want)
+		}
+	}
+	// Port is deliberately not asserted: Overcast answers with a port the
+	// caller can actually dial, which differs between a host and a sibling
+	// container, so any fixed expectation here would be wrong for one of them.
+	return nil
+}
+
+func (g *rdsCliGroup) RemoveClusterMember(_ context.Context, t *harness.TestContext) error {
+	clusterID := t.GetString("member_cluster")
+	instanceID := t.GetString("member_instance")
+	if clusterID == "" || instanceID == "" {
+		return fmt.Errorf("RemoveClusterMember: no cluster or member from the earlier tests")
+	}
+	if err := awscli.Run(t.Endpoint, t.Region, "rds", "delete-db-instance",
+		"--db-instance-identifier", instanceID, "--skip-final-snapshot"); err != nil {
+		return err
+	}
+
+	// Deleting the instance must take it out of the cluster too. It did not
+	// until recently: the record went and the membership entry stayed, so
+	// describe-db-clusters kept reporting a member that no longer existed.
+	deadline := time.Now().Add(rdsWaitBudget)
+	for {
+		cluster, err := describeDBClusterByID(t, clusterID)
+		if err != nil {
+			return err
+		}
+		ids, _ := clusterMemberIdentifiers(cluster, instanceID)
+		listed := false
+		for _, id := range ids {
+			if id == instanceID {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			t.Set("member_instance", "")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("DB instance %s was still listed in %s's DBClusterMembers %s after delete-db-instance",
+				instanceID, clusterID, rdsWaitBudget)
+		}
+		time.Sleep(rdsClusterPollInterval)
+	}
+}
+
+func (g *rdsCliGroup) DeleteClusterAfterMembers(_ context.Context, t *harness.TestContext) error {
+	clusterID := t.GetString("member_cluster")
+	if clusterID == "" {
+		return fmt.Errorf("DeleteClusterAfterMembers: no cluster from CreateClusterForMembers")
+	}
+	if err := awscli.Run(t.Endpoint, t.Region, "rds", "delete-db-cluster",
+		"--db-cluster-identifier", clusterID, "--skip-final-snapshot"); err != nil {
+		return err
+	}
+	if err := waitForDBClusterGone(t, clusterID); err != nil {
+		return err
+	}
+	t.Set("member_cluster", "")
 	return nil
 }
