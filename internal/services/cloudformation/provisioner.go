@@ -1463,7 +1463,10 @@ func (p *provisioner) rollbackCreate(
 // list, marking the stack UPDATE_ROLLBACK_COMPLETE when every resource is
 // restored. Four kinds of resource are handled:
 //
-//   - Resources created by this update (absent before it) are deleted.
+//   - Resources created by this update (absent before it) are deleted, unless
+//     the template marks them Retain and the operation did not ask for
+//     RetainExceptOnCreate — the same decision, over the same helper, that the
+//     create rollback makes.
 //   - Resources this update *replaced* are rolled back to the original: the
 //     replacement that was created is deleted, and the original — still alive,
 //     because replacement creates before deleting and defers the delete to the
@@ -1482,14 +1485,21 @@ func (p *provisioner) rollbackCreate(
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
 //
-// The operation's RetainExceptOnCreate is deliberately absent here, where the
-// create path threads it into createRollbackOptions. Deleting the resources
-// this update created is already unconditional — the first case above consults
-// no DeletionPolicy — so the flag would ask for what already happens. The
-// divergence it hides is the other way round: AWS retains a Retain-marked
-// resource a failed update created unless the flag is set, and Overcast deletes
-// it either way. Honouring Retain here is a change to what an update rollback
-// leaves behind, not to what this flag does, and belongs with that.
+// The retention in the first case reads stack.RetainExceptOnCreate directly
+// rather than taking options the way rollbackCreate does, because an update has
+// no equivalent of createRollbackOptions to thread it through. A retained
+// resource is dropped from the restored list along with the rest of the
+// attempted ones: it is orphaned, exactly as DELETE_SKIPPED means on the create
+// and delete paths, and the stack that reports UPDATE_ROLLBACK_COMPLETE is the
+// pre-update one.
+//
+// The second case stays unconditional, and DeletionPolicy is not the policy
+// that would speak to it. The original is alive and is what the stack rolls
+// back to, so keeping the replacement as well would leave two resources where
+// the template asks for one, the second under a name the restored stack does
+// not record — the orphan RetainExceptOnCreate exists to prevent, not one to
+// produce. UpdateReplacePolicy is the policy for a replacement, and
+// shouldRetainOnReplace already applies it to the original on the way forward.
 func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, previousGeneration stackGeneration, reason string) {
 	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusUpdateRollbackInProgress
@@ -1579,6 +1589,21 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			continue
 		}
 		if !r.existsServiceSide() {
+			continue
+		}
+		// A resource this update created is still a resource the template
+		// asked to keep, and the same operation flag opts it back out — the
+		// create path makes exactly this decision, over the same helper.
+		// Skipping it here also drops the record: the restore below rebuilds
+		// the list from `previous`, so the resource is orphaned rather than
+		// left in a stack that no longer provisions it, which is what
+		// DELETE_SKIPPED means everywhere else.
+		if r.shouldRetainOnCreateRollback(stack.RetainExceptOnCreate) {
+			log.Info("cfn: retaining resource on update rollback (DeletionPolicy=Retain)",
+				zap.String("type", r.Type),
+				zap.String("logicalId", r.LogicalID),
+				zap.String("physicalId", r.PhysicalID))
+			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteSkipped, "DeletionPolicy=Retain")
 			continue
 		}
 		handler, ok := p.resolveHandler(r.Type)
