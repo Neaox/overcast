@@ -7114,7 +7114,7 @@
           "operation": "CreatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Validates source/enrichment/target wiring up front; async state machine (CREATING→RUNNING)"
+          "notes": "Validates source/enrichment/target wiring up front, including a stream source's DeadLetterConfig destination; async state machine (CREATING→RUNNING)"
         },
         {
           "operation": "DescribePipe",
@@ -7126,7 +7126,7 @@
           "operation": "UpdatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)"
+          "notes": "Updates DesiredState, description, role and parameter blocks, re-validating wiring and DeadLetterConfig on a reconfiguring change (UPDATING→previous state)"
         },
         {
           "operation": "DeletePipe",

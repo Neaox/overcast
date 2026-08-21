@@ -117,7 +117,8 @@ const maxStreamDeliveryAttempts = 6
 func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[string]any) {
 	log := h.log.WithRecorder(ctx)
 
-	attempts := streamDeliveryAttempts(p)
+	sp := dynamoDBSourceParameters(p)
+	attempts := streamDeliveryAttempts(sp)
 	var rec deliveryRecord
 	var err error
 	// pending only ever shrinks, and only on a partial-batch report: a stream
@@ -146,7 +147,7 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 		rec.Error = err.Error()
 	}
 
-	dlq := streamDeadLetterARN(p)
+	dlq := streamDeadLetterARN(sp)
 	if dlq == "" {
 		log.Warn("pipes: stream batch dropped after retries — configure DeadLetterConfig to keep it",
 			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
@@ -168,25 +169,32 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 	h.recordDelivery(rec)
 }
 
-// streamSourceParameters returns the DynamoDB Streams parameter block, or nil
-// when the pipe configured none.
-//
-// Only the DynamoDB source consults it: a Kinesis source retries by leaving its
-// shard cursor where it was, so it never runs out of attempts and never reaches
-// a dead-letter queue.
-func streamSourceParameters(p *Pipe) *StreamSourceParameters {
+// dynamoDBSourceParameters returns the DynamoDB Streams parameter block, or
+// nil when the pipe configured none.
+func dynamoDBSourceParameters(p *Pipe) *StreamSourceParameters {
 	if p.SourceParameters == nil {
 		return nil
 	}
 	return p.SourceParameters.DynamoDBStreamParameters
 }
 
+// kinesisSourceParameters returns the Kinesis parameter block, or nil when the
+// pipe configured none. Shares StreamSourceParameters with the DynamoDB source
+// — same MaximumRetryAttempts/DeadLetterConfig shape, same AWS semantics —
+// which is what lets pollKinesis reuse streamDeliveryAttempts and
+// streamDeadLetterARN below rather than duplicating them.
+func kinesisSourceParameters(p *Pipe) *StreamSourceParameters {
+	if p.SourceParameters == nil {
+		return nil
+	}
+	return p.SourceParameters.KinesisStreamParameters
+}
+
 // streamDeliveryAttempts returns how many times a stream batch is delivered in
 // total: one, plus the source's MaximumRetryAttempts, capped at
-// maxStreamDeliveryAttempts. An unset value takes AWS's default of retrying;
-// an explicit 0 means one attempt and no more.
-func streamDeliveryAttempts(p *Pipe) int {
-	sp := streamSourceParameters(p)
+// maxStreamDeliveryAttempts. A nil parameter block or an unset value takes
+// AWS's default of retrying; an explicit 0 means one attempt and no more.
+func streamDeliveryAttempts(sp *StreamSourceParameters) int {
 	if sp == nil || sp.MaximumRetryAttempts == nil {
 		return maxStreamDeliveryAttempts
 	}
@@ -202,8 +210,7 @@ func streamDeliveryAttempts(p *Pipe) int {
 }
 
 // streamDeadLetterARN returns the source's dead-letter target, if any.
-func streamDeadLetterARN(p *Pipe) string {
-	sp := streamSourceParameters(p)
+func streamDeadLetterARN(sp *StreamSourceParameters) string {
 	if sp == nil || sp.DeadLetterConfig == nil {
 		return ""
 	}

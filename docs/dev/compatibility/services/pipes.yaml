@@ -2,7 +2,7 @@ service: pipes
 status: in_progress
 priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-03
+last_updated: 2026-08-22
 protocols: [rest_json]
 implementation: [internal/services/pipes]
 integration_tests: [tests/integration/pipes]
@@ -18,6 +18,7 @@ findings:
     - CreatePipe returns AWS's 200 with the six-member response body (#470).
     - Reconciled the stale service comment about UpdatePipe.
     - A Lambda target's batchItemFailures report is honoured for SQS, Kinesis and DynamoDB Streams sources (#512).
+    - A Kinesis source's MaximumRetryAttempts and DeadLetterConfig are honoured, matching the DynamoDB Streams behaviour #582 already shipped; a DeadLetterConfig naming a destination that is not an SQS queue or SNS topic is refused at CreatePipe/UpdatePipe time (#513).
   remaining_gaps:
     - FilterCriteria is rejected rather than evaluated; a pattern matcher would need the EventBridge one extracted.
     - MaximumBatchingWindowInSeconds and ParallelizationFactor are not emulated.

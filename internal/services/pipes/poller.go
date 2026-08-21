@@ -22,10 +22,13 @@ package pipes
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/eventtarget"
 )
 
 // pollInterval is how often each polled source is read. Real EventBridge polls
@@ -71,6 +74,50 @@ func (c *cursors) forget(live map[string]bool) {
 	for key := range c.pos {
 		if !live[cursorPipe(key)] {
 			delete(c.pos, key)
+		}
+	}
+}
+
+// attemptCounts tracks how many consecutive delivery failures a Kinesis
+// shard's current batch has seen.
+//
+// A Kinesis source has no inline retry loop the way executeStream gives a
+// stream-bus source: each attempt is one poll tick apart, because the cursor
+// is left where it was so the same batch is re-read next time. That means the
+// attempt count has to survive between ticks, keyed the same way a shard's
+// cursor is — reusing cursorKey/cursorPipe rather than inventing a second
+// keying scheme.
+type attemptCounts struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func newAttemptCounts() *attemptCounts { return &attemptCounts{n: make(map[string]int)} }
+
+// increment records one more failed attempt at key and returns the new total.
+func (a *attemptCounts) increment(key string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.n[key]++
+	return a.n[key]
+}
+
+// reset clears key's count, called once a batch is no longer pending — it was
+// delivered, dead-lettered, or dropped.
+func (a *attemptCounts) reset(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.n, key)
+}
+
+// forget drops the counts of pipes that no longer exist, mirroring
+// cursors.forget.
+func (a *attemptCounts) forget(live map[string]bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for key := range a.n {
+		if !live[cursorPipe(key)] {
+			delete(a.n, key)
 		}
 	}
 }
@@ -156,6 +203,7 @@ func (h *Handler) pollSources() {
 		}
 	}
 	h.cursors.forget(live)
+	h.kinesisAttempts.forget(live)
 }
 
 // pollKinesis reads one batch from every shard of a Kinesis source.
@@ -203,9 +251,14 @@ func (h *Handler) pollKinesis(ctx context.Context, p *Pipe, region string) {
 		failures, err := h.execute(ctx, p, batch)
 		if err != nil || failures.retryAll {
 			// Leave the cursor where it was so the batch is retried, matching
-			// a stream consumer that does not checkpoint a failed batch.
+			// a stream consumer that does not checkpoint a failed batch — until
+			// the source's MaximumRetryAttempts is exhausted, at which point
+			// the batch is dead-lettered and the cursor advances past it
+			// rather than retrying forever.
+			h.kinesisRetryOrDeadLetter(ctx, p, key, batch, next, err, failures.retryAll)
 			continue
 		}
+		h.kinesisAttempts.reset(key)
 		if failures.reported {
 			// A partial-batch report checkpoints the shard just before the
 			// earliest record the target named, so the retry resumes there.
@@ -218,6 +271,71 @@ func (h *Handler) pollKinesis(ctx context.Context, p *Pipe, region string) {
 		}
 		h.cursors.set(key, next)
 	}
+}
+
+// kinesisRetryOrDeadLetter counts one more failed attempt at a shard's current
+// batch and, once the source's MaximumRetryAttempts is exhausted, dead-letters
+// the batch and advances the cursor past it rather than retrying forever.
+//
+// Until issue #513, a Kinesis source's MaximumRetryAttempts and
+// DeadLetterConfig were accepted and echoed but never read: a batch that never
+// succeeds was retried on every poll tick, indefinitely, and had nowhere else
+// to go. This gives Kinesis the same retry-then-dead-letter contract
+// executeStream already gives a DynamoDB Streams source (issue #582) — the
+// same StreamSourceParameters shape, the same maxStreamDeliveryAttempts
+// ceiling — adapted to a cursor-based source where one attempt is one poll
+// tick apart rather than an inline loop, so the count has to be kept between
+// calls instead of in a local variable.
+func (h *Handler) kinesisRetryOrDeadLetter(ctx context.Context, p *Pipe, key string, batch []map[string]any, next string, deliverErr error, retryAllReported bool) {
+	log := h.log.WithRecorder(ctx)
+	sp := kinesisSourceParameters(p)
+	attempts := h.kinesisAttempts.increment(key)
+	if attempts < streamDeliveryAttempts(sp) {
+		return // leave the cursor; the next poll tick retries
+	}
+
+	rec := deliveryRecord{
+		Region:     regionOrDefault(regionFromARN(p.SourceArn), h.store.region(ctx)),
+		Pipe:       p.Name,
+		SourceARN:  p.SourceArn,
+		TargetARN:  p.TargetArn,
+		TargetType: eventtarget.DisplayName(targetKindOf(p)),
+		Records:    len(batch),
+		Attempts:   attempts,
+		Outcome:    outcomeFailed,
+	}
+	switch {
+	case deliverErr != nil:
+		rec.Error = deliverErr.Error()
+	case retryAllReported:
+		rec.Error = "the target's partial-batch failure report could not be honoured"
+	}
+
+	dlq := streamDeadLetterARN(sp)
+	switch {
+	case dlq == "":
+		log.Warn("pipes: kinesis batch dropped after retries — configure DeadLetterConfig to keep it",
+			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+			zap.Int("attempts", attempts), zap.Error(deliverErr))
+	default:
+		if dlqErr := h.deadLetter(ctx, dlq, batch); dlqErr != nil {
+			rec.Error = fmt.Sprintf("%s; dead-letter delivery also failed: %v", rec.Error, dlqErr)
+			log.Warn("pipes: dead-letter delivery failed",
+				zap.String("pipe", p.Name), zap.String("dlq", dlq), zap.Error(dlqErr))
+		} else {
+			rec.Outcome = outcomeDLQ
+			log.Warn("pipes: kinesis batch dead-lettered",
+				zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+				zap.String("dlq", dlq), zap.Int("attempts", attempts))
+		}
+	}
+	h.recordDelivery(rec)
+	// The poison batch is done with either way: dead-lettered, or reported as
+	// failed with nowhere to go. Advancing past it is what keeps the shard
+	// from being blocked on it forever, the same trade AWS documents for its
+	// own stream sources once retries are exhausted.
+	h.cursors.set(key, next)
+	h.kinesisAttempts.reset(key)
 }
 
 // shardTip returns the sequence number of the last record currently on a shard,

@@ -9,7 +9,7 @@ func init() {
 		// Pipes
 		capabilities.Capability{
 			Service: "pipes", Operation: "CreatePipe", Category: "Pipes",
-			Status: capabilities.StatusSupported, Notes: "Validates source/enrichment/target wiring up front; async state machine (CREATING→RUNNING)",
+			Status: capabilities.StatusSupported, Notes: "Validates source/enrichment/target wiring up front, including a stream source's DeadLetterConfig destination; async state machine (CREATING→RUNNING)",
 		},
 		capabilities.Capability{
 			Service: "pipes", Operation: "DescribePipe", Category: "Pipes",
@@ -17,7 +17,7 @@ func init() {
 		},
 		capabilities.Capability{
 			Service: "pipes", Operation: "UpdatePipe", Category: "Pipes",
-			Status: capabilities.StatusSupported, Notes: "Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)",
+			Status: capabilities.StatusSupported, Notes: "Updates DesiredState, description, role and parameter blocks, re-validating wiring and DeadLetterConfig on a reconfiguring change (UPDATING→previous state)",
 		},
 		capabilities.Capability{
 			Service: "pipes", Operation: "DeletePipe", Category: "Pipes",
