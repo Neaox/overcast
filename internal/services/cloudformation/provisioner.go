@@ -2509,11 +2509,12 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 
 // errDeletionBlocked is returned by a Delete implementation when the resource
 // itself refuses to be deleted: a non-empty S3 bucket, an RDS cluster with
-// DeletionProtection enabled, an IAM entity IAM answers DeleteConflict for, or
-// a nested stack whose own teardown failed. The provisioner reacts by failing
-// the stack operation instead of reporting a deletion that did not happen,
-// which is what AWS does: the delete fails, the resource survives, and the
-// operator clears the block and tries again.
+// DeletionProtection enabled, an IAM entity IAM answers DeleteConflict for, an
+// EC2 entity EC2 answers DependencyViolation for, or a nested stack whose own
+// teardown failed. The provisioner reacts by failing the stack operation
+// instead of reporting a deletion that did not happen, which is what AWS
+// does: the delete fails, the resource survives, and the operator clears the
+// block and tries again.
 //
 // It no longer decides whether a teardown stops — every error does that now,
 // because every one of them means the resource is still standing. What it
@@ -2523,8 +2524,6 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 // error text, which becomes the resource's DELETE_FAILED status reason, and a
 // nested stack carries its child's reason out under the same sentinel so the
 // parent's event says what the child refused over.
-//
-// TODO(priority:P2): route EC2's DependencyViolation through this sentinel too — AWS::EC2::SecurityGroup, Subnet, VPC and InternetGateway all refuse deletion while dependents remain, and their handlers report that refusal as an ordinary failure rather than as the standing condition it is.
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
@@ -2945,11 +2944,39 @@ func statusError(rec *httptest.ResponseRecorder) error {
 // The two that do not are correct as they are: the custom resource's delete is
 // a Lambda invoke with no response to classify, and the S3 bucket's non-empty
 // refusal is an errDeletionBlocked the stack has to see.
+//
+// EC2's own refusal answers here too: DeleteInternetGateway, the main-table
+// case of DeleteRouteTable, and DeleteVpnGateway all reject a delete with
+// DependencyViolation while something is still attached, and every EC2
+// handler's Delete dispatches through this same function — so wrapping that
+// one code in errDeletionBlocked here reaches every one of them at once
+// rather than needing a per-handler classifier the way IAM's DeleteConflict
+// does. AWS::EC2::VPC, Subnet, and SecurityGroup delete without any
+// dependency check at all in this emulator today, so they cannot yet answer
+// DependencyViolation; when that check is added, it will classify correctly
+// through this same path with no further change here.
 func teardownError(op string, rec *httptest.ResponseRecorder, err error) error {
 	if err == nil || resourceAlreadyGone(rec) {
 		return nil
 	}
+	if ec2DependencyViolation(rec) {
+		return fmt.Errorf("%w: %s: %v", errDeletionBlocked, op, err)
+	}
 	return fmt.Errorf("%s: %w", op, err)
+}
+
+// ec2DependencyViolation reports whether a failed dispatch is EC2 answering
+// DependencyViolation — the code EC2 uses across its resource types for "a
+// dependent still exists," the same standing condition IAM's DeleteConflict
+// and RDS's DeletionProtection describe for their own services. It scans the
+// body rather than checking the HTTP status because EC2 answers
+// DependencyViolation with a plain 400, the status code it also uses for
+// every other validation failure a Query-protocol delete can hit.
+func ec2DependencyViolation(rec *httptest.ResponseRecorder) bool {
+	if rec == nil {
+		return false
+	}
+	return strings.Contains(lettersLower(rec.Body.String()), "dependencyviolation")
 }
 
 // resourceAlreadyGone reports whether a failed dispatch failed only because the
