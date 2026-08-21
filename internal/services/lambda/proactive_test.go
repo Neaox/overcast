@@ -220,3 +220,97 @@ func TestProactiveInit_skipsCoveredAndThrottledFunctions(t *testing.T) {
 		t.Fatalf("ProactiveInit(throttled) = %v, want proactiveUnavailable", got)
 	}
 }
+
+// blockingProactiveRuntime blocks AcquireProactive until release is closed, so
+// a test can land DeleteFunction's eviction while the environment is still
+// being created — the window #460 is about. The container's ID is not on any
+// record yet, so a delete has nothing of its own to stop; only the goroutine's
+// own Release call, once AcquireProactive finally returns, ever learns whether
+// the function is still there.
+type blockingProactiveRuntime struct {
+	proactiveTestRuntime
+	startOnce sync.Once
+	started   chan struct{}
+	release   chan struct{}
+
+	mu   sync.Mutex
+	inst *poolTestInstance
+}
+
+func newBlockingProactiveRuntime() *blockingProactiveRuntime {
+	return &blockingProactiveRuntime{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (r *blockingProactiveRuntime) AcquireProactive(_ context.Context, fn *Function) (RuntimeInstance, error) {
+	r.startOnce.Do(func() { close(r.started) })
+	<-r.release
+	inst := newPoolTestInstance(fn.Name)
+	inst.configIdentity = functionInstanceIdentity(fn)
+	r.mu.Lock()
+	r.inst = inst
+	r.mu.Unlock()
+	return inst, nil
+}
+
+func (r *blockingProactiveRuntime) instance() *poolTestInstance {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inst
+}
+
+// TestProactiveInit_deletedMidStartDoesNotLeakContainer covers the third
+// instance of the delete-mid-start race (#460), for the site the two prior
+// fixes (RDS #412, ElastiCache #459) don't reach: an execution environment
+// ProactiveInit is still creating in the background when DeleteFunction runs.
+// EvictFunction can only close what is already in the warm set, and the new
+// container's ID reaches nothing else until the goroutine's own Release call —
+// see InstancePool.Release's `p.evicted[name]` check, the same guard an
+// in-flight invocation's release relies on
+// (TestInstancePoolRelease_afterEvictionDoesNotPoolForADeletedFunction).
+func TestProactiveInit_deletedMidStartDoesNotLeakContainer(t *testing.T) {
+	// Given: a function whose proactive environment is still being created —
+	// blocked mid-flight, the way a slow image pull or container start would
+	// hold it open on a real daemon.
+	rt := newBlockingProactiveRuntime()
+	pool := NewInstancePool(rt, zap.NewNop(), clock.NewMock(), PoolLimits{})
+	defer pool.Stop()
+	fn := &Function{Name: "proactive-delete-race", State: "Active"}
+
+	if got := pool.ProactiveInit(fn); got != proactiveStarted {
+		t.Fatalf("ProactiveInit = %v, want proactiveStarted", got)
+	}
+	select {
+	case <-rt.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("AcquireProactive was never called")
+	}
+
+	// When: DeleteFunction evicts the function while the container is still
+	// starting — exactly what EvictFunction does, before the goroutine's own
+	// Release call ever runs.
+	pool.EvictFunction(fn.Name)
+	close(rt.release)
+
+	// Then: Release — the one point that learns the container came up — sees
+	// the function already evicted and destroys the instance instead of
+	// pooling it. Nothing else was ever going to reclaim it: it holds no
+	// entry, no checked-out slot mapping back to a live task, nothing a sweep
+	// would ever find.
+	pool.warmWG.Wait()
+	inst := rt.instance()
+	if inst == nil {
+		t.Fatal("AcquireProactive never returned an instance")
+	}
+	if got := inst.CloseCalls(); got != 1 {
+		t.Fatalf("close calls = %d, want 1 — the container was pooled for a deleted function", got)
+	}
+	pool.mu.Lock()
+	warm := len(pool.entries[fn.Name])
+	pool.mu.Unlock()
+	if warm != 0 {
+		t.Fatalf("warm instances for %s = %d, want 0 — the container was pooled after the function was deleted", fn.Name, warm)
+	}
+}
