@@ -6,7 +6,8 @@ description: Every URL Overcast hands a caller must be dialable by that caller. 
 # Client-facing URL minting — one rule, tested against every service
 
 **Status:** implemented (alpha.26) · **Supersedes:** the open finding in
-`client-base-url-port-vs-stability.md`
+`client-base-url-port-vs-stability.md` (that plan recorded the initial,
+incorrect port-vs-stability framing and was deleted 2026-08-21 once superseded)
 **Related:** #318 (SQS per-caller), #331 (published port), #351/#353 (CFN output origins),
 #378 (host-routed grammar), the alpha.26 Cognito issuer fix.
 

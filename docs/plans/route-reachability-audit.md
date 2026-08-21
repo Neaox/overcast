@@ -1,6 +1,17 @@
 # AWS Route Reachability Audit
 
 > Status: audit complete against `main` at `41778729` (post `v0.0.1-alpha.33`). Seven issues filed. The reproducible check lives at `scripts/route-reachability.go`; re-run it rather than re-deriving this table.
+>
+> **Update, verified 2026-08-21: every finding is fixed.** All seven filed
+> issues (#854–#860) are closed, as are #815 and #862 — every Category-A
+> service now serves its modeled bindings, and the fallout ledger that tracked
+> them (`internal/router/modelbinding_ledger_dev_test.go`) is empty. The
+> model-vs-route gate proposed under "What would stop this recurring" has
+> landed: see [manifest-enforcement.md](./manifest-enforcement.md) (PR #876,
+> plus the path-namespace gate in #921), so this fault class now fails before
+> merge. AGENTS.md's "router coverage" wording (supporting note below) was
+> corrected in the same change. The results tables are kept as the record of
+> the audit; the script remains the release-time re-check.
 
 ## Why this audit happened
 
@@ -134,9 +145,9 @@ Recorded so the next auditor does not re-find them.
 | `elasticache` | `DescribeCacheEngineVersions`, `RebootCacheCluster` | **Routing is correct.** `OwnsVersion` claims the Query API version, `DispatchQuery` has explicit `case` arms for both, and they reach `internal/services/elasticache/handler_stubs.go`, whose entire contents are `protocol.NotImplementedQueryXML(w, r)` under `// TODO(priority:P3)` comments. The request reaches the handler; the handler declines. Not a routing fault, so no route issue was filed. |
 | `waf`, `shield`, `organizations` | all declared | `TierStub` services whose declared operations all probe reachable. Behaving as designed. |
 
-One caveat on ElastiCache worth carrying forward: both stubs are declared `StatusSupported` in `capabilities_dev.go`, so `docs/services/elasticache.md` advertises ✅ Supported for two operations that always 501. That is a capability-declaration defect, not a routing one — a different fault class from this audit, deliberately not filed here to avoid padding, but it should be corrected to `StatusUnsupported`.
+One caveat on ElastiCache worth carrying forward: both stubs were declared `StatusSupported` in `capabilities_dev.go`, so `docs/services/elasticache.md` advertised ✅ Supported for two operations that always 501. That was a capability-declaration defect, not a routing one — a different fault class from this audit, deliberately not filed here to avoid padding. **Since fixed**: both rows now read `StatusUnsupported` ("stub; returns 501").
 
-Similarly, three EKS capability rows (`DescribeAccessPolicy`, `UpdateIdentityProviderConfig`, `UpdateKubeconfig`) are declared `StatusSupported` while naming operations AWS does not model at all. They carry documented exemptions in `cmd/capgen/main.go:301-303`; the exemptions are honest, the `StatusSupported` claim on top of them is not. Noted inside #858.
+Similarly, three EKS capability rows (`DescribeAccessPolicy`, `UpdateIdentityProviderConfig`, `UpdateKubeconfig`) were declared `StatusSupported` while naming operations AWS does not model at all. Noted inside #858 and **since resolved with it**: the first two rows are gone, and `UpdateKubeconfig` survives honestly labelled as an emulator extension with its capgen exemption.
 
 ### Category C — reachable
 

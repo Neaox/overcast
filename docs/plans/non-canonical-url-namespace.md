@@ -759,7 +759,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **3** | ✅ **Done.** `/_debug/*` → `/_overcast/debug/*` (23 routes, pprof included); `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | ✅ **Done.** Service admin: `/_lambda/{instances,runtimes,layers}`, `/_ecs/*`, `/_rds/*`, EKS's `kubeconfig`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. **The four console-only Lambda endpoints did not move — see §4.5.** | Console-only consumers. |
 | **5** | ✅ **Done.** Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`, plus `/@connections`. Rewrite sites, `docs/networking.md`. | Host-addressed URLs are unaffected — see §4.6. |
-| **6** | ✅ **Done, except the Cognito decision.** The four console-only Lambda endpoints moved, with `shouldBypassIAM` narrowed so an internal path that names an operation stays authorized; the redundant CloudFront singular alias deleted; `InternalPrefix` moved to `middleware` and `notready.go` narrowed to it. Ratchet down to two entries, both Cognito. | The payoff, minus the one item that turned out to be a token-compatibility question (§4.7). |
+| **6** | ✅ **Done.** The four console-only Lambda endpoints moved, with `shouldBypassIAM` narrowed so an internal path that names an operation stays authorized; the redundant CloudFront singular alias deleted; `InternalPrefix` moved to `middleware` and `notready.go` narrowed to it. The Cognito token-compatibility question (§4.7) was then resolved in §4.9 — issuer `{base}/{poolId}`, AWS-shaped discovery route served, region-prefixed form deleted — which emptied the ratchet. | The payoff. |
 
 Phase 1 is the one that must land; 2–6 are then individually revertible.
 

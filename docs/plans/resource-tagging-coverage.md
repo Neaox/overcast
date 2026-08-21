@@ -5,6 +5,26 @@
 > remaining Axis B and Axis C sets are listed under
 > [What remains](#what-remains).
 >
+> Re-verified 2026-08-21 — movement since the audit:
+> - **`logs` Axis A is mostly closed**: `TagLogGroup` / `UntagLogGroup` /
+>   `ListTagsLogGroup` shipped (the #794 fence is long lifted); the modern
+>   `TagResource` / `UntagResource` / `ListTagsForResource` spelling is still
+>   absent from `cloudwatch-logs`.
+> - **`backup` is still open on both axes**: #815/#904 rebound the service to
+>   its modeled REST paths, but the capability notes still read
+>   "`BackupVaultTags` is accepted and dropped — Backup has no tag operations
+>   yet".
+> - **Two Axis B rows have since closed**: `opensearch` `CreateDomain` (inline
+>   `TagList` applied at creation, per its #893 rebind) and `appconfig`
+>   creates (tags applied inline since the #899 rewrite). The remaining Axis B
+>   rows below were spot-checked (kms, rds, elasticache, stepfunctions, ssm,
+>   ecs, eventbridge…) and are still open, but re-verify a row against the
+>   handler before acting on it.
+> - EC2's duplicate `TagSpecification.N` parsers were unified by #1033 (per the
+>   tagging architecture review, closed with every finding fixed and its plan
+>   doc deleted 2026-08-21); the create operations outside RunInstances/NAT/VPN
+>   gateways still ignore the member.
+>
 > Goal: **every resource at service tier `inert` or above that is taggable in real
 > AWS must be taggable in Overcast.**
 

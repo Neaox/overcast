@@ -459,12 +459,12 @@ If both are available, the recommended order is:
 Workspace server:
 
 - `cmd/overcast-mcp/main.go`
-- `internal/mcp/repo_provider.go`
+- `internal/mcp/providers/repo_provider.go`
 
 Runtime server:
 
 - `internal/router/mcp_routes.go`
-- `internal/mcp/runtime_provider.go`
+- `internal/mcp/providers/runtime_provider.go`
 
 Shared core:
 

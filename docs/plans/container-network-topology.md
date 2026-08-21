@@ -45,9 +45,13 @@
 > [container-networking.md](../dev/container-networking.md) (the mechanism),
 > [ec2.md § VPC networking strategies](../services/ec2.md) (per-VPC networks).
 >
-> Note: `internal/services/ec2/vpc_strategy.go:25` and `docs/services/ec2.md:174`
-> both cite `docs/plans/ec2-vpc-network-strategies.md`. That file exists on no
-> branch, local or remote — the link is dangling, not unmerged.
+> Note: `internal/services/ec2/vpc_strategy.go` (×2), `docs/services/ec2.md`
+> (×2) and `tests/helpers/server.go` cite
+> `docs/plans/ec2-vpc-network-strategies.md`. That file exists at no branch tip,
+> local or remote — the link is dangling, not unmerged. It did exist once: it
+> was deleted by commit `69db0889` ("wip", on
+> `backup/wip-before-squash-20260519-091947`), so the content is recoverable
+> from `69db0889^` if the citations ever need a real target.
 
 ## 1. The question
 

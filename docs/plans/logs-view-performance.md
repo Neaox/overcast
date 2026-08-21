@@ -1,6 +1,11 @@
 # Logs views — performance at thousands of lines
 
-> Status: investigation complete (2026-08-18), no code changed. Scope is the four surfaces that
+> Status: implementation essentially complete (2026-08-21). The 2026-08-18 investigation below
+> was followed by the work itself: Phases 1–5, §3b–§3g and the storage-side fixes all landed by
+> 2026-08-20 (kernel extraction #1061/#1063, scroll-settle hydration #1067, Custom Highlight
+> ranges #1070/#1072, Format memoisation #1071, worker-client kernel #1073, S3 preview adoption
+> #1074). Still open: Phase 0's formal benchmark baseline, the collapse-by-default product call
+> (§2c), and "filter for selection" (§3d QOL). Scope is the four surfaces that
 > render CloudWatch log events: the stream/all-streams viewer
 > (`web/src/features/cloudwatch/logs/components/log-events-viewer.tsx`), the map's log peek
 > (`web/src/features/map/log-stream-peek.tsx`), the generic `LogViewer`

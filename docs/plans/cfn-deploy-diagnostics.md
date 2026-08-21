@@ -1,9 +1,12 @@
 # Deploy diagnostics — keeping the answer after rollback deletes the evidence
 
-> **Status:** in progress. Phase 0 (contract + failing tests), phase 1 (journal + capture),
-> phase 2 (ECS collector) and phase 3 (endpoints) complete on `claude/cfn-diag-backend`; the
-> console tab is on `claude/cfn-diag-web`.
-> Stacked on [#993](https://github.com/Neaox/overcast/pull/993), which this depends on.
+> **Status:** shipped (2026-08-15). All phases — contract + failing tests, journal + capture,
+> ECS collector, endpoints, the console Diagnostics tab, and docs — merged to `main` in
+> [#1005](https://github.com/Neaox/overcast/pull/1005).
+> [#993](https://github.com/Neaox/overcast/pull/993) (merged 2026-08-15) and the ECS
+> log-retention hardening ([#997](https://github.com/Neaox/overcast/pull/997), merged
+> 2026-08-15) landed with it. Remaining: the two open questions at the end
+> (crash-loop capture race, `DeleteCluster` orphaning).
 > **Scope:** `internal/services/cloudformation/`, `internal/services/ecs/`, `internal/bff/`,
 > `web/src/features/cloudformation/`.
 > **Audience:** any contributor or agent. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) and
@@ -76,7 +79,8 @@ snapshots the genuinely volatile parts (the task records, which die at one hour)
 re-capturing what is already retained.
 
 These ECS-side defects are separable from the diagnostics feature and independently worth fixing, so
-they ship as their own change on `claude/ecs-log-retention-hardening` and this plan depends on it.
+they shipped as their own change — [#997](https://github.com/Neaox/overcast/pull/997), merged
+2026-08-15 — which this plan depended on.
 
 ## This is not a new fidelity exception
 
@@ -422,18 +426,20 @@ oversight — `environment` and `secrets` live there.
 upstream status through untranslated — the 404 especially, since the console keys the tab's
 existence on it.
 
-### P4 — console
+### P4 — console — **done**
 
-The Diagnostics tab. Appears only when the endpoint returns a journal. Order: headline, then per
+The Diagnostics tab
+([stack-diagnostics.tsx](../../web/src/features/cloudformation/components/stack-diagnostics.tsx)). Appears only when the endpoint returns a journal. Order: headline, then per
 resource its sections, then the counterfactual. Not in the Events tab. The existing failure banner in
 [stack-detail.tsx](../../web/src/features/cloudformation/components/stack-detail.tsx) gains a second
 action next to "View events" — *"Why did this fail?"* — since that banner is already the console's
 best failure affordance.
 
-### P5 — documentation and reach
+### P5 — documentation and reach — **done**
 
 `docs/services/cloudformation.md`'s notes and a changelog fragment are done. `docs/services/ecs.md`
-belongs with the ECS hardening change on `claude/ecs-log-retention-hardening`, which owns that file.
+shipped with the ECS hardening change ([#997](https://github.com/Neaox/overcast/pull/997)), which
+owned that file.
 The collector interface is documented at `diagnosticCollector`, with Lambda and RDS named as the
 obvious next two and the note that both fit the existing three section kinds.
 

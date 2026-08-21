@@ -2,7 +2,9 @@
 
 > Status: enforcement, CI surfacing, flake pipeline, and the framework audit landed.
 > The burn-down is finished — **zero grandfathered failures**, and CI now asserts
-> that absolutely. The dotnet/rust parity backfill is outstanding.
+> that absolutely. Outstanding as of 2026-08-21: the parity backfill (now across
+> all six SDK suites — the registry has grown since the dotnet/rust-only
+> snapshot) and the dashboard QOL items, which remain not started.
 >
 > The policy this plan implements is documented for contributors in
 > [compat/AGENTS.md § Baseline & uniformity policy](../../compat/AGENTS.md#baseline--uniformity-policy).
@@ -77,11 +79,10 @@ Three things were undermining the compat suites:
   ID**, not App ID (`app-id` is deprecated as of the action's v3), stored in
   secrets beside the key like `RELEASE_APP_CLIENT_ID`.
 
-  **Not yet exercised.** The flow has never run end to end — it only fires on a
-  push to `main` whose results improve on the baseline, and the baseline is
-  currently level with reality. The first genuine improvement is also the first
-  live test; if it strands again, the run's `Publish promotion PR` step is
-  where the evidence will be.
+  **Exercised.** The flow ran end to end on 2026-08-03: PR #491
+  (`chore(compat): promote baseline improvements`) was opened from
+  `automation/baseline-promotion` by the `overcast-compat` App and auto-merged
+  through the required checks. The promotion pipeline is live.
 
 ## What turning Docker on changed
 
@@ -331,20 +332,27 @@ emulator or suite bug.
 
 ## Outstanding — parity backfill to zero
 
-558 registry tests of debt across 112 groups
-([compat/parity-debt.json](../../compat/parity-debt.json)):
+As of 2026-08-21: **2,002 registry tests of debt across 317 groups**
+([compat/parity-debt.json](../../compat/parity-debt.json)). The debt has grown
+since the original snapshot (558 tests / 112 groups) because the registry
+itself grew — a run of cli-first coverage PRs (#973–#978, #996, #1001, #1082:
+AppConfig, AppConfigData, OpenSearch, Backup, ECR, MSK, EKS, rds-clusters, …)
+added groups the SDK suites have not implemented yet:
 
-| Suite | Debt | Shape |
-| --- | --- | --- |
-| rust-sdk | 297 | Missing iam (35) plus most non-core services |
-| dotnet-sdk | 261 | Missing most non-core services |
+| Suite | Debt (tests) | Groups |
+| --- | --: | --: |
+| rust-sdk | 567 | 97 |
+| dotnet-sdk | 527 | 92 |
+| go-sdk | 227 | 32 |
+| java-sdk | 227 | 32 |
+| node-js-sdk | 227 | 32 |
+| python-sdk | 227 | 32 |
 
-go-sdk, java-sdk, python-sdk and cli reached **zero debt** in #344.
+cli remains at **zero debt** (go/java/python/cli originally reached zero in
+#344; the four SDK suites re-accrued debt as the registry expanded).
 
-Order: dotnet-sdk and rust-sdk one service per PR:
-sts, logs, ses, kinesis, eventbridge, cloudformation, ec2, ecs, cognito, rds,
-sfn, waf, shield, apigateway, elasticache, cloudfront (47), appsync (50); rust
-additionally iam (35). Both harnesses are registry-driven `TestName → impl`
+Order: dotnet-sdk and rust-sdk one service per PR, then the newer groups across
+the remaining SDK suites. Both harnesses are registry-driven `TestName → impl`
 maps, so each PR is client wiring plus one function per test, with `na` where
 the SDK genuinely lacks the API. Each PR deletes its debt entries — the checker
 fails if it doesn't.

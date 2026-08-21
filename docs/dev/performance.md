@@ -307,8 +307,9 @@ of the same binary inside the container: 10 ms), while this phase
 reported 0.57–2.52 s depending on container setup and cache warmth. On
 native binaries the phase instead includes the OS loader and antivirus
 scanning of the exe. If this phase is large, look at the environment,
-not at Go code. Fix planned in
-[docs/plans/startup-metrics-honesty.md](../plans/startup-metrics-honesty.md).
+not at Go code. Fixed in #252: the startup profile now reports the
+pre-`main` window separately (`pre_init_ms`) and labels it as an
+environment phase rather than attributing it to Go init.
 
 A common smell: the foreground total is small but a service's first
 real request is slow because its `sync.Once` `init()` is doing the work

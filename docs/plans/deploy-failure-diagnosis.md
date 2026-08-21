@@ -1,7 +1,10 @@
 # Deploy failure diagnosis — telling the truth, and telling it unprompted
 
-> **Status:** proposed. Nothing here is built except where marked ✅, which
-> refers to work on the stacked branches listed under [Prior art](#prior-art).
+> **Status:** proposed; prior art all merged (as of 2026-08-21). Everything marked ✅
+> is now in `main` — see [Prior art](#prior-art) — and W4's first instance, the
+> region preflight check, shipped in [#1004](https://github.com/Neaox/overcast/pull/1004)
+> (`internal/router/preflight_region.go`). Still open: the W1 audit beyond ECS, W2's
+> verdict + log line + `overcast explain`, and W3 (the correlation key).
 > **Scope:** `internal/services/*` (the create/update success paths),
 > `internal/trace/`, `internal/events/`, `internal/bff/`, `cmd/overcast`,
 > `web/src/features/`.
@@ -222,6 +225,10 @@ both sides of that and say so:
 The check should fire **when a symptom matches**, not as a wall of startup
 output nobody reads.
 
+The region check shipped ✅ ([#1004](https://github.com/Neaox/overcast/pull/1004),
+`internal/router/preflight_region.go` + the console's empty-list advisory); the
+other known instances remain open.
+
 ---
 
 ## What this makes possible
@@ -253,21 +260,23 @@ evidence that W3 makes joinable, and each is worth much less on its own:
 
 ## Prior art
 
-Work already done that this generalises. All of it is on stacked branches, not
-yet in `main` — fetch before concluding a reference is missing.
+Work already done that this generalises. All of it merged to `main` on 2026-08-15.
 
 - **[#993](https://github.com/Neaox/overcast/pull/993)** — ECS scheduler failure
   reasons surviving newer progress events; `Retain` / `RetainExceptOnCreate`
   rollback semantics.
-- **`claude/ecs-log-retention-hardening`** — the capture/removal race, the
+- **[#997](https://github.com/Neaox/overcast/pull/997)** (was
+  `claude/ecs-log-retention-hardening`) — the capture/removal race, the
   unbounded `ecs:task-container-logs` namespace, and a TTY log-corruption bug in
   a duplicated Docker demultiplexer.
-- **`claude/ecs-deployment-settle`** — W1's first instance, and the source of its
-  vocabulary.
-- **`claude/cfn-deploy-diagnostics`** — the capture-before-rollback journal, the
+- **The ECS deployment settle window** (was `claude/ecs-deployment-settle`,
+  merged as part of [#1005](https://github.com/Neaox/overcast/pull/1005)) — W1's
+  first instance, and the source of its vocabulary.
+- **[#1005](https://github.com/Neaox/overcast/pull/1005)** (was
+  `claude/cfn-deploy-diagnostics`) — the capture-before-rollback journal, the
   provenance tiers (`aws-api` / `overcast-capture` / `overcast-inference`) and
   the counterfactual sentence. W2's console delivery, already built for one
-  service.
+  service. See [cfn-deploy-diagnostics.md](./cfn-deploy-diagnostics.md).
 
 ---
 

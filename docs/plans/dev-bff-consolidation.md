@@ -1,11 +1,14 @@
 # Dev BFF consolidation — kill the dual-BFF drift class
 
-> **Status:** planned — post-release (after v0.0.1-alpha.24). Owner: TBD.
+> **Status:** planned, still not started as of 2026-08-21 (releases are well past the alpha.24
+> gate this was parked behind). The Hono mirrors remain — and have since grown a `settings.ts`
+> route, more evidence of the drift class — the hand-mirrored types are still in
+> `web/src/types/common.ts`, and there is no `cmd/tsgen` / `api.gen.ts`. Owner: TBD.
 > **Scope:** the vite dev server's Hono BFF (`web/api/src`) vs the production Go BFF (`internal/bff`), plus the hand-mirrored TypeScript API types. Shipped artifacts are unaffected — this is dev tooling and build discipline.
 
 ## 1. Why this plan exists
 
-The web UI talks to `/api/*`. In production those routes are served by the Go BFF embedded in the binary. In development they are served by a **separate, hand-written Hono implementation** inside the vite plugin (`web/api/src/routes/*` — debug, docs, ecs, events, health, lambda, lambda-instances, mail, metrics, rds, s3, sqs, topology, registered in `app.ts`). Two implementations of one contract, kept aligned by memory.
+The web UI talks to `/api/*`. In production those routes are served by the Go BFF embedded in the binary. In development they are served by a **separate, hand-written Hono implementation** inside the vite plugin (`web/api/src/routes/*` — debug, docs, ecs, events, health, lambda, lambda-instances, mail, metrics, rds, s3, settings, sqs, topology, registered in `app.ts`). Two implementations of one contract, kept aligned by memory.
 
 That failure mode stopped being theoretical on 2026-07-25, twice in one day:
 

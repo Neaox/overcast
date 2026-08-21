@@ -1,7 +1,15 @@
 # Palette: categorical colour tokens
 
-> Status: requirements, not started. This is phase 2 of the palette work; phase 1 (collapsing
-> semantic hues onto the existing tokens) is separate and can land first.
+> Status: partially landed (verified 2026-08-21). The ramp itself shipped with the design-system
+> rollout (PR #314, 2026-07-27): ten `--cat-1…10` slots in `web/src/styles/global.css`, one hue
+> per slot at uniform OKLCH lightness with per-surface contrast reasoning recorded beside the
+> declarations, distinct light/dark values, and `global.test.ts` failing on any undeclared
+> `cat-` slot. The event console's source map and the ANSI 16-colour ramp resolve through it.
+> Still open: `lib/service-registry.ts` (~108 raw hue classes), the topology map (~50),
+> `metrics/startup-timeline.tsx` and the map node files remain on raw Tailwind hues — ~330 raw
+> palette classes across `web/src` — and requirement 8's raw-hue allowlist test does not exist.
+> This is phase 2 of the palette work; phase 1 (collapsing semantic hues onto the existing
+> tokens) is separate and also remains incomplete.
 
 The web UI uses ~389 raw Tailwind palette classes (`text-emerald-300`, `bg-purple-400`,
 `text-cyan-300`, …) instead of design-system tokens. They divide by purpose, and the two halves
@@ -35,7 +43,7 @@ literals. That makes this tractable — change the table, not the call sites.
 | --- | --- | --- |
 | `web/src/lib/service-registry.ts` | Service identity | **35 services**, each with a `color` and a `bg` (e.g. `color: "text-orange-400"`, `bg: "bg-orange-400/10"`). Consumed by the sidebar, dashboard cards, command palette and topology map — so this one table drives most of the app's categorical colour. |
 | `web/src/features/map/topology-nodes.tsx` | Node/service type on the topology map | Largest single file (~48 usages). Also carries message-state colours that are **not** categorical — see Non-goals. |
-| `web/src/components/ui/event-console.tsx` | Event source / level | ~40 usages; a `Record<string, string>` map at line 92. |
+| `web/src/components/ui/event-console.tsx` | Event source / level | **Done** — its source map now resolves through `text-cat-*` tokens. |
 | `web/src/features/metrics/startup-timeline.tsx` | Startup phase | ~12 usages, one colour per phase. |
 | `web/src/features/map/lambda-instance-node.tsx`, `igw-node.tsx` | Node types | ~25 usages combined. |
 

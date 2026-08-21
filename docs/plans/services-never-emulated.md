@@ -1,6 +1,10 @@
 # Services that should never be emulated: policy and classification
 
 > Status: proposal, 2026-08-03. Owner: TBD.
+> Re-verified 2026-08-21: the classification stands but **none of the §8
+> checklist is implemented** — `internal/awsapi/policy.go` / the
+> `NeverEmulated` map (N1) does not exist, so neither do its consumers (N2),
+> the compat carve-out amendment (N3) or the drift guard (N4).
 > Related: [AWS API operation coverage](./aws-api-operation-coverage.md) (the routing
 > guarantee this policy rides on top of), [Inert-tier rollout](./inert-tier-rollout.md)
 > (everything **not** on this document's never-list gets metadata-CRUD "inert"
@@ -28,7 +32,7 @@ Tier vocabulary used throughout (shared with the sibling plans):
 | Tier | Name | Means |
 | --- | --- | --- |
 | 0 | Not implemented | Protocol-correct `501` via the generic registry fallback. No service package. |
-| 1 | Inert | Metadata CRUD, correct request/response shapes, CDK/CloudFormation provisioning succeeds, no real side effects (cf. the five fully-`StatusInert` services — `autoscaling`, `transfer`, `backup`, `cloudtrail`, `organizations` — per [inert-tier-rollout.md](./inert-tier-rollout.md) §2.2). |
+| 1 | Inert | Metadata CRUD, correct request/response shapes, CDK/CloudFormation provisioning succeeds, no real side effects (cf. the fully-`StatusInert` services — as of 2026-08-21 `transfer`, `cloudtrail`, `organizations` and `bedrock`; `autoscaling` (#474) and `backup` (#815/#904) have since been promoted out — per [inert-tier-rollout.md](./inert-tier-rollout.md) §2.2). |
 | 2 | Full | Behaviorally emulated for common usage patterns. |
 
 ## 2. The universe: what are we classifying, and at what granularity

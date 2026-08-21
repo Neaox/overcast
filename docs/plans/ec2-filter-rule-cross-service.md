@@ -10,8 +10,9 @@
 > the answer to the question that issue deliberately left open — whether
 > anything else in Overcast has the same divergence.
 >
-> Parent review: [tagging-architecture-review.md](./tagging-architecture-review.md),
-> item 2 of "What remains".
+> Parent review: the tagging architecture review (closed — every finding fixed
+> via #1033/#1037/#1038/#1040/#1041; its plan doc was deleted 2026-08-21), which
+> requested this survey as item 2 of its "What remains".
 
 ## The rule, restated
 

@@ -69,6 +69,22 @@ at full operation depth (§3.9).
 
 ## 2. Current state (verified 2026-08-03)
 
+> **Re-verified 2026-08-21: the plan itself is still entirely unimplemented**
+> (no `cmd/compatgen`, no `compat/model/`, no
+> `compat/suites/registry.generated.json`, baseline not sharded — no phase of
+> §5 has landed), **but this section's counts are a 2026-08-03 snapshot and
+> have drifted.** Known movement since: `compat/suites/registry.json` is now
+> **136 groups / 778 tests / 36 services**; `compat/baseline.json` is **3,668
+> entries (~569 KB)**; `compat/parity-debt.json` is down from 558 entries to
+> **3** (the rust/dotnet backfill happened by hand, mooting most of §7.5);
+> capabilities now total **1,434 rows — 1,240 Supported / 154 Unsupported /
+> 28 Inert / 12 Partial** (Auto Scaling was promoted out of inert by #474,
+> Backup became a real REST implementation via #815/#904, and `StatusPartial`
+> is in live use). The alias table has 16 entries and has moved within
+> `registry_data.go`, so the line-number citations below are approximate.
+> Treat the generated artifacts named in this section as authoritative and
+> recompute before acting; do not trust the prose numbers.
+
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
 ops return 501" while `internal/capabilities/all.gen.go:*` declares five Shield

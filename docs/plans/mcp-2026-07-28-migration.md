@@ -13,7 +13,7 @@ may never be — see below.
 | 3a — `subscriptions/listen` | done | #1021 |
 | 3b-i — observation harness, broadcast tests ported | done | #1022 |
 | 3b-ii — per-request response stream, request-scoped tests ported | done | #1023, #1024 |
-| 4 — sessions, replay, GET stream, handshake | done | this branch |
+| 4 — sessions, replay, GET stream, handshake | done | #1027 |
 | 5 — MRTR | not started, and not yet warranted | — |
 
 Phases 1 to 3 were additive: both eras worked, and a request carrying `_meta`

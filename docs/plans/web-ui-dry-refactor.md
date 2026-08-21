@@ -1,6 +1,11 @@
 # Web UI — DRY refactor and page-archetype componentisation
 
-> Status: audit complete (2026-07-27), no code changed. Companion to
+> Status: audit 2026-07-27; backlog largely open as of 2026-08-21. Landed so far: P7 (clipboard
+> kernel, marked inline), Archetype E's virtualized-list kernel (2026-08-18), and the dead-code
+> deletions struck through in §5/§6. None of the other scaffold components exist yet —
+> no `detail-fields.tsx`, `resource-table.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
+> `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
+> `Tab asChild` — so P1–P6 and P8–P13 remain to do. Companion to
 > [web-ui-polish-wave-2.md](./web-ui-polish-wave-2.md), which owns the *visual* backlog; this file
 > owns the *structural* one. Where the two overlap (the detail-field component, the generic table
 > wrapper, the spinner rollout, busy buttons) this document supersedes the wave-2 wording with a

@@ -23,6 +23,12 @@ That is the general shape: everything that explains a failure lives in hop bodie
 | Log entries per trace | 500 | `AddLog` |
 | Traces retained | 1000 (default) | `NewBuffer`, `OVERCAST_DEBUG_TRACE_BUFFER` |
 
+> **Superseded bounds (2026-08):** [trace-retention.md](./trace-retention.md) phase 3 removed
+> `MaxHopBodyBytes`/`MaxHopBody` — hop bodies are no longer duplicated into the parent trace, so
+> deep search now matches each body once, on the trace that owns it (`MatchHopResponse`/
+> `MatchHopRequest` are gone), and the retained-trace floor/ceiling is now governed by that plan's
+> retention policy. The asymmetry argument below still holds; the specific numbers are historical.
+
 **Ceiling for one full deep scan: ~8 GB.** Typical is a thousandth of that. A CDK deploy trace really does reach the cap, and a deploy fills the ring with them — so the same query is sub-millisecond on a quiet emulator and seconds on the one you actually need to debug. Everything below follows from that asymmetry: it is why the cheap half must not wait for the expensive half, and why the expensive half must be interruptible.
 
 ---
