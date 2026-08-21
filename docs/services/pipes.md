@@ -66,8 +66,21 @@ field, so a pipe is never stored in a state where it would silently do nothing.
   STOPPING→STOPPED, …) happen asynchronously with a short delay.
 - **Start/stop.** Setting `DesiredState` to `STOPPED` or `RUNNING` on update triggers the
   appropriate state transition.
-- **Stored but not acted on.** `LogConfiguration`, `KmsKeyIdentifier`, `ParallelizationFactor` and
-  partial-batch failure reporting (`batchItemFailures`) have no effect, and a *Kinesis* source's
+- **Partial batch responses.** A **Lambda** target's response is read for a
+  `batchItemFailures` report, and the records it names are the only ones redelivered: an SQS source
+  deletes the rest and leaves the reported messages to become visible again, a Kinesis source moves
+  its shard cursor to just before the earliest reported record, and a DynamoDB Streams source
+  retries from that record onwards. A report Overcast cannot honour — invalid JSON, an empty or
+  missing `itemIdentifier`, an identifier naming a record that was not in the batch — retries the
+  whole batch and is logged with the reason. A pipe has no `FunctionResponseTypes` to opt in with,
+  so a response that never mentions `batchItemFailures` is left alone rather than second-guessed;
+  that is what keeps a target returning a non-JSON payload succeeding as it always did. **Two
+  places still do not report:** a *Step Functions* target, whose asynchronous `StartExecution` has
+  no response to read, and a Lambda **enrichment**, whose return value AWS defines as *replacing*
+  the batch rather than reporting on it. AWS offers no partial-batch reporting for any other target
+  type.
+- **Stored but not acted on.** `LogConfiguration`, `KmsKeyIdentifier` and `ParallelizationFactor`
+  have no effect, and a *Kinesis* source's
   `MaximumRetryAttempts` and `DeadLetterConfig` do not either — a Kinesis batch is retried by not
   advancing the shard cursor, so it never runs out of attempts and never reaches a dead-letter
   queue. `RoleArn` is required, as AWS requires it, but is not evaluated — Overcast is not a

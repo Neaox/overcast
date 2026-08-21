@@ -24,6 +24,7 @@ package pipes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/partialbatch"
 )
 
 // execute runs one pipe execution for a batch of source records and records the
@@ -41,24 +43,24 @@ import (
 // It returns an error when the batch was not delivered, so a polling source can
 // leave the records for redelivery rather than acknowledging them. A stream
 // source has nothing to leave behind and goes through executeStream instead.
-func (h *Handler) execute(ctx context.Context, p *Pipe, records []map[string]any) error {
-	rec, err := h.attempt(ctx, p, records)
+func (h *Handler) execute(ctx context.Context, p *Pipe, records []map[string]any) (batchFailures, error) {
+	rec, failures, err := h.attempt(ctx, p, records)
 	if rec.Outcome == "" {
-		return err // empty batch: nothing ran, nothing to report
+		return failures, err // empty batch: nothing ran, nothing to report
 	}
 	rec.Attempts = 1
 	h.recordDelivery(rec)
-	return err
+	return failures, err
 }
 
 // attempt runs one pipe execution and returns the outcome it produced without
 // recording it, so a caller that retries reports the sequence once rather than
 // once per attempt. The returned record has a zero Outcome for an empty batch.
-func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any) (deliveryRecord, error) {
+func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any) (deliveryRecord, batchFailures, error) {
 	log := h.log.WithRecorder(ctx)
 
 	if len(records) == 0 {
-		return deliveryRecord{}, nil
+		return deliveryRecord{}, batchFailures{}, nil
 	}
 	rec := deliveryRecord{
 		Region:     regionOrDefault(regionFromARN(p.SourceArn), h.store.region(ctx)),
@@ -76,22 +78,23 @@ func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any
 		rec.Error = err.Error()
 		log.Warn("pipes: execution failed before delivery",
 			zap.String("pipe", p.Name), zap.Error(err))
-		return rec, err
+		return rec, batchFailures{}, err
 	case drop:
 		rec.Outcome = outcomeFiltered
-		return rec, nil
+		return rec, batchFailures{}, nil
 	}
 
-	if err := h.dispatch(ctx, p, batch); err != nil {
+	response, err := h.dispatch(ctx, p, batch)
+	if err != nil {
 		rec.Outcome = outcomeFailed
 		rec.Error = err.Error()
 		log.Warn("pipes: target delivery failed",
 			zap.String("pipe", p.Name), zap.String("target", p.TargetArn), zap.Error(err))
-		return rec, err
+		return rec, batchFailures{}, err
 	}
 	rec.Outcome = outcomeDelivered
 	h.publishDelivered(ctx, p, len(records))
-	return rec, nil
+	return rec, h.readBatchFailures(ctx, p, records, response), nil
 }
 
 // maxStreamDeliveryAttempts caps how many times one stream batch is attempted,
@@ -117,15 +120,30 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 	attempts := streamDeliveryAttempts(p)
 	var rec deliveryRecord
 	var err error
+	// pending only ever shrinks, and only on a partial-batch report: a stream
+	// resumes at the earliest record the target named, never past it.
+	pending := records
 	for attempt := 1; attempt <= attempts; attempt++ {
-		rec, err = h.attempt(ctx, p, records)
+		var failures batchFailures
+		rec, failures, err = h.attempt(ctx, p, pending)
 		rec.Attempts = attempt
-		if err == nil {
+		if err != nil {
+			continue
+		}
+		if !failures.reported && !failures.retryAll {
 			if rec.Outcome != "" {
 				h.recordDelivery(rec)
 			}
 			return
 		}
+		if failures.retryAll {
+			err = errors.New("the target's partial-batch failure report could not be honoured")
+		} else {
+			err = fmt.Errorf("the target reported %d of %d records as failed", len(failures.failed), len(pending))
+			pending = pending[failures.firstIndex:]
+		}
+		rec.Outcome = outcomeFailed
+		rec.Error = err.Error()
 	}
 
 	dlq := streamDeadLetterARN(p)
@@ -136,7 +154,7 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 		h.recordDelivery(rec)
 		return
 	}
-	if dlqErr := h.deadLetter(ctx, dlq, records); dlqErr != nil {
+	if dlqErr := h.deadLetter(ctx, dlq, pending); dlqErr != nil {
 		rec.Error = fmt.Sprintf("%v; dead-letter delivery also failed: %v", err, dlqErr)
 		log.Warn("pipes: dead-letter delivery failed",
 			zap.String("pipe", p.Name), zap.String("dlq", dlq), zap.Error(dlqErr))
@@ -332,7 +350,7 @@ func isEmptyEnrichmentResponse(payload []byte) bool {
 }
 
 // dispatch delivers the batch to the pipe's target through the shared
-// eventtarget dispatcher.
+// eventtarget dispatcher, returning what the target answered.
 //
 // How a batch maps onto a target is AWS's rule, not a choice: a target with a
 // batch API — SQS, SNS, Kinesis, Firehose, an EventBridge bus — receives one
@@ -341,33 +359,122 @@ func isEmptyEnrichmentResponse(payload []byte) bool {
 // entire JSON array is sent in one request".
 //
 // A per-record target is delivered to record by record, and the first failure
-// fails the whole execution: the emulator has no partial-batch bookkeeping, so
-// a polling source retries the batch rather than pretending it succeeded.
-func (h *Handler) dispatch(ctx context.Context, p *Pipe, batch []byte) error {
+// fails the whole execution: AWS does not offer partial-batch reporting for
+// those targets either, so a polling source retries the batch rather than
+// pretending it succeeded. The returned response is non-nil only for a Lambda
+// target, the one kind that answers with a payload; it is what carries a
+// partial-batch failure report.
+func (h *Handler) dispatch(ctx context.Context, p *Pipe, batch []byte) ([]byte, error) {
 	dispatcher := h.dispatcher()
 	if dispatcher == nil {
-		return fmt.Errorf("target router is not configured")
+		return nil, fmt.Errorf("target router is not configured")
 	}
 	kind := targetKindOf(p)
 	if kind == "" {
-		return fmt.Errorf("target %s is not a type this emulator delivers to", p.TargetArn)
+		return nil, fmt.Errorf("target %s is not a type this emulator delivers to", p.TargetArn)
 	}
 	if kind == eventtarget.KindECS {
 		// Refused at CreatePipe time; reachable only for a pipe stored by a
 		// build that predates the wiring check.
-		return fmt.Errorf("ECS targets are not supported by EventBridge Pipes in Overcast")
+		return nil, fmt.Errorf("ECS targets are not supported by EventBridge Pipes in Overcast")
 	}
 
 	if targetTakesWholeBatch(kind) {
-		return dispatcher.Deliver(ctx, h.targetRequest(p, kind, batch))
+		return dispatcher.DeliverResponse(ctx, h.targetRequest(p, kind, batch))
 	}
 	records := splitBatch(batch)
 	for i, record := range records {
 		if err := dispatcher.Deliver(ctx, h.targetRequest(p, kind, record)); err != nil {
-			return fmt.Errorf("record %d of %d: %w", i+1, len(records), err)
+			return nil, fmt.Errorf("record %d of %d: %w", i+1, len(records), err)
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+// batchFailures is a target's partial-batch failure report, resolved against
+// the source records the execution delivered.
+//
+// The zero value means the target reported nothing, so the whole batch is
+// acknowledged — which is every execution whose target is not a Lambda function
+// and every Lambda target that does not use the feature.
+type batchFailures struct {
+	// failed holds the source-record identifiers the target named.
+	failed map[string]bool
+	// firstIndex is the position, in the delivered batch, of the earliest
+	// record the target named. A stream source resumes there.
+	firstIndex int
+	// reported is true when the target named at least one record.
+	reported bool
+	// retryAll is true when the report could not be honoured, so nothing may
+	// be acknowledged and the whole batch is redelivered.
+	retryAll bool
+}
+
+// readBatchFailures reads a partial-batch failure report out of a target's response
+// and resolves it against the source records of the execution.
+//
+// Unlike a Lambda event source mapping, a pipe has no FunctionResponseTypes to
+// opt in with — AWS makes partial-batch reporting always available for a Lambda
+// target — so a response that never mentions the member is left alone rather
+// than being held to AWS's rules for a malformed one. See partialbatch.Reports.
+//
+// Not covered, and documented as a gap in docs/services/pipes.md: a Step
+// Functions target, whose asynchronous StartExecution has no response to read,
+// and an enrichment's response, which AWS defines as *replacing* the batch
+// rather than reporting on it.
+func (h *Handler) readBatchFailures(ctx context.Context, p *Pipe, records []map[string]any, response []byte) batchFailures {
+	if len(response) == 0 || !partialbatch.Reports(response) {
+		return batchFailures{}
+	}
+	log := h.log.WithRecorder(ctx)
+	parsed := partialbatch.Parse(response)
+	if parsed.WholeBatchFailed {
+		log.Warn("pipes: partial-batch failure report not honoured — the whole batch is retried",
+			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+			zap.String("reason", parsed.Reason))
+		return batchFailures{retryAll: true}
+	}
+
+	identifiers := sourceRecordIdentifiers(p, records)
+	firstIndex, reported, unknown := parsed.LowestReportedIndex(identifiers)
+	if unknown != "" {
+		log.Warn("pipes: partial-batch failure report named a record that was not in the batch — the whole batch is retried",
+			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
+			zap.String("itemIdentifier", unknown))
+		return batchFailures{retryAll: true}
+	}
+	if !reported {
+		return batchFailures{}
+	}
+	failed := make(map[string]bool, len(parsed.Failed))
+	for _, id := range parsed.Failed {
+		failed[id] = true
+	}
+	return batchFailures{failed: failed, firstIndex: firstIndex, reported: true}
+}
+
+// sourceRecordIdentifiers returns the identifier each source record is reported
+// under: the message ID for an SQS queue and the sequence number for a stream,
+// which is what AWS names in an itemIdentifier.
+func sourceRecordIdentifiers(p *Pipe, records []map[string]any) []string {
+	kind, err := classifySourceARN(p.SourceArn)
+	if err != nil {
+		return make([]string, len(records))
+	}
+	out := make([]string, len(records))
+	for i, record := range records {
+		switch kind {
+		case sourceSQSQueue:
+			out[i], _ = record["messageId"].(string)
+		case sourceKinesisStream:
+			out[i], _ = record["sequenceNumber"].(string)
+		case sourceDynamoDBStream:
+			// eventID and dynamodb.SequenceNumber are the same value; the
+			// top-level one needs no second type assertion.
+			out[i], _ = record["eventID"].(string)
+		}
+	}
+	return out
 }
 
 // targetTakesWholeBatch reports whether the target receives the whole JSON

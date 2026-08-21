@@ -366,6 +366,47 @@ the moment it is retired rather than lingering until the idle timeout.
 
 ---
 
+## Partial batch responses
+
+An event source mapping created with
+`FunctionResponseTypes: ["ReportBatchItemFailures"]` — CDK's
+`reportBatchItemFailures: true` — is honoured, not just stored. The poller reads
+the function's response and acts on the records it names:
+
+```json
+{ "batchItemFailures": [{ "itemIdentifier": "<message id or sequence number>" }] }
+```
+
+- **SQS.** Only the messages the function did *not* report are deleted. A
+  reported message stays in flight and becomes visible again when its visibility
+  timeout expires, which is exactly how AWS redelivers it — Lambda has no
+  "return this one message" call either. The queue's own `RedrivePolicy` then
+  counts the receive and moves it to a dead-letter queue on schedule.
+- **DynamoDB Streams.** The batch is retried from the earliest record the
+  function named, and everything before it is treated as done. Records *after*
+  it are redelivered even if the function said they succeeded, because a stream
+  is ordered and AWS checkpoints at the lowest reported sequence number rather
+  than skipping the records in between.
+
+AWS's edge cases are reproduced. An empty or absent `batchItemFailures` list — or
+no response at all — means the whole batch succeeded, so turning the flag on
+cannot change a handler that does not use it. A response Overcast cannot read is
+a complete batch *failure* and nothing is acknowledged: invalid JSON, an entry
+that is not an object, a missing, empty or non-string `itemIdentifier`, and an
+identifier naming a record that was not in the batch. Each one is logged with
+the reason, at `warn`.
+
+One deliberate divergence: the member names are matched case-insensitively, so a
+handler written against a strongly typed SDK that serialises `BatchItemFailures`
+is honoured rather than read as a malformed response. A name that is neither
+spelling is still malformed, which is the case that matters.
+
+`FunctionResponseTypes` is validated against AWS's one-member enum:
+`ReportBatchItemFailures` is the only accepted value, and anything else is
+refused with AWS's own constraint message rather than stored.
+
+---
+
 ## Log format and log levels
 
 A function's `LoggingConfig` is honoured end to end. `LogFormat` decides what
@@ -1006,13 +1047,13 @@ the only way to read them back.
 
 ### Event source mappings
 
-| Operation                  | Status       | Notes                                                                              | AWS Docs                                                                               |
-| -------------------------- | ------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `CreateEventSourceMapping` | ✅ Supported | SQS→Lambda, DynamoDB Streams→Lambda; Tags are stored and readable through ListTags | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateEventSourceMapping.html) |
-| `GetEventSourceMapping`    | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetEventSourceMapping.html)    |
-| `UpdateEventSourceMapping` | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateEventSourceMapping.html) |
-| `DeleteEventSourceMapping` | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteEventSourceMapping.html) |
-| `ListEventSourceMappings`  | ✅ Supported | Filters by `FunctionName` and `EventSourceArn`                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListEventSourceMappings.html)  |
+| Operation                  | Status       | Notes                                                                                                                                                | AWS Docs                                                                               |
+| -------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `CreateEventSourceMapping` | ✅ Supported | SQS→Lambda, DynamoDB Streams→Lambda; `FunctionResponseTypes: ["ReportBatchItemFailures"]` is honoured; Tags are stored and readable through ListTags | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateEventSourceMapping.html) |
+| `GetEventSourceMapping`    | ✅ Supported |                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetEventSourceMapping.html)    |
+| `UpdateEventSourceMapping` | ✅ Supported |                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateEventSourceMapping.html) |
+| `DeleteEventSourceMapping` | ✅ Supported |                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteEventSourceMapping.html) |
+| `ListEventSourceMappings`  | ✅ Supported | Filters by `FunctionName` and `EventSourceArn`                                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListEventSourceMappings.html)  |
 
 ### Layers
 
