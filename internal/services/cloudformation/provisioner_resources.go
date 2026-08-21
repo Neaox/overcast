@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -1546,6 +1547,129 @@ func (h *lambdaCodeSigningConfigHandler) Delete(ctx context.Context, router http
 
 type sfnStateMachineHandler struct{}
 
+// sfnSubstitutionToken matches a DefinitionSubstitutions placeholder in an
+// ASL definition: a whole ${identifier} token of letters, digits and
+// underscore. CloudFormation does not support the Fn::Sub "${!name}" escape
+// here — DefinitionSubstitutions is a distinct, StepFunctions-specific
+// mechanism the state machine resource applies to an already-fully-resolved
+// DefinitionString, not the template-level Fn::Sub intrinsic.
+var sfnSubstitutionToken = regexp.MustCompile(`\$\{[A-Za-z0-9_]+\}`)
+
+// applySFNDefinitionSubstitutions replaces every ${key} placeholder in an ASL
+// definition with its value from the resource's DefinitionSubstitutions map,
+// matching real AWS: substitution happens once, before the definition is
+// stored, so the interpreter (and DescribeStateMachine) never sees the
+// placeholder syntax for a key that was supplied.
+//
+// A placeholder with no matching key is left verbatim rather than failing the
+// deploy. CloudFormation does not validate DefinitionSubstitutions
+// completeness against the definition at deploy time — an unresolved
+// ${Foo} is still valid JSON string content, so the create/update succeeds
+// the same way a real CDK deploy with a missing substitution key would; the
+// state machine simply carries a literal placeholder until it is next
+// updated with the missing key or executed against a task that dereferences
+// it. This is a deliberate departure from stricter emulators (e.g.
+// LocalStack) that reject an unmatched key outright.
+func applySFNDefinitionSubstitutions(definition string, rawSubstitutions any) string {
+	subs, ok := rawSubstitutions.(map[string]any)
+	if !ok || len(subs) == 0 {
+		return definition
+	}
+	return sfnSubstitutionToken.ReplaceAllStringFunc(definition, func(token string) string {
+		key := token[2 : len(token)-1] // strip ${ and }
+		val, ok := subs[key]
+		if !ok {
+			return token
+		}
+		return fmt.Sprint(val)
+	})
+}
+
+// sfnDefinitionFromProps resolves DefinitionString/Definition into the ASL
+// text CreateStateMachine/UpdateStateMachine expect, with
+// DefinitionSubstitutions already applied. Returns "", false when neither
+// property is set.
+func sfnDefinitionFromProps(props map[string]any) (string, bool) {
+	var definition string
+	switch {
+	case props["DefinitionString"] != nil:
+		v, _ := props["DefinitionString"].(string)
+		if v == "" {
+			return "", false
+		}
+		definition = v
+	case props["Definition"] != nil:
+		v, ok := props["Definition"].(map[string]any)
+		if !ok {
+			return "", false
+		}
+		j, _ := json.Marshal(v)
+		definition = string(j)
+	default:
+		return "", false
+	}
+	return applySFNDefinitionSubstitutions(definition, props["DefinitionSubstitutions"]), true
+}
+
+// sfnTagsWire converts a plain tag map into the lower-camel {key,value} shape
+// AWS JSON 1.0's TagResource/UntagResource expect on the wire.
+func sfnTagsWire(tags map[string]string) []map[string]string {
+	out := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, map[string]string{"key": k, "value": v})
+	}
+	return out
+}
+
+func sfnTagResource(ctx context.Context, router http.Handler, region, arn string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	if _, err := internalJSON(ctx, router, region, "AWSStepFunctions.TagResource", map[string]any{
+		"resourceArn": arn,
+		"tags":        sfnTagsWire(tags),
+	}); err != nil {
+		return fmt.Errorf("stepfunctions TagResource: %w", err)
+	}
+	return nil
+}
+
+func sfnUntagResource(ctx context.Context, router http.Handler, region, arn string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if _, err := internalJSON(ctx, router, region, "AWSStepFunctions.UntagResource", map[string]any{
+		"resourceArn": arn,
+		"tagKeys":     keys,
+	}); err != nil {
+		return fmt.Errorf("stepfunctions UntagResource: %w", err)
+	}
+	return nil
+}
+
+// sfnReconcileTags diffs desired against previous and applies only the
+// change, mirroring updateLambdaTags' and the SSM parameter handler's
+// add/remove split.
+func sfnReconcileTags(ctx context.Context, router http.Handler, region, arn string, tags, prior map[string]string) error {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if err := sfnTagResource(ctx, router, region, arn, added); err != nil {
+		return err
+	}
+	return sfnUntagResource(ctx, router, region, arn, removed)
+}
+
 func (h *sfnStateMachineHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := map[string]any{}
 	// StateMachineName is optional on the resource and CDK's `StateMachine`
@@ -1555,17 +1679,20 @@ func (h *sfnStateMachineHandler) Create(ctx context.Context, router http.Handler
 	} else {
 		body["name"] = rCtx.generatedNameWithin(maxNameLenSFN)
 	}
-	if v, _ := props["DefinitionString"].(string); v != "" {
-		body["definition"] = v
-	} else if v, ok := props["Definition"].(map[string]any); ok {
-		j, _ := json.Marshal(v)
-		body["definition"] = string(j)
+	if definition, ok := sfnDefinitionFromProps(props); ok {
+		body["definition"] = definition
 	}
 	if v, _ := props["RoleArn"].(string); v != "" {
 		body["roleArn"] = v
 	}
 	if v, _ := props["StateMachineType"].(string); v != "" {
 		body["type"] = v
+	}
+	if v, ok := props["LoggingConfiguration"]; ok {
+		body["loggingConfiguration"] = v
+	}
+	if v, ok := props["TracingConfiguration"]; ok {
+		body["tracingConfiguration"] = v
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSStepFunctions.CreateStateMachine", body)
@@ -1586,6 +1713,15 @@ func (h *sfnStateMachineHandler) Create(ctx context.Context, router http.Handler
 		name = arn[idx+1:]
 	}
 
+	// CreateStateMachine's own request has no tags parameter on this wire
+	// path (see the service handler); apply them the way an update must
+	// anyway, via TagResource, so Create and Update share one mechanism.
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		if err := sfnTagResource(ctx, router, rCtx.Region, arn, tags); err != nil {
+			return "", nil, err
+		}
+	}
+
 	attrs := map[string]string{
 		"Arn":  arn,
 		"Name": name,
@@ -1599,7 +1735,7 @@ func (h *sfnStateMachineHandler) Delete(ctx context.Context, router http.Handler
 	return teardownError("DeleteStateMachine", rec, err)
 }
 
-func (h *sfnStateMachineHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *sfnStateMachineHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	if n, ok := props["StateMachineName"].(string); ok && n != "" {
 		tail := physicalID
 		if i := strings.LastIndex(physicalID, ":"); i >= 0 {
@@ -1609,18 +1745,24 @@ func (h *sfnStateMachineHandler) Update(ctx context.Context, router http.Handler
 			return "", nil, errReplacementRequired
 		}
 	}
+	// StateMachineType cannot be changed in place: "You cannot update the
+	// type of a state machine once it has been created" (AWS docs), and the
+	// CloudFormation resource reference marks it Replacement, unlike every
+	// other property here (Update requires: No interruption).
 	if t, ok := props["StateMachineType"].(string); ok && t != "" {
-		_ = t
+		oldType, _ := oldProps["StateMachineType"].(string)
+		if oldType == "" {
+			oldType = "STANDARD"
+		}
+		if t != oldType {
+			return "", nil, errReplacementRequired
+		}
 	}
 
 	body := map[string]any{"stateMachineArn": physicalID}
 	haveMutable := false
-	if v, ok := props["DefinitionString"].(string); ok && v != "" {
-		body["definition"] = v
-		haveMutable = true
-	} else if v, ok := props["Definition"].(map[string]any); ok {
-		j, _ := json.Marshal(v)
-		body["definition"] = string(j)
+	if definition, ok := sfnDefinitionFromProps(props); ok {
+		body["definition"] = definition
 		haveMutable = true
 	}
 	if v, _ := props["RoleArn"].(string); v != "" {
@@ -1636,10 +1778,24 @@ func (h *sfnStateMachineHandler) Update(ctx context.Context, router http.Handler
 		haveMutable = true
 	}
 	if haveMutable {
+		// A rejected or partially applied UpdateStateMachine must fail the
+		// resource in place, not fall through to the provisioner's default
+		// replace-on-error path: AWS never replaces a state machine over a
+		// failed update, and doing so here would mint a new ARN out from
+		// under anything already referencing the old one.
 		if _, err := internalJSON(ctx, router, rCtx.Region, "AWSStepFunctions.UpdateStateMachine", body); err != nil {
-			return "", nil, fmt.Errorf("UpdateStateMachine: %w", err)
+			return "", nil, failUpdate(fmt.Errorf("UpdateStateMachine: %w", err))
 		}
 	}
+
+	tags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	prior := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if !reflect.DeepEqual(tags, prior) {
+		if err := sfnReconcileTags(ctx, router, rCtx.Region, physicalID, tags, prior); err != nil {
+			return "", nil, failUpdate(fmt.Errorf("stepfunctions tags: %w", err))
+		}
+	}
+
 	return physicalID, map[string]string{"Arn": physicalID}, nil
 }
 

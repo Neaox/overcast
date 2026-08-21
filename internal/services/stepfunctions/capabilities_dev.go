@@ -11,6 +11,7 @@ func init() {
 		capabilities.Capability{Service: "stepfunctions", Operation: "DescribeStateMachine", Category: "State machines", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "stepfunctions", Operation: "ListStateMachines", Category: "State machines", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "stepfunctions", Operation: "DeleteStateMachine", Category: "State machines", Status: capabilities.StatusSupported},
+			capabilities.Capability{Service: "stepfunctions", Operation: "UpdateStateMachine", Category: "State machines", Status: capabilities.StatusSupported, Notes: "Definition/roleArn/loggingConfiguration/tracingConfiguration; no versioning (publish)"},
 		capabilities.Capability{Service: "stepfunctions", Operation: "DescribeStateMachineForExecution", Category: "State machines", Status: capabilities.StatusSupported},
 		// Executions
 		capabilities.Capability{Service: "stepfunctions", Operation: "StartExecution", Category: "Executions", Status: capabilities.StatusSupported, Notes: "Interprets the ASL; returns while the execution is RUNNING, as AWS does"},

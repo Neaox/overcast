@@ -356,6 +356,8 @@ const (
 
 	// SFNStateMachineCreated fires after a new state machine is created.
 	SFNStateMachineCreated Type = "stepfunctions:StateMachineCreated"
+	// SFNStateMachineUpdated fires after a state machine is updated.
+	SFNStateMachineUpdated Type = "stepfunctions:StateMachineUpdated"
 	// SFNStateMachineDeleted fires after a state machine is deleted.
 	SFNStateMachineDeleted Type = "stepfunctions:StateMachineDeleted"
 	// SFNExecutionStarted fires after a new execution is started.

@@ -509,6 +509,7 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
 
     // ── Step Functions ────────────────────────────────────────────────────
     [EventType.stepfunctions.StateMachineCreated]: [sfnKeys.stateMachines(), topologyKey],
+    [EventType.stepfunctions.StateMachineUpdated]: [sfnKeys.stateMachines()],
     [EventType.stepfunctions.StateMachineDeleted]: [sfnKeys.stateMachines(), topologyKey],
     [EventType.stepfunctions.ExecutionStarted]: [sfnKeys.all()],
 

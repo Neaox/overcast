@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1437,
+  "total_ops": 1438,
   "services": [
     {
       "service": "s3",
@@ -7016,8 +7016,8 @@
     {
       "service": "stepfunctions",
       "display_name": "Step Functions",
-      "total_ops": 14,
-      "implemented_ops": 14,
+      "total_ops": 15,
+      "implemented_ops": 15,
       "operations": [
         {
           "operation": "CreateStateMachine",
@@ -7039,6 +7039,12 @@
           "operation": "DeleteStateMachine",
           "category": "State machines",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "UpdateStateMachine",
+          "category": "State machines",
+          "status": "✅ Supported",
+          "notes": "Definition/roleArn/loggingConfiguration/tracingConfiguration; no versioning (publish)"
         },
         {
           "operation": "DescribeStateMachineForExecution",

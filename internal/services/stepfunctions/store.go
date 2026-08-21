@@ -33,6 +33,15 @@ type StateMachine struct {
 	Status     string            `json:"Status"`
 	CreatedAt  time.Time         `json:"CreatedAt"`
 	Tags       map[string]string `json:"Tags,omitempty"`
+	// LoggingConfiguration and TracingConfiguration are stored as the raw
+	// shape CreateStateMachine/UpdateStateMachine were given (AWS's
+	// LoggingConfiguration/TracingConfiguration structures) and echoed back
+	// verbatim by DescribeStateMachine. Overcast does not act on either —
+	// no CloudWatch Logs delivery, no X-Ray spans — it only stops dropping
+	// them, matching the "accept and echo" treatment other cosmetic,
+	// unimplemented-behavior config blocks get elsewhere in the emulator.
+	LoggingConfiguration map[string]any `json:"LoggingConfiguration,omitempty"`
+	TracingConfiguration map[string]any `json:"TracingConfiguration,omitempty"`
 }
 
 // Execution represents a Step Functions execution.
