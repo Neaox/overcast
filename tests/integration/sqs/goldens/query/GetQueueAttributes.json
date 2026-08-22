@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<GetQueueAttributesResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">\n  <GetQueueAttributesResult>\n    <Attribute>\n      <Name>ReceiveMessageWaitTimeSeconds</Name>\n      <Value>0</Value>\n    </Attribute>\n    <Attribute>\n      <Name>VisibilityTimeout</Name>\n      <Value>30</Value>\n    </Attribute>\n  </GetQueueAttributesResult>\n  <ResponseMetadata>\n    <RequestId>00000000-0000-0000-0000-000000000000</RequestId>\n  </ResponseMetadata>\n</GetQueueAttributesResponse>\n"
+}

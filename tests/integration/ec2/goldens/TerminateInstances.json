@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TerminateInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>00000000-0000-0000-0000-000000000000</requestId><instancesSet><item><instanceId>i-00000000</instanceId><previousState><code>0</code><name>pending</name></previousState><currentState><code>32</code><name>shutting-down</name></currentState></item></instancesSet></TerminateInstancesResponse>"
+}

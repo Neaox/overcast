@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"queueUrls\":[\"http://localhost:0/000000000000/golden-source\"]}"
+}

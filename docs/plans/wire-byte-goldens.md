@@ -1,14 +1,83 @@
 # Wire-Byte Golden Test Infrastructure
 
-> Status: partially implemented (as of 2026-08-21). The harness
-> ([tests/helpers/golden.go](../../tests/helpers/golden.go)) and pilot goldens
-> for **ssm, backup, and kinesis** landed in #306. The implementation diverges
-> from §4.2 in one deliberate way: it does not stand up a separate "legacy"
-> server — it records whatever path currently serves the request (today the
-> legacy dispatch path), and relies on `helpers.WithMockClock()` for
-> determinism. The §5.1 priority services (SQS, DynamoDB, STS, IAM, EC2) have
-> no goldens yet, and there is no per-service CI step (§5.3) — golden tests run
-> inside the normal `go test` suite. Owner: TBD.
+> Status: §5.1 priority services complete (as of 2026-08-23, #1204). The
+> harness ([tests/helpers/golden.go](../../tests/helpers/golden.go)) and pilot
+> goldens for **ssm, backup, and kinesis** landed in #306. The implementation
+> diverges from §4.2 in one deliberate way: it does not stand up a separate
+> "legacy" server — it records whatever path currently serves the request
+> (today the legacy dispatch path for the hybrid services, and the only path
+> for services — STS/IAM/EC2 — with no typed/legacy split at all), and relies
+> on `helpers.WithMockClock()` for determinism. All five §5.1 priority
+> services now have goldens: **SQS** (the only one of the five serving both
+> JSON and Query/XML — golden'd on both), **DynamoDB**, **STS**, **IAM**, and
+> **EC2**. §5.3's per-service CI step was evaluated and deliberately NOT
+> added — see "CI wiring" below. P6+ (goldens for the remaining Phase 5/6
+> services) remains the long one-PR-per-service tail described in §5.1's
+> table; not part of #1204's scope.
+>
+> CI wiring: every golden test in this repo (ssm/backup/kinesis from #306,
+> plus sqs/dynamodb/sts/iam/ec2 from #1204) already runs as part of
+> `.github/workflows/test.yml`'s `coverage` job (`go test -race
+> -coverprofile=coverage.out ./...`, line ~162) and the three-way `build-tags`
+> matrix (`go test -tags ${{ matrix.tags }} ./...`, line ~213) — both required
+> checks on every PR. A wire-format regression in any of these eight services'
+> goldens already fails CI today; no dedicated `go test -run TestGolden`
+> step was added on top, since that would only re-run a subset of coverage
+> those two jobs already provide on every push, and this repository's CI
+> deliberately avoids that kind of redundant job (see test.yml's own comments
+> on `vet`/`coverage` dropping unneeded dependencies for the same reason). The
+> `sqs-protocol-dispatch` job is not a counterexample — it sets
+> `OVERCAST_PROTOCOL_DISPATCH=1`, exercising a code path the default sweep
+> does not, which is why it earns a dedicated step.
+>
+> Non-determinism found and normalized (§4.4) while implementing #1204, for
+> future services to check for up front rather than discover mid-implementation:
+> - **SQS**: QueueUrl embeds the httptest-assigned ephemeral port; Query/XML
+>   embeds the request ID in the body (JSON only puts it in the excluded
+>   header) — both regex-normalized.
+> - **STS**: every operation except GetCallerIdentity mints
+>   crypto/rand-backed AccessKeyId/SecretAccessKey/SessionToken (and
+>   AssumeRole's role-session ID) on every call, not just between record and
+>   assert — normalized. Query/XML's body-embedded request ID is pinned via a
+>   caller-supplied `x-amzn-requestid` header instead of a regex.
+> - **IAM**: CreateRole/CreatePolicy/CreateUser mint crypto/rand resource IDs
+>   (RoleId/PolicyId/UserId) on every call — normalized. Same body-embedded
+>   request ID as STS, on every operation (not just the ID-minting ones).
+> - **EC2**: every resource ID (instance/VPC/subnet/security-group/ENI/
+>   reservation/CIDR-association/DHCP-options) is minted by `shortID()`
+>   (8 random hex chars) on every call, including the default VPC seeded on
+>   first read — normalized uniformly by prefix. `RunInstances`/
+>   `DescribeInstances`' PrivateIPAddress is derived from a package-level
+>   `atomic.Uint32` (`syntheticIPCounter`, handler.go) shared by every EC2
+>   operation in the test binary and never reset between test servers — its
+>   value depends on test execution order across the whole package, so it is
+>   normalized too rather than relied upon to stay stable under an unfiltered
+>   `go test ./tests/integration/ec2/...`. Because every Describe* op here
+>   also reads from an ID-ordered store scan, each Describe* golden filters to
+>   the one resource the test just created (by ID) rather than trying to
+>   normalize cross-resource ordering.
+> - **DynamoDB** needed no normalization at all — no `crypto/rand`,
+>   `math/rand`, or `uuid.New` anywhere in its response path.
+>
+> AWS-divergences noticed while recording (not enshrined as correct — flagged
+> in PR #1204's description for a RICE-scored follow-up per
+> [backlog-rice.md](backlog-rice.md) §2, not fixed here):
+> - DynamoDB's CreateTable/DescribeTable response has no `TableId` field at
+>   all (real AWS always includes one).
+> - SQS's Query/XML protocol emits an empty `<XResult></XResult>` wrapper for
+>   every no-output operation (SetQueueAttributes, TagQueue, UntagQueue,
+>   PurgeQueue, DeleteQueue); real AWS omits the wrapper entirely when there's
+>   no output shape.
+> - STS's `AssumeRole`/`AssumeRoleWithWebIdentity` build `AssumedRoleUser.Arn`
+>   as `arn:aws:sts::<account>:assumed-role/<RoleSessionName>/<RoleSessionName>`
+>   — repeating the session name in both path segments instead of using the
+>   role name parsed from `RoleArn`.
+> - EC2's `RunInstances`/`DescribeInstances` hardcode `ownerId
+>   123456789012`, while `DescribeSecurityGroups` hardcodes a different
+>   literal, `000000000000` — neither is derived from `cfg.AccountID`.
+> - EC2's `CreateVpc` mints a real `dopt-XXXXXXXX` DhcpOptionsId, but a
+>   subsequent `DescribeVpcs` for the same VPC reports it empty.
+>
 > Related: [smithy.md](../dev/smithy.md) — moved from docs/plans to docs/dev
 > in #286; its former §8 testing-strategy section no longer exists.
 
@@ -146,14 +215,14 @@ output is what gets compared.
 
 Golden tests are implemented in Phase 5/6 migration order, biggest impact first:
 
-| Priority | Service      | Ops  | Deterministic ops | Rationale                                             |
-| -------- | ------------ | ---- | ----------------- | ----------------------------------------------------- |
-| P1       | SQS          | 20   | ~14               | Bellwether; already has golden test pattern           |
-| P2       | DynamoDB     | 17   | ~12               | Highest traffic; all typed                            |
-| P3       | STS          | 5    | 5                 | Small, correct response format is critical for auth   |
-| P4       | IAM          | 61   | ~50               | Large surface; central to CloudFormation              |
-| P5       | EC2          | 64   | ~40               | Largest API; high downstream impact                   |
-| P6+      | All others   | —    | —                 | One PR per service; batch small services              |
+| Priority | Service      | Ops  | Deterministic ops | Rationale                                             | Status |
+| -------- | ------------ | ---- | ----------------- | ----------------------------------------------------- | ------ |
+| P1       | SQS          | 20   | ~14               | Bellwether; already has golden test pattern           | Done (#1204) — 11 ops × JSON+Query + 1 error |
+| P2       | DynamoDB     | 17   | ~12               | Highest traffic; all typed                            | Done (#1204) — 9 ops + 1 error |
+| P3       | STS          | 5    | 5                 | Small, correct response format is critical for auth   | Done (#1204) — all 5 ops + 1 error |
+| P4       | IAM          | 61   | ~50               | Large surface; central to CloudFormation              | Done (#1204) — 9 highest-value ops + 1 error |
+| P5       | EC2          | 64   | ~40               | Largest API; high downstream impact                   | Done (#1204) — 8 highest-value ops + 1 error |
+| P6+      | All others   | —    | —                 | One PR per service; batch small services              | Not started |
 
 ### 5.2 Template for a new service golden test
 
@@ -172,18 +241,29 @@ func TestGolden_CreateFoo(t *testing.T) {
 
 ### 5.3 CI wiring
 
-Add to `.github/workflows/test.yml`:
+**Decision (#1204): no dedicated per-service step was added.** The design
+this section originally sketched — one `go test -run TestGolden` step per
+service — assumed golden tests needed their own step to be CI-enforced at
+all. They don't: every golden test file (ssm/backup/kinesis since #306, plus
+sqs/dynamodb/sts/iam/ec2 since #1204) is an ordinary `_test.go` file with no
+build tag exclusions, so it already executes inside
+`.github/workflows/test.yml`'s `coverage` job (`go test -race
+-coverprofile=coverage.out ./...`) and its three-way `build-tags` matrix
+(`go test -tags ${{ matrix.tags }} ./...`) — both required checks on every
+push and pull request. A wire-format regression in any golden already fails
+CI today. Adding eight redundant `-run TestGolden` steps on top would re-run
+work those two jobs already do on every commit, which is exactly the
+per-job-cost discipline `test.yml`'s own comments describe for `vet` and
+`coverage` (see the file's header comments on why `vet` dropped its `web`
+dependency, and why `build-tags` has no `-race`). The one existing per-service
+step in this file, `sqs-protocol-dispatch`, is not a counterexample: it sets
+`OVERCAST_PROTOCOL_DISPATCH=1`, exercising a route the default sweep never
+does, which is what earns it a dedicated job.
 
-```yaml
-- name: Golden tests (SQS)
-  run: go test -count=1 ./tests/integration/sqs/ -run TestGolden
-- name: Golden tests (DynamoDB)
-  run: go test -count=1 ./tests/integration/dynamodb/ -run TestGolden
-# ... one matrix entry per service with goldens
-```
-
-CI runs WITHOUT `-record` — it asserts. Recording is manual (developer writes
-goldens once and commits them).
+Revisit this if a future service's golden tests need something the default
+sweep can't provide (e.g. a special env var or a longer timeout) — at that
+point a dedicated step is the same well-justified exception
+`sqs-protocol-dispatch` already is, not scope creep.
 
 ## 6. Acceptance per service
 

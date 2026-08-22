@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response><Errors><Error><Code>InvalidVpcID.NotFound</Code><Message>The vpc ID &#39;vpc-ghost0000&#39; does not exist</Message></Error></Errors><RequestID>00000000-0000-0000-0000-000000000000</RequestID></Response>"
+}

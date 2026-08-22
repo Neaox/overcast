@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DescribeSecurityGroupsResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>00000000-0000-0000-0000-000000000000</requestId><securityGroupInfo><item><ownerId>000000000000</ownerId><groupId>sg-00000000</groupId><groupName>golden-sg</groupName><groupDescription>golden security group</groupDescription><vpcId>vpc-00000000</vpcId><ipPermissions></ipPermissions><ipPermissionsEgress><item><ipProtocol>-1</ipProtocol><fromPort>0</fromPort><toPort>0</toPort><ipRanges><item><cidrIp>0.0.0.0/0</cidrIp></item></ipRanges></item></ipPermissionsEgress><tagSet></tagSet></item></securityGroupInfo></DescribeSecurityGroupsResponse>"
+}

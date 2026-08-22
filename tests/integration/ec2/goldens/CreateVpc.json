@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CreateVpcResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>00000000-0000-0000-0000-000000000000</requestId><vpc><vpcId>vpc-00000000</vpcId><state>available</state><cidrBlock>10.100.0.0/16</cidrBlock><dhcpOptionsId>dopt-00000000</dhcpOptionsId><instanceTenancy>default</instanceTenancy><isDefault>false</isDefault><cidrBlockAssociationSet><item><associationId>vpc-cidr-assoc-00000000</associationId><cidrBlock>10.100.0.0/16</cidrBlock><cidrBlockState><state>associated</state></cidrBlockState></item></cidrBlockAssociationSet><tagSet></tagSet></vpc></CreateVpcResponse>"
+}

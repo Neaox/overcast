@@ -1,0 +1,7 @@
+{
+  "status": 404,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Type>Sender</Type><Code>NoSuchEntity</Code><Message>The role with name ghost-role cannot be found.</Message></Error><RequestId>REDACTED-REQUEST-ID</RequestId></ErrorResponse>"
+}

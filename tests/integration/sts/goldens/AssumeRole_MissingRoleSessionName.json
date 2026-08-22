@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Type>Sender</Type><Code>MissingParameter</Code><Message>The request must contain the parameter RoleSessionName.</Message></Error><RequestId>00000000-0000-0000-0000-000000000000</RequestId></ErrorResponse>"
+}
