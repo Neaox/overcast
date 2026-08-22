@@ -805,8 +805,24 @@ declared in [compat/parity-debt.json](./parity-debt.json).
 - **`"suites": [...]`** on a registry group — the group only makes sense for
   specific suites. Used by `cdk-lifecycle`: CDK deploys whole stacks rather than
   calling operations one at a time, so registry-wide uniformity does not apply
-  to it and it runs only groups scoped to it. Reach for this rarely; an SDK
-  suite is never a legitimate `suites` scope.
+  to it and it runs only groups scoped to it.
+
+  This has two halves, and they are not symmetric:
+
+  - **On a hand-written group** (an entry in `compat/suites/registry.json`),
+    `suites` scoping remains reserved for `cdk-lifecycle`. Reach for it rarely;
+    an SDK suite is never a legitimate `suites` scope on a hand-written group.
+  - **On a generated group** (an entry in `compat/suites/registry.generated.json`,
+    carrying `"generated": true`), `suites` is not merely allowed but
+    **required** — it lists the backends a scenario-driven test can actually
+    execute, mechanically derived from which suites have a generated backend
+    for that recipe. It is written by the generator and widens automatically as
+    typed backends land (see the model-driven coverage plan); it is never
+    hand-edited.
+
+  `scripts/validate-compat-registry.py` enforces both halves: a hand-written
+  group with `suites` outside the allowed set fails, and a generated group
+  without `suites` fails.
 - **`compat/parity-debt.json`** — a group a suite has not implemented *yet*.
   Temporary, and it only shrinks. The check fails if debt grows, if new debt is
   undeclared, or if declared debt is stale (the group is now implemented, so the
