@@ -155,6 +155,13 @@ current label, so nothing that already had a label needed to change.
 
 ## 3. What the scores actually change
 
+> **Stale since 2026-08-22 (noted 2026-08-23, docs/plans sync sweep):** roughly 40
+> more issues have closed and roughly 45 more have been filed since this
+> re-derivation, including several from PRs in the #1090-#1322 range. The method
+> and the shape of the findings below still hold; the exact counts and the
+> issue list do not. A full re-derivation against live issue state is a
+> separate task, not part of this sweep.
+
 ### Re-derivation, 2026-08-22
 
 Method unchanged from §2; this is a re-application against live issue state.
