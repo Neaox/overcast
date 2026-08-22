@@ -189,7 +189,7 @@ interface MessageRowProps {
 }
 
 function MessageRow({ message, selected, onSelect, indent }: MessageRowProps) {
-  const kind = message.kind ?? "email"
+  const kind = message.kind
   const preview = message.textBody.slice(0, 100).replace(/\s+/g, " ").trim()
   const relTime = formatDistanceToNow(new Date(message.receivedAt), { addSuffix: true })
 

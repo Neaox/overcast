@@ -24,43 +24,59 @@ import (
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+// topologyECSResourceType says which kind of ECS resource a topology node is:
+// one of the constants below. The Map page navigates differently for each
+// (a task node links to its task detail, a service node to its service), so
+// the values are a contract — cmd/tsgen renders them as the TypeScript union.
+type topologyECSResourceType = string
+
+const (
+	topologyECSCluster topologyECSResourceType = "cluster"
+	topologyECSService topologyECSResourceType = "service"
+	topologyECSTask    topologyECSResourceType = "task"
+)
+
+// topologyNode is one node of GET /_overcast/topology's graph. The fields
+// after Region are per-service details, each populated only for the services
+// named in its comment and omitted otherwise.
 type topologyNode struct {
 	ID      string `json:"id"`
 	Service string `json:"service"`
 	Label   string `json:"label"`
 	Region  string `json:"region"`
 
-	StreamEnabled                         *bool    `json:"streamEnabled,omitempty"`
-	ApproximateNumberOfMessages           *int     `json:"approximateNumberOfMessages,omitempty"`
-	ApproximateNumberOfMessagesNotVisible *int     `json:"approximateNumberOfMessagesNotVisible,omitempty"`
-	StackName                             *string  `json:"stackName,omitempty"`
-	VpcID                                 string   `json:"vpcId,omitempty"`
-	Status                                string   `json:"status,omitempty"`
-	CidrBlock                             string   `json:"cidrBlock,omitempty"`
-	SubnetCount                           *int     `json:"subnetCount,omitempty"`
-	HasInternetGateway                    *bool    `json:"hasInternetGateway,omitempty"`
-	AttachedVpcID                         string   `json:"attachedVpcId,omitempty"`
-	ProtocolType                          string   `json:"protocolType,omitempty"`
-	RouteCount                            *int     `json:"routeCount,omitempty"`
-	StageCount                            *int     `json:"stageCount,omitempty"`
-	DomainName                            string   `json:"domainName,omitempty"`
-	OriginCount                           *int     `json:"originCount,omitempty"`
-	AuthenticationType                    string   `json:"authenticationType,omitempty"`
-	DataSourceCount                       *int     `json:"dataSourceCount,omitempty"`
-	ResolverCount                         *int     `json:"resolverCount,omitempty"`
-	RepositoryUri                         string   `json:"repositoryUri,omitempty"`
-	Scope                                 string   `json:"scope,omitempty"`
-	RuleCount                             *int     `json:"ruleCount,omitempty"`
-	ESMID                                 string   `json:"esmId,omitempty"`
-	FunctionName                          string   `json:"functionName,omitempty"`
-	EventSource                           string   `json:"eventSource,omitempty"`
-	SourceType                            string   `json:"sourceType,omitempty"`
-	FilterPatterns                        []string `json:"filterPatterns,omitempty"`
-	ECSResourceType                       string   `json:"ecsResourceType,omitempty"`
-	ClusterName                           string   `json:"clusterName,omitempty"`
-	TaskID                                string   `json:"taskId,omitempty"`
-	DesiredCount                          *int     `json:"desiredCount,omitempty"`
-	RunningCount                          *int     `json:"runningCount,omitempty"`
+	StreamEnabled                         *bool    `json:"streamEnabled,omitempty"`                         // DynamoDB only — whether the table has a stream
+	ApproximateNumberOfMessages           *int     `json:"approximateNumberOfMessages,omitempty"`           // SQS only — visible messages waiting to be consumed
+	ApproximateNumberOfMessagesNotVisible *int     `json:"approximateNumberOfMessagesNotVisible,omitempty"` // SQS only — messages in flight (received, not yet deleted/returned)
+	StackName                             *string  `json:"stackName,omitempty"`                             // CloudFormation stack name this resource belongs to (1:1 ownership)
+	VpcID                                 string   `json:"vpcId,omitempty"`                                 // VPC ID this resource belongs to (EC2 instances, RDS instances, …)
+	Status                                string   `json:"status,omitempty"`                                // resource status string (e.g. RDS DBInstanceStatus: "available", "stopped")
+	CidrBlock                             string   `json:"cidrBlock,omitempty"`                             // VPC only — CIDR block (e.g. "10.0.0.0/16")
+	SubnetCount                           *int     `json:"subnetCount,omitempty"`                           // VPC only — number of subnets in this VPC
+	HasInternetGateway                    *bool    `json:"hasInternetGateway,omitempty"`                    // VPC only — whether an internet gateway is attached
+	AttachedVpcID                         string   `json:"attachedVpcId,omitempty"`                         // IGW only — the VPC ID attached to this internet gateway
+	ProtocolType                          string   `json:"protocolType,omitempty"`                          // API Gateway only — protocol type (REST or HTTP)
+	RouteCount                            *int     `json:"routeCount,omitempty"`                            // API Gateway only — number of routes or resources configured
+	StageCount                            *int     `json:"stageCount,omitempty"`                            // API Gateway only — number of deployed stages
+	DomainName                            string   `json:"domainName,omitempty"`                            // CloudFront only — the distribution's domain name
+	OriginCount                           *int     `json:"originCount,omitempty"`                           // CloudFront only — number of origins
+	AuthenticationType                    string   `json:"authenticationType,omitempty"`                    // AppSync only — authentication type (API_KEY, AWS_IAM, …)
+	DataSourceCount                       *int     `json:"dataSourceCount,omitempty"`                       // AppSync only — number of data sources attached
+	ResolverCount                         *int     `json:"resolverCount,omitempty"`                         // AppSync only — number of resolvers configured
+	RepositoryUri                         string   `json:"repositoryUri,omitempty"`                         // ECR only — full push-ready repository URI (e.g. localhost:5000/my-repo)
+	Scope                                 string   `json:"scope,omitempty"`                                 // WAF only — REGIONAL or CLOUDFRONT
+	RuleCount                             *int     `json:"ruleCount,omitempty"`                             // WAF only — number of stored rules (rules are not enforced)
+	ESMID                                 string   `json:"esmId,omitempty"`                                 // Lambda ESM filter node only — EventSourceMapping UUID
+	FunctionName                          string   `json:"functionName,omitempty"`                          // Lambda ESM filter node only — target function name
+	EventSource                           string   `json:"eventSource,omitempty"`                           // Lambda ESM filter node only — source queue/table name
+	SourceType                            string   `json:"sourceType,omitempty"`                            // Lambda ESM filter node only — source type, e.g. dynamodb
+	FilterPatterns                        []string `json:"filterPatterns,omitempty"`                        // Lambda ESM filter node only — raw FilterCriteria patterns
+
+	ECSResourceType topologyECSResourceType `json:"ecsResourceType,omitempty"` // ECS only — whether this node is a cluster, service, or task
+	ClusterName     string                  `json:"clusterName,omitempty"`     // ECS service/task owner, used for detail navigation
+	TaskID          string                  `json:"taskId,omitempty"`          // ECS task only — task UUID used by the task detail route
+	DesiredCount    *int                    `json:"desiredCount,omitempty"`    // ECS service only — configured task count
+	RunningCount    *int                    `json:"runningCount,omitempty"`    // ECS service only — currently running task count
 }
 
 type topologyEdge struct {
@@ -766,7 +782,7 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			Label:           c.Name,
 			Region:          region,
 			Status:          c.Status,
-			ECSResourceType: "cluster",
+			ECSResourceType: topologyECSCluster,
 			ClusterName:     c.Name,
 		})
 	}
@@ -792,7 +808,7 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			Label:           svc.Name,
 			Region:          region,
 			Status:          svc.Status,
-			ECSResourceType: "service",
+			ECSResourceType: topologyECSService,
 			ClusterName:     clusterName,
 			DesiredCount:    &desiredCount,
 			RunningCount:    &runningCount,
@@ -821,7 +837,7 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			Label:           taskID,
 			Region:          region,
 			Status:          task.LastStatus,
-			ECSResourceType: "task",
+			ECSResourceType: topologyECSTask,
 			ClusterName:     clusterName,
 			TaskID:          taskID,
 		})

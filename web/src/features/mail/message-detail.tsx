@@ -41,7 +41,7 @@ export function MessageDetail({ message, onDelete, deleting }: MessageDetailProp
     setTab("plain")
   }
 
-  const kind = message?.kind ?? "email"
+  const kind = message?.kind
   const isTextOnly = kind === "sms" || kind === "webhook" || kind === "push"
   const hasHtml = !!message?.htmlBody && !isTextOnly
   const hasRaw = !isTextOnly && !!message?.raw

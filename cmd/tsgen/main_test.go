@@ -45,6 +45,7 @@ package a
 
 import (
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"example.com/fixture/b"
@@ -73,6 +74,7 @@ type Shape struct {
 	AsString int ` + "`json:\"asString,string\"`" + `
 	Zero     int ` + "`json:\"zero,omitzero\"`" + `
 	Dashed   string ` + "`json:\"content-type\"`" + `
+	Headers  http.Header ` + "`json:\"headers\"`" + `
 	hidden   string
 }
 
@@ -80,10 +82,18 @@ type Shape struct {
 type Kind = string
 
 const (
+	KindNone  Kind = "" // the zero value, never on the wire
 	KindA     Kind = "a"
 	KindB     Kind = "b"
 	KindAlsoB Kind = "b" // a second name for one wire value
 )
+
+// Wrapped has a MarshalJSON, so its struct is not its wire shape.
+type Wrapped struct {
+	Secret []byte ` + "`json:\"secret\"`" + `
+}
+
+func (w Wrapped) MarshalJSON() ([]byte, error) { return json.Marshal(string(w.Secret)) }
 
 // Plain has no typed constants.
 type Plain string
@@ -173,6 +183,7 @@ export interface Shape {
   asString: string
   zero?: number
   "content-type": string
+  headers: Record<string, string[]>
 }
 
 /**
@@ -242,6 +253,21 @@ func TestRender_refusesEmbeddedFields(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "embedded field Empty") {
 		t.Errorf("render() error = %v; want a refusal naming the embedded field", err)
+	}
+}
+
+func TestRender_refusesTypesWithACustomMarshalJSON(t *testing.T) {
+	// Given: a manifest entry for a type whose MarshalJSON writes something
+	// other than its struct.
+	root := writeFixtureModule(t)
+
+	// When: it is rendered.
+	_, err := render(root, []target{{"a", "Wrapped", "Wrapped"}})
+
+	// Then: it is refused with the fix named, rather than rendered as the
+	// struct — which would be a confidently wrong contract.
+	if err == nil || !strings.Contains(err.Error(), "custom MarshalJSON") || !strings.Contains(err.Error(), "a.Wrapped") {
+		t.Errorf("render() error = %v; want a MarshalJSON refusal naming a.Wrapped", err)
 	}
 }
 

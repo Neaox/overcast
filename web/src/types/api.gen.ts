@@ -481,3 +481,448 @@ export type AdvisorySeverity = "info" | "warning" | "critical"
  * Generated from Go `cloudformation.DiagnosticProvenance` (internal/services/cloudformation/diagnostics.go).
  */
 export type DiagnosticProvenance = "aws-api" | "overcast-capture" | "overcast-inference"
+
+/** Generated from Go `router.topologyResponse` (internal/router/topology.go). */
+export interface TopologyResponse {
+  regions: string[]
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+}
+
+/**
+ * topologyNode is one node of GET /_overcast/topology's graph. The fields
+ * after Region are per-service details, each populated only for the services
+ * named in its comment and omitted otherwise.
+ *
+ * Generated from Go `router.topologyNode` (internal/router/topology.go).
+ */
+export interface TopologyNode {
+  id: string
+  service: string
+  label: string
+  region: string
+  /** DynamoDB only — whether the table has a stream */
+  streamEnabled?: boolean
+  /** SQS only — visible messages waiting to be consumed */
+  approximateNumberOfMessages?: number
+  /** SQS only — messages in flight (received, not yet deleted/returned) */
+  approximateNumberOfMessagesNotVisible?: number
+  /** CloudFormation stack name this resource belongs to (1:1 ownership) */
+  stackName?: string
+  /** VPC ID this resource belongs to (EC2 instances, RDS instances, …) */
+  vpcId?: string
+  /** resource status string (e.g. RDS DBInstanceStatus: "available", "stopped") */
+  status?: string
+  /** VPC only — CIDR block (e.g. "10.0.0.0/16") */
+  cidrBlock?: string
+  /** VPC only — number of subnets in this VPC */
+  subnetCount?: number
+  /** VPC only — whether an internet gateway is attached */
+  hasInternetGateway?: boolean
+  /** IGW only — the VPC ID attached to this internet gateway */
+  attachedVpcId?: string
+  /** API Gateway only — protocol type (REST or HTTP) */
+  protocolType?: string
+  /** API Gateway only — number of routes or resources configured */
+  routeCount?: number
+  /** API Gateway only — number of deployed stages */
+  stageCount?: number
+  /** CloudFront only — the distribution's domain name */
+  domainName?: string
+  /** CloudFront only — number of origins */
+  originCount?: number
+  /** AppSync only — authentication type (API_KEY, AWS_IAM, …) */
+  authenticationType?: string
+  /** AppSync only — number of data sources attached */
+  dataSourceCount?: number
+  /** AppSync only — number of resolvers configured */
+  resolverCount?: number
+  /** ECR only — full push-ready repository URI (e.g. localhost:5000/my-repo) */
+  repositoryUri?: string
+  /** WAF only — REGIONAL or CLOUDFRONT */
+  scope?: string
+  /** WAF only — number of stored rules (rules are not enforced) */
+  ruleCount?: number
+  /** Lambda ESM filter node only — EventSourceMapping UUID */
+  esmId?: string
+  /** Lambda ESM filter node only — target function name */
+  functionName?: string
+  /** Lambda ESM filter node only — source queue/table name */
+  eventSource?: string
+  /** Lambda ESM filter node only — source type, e.g. dynamodb */
+  sourceType?: string
+  /** Lambda ESM filter node only — raw FilterCriteria patterns */
+  filterPatterns?: string[]
+  /** ECS only — whether this node is a cluster, service, or task */
+  ecsResourceType?: TopologyECSResourceType
+  /** ECS service/task owner, used for detail navigation */
+  clusterName?: string
+  /** ECS task only — task UUID used by the task detail route */
+  taskId?: string
+  /** ECS service only — configured task count */
+  desiredCount?: number
+  /** ECS service only — currently running task count */
+  runningCount?: number
+}
+
+/** Generated from Go `router.topologyEdge` (internal/router/topology.go). */
+export interface TopologyEdge {
+  id: string
+  source: string
+  target: string
+  type: string
+  label?: string
+  state?: string
+  sourceRegion?: string
+  targetRegion?: string
+}
+
+/**
+ * topologyECSResourceType says which kind of ECS resource a topology node is:
+ * one of the constants below. The Map page navigates differently for each
+ * (a task node links to its task detail, a service node to its service), so
+ * the values are a contract — cmd/tsgen renders them as the TypeScript union.
+ *
+ * Generated from Go `router.topologyECSResourceType` (internal/router/topology.go).
+ */
+export type TopologyECSResourceType = "cluster" | "service" | "task"
+
+/**
+ * CapturedMessage holds a single message captured by the mock SMTP server or
+ * mock SMS sender. The Kind field distinguishes email from SMS.
+ *
+ * Generated from Go `smtp.CapturedMessage` (internal/smtp/message.go).
+ */
+export interface CapturedMessage {
+  /** ID is a unique identifier assigned at capture time. */
+  id: string
+  /** Kind is the transport type: "email" or "sms". */
+  kind: MessageKind
+  /**
+   * Source is the name of the service that sent the message
+   * (e.g. "sns", "ses", "cognito"). Empty when unknown.
+   */
+  source?: string
+  /**
+   * From is the envelope sender address (MAIL FROM for email, or the
+   * originator phone number / sender ID for SMS).
+   */
+  from: string
+  /** To is the list of recipient addresses (email) or phone numbers (SMS). */
+  to: string[]
+  /** Subject is the value of the Subject header. Always empty for SMS. */
+  subject?: string
+  /** TextBody is the plain-text body. */
+  textBody: string
+  /** HTMLBody is the HTML body (text/html part), if present. Always empty for SMS. */
+  htmlBody?: string
+  /** ReceivedAt is the UTC timestamp when the message was captured. */
+  receivedAt: string
+  /** Raw is the complete RFC 5321 DATA payload, verbatim. Empty for SMS. */
+  raw?: string
+  /**
+   * GroupID ties all deliveries for a single SNS Publish call together so
+   * the inbox UI can show them as a thread. It is the SNS MessageId when
+   * set by the SNS fan-out; empty for standalone messages (SES, Cognito).
+   */
+  groupId?: string
+  /**
+   * GroupTopic is the short topic name associated with GroupID, shown as
+   * the thread title in the inbox list.
+   */
+  groupTopic?: string
+}
+
+/**
+ * MessageKind distinguishes the transport type of a captured message.
+ *
+ * Generated from Go `smtp.MessageKind` (internal/smtp/message.go).
+ */
+export type MessageKind = "email" | "sms" | "webhook" | "push"
+
+/**
+ * entryJSON is Entry's wire shape — what GET /_overcast/debug/trace/{id}
+ * returns and what cmd/tsgen renders as the console's TraceEntry. It differs
+ * from Entry in two ways: the body fields are strings rather than []byte
+ * (encoding/json would base64 them otherwise), and the derived
+ * *BodyTruncated booleans are added for callers that predate OmitReason.
+ * Hops are likewise rendered through hopJSON. Keep the two in step: Entry is
+ * the in-memory type, this is the contract.
+ *
+ * Generated from Go `trace.entryJSON` (internal/trace/trace.go).
+ */
+export interface TraceEntry {
+  requestId: string
+  timestamp: string
+  duration: number
+  method: string
+  path: string
+  host: string
+  query?: string
+  service: string
+  operation?: string
+  region: string
+  stack?: string
+  requestHeaders: Record<string, string[]>
+  requestBody?: string
+  requestBodyOmitted?: TraceOmitReason
+  /**
+   * RequestBodyTruncated is derived from RequestBodyOmitted and kept for
+   * compatibility; prefer the reason, which says *which* loss occurred.
+   */
+  requestBodyTruncated?: boolean
+  requestSize?: number
+  responseHeaders: Record<string, string[]>
+  responseBody?: string
+  responseBodyOmitted?: TraceOmitReason
+  /**
+   * ResponseBodyTruncated is derived from ResponseBodyOmitted; see
+   * RequestBodyTruncated.
+   */
+  responseBodyTruncated?: boolean
+  statusCode: number
+  streaming?: boolean
+  hops?: TraceHop[]
+  logEntries?: TraceLogEntry[]
+  awsErrorCode?: string
+  awsErrorMessage?: string
+  remoteAddr?: string
+  userAgent?: string
+  referer?: string
+  parentRequestId?: string
+  xrayTraceId?: string
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * hopJSON is Hop's wire shape — bodies as strings, plus the derived
+ * *BodyTruncated booleans — and what cmd/tsgen renders as TraceHop. See
+ * entryJSON.
+ *
+ * Generated from Go `trace.hopJSON` (internal/trace/trace.go).
+ */
+export interface TraceHop {
+  id: string
+  requestId?: string
+  order: number
+  callerService: string
+  callerOperation?: string
+  service: string
+  operation: string
+  targetUri?: string
+  requestHeaders?: Record<string, string[]>
+  requestBody?: string
+  requestBodyOmitted?: TraceOmitReason
+  /**
+   * RequestBodyTruncated is derived from RequestBodyOmitted and kept for
+   * compatibility; prefer the reason.
+   */
+  requestBodyTruncated?: boolean
+  responseStatus: number
+  responseBody?: string
+  responseBodyOmitted?: TraceOmitReason
+  /**
+   * ResponseBodyTruncated is derived from ResponseBodyOmitted; see
+   * RequestBodyTruncated.
+   */
+  responseBodyTruncated?: boolean
+  duration: number
+  error?: string
+  timestamp: string
+  noisy?: boolean
+  stack?: string
+}
+
+/**
+ * LogEntry is one structured log line captured for this request.
+ *
+ * Generated from Go `trace.LogEntry` (internal/trace/trace.go).
+ */
+export interface TraceLogEntry {
+  level: string
+  message: string
+  fields?: Record<string, unknown>
+  timestamp: string
+  hopId?: string
+}
+
+/**
+ * OmitReason says why a body in a trace is not intact, so that a reader can
+ * tell a body we dropped from one that was never sent. An empty body with no
+ * reason is a request that had no body; an empty body with a reason is context
+ * this emulator deleted, and saying which is the whole point of the type.
+ *
+ * It is the single source of truth for the `requestBodyTruncated` /
+ * `responseBodyTruncated` booleans on the wire, which are derived from it
+ * during marshalling rather than stored alongside it.
+ *
+ * The reason does not say whether a prefix survived, because the body itself
+ * already does: OmitSize keeps what fit, while OmitTraceBudget and
+ * OmitStreaming keep nothing. A caller distinguishes them by looking at the
+ * body, not by consulting a second field that could disagree with it.
+ *
+ * Generated from Go `trace.OmitReason` (internal/trace/omission.go).
+ */
+export type TraceOmitReason = "size" | "trace-budget" | "evicted" | "streaming"
+
+/**
+ * Summary is a lightweight trace entry for list endpoints — no bodies, headers,
+ * hops, or log entries.
+ *
+ * Generated from Go `trace.Summary` (internal/trace/trace.go).
+ */
+export interface TraceSummary {
+  requestId: string
+  timestamp: string
+  method: string
+  path: string
+  service: string
+  operation?: string
+  statusCode: number
+  duration: number
+  region?: string
+  hopCount?: number
+  logCount?: number
+  internal?: boolean
+  /**
+   * Pinned marks a trace retained because it went wrong, rather than because
+   * it is recent. Without it a failure outliving everything around it looks
+   * like a bug in eviction; the row can now say why it is still here.
+   * Set by the buffer, which owns retention — the recorder does not know.
+   */
+  pinned?: boolean
+}
+
+/**
+ * debugTraceListResponse is one page of GET /_overcast/debug/traces. Traces is
+ * never null (empty when nothing matched); NextCursor is absent on the last
+ * page, and is what the caller passes back as ?after= for the next one.
+ *
+ * Generated from Go `router.debugTraceListResponse` (internal/router/debug.go).
+ */
+export interface TraceListResponse {
+  traces: TraceSummary[]
+  nextCursor?: string
+}
+
+/**
+ * RetentionStats is what the buffer is holding and what it has let go.
+ *
+ * It is served by the trace count endpoint and rendered at the end of the trace
+ * list, because a list that simply stops is indistinguishable from a bug: the
+ * reader cannot tell whether their request was never traced, or traced and
+ * reclaimed, or is still there and merely filtered out.
+ *
+ * Generated from Go `trace.RetentionStats` (internal/trace/stats.go).
+ */
+export interface TraceCountResponse {
+  /** Occupancy, per ring. */
+  live: number
+  pinned: number
+  internal: number
+  /**
+   * Count and Capacity keep their existing meanings: everything retained,
+   * and the most that could be.
+   */
+  count: number
+  capacity: number
+  floor: number
+  ceiling: number
+  window: number
+  pinnedLimit: number
+  bytes: number
+  bytesBudget: number
+  /**
+   * OldestRetained is how far back what you are looking at goes. Zero when
+   * nothing is retained.
+   */
+  oldestRetained?: string
+  dropped: TraceDroppedCounts
+}
+
+/**
+ * DroppedCounts is why traces are no longer here, split by the rule that
+ * reclaimed them. Internal polling is counted separately because it recycles
+ * itself constantly and would otherwise swamp the numbers a reader cares about.
+ *
+ * Generated from Go `trace.DroppedCounts` (internal/trace/stats.go).
+ */
+export interface TraceDroppedCounts {
+  capacity: number
+  aged: number
+  bytes: number
+  pinnedCap: number
+  internal: number
+}
+
+/**
+ * Match is one trace a deep search matched, and where.
+ *
+ * Before/Text/After are the excerpt, split rather than concatenated so a caller
+ * highlights the match without searching for it again — and, more importantly,
+ * without having to guess which occurrence was the one that matched.
+ *
+ * Generated from Go `trace.Match` (internal/trace/deepsearch.go).
+ */
+export interface TraceMatch {
+  requestId: string
+  field: TraceMatchField
+  hopId?: string
+  /**
+   * Label places the match: "warn · cfn: stack failed" for a log line,
+   * "ecr.DescribeImages → 400" for a hop.
+   */
+  label: string
+  before?: string
+  text?: string
+  after?: string
+  /**
+   * Binary marks a match inside something that is not text — CBOR, protobuf,
+   * a compressed payload. Rendering an excerpt of it produces mojibake, so
+   * Offset says where it hit instead and the excerpt fields stay empty.
+   */
+  binary?: boolean
+  offset?: number
+  /**
+   * Summary is the trace's list row, carried along so a caller can render the
+   * result without a second lookup that might find the trace already evicted.
+   */
+  summary: TraceSummary
+}
+
+/**
+ * MatchField names where in a trace a deep search found its query. It is the
+ * caller's label for the match, so the values are the wire's, not Go's.
+ *
+ * Generated from Go `trace.MatchField` (internal/trace/deepsearch.go).
+ */
+export type TraceMatchField = "log" | "hopError" | "requestBody" | "responseBody"
+
+/**
+ * DeepResult is what one call scanned and found.
+ *
+ * Generated from Go `trace.DeepResult` (internal/trace/deepsearch.go).
+ */
+export interface TraceSearchResponse {
+  matches: TraceMatch[]
+  /** NextCursor resumes the scan. Empty when Done. */
+  nextCursor?: string
+  /**
+   * Done reports that the scan reached the oldest retained trace. A caller
+   * that stops before this has stopped early — by its own choice, or because
+   * Cancelled.
+   */
+  done: boolean
+  /**
+   * Cancelled reports that the caller's context ended the scan. Distinct from
+   * Done: one means "there is no more", the other "we stopped".
+   */
+  cancelled?: boolean
+  /**
+   * Scanned and Remaining drive a progress indicator. Remaining counts traces
+   * this scan has not reached yet, which is the number a reader wants — not
+   * bytes, which they have no feel for.
+   */
+  scanned: number
+  remaining: number
+}
