@@ -24,7 +24,51 @@ func k3sImageForVersion(version string) string {
 	return "rancher/k3s:v" + version + ".3-k3s1"
 }
 
-// bootstrapLiveCluster is the entry point CreateCluster launches in its own
+// launchLiveBootstrap hands cluster's k3s bring-up to its own goroutine,
+// tracked on liveWg so Stop can wait for it — unless shutdown has already
+// begun, in which case it starts nothing, registers nothing, and returns
+// false; what that means for the cluster record is the caller's call.
+//
+// This is the one place liveWg.Add(1) happens. The Add and the liveStopping
+// check sit under liveLifecycleMu, the same mutex Stop sets liveStopping and
+// cancels liveCtx under before it ever calls liveWg.Wait, so every Add still
+// to come either already finished (strictly before Stop's critical section)
+// or is blocked on the lock and will observe liveStopping and refuse instead
+// of racing the Wait — sync.WaitGroup's Add-vs-Wait race, the shape #1282
+// found in lifecycle.Scheduler. CreateCluster and recoverLiveCluster each
+// carried their own copy of this fence until one of them didn't (#1291);
+// sharing it here is what keeps a third copy from drifting the same way.
+//
+// The bootstrap runs on s.liveCtx, not a request's: it outlives the response
+// that started it, and Stop needs to be able to end it. It gets its own copy
+// of cluster, so callers keep using theirs. onDone, if non-nil, runs as the
+// goroutine exits, before its liveWg slot is released.
+func (s *Service) launchLiveBootstrap(region string, cluster *Cluster, onDone func()) bool {
+	s.liveLifecycleMu.Lock()
+	if s.liveStopping {
+		s.liveLifecycleMu.Unlock()
+		return false
+	}
+	s.liveWg.Add(1)
+	s.liveLifecycleMu.Unlock()
+	// Register ownership before the goroutine runs so delete/stop can clean
+	// up even if the container launch fails. The container ID is filled in
+	// once Docker create+start succeeds. Stop cannot miss this: it blocks on
+	// the liveWg slot taken above, which the goroutine releases only after
+	// this line and its whole bootstrap have run.
+	s.setLiveClusterRuntime(region, cluster.Name, &liveClusterRuntime{})
+	own := *cluster
+	go func() {
+		defer s.liveWg.Done()
+		if onDone != nil {
+			defer onDone()
+		}
+		s.bootstrapLiveCluster(middleware.ContextWithRegion(s.liveCtx, region), region, &own)
+	}()
+	return true
+}
+
+// bootstrapLiveCluster is the entry point launchLiveBootstrap runs in its own
 // goroutine: the real bootstrap, or the stand-in a test installed in its place.
 // See startLiveClusterHook.
 func (s *Service) bootstrapLiveCluster(ctx context.Context, region string, cluster *Cluster) {
@@ -588,25 +632,16 @@ func (s *Service) recoverLiveCluster(region string, cluster *Cluster) {
 		return
 	}
 	key := liveClusterRuntimeKey(region, cluster.Name)
-	s.liveLifecycleMu.Lock()
-	if s.liveStopping {
-		s.liveLifecycleMu.Unlock()
-		return
-	}
 	if _, loaded := s.liveRecoveries.LoadOrStore(key, struct{}{}); loaded {
-		s.liveLifecycleMu.Unlock()
 		return
 	}
-	s.liveWg.Add(1)
-	s.liveLifecycleMu.Unlock()
-	copy := *cluster
-	s.setLiveClusterRuntime(region, cluster.Name, &liveClusterRuntime{})
-	go func() {
-		defer s.liveWg.Done()
-		defer s.liveRecoveries.Delete(key)
-		ctx := middleware.ContextWithRegion(s.liveCtx, region)
-		s.bootstrapLiveCluster(ctx, region, &copy)
-	}()
+	// A refused launch (shutdown has begun) gives the key back so the
+	// coalescing map does not outlive the recovery it was reserved for;
+	// nothing else can launch past this point either, so no bootstrap is
+	// lost to the gap between reserving and refusing.
+	if !s.launchLiveBootstrap(region, cluster, func() { s.liveRecoveries.Delete(key) }) {
+		s.liveRecoveries.Delete(key)
+	}
 }
 
 func (s *Service) reconcileReadyLiveCluster(ctx context.Context, region string, cluster *Cluster) *Cluster {
