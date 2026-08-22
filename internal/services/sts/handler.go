@@ -162,7 +162,7 @@ func (h *Handler) AssumeRole(w http.ResponseWriter, r *http.Request) {
 			Arn           string `xml:"Arn"`
 			AssumedRoleId string `xml:"AssumedRoleId"`
 		}{
-			Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, sessionName, sessionName),
+			Arn:           assumedRoleArn(account, roleArn, sessionName),
 			AssumedRoleId: fmt.Sprintf("%s:%s", roleID, sessionName),
 		},
 	})
@@ -204,7 +204,7 @@ func (h *Handler) AssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 			Arn           string `xml:"Arn"`
 			AssumedRoleId string `xml:"AssumedRoleId"`
 		}{
-			Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, sessionName, sessionName),
+			Arn:           assumedRoleArn(account, roleArn, sessionName),
 			AssumedRoleId: fmt.Sprintf("%s:%s", roleID, sessionName),
 		},
 		SubjectFromWebIdentityToken: "test-user",
@@ -219,10 +219,7 @@ func (h *Handler) persistRoleSession(ctx context.Context, accessKeyID, roleArn, 
 	if h.st == nil || strings.TrimSpace(accessKeyID) == "" || strings.TrimSpace(roleArn) == "" {
 		return
 	}
-	roleName := roleArn
-	if idx := strings.LastIndex(roleArn, "/"); idx >= 0 {
-		roleName = roleArn[idx+1:]
-	}
+	roleName := roleNameFromRoleArn(roleArn)
 	type sessionRecord struct {
 		RoleArn         string `json:"RoleArn"`
 		RoleName        string `json:"RoleName"`
@@ -235,6 +232,27 @@ func (h *Handler) persistRoleSession(ctx context.Context, accessKeyID, roleArn, 
 	// Ignore errors — session persistence is best-effort; missing sessions only
 	// affect IAM enforcement resolution, which is opt-in.
 	_ = h.st.Set(ctx, "iam:sessions", accessKeyID, string(b))
+}
+
+// roleNameFromRoleArn extracts the role name from an IAM role ARN
+// (arn:aws:iam::<account>:role/<RoleName> or
+// arn:aws:iam::<account>:role/<path>/<RoleName>), returning the last
+// "/"-delimited path segment. Falls back to the input unchanged if it
+// contains no "/".
+func roleNameFromRoleArn(roleArn string) string {
+	if idx := strings.LastIndex(roleArn, "/"); idx >= 0 {
+		return roleArn[idx+1:]
+	}
+	return roleArn
+}
+
+// assumedRoleArn builds the AssumedRoleUser.Arn shape AWS returns from
+// AssumeRole/AssumeRoleWithWebIdentity: arn:aws:sts::<account>:assumed-role/<RoleName>/<SessionName>,
+// where RoleName is parsed out of the request's RoleArn — not the session
+// name repeated in both segments. Shared by both the legacy and typed wire
+// paths so they stay identical.
+func assumedRoleArn(account, roleArn, sessionName string) string {
+	return fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, roleNameFromRoleArn(roleArn), sessionName)
 }
 
 // ─── Wire format helpers ──────────────────────────────────────────────────────
