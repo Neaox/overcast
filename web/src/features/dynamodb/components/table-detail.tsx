@@ -19,6 +19,7 @@ import {
   dynamoTableQueryOptions,
   dynamoItemsQueryOptions,
   dynamoQueryItemsOptions,
+  dynamoMetricsQueryOptions,
   dynamoKeys,
   putItemMutationOptions,
   deleteItemMutationOptions,
@@ -26,6 +27,11 @@ import {
   updateStreamMutationOptions,
   bulkDeleteItemsMutationOptions,
 } from "@/features/dynamodb/data"
+import {
+  MonitorPanel,
+  type MonitorCardConfig,
+} from "@/features/monitoring/components/monitor-panel"
+import { DEFAULT_CHART_RANGE, type ChartRangeToken } from "@/features/monitoring/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -129,6 +135,20 @@ const SORT_KEY_OPS: { value: SortKeyOp; label: string }[] = [
   { value: "between", label: "Between" },
 ]
 
+// The AWS/DynamoDB phase 4 table-level catalogue (handler_metrics.go):
+// consumed capacity only — see that file's doc comment for why
+// SuccessfulRequestLatency/UserErrors/SystemErrors aren't charted per table.
+const DYNAMODB_MONITOR_CARDS: MonitorCardConfig[] = [
+  {
+    title: "Consumed capacity",
+    unit: "Count",
+    series: [
+      { metric: "ConsumedReadCapacityUnits", statistic: "Sum", label: "Read" },
+      { metric: "ConsumedWriteCapacityUnits", statistic: "Sum", label: "Write" },
+    ],
+  },
+]
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 interface Props {
@@ -140,7 +160,8 @@ export function TableDetail({ tableName }: Props) {
   const qc = useQueryClient()
   const { toast } = useToast()
 
-  const [activeTab, setActiveTab] = useState<"items" | "schema">("items")
+  const [activeTab, setActiveTab] = useState<"items" | "schema" | "monitor">("items")
+  const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
   const [showPutItem, setShowPutItem] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DynamoItem>()
   const [expandedRow, setExpandedRow] = useState<number>()
@@ -175,6 +196,7 @@ export function TableDetail({ tableName }: Props) {
   } | null>(null)
 
   const { data: table, isLoading: tableLoading } = useQuery(dynamoTableQueryOptions(tableName))
+  const metricsQuery = useQuery(dynamoMetricsQueryOptions(tableName, monitorRange))
 
   const {
     data: scanPages,
@@ -444,6 +466,7 @@ export function TableDetail({ tableName }: Props) {
   const tabs = [
     { id: "items" as const, label: `Items (${scanCount})` },
     { id: "schema" as const, label: "Schema" },
+    { id: "monitor" as const, label: "Monitor" },
   ]
 
   return (
@@ -923,6 +946,22 @@ export function TableDetail({ tableName }: Props) {
             </div>
           </section>
         </div>
+      )}
+
+      {/* Monitor tab */}
+      {activeTab === "monitor" && (
+        <MonitorPanel
+          range={monitorRange}
+          onRangeChange={setMonitorRange}
+          isLoading={metricsQuery.isLoading}
+          isFetching={metricsQuery.isFetching}
+          error={metricsQuery.error}
+          data={metricsQuery.data}
+          cards={DYNAMODB_MONITOR_CARDS}
+          onRefresh={() =>
+            void qc.invalidateQueries({ queryKey: dynamoKeys.metrics(tableName, monitorRange) })
+          }
+        />
       )}
 
       {/* Put Item dialog */}
