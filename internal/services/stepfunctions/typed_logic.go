@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -17,6 +18,14 @@ type createStateMachineRequest struct {
 	Type                 string         `json:"type" cbor:"type"`
 	LoggingConfiguration map[string]any `json:"loggingConfiguration" cbor:"loggingConfiguration"`
 	TracingConfiguration map[string]any `json:"tracingConfiguration" cbor:"tracingConfiguration"`
+	Tags                 []sfnTag       `json:"tags" cbor:"tags"`
+}
+
+// sfnTag is the wire shape of Step Functions' tag list, shared by
+// CreateStateMachine and TagResource.
+type sfnTag struct {
+	Key   string `json:"key" cbor:"key"`
+	Value string `json:"value" cbor:"value"`
 }
 
 type createStateMachineResponse struct {
@@ -116,8 +125,24 @@ func (h *Handler) createStateMachineTyped(ctx context.Context, req *createStateM
 	if smType == "" {
 		smType = "STANDARD"
 	}
+	// Validated before the state machine is written (#1196) — a rejected
+	// create leaves no state machine behind.
+	tags := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(sfnTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	now := h.clk.Now()
-	arn := protocol.ARN(h.cfg.Region, h.cfg.AccountID, "states", "stateMachine:"+req.Name)
+	// The typed path used to hardcode h.cfg.Region here instead of resolving
+	// the request's actual region (as execution_ops.go's StartExecution
+	// already does) — a pre-existing divergence between this path and the
+	// legacy JSON handler unified into it by #1196. A CBOR create used to
+	// mint an ARN in the account's default region regardless of the request
+	// region; fixed to match.
+	region := middleware.RegionFromContext(ctx, h.cfg.Region)
+	arn := protocol.ARN(region, h.cfg.AccountID, "states", "stateMachine:"+req.Name)
 	sm := &StateMachine{
 		Name:                 req.Name,
 		ARN:                  arn,
@@ -128,6 +153,7 @@ func (h *Handler) createStateMachineTyped(ctx context.Context, req *createStateM
 		CreatedAt:            now,
 		LoggingConfiguration: req.LoggingConfiguration,
 		TracingConfiguration: req.TracingConfiguration,
+		Tags:                 tags,
 	}
 	if err := h.store.PutStateMachine(ctx, sm); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
