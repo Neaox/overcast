@@ -603,6 +603,17 @@ base is a `release/**` branch, so on `main` it would never report at all — and
 required check that never reports leaves every PR waiting for it forever. It
 enforces itself by failing where it does run.
 
+`Lockfile freshness` should be required as well. It runs on every PR (passing
+without a word on the ones that do not touch `web/pnpm-lock.yaml`) and fails a
+PR whose lockfile was generated against a `main` that has since changed its
+own — the same rule as "require branches to be up to date before merging",
+confined to the one file where merging two regenerated copies silently breaks
+`main` (#1340). Its sweep job posts a check run under the same name onto open PRs when a
+lockfile push lands on `main`, which is what makes it bite *before* the merge;
+the two names have to stay identical. It is a gate on the merge, not a publishing
+safeguard, and it is not a merge queue: two lockfile PRs that auto-merge in
+the same instant are not caught.
+
 ## Manual Release Trigger
 
 Manual GitHub release creation is optional. Use it only when the PR-merge
