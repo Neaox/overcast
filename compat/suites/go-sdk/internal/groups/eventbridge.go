@@ -327,21 +327,6 @@ func (g *ebGroup) RemoveTargets(ctx context.Context, t *harness.TestContext) err
 	return nil
 }
 
-func (g *ebGroup) TestEventPattern(ctx context.Context, t *harness.TestContext) error {
-	resp, err := g.cl().TestEventPattern(ctx, &eventbridge.TestEventPatternInput{
-		EventPattern: aws.String(`{"source":["my.app"]}`),
-		Event:        aws.String(`{"source":"my.app","detail-type":"order","detail":{}}`),
-	})
-	if err != nil {
-		if harness.IsUnimplemented(err) {
-			return nil
-		}
-		return err
-	}
-	_ = resp
-	return nil
-}
-
 func (g *ebGroup) DeleteRule(ctx context.Context, t *harness.TestContext) error {
 	bus := t.GetString("eb_rules_bus")
 	name := fmt.Sprintf("oc-dr-%s", t.RunID)

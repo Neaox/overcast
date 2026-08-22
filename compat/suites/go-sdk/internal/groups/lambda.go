@@ -406,19 +406,6 @@ func (g *lambdaGroup) InvokeDryRun(ctx context.Context, t *harness.TestContext) 
 	return nil
 }
 
-func (g *lambdaGroup) InvokeWithError(ctx context.Context, t *harness.TestContext) error {
-	name := t.GetString("lambda_invoke_fn")
-	resp, err := g.client().Invoke(ctx, &lambda.InvokeInput{
-		FunctionName: aws.String(name),
-		Payload:      []byte(`{}`),
-	})
-	if err != nil {
-		return err
-	}
-	_ = resp
-	return nil
-}
-
 // ── lambda-invoke-stream ──────────────────────────────────────────────────────
 
 func (g *lambdaGroup) setupInvokeStream(ctx context.Context, t *harness.TestContext) error {
