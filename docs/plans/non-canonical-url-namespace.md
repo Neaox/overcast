@@ -778,6 +778,5 @@ because it is the phase most worth reverting alone if it goes wrong.
 | `_user_request_` | Permanent documented exception, with the reason in the allowlist string (§3, violation 2). |
 | Aliases / deprecation window | None. Alpha; clean break, one breaking-change fragment (§4.4). |
 
-No open questions remain. Phase 0 (the `/api` IAM bypass, §3.1) is done; the
-next action is phase 1, landing gate 9 with today's violations pre-loaded in
-`nonManifestRoutes` so no route moves before the rule is enforced.
+No open questions remain. All phases (0 through 6, including gate 9) are done —
+see the phasing table above.
