@@ -49,6 +49,11 @@ import { Trash2 } from "lucide-react"
  * `deleteTarget` state itself: the mutation's `onSuccess` (from
  * `useResourceMutation`) is what clears it today, and that callback lives on
  * the page, not in this component.
+ *
+ * A page with a filter box passes `query.data` already filtered, plus
+ * `isFiltered`/`onClearFilter` so the empty state can tell "nothing matches
+ * the filter" apart from "nothing exists yet" — see `useFilterSearchParam`
+ * for wiring the filter itself to the route's search params.
  */
 
 export interface ResourceTableColumn<T> {
@@ -103,6 +108,18 @@ interface ResourceTableProps<T> {
   emptyTitle?: string
   emptyDescription?: string
   emptyAction?: React.ReactNode
+  /**
+   * True while a filter/search is narrowing the list — swaps the empty state
+   * to "no matches" copy with a clear-filter action instead of `emptyAction`,
+   * so a filter that turns up nothing never reads as "this doesn't exist,
+   * create one". Has no effect on a load error, which always wins (see
+   * `QueryListState`).
+   */
+  isFiltered?: boolean
+  /** Clears the active filter. Powers the default "Clear filter" action shown when `isFiltered` narrows the list to zero rows. */
+  onClearFilter?: () => void
+  filteredEmptyTitle?: string
+  filteredEmptyDescription?: string
   errorTitle?: string
   loadingCount?: number
   /** Extra per-row actions rendered before the delete action, if any. */
@@ -123,6 +140,10 @@ export function ResourceTable<T>({
   emptyTitle,
   emptyDescription,
   emptyAction,
+  isFiltered,
+  onClearFilter,
+  filteredEmptyTitle,
+  filteredEmptyDescription,
   errorTitle,
   loadingCount,
   rowActions,
@@ -144,8 +165,12 @@ export function ResourceTable<T>({
         errorTitle={errorTitle ?? `Failed to load ${noun}`}
         loadingNoun={noun}
         loadingCount={loadingCount}
+        isFiltered={isFiltered}
+        onClearFilter={onClearFilter}
+        filteredEmptyTitle={filteredEmptyTitle ?? `No matching ${noun}`}
+        filteredEmptyDescription={filteredEmptyDescription ?? `No ${noun} match your filter.`}
         empty={
-          emptyDescription || emptyAction || EmptyIcon ? (
+          !isFiltered && (emptyDescription || emptyAction || EmptyIcon) ? (
             <EmptyState
               icon={EmptyIcon && <EmptyIcon className="h-10 w-10" />}
               title={emptyTitle ?? `No ${noun}`}

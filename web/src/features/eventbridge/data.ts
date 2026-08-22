@@ -2,6 +2,17 @@ import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { eventbridge } from "@/services/api/eventbridge"
 import { endpointStore } from "@/services/endpoint-store"
 
+// ─── Tabs ───────────────────────────────────────────────────────────────────
+
+/**
+ * The EventBridge tabs, both resource lists. Lives here rather than in
+ * `eventbridge-page.tsx` because that file's exports must stay component-only
+ * for Fast Refresh; the route file needs this to validate the `tab` search
+ * param.
+ */
+export const EVENTBRIDGE_TABS = ["buses", "rules"] as const
+export type EventBridgeTab = (typeof EVENTBRIDGE_TABS)[number]
+
 // ─── Key factory ───────────────────────────────────────────────────────────
 
 export const ebKeys = {

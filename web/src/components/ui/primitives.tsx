@@ -2,8 +2,9 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
-import { AlertTriangle, Loader2 } from "lucide-react"
+import { AlertTriangle, Loader2, Search } from "lucide-react"
 import { SkeletonCards, SkeletonRows } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
 
 // ─── Labels ───────────────────────────────────────────────────────────────
 /**
@@ -107,6 +108,22 @@ interface QueryListStateProps {
   loadingNoun?: string
   errorTitle?: string
   errorDescription?: string
+  /**
+   * True while a filter/search is narrowing the list. Swaps the empty state
+   * to "no matches" copy with a clear-filter action instead of the create
+   * CTA — a filter turning up nothing is not the same fact as the resource
+   * not existing, and must not read as an invitation to create one. Has no
+   * effect while `error` is set: a failed fetch is a failed fetch regardless
+   * of what the filter box says (see the `isEmpty && error` branch below).
+   */
+  isFiltered?: boolean
+  /** Clears the active filter. Powers the default "Clear filter" action shown when `isFiltered` narrows the list to zero rows. */
+  onClearFilter?: () => void
+  /** Overrides the filtered-empty title. Defaults to `No matching {resource}` derived from `emptyTitle`/`loadingNoun` context via the caller. */
+  filteredEmptyTitle?: string
+  /** Overrides the filtered-empty description. Defaults to "No results match your filter." */
+  filteredEmptyDescription?: string
+  filteredEmptyIcon?: React.ReactNode
 }
 
 function queryErrorMessage(error: unknown): string | undefined {
@@ -131,6 +148,11 @@ function QueryListState({
   loadingNoun,
   errorTitle = "Unable to load data",
   errorDescription,
+  isFiltered,
+  onClearFilter,
+  filteredEmptyTitle,
+  filteredEmptyDescription,
+  filteredEmptyIcon,
 }: QueryListStateProps) {
   // Every list in the app inherits its loading treatment from here: a static
   // skeleton, never a centred spinner (see components/ui/skeleton.tsx).
@@ -142,6 +164,10 @@ function QueryListState({
     )
   }
 
+  // Checked before the generic `isEmpty` branch (and before `isFiltered`, for
+  // the same reason): a fetch that failed must never read as "nothing here" —
+  // filtered or otherwise — or the one signal that says "this isn't the real
+  // state, go retry" is lost.
   if (isEmpty && error) {
     return (
       <EmptyState
@@ -154,6 +180,25 @@ function QueryListState({
 
   if (isEmpty) {
     if (empty) return <>{empty}</>
+
+    if (isFiltered) {
+      return (
+        <EmptyState
+          icon={filteredEmptyIcon ?? <Search className="h-10 w-10" />}
+          title={filteredEmptyTitle ?? "No matches"}
+          description={filteredEmptyDescription ?? "No results match your filter."}
+          action={
+            onClearFilter && (
+              <Button variant="ghost" size="sm" onClick={onClearFilter}>
+                Clear filter
+              </Button>
+            )
+          }
+          className={emptyClassName}
+        />
+      )
+    }
+
     return (
       <EmptyState
         icon={emptyIcon}

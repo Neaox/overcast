@@ -20,9 +20,14 @@ import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 
-export function AppSyncPage() {
+interface AppSyncPageProps {
+  /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+export function AppSyncPage({ filter, onFilterChange }: AppSyncPageProps) {
   const [showCreate, setShowCreate] = useState(false)
-  const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
   const navigate = useNavigate()
 
@@ -69,19 +74,17 @@ export function AppSyncPage() {
         </>
       }
     >
-      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter APIs…" />
+      <ResourceListFilter value={filter} onChange={onFilterChange} placeholder="Filter APIs…" />
 
       <ResourceTable
         query={{ data: filtered, isLoading, error }}
         noun="GraphQL APIs"
         emptyIcon={Workflow}
         emptyTitle="No GraphQL APIs"
-        emptyDescription={
-          filter ? "No APIs match the filter." : "Create a GraphQL API to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create API</CreateAction>
-        }
+        emptyDescription="Create a GraphQL API to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create API</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(api) => api.apiId ?? ""}
         onRowClick={(api) =>
           navigate({ to: "/appsync/$apiId", params: { apiId: api.apiId ?? "" } })

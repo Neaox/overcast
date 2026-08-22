@@ -10,6 +10,7 @@ import {
   deleteRuleMutationOptions,
   createBusMutationOptions,
   createRuleMutationOptions,
+  type EventBridgeTab,
 } from "@/features/eventbridge/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
@@ -25,8 +26,24 @@ import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs
 import { InertBanner } from "@/components/inert-banner"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 
-export function EventBridgePage() {
-  const [tab, setTab] = useState("buses")
+interface FilterProps {
+  /** Current filter text for whichever tab is active — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+interface EventBridgePageProps extends FilterProps {
+  /** Selected tab — owned by the route's `tab` search param, so the tab survives a reload/share. */
+  tab: EventBridgeTab
+  onTabChange: (tab: EventBridgeTab) => void
+}
+
+export function EventBridgePage({
+  tab,
+  onTabChange,
+  filter,
+  onFilterChange,
+}: EventBridgePageProps) {
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   return (
@@ -45,16 +62,16 @@ export function EventBridgePage() {
         }
       />
       <InertBanner serviceName="EventBridge" />
-      <Tabs selectedKey={tab} onSelectionChange={setTab}>
+      <Tabs selectedKey={tab} onSelectionChange={(key) => onTabChange(key as EventBridgeTab)}>
         <TabList>
           <Tab id="buses">Event Buses</Tab>
           <Tab id="rules">Rules</Tab>
         </TabList>
         <TabPanel id="buses">
-          <BusesTab />
+          <BusesTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
         <TabPanel id="rules">
-          <RulesTab />
+          <RulesTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
       </Tabs>
     </div>
@@ -63,11 +80,10 @@ export function EventBridgePage() {
 
 // ─── Buses Tab ─────────────────────────────────────────────────────────────
 
-function BusesTab() {
+function BusesTab({ filter, onFilterChange }: FilterProps) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
-  const [filter, setFilter] = useState("")
   const {
     data: buses = [],
     isLoading,
@@ -98,7 +114,7 @@ function BusesTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter buses…"
             className="flex-1"
           />
@@ -113,12 +129,10 @@ function BusesTab() {
         noun="buses"
         emptyIcon={CalendarClock}
         emptyTitle="No event buses"
-        emptyDescription={
-          filter ? "No buses match the filter." : "Create an event bus to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Bus</CreateAction>
-        }
+        emptyDescription="Create an event bus to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create Bus</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(bus) => bus.Name ?? ""}
         onRowClick={(bus) =>
           navigate({ to: "/eventbridge/$busName", params: { busName: bus.Name ?? "" } })
@@ -171,10 +185,9 @@ function BusesTab() {
 
 // ─── Rules Tab ─────────────────────────────────────────────────────────────
 
-function RulesTab() {
+function RulesTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
-  const [filter, setFilter] = useState("")
   const {
     data: rules = [],
     isLoading,
@@ -205,7 +218,7 @@ function RulesTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter rules…"
             className="flex-1"
           />
@@ -220,12 +233,10 @@ function RulesTab() {
         noun="rules"
         emptyIcon={CalendarClock}
         emptyTitle="No rules"
-        emptyDescription={
-          filter ? "No rules match the filter." : "Create an event rule to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Rule</CreateAction>
-        }
+        emptyDescription="Create an event rule to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create Rule</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(rule) => rule.Name ?? ""}
         columns={[
           { header: "Name", cell: (rule) => rule.Name },

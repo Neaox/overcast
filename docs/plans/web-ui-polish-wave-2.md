@@ -6,7 +6,15 @@
 > `connection-gate.tsx`; the disconnected bar later became a reconnecting toast, PR #376),
 > `prefers-reduced-motion` support, the dialog anatomy (header band, icon tile, footer), the
 > pending toast variant, and copy-to-clipboard on identifiers (PR #361) have all landed and
-> their items were deleted below. The structural extractions (detail field, table wrapper, busy
+> their items were deleted below. 2026-08-23 (#1203): the "Quality of life" bullets below on
+> deep-linkable filter state and audited empty-state messaging landed for the scaffold plus every
+> page that already had a filter box — the five single-list index pages (AppSync, Cognito, KMS,
+> SSM, Step Functions) and, since they also converted to `ResourceTable`/`ResourceListFilter` in
+> #1200 wave 2, the two tabbed pages (IAM's four resource tabs, EventBridge's two) — which
+> additionally gained a `tab` search param, so tab-state deep-linking is no longer wholly open
+> either; see the narrowed wording in place. Pages that still lack a filter box (`ec2-dashboard`)
+> or bind a search param one-way rather than live (`apigateway/usage-plans-page`'s `apiId`/`planId`)
+> remain open. The structural extractions (detail field, table wrapper, busy
 > buttons, spinner rollout) are sequenced in
 > [web-ui-dry-refactor.md](./web-ui-dry-refactor.md), which supersedes this file's wording
 > where they overlap.
@@ -136,8 +144,27 @@ were brought to the canvas's sizes and weights. Still outstanding:
 
 ### Quality of life
 
-- Deep-linkable state for filters and selected tabs, matching what the Raw State Debugger already does. (The CloudWatch log viewers gained anchor deep links in the logs-performance work; the rest of the app has not.)
-- Empty states audited per page — several lists fall back to a generic message.
+- ~~Deep-linkable state for filters and selected tabs~~ — landed 2026-08-23 (#1203):
+  `useFilterSearchParam` (`hooks/use-filter-search-param.ts`) two-way binds `ResourceListFilter` to
+  the route's `q` search param — debounced commit, `replace: true` so typing never spams
+  Back/Forward — following the same contract Request Traces' filters already use. Wired into the
+  five single-list index pages that had a filter box (AppSync, Cognito, KMS, SSM, Step Functions)
+  and, since #1200 wave 2 converted them to the same `ResourceTable`/`ResourceListFilter` shape,
+  the two tabbed pages (`iam-page`'s Users/Roles/Policies/Groups tabs, `eventbridge-page`'s
+  Buses/Rules tabs) — both of which also gained a `tab` search param, so the selected tab
+  deep-links too; switching tabs clears `q` in the same navigation, matching `TabPanel`'s existing
+  behaviour of unmounting every tab but the selected one. **Still open:** pages that filter
+  client-side but have no filter box yet at all (`ec2-dashboard`; see P9 in
+  `web-ui-dry-refactor.md`), and `apigateway/usage-plans-page`'s `apiId`/`planId` params, which
+  predate this and are a one-way "open on this plan" link rather than a live filter binding.
+- ~~Empty states audited per page~~ — landed 2026-08-23 (#1203): `ResourceTable`/`QueryListState`
+  gained `isFiltered`/`onClearFilter`, so "nothing exists yet" (create CTA) and "nothing matches
+  the filter" (clear-filter action, "No matching {noun}" copy) are distinct by construction instead
+  of each page hand-writing the `filter ? … : …` ternary — and a load error still wins over both
+  (checked first, regardless of `isFiltered`). Applied to the seven pages above. The remaining
+  Archetype-A pages that use `ResourceTable`/`QueryListState` without a filter box already got the
+  true-empty/error distinction for free from the primitive; none were found falling back to a bare
+  generic message.
 
 ## Open decisions
 

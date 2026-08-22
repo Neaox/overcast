@@ -20,6 +20,8 @@ function TopicsTable(props: {
   onRowClick?: (t: Topic) => void
   onDeleteMutate?: (id: string) => void
   isDeletePending?: boolean
+  isFiltered?: boolean
+  onClearFilter?: () => void
 }) {
   const [deleteTarget, setDeleteTarget] = useState<Topic>()
 
@@ -32,6 +34,8 @@ function TopicsTable(props: {
       emptyIcon={Bell}
       emptyTitle="No topics yet"
       emptyDescription="Create a topic to get started."
+      isFiltered={props.isFiltered}
+      onClearFilter={props.onClearFilter}
       onRowClick={props.onRowClick}
       onDelete={
         props.onDeleteMutate
@@ -77,6 +81,56 @@ describe("ResourceTable > loading and empty states", () => {
     render(<TopicsTable data={[]} error={new Error("network down")} />)
     expect(screen.getByText("Failed to load topics")).toBeInTheDocument()
     expect(screen.getByText("network down")).toBeInTheDocument()
+  })
+})
+
+// The three states a list page can land in when it's empty: nothing exists
+// yet (create CTA), a filter narrowed it to nothing (clear-filter action,
+// distinct copy), or the fetch failed (error copy, wins over both).
+describe("ResourceTable > filtered vs. true-empty vs. error", () => {
+  it("shows the create-CTA empty state when isFiltered is unset", () => {
+    render(<TopicsTable data={[]} />)
+    expect(screen.getByText("No topics yet")).toBeInTheDocument()
+    expect(screen.getByText("Create a topic to get started.")).toBeInTheDocument()
+    expect(screen.queryByText("No results match your filter.")).not.toBeInTheDocument()
+  })
+
+  it("shows 'no matches' copy and a clear-filter action instead of the create CTA when isFiltered is set", () => {
+    const onClearFilter = vi.fn()
+    render(<TopicsTable data={[]} isFiltered onClearFilter={onClearFilter} />)
+
+    expect(screen.getByText("No matching topics")).toBeInTheDocument()
+    expect(screen.getByText("No topics match your filter.")).toBeInTheDocument()
+    // The true-empty copy must not also be showing.
+    expect(screen.queryByText("No topics yet")).not.toBeInTheDocument()
+    expect(screen.queryByText("Create a topic to get started.")).not.toBeInTheDocument()
+
+    expect(screen.getByRole("button", { name: "Clear filter" })).toBeInTheDocument()
+  })
+
+  it("clicking Clear filter calls onClearFilter", async () => {
+    const onClearFilter = vi.fn()
+    const { user } = render(<TopicsTable data={[]} isFiltered onClearFilter={onClearFilter} />)
+
+    await user.click(screen.getByRole("button", { name: "Clear filter" }))
+    expect(onClearFilter).toHaveBeenCalledOnce()
+  })
+
+  it("shows the error state, not the filtered-empty state, when a filtered query also failed", () => {
+    render(
+      <TopicsTable
+        data={[]}
+        error={new Error("network down")}
+        isFiltered
+        onClearFilter={() => {}}
+      />,
+    )
+    expect(screen.getByText("Failed to load topics")).toBeInTheDocument()
+    expect(screen.getByText("network down")).toBeInTheDocument()
+    // Neither empty-state variant should show — the error must win.
+    expect(screen.queryByText("No matching topics")).not.toBeInTheDocument()
+    expect(screen.queryByText("No topics yet")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Clear filter" })).not.toBeInTheDocument()
   })
 })
 

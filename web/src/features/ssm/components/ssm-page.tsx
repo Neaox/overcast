@@ -35,12 +35,17 @@ import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
 
-export function SsmPage() {
+interface SsmPageProps {
+  /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+export function SsmPage({ filter, onFilterChange }: SsmPageProps) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
   const [showCreate, setShowCreate] = useState(false)
-  const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -111,21 +116,23 @@ export function SsmPage() {
     >
       <InertBanner serviceName="SSM Parameter Store" />
 
-      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter parameters…" />
+      <ResourceListFilter
+        value={filter}
+        onChange={onFilterChange}
+        placeholder="Filter parameters…"
+      />
 
       <ResourceTable
         query={{ data: filtered, isLoading, error }}
         noun="parameters"
         emptyIcon={Settings}
         emptyTitle="No parameters"
-        emptyDescription={
-          filter ? "No parameters match the filter." : "Create a parameter to get started."
-        }
+        emptyDescription="Create a parameter to get started."
         emptyAction={
-          !filter && (
-            <CreateAction onClick={() => setShowCreate(true)}>Create parameter</CreateAction>
-          )
+          <CreateAction onClick={() => setShowCreate(true)}>Create parameter</CreateAction>
         }
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(param) => param.Name ?? ""}
         onRowClick={(param) => navigate({ to: "/ssm/$name", params: { name: param.Name ?? "" } })}
         columns={[
