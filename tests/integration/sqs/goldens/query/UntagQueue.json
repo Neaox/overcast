@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "text/xml"
   },
-  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<UntagQueueResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">\n  <UntagQueueResult>\n  </UntagQueueResult>\n  <ResponseMetadata>\n    <RequestId>00000000-0000-0000-0000-000000000000</RequestId>\n  </ResponseMetadata>\n</UntagQueueResponse>\n"
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<UntagQueueResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">\n  <ResponseMetadata>\n    <RequestId>00000000-0000-0000-0000-000000000000</RequestId>\n  </ResponseMetadata>\n</UntagQueueResponse>\n"
 }

@@ -411,6 +411,24 @@ func parseBatchEntries(form url.Values, prefix string) []map[string]any {
 
 // ── JSON → Query XML response conversion ────────────────────────────────────
 
+// noOutputQueryActions holds the SQS Query-protocol actions whose modeled
+// output shape has no members at all. AWS's Query/XML response for these
+// omits the <{Action}Result> wrapper entirely — the response body goes
+// straight from the opening <{Action}Response> element to <ResponseMetadata>.
+// See: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html
+//
+// This is distinct from an action that *has* an output shape but happens to
+// return no members for a given call (e.g. ListQueueTags with no tags) —
+// those still get an (empty) <{Action}Result/> wrapper on real AWS, so they
+// must not be added here.
+var noOutputQueryActions = map[string]bool{
+	"DeleteQueue":        true,
+	"PurgeQueue":         true,
+	"SetQueueAttributes": true,
+	"TagQueue":           true,
+	"UntagQueue":         true,
+}
+
 // writeQueryXMLFromJSON converts a captured JSON response to SQS Query XML format.
 func writeQueryXMLFromJSON(w http.ResponseWriter, r *http.Request, action string, rec *httptest.ResponseRecorder) {
 	reqID := protocol.RequestIDFromContext(r.Context())
@@ -431,9 +449,11 @@ func writeQueryXMLFromJSON(w http.ResponseWriter, r *http.Request, action string
 	var buf bytes.Buffer
 	buf.WriteString(xml.Header)
 	buf.WriteString(fmt.Sprintf("<%sResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">\n", action))
-	buf.WriteString(fmt.Sprintf("  <%sResult>\n", action))
-	writeXMLMap(&buf, data, "    ")
-	buf.WriteString(fmt.Sprintf("  </%sResult>\n", action))
+	if !noOutputQueryActions[action] {
+		buf.WriteString(fmt.Sprintf("  <%sResult>\n", action))
+		writeXMLMap(&buf, data, "    ")
+		buf.WriteString(fmt.Sprintf("  </%sResult>\n", action))
+	}
 	buf.WriteString("  <ResponseMetadata>\n")
 	buf.WriteString(fmt.Sprintf("    <RequestId>%s</RequestId>\n", xmlEscape(reqID)))
 	buf.WriteString("  </ResponseMetadata>\n")
