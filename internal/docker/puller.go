@@ -115,21 +115,52 @@ func (p *ImagePuller) ensure(ctx context.Context, ref ImageReference) error {
 // — is already synchronous, so a few seconds of bounded backoff trades a
 // little latency for not failing a placement that would have worked a moment
 // later.
+//
+// Total bound: 1 initial attempt + len(pullRetryBackoff) retries = 4 attempts
+// at most, with at most sum(pullRetryBackoff) = 2.5s of backoff between them.
+// A create that keeps hitting a transient pull failure therefore takes at
+// most ~2.5s longer than a single failed attempt before it gives up — bounded
+// however slow the daemon's own attempts are, since each attempt still runs
+// to completion (or to the caller's ctx ending, see pullWithRetry) rather
+// than being cut short by a puller-imposed timeout.
 var pullRetryBackoff = []time.Duration{250 * time.Millisecond, 750 * time.Millisecond, 1500 * time.Millisecond}
 
 // pullWithRetry pulls ref, retrying when the daemon's answer says the
-// failure is transient — a registry rate limit — rather than treating one
-// blip as a permanent failure that bricks the task placement that hit it.
+// failure is transient — a registry rate limit, a registry/daemon 5xx, or a
+// deadline/timeout/reset while the pull was in flight — rather than treating
+// one blip as a permanent failure that bricks the task placement that hit
+// it. This is the same class of failure PR #1162 first handled for registry
+// rate limits (#991, #995); #1299 widened it after a registry 5xx wrapping
+// "context deadline exceeded" failed a Lambda create outright in CI (seen on
+// PR #1290).
 //
 // Anything else is not retried: an image that does not exist, a daemon that
 // is unreachable, or credentials that are wrong will not start working
 // because this waited and asked again, and retrying those would only add
 // latency to a failure that was always going to happen.
+//
+// A failure is also not retried when ctx itself has ended (deadline or
+// cancellation) even if its error text would otherwise match a transient
+// shape — a pull that fails because the *caller's* context ran out (a
+// shutdown, or the deadline the caller put on the whole request) says nothing
+// about whether the registry would answer differently a moment later, and
+// retrying would spend the backoff budget on a context that is already dead
+// while ignoring the caller's own wish to stop. Checking ctx.Err() here,
+// rather than trusting the error text alone, is what keeps that case (the
+// parent ctx being done) separate from a deadline embedded in the daemon's
+// own answer for this one attempt (the per-attempt failure this function
+// exists to retry).
 func (p *ImagePuller) pullWithRetry(ctx context.Context, ref ImageReference) error {
 	var err error
 	for attempt := 0; ; attempt++ {
 		err = p.client.PullImageWithOptions(ctx, ref.Ref, PullOptions{Auth: ref.Auth})
-		if err == nil || !isTransientPullError(err) || attempt >= len(pullRetryBackoff) {
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if !isTransientPullError(err) || attempt >= len(pullRetryBackoff) {
 			return err
 		}
 		p.sleepFor(pullRetryBackoff[attempt])
@@ -146,23 +177,50 @@ func (p *ImagePuller) sleepFor(d time.Duration) {
 	time.Sleep(d)
 }
 
-// isTransientPullError reports whether a pull failure is a registry rate
-// limit, which retrying can resolve, rather than something retrying cannot
-// fix. Docker's daemon surfaces a rate limit two different ways depending on
-// when in the pull it strikes: an immediate non-200 response wraps the
-// registry's own JSON body verbatim ("status 500: {\"message\":
-// \"toomanyrequests: Rate exceeded\"}"), while a failure discovered mid-stream
-// lands as the last progress line's own "error" field ("toomanyrequests:
-// Rate exceeded"). Matching the substring catches both without depending on
-// which HTTP status a given registry or daemon version wraps it in.
+// transientPullStatuses are the registry/daemon HTTP statuses PullImageWithOptions
+// wraps as "status %d: %s" (see client.go) that mean a server-side blip
+// rather than a request that was always going to fail: Internal Server
+// Error, Bad Gateway, Service Unavailable, Gateway Timeout. A 4xx status
+// (401/403/404 and friends) never belongs in this list — those are the
+// daemon telling us the request itself is wrong (bad credentials, no such
+// image), which asking again does not fix.
+var transientPullStatuses = []string{"status 500", "status 502", "status 503", "status 504"}
+
+// isTransientPullError reports whether a pull failure is a registry blip —
+// a rate limit, a 5xx, or a deadline/timeout/reset while the pull was in
+// flight — which retrying can resolve, rather than something retrying
+// cannot fix. Docker's daemon surfaces a failure two different ways
+// depending on when in the pull it strikes: an immediate non-200 response
+// wraps the registry's own JSON body verbatim ("status 500: {\"message\":
+// \"toomanyrequests: Rate exceeded\"}", or, per #1299, "status 500: ...
+// context deadline exceeded" when the daemon's own upstream fetch timed
+// out), while a failure discovered mid-stream lands as the last progress
+// line's own "error" field ("toomanyrequests: Rate exceeded"). Matching
+// substrings catches both without depending on which HTTP status a given
+// registry or daemon version wraps a given failure in.
+//
+// Not matched, deliberately: "manifest unknown"/"not found" (no such image
+// or tag), "unauthorized"/"denied" (bad or missing credentials), "invalid
+// reference" (a malformed image string) — none of those change on retry.
 func isTransientPullError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "toomanyrequests") ||
+	if strings.Contains(msg, "toomanyrequests") ||
 		strings.Contains(msg, "rate exceeded") ||
-		strings.Contains(msg, "rate limit")
+		strings.Contains(msg, "rate limit") {
+		return true
+	}
+	for _, s := range transientPullStatuses {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "unexpected eof")
 }
 
 // imagePresent reports whether the daemon already holds image locally.

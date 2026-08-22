@@ -34,13 +34,17 @@ func TestIsImageMissingErr(t *testing.T) {
 }
 
 func TestImagePullerEnsure_failedPullRetriesOnNextCall(t *testing.T) {
-	// Given: a daemon whose first pull fails and second succeeds.
+	// Given: a daemon whose first pull fails permanently — a shape retrying
+	// within a single call cannot fix, so this pins the *other* retry path:
+	// invalidate() dropping the cached failure so the next Ensure call (the
+	// next user-driven launch attempt) tries again from scratch.
 	var pulls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/images/create"):
 			if pulls.Add(1) == 1 {
-				w.WriteHeader(http.StatusInternalServerError)
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message":"unauthorized: authentication required"}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -147,6 +151,164 @@ func TestImagePullerEnsure_rateLimitMidStreamRetries(t *testing.T) {
 	}
 }
 
+func TestImagePullerEnsure_registry5xxRetriesWithinSingleCall(t *testing.T) {
+	// Given: a registry 5xx that has nothing to do with rate limiting — the
+	// shape #1299 widened the classifier for after PR #1290's CI run hit
+	// "status 500: ... context deadline exceeded" pulling
+	// public.ecr.aws/lambda/python:3.11 and failed the create outright.
+	var pulls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/images/create"):
+			if pulls.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`context deadline exceeded while fetching manifest`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case strings.Contains(r.URL.Path, "/images/prune"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+	p.sleep = func(time.Duration) {}
+
+	if err := p.Ensure(context.Background(), "img:1"); err != nil {
+		t.Fatalf("Ensure should retry past a registry 5xx, got %v", err)
+	}
+	if got := pulls.Load(); got != 2 {
+		t.Fatalf("pulls = %d, want 2 (one 5xx, one success)", got)
+	}
+}
+
+func TestImagePullerEnsure_midStreamDeadlineExceededRetries(t *testing.T) {
+	// Given: a pull that starts (status 200) and then reports a deadline
+	// exceeded as the last line of its progress stream — the daemon's own
+	// upstream fetch timing out mid-pull, distinct from our ctx ending.
+	var pulls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/images/create"):
+			if pulls.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"status":"Pulling"}` + "\n" + `{"error":"context deadline exceeded"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case strings.Contains(r.URL.Path, "/images/prune"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+	p.sleep = func(time.Duration) {}
+
+	if err := p.Ensure(context.Background(), "img:1"); err != nil {
+		t.Fatalf("Ensure should retry past a mid-stream deadline exceeded, got %v", err)
+	}
+	if got := pulls.Load(); got != 2 {
+		t.Fatalf("pulls = %d, want 2", got)
+	}
+}
+
+func TestImagePullerEnsure_ioTimeoutAndConnectionResetRetry(t *testing.T) {
+	// Given: the two other transient network shapes #1299 asked for —
+	// i/o timeout and connection reset — each surfacing mid-stream.
+	for _, shape := range []string{"read tcp: i/o timeout", "read: connection reset by peer", "unexpected EOF"} {
+		t.Run(shape, func(t *testing.T) {
+			var pulls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/images/create"):
+					if pulls.Add(1) == 1 {
+						_, _ = w.Write([]byte(`{"error":"` + shape + `"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"status":"ok"}`))
+				case strings.Contains(r.URL.Path, "/images/prune"):
+					_, _ = w.Write([]byte(`{}`))
+				default:
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+			p.sleep = func(time.Duration) {}
+
+			if err := p.Ensure(context.Background(), "img:1"); err != nil {
+				t.Fatalf("Ensure should retry past %q, got %v", shape, err)
+			}
+			if got := pulls.Load(); got != 2 {
+				t.Fatalf("pulls = %d, want 2", got)
+			}
+		})
+	}
+}
+
+func TestImagePullerEnsure_parentCtxDoneDoesNotRetry(t *testing.T) {
+	// Given: a caller whose own context has already ended (shutdown, or the
+	// deadline the caller put on the whole request) before the pull even
+	// answers. Even though a cancelled context's own error text contains
+	// "context canceled" — a shape adjacent to the deadline text this change
+	// makes transient — it must not be retried: retrying would spend the
+	// backoff budget on a context that is already dead and ignore the
+	// caller's own wish to stop.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("no request should reach the daemon once the caller's ctx is done, got %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+	p.sleep = func(time.Duration) { t.Fatal("should not back off once the parent ctx is done") }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done before Ensure is ever called
+
+	if err := p.Ensure(ctx, "img:1"); err == nil {
+		t.Fatal("Ensure should fail when the caller's ctx is already done")
+	}
+}
+
+func TestImagePullerEnsure_notFoundErrorDoesNotRetry(t *testing.T) {
+	// Given: the non-transient shapes the DoD calls out explicitly — manifest
+	// unknown, unauthorized/denied, invalid reference — none of which are
+	// swept up by the new 5xx/deadline matching.
+	for _, shape := range []string{
+		`{"message":"manifest unknown: manifest tagged by \"missing\" is not found"}`,
+		`{"message":"unauthorized: authentication required"}`,
+		`{"message":"invalid reference format"}`,
+	} {
+		t.Run(shape, func(t *testing.T) {
+			var pulls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/images/create"):
+					pulls.Add(1)
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(shape))
+				case strings.HasSuffix(r.URL.Path, "/json"):
+					w.WriteHeader(http.StatusNotFound)
+				default:
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+			p.sleep = func(time.Duration) { t.Fatal("should not back off for a non-transient error") }
+
+			if err := p.Ensure(context.Background(), "img:1"); err == nil {
+				t.Fatal("Ensure should fail on a non-transient error")
+			}
+			if got := pulls.Load(); got != 1 {
+				t.Fatalf("pulls = %d, want 1 (no retry)", got)
+			}
+		})
+	}
+}
+
 func TestImagePullerEnsure_nonTransientErrorDoesNotRetry(t *testing.T) {
 	// Given: a pull that fails for a reason retrying cannot fix. Unrelated to
 	// the rate-limit path, and it must not be swept up by it.
@@ -187,6 +349,18 @@ func TestIsTransientPullError(t *testing.T) {
 		{"case insensitive", errors.New("pull image x: TOOMANYREQUESTS: rate EXCEEDED"), true},
 		{"unrelated 404", errors.New(`pull image x: status 404: {"message":"No such image"}`), false},
 		{"connection refused", errors.New("pull image x: connection refused"), false},
+		{"status 500 deadline exceeded (#1299, PR #1290 CI)", errors.New(`pull image x: status 500: context deadline exceeded`), true},
+		{"status 502", errors.New(`pull image x: status 502: {"message":"Bad Gateway"}`), true},
+		{"status 503", errors.New(`pull image x: status 503: {"message":"Service Unavailable"}`), true},
+		{"status 504", errors.New(`pull image x: status 504: {"message":"Gateway Timeout"}`), true},
+		{"mid-stream deadline exceeded", errors.New("pull image x: context deadline exceeded"), true},
+		{"i/o timeout", errors.New("pull image x: read tcp 1.2.3.4:443: i/o timeout"), true},
+		{"connection reset", errors.New("pull image x: read: connection reset by peer"), true},
+		{"unexpected EOF", errors.New("pull image x: unexpected EOF"), true},
+		{"manifest unknown", errors.New(`pull image x: manifest unknown: manifest tagged by "missing" is not found`), false},
+		{"unauthorized", errors.New("pull image x: unauthorized: authentication required"), false},
+		{"invalid reference", errors.New("pull image x: invalid reference format"), false},
+		{"context canceled is not deadline exceeded", errors.New("pull image x: context canceled"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
