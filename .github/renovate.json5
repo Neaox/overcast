@@ -23,6 +23,10 @@
 //   - Nothing younger than seven days is taken (`minimumReleaseAge`): a
 //     yanked tag or a compromised npm release is usually caught within days
 //     of publish, and this repo is content to be a week behind.
+//   - Open PRs are kept rebased on `main` rather than only when they
+//     conflict. A regenerated lockfile is only true of the base it was
+//     generated against, and git will merge two of them without complaint
+//     (#1340).
 //   - The dependency dashboard issue (on by way of config:recommended) lists
 //     everything pending or deliberately not taken, so "no PR" is visible
 //     rather than silent.
@@ -82,6 +86,60 @@
   // Weekly, matching the cadence dependabot.yml had. The dashboard still
   // updates between runs, and a security advisory bypasses the schedule.
   schedule: ['* 0-8 * * 1'],
+
+  // Keep every open Renovate PR rebased onto the current `main`, rather than
+  // only once it conflicts.
+  //
+  // Not a no-op on top of the default. `auto` already resolves to
+  // `behind-base-branch` for anything carrying `automerge: true` — Renovate
+  // declines to automerge a stale branch — so the digest, Go-toolchain and
+  // Go-dependency groups were being rebased already. Everything else, which
+  // is every group that waits for a human, sat on `conflicted`: rebased when
+  // git says the text collides, and not otherwise. That is the set the
+  // 2026-08-22 breakage came out of.
+  //
+  // `web/pnpm-lock.yaml` is one generated file whose peer-resolution keys
+  // cross-reference each other — an entry is literally named
+  // `vitest@4.1.5(jsdom@27.4.0)(vite@8.0.16(…))(…)`. Two copies of it
+  // regenerated independently cannot be combined by merging their text, even
+  // though git reports no conflict, because the keys one side wrote name
+  // versions the other side changed. Five npm majors merged back to back that
+  // day, each reviewed on its own and each carrying its own regenerated lock,
+  // and left `main` with a lockfile still naming the pre-bump jsdom: every
+  // pull request failed `pnpm install --frozen-lockfile` for 28 minutes,
+  // until the next web-deps PR happened to regenerate the lock against all
+  // five at once (#1340).
+  //
+  // Rebasing regenerates the lock against what actually landed, so a pull
+  // request is consistent with `main` as of its last rebase rather than as of
+  // the day it was opened. Rebases run outside the weekly window
+  // (`updateNotScheduled` is left at its default of true), which is the point
+  // — a branch that goes stale on Wednesday is regenerated on Wednesday, not
+  // next Monday.
+  //
+  // It does not close the race on its own: `main` can still move between the
+  // last rebase and the merge. What closes it is requiring branches to be up
+  // to date before merging, which is a branch-protection setting and not
+  // anything this file can express.
+  rebaseWhen: 'behind-base-branch',
+
+  // A monthly full regeneration of `web/pnpm-lock.yaml`. A direct-dependency
+  // bump only re-resolves the part of the tree it touches, so a transitive
+  // pin that no direct bump ever reaches sits frozen indefinitely; this is
+  // the only thing here that advances it. Monthly rather than weekly because
+  // the diff is large and unreadable either way, and `osvVulnerabilityAlerts`
+  // above already handles the transitive versions that are known to matter —
+  // this is for the residue, not for security response.
+  //
+  // Deliberately npm-only; the packageRule below turns it off for `gomod`. A
+  // lockFileMaintenance run there is `go get -u ./...`, which would bump every
+  // indirect module at once and outside the `go dependencies (non-major)`
+  // group that exists to review exactly that. go.sum needs no equivalent:
+  // `postUpdateOptions: gomodTidy` keeps it in step on every Go update.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['* 0-8 1 * *'],
+  },
 
   postUpdateOptions: ['gomodTidy'],
 
@@ -182,6 +240,13 @@
       matchUpdateTypes: ['minor', 'patch'],
       groupName: 'go dependencies (non-major)',
       automerge: true,
+    },
+    {
+      // Confines `lockFileMaintenance` above to the npm workspace. See the
+      // comment there for why go.sum is not the same problem.
+      matchManagers: ['gomod'],
+      matchUpdateTypes: ['lockFileMaintenance'],
+      enabled: false,
     },
     {
       matchManagers: ['npm'],
