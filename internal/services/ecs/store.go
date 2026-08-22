@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -479,6 +480,12 @@ type ecsStore struct {
 	mu            sync.Mutex
 	store         state.Store
 	defaultRegion string
+
+	// eventBridge is the EventBridge bus publisher wired by
+	// Service.InitEventBridge. nil in most tests, and delivery is skipped
+	// then rather than attempted against nothing — see notifyTaskStateChange
+	// in eventbridge.go.
+	eventBridge events.BusPublisher
 }
 
 func newECSStore(store state.Store, defaultRegion string) *ecsStore {
@@ -666,14 +673,25 @@ func (s *ecsStore) currentRevision(ctx context.Context, family string) (int, *pr
 // ---- Task operations ----------------------------------------------------------
 
 func (s *ecsStore) putTask(ctx context.Context, task *Task) *protocol.AWSError {
+	clusterName := extractClusterName(task.ClusterArn)
+	taskID := extractTaskID(task.TaskArn)
+
+	// Read the prior record before overwriting it so the write below can tell
+	// whether the task's lastStatus actually changed — see
+	// notifyTaskStateChange in eventbridge.go. A lookup failure (including
+	// "not found", the very first write for this task) just means prev is
+	// nil; it is not fatal to the put itself.
+	prev, _ := s.getTask(ctx, clusterName, taskID)
+
 	raw, err := json.Marshal(task)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	key := serviceutil.RegionKey(s.region(ctx), extractClusterName(task.ClusterArn)+"/"+extractTaskID(task.TaskArn))
+	key := serviceutil.RegionKey(s.region(ctx), clusterName+"/"+taskID)
 	if err := s.store.Set(ctx, nsTasks, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.notifyTaskStateChange(ctx, prev, task)
 	return nil
 }
 

@@ -1062,24 +1062,34 @@ working would then depend on EventBridge's emulation being correct — a bug in
 one surfacing as a bug in the other.
 
 The two meet wherever an emulated service emits an event real AWS would also
-emit. Two do today:
+emit. Four do today:
 
 - **CloudWatch alarms** publish a `CloudWatch Alarm State Change` on every
   transition.
 - **S3** publishes object events when a bucket has EventBridge notifications
   enabled.
+- **EC2** publishes an `EC2 Instance State-change Notification` every time an
+  instance's state actually changes — including the initial transition into
+  `pending` — from the store layer (`ec2Store.putInstance`), so every call
+  site that commits a state (`RunInstances`, `StartInstances`,
+  `StopInstances`, `TerminateInstances`, and the scheduler callbacks that
+  fast-forward `pending`→`running` and `stopping`→`stopped`) notifies without
+  each needing its own wiring.
+- **ECS** publishes an `ECS Task State Change` event the same way, from
+  `ecsStore.putTask`, whenever a task's `lastStatus` changes.
 
-Both go to emulated EventBridge because AWS would send them there and a rule in
-your stack may be matching, *and* separately onto the internal bus so the
-console can render them. One occurrence, two audiences — which is the clearest
-illustration of the split.
+CloudWatch and S3 also publish separately onto the internal bus so the console
+can render them; EC2 and ECS already have their own internal-bus lifecycle
+events (`ec2:InstanceLaunched`/`Started`/`Stopped`/`Terminated`,
+`ecs:TaskStartFailed`, …) at a coarser grain, so their EventBridge bridge does
+not duplicate onto the internal bus a second time.
 
 That list is short because real AWS emits far more service-originated events
-than Overcast does — EC2 instance state changes, ECS task transitions, Step
-Functions execution status, and others. A rule matching one of those will never
-fire here. The extension point exists (`events.BusPublisher`), so this is a
-gap rather than a limitation; tracked as
-[#758](https://github.com/Neaox/overcast/issues/758).
+than Overcast does — Step Functions execution status and others. A rule
+matching one of those will never fire here. The extension point exists
+(`events.BusPublisher`), so this is a gap rather than a limitation; tracked as
+[#758](https://github.com/Neaox/overcast/issues/758) (EC2 and ECS closed the
+gap for those two services; the remainder is filed as a follow-up).
 
 ---
 

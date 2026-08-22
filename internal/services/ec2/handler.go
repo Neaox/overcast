@@ -50,7 +50,7 @@ type Handler struct {
 func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
 	h := &Handler{
 		cfg:       cfg,
-		store:     newEC2Store(store, cfg.Region),
+		store:     newEC2Store(store, cfg.Region, cfg.AccountID),
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
