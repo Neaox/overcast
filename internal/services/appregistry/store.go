@@ -331,3 +331,14 @@ func errInvalidParameter(msg string) *protocol.AWSError {
 		HTTPStatus: 400,
 	}
 }
+
+// appregistryTagCfg tunes the shared tag validator to AppRegistry's error
+// shape (#1052). AppRegistry reports every other rejected-input case this
+// package models (errInvalidParameter, above) as ValidationException, and
+// declares no dedicated tag-count exception, so the 50-tag limit is
+// reported the same way an invalid key or value is.
+var appregistryTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "ValidationException",
+	InvalidCode:     "ValidationException",
+	ExceededMessage: "A resource can have no more than 50 tags.",
+}

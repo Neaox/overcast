@@ -146,6 +146,17 @@ type tagEntry struct {
 	Value string `json:"Value"`
 }
 
+// kinesisTagCfg tunes the shared tag validator to Kinesis's error shape
+// (#1052). Kinesis reports every other rejected-input case this package
+// models (a bad ARN, a missing parameter) as InvalidArgumentException, and
+// declares no dedicated tag-count exception, so the 50-tag limit is reported
+// the same way.
+var kinesisTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidArgumentException",
+	InvalidCode:     "InvalidArgumentException",
+	ExceededMessage: "Tag limit exceeded for the stream.",
+}
+
 // createStreamTags copies CreateStream's inline Tags into the map the stream
 // stores. The result is never nil, matching what CreateStream stored before it
 // accepted tags; the tag handlers still nil-check, for streams persisted by an
@@ -244,6 +255,13 @@ func (h *Handler) createStreamTyped(ctx context.Context, req *createStreamReques
 	shardCount := req.ShardCount
 	if shardCount <= 0 {
 		shardCount = 1
+	}
+	// Request-shape validation before the duplicate-name check resolves
+	// against the store — the same ordering createLogGroupTyped uses
+	// (internal/services/cloudwatch/logs/typed_logic.go) — so a rejected
+	// create must not depend on whether the name happens to collide (#1052).
+	if aerr := serviceutil.ValidateTags(kinesisTagCfg, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if _, aerr := h.store.getStream(ctx, req.StreamName); aerr == nil {
 		return nil, errStreamAlreadyExists(req.StreamName)
@@ -641,9 +659,16 @@ func (h *Handler) addTagsToStreamTyped(ctx context.Context, req *addTagsToStream
 	if st.Tags == nil {
 		st.Tags = map[string]string{}
 	}
+	merged := createStreamTags(st.Tags)
 	for k, v := range req.Tags {
-		st.Tags[k] = v
+		merged[k] = v
 	}
+	// Validated against the merged set, not just the incoming delta, so the
+	// tag limit holds across repeated AddTagsToStream calls (#1052).
+	if aerr := serviceutil.ValidateTags(kinesisTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	st.Tags = merged
 	if aerr := h.store.putStream(ctx, st); aerr != nil {
 		return nil, aerr
 	}
@@ -686,9 +711,14 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	if st.Tags == nil {
 		st.Tags = map[string]string{}
 	}
+	merged := createStreamTags(st.Tags)
 	for k, v := range req.Tags {
-		st.Tags[k] = v
+		merged[k] = v
 	}
+	if aerr := serviceutil.ValidateTags(kinesisTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	st.Tags = merged
 	if aerr := h.store.putStream(ctx, st); aerr != nil {
 		return nil, aerr
 	}

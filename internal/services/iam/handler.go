@@ -255,6 +255,14 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// See createUserTyped (typed_logic.go) — this Query/XML path duplicates
+	// it rather than delegating, so the tag validation added for #1052 has
+	// to be kept in lockstep here too.
+	tags := createTags(formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	u := &User{
 		UserName:            name,
 		UserId:              iamID("AIDA", 17),
@@ -262,7 +270,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary: boundary,
-		Tags:                createTags(formTagEntries(r)),
+		Tags:                tags,
 	}
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -536,6 +544,14 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
+	// See createRoleTyped (typed_logic.go) — this Query/XML path duplicates
+	// it rather than delegating, so the tag validation added for #1052 has
+	// to be kept in lockstep here too.
+	tags := createTags(formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	role := &Role{
 		RoleName:                 name,
 		RoleId:                   iamID("AROA", 17),
@@ -544,7 +560,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      boundary,
-		Tags:                     createTags(formTagEntries(r)),
+		Tags:                     tags,
 		Description:              r.FormValue("Description"),
 		MaxSessionDuration:       duration,
 	}
@@ -698,13 +714,21 @@ func (h *Handler) CreateInstanceProfile(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteQueryXMLError(w, r, errEntityAlreadyExists("instance profile", name))
 		return
 	}
+	// See createInstanceProfileTyped (typed_logic.go) — this Query/XML path
+	// duplicates it rather than delegating, so the tag validation added for
+	// #1052 has to be kept in lockstep here too.
+	tags := createTags(formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	profile := &InstanceProfile{
 		InstanceProfileName: name,
 		InstanceProfileId:   iamID("AIPA", 17),
 		Arn:                 h.store.arnForProfile(path, name),
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:                createTags(formTagEntries(r)),
+		Tags:                tags,
 	}
 	if aerr := h.store.putProfile(r.Context(), profile); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -839,6 +863,14 @@ func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errEntityAlreadyExists("policy", name))
 		return
 	}
+	// See createPolicyTyped (typed_logic.go) — this Query/XML path
+	// duplicates it rather than delegating, so the tag validation added for
+	// #1052 has to be kept in lockstep here too.
+	tags := createTags(formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	p := &Policy{
 		PolicyName:  name,
 		PolicyId:    iamID("ANPA", 17),
@@ -846,7 +878,7 @@ func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		Path:        path,
 		Document:    doc,
 		CreateDate:  h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:        createTags(formTagEntries(r)),
+		Tags:        tags,
 		Description: r.FormValue("Description"),
 	}
 	if aerr := h.store.putPolicy(r.Context(), p); aerr != nil {
@@ -1580,7 +1612,15 @@ func (h *Handler) TagRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	role.SetTags(mergeTagEntries(role.GetTags(), formTagEntries(r)))
+	// See tagRoleTyped (typed_logic.go) — this Query/XML path duplicates it
+	// rather than delegating, so the tag validation added for #1052 has to be
+	// kept in lockstep here too.
+	merged := mergeTagEntries(role.GetTags(), formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	role.SetTags(merged)
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1656,7 +1696,15 @@ func (h *Handler) TagUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	u.SetTags(mergeTagEntries(u.GetTags(), formTagEntries(r)))
+	// See tagUserTyped (typed_logic.go) — this Query/XML path duplicates it
+	// rather than delegating, so the tag validation added for #1052 has to be
+	// kept in lockstep here too.
+	merged := mergeTagEntries(u.GetTags(), formTagEntries(r))
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	u.SetTags(merged)
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return

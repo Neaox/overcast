@@ -563,6 +563,14 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = existing
 
+	// See createRepositoryTyped (typed_logic.go) — this JSON1.1 path
+	// duplicates it rather than delegating, so the tag validation added for
+	// #1052 has to be kept in lockstep here too.
+	if aerr := serviceutil.ValidateTags(ecrTagCfg, ecrTagsToMap(req.Tags)); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	mutability := req.ImageTagMutability
 	if mutability == "" {
 		mutability = "MUTABLE"
@@ -1777,6 +1785,14 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range req.Tags {
 		tagMap[t.Key] = t.Value
+	}
+	// See tagResourceTyped (typed_logic.go) — this JSON1.1 path duplicates
+	// it rather than delegating, so the tag validation added for #1052 has
+	// to be kept in lockstep here too. Validated against the merged set, not
+	// just the incoming delta.
+	if aerr := serviceutil.ValidateTags(ecrTagCfg, tagMap); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	merged := make([]Tag, 0, len(tagMap))
 	for k, v := range tagMap {

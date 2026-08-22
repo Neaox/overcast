@@ -9,6 +9,7 @@
 package acm_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -154,6 +155,94 @@ func TestACMTagging_unknownCertificate(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+}
+
+// ACM's tag operations used to store whatever a caller sent without checking
+// AWS's own tag constraints (#1052) — a reserved `aws:` key prefix, an
+// over-length key, or more than 50 tags on one certificate all had to be
+// rejected the way real AWS rejects them, and none of it was.
+func TestACMTagResource_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := requestCertificate(t, srv, "invalid-tag.example.com", nil)
+
+	resp := acmCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": arn,
+		"Tags":        []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
+
+	if got := acmTagMap(t, srv, arn); len(got) != 0 {
+		t.Fatalf("tags = %#v after a rejected TagResource, want none stored", got)
+	}
+}
+
+func TestACMAddTagsToCertificate_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := requestCertificate(t, srv, "invalid-tag-legacy.example.com", nil)
+
+	resp := acmCall(t, srv, "AddTagsToCertificate", map[string]any{
+		"CertificateArn": arn,
+		"Tags":           []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
+}
+
+func TestACMRequestCertificate_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := acmCall(t, srv, "RequestCertificate", map[string]any{
+		"DomainName": "invalid-tag-create.example.com",
+		"Tags":       []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
+
+	// And: no certificate was left behind for the rejected tags to strand.
+	list := acmCall(t, srv, "ListCertificates", map[string]any{})
+	defer list.Body.Close()
+	var out struct {
+		CertificateSummaryList []struct {
+			DomainName string `json:"DomainName"`
+		} `json:"CertificateSummaryList"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	for _, c := range out.CertificateSummaryList {
+		if c.DomainName == "invalid-tag-create.example.com" {
+			t.Fatalf("a certificate for %q exists despite the rejected create", c.DomainName)
+		}
+	}
+}
+
+// Merged-set enforcement: the 50-tag limit is checked against the existing
+// plus incoming set, not just what one call adds — matching #1052's
+// "the merged set is what gets validated" requirement.
+func TestACMTagResource_tagLimitEnforcedOnMergedSet(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := requestCertificate(t, srv, "tag-limit.example.com", nil)
+
+	seedTags := make([]map[string]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		seedTags = append(seedTags, map[string]string{"Key": fmt.Sprintf("k%d", i), "Value": "v"})
+	}
+	seed := acmCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": arn,
+		"Tags":        seedTags,
+	})
+	defer seed.Body.Close()
+	helpers.AssertStatus(t, seed, http.StatusOK)
+
+	resp := acmCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": arn,
+		"Tags":        []map[string]string{{"Key": "one-too-many", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
 }
 
 // Deleting the certificate takes its tags with it.

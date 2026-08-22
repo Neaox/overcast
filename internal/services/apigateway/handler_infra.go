@@ -27,6 +27,17 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
+// apigatewayTagCfg tunes the shared tag validator to API Gateway's error
+// shape (#1052). API Gateway reports every other rejected-input case this
+// package models (errBadRequest, store.go) as BadRequestException, and
+// declares no dedicated tag-count exception, so the 50-tag limit is
+// reported the same way an invalid key or value is.
+var apigatewayTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequestException",
+	InvalidCode:     "BadRequestException",
+	ExceededMessage: "Tags limit exceeded.",
+}
+
 // ---- REST API v1: Domain Names --------------------------------------------
 
 type createDomainNameRequest struct {
@@ -48,6 +59,10 @@ func (h *Handler) CreateDomainName(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DomainName == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("domainName is required"))
+		return
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -262,6 +277,12 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Tags {
 		existing[k] = v
 	}
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagResource calls (#1052).
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, existing); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	if aerr := h.store.putResourceTags(r.Context(), arn, existing); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -335,6 +356,10 @@ func (h *Handler) CreateV2DomainName(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DomainName == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("domainName is required"))
+		return
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -413,6 +438,10 @@ func (h *Handler) CreateV2VpcLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("name is required"))
+		return
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -549,6 +578,10 @@ func (h *Handler) TagV2Resource(w http.ResponseWriter, r *http.Request) {
 	}
 	for k, v := range req.Tags {
 		existing[k] = v
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, existing); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 
 	if aerr := h.store.putV2Tags(r.Context(), arn, existing); aerr != nil {

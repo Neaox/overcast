@@ -11,6 +11,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ─── Application typed request/response types ──────────────────────────────────
@@ -29,6 +30,9 @@ type createApplicationResponse struct {
 func (h *Handler) createApplicationTyped(ctx context.Context, req *createApplicationRequest) (*createApplicationResponse, *protocol.AWSError) {
 	if req.Name == "" {
 		return nil, errInvalidParameter("name is required")
+	}
+	if aerr := serviceutil.ValidateTags(appregistryTagCfg, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if existing, _ := h.store.resolveApplication(ctx, req.Name); existing != nil {
 		return nil, errConflict(req.Name)
@@ -388,6 +392,9 @@ type createAttributeGroupResponse struct {
 func (h *Handler) createAttributeGroupTyped(ctx context.Context, req *createAttributeGroupRequest) (*createAttributeGroupResponse, *protocol.AWSError) {
 	if req.Name == "" {
 		return nil, errInvalidParameter("name is required")
+	}
+	if aerr := serviceutil.ValidateTags(appregistryTagCfg, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if existing, _ := h.store.resolveAttributeGroup(ctx, req.Name); existing != nil {
 		return nil, errConflict(req.Name)

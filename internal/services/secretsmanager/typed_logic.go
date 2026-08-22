@@ -12,7 +12,26 @@ import (
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// smTagCfg tunes the shared tag validator to Secrets Manager's error shape
+// (#1052). Every other rejected-input case this package models already
+// answers InvalidParameterException, and it declares no dedicated tag-count
+// exception, so the 50-tag limit is reported the same way.
+var smTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "You can create a maximum of 50 tags for a secret.",
+}
+
+func smTagsToMap(tags []Tag) map[string]string {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return m
+}
 
 type secretIDRequest struct {
 	SecretId string `json:"SecretId" cbor:"SecretId"`
@@ -232,6 +251,13 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 	}
 	if _, aerr := h.store.getSecret(ctx, req.Name); aerr == nil {
 		return nil, errResourceExists(req.Name)
+	}
+	// Request-shape validation before the secret is created — the same
+	// ordering createLogGroupTyped uses (internal/services/cloudwatch/logs/
+	// typed_logic.go) — so a rejected create leaves no secret behind with
+	// nothing able to fix its tags (#1052).
+	if aerr := serviceutil.ValidateTags(smTagCfg, smTagsToMap(req.Tags)); aerr != nil {
+		return nil, aerr
 	}
 
 	now := h.store.now()
@@ -572,18 +598,14 @@ func (h *Handler) deleteSecretTyped(ctx context.Context, req *deleteSecretReques
 	}, nil
 }
 
+// tagResourceTyped merges tags through serviceutil.ApplyInlineTags, which
+// validates the merged set (existing plus incoming) before saving — Secret
+// already implements serviceutil.Taggable (store.go's GetTags/SetTags), and
+// SetTags already renders the result key-sorted, so there is no ordering
+// change here versus the hand-rolled merge this replaces (#1052).
 func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
-	sec, aerr := h.store.resolveSecret(ctx, req.SecretId)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	tags := sec.GetTags()
-	for _, t := range req.Tags {
-		tags[t.Key] = t.Value
-	}
-	sec.SetTags(tags)
-	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, req.SecretId, smTagsToMap(req.Tags), smTagCfg,
+		h.store.resolveSecret, h.store.putSecret); aerr != nil {
 		return nil, aerr
 	}
 	return &struct{}{}, nil

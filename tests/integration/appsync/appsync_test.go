@@ -515,6 +515,40 @@ func TestUpdateGraphqlApi_success(t *testing.T) {
 	}
 }
 
+// UpdateGraphqlApi's decode target is the same GraphqlAPI struct
+// CreateGraphqlApi uses, so a client-supplied `tags` field on update is
+// stored — but until #1052 it was never validated, the one call site
+// validateGraphqlAPIInput's allowTags=false skipped entirely.
+func TestUpdateGraphqlApi_reservedTagPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	apiID, _ := createTestAPI(t, srv)
+
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID, map[string]any{
+		"name":               "updated-name",
+		"authenticationType": "API_KEY",
+		"tags":               map[string]string{"aws:reserved": "x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+
+	// And: the rejected update did not store the reserved-prefix tag.
+	getResp, err := http.Get(srv.URL + "/v1/apis/" + apiID)
+	if err != nil {
+		t.Fatalf("GetGraphqlApi: %v", err)
+	}
+	defer getResp.Body.Close()
+	var got struct {
+		GraphqlAPI struct {
+			Tags map[string]string `json:"tags"`
+		} `json:"graphqlApi"`
+	}
+	helpers.DecodeJSON(t, getResp, &got)
+	if len(got.GraphqlAPI.Tags) != 0 {
+		t.Fatalf("tags = %#v after a rejected UpdateGraphqlApi, want none stored", got.GraphqlAPI.Tags)
+	}
+}
+
 func TestUpdateGraphqlApi_notFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := appsyncPost(t, srv, "/v1/apis/nonexistent", map[string]any{
@@ -1516,7 +1550,13 @@ func TestTagResource_invalidTagPatterns(t *testing.T) {
 		tags map[string]string
 	}{
 		{name: "reserved prefix", tags: map[string]string{"aws:reserved": "x"}},
-		{name: "invalid key character", tags: map[string]string{"bad@key": "x"}},
+		// '@' is a legal tag-key character under AWS's own documented
+		// pattern (^(?!aws:)[\p{L}\p{Z}\p{N}_.:/=+\-@]*$, shared by most
+		// tag-modeling services and enforced by serviceutil.ValidateTags) —
+		// this case used to assert the opposite because AppSync validated
+		// tags with a local, overly-restrictive regex instead of that shared
+		// pattern (#1052). '!' is not in the allowed set on any of them.
+		{name: "invalid key character", tags: map[string]string{"bad!key": "x"}},
 		{name: "invalid value character", tags: map[string]string{"good-key": "bad#value"}},
 	}
 	for _, tc := range cases {

@@ -301,8 +301,8 @@ func (s *Service) createFileSystemTyped(ctx context.Context, req *createFileSyst
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if len(req.Tags) > 0 {
-		if err := s.mergeTags(ctx, region, rec.FileSystemId, req.Tags); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		if aerr := s.mergeTags(ctx, region, rec.FileSystemId, req.Tags); aerr != nil {
+			return nil, aerr
 		}
 	}
 
@@ -908,8 +908,8 @@ func (s *Service) createAccessPointTyped(ctx context.Context, req *createAccessP
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	if len(req.Tags) > 0 {
-		if err := s.mergeTags(ctx, region, rec.AccessPointId, req.Tags); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		if aerr := s.mergeTags(ctx, region, rec.AccessPointId, req.Tags); aerr != nil {
+			return nil, aerr
 		}
 	}
 
@@ -1277,8 +1277,8 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 			return nil, errBadRequest("Tag keys must not be empty.")
 		}
 	}
-	if err := s.mergeTags(ctx, region, id, req.Tags); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	if aerr := s.mergeTags(ctx, region, id, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	return nil, nil
 }

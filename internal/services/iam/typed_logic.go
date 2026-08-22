@@ -985,6 +985,10 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 			return nil, aerr
 		}
 	}
+	tags := createTags(req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	u := &User{
 		UserName:            name,
 		UserId:              iamID("AIDA", 17),
@@ -992,7 +996,7 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary: req.PermissionsBoundary,
-		Tags:                createTags(req.Tags),
+		Tags:                tags,
 	}
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
@@ -1183,6 +1187,10 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 	} else if aerr := checkMaxSessionDuration(duration); aerr != nil {
 		return nil, aerr
 	}
+	tags := createTags(req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	role := &Role{
 		RoleName:                 req.RoleName,
 		RoleId:                   iamID("AROA", 17),
@@ -1191,7 +1199,7 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 		AssumeRolePolicyDocument: req.AssumeRolePolicyDocument,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      req.PermissionsBoundary,
-		Tags:                     createTags(req.Tags),
+		Tags:                     tags,
 		Description:              req.Description,
 		MaxSessionDuration:       duration,
 	}
@@ -1347,13 +1355,17 @@ func (h *Handler) createInstanceProfileTyped(ctx context.Context, req *createIns
 	if _, aerr := h.store.getProfile(ctx, req.InstanceProfileName); aerr == nil {
 		return nil, errEntityAlreadyExists("instance profile", req.InstanceProfileName)
 	}
+	tags := createTags(req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	profile := &InstanceProfile{
 		InstanceProfileName: req.InstanceProfileName,
 		InstanceProfileId:   iamID("AIPA", 17),
 		Arn:                 h.store.arnForProfile(path, req.InstanceProfileName),
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:                createTags(req.Tags),
+		Tags:                tags,
 	}
 	if aerr := h.store.putProfile(ctx, profile); aerr != nil {
 		return nil, aerr
@@ -1439,6 +1451,10 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 	if _, aerr := h.store.getPolicy(ctx, arn); aerr == nil {
 		return nil, errEntityAlreadyExists("policy", req.PolicyName)
 	}
+	tags := createTags(req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	p := &Policy{
 		PolicyName:  req.PolicyName,
 		PolicyId:    iamID("ANPA", 17),
@@ -1446,7 +1462,7 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 		Path:        path,
 		Document:    req.PolicyDocument,
 		CreateDate:  h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:        createTags(req.Tags),
+		Tags:        tags,
 		Description: req.Description,
 	}
 	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
@@ -1767,14 +1783,13 @@ func (h *Handler) tagRoleTyped(ctx context.Context, req *tagRoleReq) (*tagRoleRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := role.GetTags()
-	if tags == nil {
-		tags = make(map[string]string)
+	merged := mergeTagEntries(role.GetTags(), req.Tags)
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagRole calls (#1052).
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		return nil, aerr
 	}
-	for _, t := range req.Tags {
-		tags[t.Key] = t.Value
-	}
-	role.SetTags(tags)
+	role.SetTags(merged)
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
 	}
@@ -1819,14 +1834,11 @@ func (h *Handler) tagUserTyped(ctx context.Context, req *tagUserReq) (*tagUserRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := u.GetTags()
-	if tags == nil {
-		tags = make(map[string]string)
+	merged := mergeTagEntries(u.GetTags(), req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		return nil, aerr
 	}
-	for _, t := range req.Tags {
-		tags[t.Key] = t.Value
-	}
-	u.SetTags(tags)
+	u.SetTags(merged)
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
 	}
@@ -1871,7 +1883,11 @@ func (h *Handler) tagPolicyTyped(ctx context.Context, req *tagPolicyReq) (*tagPo
 	if aerr != nil {
 		return nil, aerr
 	}
-	p.SetTags(mergeTagEntries(p.GetTags(), req.Tags))
+	merged := mergeTagEntries(p.GetTags(), req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	p.SetTags(merged)
 	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
 		return nil, aerr
 	}
@@ -1907,7 +1923,11 @@ func (h *Handler) tagInstanceProfileTyped(ctx context.Context, req *tagInstanceP
 	if aerr != nil {
 		return nil, aerr
 	}
-	profile.SetTags(mergeTagEntries(profile.GetTags(), req.Tags))
+	merged := mergeTagEntries(profile.GetTags(), req.Tags)
+	if aerr := serviceutil.ValidateTags(iamTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	profile.SetTags(merged)
 	if aerr := h.store.putProfile(ctx, profile); aerr != nil {
 		return nil, aerr
 	}
@@ -1937,6 +1957,18 @@ func (h *Handler) listInstanceProfileTagsTyped(ctx context.Context, req *listIns
 }
 
 // --- Tag helpers ---
+
+// iamTagCfg tunes the shared tag validator to IAM's error shape (#1052).
+// IAM reports the constraint violations its own Query/XML validation
+// already models (a MaxSessionDuration outside range, e.g. typed_updates.go)
+// as ValidationError, and declares no dedicated tag-count exception across
+// its four taggable resource types, so the 50-tag limit is reported the
+// same way an invalid key or value is.
+var iamTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "ValidationError",
+	InvalidCode:     "ValidationError",
+	ExceededMessage: "A resource can have no more than 50 tags.",
+}
 
 // mergeTagEntries folds an inline Tags list into an entity's tag map. It
 // returns a usable map even when the entity had none, which is what makes it

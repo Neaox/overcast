@@ -382,30 +382,17 @@ func (h *Handler) MergeShards(w http.ResponseWriter, r *http.Request) {
 
 // AddTagsToStream handles Kinesis_20131202.AddTagsToStream.
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_AddTagsToStream.html
+//
+// Delegates to addTagsToStreamTyped (typed_logic.go) rather than repeating
+// it — this used to be a standalone duplicate that skipped the tag
+// validation added there for #1052, exactly the drift PutRecord's doc
+// comment above warns about.
 func (h *Handler) AddTagsToStream(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StreamName string            `json:"StreamName"`
-		Tags       map[string]string `json:"Tags"`
-	}
+	var req addTagsToStreamRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.StreamName == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("StreamName"))
-		return
-	}
-	st, aerr := h.store.getStream(r.Context(), req.StreamName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if st.Tags == nil {
-		st.Tags = map[string]string{}
-	}
-	for k, v := range req.Tags {
-		st.Tags[k] = v
-	}
-	if aerr := h.store.putStream(r.Context(), st); aerr != nil {
+	if _, aerr := h.addTagsToStreamTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

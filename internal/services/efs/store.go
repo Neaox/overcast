@@ -9,8 +9,28 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// efsTagCfg tunes the shared tag validator to EFS's error shape (#1052).
+// EFS reports every other rejected-input case this package models
+// (errBadRequest, typed_logic.go) as BadRequest, and declares no dedicated
+// tag-count exception, so the 50-tag limit is reported the same way an
+// invalid key or value is.
+var efsTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequest",
+	InvalidCode:     "BadRequest",
+	ExceededMessage: "Tags must be no more than 50.",
+}
+
+func efsTagsToMap(tags []Tag) map[string]string {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return m
+}
 
 // Store namespaces. All keys are region-scoped via serviceutil.RegionKey so
 // resources in different regions never collide.
@@ -172,8 +192,10 @@ func (s *Service) saveTags(ctx context.Context, region, resourceID string, tags 
 }
 
 // mergeTags upserts the given tags into the resource's tag list, preserving
-// the position of existing keys.
-func (s *Service) mergeTags(ctx context.Context, region, resourceID string, tags []Tag) error {
+// the position of existing keys. The merged set — not just the incoming
+// delta — is validated against the shared limits before it is saved, so the
+// 50-tag limit holds across repeated calls (#1052).
+func (s *Service) mergeTags(ctx context.Context, region, resourceID string, tags []Tag) *protocol.AWSError {
 	existing := s.loadTags(ctx, region, resourceID)
 	for _, t := range tags {
 		replaced := false
@@ -188,7 +210,13 @@ func (s *Service) mergeTags(ctx context.Context, region, resourceID string, tags
 			existing = append(existing, t)
 		}
 	}
-	return s.saveTags(ctx, region, resourceID, existing)
+	if aerr := serviceutil.ValidateTags(efsTagCfg, efsTagsToMap(existing)); aerr != nil {
+		return aerr
+	}
+	if err := s.saveTags(ctx, region, resourceID, existing); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
 }
 
 func (s *Service) removeTags(ctx context.Context, region, resourceID string, keys []string) error {

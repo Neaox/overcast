@@ -206,6 +206,10 @@ func (h *Handler) CreateStage(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("deploymentId is required"))
 		return
 	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// Check for conflict.
 	if existing, _ := h.store.getStage(r.Context(), apiID, req.StageName); existing != nil {
@@ -422,6 +426,10 @@ func (h *Handler) CreateV2Stage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.StageName == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("stageName is required"))
+		return
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 

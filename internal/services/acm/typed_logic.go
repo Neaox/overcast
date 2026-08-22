@@ -109,6 +109,16 @@ func (h *Handler) requestCertificateTyped(ctx context.Context, req *requestCerti
 		sans = []string{req.DomainName}
 	}
 
+	// Tag validation is a request-shape constraint, checked before the
+	// certificate is created — the same ordering createLogGroupTyped uses
+	// (internal/services/cloudwatch/logs/typed_logic.go) and for the same
+	// reason: a rejected request must not leave a certificate behind with no
+	// tags reachable to fix (#1052).
+	merged := mergeTags(nil, req.Tags)
+	if aerr := validateCertTags(merged); aerr != nil {
+		return nil, aerr
+	}
+
 	cert := &Certificate{
 		CertificateArn:          arn,
 		DomainName:              req.DomainName,
@@ -124,7 +134,7 @@ func (h *Handler) requestCertificateTyped(ctx context.Context, req *requestCerti
 	// AWS applies RequestCertificate's Tags when the certificate is issued,
 	// and authorizes that separately from AddTagsToCertificate.
 	if len(req.Tags) > 0 {
-		if err := h.store.setTags(ctx, arn, mergeTags(nil, req.Tags)); err != nil {
+		if err := h.store.setTags(ctx, arn, merged); err != nil {
 			return nil, protocol.ErrInternalError
 		}
 	}
@@ -193,7 +203,11 @@ func (h *Handler) addTagsToCertificateTyped(ctx context.Context, req *addTagsToC
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
-	if err := h.store.setTags(ctx, req.CertificateArn, mergeTags(existing, req.Tags)); err != nil {
+	merged := mergeTags(existing, req.Tags)
+	if aerr := validateCertTags(merged); aerr != nil {
+		return nil, aerr
+	}
+	if err := h.store.setTags(ctx, req.CertificateArn, merged); err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil

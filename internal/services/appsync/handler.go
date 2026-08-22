@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +33,17 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
-var (
-	tagKeyPattern   = regexp.MustCompile(`^[ a-zA-Z+\-=._:/]+$`)
-	tagValuePattern = regexp.MustCompile(`^[\s\w+\-=.:/@]*$`)
-)
+// appsyncTagCfg tunes the shared tag validator to AppSync's error shape
+// (#1052). This replaces a locally re-implemented duplicate of the same
+// rules (validateTagMap, tagKeyPattern, tagValuePattern) that never called
+// serviceutil.ValidateTags — a parallel validator this codebase's own rule
+// says to retire rather than extend, and one whose tagKeyPattern rejected
+// any digit in a tag key, which no AWS documentation supports.
+var appsyncTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequestException",
+	InvalidCode:     "BadRequestException",
+	ExceededMessage: "tags cannot exceed 50 entries.",
+}
 
 // Handler holds AppSync handler dependencies.
 type Handler struct {
@@ -199,7 +205,7 @@ func (h *Handler) CreateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &api) {
 		return
 	}
-	if err := validateGraphqlAPIInput(&api, true); err != nil {
+	if err := validateGraphqlAPIInput(&api); err != nil {
 		protocol.WriteJSONError(w, r, err)
 		return
 	}
@@ -309,7 +315,7 @@ func (h *Handler) UpdateGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &update) {
 		return
 	}
-	if err := validateGraphqlAPIInput(&update, false); err != nil {
+	if err := validateGraphqlAPIInput(&update); err != nil {
 		protocol.WriteJSONError(w, r, err)
 		return
 	}
@@ -465,17 +471,21 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, badRequestError("tags is required."))
 		return
 	}
-	if err := validateTagMap(req.Tags); err != nil {
-		protocol.WriteJSONError(w, r, err)
-		return
-	}
 
-	if api.Tags == nil {
-		api.Tags = make(map[string]string, len(req.Tags))
+	merged := make(map[string]string, len(api.Tags)+len(req.Tags))
+	for k, v := range api.Tags {
+		merged[k] = v
 	}
 	for k, v := range req.Tags {
-		api.Tags[k] = v
+		merged[k] = v
 	}
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagResource calls (#1052).
+	if aerr := serviceutil.ValidateTags(appsyncTagCfg, merged); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	api.Tags = merged
 
 	if storeErr := h.store.PutAPI(r.Context(), api); storeErr != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, storeErr))
@@ -524,7 +534,15 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
 }
 
-func validateGraphqlAPIInput(api *GraphqlAPI, allowTags bool) *protocol.AWSError {
+// validateGraphqlAPIInput checks a GraphqlAPI's fields, including tags — on
+// both CreateGraphqlApi and UpdateGraphqlApi. Real AWS models no tags member
+// on UpdateGraphqlApiInput, but this handler's decode target is the same
+// GraphqlAPI struct either way, so a client-supplied `tags` on update is
+// stored (existing.Tags is kept only when Tags is nil) and therefore must be
+// validated here too — #1052 found it was not, the one gap left once
+// CreateGraphqlApi and TagResource's own checks were confirmed reaching
+// equivalent rules (just not through the shared validator).
+func validateGraphqlAPIInput(api *GraphqlAPI) *protocol.AWSError {
 	if api.Name == "" {
 		return badRequestError("name is required.")
 	}
@@ -549,34 +567,7 @@ func validateGraphqlAPIInput(api *GraphqlAPI, allowTags bool) *protocol.AWSError
 	if len(api.OwnerContact) > 256 {
 		return badRequestError("ownerContact must be 256 characters or fewer.")
 	}
-	if allowTags {
-		return validateTagMap(api.Tags)
-	}
-	return nil
-}
-
-func validateTagMap(tags map[string]string) *protocol.AWSError {
-	if len(tags) > 50 {
-		return badRequestError("tags cannot exceed 50 entries.")
-	}
-	for key, value := range tags {
-		if len(key) < 1 || len(key) > 128 {
-			return badRequestError("tag keys must be between 1 and 128 characters.")
-		}
-		if strings.HasPrefix(key, "aws:") {
-			return badRequestError("tag keys must not start with aws:.")
-		}
-		if !tagKeyPattern.MatchString(key) {
-			return badRequestError("tag keys contain invalid characters.")
-		}
-		if len(value) > 256 {
-			return badRequestError("tag values must be 256 characters or fewer.")
-		}
-		if !tagValuePattern.MatchString(value) {
-			return badRequestError("tag values contain invalid characters.")
-		}
-	}
-	return nil
+	return serviceutil.ValidateTags(appsyncTagCfg, api.Tags)
 }
 
 // apiForARN extracts the API ID from a resource ARN and loads the API.

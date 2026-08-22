@@ -246,6 +246,10 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 
 	params := collectParameters(r)
 	tags := collectTags(r)
+	if aerr := validateStackTags(tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	caps := collectCapabilities(r)
 
 	stack := &Stack{
@@ -327,7 +331,10 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		stack.Parameters = params
 	}
 	if tagsParameterPresent(r) {
-		applyStackTags(stack, collectTags(r), true)
+		if aerr := applyStackTags(stack, collectTags(r), true); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
 	}
 
 	stack.DisableRollback = disableRollback
@@ -763,6 +770,12 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 	csID := fmt.Sprintf("arn:aws:cloudformation:%s:%s:changeSet/%s/%s",
 		chsRegion, h.cfg.AccountID, csName, uuid.NewString())
 
+	changeSetTags := collectTags(r)
+	if aerr := validateStackTags(changeSetTags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	// Compute changes.
 	changes := computeChanges(tmpl, stack, changeSetType)
 
@@ -775,7 +788,7 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 		StackName:       stack.StackName,
 		TemplateBody:    templateBody,
 		Parameters:      collectParameters(r),
-		Tags:            collectTags(r),
+		Tags:            changeSetTags,
 		TagsSet:         tagsParameterPresent(r),
 		Capabilities:    collectCapabilities(r),
 		Status:          ChangeSetStatusCreateComplete,
@@ -890,7 +903,10 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		stack.Parameters = cs.Parameters
 	}
 	if cs.TagsSet || len(cs.Tags) > 0 {
-		applyStackTags(stack, cs.Tags, true)
+		if aerr := applyStackTags(stack, cs.Tags, true); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
 	}
 	stack.TemplateBody = cs.TemplateBody
 
@@ -1339,11 +1355,15 @@ func tagsParameterPresent(r *http.Request) bool {
 	return false
 }
 
-func applyStackTags(stack *Stack, tags []Tag, present bool) {
+func applyStackTags(stack *Stack, tags []Tag, present bool) *protocol.AWSError {
 	if !present {
-		return
+		return nil
+	}
+	if aerr := validateStackTags(tags); aerr != nil {
+		return aerr
 	}
 	stack.Tags = append([]Tag(nil), tags...)
+	return nil
 }
 
 // collectStackStatusFilter reads ListStacks' StackStatusFilter.member.N form
