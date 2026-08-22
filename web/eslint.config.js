@@ -102,6 +102,19 @@ export default defineConfig([
       "classnames/no-dup-ternary": "warn",
       "classnames/prefer-cva": "warn",
 
+      // docs/plans/web-ui-dry-refactor.md §7 — guardrails for the
+      // ResourceTable/ResourceListPage/ResourceListSection scaffolds. `warn`
+      // for now, alongside the six rules above, while the existing sites work
+      // through adoption; flip to `error` once the backlog lands (see the
+      // plan doc — a mixed severity is what let 392 raw palette classes
+      // accumulate before this codebase started ratcheting them down).
+      "classnames/no-local-detail-row": "warn",
+      "classnames/prefer-button-busy": "warn",
+      "classnames/no-raw-spinner-in-content": "warn",
+      "classnames/prefer-shared-formatter": "warn",
+      "classnames/prefer-use-resource-mutation": "warn",
+      "classnames/no-duplicate-class-cluster": "warn",
+
       // TanStack Query — prefer-query-options is in recommendedStrict; adding it
       // here enforces the queryOptions() wrapper which gives type-safe inference.
       "@tanstack/query/prefer-query-options": "warn",

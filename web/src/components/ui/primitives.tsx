@@ -244,25 +244,6 @@ function PageHeader({ title, count, meta, description, actions, className }: Pag
   )
 }
 
-// ─── Separator ────────────────────────────────────────────────────────────
-function Separator({
-  className,
-  orientation = "horizontal",
-}: {
-  className?: string
-  orientation?: "horizontal" | "vertical"
-}) {
-  return (
-    <div
-      className={cn(
-        "bg-border",
-        orientation === "horizontal" ? "h-px w-full" : "w-px self-stretch",
-        className,
-      )}
-    />
-  )
-}
-
 // ─── Code / pre ───────────────────────────────────────────────────────────
 function Code({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -292,7 +273,6 @@ export {
   SectionLabel,
   QueryListState,
   PageHeader,
-  Separator,
   Code,
   CodeBlock,
 }

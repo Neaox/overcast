@@ -147,3 +147,89 @@ describe("Scrollbar styling", () => {
     expect(css).toMatch(/::-webkit-scrollbar-track\s*\{\s*background:\s*transparent/)
   })
 })
+
+/**
+ * docs/plans/web-ui-dry-refactor.md §7 ("Guardrails") calls these five patterns
+ * out by name as the bespoke shapes the new `ResourceTable`/`ResourceListPage`/
+ * `ResourceListSection` scaffolds were built to replace, and asks for a ratchet
+ * rather than a lint rule for the migration period: each ceiling below permits
+ * every existing site, forbids the count from growing, and its failure message
+ * names the file+line that pushed it over. Lower a ceiling in the same commit
+ * that removes the sites it covered — never bump one up to make room for a new
+ * bespoke site; use the shared component instead (see AGENTS.md).
+ *
+ * Baselines were captured 2026-08-23, the day #1200 (waves 1-2) finished
+ * converting every Archetype-C index page to the shared scaffolds.
+ */
+describe("DRY-refactor ratchets (docs/plans/web-ui-dry-refactor.md §7)", () => {
+  /** Every match of `pattern` across `dir`, as `"file:line  matchedText"`. */
+  function patternHits(
+    pattern: RegExp,
+    dir: string,
+    exclude: (file: string) => boolean = () => false,
+  ) {
+    const hits: string[] = []
+    for (const file of sourceFiles(dir)) {
+      // this file's own prose/regex literals are not the code under test
+      if (file.endsWith("global.test.ts") || exclude(file)) continue
+      readFileSync(file, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          for (const match of line.matchAll(pattern)) {
+            hits.push(`${file}:${i + 1}  ${match[0]}`)
+          }
+        })
+    }
+    return hits
+  }
+
+  it("does not grow the raw <Spinner> element count", () => {
+    // The 14-16px busy indicator, used directly rather than through
+    // Button.busy — legitimate inside a chip/badge/toast, but every site is a
+    // candidate for the P4 busy-button rollout to absorb.
+    const hits = patternHits(/<Spinner\b/g, "src")
+    expect(hits.length, `<Spinner> sites:\n${hits.join("\n")}`).toBeLessThanOrEqual(209)
+  })
+
+  it("does not grow the hand-rolled disabled={…isPending…} count", () => {
+    // Button.busy encodes "disabled while pending" once; each of these sites
+    // re-derives it locally instead of adopting the prop.
+    const hits = patternHits(/disabled=\{[^}]*isPending[^}]*\}/g, "src")
+    expect(hits.length, `disabled={…isPending…} sites:\n${hits.join("\n")}`).toBeLessThanOrEqual(
+      131,
+    )
+  })
+
+  it("does not grow the number of local DetailRow/InfoRow/MetaRow definitions", () => {
+    // Directly mirrors the classnames/no-local-detail-row eslint rule; kept
+    // here too because a ratchet names the exact remaining file, not just "a
+    // file somewhere".
+    const hits = patternHits(/\bfunction\s+(?:DetailRow|InfoRow|MetaRow)\b/g, "src/features")
+    expect(
+      hits.length,
+      `local DetailRow/InfoRow/MetaRow definitions:\n${hits.join("\n")}`,
+    ).toBeLessThanOrEqual(1)
+  })
+
+  it("does not grow the raw useMutation( count in features/**", () => {
+    // useResourceMutation (src/hooks/use-resource-mutation.ts, outside
+    // features/**) already folds invalidateQueries + the two toasts; each hit
+    // here hand-rolls that instead.
+    const hits = patternHits(/\buseMutation\s*\(/g, "src/features")
+    expect(hits.length, `raw useMutation( sites:\n${hits.join("\n")}`).toBeLessThanOrEqual(80)
+  })
+
+  it("does not grow the raw <Loader2 count outside ui/primitives.tsx", () => {
+    // ui/primitives.tsx is Spinner's own implementation. Every other site
+    // reaches past Spinner for the bare lucide-react icon; the plan's target
+    // is 0, not yet reached because P4 (Button.busy rollout) hasn't landed —
+    // this ceiling holds the line at today's count until it does.
+    const hits = patternHits(/<Loader2\b/g, "src", (file) =>
+      file.replace(/\\/g, "/").endsWith("components/ui/primitives.tsx"),
+    )
+    expect(
+      hits.length,
+      `<Loader2 sites outside ui/primitives.tsx:\n${hits.join("\n")}`,
+    ).toBeLessThanOrEqual(9)
+  })
+})
