@@ -1,16 +1,21 @@
 # Web UI — DRY refactor and page-archetype componentisation
 
-> Status: audit 2026-07-27; backlog largely open as of 2026-08-21. Landed so far: P7 (clipboard
+> Status: audit 2026-07-27; backlog largely open as of 2026-08-23. Landed so far: P7 (clipboard
 > kernel, marked inline), Archetype E's virtualized-list kernel (2026-08-18), the dead-code
-> deletions struck through in §5/§6, and — 2026-08-22, tracked in #1200 — P3's `ResourceTable`
-> (`components/ui/resource-table.tsx`) plus 8 of the 9 unconverted Archetype-A index pages listed in
-> §1's Archetype C table: `kms`, `ssm`, `appsync`, `stepfunctions`, `secretsmanager`, `ses`, `eks`,
-> `apigateway/api-keys-page`. `ResourceListPage` also gained a `description` passthrough (the prose
-> subtitle every one of those pages needed) as part of the same change. Still remaining from that
-> table: `apigateway/usage-plans-page` (nested sub-table) and the wave-2 tabbed pages
-> (`eventbridge`, `iam`, `ec2-dashboard`) — those need the `ResourceListSection`/tab-strip variant
-> described in §1 Archetype C, which has not been built yet; `sts-page` stays bespoke per that
-> section. None of the other scaffold components exist yet —
+> deletions struck through in §5/§6, and P3's `ResourceTable` (`components/ui/resource-table.tsx`),
+> landed 2026-08-22 (#1200 wave 1) with 8 of the 12 Archetype-C index pages converted: `kms`, `ssm`,
+> `appsync`, `stepfunctions`, `secretsmanager`, `ses`, `eks`, `apigateway/api-keys-page`.
+> `ResourceListPage` also gained a `description` passthrough (the prose subtitle every one of those
+> pages needed) as part of the same change. **2026-08-23 (#1200 wave 2):** `ResourceListSection`
+> (`components/ui/resource-list-section.tsx`) — the Archetype-C tab-strip variant described in §1 —
+> was built, and the remaining four pages converted: `apigateway/usage-plans-page` (its main list
+> plus the nested plan-keys sub-table, the first real caller of `ResourceTable`'s
+> `variant="embedded"`), `eventbridge-page` (2 tabs), `iam-page` (4 resource tabs — Users, Roles,
+> Policies, Groups; the Simulator tab is not a resource list and is untouched), and `ec2-dashboard`
+> (5 tabs — Instances, VPCs, Security Groups, Elastic IPs, NAT Gateways). `sts-page` stays bespoke
+> per this section's own recommendation. **All 12 pages in the Archetype C table are now resolved**
+> (11 converted + `sts-page` deliberately bespoke) — #1200 is closed. None of the other scaffold
+> components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
 > `Tab asChild` — so P1–P2, P4–P6 and P8–P13 remain to do. Companion to
@@ -182,16 +187,31 @@ converted:
 | `ses/ses-page.tsx` | 230 | 0 | 1 | **Converted 2026-08-22** (#1200) |
 | `eks/eks-page.tsx` | 219 | 0 | 1 | **Converted 2026-08-22** (#1200) |
 | `apigateway/api-keys-page.tsx` | 223 | 0 | 1 | **Converted 2026-08-22** (#1200) |
-| `apigateway/usage-plans-page.tsx` | 366 | 0 | 2 | A + one nested sub-table — remaining, #1200 |
-| `eventbridge/eventbridge-page.tsx` | 324 | 1 | 2 | A ×2 behind tabs — remaining, needs `ResourceListSection` |
-| `iam/iam-page.tsx` | 574 | 1 | 4 | A ×4 behind tabs — remaining, needs `ResourceListSection` |
-| `ec2/ec2-dashboard.tsx` | 1260 | 1 | 5 | A ×5 behind tabs — remaining, needs `ResourceListSection` |
+| `apigateway/usage-plans-page.tsx` | 366 | 0 | 2 | A + one nested sub-table — **converted 2026-08-23** (#1200 wave 2) |
+| `eventbridge/eventbridge-page.tsx` | 324 | 1 | 2 | A ×2 behind tabs — **converted 2026-08-23** (#1200 wave 2) |
+| `iam/iam-page.tsx` | 574 | 1 | 4 | A ×4 behind tabs — **converted 2026-08-23** (#1200 wave 2) |
+| `ec2/ec2-dashboard.tsx` | 1260 | 1 | 5 | A ×5 behind tabs — **converted 2026-08-23** (#1200 wave 2) |
 | `sts/sts-page.tsx` | 90 | 0 | 0 | Genuinely different — a single read-only identity card |
 
 So the "third archetype" is really **A + tab strip**: a `<ResourceListSection>` (the list-page body
 without its own page header) composed N times inside a tabbed page. That is one small addition to
 Archetype A, not a new abstraction. Only `sts-page.tsx` is genuinely outside — and at 90 lines it
 should stay bespoke.
+
+**`ResourceListSection` (built 2026-08-23, #1200 wave 2):** `components/ui/resource-list-section.tsx`.
+Takes `actions` (the control row — filter, refresh, create — rendered above the body, the tab-local
+analogue of `ResourceListPage`'s header actions minus a title) and `children` (typically a
+`<ResourceTable variant="embedded">`, but deliberately untyped beyond `ReactNode` — EC2's instance
+state-filter chip row and the usage-plan/IAM-group expanded-detail blocks are extra content passed
+alongside the table, not a second prop). One adaptation surfaced during the conversion: IAM's Groups
+tab previously expanded a member list as an extra table row inserted inline (via a `flatMap` trick);
+`ResourceTable` has no row-expansion concept, so it now renders the expanded group's members in a
+bordered block below the table — the same pattern `usage-plans-page`'s plan-keys expansion already
+used. Functionally identical (toggle, membership list), position differs (bottom of the list rather
+than inline under the clicked row). Two conditional-delete cases (EventBridge's undeletable
+`default` bus, EC2's undeletable default VPC) kept a hand-rolled `rowActions` button instead of
+`ResourceTable`'s `onDelete`, which has no per-row-disable hook — extending the shared kernel for a
+two-instance edge case was judged worse than the small duplication.
 
 ### Archetype D — Create/edit dialog (14 bespoke + 1 shared, used 4×)
 
@@ -312,10 +332,13 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
 
 ### P3 — `ResourceTable` — **M** — **LANDED 2026-08-22** (#1200); still unblocks P5, P9
 
-- **Collapses:** the state-branch + table body of the 8 index pages converted in #1200. **Not yet
-  applied to** the 24 already-converted list pages or the ~33 files rendering a bare `<Table>`
-  outside `ResourceListCard` — that adoption sweep is still open (tracked in #1101, not #1200,
-  which scoped to the unconverted index pages only).
+- **Collapses:** the state-branch + table body of all 12 index pages in §1's Archetype C table —
+  8 converted in #1200 wave 1 (2026-08-22), the remaining 4 (`apigateway/usage-plans-page`,
+  `eventbridge-page`, `iam-page`, `ec2-dashboard`) in #1200 wave 2 (2026-08-23), which also shipped
+  the `ResourceListSection` companion (see §1 Archetype C). **Not yet applied to** the 24
+  already-converted list pages or the ~33 files rendering a bare `<Table>` outside
+  `ResourceListCard` — that adoption sweep is still open (tracked in #1101, not #1200, which scoped
+  to the unconverted index pages only).
 - **Shipped API** (`components/ui/resource-table.tsx`): `query: {data, isLoading, error}`,
   `columns: ResourceTableColumn<T>[]` (`header`, `cell`, `headerClassName?`, `cellClassName?`,
   `prose?` — routes the cell through `TableCellProse` instead of the mono default), `rowKey`,
@@ -329,9 +352,9 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
   against the router's route tree (row click handlers are caller-supplied closures instead, which
   sidesteps that entirely), and none of the 8 pages use bulk selection or an in-table filter.
 - **Explicitly an extension of `ResourceListCard`, not a competitor** — per wave-2's instruction.
-  Sub-tables get `<ResourceTable variant="embedded">` (no card surface); not yet exercised by a
-  real caller, but `apigateway/usage-plans-page` (next in #1200's remaining list) is the first one
-  that needs it.
+  Sub-tables get `<ResourceTable variant="embedded">` (no card surface) — first exercised by
+  `apigateway/usage-plans-page`'s nested plan-keys table (#1200 wave 2, 2026-08-23), and now the
+  default choice for every `ResourceTable` composed inside a `ResourceListSection` tab body too.
 
 ### P4 — Route the busy-button contract through `Button.busy` — **S** — depends on nothing
 
@@ -530,9 +553,9 @@ Wave 2 (call-site migration — partition by FEATURE DIRECTORY, one agent per gr
 Wave 3 (needs Wave 2 in the affected directories)
   ├── O: ResourceFormDialog + migrate the 14 create dialogs   (P5)
   ├── P: convert the 9 unconverted index pages to Archetype A (§1 Archetype C) —
-  │      8/9 done (#1200); remaining: `apigateway/usage-plans-page` (needs `variant="embedded"`
-  │      sub-table support, which `ResourceTable` already has) and the three tabbed pages
-  │      (`eventbridge`, `iam`, `ec2-dashboard`), which need `ResourceListSection` built first
+  │      **DONE** (#1200): 8/9 in wave 1 (2026-08-22), the remaining `apigateway/usage-plans-page`
+  │      + the three tabbed pages (`eventbridge`, `iam`, `ec2-dashboard`, via the new
+  │      `ResourceListSection`) in wave 2 (2026-08-23). `sts-page` stays bespoke as planned.
   └── Q: useResourceFilter rollout                            (P9)
 
 Wave 4

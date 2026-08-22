@@ -1,0 +1,1 @@
+~ [web/iam] the Groups tab's expanded member list now renders in its own panel below the group table instead of as an extra row inserted under the clicked group — the shared list-table kernel (`ResourceTable`) has no row-expansion concept, and this is the same below-the-table pattern API Gateway's usage-plan key list already used

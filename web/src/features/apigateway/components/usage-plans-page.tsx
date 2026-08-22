@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Plus, Trash2, RefreshCw, ChevronRight, Gauge } from "lucide-react"
+import { Trash2, ChevronRight, Gauge } from "lucide-react"
 import {
   usagePlansQueryOptions,
   usagePlanKeysQueryOptions,
@@ -15,15 +15,6 @@ import { EventType } from "@/services/event-types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -31,7 +22,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListPage } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useToast } from "@/components/ui/toast"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
@@ -118,7 +111,9 @@ function ThrottleActivity({ planId }: { planId: string }) {
               key {p.apiKeyName || p.apiKeyId} · used {p.used} · remaining{" "}
               {formatRemaining(p.remaining ?? -1)}
             </span>
-            <span className="ml-auto text-fg-muted">{new Date(event.time).toLocaleTimeString()}</span>
+            <span className="ml-auto text-fg-muted">
+              {new Date(event.time).toLocaleTimeString()}
+            </span>
           </div>
         )
       })}
@@ -178,57 +173,40 @@ function PlanKeys({ plan }: { plan: UsagePlan }) {
         </Badge>
         <Badge variant="outline">quota {formatQuota(plan)}</Badge>
       </div>
-      {keys.length === 0 ? (
-        <QueryListState
-          isLoading={isLoading}
-          isEmpty
-          error={error}
-          loadingClassName="py-4"
-          emptyTitle="No keys associated with this plan."
-          emptyClassName="py-4"
-          errorTitle="Failed to load usage plan keys"
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>ID</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Used today</TableHead>
-              <TableHead>Remaining</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keys.map((key) => (
-              <TableRow key={key.id}>
-                <TableCell className="font-medium">{key.name}</TableCell>
-                <TableCell className="text-fg-muted">{key.id}</TableCell>
-                <TableCell>
-                  <ApiKeyValue value={key.value} />
-                </TableCell>
-                <TableCell className="text-fg-muted">{key.type}</TableCell>
-                <TableCell className="font-mono">{usageByKey.get(key.id)?.used ?? 0}</TableCell>
-                <TableCell className="font-mono text-fg-muted">
-                  {formatRemaining(usageByKey.get(key.id)?.remaining ?? -1)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setRemoveTarget(key)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+
+      <ResourceTable
+        variant="embedded"
+        query={{ data: keys, isLoading: false, error }}
+        noun="keys"
+        emptyTitle="No keys associated with this plan."
+        errorTitle="Failed to load usage plan keys"
+        rowKey={(key) => key.id}
+        columns={[
+          { header: "Name", cellClassName: "font-medium", cell: (key) => key.name },
+          { header: "ID", cellClassName: "text-fg-muted", cell: (key) => key.id },
+          { header: "Value", cell: (key) => <ApiKeyValue value={key.value} /> },
+          { header: "Type", cellClassName: "text-fg-muted", cell: (key) => key.type },
+          {
+            header: "Used today",
+            cell: (key) => usageByKey.get(key.id)?.used ?? 0,
+          },
+          {
+            header: "Remaining",
+            cellClassName: "text-fg-muted",
+            cell: (key) => formatRemaining(usageByKey.get(key.id)?.remaining ?? -1),
+          },
+        ]}
+        rowActions={(key) => (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-danger hover:text-danger"
+            onClick={() => setRemoveTarget(key)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      />
 
       <ThrottleActivity planId={planId} />
 
@@ -320,23 +298,16 @@ export function UsagePlansPage({
   const expandedPlan = plans.find((p) => p.id === expandedPlanId)
 
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-4">
-      <PageHeader
-        title="Usage Plans"
-        actions={
-          <>
-            <Button size="sm" variant="ghost" onClick={() => void refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Usage Plan
-            </Button>
-          </>
-        }
-      />
-
+    <ResourceListPage
+      title="Usage Plans"
+      className="max-w-5xl"
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Usage Plan</CreateAction>
+        </>
+      }
+    >
       {apiIdFilter ? (
         <div className="border-info/40 bg-info/10 text-info rounded-md border px-3 py-2 text-sm">
           Showing usage plans associated with API{" "}
@@ -347,83 +318,59 @@ export function UsagePlansPage({
         </div>
       ) : null}
 
-      {isLoading || plans.length === 0 ? (
-        <QueryListState
-          isLoading={isLoading}
-          isEmpty={plans.length === 0}
-          error={error}
-          emptyTitle="No usage plans yet"
-          errorTitle="Failed to load usage plans"
-        />
-      ) : (
-        <div className="flex flex-col gap-2">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead />
-                <TableHead>Name</TableHead>
-                <TableHead>ID</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Rate / burst</TableHead>
-                <TableHead>Quota</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {plans.map((plan) => (
-                <TableRow
-                  key={plan.id}
-                  className="cursor-pointer"
-                  onClick={() => togglePlan(plan.id)}
-                >
-                  <TableCell className="w-8">
-                    <ChevronRight
-                      className={cn(
-                        "h-4 w-4 text-fg-muted transition-transform",
-                        expandedPlanId === plan.id && "rotate-90",
-                      )}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">{plan.name}</TableCell>
-                  <TableCell className="text-fg-muted">{plan.id}</TableCell>
-                  <TableCellProse>{plan.description || "—"}</TableCellProse>
-                  <TableCell className="font-mono text-fg-muted">{formatThrottle(plan)}</TableCell>
-                  <TableCell className="font-mono text-fg-muted">{formatQuota(plan)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-danger hover:text-danger"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(plan)
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-
-          {expandedPlan && <PlanKeys plan={expandedPlan} />}
-        </div>
-      )}
-
-      {/* Delete confirmation */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Usage Plan"
-        description={
-          <>
-            Delete usage plan <span className="font-mono font-semibold">{deleteTarget?.name}</span>?
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+      <ResourceTable
+        query={{ data: plans, isLoading, error }}
+        noun="usage plans"
+        emptyTitle="No usage plans yet"
+        errorTitle="Failed to load usage plans"
+        rowKey={(plan) => plan.id}
+        onRowClick={(plan) => togglePlan(plan.id)}
+        columns={[
+          {
+            header: "",
+            headerClassName: "w-8",
+            cellClassName: "w-8",
+            cell: (plan) => (
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-fg-muted transition-transform",
+                  expandedPlanId === plan.id && "rotate-90",
+                )}
+              />
+            ),
+          },
+          { header: "Name", cellClassName: "font-medium", cell: (plan) => plan.name },
+          { header: "ID", cellClassName: "text-fg-muted", cell: (plan) => plan.id },
+          { header: "Description", prose: true, cell: (plan) => plan.description || "—" },
+          {
+            header: "Rate / burst",
+            cellClassName: "font-mono text-fg-muted",
+            cell: (plan) => formatThrottle(plan),
+          },
+          {
+            header: "Quota",
+            cellClassName: "font-mono text-fg-muted",
+            cell: (plan) => formatQuota(plan),
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (plan) => plan.id,
+          label: (plan) => plan.name,
+          noun: "usage plan",
+          title: "Delete Usage Plan",
+          description: (plan) => (
+            <>
+              Delete usage plan <span className="font-mono font-semibold">{plan.name}</span>?
+            </>
+          ),
+        }}
       />
+
+      {expandedPlan && <PlanKeys plan={expandedPlan} />}
 
       {/* Create dialog */}
       <Dialog
@@ -488,6 +435,6 @@ export function UsagePlansPage({
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </ResourceListPage>
   )
 }

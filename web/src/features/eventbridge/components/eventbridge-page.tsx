@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { CalendarClock, Plus, Trash2, RefreshCw, Search } from "lucide-react"
+import { CalendarClock } from "lucide-react"
 import {
   ebBusesQueryOptions,
   ebRulesQueryOptions,
@@ -13,23 +13,17 @@ import {
 } from "@/features/eventbridge/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Trash2 } from "lucide-react"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
+import { CreateAction, RefreshAction, ResourceListFilter } from "@/components/ui/resource-list-page"
+import { ResourceListSection } from "@/components/ui/resource-list-section"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { InertBanner } from "@/components/inert-banner"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
-import { cn } from "@/lib/utils"
 
 export function EventBridgePage() {
   const [tab, setTab] = useState("buses")
@@ -74,7 +68,13 @@ function BusesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
-  const { data: buses = [], isLoading, isFetching, refetch } = useQuery(ebBusesQueryOptions())
+  const {
+    data: buses = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(ebBusesQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deleteBusMutationOptions(),
@@ -92,80 +92,53 @@ function BusesTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter buses…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter buses…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} /> Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Bus
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<CalendarClock className="h-6 w-6" />}
-          title="No event buses"
-          description={
-            filter ? "No buses match the filter." : "Create an event bus to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Bus
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((bus) => (
-              <TableRow
-                key={bus.Name}
-                className="cursor-pointer"
-                onClick={() =>
-                  navigate({ to: "/eventbridge/$busName", params: { busName: bus.Name ?? "" } })
-                }
-              >
-                <TableCell>{bus.Name}</TableCell>
-                <TableCell className="text-fg-muted">{bus.Arn}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(bus.Name)}
-                    disabled={bus.Name === "default"}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Bus</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="buses"
+        emptyIcon={CalendarClock}
+        emptyTitle="No event buses"
+        emptyDescription={
+          filter ? "No buses match the filter." : "Create an event bus to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Bus</CreateAction>
+        }
+        rowKey={(bus) => bus.Name ?? ""}
+        onRowClick={(bus) =>
+          navigate({ to: "/eventbridge/$busName", params: { busName: bus.Name ?? "" } })
+        }
+        columns={[
+          { header: "Name", cell: (bus) => bus.Name },
+          { header: "ARN", cellClassName: "text-fg-muted", cell: (bus) => bus.Arn },
+        ]}
+        rowActions={(bus) => (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-danger hover:text-danger"
+            onClick={() => setDeleteTarget(bus.Name)}
+            disabled={bus.Name === "default"}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -192,7 +165,7 @@ function BusesTab() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -202,7 +175,13 @@ function RulesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
-  const { data: rules = [], isLoading, isFetching, refetch } = useQuery(ebRulesQueryOptions())
+  const {
+    data: rules = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(ebRulesQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deleteRuleMutationOptions(),
@@ -220,79 +199,66 @@ function RulesTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter rules…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter rules…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} /> Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Rule
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<CalendarClock className="h-6 w-6" />}
-          title="No rules"
-          description={
-            filter ? "No rules match the filter." : "Create an event rule to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Rule
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Event Bus</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((rule) => (
-              <TableRow key={rule.Name}>
-                <TableCell>{rule.Name}</TableCell>
-                <TableCell className="text-fg-muted">{rule.EventBusName}</TableCell>
-                <TableCell>
-                  <Badge variant={rule.State === "ENABLED" ? "success" : "default"}>
-                    {rule.State}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(rule.Name)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Rule</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="rules"
+        emptyIcon={CalendarClock}
+        emptyTitle="No rules"
+        emptyDescription={
+          filter ? "No rules match the filter." : "Create an event rule to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Rule</CreateAction>
+        }
+        rowKey={(rule) => rule.Name ?? ""}
+        columns={[
+          { header: "Name", cell: (rule) => rule.Name },
+          {
+            header: "Event Bus",
+            cellClassName: "text-fg-muted",
+            cell: (rule) => rule.EventBusName,
+          },
+          {
+            header: "State",
+            cell: (rule) => (
+              <Badge variant={rule.State === "ENABLED" ? "success" : "default"}>{rule.State}</Badge>
+            ),
+          },
+        ]}
+        onDelete={{
+          target: rules.find((r) => r.Name === deleteTarget),
+          onRequest: (rule) => setDeleteTarget(rule.Name),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (rule) => rule.Name ?? "",
+          label: (rule) => rule.Name ?? "",
+          noun: "rule",
+          title: "Delete Rule",
+          description: (rule) => (
+            <>
+              Delete rule <span className="font-mono font-semibold">{rule.Name}</span>? This cannot
+              be undone.
+            </>
+          ),
+          actionLabel: (rule) => `Delete ${rule.Name}`,
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -304,21 +270,6 @@ function RulesTab() {
         invalidateKeys={[ebKeys.rules()]}
         successTitle="Rule created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Rule"
-        description={
-          <>
-            Delete rule <span className="font-mono font-semibold">{deleteTarget}</span>? This cannot
-            be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }

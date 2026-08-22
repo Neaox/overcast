@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Users, Plus, Trash2, RefreshCw, Search, ChevronDown, ChevronRight } from "lucide-react"
+import { Users, ChevronDown, ChevronRight } from "lucide-react"
 import {
   iamUsersQueryOptions,
   iamRolesQueryOptions,
@@ -18,23 +18,14 @@ import {
   createGroupMutationOptions,
 } from "@/features/iam/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListFilter } from "@/components/ui/resource-list-page"
+import { ResourceListSection } from "@/components/ui/resource-list-section"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 import { PolicySimulator, EnforcementNotice } from "./policy-simulator"
-import { cn } from "@/lib/utils"
 
 export function IAMPage() {
   const [tab, setTab] = useState("users")
@@ -90,7 +81,13 @@ function UsersTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
-  const { data: users = [], isLoading, isFetching, refetch } = useQuery(iamUsersQueryOptions())
+  const {
+    data: users = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(iamUsersQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deleteUserMutationOptions(),
@@ -112,74 +109,57 @@ function UsersTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter users…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter users…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create User
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Users className="h-6 w-6" />}
-          title="No users"
-          description={filter ? "No users match the filter." : "Create an IAM user to get started."}
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create User
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User Name</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead>Path</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((u) => (
-              <TableRow key={u.UserName}>
-                <TableCell>{u.UserName}</TableCell>
-                <TableCell className="text-fg-muted">{u.Arn}</TableCell>
-                <TableCell>{u.Path}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(u.UserName)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create User</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="users"
+        emptyIcon={Users}
+        emptyTitle="No users"
+        emptyDescription={
+          filter ? "No users match the filter." : "Create an IAM user to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create User</CreateAction>
+        }
+        rowKey={(u) => u.UserName ?? ""}
+        columns={[
+          { header: "User Name", cell: (u) => u.UserName },
+          { header: "ARN", cellClassName: "text-fg-muted", cell: (u) => u.Arn },
+          { header: "Path", cell: (u) => u.Path },
+        ]}
+        onDelete={{
+          target: users.find((u) => u.UserName === deleteTarget),
+          onRequest: (u) => setDeleteTarget(u.UserName),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (u) => u.UserName ?? "",
+          label: (u) => u.UserName ?? "",
+          noun: "user",
+          title: "Delete User",
+          description: (u) => (
+            <>
+              Delete user <span className="font-mono font-semibold">{u.UserName}</span>? This cannot
+              be undone.
+            </>
+          ),
+          actionLabel: (u) => `Delete ${u.UserName}`,
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -191,22 +171,7 @@ function UsersTab() {
         invalidateKeys={[iamKeys.users()]}
         successTitle="User created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete User"
-        description={
-          <>
-            Delete user <span className="font-mono font-semibold">{deleteTarget}</span>? This cannot
-            be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -216,7 +181,13 @@ function RolesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
-  const { data: roles = [], isLoading, isFetching, refetch } = useQuery(iamRolesQueryOptions())
+  const {
+    data: roles = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(iamRolesQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deleteRoleMutationOptions(),
@@ -235,73 +206,57 @@ function RolesTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter roles…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter roles…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} /> Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Role
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Users className="h-6 w-6" />}
-          title="No roles"
-          description={filter ? "No roles match the filter." : "Create an IAM role to get started."}
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Role
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Role Name</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead>Path</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((r) => (
-              <TableRow key={r.RoleName}>
-                <TableCell>{r.RoleName}</TableCell>
-                <TableCell className="text-fg-muted">{r.Arn}</TableCell>
-                <TableCell>{r.Path}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(r.RoleName)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Role</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="roles"
+        emptyIcon={Users}
+        emptyTitle="No roles"
+        emptyDescription={
+          filter ? "No roles match the filter." : "Create an IAM role to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Role</CreateAction>
+        }
+        rowKey={(r) => r.RoleName ?? ""}
+        columns={[
+          { header: "Role Name", cell: (r) => r.RoleName },
+          { header: "ARN", cellClassName: "text-fg-muted", cell: (r) => r.Arn },
+          { header: "Path", cell: (r) => r.Path },
+        ]}
+        onDelete={{
+          target: roles.find((r) => r.RoleName === deleteTarget),
+          onRequest: (r) => setDeleteTarget(r.RoleName),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (r) => r.RoleName ?? "",
+          label: (r) => r.RoleName ?? "",
+          noun: "role",
+          title: "Delete Role",
+          description: (r) => (
+            <>
+              Delete role <span className="font-mono font-semibold">{r.RoleName}</span>? This cannot
+              be undone.
+            </>
+          ),
+          actionLabel: (r) => `Delete ${r.RoleName}`,
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -313,22 +268,7 @@ function RolesTab() {
         invalidateKeys={[iamKeys.roles()]}
         successTitle="Role created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Role"
-        description={
-          <>
-            Delete role <span className="font-mono font-semibold">{deleteTarget}</span>? This cannot
-            be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -336,13 +276,14 @@ function RolesTab() {
 
 function PoliciesTab() {
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{ name: string; arn: string }>()
+  const [deleteTarget, setDeleteTarget] = useState<(typeof policies)[number]>()
   const [filter, setFilter] = useState("")
   const {
     data: policies = [],
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(iamPoliciesQueryOptions())
 
   const deleteMut = useResourceMutation({
@@ -362,75 +303,58 @@ function PoliciesTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter policies…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter policies…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} /> Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Policy
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Users className="h-6 w-6" />}
-          title="No policies"
-          description={
-            filter ? "No policies match the filter." : "Create an IAM policy to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Policy
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Policy Name</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead>Attachments</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((p) => (
-              <TableRow key={p.PolicyName}>
-                <TableCell>{p.PolicyName}</TableCell>
-                <TableCell className="text-fg-muted">{p.Arn}</TableCell>
-                <TableCell>{p.AttachmentCount}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget({ name: p.PolicyName ?? "", arn: p.Arn ?? "" })}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Policy</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="policies"
+        emptyIcon={Users}
+        emptyTitle="No policies"
+        emptyDescription={
+          filter ? "No policies match the filter." : "Create an IAM policy to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Policy</CreateAction>
+        }
+        rowKey={(p) => p.PolicyName ?? ""}
+        columns={[
+          { header: "Policy Name", cell: (p) => p.PolicyName },
+          { header: "ARN", cellClassName: "text-fg-muted", cell: (p) => p.Arn },
+          { header: "Attachments", cell: (p) => p.AttachmentCount },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          // The API takes the policy's ARN, not its name.
+          getId: (p) => p.Arn ?? "",
+          label: (p) => p.PolicyName ?? "",
+          noun: "policy",
+          title: "Delete Policy",
+          description: (p) => (
+            <>
+              Delete policy <span className="font-mono font-semibold">{p.PolicyName}</span>? This
+              cannot be undone.
+            </>
+          ),
+          actionLabel: (p) => `Delete ${p.PolicyName}`,
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -442,22 +366,7 @@ function PoliciesTab() {
         invalidateKeys={[iamKeys.policies()]}
         successTitle="Policy created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Policy"
-        description={
-          <>
-            Delete policy <span className="font-mono font-semibold">{deleteTarget?.name}</span>?
-            This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.arn)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -503,7 +412,13 @@ function GroupsTab() {
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [expanded, setExpanded] = useState<string>()
   const [filter, setFilter] = useState("")
-  const { data: groups = [], isLoading, isFetching, refetch } = useQuery(iamGroupsQueryOptions())
+  const {
+    data: groups = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(iamGroupsQueryOptions())
 
   const deleteMut = useResourceMutation({
     options: deleteGroupMutationOptions(),
@@ -522,101 +437,86 @@ function GroupsTab() {
   )
 
   return (
-    <div className="flex flex-col gap-3 pt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter groups…"
-            className="pl-8"
+    <ResourceListSection
+      className="pt-4"
+      actions={
+        <>
+          <ResourceListFilter
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={setFilter}
+            placeholder="Filter groups…"
+            className="flex-1"
           />
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} /> Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Group
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Users className="h-6 w-6" />}
-          title="No groups"
-          description={
-            filter ? "No groups match the filter." : "Create an IAM group to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create Group
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Group Name</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead>Path</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.flatMap((g) => {
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Group</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="groups"
+        emptyIcon={Users}
+        emptyTitle="No groups"
+        emptyDescription={
+          filter ? "No groups match the filter." : "Create an IAM group to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Group</CreateAction>
+        }
+        rowKey={(g) => g.GroupName ?? ""}
+        columns={[
+          {
+            header: "Group Name",
+            cell: (g) => {
               const name = g.GroupName ?? ""
               const isExpanded = expanded === name
-              return [
-                <TableRow key={name}>
-                  <TableCell>
-                    <button
-                      type="button"
-                      aria-expanded={isExpanded}
-                      onClick={() => setExpanded(isExpanded ? undefined : name)}
-                      className="flex items-center gap-1.5 text-left font-medium text-fg hover:text-accent"
-                    >
-                      {isExpanded ? (
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                      )}
-                      {name}
-                    </button>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{g.Arn}</TableCell>
-                  <TableCell>{g.Path}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-danger hover:text-danger"
-                      onClick={() => setDeleteTarget(name)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TableCell>
-                </TableRow>,
-                ...(isExpanded
-                  ? [
-                      <TableRow key={`${name}-members`}>
-                        <TableCell colSpan={4} className="bg-bg-subtle">
-                          <GroupMembers groupName={name} />
-                        </TableCell>
-                      </TableRow>,
-                    ]
-                  : []),
-              ]
-            })}
-          </TableBody>
-        </Table>
+              return (
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpanded(isExpanded ? undefined : name)}
+                  className="flex items-center gap-1.5 text-left font-medium text-fg hover:text-accent"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                  {name}
+                </button>
+              )
+            },
+          },
+          { header: "ARN", cellClassName: "text-fg-muted", cell: (g) => g.Arn },
+          { header: "Path", cell: (g) => g.Path },
+        ]}
+        onDelete={{
+          target: groups.find((g) => g.GroupName === deleteTarget),
+          onRequest: (g) => setDeleteTarget(g.GroupName),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (g) => g.GroupName ?? "",
+          label: (g) => g.GroupName ?? "",
+          noun: "group",
+          title: "Delete Group",
+          description: (g) => (
+            <>
+              Delete group <span className="font-mono font-semibold">{g.GroupName}</span>? This
+              cannot be undone.
+            </>
+          ),
+          actionLabel: (g) => `Delete ${g.GroupName}`,
+        }}
+      />
+
+      {expanded && (
+        <div className="rounded-lg border bg-bg-elevated p-4">
+          <p className="mb-1 text-sm font-medium text-fg-muted">
+            Members of <span className="font-semibold text-fg">{expanded}</span>
+          </p>
+          <GroupMembers groupName={expanded} />
+        </div>
       )}
 
       <CreateResourceDialog
@@ -629,21 +529,6 @@ function GroupsTab() {
         invalidateKeys={[iamKeys.groups()]}
         successTitle="Group created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Group"
-        description={
-          <>
-            Delete group <span className="font-mono font-semibold">{deleteTarget}</span>? This
-            cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Cpu, Plus, Trash2, RefreshCw, Play, Square, Link as LinkIcon } from "lucide-react"
+import { Cpu, Plus, Trash2, Play, Square, Link as LinkIcon } from "lucide-react"
 import type { Ec2ElasticIp } from "@/types"
 import {
   ec2InstancesQueryOptions,
@@ -31,15 +31,6 @@ import { Input } from "@/components/ui/input"
 import { Combobox } from "@/components/ui/combobox"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -48,7 +39,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction } from "@/components/ui/resource-list-page"
+import { ResourceListSection } from "@/components/ui/resource-list-section"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -169,18 +163,14 @@ function InstancesPanel() {
   })
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowLaunch(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Launch Instance
-        </Button>
-      </div>
-
+    <ResourceListSection
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowLaunch(true)}>Launch Instance</CreateAction>
+        </>
+      }
+    >
       {instances.length > 0 && (
         <div className="flex items-center gap-1.5">
           {["all", "running", "stopped", "terminated"].map((s) => (
@@ -197,96 +187,80 @@ function InstancesPanel() {
         </div>
       )}
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : instances.length === 0 ? (
-        <EmptyState
-          icon={<Cpu className="h-10 w-10" />}
-          title="No instances"
-          description="Launch an instance to get started."
-          action={
-            <Button onClick={() => setShowLaunch(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Launch Instance
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Instance ID</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Private IP</TableHead>
-              <TableHead>VPC ID</TableHead>
-              <TableHead>Launch Time</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((i) => (
-              <TableRow key={i.instanceId}>
-                <TableCell>
-                  <Link
-                    to="/ec2/$instanceId"
-                    params={{ instanceId: i.instanceId }}
-                    className="text-accent hover:underline"
-                  >
-                    {i.instanceId}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <InstanceStateBadge state={i.state.name} />
-                </TableCell>
-                <TableCell>{i.instanceType}</TableCell>
-                <TableCell className="text-fg-muted">{i.privateIpAddress ?? "—"}</TableCell>
-                <TableCell className="text-fg-muted">{i.vpcId ?? "—"}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {i.launchTime ? new Date(i.launchTime).toLocaleString() : "—"}
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    {i.state.name === "stopped" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Start"
-                        onClick={() => startMut.mutate([i.instanceId])}
-                      >
-                        <Play className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {i.state.name === "running" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Stop"
-                        onClick={() => stopMut.mutate([i.instanceId])}
-                      >
-                        <Square className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {i.state.name !== "terminated" && i.state.name !== "shutting-down" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-fg-muted hover:text-danger"
-                        title="Terminate"
-                        onClick={() => setTerminateTarget(i.instanceId)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading }}
+        noun="instances"
+        emptyIcon={Cpu}
+        emptyTitle="No instances"
+        emptyDescription="Launch an instance to get started."
+        emptyAction={
+          <CreateAction onClick={() => setShowLaunch(true)}>Launch Instance</CreateAction>
+        }
+        rowKey={(i) => i.instanceId}
+        columns={[
+          {
+            header: "Instance ID",
+            cell: (i) => (
+              <Link
+                to="/ec2/$instanceId"
+                params={{ instanceId: i.instanceId }}
+                className="text-accent hover:underline"
+              >
+                {i.instanceId}
+              </Link>
+            ),
+          },
+          { header: "State", cell: (i) => <InstanceStateBadge state={i.state.name} /> },
+          { header: "Type", cell: (i) => i.instanceType },
+          {
+            header: "Private IP",
+            cellClassName: "text-fg-muted",
+            cell: (i) => i.privateIpAddress ?? "—",
+          },
+          { header: "VPC ID", cellClassName: "text-fg-muted", cell: (i) => i.vpcId ?? "—" },
+          {
+            header: "Launch Time",
+            cellClassName: "text-fg-muted",
+            cell: (i) => (i.launchTime ? new Date(i.launchTime).toLocaleString() : "—"),
+          },
+        ]}
+        rowActions={(i) => (
+          <div className="flex gap-1">
+            {i.state.name === "stopped" && (
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Start"
+                onClick={() => startMut.mutate([i.instanceId])}
+              >
+                <Play className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {i.state.name === "running" && (
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Stop"
+                onClick={() => stopMut.mutate([i.instanceId])}
+              >
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {i.state.name !== "terminated" && i.state.name !== "shutting-down" && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-fg-muted hover:text-danger"
+                title="Terminate"
+                onClick={() => setTerminateTarget(i.instanceId)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+      />
 
       <LaunchInstanceDialog
         open={showLaunch}
@@ -307,7 +281,7 @@ function InstancesPanel() {
         isPending={terminateMut.isPending}
         onConfirm={() => terminateTarget && terminateMut.mutate([terminateTarget])}
       />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -335,78 +309,57 @@ function VpcsPanel() {
   })
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Create VPC
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : vpcs.length === 0 ? (
-        <EmptyState
-          title="No VPCs"
-          description="Create a VPC to set up networking."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create VPC
+    <ResourceListSection
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create VPC</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: vpcs, isLoading }}
+        noun="VPCs"
+        emptyTitle="No VPCs"
+        emptyDescription="Create a VPC to set up networking."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create VPC</CreateAction>}
+        rowKey={(v) => v.vpcId}
+        columns={[
+          {
+            header: "VPC ID",
+            cell: (v) => (
+              <Link
+                to="/ec2/vpc/$vpcId"
+                params={{ vpcId: v.vpcId }}
+                className="text-accent hover:underline"
+              >
+                {v.vpcId}
+              </Link>
+            ),
+          },
+          { header: "CIDR", cell: (v) => v.cidrBlock },
+          {
+            header: "State",
+            cell: (v) => (
+              <Badge variant={v.state === "available" ? "success" : "warning"}>{v.state}</Badge>
+            ),
+          },
+          { header: "Default", cell: (v) => (v.isDefault ? "Yes" : "No") },
+        ]}
+        rowActions={(v) =>
+          !v.isDefault && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-fg-muted hover:text-danger"
+              onClick={() => setDeleteTarget(v.vpcId)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>VPC ID</TableHead>
-              <TableHead>CIDR</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>Default</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {vpcs.map((v) => (
-              <TableRow key={v.vpcId}>
-                <TableCell>
-                  <Link
-                    to="/ec2/vpc/$vpcId"
-                    params={{ vpcId: v.vpcId }}
-                    className="text-accent hover:underline"
-                  >
-                    {v.vpcId}
-                  </Link>
-                </TableCell>
-                <TableCell>{v.cidrBlock}</TableCell>
-                <TableCell>
-                  <Badge variant={v.state === "available" ? "success" : "warning"}>{v.state}</Badge>
-                </TableCell>
-                <TableCell>{v.isDefault ? "Yes" : "No"}</TableCell>
-                <TableCell>
-                  {!v.isDefault && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-fg-muted hover:text-danger"
-                      onClick={() => setDeleteTarget(v.vpcId)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          )
+        }
+      />
 
       <CreateVpcDialog
         open={showCreate}
@@ -427,7 +380,7 @@ function VpcsPanel() {
         isPending={deleteMut.isPending}
         onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -460,74 +413,60 @@ function SecurityGroupsPanel() {
   })
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Create Security Group
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : groups.length === 0 ? (
-        <EmptyState
-          title="No security groups"
-          description="Create a security group to manage access."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Security Group
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Group ID</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>VPC ID</TableHead>
-              <TableHead>Inbound Rules</TableHead>
-              <TableHead>Outbound Rules</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {groups.map((sg) => (
-              <TableRow key={sg.groupId}>
-                <TableCell>{sg.groupId}</TableCell>
-                <TableCell className="font-medium">{sg.groupName}</TableCell>
-                <TableCellProse className="max-w-xs truncate">{sg.description}</TableCellProse>
-                <TableCell className="text-fg-muted">{sg.vpcId ?? "—"}</TableCell>
-                <TableCell>
-                  <Badge variant="default">{sg.ipPermissions.length}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="default">{sg.ipPermissionsEgress.length}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    onClick={() => setDeleteTarget(sg.groupId)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+    <ResourceListSection
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Security Group</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: groups, isLoading }}
+        noun="security groups"
+        emptyTitle="No security groups"
+        emptyDescription="Create a security group to manage access."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create Security Group</CreateAction>
+        }
+        rowKey={(sg) => sg.groupId}
+        columns={[
+          { header: "Group ID", cell: (sg) => sg.groupId },
+          { header: "Name", cellClassName: "font-medium", cell: (sg) => sg.groupName },
+          {
+            header: "Description",
+            prose: true,
+            cellClassName: "max-w-xs truncate",
+            cell: (sg) => sg.description,
+          },
+          { header: "VPC ID", cellClassName: "text-fg-muted", cell: (sg) => sg.vpcId ?? "—" },
+          {
+            header: "Inbound Rules",
+            cell: (sg) => <Badge variant="default">{sg.ipPermissions.length}</Badge>,
+          },
+          {
+            header: "Outbound Rules",
+            cell: (sg) => <Badge variant="default">{sg.ipPermissionsEgress.length}</Badge>,
+          },
+        ]}
+        onDelete={{
+          target: groups.find((sg) => sg.groupId === deleteTarget),
+          onRequest: (sg) => setDeleteTarget(sg.groupId),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (sg) => sg.groupId,
+          label: (sg) => sg.groupId,
+          noun: "security group",
+          title: "Delete Security Group",
+          description: (sg) => (
+            <>
+              Permanently delete security group <strong>{sg.groupId}</strong>?
+            </>
+          ),
+          actionLabel: (sg) => `Delete ${sg.groupId}`,
+        }}
+      />
 
       <CreateSecurityGroupDialog
         open={showCreate}
@@ -535,20 +474,7 @@ function SecurityGroupsPanel() {
         isPending={createMut.isPending}
         onSubmit={(opts) => createMut.mutate(opts)}
       />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Security Group"
-        description={
-          <>
-            Permanently delete security group <strong>{deleteTarget}</strong>?
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -883,101 +809,87 @@ function ElasticIpsPanel() {
   })
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => allocateMut.mutate(undefined)}
-          disabled={allocateMut.isPending}
-        >
-          {allocateMut.isPending ? (
-            <Spinner className="mr-2" />
-          ) : (
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          Allocate Address
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : eips.length === 0 ? (
-        <EmptyState
-          title="No Elastic IPs"
-          description="Allocate an Elastic IP to reserve a static public address."
-          action={
-            <Button onClick={() => allocateMut.mutate(undefined)}>
+    <ResourceListSection
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <Button
+            size="sm"
+            onClick={() => allocateMut.mutate(undefined)}
+            disabled={allocateMut.isPending}
+          >
+            {allocateMut.isPending ? (
+              <Spinner className="mr-2" />
+            ) : (
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Allocate Address
+            )}
+            Allocate Address
+          </Button>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: eips, isLoading }}
+        noun="Elastic IPs"
+        emptyTitle="No Elastic IPs"
+        emptyDescription="Allocate an Elastic IP to reserve a static public address."
+        emptyAction={
+          <Button onClick={() => allocateMut.mutate(undefined)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Allocate Address
+          </Button>
+        }
+        rowKey={(eip) => eip.allocationId}
+        columns={[
+          { header: "Allocation ID", cell: (eip) => eip.allocationId },
+          { header: "Public IP", cell: (eip) => eip.publicIp },
+          { header: "Domain", cell: (eip) => <Badge variant="default">{eip.domain}</Badge> },
+          {
+            header: "Associated Instance",
+            cellClassName: "text-fg-muted",
+            cell: (eip) => eip.instanceId ?? "—",
+          },
+          {
+            header: "Private IP",
+            cellClassName: "text-fg-muted",
+            cell: (eip) => eip.privateIpAddress ?? "—",
+          },
+        ]}
+        rowActions={(eip) => (
+          <div className="flex items-center gap-1">
+            {eip.associationId ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs text-fg-muted hover:text-warning"
+                onClick={() => disassociateMut.mutate(eip.associationId!)}
+                disabled={disassociateMut.isPending}
+              >
+                Disassociate
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs"
+                onClick={() => setAssociateTarget(eip)}
+              >
+                <LinkIcon className="mr-1 h-3 w-3" />
+                Associate
+              </Button>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-fg-muted hover:text-danger"
+              onClick={() => setReleaseTarget(eip.allocationId)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Allocation ID</TableHead>
-              <TableHead>Public IP</TableHead>
-              <TableHead>Domain</TableHead>
-              <TableHead>Associated Instance</TableHead>
-              <TableHead>Private IP</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {eips.map((eip) => (
-              <TableRow key={eip.allocationId}>
-                <TableCell>{eip.allocationId}</TableCell>
-                <TableCell>{eip.publicIp}</TableCell>
-                <TableCell>
-                  <Badge variant="default">{eip.domain}</Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">{eip.instanceId ?? "—"}</TableCell>
-                <TableCell className="text-fg-muted">{eip.privateIpAddress ?? "—"}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1">
-                    {eip.associationId ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-xs text-fg-muted hover:text-warning"
-                        onClick={() => disassociateMut.mutate(eip.associationId!)}
-                        disabled={disassociateMut.isPending}
-                      >
-                        Disassociate
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-xs"
-                        onClick={() => setAssociateTarget(eip)}
-                      >
-                        <LinkIcon className="mr-1 h-3 w-3" />
-                        Associate
-                      </Button>
-                    )}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-fg-muted hover:text-danger"
-                      onClick={() => setReleaseTarget(eip.allocationId)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          </div>
+        )}
+      />
 
       {associateTarget && (
         <AssociateAddressDialog
@@ -1002,7 +914,7 @@ function ElasticIpsPanel() {
         isPending={releaseMut.isPending}
         onConfirm={() => releaseTarget && releaseMut.mutate(releaseTarget)}
       />
-    </div>
+    </ResourceListSection>
   )
 }
 
@@ -1094,74 +1006,58 @@ function NatGatewaysPanel() {
   })
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Create NAT Gateway
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : natGateways.length === 0 ? (
-        <EmptyState
-          title="No NAT Gateways"
-          description="Create a NAT Gateway to allow private subnet internet access."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create NAT Gateway
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>NAT Gateway ID</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>VPC ID</TableHead>
-              <TableHead>Subnet ID</TableHead>
-              <TableHead>Public IP</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {natGateways.map((ngw) => (
-              <TableRow key={ngw.natGatewayId}>
-                <TableCell>{ngw.natGatewayId}</TableCell>
-                <TableCell>
-                  <NatGatewayStateBadge state={ngw.state} />
-                </TableCell>
-                <TableCell className="text-fg-muted">{ngw.vpcId}</TableCell>
-                <TableCell className="text-fg-muted">{ngw.subnetId}</TableCell>
-                <TableCell className="text-fg-muted">{ngw.publicIp ?? "—"}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {ngw.createTime ? new Date(ngw.createTime).toLocaleString() : "—"}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-fg-muted hover:text-danger"
-                    onClick={() => setDeleteTarget(ngw.natGatewayId)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+    <ResourceListSection
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create NAT Gateway</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        variant="embedded"
+        query={{ data: natGateways, isLoading }}
+        noun="NAT Gateways"
+        emptyTitle="No NAT Gateways"
+        emptyDescription="Create a NAT Gateway to allow private subnet internet access."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create NAT Gateway</CreateAction>
+        }
+        rowKey={(ngw) => ngw.natGatewayId}
+        columns={[
+          { header: "NAT Gateway ID", cell: (ngw) => ngw.natGatewayId },
+          { header: "State", cell: (ngw) => <NatGatewayStateBadge state={ngw.state} /> },
+          { header: "VPC ID", cellClassName: "text-fg-muted", cell: (ngw) => ngw.vpcId },
+          { header: "Subnet ID", cellClassName: "text-fg-muted", cell: (ngw) => ngw.subnetId },
+          {
+            header: "Public IP",
+            cellClassName: "text-fg-muted",
+            cell: (ngw) => ngw.publicIp ?? "—",
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            cell: (ngw) => (ngw.createTime ? new Date(ngw.createTime).toLocaleString() : "—"),
+          },
+        ]}
+        onDelete={{
+          target: natGateways.find((ngw) => ngw.natGatewayId === deleteTarget),
+          onRequest: (ngw) => setDeleteTarget(ngw.natGatewayId),
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (ngw) => ngw.natGatewayId,
+          label: (ngw) => ngw.natGatewayId,
+          noun: "NAT Gateway",
+          title: "Delete NAT Gateway",
+          description: (ngw) => (
+            <>
+              Delete NAT Gateway <strong>{ngw.natGatewayId}</strong>? This may disrupt traffic from
+              private subnets.
+            </>
+          ),
+          actionLabel: (ngw) => `Delete ${ngw.natGatewayId}`,
+        }}
+      />
 
       {showCreate && (
         <CreateNatGatewayDialog
@@ -1170,21 +1066,7 @@ function NatGatewaysPanel() {
           onSubmit={(params) => createMut.mutate(params)}
         />
       )}
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete NAT Gateway"
-        description={
-          <>
-            Delete NAT Gateway <strong>{deleteTarget}</strong>? This may disrupt traffic from
-            private subnets.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListSection>
   )
 }
 
