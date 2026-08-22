@@ -25,7 +25,7 @@
  *   tail costs nothing.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 
@@ -48,6 +48,22 @@ interface ForwardState {
 
 const EMPTY: ForwardState = { events: [], exhausted: false, loading: false }
 
+/** A walk's state together with the stream it belongs to. */
+interface Snapshot {
+  identity: string
+  state: ForwardState
+}
+
+/** Where the walk has got to. Only ever touched from callbacks, never in render. */
+interface Walk {
+  identity: string
+  /** The token to fetch next; undefined until the first fetch chains off startToken. */
+  token: string | undefined
+  inFlight: boolean
+  /** Bumped when the stream identity changes, so a stale in-flight fetch discards itself. */
+  epoch: number
+}
+
 export function useForwardLogPages({
   logGroup,
   logStream,
@@ -58,55 +74,69 @@ export function useForwardLogPages({
   /** The newest fetched page's nextForwardToken — where "newer than loaded" starts. */
   startToken: string | undefined
 }): ForwardLogPages {
-  const [state, setState] = useState<ForwardState>(EMPTY)
-  /** The token to fetch next; undefined until the first fetch chains off startToken. */
-  const tokenRef = useRef<string | undefined>(undefined)
-  const inFlightRef = useRef(false)
-  /** Bumped when the stream identity changes, so a stale in-flight fetch discards itself. */
-  const epochRef = useRef(0)
+  // A walk belongs to one stream, and carrying that identity in the snapshot is
+  // what makes the reset a *derivation*: a snapshot stamped with a stream the
+  // viewer has moved off is simply not this stream's state. Writing EMPTY back
+  // from an effect would say the same thing at the cost of an extra render every
+  // time the viewer changes stream.
+  const identity = JSON.stringify([logGroup, logStream])
+  const [snapshot, setSnapshot] = useState<Snapshot>({ identity, state: EMPTY })
+  const state = snapshot.identity === identity ? snapshot.state : EMPTY
 
-  useEffect(() => {
-    // A new stream identity starts a new epoch: the walk restarts from the
-    // new stream's start token, and anything still in flight from the old
-    // stream discards itself when it lands.
-    epochRef.current++
-    tokenRef.current = undefined
-    inFlightRef.current = false
-    setState(EMPTY)
-  }, [logGroup, logStream])
+  const walkRef = useRef<Walk>({ identity, token: undefined, inFlight: false, epoch: 0 })
 
   const loadNewer = useCallback(() => {
-    if (inFlightRef.current || !logGroup || !logStream) return
-    const token = tokenRef.current ?? startToken
+    const walk = walkRef.current
+    if (walk.identity !== identity) {
+      // A new stream starts a new epoch: the walk restarts from the new
+      // stream's start token, and anything still in flight from the old stream
+      // discards itself when it lands. Doing this here rather than in an effect
+      // keeps every ref write inside a callback.
+      walk.identity = identity
+      walk.token = undefined
+      walk.inFlight = false
+      walk.epoch++
+    }
+    if (walk.inFlight || !logGroup || !logStream) return
+    const token = walk.token ?? startToken
     if (!token) return
-    inFlightRef.current = true
-    const epoch = epochRef.current
-    setState((prev) => ({ ...prev, loading: true }))
+    walk.inFlight = true
+    const epoch = walk.epoch
+
+    /** Fold into the snapshot, starting fresh if the last one was another stream's. */
+    const update = (fn: (prev: ForwardState) => ForwardState) => {
+      setSnapshot((prev) => ({
+        identity,
+        state: fn(prev.identity === identity ? prev.state : EMPTY),
+      }))
+    }
+
+    update((prev) => ({ ...prev, loading: true }))
     void (async () => {
       try {
         const page = await logs.getEvents(logGroup, logStream, { nextToken: token, limit: 200 })
-        if (epochRef.current !== epoch) return
+        if (walkRef.current.epoch !== epoch) return
         const next = page.nextForwardToken
         // The same token coming back is AWS's end-of-stream signal.
         const atEnd = !next || next === token
-        if (next) tokenRef.current = next
-        setState((prev) => ({
+        if (next) walkRef.current.token = next
+        update((prev) => ({
           events: page.events.length ? [...prev.events, ...page.events] : prev.events,
           exhausted: atEnd,
           loading: false,
         }))
       } catch (err) {
-        if (epochRef.current !== epoch) return
+        if (walkRef.current.epoch !== epoch) return
         // Latch rather than retry: if the emulator is down (the usual reason a
         // tail died), spinning against it helps nobody. A fresh tail session
         // resets everything.
         console.warn("forward log paging stopped after a failed fetch", err)
-        setState((prev) => ({ ...prev, exhausted: true, loading: false }))
+        update((prev) => ({ ...prev, exhausted: true, loading: false }))
       } finally {
-        if (epochRef.current === epoch) inFlightRef.current = false
+        if (walkRef.current.epoch === epoch) walkRef.current.inFlight = false
       }
     })()
-  }, [logGroup, logStream, startToken])
+  }, [identity, logGroup, logStream, startToken])
 
   return { ...state, loadNewer }
 }
