@@ -165,7 +165,8 @@ type describeImagesReq struct {
 }
 
 type createKeyPairReq struct {
-	KeyName string `json:"KeyName"`
+	KeyName           string                `json:"KeyName"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeKeyPairsReq struct {
@@ -233,8 +234,9 @@ type detachIGWReq struct {
 }
 
 type createVPCPeeringReq struct {
-	VpcID     string `json:"VpcId"`
-	PeerVpcID string `json:"PeerVpcId"`
+	VpcID             string                `json:"VpcId"`
+	PeerVpcID         string                `json:"PeerVpcId"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type acceptVPCPeeringReq struct {
@@ -374,9 +376,10 @@ type modifyInstanceAttributeReq struct {
 }
 
 type createVpcEndpointReq struct {
-	VpcID           string `json:"VpcId"`
-	ServiceName     string `json:"ServiceName"`
-	VpcEndpointType string `json:"VpcEndpointType"`
+	VpcID             string                `json:"VpcId"`
+	ServiceName       string                `json:"ServiceName"`
+	VpcEndpointType   string                `json:"VpcEndpointType"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeVpcEndpointsReq struct {
@@ -569,13 +572,14 @@ type stopInstancesResp struct {
 }
 
 type createKeyPairResp struct {
-	XMLName        struct{} `xml:"CreateKeyPairResponse"`
-	Xmlns          string   `xml:"xmlns,attr"`
-	RequestID      string   `xml:"requestId"`
-	KeyName        string   `xml:"keyName"`
-	KeyFingerprint string   `xml:"keyFingerprint"`
-	KeyMaterial    string   `xml:"keyMaterial"`
-	KeyPairID      string   `xml:"keyPairId"`
+	XMLName        struct{}      `xml:"CreateKeyPairResponse"`
+	Xmlns          string        `xml:"xmlns,attr"`
+	RequestID      string        `xml:"requestId"`
+	KeyName        string        `xml:"keyName"`
+	KeyFingerprint string        `xml:"keyFingerprint"`
+	KeyMaterial    string        `xml:"keyMaterial"`
+	KeyPairID      string        `xml:"keyPairId"`
+	TagSet         []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type deleteKeyPairResp struct {
@@ -708,6 +712,7 @@ type typedVPCPeeringXML struct {
 	RequesterVpcInfo       typedVPCPeeringVpcInfoXML `xml:"requesterVpcInfo"`
 	AccepterVpcInfo        typedVPCPeeringVpcInfoXML `xml:"accepterVpcInfo"`
 	Status                 typedVPCPeeringStatusXML  `xml:"status"`
+	TagSet                 []typedTagXML             `xml:"tagSet>item,omitempty"`
 }
 
 type typedVPCPeeringVpcInfoXML struct {
@@ -908,11 +913,12 @@ type createVpcEndpointResp struct {
 }
 
 type typedVpcEndpointXML struct {
-	VpcEndpointID   string `xml:"vpcEndpointId"`
-	VpcID           string `xml:"vpcId"`
-	ServiceName     string `xml:"serviceName"`
-	State           string `xml:"state"`
-	VpcEndpointType string `xml:"vpcEndpointType"`
+	VpcEndpointID   string        `xml:"vpcEndpointId"`
+	VpcID           string        `xml:"vpcId"`
+	ServiceName     string        `xml:"serviceName"`
+	State           string        `xml:"state"`
+	VpcEndpointType string        `xml:"vpcEndpointType"`
+	TagSet          []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type deleteVpcEndpointsResp struct {
@@ -1476,6 +1482,13 @@ func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq)
 	if _, aerr := h.store.getKeyPair(ctx, req.KeyName); aerr == nil {
 		return nil, ec2err("InvalidKeyPair.Duplicate", fmt.Sprintf("The keypair '%s' already exists", req.KeyName), http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "key-pair")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a key pair behind
+	// (#1197 typed-path parity).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	fingerprint, material := h.keyMaterialFor()
 	kpID := fmt.Sprintf("key-%s", shortID())
 	kp := &KeyPair{
@@ -1487,6 +1500,10 @@ func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq)
 	if aerr := h.store.putKeyPair(ctx, kp); aerr != nil {
 		return nil, aerr
 	}
+	// Keyed by KeyName, matching deleteKeyPair's existing tag cleanup.
+	if aerr := h.putResourceTags(ctx, req.KeyName, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createKeyPairResp{
 		Xmlns:          ec2XMLNS,
 		RequestID:      protocol.RequestIDFromContext(ctx),
@@ -1494,6 +1511,7 @@ func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq)
 		KeyFingerprint: fingerprint,
 		KeyMaterial:    material,
 		KeyPairID:      kpID,
+		TagSet:         typedTagsOf(tags),
 	}, nil
 }
 
@@ -1791,6 +1809,13 @@ func (h *Handler) createVPCPeeringTyped(ctx context.Context, req *createVPCPeeri
 	if aerr != nil {
 		return nil, ec2err("InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", req.PeerVpcID), http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "vpc-peering-connection")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a connection behind
+	// (#1197 typed-path parity).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	region := h.store.region(ctx)
 	ownerID := h.cfg.AccountID
 	pcxID := fmt.Sprintf("pcx-%s", shortID())
@@ -1807,10 +1832,13 @@ func (h *Handler) createVPCPeeringTyped(ctx context.Context, req *createVPCPeeri
 	if aerr := h.store.putVpcPeeringConnection(ctx, pcx); aerr != nil {
 		return nil, aerr
 	}
+	if aerr := h.putResourceTags(ctx, pcxID, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createVPCPeeringResp{
 		Xmlns:                ec2XMLNS,
 		RequestID:            protocol.RequestIDFromContext(ctx),
-		VpcPeeringConnection: pcxToTypedXML(pcx),
+		VpcPeeringConnection: pcxToTypedXML(pcx, tags),
 	}, nil
 }
 
@@ -1829,10 +1857,14 @@ func (h *Handler) acceptVPCPeeringTyped(ctx context.Context, req *acceptVPCPeeri
 	if aerr := h.store.putVpcPeeringConnection(ctx, pcx); aerr != nil {
 		return nil, aerr
 	}
+	tags, aerr := h.store.getTags(ctx, req.VpcPeeringConnectionID)
+	if aerr != nil {
+		return nil, aerr
+	}
 	return &acceptVPCPeeringResp{
 		Xmlns:                ec2XMLNS,
 		RequestID:            protocol.RequestIDFromContext(ctx),
-		VpcPeeringConnection: pcxToTypedXML(pcx),
+		VpcPeeringConnection: pcxToTypedXML(pcx, sortedTags(tags)),
 	}, nil
 }
 
@@ -2382,6 +2414,13 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
 		return nil, aerr
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "vpc-endpoint")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave an endpoint behind
+	// (#1197 typed-path parity).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	id := fmt.Sprintf("vpce-%s", shortID())
 	ep := &VpcEndpoint{
 		VpcEndpointID:   id,
@@ -2393,6 +2432,9 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 	if aerr := h.store.putVpcEndpoint(ctx, ep); aerr != nil {
 		return nil, aerr
 	}
+	if aerr := h.putResourceTags(ctx, id, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createVpcEndpointResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -2402,6 +2444,7 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 			ServiceName:     ep.ServiceName,
 			State:           ep.State,
 			VpcEndpointType: ep.VpcEndpointType,
+			TagSet:          typedTagsOf(tags),
 		},
 	}, nil
 }
@@ -2477,7 +2520,7 @@ func vpnGatewayToTypedXML(vgw *VpnGateway, tags []Tag) typedVpnGatewayXML {
 	}
 }
 
-func pcxToTypedXML(pcx *VpcPeeringConnection) typedVPCPeeringXML {
+func pcxToTypedXML(pcx *VpcPeeringConnection, tags []Tag) typedVPCPeeringXML {
 	return typedVPCPeeringXML{
 		VpcPeeringConnectionID: pcx.VpcPeeringConnectionID,
 		RequesterVpcInfo: typedVPCPeeringVpcInfoXML{
@@ -2492,6 +2535,7 @@ func pcxToTypedXML(pcx *VpcPeeringConnection) typedVPCPeeringXML {
 			CidrBlock: pcx.AccepterVpcInfo.CidrBlock,
 			Region:    pcx.AccepterVpcInfo.Region,
 		},
+		TagSet: typedTagsOf(tags),
 		Status: typedVPCPeeringStatusXML{
 			Code:    pcx.Status.Code,
 			Message: pcx.Status.Message,
