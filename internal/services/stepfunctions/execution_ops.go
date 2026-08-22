@@ -439,7 +439,40 @@ type listExecutionsResponse struct {
 	NextToken  string              `json:"nextToken,omitempty" cbor:"nextToken,omitempty"`
 }
 
+// executionStatusValues is the complete ExecutionStatus enum ListExecutions'
+// statusFilter draws from.
+//
+// https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html
+var executionStatusValues = []string{
+	"RUNNING", "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "PENDING_REDRIVE",
+}
+
+var executionStatusSet = func() map[string]bool {
+	set := make(map[string]bool, len(executionStatusValues))
+	for _, s := range executionStatusValues {
+		set[s] = true
+	}
+	return set
+}()
+
+// errInvalidStatusFilter refuses a statusFilter value outside AWS's
+// ExecutionStatus enum. ListExecutions declares ValidationException as one of
+// its own errors for exactly this — an empty page would look like "no
+// executions in that state" rather than "I do not recognise that state".
+func errInvalidStatusFilter(status string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: "ValidationException",
+		Message: fmt.Sprintf(
+			"1 validation error detected: Value '%s' at 'statusFilter' failed to satisfy constraint: Member must satisfy enum value set: [%s]",
+			status, strings.Join(executionStatusValues, ", ")),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 func (h *Handler) listExecutionsTyped(ctx context.Context, req *listExecutionsRequest) (*listExecutionsResponse, *protocol.AWSError) {
+	if req.StatusFilter != "" && !executionStatusSet[req.StatusFilter] {
+		return nil, errInvalidStatusFilter(req.StatusFilter)
+	}
 	sm, err := h.store.GetStateMachine(ctx, extractSMName(req.StateMachineArn))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)

@@ -289,6 +289,14 @@ const (
 	StatusImportComplete         = "IMPORT_COMPLETE"
 	StatusImportRollbackComplete = "IMPORT_ROLLBACK_COMPLETE"
 
+	// Import in-progress states. Like the two above, Overcast never produces
+	// them, but ListStacks' StackStatusFilter validation (see
+	// stackStatusEnumValues) has to know they are real so a caller filtering
+	// on one is not refused for a value AWS itself accepts.
+	StatusImportInProgress         = "IMPORT_IN_PROGRESS"
+	StatusImportRollbackInProgress = "IMPORT_ROLLBACK_IN_PROGRESS"
+	StatusImportRollbackFailed     = "IMPORT_ROLLBACK_FAILED"
+
 	// Cleanup states. An update does not finish the moment every resource has
 	// been updated: CloudFormation then removes what the update superseded —
 	// resources dropped from the template, and the originals that replacements

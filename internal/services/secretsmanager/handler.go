@@ -2,6 +2,7 @@ package secretsmanager
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -137,6 +138,38 @@ func containsRune(s string, r rune) bool {
 type secretFilter struct {
 	Key    string   `json:"Key" cbor:"Key"`
 	Values []string `json:"Values" cbor:"Values"`
+}
+
+// secretFilterKeys is AWS's complete FilterNameStringType enum — every Key
+// value ListSecrets/BatchGetSecretValue's Filters accepts.
+//
+// "primary-region" and "owning-service" are accepted here but never match
+// below: Overcast does not model secret replication or AWS-managed (e.g.
+// RDS-owned) secrets, so no secret ever carries either attribute, and an
+// empty match is the honest answer for an account with none of either — the
+// same reasoning EC2's filterSpec uses for a real tag key nothing happens to
+// have. That is a coverage gap, not a validation one, and out of scope here.
+//
+// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_Filter.html
+var secretFilterKeys = map[string]bool{
+	"description": true, "name": true, "tag-key": true, "tag-value": true,
+	"primary-region": true, "owning-service": true, "all": true,
+}
+
+// validateSecretFilters refuses a Filter.Key outside AWS's enum, before the
+// store is ever scanned. Real Secrets Manager declares InvalidParameterException
+// as one of ListSecrets' and BatchGetSecretValue's own errors for exactly
+// this, so — unlike the two other findings in the cross-service filter-value
+// survey — no new error had to be invented.
+func validateSecretFilters(filters []secretFilter) *protocol.AWSError {
+	for _, f := range filters {
+		if !secretFilterKeys[strings.ToLower(f.Key)] {
+			return errInvalidParameter(fmt.Sprintf(
+				"1 validation error detected: Value '%s' at 'filters.1.member.key' failed to satisfy constraint: Member must satisfy enum value set: [description, name, tag-key, tag-value, primary-region, owning-service, all]",
+				f.Key))
+		}
+	}
+	return nil
 }
 
 // secretMatchesFilters reports whether a secret satisfies every filter, which

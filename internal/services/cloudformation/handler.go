@@ -671,12 +671,17 @@ func (h *Handler) DescribeStacks(w http.ResponseWriter, r *http.Request) {
 // ── ListStacks ─────────────────────────────────────────────────────────────
 
 func (h *Handler) ListStacks(w http.ResponseWriter, r *http.Request) {
+	statusFilter := collectStackStatusFilter(r)
+	if aerr := validateStackStatusFilter(statusFilter); aerr != nil {
+		writeCFNError(w, r, aerr.Code, aerr.Message, aerr.HTTPStatus)
+		return
+	}
 	stacks, aerr := h.store.listStacks(r.Context())
 	if aerr != nil {
 		writeCFNError(w, r, "InternalFailure", "failed to list stacks", http.StatusInternalServerError)
 		return
 	}
-	stacks = filterStacksByStatus(stacks, collectStackStatusFilter(r))
+	stacks = filterStacksByStatus(stacks, statusFilter)
 	slices.SortFunc(stacks, func(a, b *Stack) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
@@ -1387,11 +1392,9 @@ func collectStackStatusFilter(r *http.Request) []string {
 // deleted". That last part is why this is not DescribeStacks' filter — the
 // caller-visible default there drops DELETE_COMPLETE, and here it must not.
 //
-// A status outside the AWS enum simply matches nothing. Real CloudFormation
-// rejects one with a ValidationError naming the whole enum; Overcast does not
-// model the enum, and guessing at a subset would reject statuses AWS accepts
-// (the IMPORT_* family, which the emulator never produces but a client may
-// legitimately filter on).
+// A status outside the AWS enum is refused before this runs — see
+// validateStackStatusFilter — so every value seen here is a real StackStatus,
+// including the IMPORT_* family Overcast itself never produces.
 //
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html
 func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
@@ -1405,6 +1408,55 @@ func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
 		}
 	}
 	return filtered
+}
+
+// stackStatusEnumValues is the complete StackStatus enum ListStacks'
+// StackStatusFilter draws from — every value AWS documents, not only the ones
+// Overcast's own provisioner produces. That distinction is what lets this
+// reject a genuinely bogus value without rejecting the IMPORT_* states
+// (resource import is not emulated, but a client may still legitimately ask
+// to filter on them).
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html
+var stackStatusEnumValues = []string{
+	StatusCreateInProgress, StatusCreateFailed, StatusCreateComplete,
+	StatusRollbackInProgress, StatusRollbackFailed, StatusRollbackComplete,
+	StatusDeleteInProgress, StatusDeleteFailed, StatusDeleteComplete,
+	StatusUpdateInProgress, StatusUpdateCompleteCleanupInProgress, StatusUpdateComplete, StatusUpdateFailed,
+	StatusUpdateRollbackInProgress, StatusUpdateRollbackFailed, StatusUpdateRollbackCompleteCleanupInProgress, StatusUpdateRollbackComplete,
+	StatusReviewInProgress,
+	StatusImportInProgress, StatusImportComplete, StatusImportRollbackInProgress, StatusImportRollbackFailed, StatusImportRollbackComplete,
+}
+
+var stackStatusEnumSet = func() map[string]bool {
+	set := make(map[string]bool, len(stackStatusEnumValues))
+	for _, s := range stackStatusEnumValues {
+		set[s] = true
+	}
+	return set
+}()
+
+// validateStackStatusFilter refuses a StackStatusFilter value outside AWS's
+// StackStatus enum, before the store is ever scanned — matching real
+// CloudFormation, which answers ValidationError rather than an empty page for
+// a status it does not model.
+func validateStackStatusFilter(statuses []string) *protocol.AWSError {
+	for _, status := range statuses {
+		if !stackStatusEnumSet[status] {
+			return errInvalidStackStatusFilter(status)
+		}
+	}
+	return nil
+}
+
+func errInvalidStackStatusFilter(status string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: "ValidationError",
+		Message: fmt.Sprintf(
+			"Value '%s' at 'stackStatusFilter' failed to satisfy constraint: Member must satisfy enum value set: [%s]",
+			status, strings.Join(stackStatusEnumValues, ", ")),
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // parseDisableRollback resolves one operation's DisableRollback member from its

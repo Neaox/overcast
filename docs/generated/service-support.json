@@ -5077,7 +5077,7 @@
           "operation": "ListStacks",
           "category": "Stacks",
           "status": "✅ Supported",
-          "notes": "StackStatusFilter; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason"
+          "notes": "StackStatusFilter, validated against the full StackStatus enum; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason"
         },
         {
           "operation": "CancelUpdateStack",
@@ -6097,7 +6097,7 @@
           "operation": "ListSecrets",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Sorted by name, KMS metadata, optional filters"
+          "notes": "Sorted by name, KMS metadata, optional filters — Filter.Key validated against AWS's enum"
         },
         {
           "operation": "ListSecretVersionIds",
@@ -6115,7 +6115,7 @@
           "operation": "BatchGetSecretValue",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Partial results on missing secrets"
+          "notes": "Partial results on missing secrets; Filter.Key validated against AWS's enum"
         },
         {
           "operation": "RotateSecret",
@@ -7125,7 +7125,7 @@
           "operation": "ListExecutions",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "statusFilter and maxResults honoured; no pagination token"
+          "notes": "statusFilter (validated against the ExecutionStatus enum) and maxResults honoured; no pagination token"
         },
         {
           "operation": "GetExecutionHistory",
