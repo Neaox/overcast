@@ -1498,6 +1498,155 @@ func TestTagResource_success(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+// TestCreateCluster_tagsAppliedAtCreate: tags passed to CreateCluster
+// (issue #1196, Axis B) must be stored and readable via ListTagsForResource
+// immediately, without a follow-up TagResource call.
+func TestCreateCluster_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ecsCall(t, srv, "CreateCluster", map[string]any{
+		"clusterName": "tagged-at-create",
+		"tags":        []map[string]string{{"key": "env", "value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var created struct {
+		Cluster struct {
+			ClusterArn string `json:"clusterArn"`
+		} `json:"cluster"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	list := ecsCall(t, srv, "ListTagsForResource", map[string]any{"resourceArn": created.Cluster.ClusterArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateCluster_invalidTagRejected: an invalid tag passed to
+// CreateCluster must be rejected before the cluster is created.
+func TestCreateCluster_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ecsCall(t, srv, "CreateCluster", map[string]any{
+		"clusterName": "tags-rejected-cluster",
+		"tags":        []map[string]string{{"key": "aws:reserved", "value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	desc := ecsCall(t, srv, "DescribeClusters", map[string]any{"clusters": []string{"tags-rejected-cluster"}})
+	defer desc.Body.Close()
+	var out struct {
+		Clusters []struct {
+			ClusterName string `json:"clusterName"`
+		} `json:"clusters"`
+	}
+	helpers.DecodeJSON(t, desc, &out)
+	if len(out.Clusters) != 0 {
+		t.Errorf("expected no cluster created, got %v", out.Clusters)
+	}
+}
+
+// TestCreateService_tagsAppliedAtCreate: tags passed to CreateService
+// (issue #1196, Axis B) must be stored and readable via ListTagsForResource
+// immediately.
+func TestCreateService_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	cr := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "svc-tag-cluster"})
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	cr.Body.Close()
+
+	reg := ecsCall(t, srv, "RegisterTaskDefinition", map[string]any{
+		"family": "svc-tag-task",
+		"containerDefinitions": []map[string]any{
+			{"name": "app", "image": "nginx:latest"},
+		},
+	})
+	helpers.AssertStatus(t, reg, http.StatusOK)
+	reg.Body.Close()
+
+	resp := ecsCall(t, srv, "CreateService", map[string]any{
+		"cluster":        "svc-tag-cluster",
+		"serviceName":    "tagged-service",
+		"taskDefinition": "svc-tag-task:1",
+		"tags":           []map[string]string{{"key": "env", "value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var created struct {
+		Service struct {
+			ServiceArn string `json:"serviceArn"`
+		} `json:"service"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	list := ecsCall(t, srv, "ListTagsForResource", map[string]any{"resourceArn": created.Service.ServiceArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateService_invalidTagRejected: an invalid tag passed to
+// CreateService must be rejected before the service is created.
+func TestCreateService_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	cr := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "svc-tag-rejected-cluster"})
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	cr.Body.Close()
+
+	reg := ecsCall(t, srv, "RegisterTaskDefinition", map[string]any{
+		"family": "svc-tag-rejected-task",
+		"containerDefinitions": []map[string]any{
+			{"name": "app", "image": "nginx:latest"},
+		},
+	})
+	helpers.AssertStatus(t, reg, http.StatusOK)
+	reg.Body.Close()
+
+	resp := ecsCall(t, srv, "CreateService", map[string]any{
+		"cluster":        "svc-tag-rejected-cluster",
+		"serviceName":    "rejected-service",
+		"taskDefinition": "svc-tag-rejected-task:1",
+		"tags":           []map[string]string{{"key": "aws:reserved", "value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	desc := ecsCall(t, srv, "DescribeServices", map[string]any{
+		"cluster":  "svc-tag-rejected-cluster",
+		"services": []string{"rejected-service"},
+	})
+	defer desc.Body.Close()
+	var out struct {
+		Services []struct {
+			ServiceName string `json:"serviceName"`
+		} `json:"services"`
+	}
+	helpers.DecodeJSON(t, desc, &out)
+	if len(out.Services) != 0 {
+		t.Errorf("expected no service created, got %v", out.Services)
+	}
+}
+
 func TestListTagsForResource_success(t *testing.T) {
 	// Given: a tagged cluster
 	srv := helpers.NewTestServer(t)
