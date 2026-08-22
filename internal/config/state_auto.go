@@ -116,7 +116,7 @@ func detectAutoStateSignals(dataDir, dataDirEnvRaw, dataDirSource string) autoSt
 	return autoStateSignals{
 		Mountpoint:       isMountpoint(dataDir),
 		DataDirExplicit:  dataDirEnvRaw != "" && !isDockerImage(dataDirSource),
-		ExistingDatabase: hasExistingDatabase(dataDir),
+		ExistingDatabase: HasExistingDatabase(dataDir),
 		SQLiteAvailable:  sqliteBuildSupported,
 	}
 }
@@ -134,11 +134,19 @@ func isDockerImage(dataDirSource string) bool {
 	return dataDirSource == "image"
 }
 
-// hasExistingDatabase reports whether a persistent-backend database file
+// HasExistingDatabase reports whether a persistent-backend database file
 // already exists in dataDir — overcast.db (hybrid/persistent backends) or
 // overcast.wal (the WAL backend's append log). See internal/state/sqlite.go
 // and internal/state/wal.go for the filenames this must stay in sync with.
-func hasExistingDatabase(dataDir string) bool {
+//
+// Exported (beyond resolveAutoState's own use of it as an auto-detection
+// signal) so a caller can ask the same question *after* OVERCAST_STATE has
+// already been resolved to something other than auto — see
+// cmd/overcast's ephemeral-state preflight and
+// internal/router/advisories.go's checkMemoryModeIgnoresExistingData, both of
+// which warn when memory mode (explicit, or auto in a -tags nosqlite build)
+// is about to silently ignore a database that already has data in it.
+func HasExistingDatabase(dataDir string) bool {
 	for _, name := range []string{"overcast.db", "overcast.wal"} {
 		if _, err := os.Stat(filepath.Join(dataDir, name)); err == nil {
 			return true

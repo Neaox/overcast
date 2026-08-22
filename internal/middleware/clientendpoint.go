@@ -86,15 +86,34 @@ func clientOrigin(r *http.Request) string {
 	if host == "" {
 		return ""
 	}
-	if net.ParseIP(host) == nil {
-		lower := strings.ToLower(host)
-		for _, suffix := range awsOwnedSuffixes {
-			if strings.HasSuffix(lower, suffix) {
-				return ""
-			}
-		}
+	if IsRealAWSHost(host) {
+		return ""
 	}
 	return base
+}
+
+// IsRealAWSHost reports whether host belongs to real AWS's own domain space
+// (awsOwnedSuffixes) rather than to anything Overcast could itself be
+// addressed as. A bare IP is never a match — real AWS is never dialed by IP
+// literal, and Overcast's own container/host addresses often are.
+//
+// Exported for WarnRealAWSHost (endpointpreflight.go), the "client's endpoint
+// pointed somewhere other than the developer thinks" check named in
+// docs/plans/deploy-failure-diagnosis.md's W4 — kept as one predicate here
+// rather than duplicated, since clientOrigin's own gate above needs the exact
+// same list and two copies of it once drifted (see Hostnames' doc comment in
+// internal/containerendpoint for the same lesson learned the hard way).
+func IsRealAWSHost(host string) bool {
+	if host == "" || net.ParseIP(host) != nil {
+		return false
+	}
+	lower := strings.ToLower(host)
+	for _, suffix := range awsOwnedSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ClientEndpointFromContext returns the origin stored by the ClientEndpoint

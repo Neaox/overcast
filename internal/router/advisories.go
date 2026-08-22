@@ -26,12 +26,13 @@ const (
 // Advisory codes — stable identifiers a caller (or a future test) can key
 // off of without parsing Title/Detail text.
 const (
-	advisoryCodeJournalModeNotWAL       = "journal-mode-not-wal"
-	advisoryCodeStoreDegradedMemoryOnly = "store-degraded-memory-only"
-	advisoryCodeStoreUnhealthy          = "store-unhealthy"
-	advisoryCodeDataDirSlowFilesystem   = "data-dir-slow-filesystem"
-	advisoryCodeReadPressureObserved    = "read-pressure-observed"
-	advisoryCodeMemoryMode              = "memory-mode"
+	advisoryCodeJournalModeNotWAL         = "journal-mode-not-wal"
+	advisoryCodeStoreDegradedMemoryOnly   = "store-degraded-memory-only"
+	advisoryCodeStoreUnhealthy            = "store-unhealthy"
+	advisoryCodeDataDirSlowFilesystem     = "data-dir-slow-filesystem"
+	advisoryCodeReadPressureObserved      = "read-pressure-observed"
+	advisoryCodeMemoryMode                = "memory-mode"
+	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
 )
 
 // performanceDocsPath is the docs-browser-relative path (see
@@ -134,6 +135,14 @@ type advisoryInput struct {
 	// PersistentHealthSnapshot's own contract exactly.
 	Health    state.PersistentHealth
 	HasHealth bool
+
+	// ExistingDatabase is config.HasExistingDatabase(cfg.DataDir) — true when
+	// an overcast.db or overcast.wal file already sits in the data directory.
+	// Drives memory-mode-ignores-existing-database: memory mode is otherwise
+	// unremarkable (see checkMemoryMode), but a database already sitting one
+	// directory away that this run will neither read nor update is the sharp
+	// exception, and the one case worth an extra, stronger advisory for.
+	ExistingDatabase bool
 }
 
 // computeAdvisories is the single generator function behind the
@@ -167,6 +176,9 @@ func computeAdvisories(in advisoryInput) []Advisory {
 		advisories = append(advisories, *a)
 	}
 	if a := checkMemoryMode(in.StateBackend, in.StateSource, in.SQLiteAvailable); a != nil {
+		advisories = append(advisories, *a)
+	}
+	if a := checkMemoryModeIgnoresExisting(in.StateBackend, in.ExistingDatabase); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
@@ -392,5 +404,39 @@ func checkMemoryMode(backend config.StateBackend, source config.StateSource, sql
 		Code:     advisoryCodeMemoryMode,
 		Title:    "Running in memory-only mode",
 		Detail:   "OVERCAST_STATE=memory — state won't survive restarts; expected in this mode.",
+	}
+}
+
+// checkMemoryModeIgnoresExisting is a warning, not merely informational like
+// checkMemoryMode's three variants: memory mode on its own is a deliberate or
+// harmless default (fresh install, CI), but memory mode while a database
+// already sits in the data directory means there is real, existing data one
+// directory away that this run will neither read nor update. That combination
+// only arises two ways — OVERCAST_STATE=memory set explicitly over a
+// directory that already has one (a leftover env file, a docker-compose
+// override nobody remembers writing), or a -tags nosqlite build's auto
+// resolution short-circuiting straight to memory regardless of evidence (see
+// config.resolveAutoState's SQLiteAvailable gate) — and both are worse than
+// the ordinary "auto landed on memory, nothing here yet" case checkMemoryMode
+// already covers: a developer who restarts expecting their state back gets an
+// empty emulator with no indication the data still exists, just not in this
+// run.
+//
+// hasExistingDatabase is config.HasExistingDatabase(cfg.DataDir), false for
+// every fresh install and every ordinary memory-mode CI run — the two cases
+// this must never fire on.
+func checkMemoryModeIgnoresExisting(backend config.StateBackend, hasExistingDatabase bool) *Advisory {
+	if backend != config.StateBackendMemory || !hasExistingDatabase {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeMemoryModeIgnoresExisting,
+		Title:    "Memory mode is ignoring an existing database",
+		Detail: "This run is memory-only, but an existing Overcast database was found in the data " +
+			"directory — it will not be read and will not be updated: writes made now are lost on " +
+			"restart, while that database is left exactly as it was. If you expected this run to use " +
+			"it, set OVERCAST_STATE=auto (or hybrid/wal) and confirm this build has SQLite support.",
+		DocsPath: storageDocsPath,
 	}
 }
