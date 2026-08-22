@@ -19,8 +19,9 @@ become `<skipped>` with the reason spelled out.
 
 Usage: python3 scripts/compat-report.py   (run from the repo root)
 
-Inputs (all optional except results): compat-results.json, compat/baseline.json,
-baseline-regressions.txt, parity-issues.txt, compat/parity-debt.json.
+Inputs (all optional except results): compat-results.json, compat/baseline/
+(per-suite shards), baseline-regressions.txt, parity-issues.txt,
+compat/parity-debt.json.
 """
 
 from __future__ import annotations
@@ -35,7 +36,11 @@ from datetime import date
 from pathlib import Path
 
 RESULTS = Path("compat-results.json")
-BASELINE = Path("compat/baseline.json")
+# A directory of per-suite shards; read_baseline aggregates them. The single
+# file it replaced is still read so this script works against an older
+# checkout — a maintenance branch cut before the split, say.
+BASELINE = Path("compat/baseline")
+BASELINE_FILE = Path("compat/baseline.json")
 PARITY_DEBT = Path("compat/parity-debt.json")
 FLAKY = Path("compat/flaky.json")
 
@@ -66,6 +71,22 @@ def read_json(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def read_baseline():
+    """Aggregate compat/baseline/<suite>.json, or read the pre-split file.
+
+    Only `entries` is merged: the shards share one schema version, and only the
+    entries are read downstream.
+    """
+    if BASELINE.is_dir():
+        entries = []
+        for shard in sorted(BASELINE.glob("*.json")):
+            data = read_json(shard)
+            if data:
+                entries.extend(data.get("entries", []))
+        return {"version": 1, "entries": entries}
+    return read_json(BASELINE_FILE)
 
 
 def read_lines(path: Path) -> list[str]:
@@ -199,7 +220,7 @@ def build(results, baseline, debt, regressions, parity_issues) -> tuple[str, str
     if reg_keys or parity_issues:
         S.append("### ❌ Gate failures\n")
         if reg_keys:
-            S.append(f"**{len(reg_keys)} baseline regression(s)** — a result got worse than `compat/baseline.json` records, or a new test is failing.\n")
+            S.append(f"**{len(reg_keys)} baseline regression(s)** — a result got worse than `compat/baseline/` records, or a new test is failing.\n")
             S.append("```")
             S.extend(regressions[:50])
             if len(regressions) > 50:
@@ -397,7 +418,7 @@ def main() -> int:
 
     summary, comment, junit = build(
         results,
-        read_json(BASELINE),
+        read_baseline(),
         read_json(PARITY_DEBT),
         read_lines(REGRESSIONS_LOG),
         read_lines(PARITY_LOG),

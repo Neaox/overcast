@@ -8,7 +8,7 @@ name: Compatibility Tests
 # release is cut from one of those branches (RELEASE.md § Maintenance
 # Releases), and a fix cherry-picked onto a line that stopped moving months ago
 # is the change least like the code it lands on — which is the case for running
-# the suites, not against it. The branch carries the `compat/baseline.json` it
+# the suites, not against it. The branch carries the `compat/baseline/` it
 # was cut from, so the ratchet it is measured against is its own line's, not
 # `main`'s. Inert until such a branch exists; nothing in the repository matches
 # it today.
@@ -19,10 +19,13 @@ name: Compatibility Tests
 on:
   push:
     branches: [main, "support/**"]
-    # The auto-merged baseline-promotion PR lands a commit touching only this
-    # file; it must not trigger another full run — see "Publish promotion PR".
+    # The auto-merged baseline-promotion PR lands a commit touching only these
+    # files; it must not trigger another full run — see "Publish promotion PR".
+    # The baseline is a directory of per-suite shards, so this has to be the
+    # glob: naming the old single file would let every promotion start a new
+    # run, and each of those runs promotes again.
     paths-ignore:
-      - compat/baseline.json
+      - compat/baseline/**
   pull_request:
     branches: [main, "support/**"]
     # Deliberately no `paths-ignore:` here. There used to be one, skipping
@@ -605,12 +608,12 @@ jobs:
         run: |
           go run ./cmd/compat \
             --compare-baseline --annotate \
-            --baseline-file compat/baseline.json \
+            --baseline-file compat/baseline \
             --results-file compat-results.json \
             2>baseline-regressions.txt
 
       # The absolute gate, next to the relative one. --compare-baseline asks
-      # whether anything got worse than compat/baseline.json records; this asks
+      # whether anything got worse than compat/baseline records; this asks
       # whether anything failed at all. They are not the same question while the
       # baseline can record a `fail`: the recorded fail set reached zero in
       # #462, and this step is what stops it growing again through a stale or
@@ -642,22 +645,48 @@ jobs:
             2>parity-issues.txt
 
       # Gating this lint and the flaky one below is safe for the same reason the
-      # whole gate is: compat/baseline.json and compat/flaky.json are not prose,
+      # whole gate is: compat/baseline/ and compat/flaky.json are not prose,
       # so a pull request that edits either classifies as code and is linted
       # exactly as today.
+      #
+      # The base commit's baseline is whichever layout that commit had: a
+      # directory of shards after the split, a single compat/baseline.json
+      # before it. --baseline-file reads both, so both are offered here — a
+      # base commit older than the split must still be lintable against, or
+      # every long-lived branch loses its downgrade gate on rebase.
       - name: Lint compat baseline changes
         id: baseline-lint
         if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
         continue-on-error: true
         run: |
-          if [[ -f base/compat/baseline.json ]]; then
+          from=""
+          if [[ -d base/compat/baseline ]]; then
+            from=base/compat/baseline
+          elif [[ -f base/compat/baseline.json ]]; then
+            from=base/compat/baseline.json
+          fi
+          if [[ -n "$from" ]]; then
             go run ./cmd/compat \
-              --lint-baseline-from base/compat/baseline.json \
-              --lint-baseline-to compat/baseline.json \
+              --lint-baseline-from "$from" \
+              --lint-baseline-to compat/baseline \
               --annotate
           else
             echo "No baseline exists on the base commit yet; skipping downgrade lint."
           fi
+
+      # The per-shard size budget. Sharding only helps while a shard stays
+      # small enough to review; this is what says so out loud instead of
+      # letting the files creep back to where they were before the split.
+      # Unlike the lint above it is not pull-request-only: the promotion bot on
+      # main is what actually grows the baseline.
+      - name: Check compat baseline shard sizes
+        id: baseline-size
+        if: env.RUN_SUITES == 'true'
+        continue-on-error: true
+        run: |
+          go run ./cmd/compat \
+            --lint-baseline-size --annotate \
+            --baseline-file compat/baseline
 
       # Quarantining a test removes it from the baseline gate in both
       # directions, so growing the list is how a failure gets silenced. That is
@@ -739,7 +768,7 @@ jobs:
       # Promote improvements automatically so contributors never hand-edit the
       # baseline: a fix merges, the ratchet tightens on the next push. Only ever
       # improves entries (updateBaseline keeps the better status), only runs on
-      # main, and only commits compat/baseline.json. paths-ignore on the push
+      # main, and only commits compat/baseline/. paths-ignore on the push
       # trigger stops this commit from starting another run.
       # Promotion is PR-based: branch protection (since #393) rejects any
       # direct push to main — automation included — so the old direct-push
@@ -755,7 +784,7 @@ jobs:
       # permissions — Contents: read & write (force-push the branch, and merge
       # once checks pass) and Pull requests: read & write (open the PR, arm
       # auto-merge). Not Workflows: the promotion commit touches
-      # compat/baseline.json and nothing else.
+      # compat/baseline/ and nothing else.
       #
       # Identify the App by its Client ID, not its App ID: `app-id` carries a
       # deprecationMessage as of the action's v3, and GitHub recommends the
@@ -772,9 +801,13 @@ jobs:
         run: |
           go run ./cmd/compat \
             --update-baseline \
-            --baseline-file compat/baseline.json \
+            --baseline-file compat/baseline \
             --results-file compat-results.json
-          if git diff --quiet -- compat/baseline.json; then
+          # `git status --porcelain`, not `git diff`: a first result from a new
+          # suite writes a brand-new shard, and an untracked file is invisible
+          # to `git diff` — that promotion would be computed and then silently
+          # dropped.
+          if [[ -z "$(git status --porcelain -- compat/baseline)" ]]; then
             echo "Baseline unchanged — nothing to promote."
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -810,7 +843,7 @@ jobs:
         run: |
           git config user.name "overcast-compat-promotion[bot]"
           git config user.email "overcast-compat-promotion[bot]@users.noreply.github.com"
-          git add compat/baseline.json
+          git add compat/baseline
           git commit -m "chore(compat): promote baseline improvements" \
             -m "Automated: compat results on main run ${GITHUB_RUN_ID} (commit ${GITHUB_SHA}) improved on the recorded baseline."
           # Non-fatal from here down: promotion is an optimisation, not a gate,
@@ -855,6 +888,10 @@ jobs:
           fi
           if [[ "${{ steps.baseline-lint.outcome }}" == "failure" ]]; then
             echo "Baseline change lint failed — a downgrade or a new fail expectation." >&2
+            failed=1
+          fi
+          if [[ "${{ steps.baseline-size.outcome }}" == "failure" ]]; then
+            echo "Baseline shard size budget exceeded — shard further; see the annotations." >&2
             failed=1
           fi
           if [[ "${{ steps.flaky-lint.outcome }}" == "failure" ]]; then

@@ -607,50 +607,8 @@ func baselineEntriesFromReport(report *compat.RunReport) *compatBaseline {
 	return &compatBaseline{Version: baselineVersion, Entries: sortBaselineEntries(entries)}
 }
 
-func readBaselineFile(path string) (*compatBaseline, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read baseline %s: %w", path, err)
-	}
-	var baseline compatBaseline
-	if err := json.Unmarshal(b, &baseline); err != nil {
-		return nil, fmt.Errorf("parse baseline %s: %w", path, err)
-	}
-	if baseline.Version == 0 {
-		baseline.Version = baselineVersion
-	}
-	return &baseline, nil
-}
-
-func readBaselineFileIfExists(path string) (*compatBaseline, error) {
-	baseline, err := readBaselineFile(path)
-	if err == nil {
-		return baseline, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return &compatBaseline{Version: baselineVersion}, nil
-	}
-	return nil, err
-}
-
-func writeBaselineFile(path string, baseline *compatBaseline) error {
-	baseline.Version = baselineVersion
-	baseline.Entries = sortBaselineEntries(baseline.Entries)
-	b, err := json.MarshalIndent(baseline, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal baseline: %w", err)
-	}
-	b = append(b, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return fmt.Errorf("write baseline: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) //nolint:errcheck
-		return fmt.Errorf("write baseline: %w", err)
-	}
-	return nil
-}
+// Baseline reading and writing live in baseline_shards.go: the file this
+// package reads is really a directory of per-suite shards.
 
 func baselineEntryMap(entries []baselineEntry) map[string]baselineEntry {
 	out := make(map[string]baselineEntry, len(entries))

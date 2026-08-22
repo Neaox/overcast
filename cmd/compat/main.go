@@ -50,18 +50,22 @@ import (
 // Flags are package-level so that both main and run can read them; run holds
 // the deferred cleanup that must survive every exit path.
 var (
-	endpoint            = flag.String("endpoint", envOr("OVERCAST_ENDPOINT", ""), "Overcast base URL (default: a throwaway instance compat starts itself)")
-	region              = flag.String("region", envOr("OVERCAST_DEFAULT_REGION", "us-east-1"), "AWS region")
-	suiteFlag           = flag.String("suite", "", "Comma-separated suite names to run (empty = all)")
-	shardFlag           = flag.String("shard", "", "Run only shard i of n test groups, e.g. \"2/4\" (1-based i; empty = every group, today's behaviour)")
-	format              = flag.String("format", envOr("OVERCAST_COMPAT_FORMAT", "pretty"), "Output format: pretty|json|agent")
-	serve               = flag.Bool("serve", false, "Start the compatibility dashboard HTTP server")
-	port                = flag.String("port", envOr("OVERCAST_COMPAT_PORT", ":7777"), "Preferred dashboard listen address; a free port is chosen if it is taken")
-	resultsFile         = flag.String("results-file", envOr("OVERCAST_COMPAT_RESULTS_FILE", "compat-results.json"), "Path to persist last run results (empty to disable)")
-	agentReportFile     = flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
-	reportMode          = flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
-	mergeResults        = flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
-	baselineFile        = flag.String("baseline-file", "compat/baseline.json", "Compatibility baseline file")
+	endpoint        = flag.String("endpoint", envOr("OVERCAST_ENDPOINT", ""), "Overcast base URL (default: a throwaway instance compat starts itself)")
+	region          = flag.String("region", envOr("OVERCAST_DEFAULT_REGION", "us-east-1"), "AWS region")
+	suiteFlag       = flag.String("suite", "", "Comma-separated suite names to run (empty = all)")
+	shardFlag       = flag.String("shard", "", "Run only shard i of n test groups, e.g. \"2/4\" (1-based i; empty = every group, today's behaviour)")
+	format          = flag.String("format", envOr("OVERCAST_COMPAT_FORMAT", "pretty"), "Output format: pretty|json|agent")
+	serve           = flag.Bool("serve", false, "Start the compatibility dashboard HTTP server")
+	port            = flag.String("port", envOr("OVERCAST_COMPAT_PORT", ":7777"), "Preferred dashboard listen address; a free port is chosen if it is taken")
+	resultsFile     = flag.String("results-file", envOr("OVERCAST_COMPAT_RESULTS_FILE", "compat-results.json"), "Path to persist last run results (empty to disable)")
+	agentReportFile = flag.String("agent-report-file", envOr("OVERCAST_COMPAT_AGENT_REPORT", "compat-report.txt"), "Path to write the agent-friendly text report after each run (empty to disable)")
+	reportMode      = flag.Bool("report", false, "Read an existing results file and print an agent-friendly summary (no tests are run)")
+	mergeResults    = flag.String("merge-results", "", "Comma-separated result files or glob patterns to merge, then exit")
+	// A directory of per-suite shards (compat/baseline/<suite>.json) or the
+	// single file that predates the split — see baseline_shards.go. The name
+	// stays --baseline-file so that every recorded invocation, in CI and in
+	// people's shell history, keeps working.
+	baselineFile        = flag.String("baseline-file", "compat/baseline", "Compatibility baseline: a directory of per-suite shards, or a single baseline JSON file")
 	compareBaselineFlag = flag.Bool("compare-baseline", false, "Compare --results-file against --baseline-file, then exit")
 	annotate            = flag.Bool("annotate", false, "Emit GitHub workflow ::error commands for baseline regressions so they surface as PR annotations")
 	flakyFilePath       = flag.String("flaky-file", "compat/flaky.json", "Tests quarantined as intermittent: exempt from the baseline gate in both directions")
@@ -79,6 +83,7 @@ var (
 
 	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
 	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
+	lintBaselineSize = flag.Bool("lint-baseline-size", false, "Fail if any --baseline-file shard exceeds the per-shard size budget, then exit")
 	reportFlakyAge   = flag.Bool("report-flaky-overdue", false, "Report quarantined tests older than the soft deadline, then exit")
 	lintFlakyFrom    = flag.String("lint-flaky-from", "", "Old flaky list for growth linting")
 	lintFlakyTo      = flag.String("lint-flaky-to", "", "New flaky list for growth linting")
@@ -304,6 +309,14 @@ func main() {
 		}
 		if err := lintBaselineChangeFiles(*lintBaselineFrom, *lintBaselineTo); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: baseline change lint failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *lintBaselineSize {
+		if err := lintBaselineShardSizes(*baselineFile); err != nil {
+			fmt.Fprintf(os.Stderr, "compat: baseline size check failed: %v\n", err)
 			os.Exit(1)
 		}
 		return

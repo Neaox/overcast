@@ -1,5 +1,7 @@
-# Compat baseline downgrades require maintainer review.
-compat/baseline.json @Neaox
+# Compat baseline downgrades require maintainer review. The baseline is a
+# directory of per-suite shards, so this has to cover the directory: a rule
+# naming the old single file would own nothing.
+compat/baseline/ @Neaox
 
 # Releases are controlled by version bumps.
 VERSION @Neaox

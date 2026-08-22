@@ -798,7 +798,7 @@ Three cases:
    policy in [compat/AGENTS.md](../../../compat/AGENTS.md#baseline--uniformity-policy)
    applies from the first test.
 2. **The operations are registered but recorded `unimplemented` in
-   `compat/baseline.json`**: your feature should flip them. Run the affected
+   `compat/baseline/<suite>.json`**: your feature should flip them. Run the affected
    suites locally (`go run ./cmd/compat --suite <suite>`) and confirm
    unimplemented → pass; baseline auto-promotion records the improvement on
    merge. If they still fail after the feature, the feature is not done — a

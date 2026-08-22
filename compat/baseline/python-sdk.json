@@ -1,0 +1,5328 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "CreateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "DeleteApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "GetApis",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "CreateRestApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "DeleteRestApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "op": "CreateUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "CreateApplication",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "DeleteApplication",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "GetApplication",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "GetApplicationNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "ListApplications",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "ListApplicationsInvalidToken",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "UpdateApplication",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "CreateConfigurationProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "DeleteConfigurationProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "GetConfigurationProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "GetConfigurationProfileNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "ListConfigurationProfiles",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "ListConfigurationProfilesByType",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "UpdateConfigurationProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "CreateDeploymentStrategy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "DeleteDeploymentStrategy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "GetDeploymentStrategy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "ListDeploymentStrategies",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "UpdateDeploymentStrategy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "GetDeployment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "ListDeployments",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "StartDeployment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "StopDeployment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "CreateEnvironment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "DeleteEnvironment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "GetEnvironment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "GetEnvironmentNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "ListEnvironments",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "ListEnvironmentsApplicationNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "UpdateEnvironment",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentDefinitions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentRunEvents",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentRuns",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "CreateExtension",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "CreateExtensionAssociation",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "DeleteExtension",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "DeleteExtensionAssociation",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "GetExtension",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "GetExtensionAssociation",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "ListExtensionAssociations",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "ListExtensions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "UpdateExtension",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "UpdateExtensionAssociation",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "CreateHostedConfigurationVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "CreateHostedConfigurationVersionStaleVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "DeleteHostedConfigurationVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "GetHostedConfigurationVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "GetHostedConfigurationVersionNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "ListHostedConfigurationVersions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "ListHostedConfigurationVersionsByLabel",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "CreateApplicationWithTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "ListTagsForResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "ListTagsForResourceNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "TagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "UntagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "GetLatestConfigurationInvalidToken",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "GetLatestConfigurationReusedToken",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionApplicationNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionEnvironmentNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionProfileNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfigurationAfterNewVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfigurationWithNextPollToken",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "StartConfigurationSession",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "StartConfigurationSessionWithPollInterval",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "DeleteApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "ListApiKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "UpdateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "CreateGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "DeleteGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "GetGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "ListGraphqlApis",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "UpdateGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "CreateApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "DeleteApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "FlushApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "GetApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "UpdateApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "CreateDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "DeleteDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "GetDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "ListDataSources",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "UpdateDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "AssociateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "CreateDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "DeleteDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "DisassociateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "GetApiAssociation",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "GetDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "ListDomainNames",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "UpdateDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-env-vars",
+      "test": "GetGraphqlApiEnvironmentVariables",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-env-vars",
+      "test": "PutGraphqlApiEnvironmentVariables",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "CreateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "DeleteFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "GetFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "ListFunctions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "UpdateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "CreateResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "DeleteResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "GetResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "ListResolvers",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "ListResolversByFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "UpdateResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-schemas",
+      "test": "GetSchemaCreationStatus",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-schemas",
+      "test": "StartSchemaCreation",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "CreateType",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "DeleteType",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "GetType",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "ListTypes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "UpdateType",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "DescribeBackupJob",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "ListBackupJobs",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "ListRecoveryPointsByBackupVault",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "StartBackupJob",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "CreateBackupPlan",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "DeleteBackupPlan",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "DeleteBackupPlanNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlan",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlanNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlanVersionNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "ListBackupPlans",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "ListBackupPlansPaginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "UpdateBackupPlan",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "UpdateBackupPlanNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "CreateBackupSelection",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "DeleteBackupSelection",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "GetBackupSelection",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "ListBackupSelections",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "ListTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "TagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "UntagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVault",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVaultAlreadyExists",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVaultInvalidName",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DeleteBackupVault",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DeleteBackupVaultNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DescribeBackupVault",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DescribeBackupVaultNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaults",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaultsByShared",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaultsPaginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "CreateStack",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "DeleteStack",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "DescribeStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "ListStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "UpdateStack",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "ValidateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "CreateCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "DeleteCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "GetCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "GetCachePolicyConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "ListCachePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "UpdateCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "CreateContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "DeleteContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "GetContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "GetContinuousDeploymentPolicyConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "ListContinuousDeploymentPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "UpdateContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "CreateDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "DeleteDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "GetDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "ListDistributions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "CreateFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "DeleteFieldLevelEncryption",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "GetFieldLevelEncryption",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "GetFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "ListFieldLevelEncryptionConfigs",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "UpdateFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "CreateFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "DeleteFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "GetFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "GetFieldLevelEncryptionProfileConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "ListFieldLevelEncryptionProfiles",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "UpdateFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "CreateKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "DeleteKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "GetKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "GetKeyGroupConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "ListKeyGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "UpdateKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "CreateMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "DeleteMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "GetMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "CreateOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "DeleteOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "GetOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "ListOriginAccessControls",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "UpdateOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "CreateRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "DeleteRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "GetRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "ListRealtimeLogConfigs",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "UpdateRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
+      "op": "CreateUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "DeleteUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "DescribeUserPoolClientTokenValidity",
+      "op": "DescribeUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "UpdateUserPoolClientTokenValidity",
+      "op": "UpdateUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "AdminCreateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "AdminDeleteUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "CreateUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "CreateUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "DeleteUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "DescribeUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUserPoolClients",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUserPools",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUsers",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-batch",
+      "test": "BatchGetItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-batch",
+      "test": "BatchWriteItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "DeleteItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "GetItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "PutItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "PutItemConditionFail",
+      "op": "PutItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "UpdateItem",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "Query",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryPagination",
+      "op": "Query",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryWithFilterExpression",
+      "op": "Query",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryWithLimit",
+      "op": "Query",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "Scan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "ScanWithFilter",
+      "op": "Scan",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "CreateTable",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "DeleteTable",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "DescribeTable",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "ListTables",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "UpdateTable",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-ttl",
+      "test": "DescribeTimeToLive",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-ttl",
+      "test": "UpdateTimeToLive",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactGetItems",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactWriteConditionFail",
+      "op": "TransactWriteItems",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactWriteItems",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeAvailabilityZones",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeImages",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeInstanceTypes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeRegions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "RunInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "StartInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "StopInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "TerminateInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "CreateKeyPair",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "DeleteKeyPair",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "DescribeKeyPairs",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "AuthorizeSecurityGroupIngress",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "DescribeSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "RevokeSecurityGroupIngress",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "AttachInternetGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "AttachVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateInternetGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateSecurityGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateSubnet",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateVpc",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteSecurityGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteSubnet",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteVpc",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeSubnets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeVpcs",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeVpnGateways",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DetachVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "BatchDeleteImage",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "BatchGetImage",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "DescribeImages",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "DescribeImagesNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "ListImages",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "ListImagesPaginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "PutImage",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "DeleteLifecyclePolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "DeleteRepositoryPolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetLifecyclePolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetLifecyclePolicyNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetRepositoryPolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "PutLifecyclePolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "SetRepositoryPolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "test": "DescribeRegistry",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "test": "GetAuthorizationToken",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "CreateRepository",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "CreateRepositoryAlreadyExists",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepository",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepositoryForce",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepositoryNotEmpty",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositories",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesAll",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesPaginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesSigned",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "ListTagsForResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "TagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "UntagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "CreateCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DeleteCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DeregisterTaskDefinition",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DescribeClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "ListClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "ListTaskDefinitions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "RegisterTaskDefinition",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "CreateService",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "DeleteService",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "DescribeServices",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "ListServices",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "UpdateService",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "DescribeTasks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "ListTasks",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "RunTask",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "StopTask",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "CreateAddon",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DeleteAddon",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddon",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonVersions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "ListAddons",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "UpdateAddon",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "AssociateAccessPolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "AssociateIdentityProviderConfig",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "CreateAccessEntry",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DeleteAccessEntry",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DescribeAccessEntry",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DescribeIdentityProviderConfig",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DisassociateAccessPolicy",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DisassociateIdentityProviderConfig",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAccessEntries",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAccessPolicies",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAssociatedAccessPolicies",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListIdentityProviderConfigs",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "UpdateAccessEntry",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "CreateCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "CreateClusterAlreadyExists",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DeleteCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DeleteClusterNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeClusterNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeClusterVersions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeUpdate",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListClusters",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListClustersPaginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListUpdates",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterConfig",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterConfigNoChanges",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "CreateFargateProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DeleteFargateProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DescribeFargateProfile",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DescribeFargateProfileNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "ListFargateProfiles",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "CreateNodegroup",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "CreateNodegroupAlreadyExists",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DeleteNodegroup",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DescribeNodegroup",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DescribeNodegroupNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "ListNodegroups",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "ListNodegroupsClusterNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "UpdateNodegroupConfig",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "UpdateNodegroupVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "CreateClusterWithTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "ListTagsForResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "TagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "UntagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "CreateCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "DeleteCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "DescribeCacheClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-modify",
+      "test": "ModifyCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-modify",
+      "test": "ModifyReplicationGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "CreateCacheParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "DeleteCacheParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "DescribeCacheParameterGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-replication-groups",
+      "test": "CreateReplicationGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-replication-groups",
+      "test": "DescribeReplicationGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-subnet-groups",
+      "test": "CreateCacheSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "elasticache",
+      "group": "elasticache-subnet-groups",
+      "test": "DescribeCacheSubnetGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "CreateEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "DeleteEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "DescribeEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "ListEventBridgeTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "ListEventBuses",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "TagEventBus",
+      "op": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-events",
+      "test": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-events",
+      "test": "PutEventsBatch",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DeleteRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DescribeRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DisableRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "EnableRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "ListRules",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "ListTargetsByRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "PutRule",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "PutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "RemoveTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "op": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "op": "PutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "AddUserToGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "CreateGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "DeleteGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "GetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "ListGroupsForUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "RemoveUserFromGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "CreatePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "DeletePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "ListPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "AddRoleToInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "AttachRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateRole",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DeleteRole",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DeleteRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DetachRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRole",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListAttachedRolePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListRolePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListRoles",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "op": "SimulateCustomPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "op": "SimulatePrincipalPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
+      "op": "SimulatePrincipalPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "CreateAccessKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "CreateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteAccessKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "GetUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "GetUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "ListAccessKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "ListUsers",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "PutUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "UpdateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "GetRecords",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "GetShardIterator",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "PutRecord",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "PutRecords",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "ListShards",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "MergeShards",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "SplitShard",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "AddTagsToStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "CreateStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DeleteStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DescribeStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DescribeStreamSummary",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "ListStreams",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "ListTagsForStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-asymmetric",
+      "test": "Sign",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-asymmetric",
+      "test": "Verify",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "Decrypt",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "Encrypt",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "GenerateDataKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "GenerateDataKeyWithoutPlaintext",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CancelKeyDeletion",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CreateKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CreateKmsAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "DescribeKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "DisableKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "EnableKey",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKMSResourceTags",
+      "op": "ListResourceTags",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKmsAliases",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "PutKeyPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ScheduleKeyDeletion",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "TagKMSResource",
+      "op": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "UntagKMSResource",
+      "op": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "CreateAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "DeleteAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "GetAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "ListAliases",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "ListVersionsByFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "PublishVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "UpdateAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "CreateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "DeleteFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "GetFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "ListFunctions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "UpdateFunctionCode",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "UpdateFunctionConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke-stream",
+      "test": "InvokeWithResponseStream",
+      "op": "InvokeWithResponseStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeAsync",
+      "op": "Invoke",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeDryRun",
+      "op": "Invoke",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeSync",
+      "op": "Invoke",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "DeleteLayerVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "ListLayers",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "PublishLayerVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "AddPermission",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "RemovePermission",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "DeleteLogStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "DescribeLogStreams",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "FilterLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "GetLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "PutLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "CreateLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "CreateLogStream",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DeleteLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DeleteRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DescribeLogGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "PutRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "TagLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "VerifyRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2NeitherType",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2Provisioned",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2Serverless",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2NotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2Provisioned",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClusterOperationsV2",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2ByClusterType",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2Paginated",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "CreateCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "CreateClusterConflict",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DeleteCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DeleteClusterNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DescribeCluster",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DescribeClusterNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "GetBootstrapBrokers",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "GetBootstrapBrokersNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClusterOperations",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClusters",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClustersByNameFilter",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListKafkaVersions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListNodes",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfigurationStaleVersion",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfigurationUnknownConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "CreateConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "CreateConfigurationConflict",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DeleteConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DeleteConfigurationNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DescribeConfiguration",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DescribeConfigurationNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "ListConfigurationRevisions",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "ListConfigurations",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "CreateClusterV2WithTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "ListTagsForResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "TagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "UntagResource",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "CreateDomain",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "CreateDomainAlreadyExists",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DeleteDomain",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DeleteDomainNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomain",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomainNotFound",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomains",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNames",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNamesByEngineType",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNamesInvalidEngineType",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "AddTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "CreateDomainWithTagList",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "ListTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "RemoveTags",
+      "status": "skip"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "op": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "AddClusterMember",
+      "op": "CreateDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "CreateClusterForMembers",
+      "op": "CreateDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DeleteClusterAfterMembers",
+      "op": "DeleteDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DescribeClusterMembers",
+      "op": "DescribeDBClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DescribeMemberInheritedSettings",
+      "op": "DescribeDBInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "RemoveClusterMember",
+      "op": "DeleteDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "CreateDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "DeleteDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "DescribeDBClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "ModifyDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "StartDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "StopDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "CreateDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DeleteDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DescribeDBEngineVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DescribeDBInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "ModifyDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "StartDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "StopDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "CreateDBParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "DeleteDBParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "DescribeDBParameterGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "CreateDBSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "DeleteDBSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "DescribeDBSubnetGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "CopyObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "CreateSourceBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "PutSourceObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-cors",
+      "test": "GetBucketCors",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-cors",
+      "test": "PutBucketCors",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "CreateBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteObjects",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "GetObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "HeadObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "ListObjectsV2",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "ListObjectsV2Delimiter",
+      "op": "ListObjectsV2",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectFormContentType",
+      "op": "PutObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectMultipleKeys",
+      "op": "PutObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectPlusInKey",
+      "op": "PutObject",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "AbortMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "CompleteMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "CreateMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "UploadPart",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "GetBucketTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "GetObjectTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "PutBucketTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "PutObjectTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-versioning",
+      "test": "GetBucketVersioning",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-versioning",
+      "test": "PutBucketVersioning",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-website",
+      "test": "GetBucketWebsite",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "s3",
+      "group": "s3-website",
+      "test": "PutBucketWebsite",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "BatchGetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "CreateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "DeleteSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "DescribeSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "GetRandomPassword",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "GetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "ListSecretVersionIds",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "ListSecrets",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "PutSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "UpdateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "CancelRotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "op": "GetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "op": "PutSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "op": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "DeleteIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "GetIdentityVerificationAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "ListIdentities",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "ListVerifiedEmailAddresses",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "SetIdentityFeedbackForwardingEnabled",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "VerifyEmailAddress",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "VerifyEmailIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "GetSendQuota",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendEmailWithReplyTo",
+      "op": "SendEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendRawEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "CreateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "DeleteTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "GetTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "ListTemplates",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "SendTemplatedEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "CreateStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "DeleteStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "DescribeStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "ListStateMachines",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "CreateProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DeleteProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DescribeProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DescribeSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "ListProtections",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "Publish",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "PublishBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "PublishWithAttributes",
+      "op": "Publish",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "GetSubscriptionAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "ListSubscriptionsByTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "PublishDeliveredToSQS",
+      "op": "Publish",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "SetSubscriptionAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "SubscribeSQS",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "Unsubscribe",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "CreateTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "DeleteTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "GetTopicAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "ListTopics",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "SetTopicAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "CreateDLQ",
+      "op": "CreateQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "GetRedrivePolicy",
+      "op": "GetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "SetRedrivePolicy",
+      "op": "SetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "CreateFifoQueue",
+      "op": "CreateQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "ReceiveFifoMessage",
+      "op": "ReceiveMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "SendFifoMessage",
+      "op": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "ChangeMessageVisibility",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "DeleteMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "DeleteMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "PurgeQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "ReceiveMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "SendMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "CreateQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "DeleteQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "GetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "GetQueueUrl",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "ListQueues",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "SetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "TagQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "UntagQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "DeleteParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "DescribeParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameterHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "ListSSMTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutMultipleParameters",
+      "op": "PutParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutParameterOverwrite",
+      "op": "PutParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "TagParameter",
+      "op": "AddTagsToResource",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPath",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPathPaginated",
+      "op": "GetParametersByPath",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPathRecursive",
+      "op": "GetParametersByPath",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "GetSecureStringParameter",
+      "op": "GetParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "GetSecureStringWithoutDecryption",
+      "op": "GetParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "PutSecureStringParameter",
+      "op": "PutParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sts",
+      "group": "sts-assume",
+      "test": "AssumeRole",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sts",
+      "group": "sts-assume",
+      "test": "AssumeRoleWithWebIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetCallerIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetFederationToken",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetSessionToken",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "CreateWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "DeleteWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "GetWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "python-sdk",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "ListWebACLs",
+      "status": "pass"
+    }
+  ]
+}
