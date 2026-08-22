@@ -15,7 +15,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/services/eventbridge"
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/alarmaction"
@@ -146,7 +145,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}, clk)
 
 	// ---- Middleware chain --------------------------------------------------
-	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.RealIP)
 	r.Use(middleware.CORS)
 	r.Use(middleware.DrainBody)
 	// HostAddressing owns the whole Host-header decision: S3 virtual-hosted
