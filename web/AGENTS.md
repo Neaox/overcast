@@ -88,27 +88,20 @@ export function createMyThingMutationOptions() {
 
 - **Always use AWS SDK v3 clients for standard AWS service endpoints.** Import the relevant commands from `@aws-sdk/client-<service>` and obtain a client from `awsClients.<service>()` (defined in `web/src/services/aws-clients.ts`). Never hand-roll `fetch` calls or use `emulatorFetch` for operations that the SDK covers.
 - `emulatorFetch` and direct `fetch` are only acceptable for emulator-specific custom endpoints (`/_overcast/*`, `/_overcast/rds/*`, etc.) that have no SDK equivalent.
-- When adding a new service client file, add both browser-side factory methods to `aws-clients.ts` and the corresponding imports to `web/api/src/client/aws.ts` for BFF use.
+- These clients dial the emulator directly from the browser and have nothing to do with the dev BFF below — there is no separate BFF-side client factory to keep in sync.
 
 ---
 
-## BFF conventions (`web/api/src/routes/`)
+## Dev BFF (`web/api/src`)
 
-Each route file proxies requests to the emulator using `resolveEndpoint()`:
-
-```typescript
-const endpoint = resolveEndpoint(c)
-const res = await fetch(`${endpoint.baseUrl}/2015-03-31/...`, {
-  method: c.req.method,
-  headers: { ... },
-  body: ...,
-})
-return c.newResponse(res.body, res.status, Object.fromEntries(res.headers))
-```
-
-- One BFF route file per AWS service.
-- Pass query strings through to the emulator where the AWS SDK expects them.
-- The BFF is not a transformation layer — it forwards requests and returns raw responses.
+`/api/*` has exactly one implementation: the Go BFF (`internal/bff/bff.go`), embedded in the
+`overcast` binary. `web/api/src/app.ts` is a thin proxy — `/api/*` forwards verbatim (method,
+path, query, headers, body, streaming responses included) to the Go BFF's own UI port (4567 by
+default; see `GO_BFF_ENDPOINT`/`OVERCAST_UI_PORT` in `web/api/src/service-discovery.ts`). Do not
+add a per-route handler here for a new console feature — add the route to `internal/bff/bff.go`
+instead, and it is automatically live under `pnpm dev` once a rebuilt `overcast serve` is running
+alongside it. See `docs/plans/dev-bff-consolidation.md` for why (`#1104` — this used to be a
+hand-mirrored second implementation of the whole BFF, kept in sync by memory).
 
 ---
 

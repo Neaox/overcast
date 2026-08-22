@@ -2,50 +2,7 @@ import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 import { HTTPException } from "hono/http-exception"
-
-// ─── Lazy route loading ───────────────────────────────────────────────────
-// Route modules that import AWS SDK clients are loaded on first request to
-// their prefix instead of at import time. This avoids ~7s of synchronous
-// SDK initialisation blocking Vite startup.
-
-type LazyRoute = {
-  app?: Hono
-  loading?: Promise<Hono>
-}
-
-function lazyRoute(loader: () => Promise<Hono>): Hono {
-  const state: LazyRoute = {}
-  const proxy = new Hono()
-  // Attach the shared error handler so that errors from merged sub-app routes
-  // (after the first request) are handled correctly instead of defaulting to 500.
-  proxy.onError(apiErrorHandler)
-  proxy.all("*", async (c) => {
-    if (!state.app) {
-      state.loading ??= loader().then((a) => {
-        // Also attach to the sub-app itself so that state.app.fetch() calls
-        // (used on the first request) translate AWS errors to the right status.
-        a.onError(apiErrorHandler)
-        state.app = a
-        state.loading = undefined
-        return a
-      })
-      state.app = await state.loading
-      // Mount the real app into the proxy so future requests bypass the
-      // catch-all and benefit from Hono's normal prefix stripping.
-      proxy.route("/", state.app)
-    }
-    // For the first request(s): strip our mount prefix from the URL.
-    // c.req.routePath is e.g. "/api/health/*" — extract the mount prefix.
-    const routePrefix = c.req.routePath.replace(/\/?\*$/, "")
-    const url = new URL(c.req.url)
-    url.pathname = url.pathname.startsWith(routePrefix)
-      ? url.pathname.slice(routePrefix.length) || "/"
-      : url.pathname
-    const req = new Request(url.toString(), c.req.raw)
-    return state.app.fetch(req)
-  })
-  return proxy
-}
+import { GO_BFF_ENDPOINT } from "./service-discovery.js"
 
 const app = new Hono()
 
@@ -94,15 +51,13 @@ if (process.env.NODE_ENV !== "production") {
   app.use("*", logger())
 }
 
-// ─── Global error handler — translates AWS SDK ServiceException to JSON ────
-// Exported so lazyRoute can attach it to each lazily-loaded sub-app and its
-// proxy Hono instance (both lack onError by default, causing all SDK errors
-// to fall through to Hono's built-in 500 fallback).
+// ─── Global error handler ──────────────────────────────────────────────────
+// A thrown network error (the proxy fetch below failing to reach the Go BFF)
+// is the one error this app still has to translate itself — everything else
+// about an /api/* response, including AWS SDK errors, is now decided by the
+// Go BFF and passed through verbatim by the proxy handler.
 export function apiErrorHandler(err: Error, c: Context) {
   if (err instanceof HTTPException) return err.getResponse()
-  // Network errors reaching the emulator — return 502 instead of 500 so the
-  // frontend (and the EventSource retry logic) can distinguish "emulator not
-  // ready" from a real server bug.
   const cause = (err as NodeJS.ErrnoException).cause as NodeJS.ErrnoException | undefined
   const code = (err as NodeJS.ErrnoException).code ?? cause?.code
   if (
@@ -112,15 +67,15 @@ export function apiErrorHandler(err: Error, c: Context) {
     code === "ETIMEDOUT"
   ) {
     return c.json(
-      { error: "EmulatorUnavailable", message: "Overcast emulator is not reachable" },
+      {
+        error: "OvercastUnavailable",
+        message:
+          `Could not reach the Go BFF at ${GO_BFF_ENDPOINT} — run a built overcast ` +
+          "(`overcast serve` / `make run`) alongside `pnpm dev`. See " +
+          "docs/dev/development-setup.md.",
+      },
       502,
     )
-  }
-  // AWS SDK errors carry a $metadata object and a name (the error code)
-  const awsErr = err as unknown as Record<string, unknown>
-  if (awsErr.$metadata) {
-    const status = (awsErr.$metadata as { httpStatusCode?: number }).httpStatusCode ?? 500
-    return c.json({ error: awsErr.name ?? "AWSError", message: err.message }, status as never)
   }
   console.error(err)
   return c.json({ error: "InternalError", message: err.message }, 500)
@@ -128,74 +83,55 @@ export function apiErrorHandler(err: Error, c: Context) {
 
 app.onError(apiErrorHandler)
 
-// ─── Health (eager — needed for readiness probes) ──────────────────────────
-app.route(
-  "/api/health",
-  lazyRoute(async () => (await import("./routes/health.js")).healthRoutes),
-)
+// ─── /api/* → proxy to the Go BFF ──────────────────────────────────────────
+// Every /api/* route the console calls is implemented exactly once, in the Go
+// BFF (internal/bff/bff.go) embedded in the same overcast binary this dev
+// server already depends on for AWS calls (the emulator). Rather than
+// hand-mirroring each route in TypeScript — the drift class
+// docs/plans/dev-bff-consolidation.md (B1) tracks, where a Go-only route
+// silently 404s here until someone remembers to port it (#1104; the
+// CloudFormation stack-diagnostics tab was the concrete instance) — forward
+// the request byte-for-byte to the Go BFF and let it answer, streaming or not.
+//
+// Method, path, query string, headers (including x-overcast-endpoint and
+// x-overcast-region, however the browser delivered them — as headers or, for
+// EventSource/download-link requests that cannot set custom headers, as query
+// params the Go BFF's own resolveEndpointQP already understands) and body all
+// pass through unchanged; only the small hop-by-hop / framing headers below
+// are stripped so Node's HTTP stack (not a stale upstream value) decides them.
+const HOP_BY_HOP_REQUEST_HEADERS = ["host", "connection", "keep-alive", "content-length"]
+const HOP_BY_HOP_RESPONSE_HEADERS = [
+  "connection",
+  "keep-alive",
+  "transfer-encoding",
+  "content-encoding",
+  "content-length",
+]
 
-// ─── Service routes (lazy — AWS SDK clients loaded on first request) ───────
-app.route(
-  "/api/s3",
-  lazyRoute(async () => (await import("./routes/s3.js")).s3Routes),
-)
-app.route(
-  "/api/sqs",
-  lazyRoute(async () => (await import("./routes/sqs.js")).sqsRoutes),
-)
-app.route(
-  "/api/events",
-  lazyRoute(async () => (await import("./routes/events.js")).eventsRoutes),
-)
-app.route(
-  "/api/metrics",
-  lazyRoute(async () => (await import("./routes/metrics.js")).metricsRoutes),
-)
-app.route(
-  "/api/topology",
-  lazyRoute(async () => (await import("./routes/topology.js")).topologyRoutes),
-)
-app.route(
-  "/api/inbox",
-  lazyRoute(async () => (await import("./routes/mail.js")).mailRoutes),
-)
-app.route(
-  "/api/lambda",
-  lazyRoute(async () => {
-    const [{ lambdaRoutes }, { lambdaInstancesRoutes }] = await Promise.all([
-      import("./routes/lambda.js"),
-      import("./routes/lambda-instances.js"),
-    ])
-    const merged = new Hono()
-    merged.route("/", lambdaRoutes)
-    merged.route("/", lambdaInstancesRoutes)
-    return merged
-  }),
-)
-app.route(
-  "/api/ecs",
-  lazyRoute(async () => (await import("./routes/ecs.js")).ecsRoutes),
-)
-app.route(
-  "/api/rds",
-  lazyRoute(async () => (await import("./routes/rds.js")).rdsRoutes),
-)
-app.route(
-  "/api/docs",
-  lazyRoute(async () => (await import("./routes/docs.js")).docsRoutes),
-)
-app.route(
-  "/api/debug",
-  lazyRoute(async () => (await import("./routes/debug.js")).debugRoutes),
-)
-app.route(
-  "/api/settings",
-  lazyRoute(async () => (await import("./routes/settings.js")).settingsRoutes),
-)
-app.route(
-  "/api/ca.pem",
-  lazyRoute(async () => (await import("./routes/settings.js")).caPemRoutes),
-)
-// future: additional services
+async function proxyToGoBFF(c: Context): Promise<Response> {
+  const url = new URL(c.req.url)
+  const target = new URL(url.pathname + url.search, GO_BFF_ENDPOINT)
+
+  const headers = new Headers(c.req.raw.headers)
+  for (const h of HOP_BY_HOP_REQUEST_HEADERS) headers.delete(h)
+
+  const hasBody = c.req.method !== "GET" && c.req.method !== "HEAD"
+
+  const upstream = await fetch(target, {
+    method: c.req.method,
+    headers,
+    body: hasBody ? c.req.raw.body : undefined,
+    signal: c.req.raw.signal,
+    ...(hasBody ? { duplex: "half" } : {}),
+  })
+
+  const resHeaders = new Headers(upstream.headers)
+  for (const h of HOP_BY_HOP_RESPONSE_HEADERS) resHeaders.delete(h)
+
+  return new Response(upstream.body, { status: upstream.status, headers: resHeaders })
+}
+
+app.all("/api", proxyToGoBFF)
+app.all("/api/*", proxyToGoBFF)
 
 export { app }

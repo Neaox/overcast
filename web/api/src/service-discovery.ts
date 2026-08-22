@@ -36,3 +36,20 @@ export function resolveEndpoint(headers: Record<string, string | undefined>): Em
   const region = headers[REGION_HEADER] ?? DEFAULT_ENDPOINT.region
   return { baseUrl: baseUrl.replace(/\/$/, ""), region }
 }
+
+/**
+ * Base URL of the Go BFF (internal/bff), the single implementation of every
+ * `/api/*` route (see docs/plans/dev-bff-consolidation.md, B1). It is the web
+ * UI port `overcast serve` starts alongside the emulator's API port — 4567 by
+ * default, matching cmd/overcast/cmd_serve.go's defaultUIPort — so this dev
+ * server needs a locally running, built overcast binary to answer `/api/*`
+ * requests, exactly as the shipped console does.
+ *
+ * `GO_BFF_ENDPOINT` overrides the whole URL; `OVERCAST_UI_PORT` (same name as
+ * the Go flag/env var) overrides only the port against localhost, for the
+ * common case of a UI port picked to avoid colliding with another worktree's
+ * server (see docs/dev/development-setup.md's parallel-agent guidance).
+ */
+export const GO_BFF_ENDPOINT = (
+  process.env.GO_BFF_ENDPOINT || `http://localhost:${process.env.OVERCAST_UI_PORT || "4567"}`
+).replace(/\/$/, "")

@@ -18,10 +18,12 @@ The management console for [Overcast](../README.md) — a local AWS emulator. Pr
 
 ## Getting started
 
-The emulator must be running on port 4566 before starting the dev server.
+A built `overcast` must be running before starting the dev server — not just the emulator
+(`:4566`), but the web UI port (`:4567`) it starts alongside it, since the dev server's `/api/*`
+proxy targets that port (see Architecture below).
 
 ```bash
-# From the repo root — start the emulator
+# From the repo root — start the emulator + its BFF/UI port
 make run
 
 # In a separate terminal — start the web UI
@@ -30,7 +32,8 @@ pnpm install
 pnpm run dev
 ```
 
-The UI is served at `http://localhost:5173`. The BFF proxy runs on port 5174 and forwards requests to the emulator at `http://localhost:4566`.
+The UI is served at `http://localhost:5173`. Its dev server proxies `/api/*` to the Go BFF at
+`http://localhost:4567`, which in turn talks to the emulator at `http://localhost:4566`.
 
 ## Available scripts
 
@@ -71,14 +74,20 @@ src/
   styles/              # Global CSS / Tailwind tokens
 api/
   src/
-    routes/            # Hono BFF proxy routes — one file per service
-    app.ts             # Hono app wiring
-    vite-plugin.ts     # Vite plugin that starts the BFF alongside the dev server
+    app.ts             # Hono app: /api/* is one catch-all proxy to the Go BFF
+    service-discovery.ts # Resolves the emulator endpoint and the Go BFF's own URL
+    vite-plugin.ts     # Vite plugin that mounts the proxy in the dev server
 ```
 
 ## Architecture
 
-The UI uses a **BFF (Backend-for-Frontend)** pattern. The browser talks only to the Hono server in `api/`; that server proxies to the emulator at `:4566`. This keeps CORS and credential concerns out of the browser entirely.
+The UI uses a **BFF (Backend-for-Frontend)** pattern, but there is only one BFF implementation:
+`internal/bff/bff.go`, embedded in the `overcast` binary. The browser talks only to `/api/*`; in
+production that's served directly by the binary, and in dev, `api/src/app.ts` forwards every
+`/api/*` request byte-for-byte to the same binary's UI port (`:4567` by default) rather than
+re-implementing each route in TypeScript. See `docs/plans/dev-bff-consolidation.md` for why (a
+hand-mirrored second implementation used to live here, and silently drifted from the Go one —
+`#1104`).
 
 Data fetching follows the TanStack Query pattern:
 
