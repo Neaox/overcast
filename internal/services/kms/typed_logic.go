@@ -20,7 +20,30 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// kmsTagCfg tunes the shared tag validator to KMS's error shape (#1052). KMS
+// reports every other rejected-input case this package models (an unsupported
+// key spec, an invalid policy) as ValidationException, and declares no
+// dedicated tag-count exception, so the 50-tag limit is reported the same
+// way an invalid key or value is.
+var kmsTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "ValidationException",
+	InvalidCode:     "ValidationException",
+	ExceededMessage: "You have exceeded the limit on the number of tags you can assign to a KMS key.",
+}
+
+// validateKeyTags converts KMS's [{TagKey,TagValue}] tag shape — its own
+// spelling of the common {Key,Value} pair — to the map the shared validator
+// works in.
+func validateKeyTags(tags []Tag) *protocol.AWSError {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.TagKey] = t.TagValue
+	}
+	return serviceutil.ValidateTags(kmsTagCfg, m)
+}
 
 type keyIDRequest struct {
 	KeyId string `json:"KeyId" cbor:"KeyId"`
@@ -207,6 +230,13 @@ func (h *Handler) createKeyTyped(ctx context.Context, req *createKeyRequest) (*k
 	policy := ""
 	if req.Policy != nil {
 		policy = *req.Policy
+	}
+	// Request-shape validation before the key exists — the same ordering
+	// createLogGroupTyped uses (internal/services/cloudwatch/logs/typed_logic.go)
+	// — so a rejected create leaves no key behind with nothing able to fix its
+	// tags (#1052).
+	if aerr := validateKeyTags(req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	k := &Key{
 		KeyID:       keyID,
@@ -481,19 +511,26 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	if aerr != nil {
 		return nil, aerr
 	}
+	merged := append([]Tag(nil), k.Tags...)
 	for _, t := range req.Tags {
 		replaced := false
-		for i, existing := range k.Tags {
+		for i, existing := range merged {
 			if existing.TagKey == t.TagKey {
-				k.Tags[i].TagValue = t.TagValue
+				merged[i].TagValue = t.TagValue
 				replaced = true
 				break
 			}
 		}
 		if !replaced {
-			k.Tags = append(k.Tags, t)
+			merged = append(merged, t)
 		}
 	}
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagResource calls (#1052).
+	if aerr := validateKeyTags(merged); aerr != nil {
+		return nil, aerr
+	}
+	k.Tags = merged
 	if err := h.store.PutKey(ctx, k); err != nil {
 		return nil, protocol.ErrInternalError
 	}

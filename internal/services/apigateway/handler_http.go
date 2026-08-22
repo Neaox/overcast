@@ -46,6 +46,10 @@ func (h *Handler) CreateV2Api(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("ProtocolType is required"))
 		return
 	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// TODO(priority:P3): implement WEBSOCKET protocol type — currently only HTTP is fully supported
 	if req.ProtocolType == "WEBSOCKET" {

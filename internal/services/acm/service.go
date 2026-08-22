@@ -213,6 +213,29 @@ func mergeTags(existing, overrides []Tag) []Tag {
 	return out
 }
 
+// acmTagCfg tunes the shared tag validator to ACM's error shape (#1052).
+// ACM's tag operations model InvalidParameterException for a malformed
+// request and no dedicated tag-count exception, so the 50-tag limit is
+// reported the same way an invalid key or value is.
+var acmTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "You have exceeded the maximum number of tags for a certificate.",
+}
+
+// validateCertTags converts ACM's [{Key,Value}] tag shape to the map the
+// shared validator works in. Callers pass the MERGED set (existing plus
+// incoming), not just the incoming delta, so the 50-tag limit is enforced
+// across repeated AddTagsToCertificate/TagResource calls rather than only
+// against whatever one call happens to add.
+func validateCertTags(tags []Tag) *protocol.AWSError {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return serviceutil.ValidateTags(acmTagCfg, m)
+}
+
 func removeTagKeys(existing []Tag, keys []string) []Tag {
 	if len(keys) == 0 {
 		return existing

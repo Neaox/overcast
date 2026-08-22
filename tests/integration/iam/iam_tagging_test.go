@@ -216,6 +216,130 @@ func TestCreateInstanceProfile_appliesTagsAtCreation(t *testing.T) {
 	}
 }
 
+// ─── Tag validation (#1052) ───────────────────────────────────────────────────
+//
+// All four taggable resource types (user, role, managed policy, instance
+// profile) used to store whatever a caller sent — through either their
+// Tag* operation or their Create*'s inline Tags — without checking AWS's own
+// tag constraints. A reserved `aws:` key prefix had to be rejected the way
+// real AWS rejects it, and none of the eight call sites did.
+
+func TestTagRole_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createRole(t, srv, "invalid-tag-role")
+
+	resp := iamCall(t, srv, "TagRole", url.Values{
+		"RoleName":            {"invalid-tag-role"},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+
+	if got := iamTagMap(t, srv, "ListRoleTags", url.Values{"RoleName": {"invalid-tag-role"}}); len(got) != 0 {
+		t.Fatalf("tags = %#v after a rejected TagRole, want none stored", got)
+	}
+}
+
+func TestTagUser_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createUser(t, srv, "invalid-tag-user")
+
+	resp := iamCall(t, srv, "TagUser", url.Values{
+		"UserName":            {"invalid-tag-user"},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
+func TestTagPolicy_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createPolicy(t, srv, "invalid-tag-policy")
+
+	resp := iamCall(t, srv, "TagPolicy", url.Values{
+		"PolicyArn":           {arn},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
+func TestTagInstanceProfile_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createInstanceProfile(t, srv, "invalid-tag-profile")
+
+	resp := iamCall(t, srv, "TagInstanceProfile", url.Values{
+		"InstanceProfileName": {"invalid-tag-profile"},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
+func TestCreateUser_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := iamCall(t, srv, "CreateUser", url.Values{
+		"UserName":            {"invalid-tag-create-user"},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+
+	get := iamCall(t, srv, "GetUser", url.Values{"UserName": {"invalid-tag-create-user"}})
+	defer get.Body.Close()
+	if get.StatusCode == http.StatusOK {
+		t.Fatalf("a user named invalid-tag-create-user exists despite the rejected create")
+	}
+}
+
+func TestCreateRole_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := iamCall(t, srv, "CreateRole", url.Values{
+		"RoleName":                 {"invalid-tag-create-role"},
+		"AssumeRolePolicyDocument": {`{"Version":"2012-10-17","Statement":[]}`},
+		"Tags.member.1.Key":        {"aws:reserved"},
+		"Tags.member.1.Value":      {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
+func TestCreatePolicy_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := iamCall(t, srv, "CreatePolicy", url.Values{
+		"PolicyName":          {"invalid-tag-create-policy"},
+		"PolicyDocument":      {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
+func TestCreateInstanceProfile_reservedPrefixRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := iamCall(t, srv, "CreateInstanceProfile", url.Values{
+		"InstanceProfileName": {"invalid-tag-create-profile"},
+		"Tags.member.1.Key":   {"aws:reserved"},
+		"Tags.member.1.Value": {"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertQueryXMLError(t, resp, "ValidationError")
+}
+
 // Deleting an entity must take its tags with it, so a same-named replacement
 // does not inherit them.
 func TestDeletePolicy_dropsItsTags(t *testing.T) {

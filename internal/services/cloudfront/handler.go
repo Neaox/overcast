@@ -471,6 +471,25 @@ func (h *Handler) ListInvalidations(w http.ResponseWriter, r *http.Request) {
 
 // ─── TagResource ────────────────────────────────────────────────────────────
 
+// cloudfrontTagCfg tunes the shared tag validator to CloudFront's error
+// shape (#1052). CloudFront reports its other rejected-input cases on this
+// path (a missing ARN, malformed XML) as InvalidArgument, and declares no
+// dedicated tag-count exception, so the 50-tag limit is reported the same
+// way an invalid key or value is.
+var cloudfrontTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidArgument",
+	InvalidCode:     "InvalidArgument",
+	ExceededMessage: "Invalid tag: too many tags for this resource.",
+}
+
+func cloudfrontTagsToMap(tags []Tag) map[string]string {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return m
+}
+
 // TagResource handles POST /2020-05-31/tagging?Operation=Tag&Resource={arn}.
 func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithOperation("TagResource")
@@ -512,6 +531,13 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range body.Items {
 		tagMap[t.Key] = t.Value
+	}
+
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagResource calls (#1052).
+	if aerr := serviceutil.ValidateTags(cloudfrontTagCfg, tagMap); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
 	}
 
 	merged := make([]Tag, 0, len(tagMap))
@@ -631,6 +657,15 @@ func (h *Handler) CreateDistributionWithTags(w http.ResponseWriter, r *http.Requ
 	cfg := &body.DistributionConfig
 	if cfg.CallerReference == "" {
 		protocol.WriteXMLError(w, r, errMissingCallerReference())
+		return
+	}
+	// Request-shape validation before the distribution is created — the
+	// same ordering createLogGroupTyped uses
+	// (internal/services/cloudwatch/logs/typed_logic.go) — so a rejected
+	// create leaves no distribution behind with nothing able to fix its
+	// tags (#1052).
+	if aerr := serviceutil.ValidateTags(cloudfrontTagCfg, cloudfrontTagsToMap(body.Tags.Items)); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 

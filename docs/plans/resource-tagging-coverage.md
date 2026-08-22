@@ -3,7 +3,16 @@
 > Status: audit complete. Every **Axis A** gap is closed (#1195 filled the
 > last two, `logs` and `backup`), together with the Axis B gaps in the
 > services that closed alongside them. The remaining Axis B and Axis C sets
-> are listed under [What remains](#what-remains).
+> are listed under [What remains](#what-remains). A third question — whether
+> a service's tag-accepting write actually reaches the shared validator, not
+> just whether the operation exists — is #1052's, closed for all seventeen
+> services it named; see [Validator reach audit](#validator-reach-audit-1052).
+>
+> Re-verified 2026-08-22 (#1052) — every one of the 17 services #1052 named
+> now routes its tag-accepting writes through `serviceutil.ValidateTags`
+> (directly, via `ApplyStoreTags`, or via `ApplyInlineTags`); three
+> (`cognito`, `glue`, `stepfunctions`) were already fixed by #1037 and needed
+> no change. Full disposition table below.
 >
 > Re-verified 2026-08-22 (#1195) — movement since the previous update:
 > - **`logs` Axis A is closed**: the modern `TagResource` / `UntagResource` /
@@ -310,3 +319,61 @@ coherent follow-up rather than eight scattered ones.
 list-shaped tag helper — three services in this branch (`transfer`,
 `cloudtrail`, `acm`) each convert between AWS' `[{Key,Value}]` wire shape and
 the `map[string]string` the existing `ValidateTags` works in.
+
+## Validator reach audit (#1052)
+
+A third, orthogonal question the two axes above do not answer: for a service
+that *has* a tag-accepting operation (Axis A) or a create-time `Tags` member
+(Axis B), does the incoming tag set actually reach `serviceutil.ValidateTags`
+before it is stored? #1052 found seventeen services where it did not — the
+operation existed and answered success, but never checked AWS's own tag
+constraints (the 128/256-character key/value limits, the reserved `aws:` key
+prefix, the 50-tag cap), so a tag set real AWS refuses was silently accepted
+and stored here.
+
+Re-verified against current code — three of the seventeen turned out to be
+already fixed by #1037's tagging-architecture review, and the rest needed a
+real change:
+
+| Service | Disposition |
+| --- | --- |
+| `acm` | Fixed — `RequestCertificate`'s inline `Tags`, `AddTagsToCertificate`/`TagResource` (one shared implementation via `serveTyped`) |
+| `apigateway` | Fixed — `TagResource`, `TagV2Resource`, and nine `Create*` inline-tag call sites (REST APIs, HTTP APIs, domain names ×2, VPC links ×2, API keys, usage plans, stages ×2) |
+| `appregistry` | Fixed — `CreateApplication`, `CreateAttributeGroup`, on both the JSON1.1 REST path and the CBOR typed path (both are genuinely reachable — the JSON path is a real `POST` route, not merely a codec variant of the typed one). `TagResource` was already covered: it is apigateway's own shared ARN-keyed handler, not a separate implementation |
+| `appsync` | Fixed — retired a locally re-implemented duplicate validator (`validateTagMap`, `tagKeyPattern`, `tagValuePattern`) that never called the shared one and was *more* restrictive than AWS's documented pattern: its key regex rejected any digit at all, which no AWS documentation supports. `CreateGraphqlApi`/`TagResource` already enforced equivalent (if buggier) rules; `UpdateGraphqlApi` enforced none, because `validateGraphqlAPIInput`'s `allowTags` parameter skipped the tag check there entirely — real AWS models no tags member on `UpdateGraphqlApiInput`, but this handler decodes into the same `GraphqlAPI` struct either way, so a client-supplied `tags` on update was stored unvalidated |
+| `cloudformation` | Fixed — `CreateStack`, `UpdateStack`, `CreateChangeSet`, `ExecuteChangeSet`, on both the Query/XML legacy path and the CBOR typed path (each pair is a genuine standalone duplicate, not a codec variant of one implementation) |
+| `cloudfront` | Fixed — `TagResource`, `CreateDistributionWithTags` |
+| `cognito` | Already fixed (#1037) — `TagResource` already validates via `ApplyInlineTags`; `CreateUserPool` models no `Tags`/`UserPoolTags` request field in this emulator to bypass (a feature gap tracked under Axis B, not a validator-reach gap) |
+| `dynamodb` | Fixed (narrow) — `TagResource` already validated via `dynamoTagCfg`/`ApplyInlineTags`; `CreateTable`'s inline `Tags` did not |
+| `ecr` | Fixed — `CreateRepository`, `TagResource`, on both the JSON1.1 legacy path (lowercase `createRepository`/`tagResource` — a genuine second copy, easy to miss by name alone) and the CBOR typed path |
+| `efs` | Fixed — `CreateFileSystem`, `CreateAccessPoint`, `TagResource`, all three funneling through one shared `mergeTags` store helper that now validates the merged set before saving |
+| `glue` | Already fixed (#1037) — `TagResource` for both taggable resource types (database, table) already routes through `ApplyInlineTags` with a declared `glueTagCfg`; neither's `Create*` models a `Tags` member to bypass |
+| `iam` | Fixed — all four taggable resource types (user, role, managed policy, instance profile): both their `Tag*` operation and their `Create*`'s inline `Tags`, on both the Query/XML legacy path and the CBOR typed path. `TagPolicy`/`TagInstanceProfile` already delegated to the typed path via a `typedHandler` adapter; `TagRole`/`TagUser` and all four `Create*` were genuine standalone Query/XML duplicates that had to be patched separately |
+| `kinesis` | Fixed — `CreateStream`, `AddTagsToStream` (a genuine legacy-path duplicate that skipped `addTagsToStreamTyped` entirely), `TagResource` |
+| `kms` | Fixed — `CreateKey`, `TagResource`, on both the JSON1.1 legacy path and the CBOR typed path |
+| `msk` | Fixed — `CreateCluster`, `CreateClusterV2`, `TagResource` |
+| `secretsmanager` | Fixed — `CreateSecret`'s inline `Tags`; `TagResource` now shares `serviceutil.ApplyInlineTags` (`Secret` already implements `Taggable`, so this replaced a hand-rolled merge rather than adding one) |
+| `stepfunctions` | Already fixed (#1037) — `TagResource` already routes through `ApplyInlineTags`; `CreateStateMachine`/`CreateActivity` model no `tags` request member in this emulator to bypass |
+
+Every fix keeps the shared, conservative charset
+(`^(?!aws:)[\p{L}\p{Z}\p{N}_.:/=+\-@]*$`, enforced by `serviceutil.ValidateTags`)
+rather than inventing a per-service rule. The one place a per-service pattern
+existed before this pass — AppSync's `tagKeyPattern` — was strictly *more*
+restrictive than AWS actually documents and rejected a real, legal tag-key
+character (`@`); it is retired here, not preserved alongside the shared one.
+
+A recurring shape worth naming: several of the "already had a tag operation"
+services turned out to have *two* implementations of it — a JSON1.1 or
+Query/XML legacy handler and a CBOR typed-operation handler — where only one
+of the two had been wired to the shared validator, or neither had. `ecr`'s
+legacy `createRepository`/`tagResource` (lowercase, easy to miss grepping for
+`CreateRepository`) is the sharpest example. Each such pair is patched
+separately rather than collapsed into one delegating implementation, the same
+choice #1037 made for its own duplicated legacy/typed pairs — a larger
+refactor left for its own review.
+
+Left for later issues: the fourteen Axis B services (#1196) and the eight
+CloudFormation resource types (#1197) this file's own
+[What remains](#what-remains) section already tracks are unaffected by this
+pass — a service still missing its create-time `Tags` member entirely has
+nothing for a validator to reach yet.

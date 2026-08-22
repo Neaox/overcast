@@ -278,6 +278,9 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 
 	params := typedCollectParams(req.Parameters)
 	tags := typedCollectTags(req.Tags)
+	if aerr := validateStackTags(tags); aerr != nil {
+		return nil, aerr
+	}
 	caps := req.Capabilities
 
 	stack := &Stack{
@@ -364,7 +367,9 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		stack.Parameters = params
 	}
 	if req.Tags != nil {
-		applyStackTags(stack, typedCollectTags(*req.Tags), true)
+		if aerr := applyStackTags(stack, typedCollectTags(*req.Tags), true); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	stack.DisableRollback = disableRollback
@@ -530,6 +535,11 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 	csID := fmt.Sprintf("arn:aws:cloudformation:%s:%s:changeSet/%s/%s",
 		chsRegion, h.cfg.AccountID, req.ChangeSetName, uuid.NewString())
 
+	changeSetTags := typedCollectOptionalTags(req.Tags)
+	if aerr := validateStackTags(changeSetTags); aerr != nil {
+		return nil, aerr
+	}
+
 	changes := computeChanges(tmpl, stack, changeSetType)
 
 	cs := &ChangeSet{
@@ -541,7 +551,7 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 		StackName:       stack.StackName,
 		TemplateBody:    templateBody,
 		Parameters:      typedCollectParams(req.Parameters),
-		Tags:            typedCollectOptionalTags(req.Tags),
+		Tags:            changeSetTags,
 		TagsSet:         req.Tags != nil,
 		Capabilities:    req.Capabilities,
 		Status:          ChangeSetStatusCreateComplete,
@@ -642,7 +652,9 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		stack.Parameters = cs.Parameters
 	}
 	if cs.TagsSet || len(cs.Tags) > 0 {
-		applyStackTags(stack, cs.Tags, true)
+		if aerr := applyStackTags(stack, cs.Tags, true); aerr != nil {
+			return nil, aerr
+		}
 	}
 	stack.TemplateBody = cs.TemplateBody
 
@@ -950,6 +962,32 @@ func (h *Handler) listImportsTyped(ctx context.Context, req *listImportsReq) (*l
 
 func cfnerr(code, message string, httpStatus int) *protocol.AWSError {
 	return &protocol.AWSError{Code: code, Message: message, HTTPStatus: httpStatus}
+}
+
+// cfnTagCfg tunes the shared tag validator to CloudFormation's error shape.
+// CloudFormation reports every client-side rejection this handler already
+// returns (missing StackName, a bad template, an unresolvable stack) as
+// ValidationError over its Query/XML protocol (writeCFNError/cfnerr above),
+// and models no dedicated tagging exception, so a rejected tag set gets the
+// same code (#1052).
+var cfnTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "ValidationError",
+	InvalidCode:     "ValidationError",
+	ExceededMessage: "Member must have length less than or equal to 50",
+}
+
+// validateStackTags checks a stack's Tags against the shared validator
+// before CreateStack/UpdateStack ever store them (#1052 — this operation
+// used to store whatever a template or Tags.member.N gave it unchecked).
+func validateStackTags(tags []Tag) *protocol.AWSError {
+	if len(tags) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return serviceutil.ValidateTags(cfnTagCfg, m)
 }
 
 func metaFromCFNCtx(ctx context.Context) cfnResponseMeta {

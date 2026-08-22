@@ -16,6 +16,25 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
+// ecrTagCfg tunes the shared tag validator to ECR's error shape (#1052).
+// ECR reports every other rejected-input case this package models (see
+// service.go's InvalidParameterException usages) the same way, and declares
+// no dedicated tag-count exception, so the 50-tag limit is reported the same
+// way an invalid key or value is.
+var ecrTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "The parameter tags must be no more than 50 tags.",
+}
+
+func ecrTagsToMap(tags []Tag) map[string]string {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	return m
+}
+
 // ---- Request types ----
 
 type createRepositoryRequest struct {
@@ -284,6 +303,13 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 		return nil, &protocol.AWSError{
 			Code: "RepositoryAlreadyExistsException", Message: fmt.Sprintf("The repository with name '%s' already exists in the registry with id '%s'", req.RepositoryName, s.accountID()), HTTPStatus: http.StatusBadRequest,
 		}
+	}
+	// Request-shape validation before the repository is created — the same
+	// ordering createLogGroupTyped uses (internal/services/cloudwatch/logs/
+	// typed_logic.go) — so a rejected create leaves no repository behind
+	// with nothing able to fix its tags (#1052).
+	if aerr := serviceutil.ValidateTags(ecrTagCfg, ecrTagsToMap(req.Tags)); aerr != nil {
+		return nil, aerr
 	}
 	mutability := req.ImageTagMutability
 	if mutability == "" {
@@ -873,6 +899,11 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	}
 	for _, t := range req.Tags {
 		tagMap[t.Key] = t.Value
+	}
+	// Validated against the merged set, not just the incoming delta, so the
+	// 50-tag limit holds across repeated TagResource calls (#1052).
+	if aerr := serviceutil.ValidateTags(ecrTagCfg, tagMap); aerr != nil {
+		return nil, aerr
 	}
 	merged := make([]Tag, 0, len(tagMap))
 	for k, v := range tagMap {

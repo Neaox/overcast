@@ -77,6 +77,10 @@ func (h *Handler) CreateApplication(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errInvalidParameter("name is required"))
 		return
 	}
+	if aerr := serviceutil.ValidateTags(appregistryTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	ctx := r.Context()
 	if existing, _ := h.store.resolveApplication(ctx, req.Name); existing != nil {

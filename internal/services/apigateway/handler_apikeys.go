@@ -189,6 +189,10 @@ func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("API key name is required"))
 		return
 	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	value := req.Value
 	if value == "" {
@@ -282,6 +286,10 @@ func (h *Handler) CreateUsagePlan(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
 	var req createUsagePlanRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 

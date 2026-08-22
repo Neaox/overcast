@@ -245,6 +245,21 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 			return nil, aerr
 		}
 	}
+	// Request-shape validation before the existence check resolves against
+	// the store — the same ordering createLogGroupTyped uses
+	// (internal/services/cloudwatch/logs/typed_logic.go) — so a rejected
+	// create must not depend on whether the name happens to collide (#1052).
+	// CreateTable's inline Tags reached ValidateTags nowhere before this: the
+	// shared dynamoTagCfg above is already wired for TagResource.
+	if len(req.Tags) > 0 {
+		tagMap := make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tagMap[t.Key] = t.Value
+		}
+		if aerr := serviceutil.ValidateTags(dynamoTagCfg, tagMap); aerr != nil {
+			return nil, aerr
+		}
+	}
 
 	exists, aerr := h.store.tableExists(ctx, req.TableName)
 	if aerr != nil {

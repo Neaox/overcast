@@ -187,6 +187,13 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	if req.Policy != nil {
 		policy = *req.Policy
 	}
+	// See createKeyTyped (typed_logic.go) — this JSON1.1 path duplicates it
+	// rather than delegating, so the tag validation added for #1052 has to be
+	// kept in lockstep here too.
+	if aerr := validateKeyTags(req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	k := &Key{
 		KeyID:       keyID,
 		ARN:         arn,
@@ -1290,6 +1297,12 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	tags := k.GetTags()
 	for _, t := range req.Tags {
 		tags[t.TagKey] = t.TagValue
+	}
+	// Validated against the merged set, not just the incoming delta, matching
+	// tagResourceTyped's ordering (#1052).
+	if aerr := serviceutil.ValidateTags(kmsTagCfg, tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	k.SetTags(tags)
 	if err := h.store.PutKey(ctx, k); err != nil {

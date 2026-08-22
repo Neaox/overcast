@@ -47,6 +47,16 @@ func errBadRequest(format string, args ...any) *protocol.AWSError {
 	}
 }
 
+// mskTagCfg tunes the shared tag validator to MSK's error shape (#1052).
+// MSK reports every other rejected-input case this package models the same
+// way (errBadRequest), and declares no dedicated tag-count exception, so the
+// 50-tag limit is reported the same way an invalid key or value is.
+var mskTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequestException",
+	InvalidCode:     "BadRequestException",
+	ExceededMessage: "You have exceeded the number of tags allowed for a resource.",
+}
+
 // errConflict builds MSK's 409. The pinned kafka model gives ConflictException
 // @httpError(409) and declares it on CreateCluster, CreateClusterV2 and
 // CreateConfiguration alike; the API reference spells the condition out on
@@ -190,6 +200,13 @@ func (h *Handler) saveCreationTags(ctx context.Context, resourceArn string, tags
 	if len(tags) == 0 {
 		return nil
 	}
+	// Validated here too, in addition to the create handlers' own earlier
+	// check (#1052) — callers besides CreateCluster/CreateClusterV2 may add
+	// tags through this entry point later, and this is the one place all of
+	// them funnel through before a write.
+	if aerr := serviceutil.ValidateTags(mskTagCfg, tags); aerr != nil {
+		return aerr
+	}
 	return h.store.tags().Save(ctx, resourceArn, tags)
 }
 
@@ -276,6 +293,16 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ClusterName == "" {
 		protocol.WriteJSONError(w, r, errBadRequest("clusterName is required"))
+		return
+	}
+	// Request-shape validation before the name claim resolves against the
+	// store — the same ordering createLogGroupTyped uses
+	// (internal/services/cloudwatch/logs/typed_logic.go) — so a rejected
+	// create must not leave a cluster behind with nothing able to fix its
+	// tags (#1052). saveCreationTags below validates again on the merged
+	// path other callers may reach, but by then the cluster already exists.
+	if aerr := serviceutil.ValidateTags(mskTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -629,16 +656,10 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	tagStore := h.store.tags()
-	tags, aerr := tagStore.Load(r.Context(), resourceArn)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	for k, v := range req.Tags {
-		tags[k] = v
-	}
-	if aerr := tagStore.Save(r.Context(), resourceArn, tags); aerr != nil {
+	// ApplyStoreTags does the load-merge-validate-save in one call — the
+	// merged set is what gets checked against the 50-tag limit, not just
+	// this call's incoming delta (#1052).
+	if _, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), resourceArn, req.Tags, mskTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -711,6 +732,12 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 	// cluster the caller never asked for.
 	if (req.Provisioned == nil) == (req.Serverless == nil) {
 		protocol.WriteJSONError(w, r, errBadRequest("Exactly one of provisioned or serverless must be specified."))
+		return
+	}
+	// See createCluster (v1) above for why this runs before the cluster
+	// exists (#1052).
+	if aerr := serviceutil.ValidateTags(mskTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 

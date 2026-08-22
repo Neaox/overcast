@@ -45,6 +45,10 @@ func (h *Handler) CreateRestApi(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("API name is required"))
 		return
 	}
+	if aerr := serviceutil.ValidateTags(apigatewayTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	apiID := generateAPIID()
 	rootResourceID := generateShortID()
