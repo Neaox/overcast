@@ -5,6 +5,7 @@
  *   lambda-crud    — function lifecycle (implemented)
  *   lambda-invoke  — synchronous invocation (requires Docker, skip if unavailable)
  *   lambda-invoke-stream — InvokeWithResponseStream (requires Docker, skip if unavailable)
+ *   lambda-invoke-error — a handler that throws, surfaced via FunctionError (requires Docker)
  *   lambda-config  — environment variables, timeout, memory (implemented)
  *   lambda-aliases — versions and aliases (implemented)
  *   lambda-layers  — layer management (implemented)
@@ -58,6 +59,19 @@ const MINIMAL_ZIP_BASE64 =
 
 function makeZipBuffer(): Uint8Array {
   return Buffer.from(MINIMAL_ZIP_BASE64, "base64");
+}
+
+/**
+ * Handler bundled the same way as MINIMAL_ZIP_BASE64, but this one throws
+ * unconditionally:
+ * exports.handler = async () => { throw new Error("compat: intentional failure"); };
+ * Used by lambda-invoke-error to exercise the FunctionError path.
+ */
+const ERROR_ZIP_BASE64 =
+  "UEsDBBQAAAAAAAAAAAB4B5sFUgAAAFIAAAAIAAAAaW5kZXguanNleHBvcnRzLmhhbmRsZXIgPSBhc3luYyAoKSA9PiB7IHRocm93IG5ldyBFcnJvcigiY29tcGF0OiBpbnRlbnRpb25hbCBmYWlsdXJlIik7IH07UEsBAhQAFAAAAAAAAAAAAHgHmwVSAAAAUgAAAAgAAAAAAAAAAAAAAAAAAAAAAGluZGV4LmpzUEsFBgAAAAABAAEANgAAAHgAAAAAAA==";
+
+function makeErrorZipBuffer(): Uint8Array {
+  return Buffer.from(ERROR_ZIP_BASE64, "base64");
 }
 
 const ROLE_ARN = "arn:aws:iam::000000000000:role/lambda-exec";
@@ -518,6 +532,73 @@ export function makeLambdaGroups(suite: string): TestGroup[] {
       teardown: async (ctx) => {
         const { lambda, logs } = makeClients(ctx);
         await deleteFunctionAndLogGroup(lambda, logs, `${ctx.runId}-fn-stream`);
+      },
+    },
+
+    // ── lambda-invoke-error ────────────────────────────────────────────────
+    //
+    // A handler that throws unconditionally. AWS still answers the sync
+    // Invoke with HTTP 200 — the failure is signalled via the
+    // X-Amz-Function-Error header, surfaced as FunctionError on the SDK
+    // response, not as a thrown SDK error.
+    {
+      suite,
+      service: "lambda",
+      name: "lambda-invoke-error",
+      tests: [
+        {
+          name: "InvokeWithError",
+          op: "Invoke",
+          fn: async (ctx) => {
+            const { lambda } = makeClients(ctx);
+            const name = (ctx["_lambda_invoke_err_fn"] as string) ?? `${ctx.runId}-fn-invoke-err`;
+            const resp = await lambda.send(
+              new InvokeCommand({
+                FunctionName: name,
+                InvocationType: "RequestResponse",
+                Payload: new TextEncoder().encode("{}"),
+              }),
+            );
+            assert.strictEqual(
+              resp.StatusCode,
+              200,
+              `InvokeWithError: expected StatusCode=200, got ${resp.StatusCode}`,
+            );
+            assert.strictEqual(
+              resp.FunctionError,
+              "Unhandled",
+              `InvokeWithError: expected FunctionError=Unhandled for a throwing handler, got ${resp.FunctionError}`,
+            );
+            const body = resp.Payload
+              ? new TextDecoder().decode(resp.Payload)
+              : "";
+            assert.match(
+              body,
+              /errorMessage/,
+              `InvokeWithError: expected payload to contain errorMessage, got ${body}`,
+            );
+          },
+        },
+      ],
+      setup: async (ctx) => {
+        const { lambda } = makeClients(ctx);
+        const name = `${ctx.runId}-fn-invoke-err`;
+        await lambda.send(
+          new CreateFunctionCommand({
+            FunctionName: name,
+            Runtime: RUNTIME,
+            Handler: HANDLER,
+            Role: ROLE_ARN,
+            Code: { ZipFile: makeErrorZipBuffer() },
+            Timeout: 30,
+          }),
+        );
+        await waitFunctionActive(lambda, name);
+        ctx["_lambda_invoke_err_fn"] = name;
+      },
+      teardown: async (ctx) => {
+        const { lambda, logs } = makeClients(ctx);
+        await deleteFunctionAndLogGroup(lambda, logs, `${ctx.runId}-fn-invoke-err`);
       },
     },
 

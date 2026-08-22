@@ -890,6 +890,7 @@ var AllCapabilities = []Capability{
 	{Service: "eventbridge", Operation: "RemoveTargets", Category: "Targets", Status: StatusSupported, Notes: "Removes targets from a rule", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "eventbridge", Operation: "StartReplay", Category: "Replays", Status: StatusUnsupported, Notes: "Returns 501", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "eventbridge", Operation: "TagResource", Category: "Tags", Status: StatusSupported, Notes: "Tag buses and rules", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "eventbridge", Operation: "TestEventPattern", Category: "Rules", Status: StatusSupported, Notes: "Evaluates an event against a pattern with the matcher rule delivery uses; unparseable patterns are InvalidEventPatternException, mandatory envelope fields are not enforced", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "eventbridge", Operation: "UntagResource", Category: "Tags", Status: StatusSupported, Notes: "Removes tags from a resource", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "firehose", Operation: "CreateDeliveryStream", Category: "Delivery Streams", Status: StatusSupported, Notes: "Creates a delivery stream", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "firehose", Operation: "DeleteDeliveryStream", Category: "Delivery Streams", Status: StatusSupported, Notes: "Deletes a delivery stream", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

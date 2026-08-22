@@ -18,6 +18,7 @@ func init() {
 		capabilities.Capability{Service: "eventbridge", Operation: "EnableRule", Category: "Rules", Status: capabilities.StatusSupported, Notes: "Sets rule state to ENABLED"},
 		capabilities.Capability{Service: "eventbridge", Operation: "DisableRule", Category: "Rules", Status: capabilities.StatusSupported, Notes: "Sets rule state to DISABLED"},
 		capabilities.Capability{Service: "eventbridge", Operation: "DeleteRule", Category: "Rules", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "eventbridge", Operation: "TestEventPattern", Category: "Rules", Status: capabilities.StatusSupported, Notes: "Evaluates an event against a pattern with the matcher rule delivery uses; unparseable patterns are InvalidEventPatternException, mandatory envelope fields are not enforced"},
 		// Targets
 		capabilities.Capability{Service: "eventbridge", Operation: "PutTargets", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time"},
 		capabilities.Capability{Service: "eventbridge", Operation: "ListTargetsByRule", Category: "Targets", Status: capabilities.StatusSupported, Notes: "Lists targets including input transformers and ECS/Kinesis/SQS target parameters"},

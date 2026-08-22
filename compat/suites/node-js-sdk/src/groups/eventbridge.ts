@@ -8,6 +8,7 @@
  *   eventbridge-rules         — rule + target lifecycle on the default bus
  *   eventbridge-events        — PutEvents
  *   eventbridge-target-fanout — PutEvents actually reaching a rule's targets
+ *   eventbridge-patterns      — TestEventPattern (stateless, no setup/teardown)
  */
 
 import {
@@ -27,6 +28,7 @@ import {
   DisableRuleCommand,
   TagResourceCommand,
   ListTagsForResourceCommand,
+  TestEventPatternCommand,
   RuleState,
 } from "@aws-sdk/client-eventbridge";
 import {
@@ -449,7 +451,73 @@ export function makeEventBridgeGroups(suite: string): TestGroup[] {
         },
       ],
     },
+
+    // ── eventbridge-patterns ───────────────────────────────────────────────
+    //
+    // TestEventPattern is a pure predicate — it does not touch any
+    // durable resource, so the group needs no setup/teardown.
+    {
+      suite,
+      service: "eventbridge",
+      name: "eventbridge-patterns",
+      tests: [
+        {
+          name: "TestEventPattern",
+          fn: async (ctx) => {
+            const { eventbridge } = makeClients(ctx);
+            const resp = await eventbridge.send(
+              new TestEventPatternCommand({
+                EventPattern: JSON.stringify({
+                  source: ["compat.eventbridge-patterns"],
+                  "detail-type": ["order.created"],
+                }),
+                Event: makePatternEvent(ctx),
+              }),
+            );
+            assert.strictEqual(
+              resp.Result,
+              true,
+              `TestEventPattern: expected Result=true, got ${resp.Result}`,
+            );
+          },
+        },
+        {
+          name: "TestEventPatternNoMatch",
+          op: "TestEventPattern",
+          fn: async (ctx) => {
+            const { eventbridge } = makeClients(ctx);
+            const resp = await eventbridge.send(
+              new TestEventPatternCommand({
+                EventPattern: JSON.stringify({
+                  source: ["compat.eventbridge-patterns.other"],
+                }),
+                Event: makePatternEvent(ctx),
+              }),
+            );
+            assert.strictEqual(
+              resp.Result,
+              false,
+              `TestEventPatternNoMatch: expected Result=false, got ${resp.Result}`,
+            );
+          },
+        },
+      ],
+    },
   ];
+}
+
+/** The shared event used by both eventbridge-patterns tests. */
+function makePatternEvent(ctx: { runId: string; region: string }): string {
+  return JSON.stringify({
+    id: ctx.runId,
+    "detail-type": "order.created",
+    source: "compat.eventbridge-patterns",
+    account: "000000000000",
+    time: "2026-01-01T00:00:00Z",
+    region: ctx.region,
+    resources: [],
+    detail: { orderId: "1" },
+  });
 }
 
 type FanoutCtx = Parameters<NonNullable<TestGroup["setup"]>>[0];

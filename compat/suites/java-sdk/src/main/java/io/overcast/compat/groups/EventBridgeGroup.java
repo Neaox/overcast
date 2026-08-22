@@ -17,7 +17,7 @@ import java.util.Map;
  * EventBridge compatibility test group.
  *
  * <p>Groups: eventbridge-buses, eventbridge-rules, eventbridge-events,
- * eventbridge-target-fanout.
+ * eventbridge-target-fanout, eventbridge-patterns.
  */
 public final class EventBridgeGroup implements ServiceGroup {
 
@@ -51,7 +51,9 @@ public final class EventBridgeGroup implements ServiceGroup {
                 Map.entry("PutEventsBatch",    this::putEventsCustomBus),
                 Map.entry("PutFanoutTargets",              this::putFanoutTargets),
                 Map.entry("PutEventsToQueueTarget",        this::putEventsToQueueTarget),
-                Map.entry("PutEventsWithInputTransformer", this::putEventsWithInputTransformer)
+                Map.entry("PutEventsWithInputTransformer", this::putEventsWithInputTransformer),
+                Map.entry("TestEventPattern",              this::testEventPattern),
+                Map.entry("TestEventPatternNoMatch",       this::testEventPatternNoMatch)
         );
     }
 
@@ -367,6 +369,42 @@ public final class EventBridgeGroup implements ServiceGroup {
             Thread.sleep(100);
         }
         throw new AssertionError("no message containing " + want + " delivered to the target queue");
+    }
+
+    // -- eventbridge-patterns ---------------------------------------------------
+    //
+    // TestEventPattern is stateless — it evaluates a pattern against an event
+    // without touching a bus or rule, so the group needs no setup/teardown.
+
+    private void testEventPattern(TestContext ctx) throws Exception {
+        var resp = eb().testEventPattern(r -> r
+                .eventPattern(patternsMatchingPattern())
+                .event(patternsEvent(ctx)));
+        Assertions.assertNotNull(resp.result(), "TestEventPattern: Result is null");
+        Assertions.assertTrue(resp.result(), "TestEventPattern: expected Result true for a matching pattern");
+    }
+
+    private void testEventPatternNoMatch(TestContext ctx) throws Exception {
+        var resp = eb().testEventPattern(r -> r
+                .eventPattern(patternsNonMatchingPattern())
+                .event(patternsEvent(ctx)));
+        Assertions.assertNotNull(resp.result(), "TestEventPatternNoMatch: Result is null");
+        Assertions.assertFalse(resp.result(), "TestEventPatternNoMatch: expected Result false for a non-matching pattern");
+    }
+
+    private String patternsEvent(TestContext ctx) {
+        return "{\"id\":\"" + ctx.runId() + "\",\"detail-type\":\"order.created\","
+                + "\"source\":\"compat.eventbridge-patterns\",\"account\":\"000000000000\","
+                + "\"time\":\"2026-01-01T00:00:00Z\",\"region\":\"" + ctx.region() + "\","
+                + "\"resources\":[],\"detail\":{\"orderId\":\"1\"}}";
+    }
+
+    private String patternsMatchingPattern() {
+        return "{\"source\":[\"compat.eventbridge-patterns\"],\"detail-type\":[\"order.created\"]}";
+    }
+
+    private String patternsNonMatchingPattern() {
+        return "{\"source\":[\"compat.eventbridge-patterns.other\"]}";
     }
 
     // -- Helpers ---------------------------------------------------------------

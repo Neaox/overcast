@@ -33,6 +33,13 @@ impl AwsClients {
         aws_sdk_dynamodb::Client::from_conf(config)
     }
 
+    pub fn eventbridge(&self) -> aws_sdk_eventbridge::Client {
+        let config = aws_sdk_eventbridge::config::Builder::from(&self.shared_config)
+            .endpoint_url(&self.endpoint)
+            .build();
+        aws_sdk_eventbridge::Client::from_conf(config)
+    }
+
     pub fn kms(&self) -> aws_sdk_kms::Client {
         let config = aws_sdk_kms::config::Builder::from(&self.shared_config)
             .endpoint_url(&self.endpoint)

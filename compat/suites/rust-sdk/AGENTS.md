@@ -26,7 +26,7 @@ Planned coverage (core services only, not full parity with `node-js-sdk`):
 
 ## Status
 
-**Implemented.** Covers 9 AWS services: S3 (7 groups), SQS (4 groups), DynamoDB (6 groups), SNS (3 groups), Lambda (5 groups), STS (2 groups), KMS (3 groups), Secrets Manager (2 groups), SSM (3 groups).
+**Implemented.** Covers 10 AWS services: S3 (7 groups), SQS (4 groups), DynamoDB (6 groups), SNS (3 groups), Lambda (6 groups), STS (2 groups), KMS (3 groups), Secrets Manager (2 groups), SSM (3 groups), EventBridge (1 group).
 
 ---
 

@@ -39,6 +39,8 @@ func EventBridge(c *clients.Clients) ServiceGroup {
 			"PutFanoutTargets":               g.PutFanoutTargets,
 			"PutEventsToQueueTarget":         g.PutEventsToQueueTarget,
 			"PutEventsWithInputTransformer":  g.PutEventsWithInputTransformer,
+			"TestEventPattern":               g.TestEventPattern,
+			"TestEventPatternNoMatch":        g.TestEventPatternNoMatch,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"eventbridge-buses":         g.setupBuses,
@@ -338,6 +340,49 @@ func (g *ebGroup) DeleteRule(ctx context.Context, t *harness.TestContext) error 
 		Name: aws.String(name), EventBusName: aws.String(bus),
 	})
 	return err
+}
+
+// ── eventbridge-patterns ──────────────────────────────────────────────────────
+
+// patternsEvent is the envelope both pattern tests evaluate: every field AWS
+// documents as mandatory for TestEventPattern is present.
+func (g *ebGroup) patternsEvent(t *harness.TestContext) string {
+	return fmt.Sprintf(`{"id":%q,"detail-type":"order.created","source":"compat.eventbridge-patterns",`+
+		`"account":"000000000000","time":"2026-01-01T00:00:00Z","region":%q,"resources":[],"detail":{"orderId":"1"}}`,
+		t.RunID, t.Region)
+}
+
+func (g *ebGroup) testEventPattern(ctx context.Context, t *harness.TestContext, pattern string) (bool, error) {
+	resp, err := g.cl().TestEventPattern(ctx, &eventbridge.TestEventPatternInput{
+		EventPattern: aws.String(pattern),
+		Event:        aws.String(g.patternsEvent(t)),
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.Result, nil
+}
+
+func (g *ebGroup) TestEventPattern(ctx context.Context, t *harness.TestContext) error {
+	matched, err := g.testEventPattern(ctx, t, `{"source":["compat.eventbridge-patterns"],"detail-type":["order.created"]}`)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("TestEventPattern: expected Result=true for a matching pattern, got false")
+	}
+	return nil
+}
+
+func (g *ebGroup) TestEventPatternNoMatch(ctx context.Context, t *harness.TestContext) error {
+	matched, err := g.testEventPattern(ctx, t, `{"source":["compat.eventbridge-patterns.other"]}`)
+	if err != nil {
+		return err
+	}
+	if matched {
+		return fmt.Errorf("TestEventPatternNoMatch: expected Result=false for a non-matching pattern, got true")
+	}
+	return nil
 }
 
 // ── eventbridge-events ────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package eventbridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -55,11 +56,25 @@ func (c *patternCache) matches(pattern string, event map[string]any) bool {
 // eventPatternMatches parses and evaluates a pattern without the cache. It is
 // the uncached reference the cache is tested against.
 func eventPatternMatches(pattern string, event map[string]any) bool {
-	var p map[string]any
-	if json.Unmarshal([]byte(pattern), &p) != nil {
+	p, err := parseEventPattern(pattern)
+	if err != nil {
 		return false
 	}
 	return matchPatternMap(p, event)
+}
+
+// parseEventPattern decodes a pattern document, reporting why it is not one.
+// Rule delivery treats an unparseable pattern as never matching; TestEventPattern
+// surfaces the reason as InvalidEventPatternException instead.
+func parseEventPattern(pattern string) (map[string]any, error) {
+	var p map[string]any
+	if err := json.Unmarshal([]byte(pattern), &p); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errors.New("pattern must be a JSON object")
+	}
+	return p, nil
 }
 
 func matchPatternMap(pattern, event map[string]any) bool {

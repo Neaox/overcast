@@ -48,6 +48,8 @@ func Lambda() ServiceGroup {
 			"DeleteAlias":            g.DeleteAlias,
 			// lambda-invoke-stream
 			"InvokeWithResponseStream": nil, // invoke-with-response-stream is not available in the installed CLI version
+			// lambda-invoke-error
+			"InvokeWithError": g.InvokeWithError,
 			// lambda-layers
 			"PublishLayerVersion": g.PublishLayerVersion,
 			"ListLayers":          g.ListLayers,
@@ -59,6 +61,7 @@ func Lambda() ServiceGroup {
 			"lambda-invoke":        g.setupInvoke,
 			"lambda-aliases":       g.setupAliases,
 			"lambda-invoke-stream": g.setupInvokeStream,
+			"lambda-invoke-error":  g.setupInvokeError,
 			"lambda-layers":        g.setupLayers,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
@@ -67,6 +70,7 @@ func Lambda() ServiceGroup {
 			"lambda-invoke":        g.teardownFunction,
 			"lambda-aliases":       g.teardownFunction,
 			"lambda-invoke-stream": g.teardownFunction,
+			"lambda-invoke-error":  g.teardownFunction,
 			"lambda-layers":        g.teardownLayers,
 		},
 	}
@@ -97,6 +101,21 @@ func (g *lambdaGroup) lambdaZipFile(t *harness.TestContext) (string, error) {
 def handler(event, context):
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 `
+	return g.writeLambdaZip(fmt.Sprintf("lambda-%s.zip", t.RunID), code)
+}
+
+// lambdaErrorZipFile writes a Python handler that raises on every invocation;
+// lambda-invoke-error proves the failure surfaces the way AWS reports it.
+func (g *lambdaGroup) lambdaErrorZipFile(t *harness.TestContext) (string, error) {
+	code := `def handler(event, context):
+    raise RuntimeError("compat: intentional failure")
+`
+	return g.writeLambdaZip(fmt.Sprintf("lambda-err-%s.zip", t.RunID), code)
+}
+
+// writeLambdaZip zips code as index.py under filename in the temp dir and
+// returns the file path.
+func (g *lambdaGroup) writeLambdaZip(filename, code string) (string, error) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	f, err := w.Create("index.py")
@@ -109,7 +128,7 @@ def handler(event, context):
 	if err := w.Close(); err != nil {
 		return "", err
 	}
-	path := filepath.Join(os.TempDir(), fmt.Sprintf("lambda-%s.zip", t.RunID))
+	path := filepath.Join(os.TempDir(), filename)
 	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
 		return "", err
 	}
@@ -721,5 +740,60 @@ func (g *lambdaGroup) teardownLayers(_ context.Context, t *harness.TestContext) 
 		"--version-number", ver,
 	)
 	os.Remove(filepath.Join(os.TempDir(), fmt.Sprintf("layer-%s.zip", t.RunID)))
+	return nil
+}
+
+// ─── lambda-invoke-error ─────────────────────────────────────────────────────
+
+func (g *lambdaGroup) setupInvokeError(_ context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("%s-lmbd-inverr", t.RunID)
+	t.Set("fn_name", name)
+	zipPath, err := g.lambdaErrorZipFile(t)
+	if err != nil {
+		return fmt.Errorf("lambda setupInvokeError: %w", err)
+	}
+	_, err = awscli.RunOutput(t.Endpoint, t.Region,
+		"lambda", "create-function",
+		"--function-name", name,
+		"--runtime", "python3.12",
+		"--role", g.fakeRoleARN(t),
+		"--handler", "index.handler",
+		"--zip-file", fmt.Sprintf("fileb://%s", zipPath),
+		"--timeout", "30",
+	)
+	return err
+}
+
+// InvokeWithError proves a handler failure is reported the way AWS reports
+// it: `lambda invoke` itself succeeds with StatusCode 200, FunctionError names
+// the failure class, and the payload file carries the error document.
+func (g *lambdaGroup) InvokeWithError(_ context.Context, t *harness.TestContext) error {
+	if err := g.waitFunctionActive(t); err != nil {
+		return err
+	}
+	outFile := filepath.Join(os.TempDir(), fmt.Sprintf("invoke-err-%s.json", t.RunID))
+	defer os.Remove(outFile)
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"lambda", "invoke",
+		"--function-name", g.currentFnName(t),
+		"--payload", `{}`,
+		outFile,
+	)
+	if err != nil {
+		return err
+	}
+	if code, _ := out["StatusCode"].(float64); code != 200 {
+		return fmt.Errorf("InvokeWithError: expected StatusCode 200, got %v", out["StatusCode"])
+	}
+	if fe, _ := out["FunctionError"].(string); fe != "Unhandled" {
+		return fmt.Errorf("InvokeWithError: expected FunctionError=Unhandled for a raising handler, got %q in %v", fe, out)
+	}
+	body, err := os.ReadFile(outFile)
+	if err != nil {
+		return fmt.Errorf("InvokeWithError: read payload: %w", err)
+	}
+	if !strings.Contains(string(body), "errorMessage") {
+		return fmt.Errorf("InvokeWithError: expected an error document in the payload, got %s", body)
+	}
 	return nil
 }

@@ -5,6 +5,7 @@ import io.overcast.compat.harness.Assertions;
 import io.overcast.compat.harness.TestContext;
 import io.overcast.compat.harness.TestFn;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.lambda.LambdaAsyncClient;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -22,7 +23,7 @@ import java.util.zip.ZipOutputStream;
  * Lambda compatibility test group.
  *
  * <p>Groups: lambda-crud, lambda-invoke (docker-gated), lambda-aliases,
- * lambda-layers.
+ * lambda-layers, lambda-invoke-error (docker-gated).
  */
 public final class LambdaGroup implements ServiceGroup {
 
@@ -35,6 +36,7 @@ public final class LambdaGroup implements ServiceGroup {
     private LambdaClient lambda() { return clients.lambda(); }
     private SqsClient sqs() { return clients.sqs(); }
     private LambdaAsyncClient lambdaAsync() { return clients.lambdaAsync(); }
+    private CloudWatchLogsClient logs() { return clients.cloudWatchLogs(); }
 
     @Override
     public Map<String, TestFn> impls() {
@@ -52,6 +54,7 @@ public final class LambdaGroup implements ServiceGroup {
                 Map.entry("InvokeSync",                 this::invokeSync),
                 Map.entry("InvokeAsync",                this::invokeAsync),
                 Map.entry("InvokeWithResponseStream", this::invokeWithResponseStream),
+                Map.entry("InvokeWithError",            this::invokeWithError),
                 Map.entry("PublishVersion",             this::publishVersion),
                 Map.entry("ListVersionsByFunction",     this::listVersionsByFunction),
                 Map.entry("CreateAlias",                this::createAlias),
@@ -73,7 +76,8 @@ public final class LambdaGroup implements ServiceGroup {
                 Map.entry("lambda-invoke",  this::setupInvoke),
                 Map.entry("lambda-aliases", this::setupAliases),
                 Map.entry("lambda-invoke-stream", this::setupInvokeStream),
-                Map.entry("lambda-layers",         this::setupLayers)
+                Map.entry("lambda-layers",         this::setupLayers),
+                Map.entry("lambda-invoke-error",   this::setupInvokeError)
         );
     }
 
@@ -85,7 +89,8 @@ public final class LambdaGroup implements ServiceGroup {
                 Map.entry("lambda-invoke",  ctx -> deleteFunctionSilently(ctx.getString("lambdaInvokeName"))),
                 Map.entry("lambda-aliases", ctx -> deleteFunctionSilently(ctx.getString("lambdaAliasFuncName"))),
                 Map.entry("lambda-invoke-stream", ctx -> deleteFunctionSilently(ctx.getString("lambdaStreamName"))),
-                Map.entry("lambda-layers",         ctx -> deleteLayerVersionSilently(ctx.getString("lambdaLayerName"), ctx.<Long>get("lambdaLayerVersion")))
+                Map.entry("lambda-layers",         ctx -> deleteLayerVersionSilently(ctx.getString("lambdaLayerName"), ctx.<Long>get("lambdaLayerVersion"))),
+                Map.entry("lambda-invoke-error",   ctx -> deleteFunctionAndLogGroupSilently(ctx.getString("lambdaInvokeErrName")))
         );
     }
 
@@ -308,6 +313,34 @@ public final class LambdaGroup implements ServiceGroup {
                 handler).join();
     }
 
+    // ── lambda-invoke-error ─────────────────────────────────────────────────────
+
+    private void setupInvokeError(TestContext ctx) throws Exception {
+        String name = ctx.runId() + "-laminverr";
+        lambda().createFunction(r -> r
+                .functionName(name)
+                .runtime(Runtime.NODEJS20_X)
+                .role("arn:aws:iam::000000000000:role/lambda-role")
+                .handler("index.handler")
+                .code(fc -> fc.zipFile(throwingNodeZip())));
+        ctx.set("lambdaInvokeErrName", name);
+    }
+
+    private void invokeWithError(TestContext ctx) throws Exception {
+        String name = ctx.getString("lambdaInvokeErrName");
+        // Nothing else in this group has waited for the function yet — same
+        // cold-start race as InvokeDryRun in lambda-invoke.
+        awaitFunctionActive(name);
+        var resp = lambda().invoke(r -> r.functionName(name)
+                .invocationType(InvocationType.REQUEST_RESPONSE)
+                .payload(SdkBytes.fromUtf8String("{}")));
+        Assertions.assertEquals(200, resp.statusCode(), "InvokeWithError: statusCode");
+        Assertions.assertNotBlank(resp.functionError(), "InvokeWithError: FunctionError");
+        Assertions.assertEquals("Unhandled", resp.functionError(), "InvokeWithError: FunctionError");
+        String body = resp.payload() == null ? "" : resp.payload().asUtf8String();
+        Assertions.assertContains(body, "errorMessage", "InvokeWithError: response payload");
+    }
+
     // ── lambda-aliases ────────────────────────────────────────────────────────
 
     private void setupAliases(TestContext ctx) throws Exception {
@@ -418,9 +451,36 @@ public final class LambdaGroup implements ServiceGroup {
         }
     }
 
+    /**
+     * Returns a minimal Node.js Lambda ZIP whose handler throws unconditionally,
+     * for the {@code lambda-invoke-error} group's InvokeWithError test.
+     */
+    static SdkBytes throwingNodeZip() {
+        try {
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            try (ZipOutputStream zip = new ZipOutputStream(buf)) {
+                ZipEntry entry = new ZipEntry("index.js");
+                zip.putNextEntry(entry);
+                byte[] js = "exports.handler = async () => { throw new Error(\"compat: intentional failure\"); };"
+                        .getBytes(StandardCharsets.UTF_8);
+                zip.write(js);
+                zip.closeEntry();
+            }
+            return SdkBytes.fromByteArray(buf.toByteArray());
+        } catch (Exception e) {
+            throw new RuntimeException("failed to build throwing Lambda ZIP", e);
+        }
+    }
+
     private void deleteFunctionSilently(String name) {
         if (name == null) return;
         try { lambda().deleteFunction(r -> r.functionName(name)); } catch (Exception ignored) {}
+    }
+
+    private void deleteFunctionAndLogGroupSilently(String name) {
+        if (name == null) return;
+        try { lambda().deleteFunction(r -> r.functionName(name)); } catch (Exception ignored) {}
+        try { logs().deleteLogGroup(r -> r.logGroupName("/aws/lambda/" + name)); } catch (Exception ignored) {}
     }
 
     private void deleteLayerVersionSilently(String name, Long version) {

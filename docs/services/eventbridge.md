@@ -103,7 +103,7 @@ same-process target delivery.
 | Category    | ✅ Supported | ❌ Unsupported |
 | ----------- | ------------ | -------------- |
 | Event buses | 4            |                |
-| Rules       | 6            |                |
+| Rules       | 7            |                |
 | Targets     | 3            |                |
 | Events      | 1            |                |
 | Tags        | 3            |                |
@@ -126,14 +126,15 @@ same-process target delivery.
 
 ### Rules
 
-| Operation      | Status       | Notes                       | AWS Docs                                                                                  |
-| -------------- | ------------ | --------------------------- | ----------------------------------------------------------------------------------------- |
-| `PutRule`      | ✅ Supported | Creates or updates a rule   | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutRule.html)      |
-| `DescribeRule` | ✅ Supported |                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeRule.html) |
-| `ListRules`    | ✅ Supported | Lists rules for a bus       | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListRules.html)    |
-| `EnableRule`   | ✅ Supported | Sets rule state to ENABLED  | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_EnableRule.html)   |
-| `DisableRule`  | ✅ Supported | Sets rule state to DISABLED | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DisableRule.html)  |
-| `DeleteRule`   | ✅ Supported |                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteRule.html)   |
+| Operation          | Status       | Notes                                                                                                                                                                       | AWS Docs                                                                                      |
+| ------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `PutRule`          | ✅ Supported | Creates or updates a rule                                                                                                                                                   | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutRule.html)          |
+| `DescribeRule`     | ✅ Supported |                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeRule.html)     |
+| `ListRules`        | ✅ Supported | Lists rules for a bus                                                                                                                                                       | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListRules.html)        |
+| `EnableRule`       | ✅ Supported | Sets rule state to ENABLED                                                                                                                                                  | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_EnableRule.html)       |
+| `DisableRule`      | ✅ Supported | Sets rule state to DISABLED                                                                                                                                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DisableRule.html)      |
+| `DeleteRule`       | ✅ Supported |                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteRule.html)       |
+| `TestEventPattern` | ✅ Supported | Evaluates an event against a pattern with the matcher rule delivery uses; unparseable patterns are InvalidEventPatternException, mandatory envelope fields are not enforced | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_TestEventPattern.html) |
 
 ### Targets
 

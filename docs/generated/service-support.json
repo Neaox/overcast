@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1452,
+  "total_ops": 1453,
   "services": [
     {
       "service": "s3",
@@ -4771,8 +4771,8 @@
     {
       "service": "eventbridge",
       "display_name": "EventBridge",
-      "total_ops": 28,
-      "implemented_ops": 17,
+      "total_ops": 29,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateEventBus",
@@ -4830,6 +4830,12 @@
           "operation": "DeleteRule",
           "category": "Rules",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "TestEventPattern",
+          "category": "Rules",
+          "status": "✅ Supported",
+          "notes": "Evaluates an event against a pattern with the matcher rule delivery uses; unparseable patterns are InvalidEventPatternException, mandatory envelope fields are not enforced"
         },
         {
           "operation": "PutTargets",

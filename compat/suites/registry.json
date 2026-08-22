@@ -744,6 +744,19 @@
     },
     {
       "service": "lambda",
+      "name": "lambda-invoke-error",
+      "tests": [
+        {
+          "name": "InvokeWithError",
+          "op": "Invoke",
+          "requires": [
+            "docker"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "lambda",
       "name": "lambda-aliases",
       "tests": [
         {
@@ -1908,6 +1921,19 @@
           "depends": [
             "RemoveTargets"
           ]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
+      "name": "eventbridge-patterns",
+      "tests": [
+        {
+          "name": "TestEventPattern"
+        },
+        {
+          "name": "TestEventPatternNoMatch",
+          "op": "TestEventPattern"
         }
       ]
     },

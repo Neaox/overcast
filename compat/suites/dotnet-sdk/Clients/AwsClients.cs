@@ -1,5 +1,6 @@
 using Amazon;
 using Amazon.DynamoDBv2;
+using Amazon.EventBridge;
 using Amazon.IdentityManagement;
 using Amazon.KeyManagementService;
 using Amazon.Lambda;
@@ -20,6 +21,7 @@ public sealed class AwsClients
     private readonly AWSCredentials _credentials = new BasicAWSCredentials("test", "test");
 
     private AmazonDynamoDBClient? _dynamodb;
+    private AmazonEventBridgeClient? _eventbridge;
     private AmazonIdentityManagementServiceClient? _iam;
     private AmazonKeyManagementServiceClient? _kms;
     private AmazonLambdaClient? _lambda;
@@ -47,6 +49,11 @@ public sealed class AwsClients
     public AmazonDynamoDBClient DynamoDB()
     {
         return _dynamodb ??= CreateClient((creds, cfg) => new AmazonDynamoDBClient(creds, (AmazonDynamoDBConfig)cfg), new AmazonDynamoDBConfig());
+    }
+
+    public AmazonEventBridgeClient EventBridge()
+    {
+        return _eventbridge ??= CreateClient((creds, cfg) => new AmazonEventBridgeClient(creds, (AmazonEventBridgeConfig)cfg), new AmazonEventBridgeConfig());
     }
 
     public AmazonIdentityManagementServiceClient IAM()
