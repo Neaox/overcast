@@ -1,6 +1,11 @@
 # Service metrics platform plan (Lambda pilot)
 
-> **Status:** proposed
+> **Status:** proposed — adopted as backlog work 2026-08-22, tracked by
+> [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100;
+> phase 1 = the Lambda pilot below). Cost/benefit recorded there: Overcast already
+> evaluates CloudWatch alarms but no service emits the metrics they watch, so
+> configured alarms silently never fire — the §2.1 "shape 2" divergence. Not yet
+> started; nothing in `internal/metrics` exists.
 >
 > **Scope:** an AWS-shaped metrics substrate shared by every emulated service,
 > delivered first for Lambda and designed for subsequent SQS, SNS, and service
