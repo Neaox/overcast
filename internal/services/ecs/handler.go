@@ -278,35 +278,20 @@ func validateFargateCPUMemory(cpu, memory string) error {
 
 // CreateCluster handles AmazonEC2ContainerServiceV20141113.CreateCluster.
 func (h *Handler) CreateCluster(w http.ResponseWriter, r *http.Request) {
-	h.ensureBuiltinProviders(r.Context())
-	var req struct {
-		ClusterName                     string                         `json:"clusterName"`
-		CapacityProviders               []string                       `json:"capacityProviders"`
-		DefaultCapacityProviderStrategy []CapacityProviderStrategyItem `json:"defaultCapacityProviderStrategy"`
-	}
+	// Delegates to createClusterTyped (typed_logic.go) so the legacy
+	// JSON1.1 path and the CBOR typed path share one implementation — the
+	// legacy copy previously re-implemented this inline and silently
+	// ignored tags (#1196).
+	var req createClusterRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.ClusterName == "" {
-		req.ClusterName = "default"
-	}
-	c := &Cluster{
-		ClusterName:                       req.ClusterName,
-		ClusterArn:                        h.clusterARN(r.Context(), req.ClusterName),
-		Status:                            "ACTIVE",
-		RegisteredContainerInstancesCount: 0,
-		RunningTasksCount:                 0,
-		PendingTasksCount:                 0,
-		ActiveServicesCount:               0,
-		CapacityProviders:                 req.CapacityProviders,
-		DefaultCapacityProviderStrategy:   req.DefaultCapacityProviderStrategy,
-	}
-	if aerr := h.store.putCluster(r.Context(), c); aerr != nil {
+	resp, aerr := h.createClusterTyped(r.Context(), &req)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.ECSClusterCreated, events.ResourcePayload{Name: c.ClusterName})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": c}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"cluster": resp.Cluster}, "application/x-amz-json-1.1")
 }
 
 // DescribeClusters handles AmazonEC2ContainerServiceV20141113.DescribeClusters.

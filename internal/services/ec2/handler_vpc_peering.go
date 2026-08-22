@@ -44,6 +44,7 @@ type xmlVpcPeeringConnection struct {
 	RequesterVpcInfo       xmlVpcPeeringVpcInfo `xml:"requesterVpcInfo"`
 	AccepterVpcInfo        xmlVpcPeeringVpcInfo `xml:"accepterVpcInfo"`
 	Status                 xmlVpcPeeringStatus  `xml:"status"`
+	TagSet                 []xmlTag             `xml:"tagSet>item,omitempty"`
 }
 
 type xmlVpcPeeringVpcInfo struct {
@@ -98,6 +99,15 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	tags := parseTagSpecifications(r, "vpc-peering-connection")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a connection behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	region := h.store.region(ctx)
 	ownerID := h.cfg.AccountID
 
@@ -126,11 +136,17 @@ func (h *Handler) CreateVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, pcxID, tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateVpcPeeringConnectionResponse{
 		Xmlns:                ec2XMLNS,
 		RequestID:            protocol.RequestIDFromContext(ctx),
-		VpcPeeringConnection: pcxToXML(pcx),
+		VpcPeeringConnection: pcxToXML(pcx, tags),
 	})
 }
 
@@ -174,10 +190,15 @@ func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	tags, aerr := h.store.getTags(ctx, pcxID)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAcceptVpcPeeringConnectionResponse{
 		Xmlns:                ec2XMLNS,
 		RequestID:            protocol.RequestIDFromContext(ctx),
-		VpcPeeringConnection: pcxToXML(pcx),
+		VpcPeeringConnection: pcxToXML(pcx, sortedTags(tags)),
 	})
 }
 
@@ -201,12 +222,18 @@ func (h *Handler) describeVpcPeeringConnections(ctx context.Context, q describeQ
 		return nil, aerr
 	}
 
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	items := make([]xmlVpcPeeringConnection, 0, len(all))
 	for _, pcx := range all {
 		if !requested.has(pcx.VpcPeeringConnectionID) || !filters.matches(pcx) {
 			continue
 		}
-		items = append(items, pcxToXML(pcx))
+		tags, _ := tagsView.keep(pcx.VpcPeeringConnectionID)
+		items = append(items, pcxToXML(pcx, tags))
 	}
 
 	return &xmlDescribeVpcPeeringConnectionsResponse{
@@ -270,7 +297,7 @@ func (h *Handler) DeleteVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-func pcxToXML(pcx *VpcPeeringConnection) xmlVpcPeeringConnection {
+func pcxToXML(pcx *VpcPeeringConnection, tags []Tag) xmlVpcPeeringConnection {
 	return xmlVpcPeeringConnection{
 		VpcPeeringConnectionID: pcx.VpcPeeringConnectionID,
 		RequesterVpcInfo: xmlVpcPeeringVpcInfo{
@@ -289,5 +316,6 @@ func pcxToXML(pcx *VpcPeeringConnection) xmlVpcPeeringConnection {
 			Code:    pcx.Status.Code,
 			Message: pcx.Status.Message,
 		},
+		TagSet: xmlTagsOf(tags),
 	}
 }

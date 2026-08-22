@@ -104,6 +104,7 @@ type CreateUserPoolReq struct {
 	EmailVerificationMessage    string                           `json:"EmailVerificationMessage" cbor:"EmailVerificationMessage"`
 	EmailVerificationSubject    string                           `json:"EmailVerificationSubject" cbor:"EmailVerificationSubject"`
 	LambdaConfig                *LambdaConfig                    `json:"LambdaConfig" cbor:"LambdaConfig"`
+	UserPoolTags                map[string]string                `json:"UserPoolTags" cbor:"UserPoolTags"`
 }
 
 type UpdateUserPoolReq struct {
@@ -1490,10 +1491,15 @@ func (s *Service) CreateUserPoolTyped(ctx context.Context, req *CreateUserPoolRe
 	if aerr := validateTierForSignInPolicy(req.UserPoolTier, req.Policies); aerr != nil {
 		return nil, aerr
 	}
+	// Validated before the pool is written (#1196) — a rejected create
+	// leaves no user pool behind.
+	if aerr := serviceutil.ValidateTags(cognitoTagCfg, req.UserPoolTags); aerr != nil {
+		return nil, aerr
+	}
 	region := s.region(ctx)
 	poolID := region + "_" + generatePoolSuffix()
 	arn := fmt.Sprintf("arn:aws:cognito-idp:%s:%s:userpool/%s", region, s.cfg.AccountID, poolID)
-	pool := &UserPool{ID: poolID, Name: req.PoolName, ARN: arn, CreatedAt: s.clk.Now(), UserPoolTier: effectiveTierValue(req.UserPoolTier), UsernameAttributes: req.UsernameAttributes, AliasAttributes: req.AliasAttributes}
+	pool := &UserPool{ID: poolID, Name: req.PoolName, ARN: arn, CreatedAt: s.clk.Now(), UserPoolTier: effectiveTierValue(req.UserPoolTier), UsernameAttributes: req.UsernameAttributes, AliasAttributes: req.AliasAttributes, Tags: req.UserPoolTags}
 	if v := req.VerificationMessageTemplate; v != nil {
 		opt := v.DefaultEmailOption
 		if opt == "" {

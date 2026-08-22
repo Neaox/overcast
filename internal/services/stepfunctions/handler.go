@@ -10,7 +10,6 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
@@ -107,90 +106,22 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 }
 
 func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name                 string         `json:"name"`
-		Definition           string         `json:"definition"`
-		RoleArn              string         `json:"roleArn"`
-		Type                 string         `json:"type"`
-		LoggingConfiguration map[string]any `json:"loggingConfiguration"`
-		TracingConfiguration map[string]any `json:"tracingConfiguration"`
-	}
+	// Delegates to createStateMachineTyped (typed_logic.go) so the legacy
+	// JSON1.0/1.1 path and the CBOR typed path share one implementation —
+	// the legacy copy previously re-implemented this inline and silently
+	// ignored tags (#1196).
+	var req createStateMachineRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidName",
-			Message:    "Value null at 'name' failed to satisfy constraint",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	// AWS validates the ASL before it looks at anything else, so a malformed
-	// definition is InvalidDefinition rather than a state machine that
-	// provisions and then cannot run.
-	if aerr := validateDefinitionForCreate(req.Definition); aerr != nil {
+	resp, aerr := h.createStateMachineTyped(r.Context(), &req)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	// Check for duplicate: AWS CreateStateMachine is idempotent when the name,
-	// definition, roleArn, and type all match the existing state machine.
-	existing, err := h.store.GetStateMachine(r.Context(), req.Name)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-	if existing != nil {
-		smType := req.Type
-		if smType == "" {
-			smType = "STANDARD"
-		}
-		if existing.Definition == req.Definition && existing.RoleArn == req.RoleArn && existing.Type == smType {
-			// Idempotent create — return existing ARN.
-			protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-				"stateMachineArn": existing.ARN,
-				"creationDate":    float64(existing.CreatedAt.UnixMilli()) / 1000.0,
-			})
-			return
-		}
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "StateMachineAlreadyExists",
-			Message:    fmt.Sprintf("State Machine Already Exists: '%s'", req.Name),
-			HTTPStatus: http.StatusConflict,
-		})
-		return
-	}
-
-	smType := req.Type
-	if smType == "" {
-		smType = "STANDARD"
-	}
-
-	now := h.clk.Now()
-	arn := protocol.ARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "states", "stateMachine:"+req.Name)
-	sm := &StateMachine{
-		Name:                 req.Name,
-		ARN:                  arn,
-		Definition:           req.Definition,
-		RoleArn:              req.RoleArn,
-		Type:                 smType,
-		Status:               "ACTIVE",
-		CreatedAt:            now,
-		LoggingConfiguration: req.LoggingConfiguration,
-		TracingConfiguration: req.TracingConfiguration,
-	}
-
-	if err := h.store.PutStateMachine(r.Context(), sm); err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-
-	h.publish(r, events.SFNStateMachineCreated, events.ResourcePayload{Name: req.Name})
-
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"stateMachineArn": arn,
-		"creationDate":    float64(now.UnixMilli()) / 1000.0,
+		"stateMachineArn": resp.StateMachineArn,
+		"creationDate":    resp.CreationDate,
 	})
 }
 

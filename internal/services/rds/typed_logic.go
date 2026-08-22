@@ -9,6 +9,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ─── Request types ──────────────────────────────────────────────────────────
@@ -31,7 +32,8 @@ type createDBInstanceReq struct {
 	// false, it is "it depends" — see defaultPubliclyAccessible. A plain bool
 	// would make an omitted parameter indistinguishable from
 	// `PubliclyAccessible=false` and so make the default unreachable.
-	PubliclyAccessible *bool `json:"PubliclyAccessible"`
+	PubliclyAccessible *bool                 `json:"PubliclyAccessible"`
+	Tags               []serviceutil.TagPair `json:"Tags"`
 }
 
 type describeDBInstancesReq struct {
@@ -76,10 +78,11 @@ type modifyDBInstanceReq struct {
 }
 
 type createDBSubnetGroupReq struct {
-	DBSubnetGroupName        string   `json:"DBSubnetGroupName"`
-	DBSubnetGroupDescription string   `json:"DBSubnetGroupDescription"`
-	SubnetIds                []string `json:"SubnetIds"`
-	VpcId                    string   `json:"VpcId"`
+	DBSubnetGroupName        string                `json:"DBSubnetGroupName"`
+	DBSubnetGroupDescription string                `json:"DBSubnetGroupDescription"`
+	SubnetIds                []string              `json:"SubnetIds"`
+	VpcId                    string                `json:"VpcId"`
+	Tags                     []serviceutil.TagPair `json:"Tags"`
 }
 
 type deleteDBSubnetGroupReq struct {
@@ -132,6 +135,7 @@ type createDBClusterReq struct {
 	DeletionProtection                *bool                              `json:"DeletionProtection"`
 	EnableCloudwatchLogsExports       []string                           `json:"EnableCloudwatchLogsExports"`
 	CloudwatchLogsExportConfiguration *cloudwatchLogsExportConfiguration `json:"CloudwatchLogsExportConfiguration"`
+	Tags                              []serviceutil.TagPair              `json:"Tags"`
 }
 
 type describeDBClustersReq struct {
@@ -263,6 +267,13 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		return nil, errDBInstanceAlreadyExists(id)
 	}
 
+	// Validated before the instance is written (#1196) — a rejected create
+	// leaves no instance behind.
+	incomingTags := serviceutil.TagsFromList(req.Tags)
+	if aerr := serviceutil.ValidateTags(rdsTagCfg, incomingTags); aerr != nil {
+		return nil, aerr
+	}
+
 	instanceClass := req.DBInstanceClass
 	if instanceClass == "" {
 		instanceClass = "db.t3.micro"
@@ -354,6 +365,11 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 
 	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
 		return nil, aerr
+	}
+	if len(incomingTags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.store.tags(), arn, incomingTags, rdsTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	// Before the container starts, not after: the alias set the container is
@@ -762,6 +778,13 @@ func (h *Handler) createDBSubnetGroupTyped(ctx context.Context, req *createDBSub
 		return nil, errInvalidParameterValue("At least one SubnetId is required")
 	}
 
+	// Validated before the subnet group is written (#1196) — a rejected
+	// create leaves no subnet group behind.
+	incomingTags := serviceutil.TagsFromList(req.Tags)
+	if aerr := serviceutil.ValidateTags(rdsTagCfg, incomingTags); aerr != nil {
+		return nil, aerr
+	}
+
 	vpcId := req.VpcId
 	if vpcId == "" && h.vpcResolver != nil && len(subnetIds) > 0 {
 		vpcId = h.vpcResolver.VpcIDForSubnet(ctx, subnetIds[0])
@@ -784,6 +807,11 @@ func (h *Handler) createDBSubnetGroupTyped(ctx context.Context, req *createDBSub
 
 	if aerr := h.store.putDBSubnetGroup(ctx, sg); aerr != nil {
 		return nil, aerr
+	}
+	if len(incomingTags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.store.tags(), arn, incomingTags, rdsTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	if h.bus != nil {
@@ -1046,6 +1074,13 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 		return nil, errDBClusterAlreadyExists(id)
 	}
 
+	// Validated before the cluster is written (#1196) — a rejected create
+	// leaves no cluster behind.
+	incomingTags := serviceutil.TagsFromList(req.Tags)
+	if aerr := serviceutil.ValidateTags(rdsTagCfg, incomingTags); aerr != nil {
+		return nil, aerr
+	}
+
 	engineVersion := req.EngineVersion
 	if engineVersion == "" {
 		engineVersion = defaultEngineVersions[engine]
@@ -1103,6 +1138,11 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 
 	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
+	}
+	if len(incomingTags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.store.tags(), arn, incomingTags, rdsTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	clID := id

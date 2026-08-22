@@ -61,9 +61,23 @@ type xmlDetachInternetGatewayResponse struct {
 
 // CreateInternetGateway creates a new internet gateway.
 func (h *Handler) CreateInternetGateway(w http.ResponseWriter, r *http.Request) {
+	tags := parseTagSpecifications(r, "internet-gateway")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a gateway behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	igwID := fmt.Sprintf("igw-%s", shortID())
 	igw := &InternetGateway{InternetGatewayID: igwID}
 	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), igwID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -73,6 +87,7 @@ func (h *Handler) CreateInternetGateway(w http.ResponseWriter, r *http.Request) 
 		RequestID: protocol.RequestIDFromContext(r.Context()),
 		InternetGateway: xmlInternetGateway{
 			InternetGatewayID: igwID,
+			TagSet:            xmlTagsOf(tags),
 		},
 	})
 }

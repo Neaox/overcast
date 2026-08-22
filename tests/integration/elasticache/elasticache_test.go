@@ -270,6 +270,62 @@ func TestCreateReplicationGroup_success(t *testing.T) {
 	assert.Contains(t, out.Result.ReplicationGroup.ARN, "test-rg")
 }
 
+// TestCreateReplicationGroup_tagsAppliedAtCreate: Tags passed to
+// CreateReplicationGroup (issue #1196, Axis B) must be stored and readable
+// via ListTagsForResource immediately, without a follow-up
+// AddTagsToResource call.
+func TestCreateReplicationGroup_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := cacheQuery(t, srv, "CreateReplicationGroup", url.Values{
+		"ReplicationGroupId":          []string{"tags-at-create-rg"},
+		"ReplicationGroupDescription": []string{"test"},
+		"Tags.Tag.1.Key":              []string{"env"},
+		"Tags.Tag.1.Value":            []string{"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	list := cacheQuery(t, srv, "ListTagsForResource", url.Values{
+		"ResourceName": []string{"arn:aws:elasticache:us-east-1:000000000000:replicationgroup:tags-at-create-rg"},
+	})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Result struct {
+			TagList struct {
+				Tags []struct {
+					Key   string `xml:"Key"`
+					Value string `xml:"Value"`
+				} `xml:"Tag"`
+			} `xml:"TagList"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, list, &out)
+	if len(out.Result.TagList.Tags) != 1 || out.Result.TagList.Tags[0].Key != "env" || out.Result.TagList.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", out.Result.TagList.Tags)
+	}
+}
+
+// TestCreateReplicationGroup_invalidTagRejected: an invalid tag passed to
+// CreateReplicationGroup must be rejected before the group is created.
+func TestCreateReplicationGroup_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := cacheQuery(t, srv, "CreateReplicationGroup", url.Values{
+		"ReplicationGroupId":          []string{"tags-rejected-rg"},
+		"ReplicationGroupDescription": []string{"test"},
+		"Tags.Tag.1.Key":              []string{"aws:reserved"},
+		"Tags.Tag.1.Value":            []string{"x"},
+	})
+	defer resp.Body.Close()
+	assertQueryXMLError(t, resp, "InvalidParameterValue")
+
+	desc := cacheQuery(t, srv, "DescribeReplicationGroups", url.Values{
+		"ReplicationGroupId": []string{"tags-rejected-rg"},
+	})
+	defer desc.Body.Close()
+	assertQueryXMLError(t, desc, "ReplicationGroupNotFoundFault")
+}
+
 func TestCreateCacheCluster_valkey(t *testing.T) {
 	// Given: valkey is a valid ElastiCache engine (same Redis-compatible protocol)
 	srv := helpers.NewTestServer(t)

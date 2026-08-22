@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"unicode"
@@ -140,6 +141,103 @@ func TestCreateUserPool_success(t *testing.T) {
 	}
 	if result.UserPool.Arn == "" {
 		t.Error("expected UserPool.Arn to be set")
+	}
+}
+
+// TestCreateUserPool_tagsAppliedAtCreate: UserPoolTags passed to
+// CreateUserPool (issue #1196, Axis B) must be stored and readable via
+// ListTagsForResource immediately, without a follow-up TagResource call.
+// CreateUserPool used to model no UserPoolTags request member at all — the
+// legacy JSON1.1 handler and the CBOR typed path were also two independent
+// implementations, so both are covered here.
+func TestCreateUserPool_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := cognitoCall(t, srv, "CreateUserPool", map[string]any{
+		"PoolName":     "tagged-at-create",
+		"UserPoolTags": map[string]string{"env": "prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var created struct {
+		UserPool struct {
+			Arn string `json:"Arn"`
+		} `json:"UserPool"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	list := cognitoCall(t, srv, "ListTagsForResource", map[string]any{"ResourceArn": created.UserPool.Arn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if out.Tags["env"] != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateUserPoolCBOR_tagsAppliedAtCreate is
+// TestCreateUserPool_tagsAppliedAtCreate over the CBOR typed path.
+func TestCreateUserPoolCBOR_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := cognitoCBORCall(t, srv, "CreateUserPool", map[string]any{
+		"PoolName":     "tagged-at-create-cbor",
+		"UserPoolTags": map[string]string{"env": "prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read CBOR response: %v", err)
+	}
+	var created struct {
+		UserPool struct {
+			Arn string `cbor:"Arn"`
+		} `cbor:"UserPool"`
+	}
+	if err := cborlib.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal CBOR response: %v", err)
+	}
+
+	list := cognitoCall(t, srv, "ListTagsForResource", map[string]any{"ResourceArn": created.UserPool.Arn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if out.Tags["env"] != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateUserPool_invalidTagRejected: an invalid tag passed to
+// CreateUserPool must be rejected before the pool is created.
+func TestCreateUserPool_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := cognitoCall(t, srv, "CreateUserPool", map[string]any{
+		"PoolName":     "tags-rejected",
+		"UserPoolTags": map[string]string{"aws:reserved": "x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	list := cognitoCall(t, srv, "ListUserPools", map[string]any{"MaxResults": 10})
+	defer list.Body.Close()
+	var out struct {
+		UserPools []struct {
+			Name string `json:"Name"`
+		} `json:"UserPools"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	for _, p := range out.UserPools {
+		if p.Name == "tags-rejected" {
+			t.Error("tags-rejected pool should not have been created")
+		}
 	}
 }
 

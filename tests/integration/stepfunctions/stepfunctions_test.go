@@ -6,6 +6,7 @@ package stepfunctions_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -76,6 +77,106 @@ func TestCreateStateMachine_success(t *testing.T) {
 	if result.StateMachineArn == "" {
 		t.Error("expected stateMachineArn to be set")
 	}
+}
+
+// TestCreateStateMachine_tagsAppliedAtCreate: tags passed to
+// CreateStateMachine (issue #1196, Axis B) must be stored and readable via
+// ListTagsForResource immediately, without a follow-up TagResource call.
+// CreateStateMachine used to model no tags request member at all — the
+// legacy JSON1.0/1.1 handler and the CBOR typed path were also two
+// independent implementations, so both are covered here.
+func TestCreateStateMachine_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := sfnCall(t, srv, "CreateStateMachine", map[string]any{
+		"name":       "tagged-at-create",
+		"type":       "EXPRESS",
+		"definition": testDefinition,
+		"roleArn":    "arn:aws:iam::000000000000:role/test-role",
+		"tags":       []map[string]string{{"key": "env", "value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var created struct {
+		StateMachineArn string `json:"stateMachineArn"`
+	}
+	helpers.DecodeJSON(t, resp, &created)
+
+	list := sfnCall(t, srv, "ListTagsForResource", map[string]any{"resourceArn": created.StateMachineArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateStateMachineCBOR_tagsAppliedAtCreate is
+// TestCreateStateMachine_tagsAppliedAtCreate over the CBOR typed path.
+func TestCreateStateMachineCBOR_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := sfnCBORCall(t, srv, "CreateStateMachine", map[string]any{
+		"name":       "tagged-at-create-cbor",
+		"type":       "EXPRESS",
+		"definition": testDefinition,
+		"roleArn":    "arn:aws:iam::000000000000:role/test-role",
+		"tags":       []map[string]string{{"key": "env", "value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read CBOR response: %v", err)
+	}
+	var created struct {
+		StateMachineArn string `cbor:"stateMachineArn"`
+	}
+	if err := cbor.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal CBOR response: %v", err)
+	}
+
+	list := sfnCall(t, srv, "ListTagsForResource", map[string]any{"resourceArn": created.StateMachineArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestCreateStateMachine_invalidTagRejected: an invalid tag passed to
+// CreateStateMachine must be rejected before the state machine is created.
+func TestCreateStateMachine_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := sfnCall(t, srv, "CreateStateMachine", map[string]any{
+		"name":       "tags-rejected",
+		"type":       "EXPRESS",
+		"definition": testDefinition,
+		"roleArn":    "arn:aws:iam::000000000000:role/test-role",
+		"tags":       []map[string]string{{"key": "aws:reserved", "value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	desc := sfnCall(t, srv, "DescribeStateMachine", map[string]any{
+		"stateMachineArn": "arn:aws:states:us-east-1:000000000000:stateMachine:tags-rejected",
+	})
+	defer desc.Body.Close()
+	helpers.AssertStatus(t, desc, http.StatusBadRequest)
 }
 
 func TestRPCv2CBOR_StateMachineLifecycle(t *testing.T) {

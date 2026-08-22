@@ -28,8 +28,9 @@ type workGroupNameReq struct {
 }
 
 type createWorkGroupReq struct {
-	Name        string `json:"Name" cbor:"Name"`
-	Description string `json:"Description" cbor:"Description"`
+	Name        string      `json:"Name" cbor:"Name"`
+	Description string      `json:"Description" cbor:"Description"`
+	Tags        []athenaTag `json:"Tags" cbor:"Tags"`
 }
 
 type startQueryExecResp struct {
@@ -127,7 +128,14 @@ func (s *Service) createWorkGroupTyped(ctx context.Context, req *createWorkGroup
 			Code: "InvalidRequestException", Message: "Name is required", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description}
+	tags := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(athenaTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
+	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description, Tags: tags}
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {
 		return nil, protocol.ErrInternalError
 	}

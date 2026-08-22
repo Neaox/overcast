@@ -54,6 +54,96 @@ func listRDSTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]s
 	return tags
 }
 
+// TestCreateDBInstance_tagsAppliedAtCreate: Tags passed to CreateDBInstance
+// (issue #1196, Axis B) must be stored and readable via ListTagsForResource
+// immediately, without a follow-up AddTagsToResource call.
+func TestCreateDBInstance_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := rdsQuery(t, srv, "CreateDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"tags-at-create-db"},
+		"DBInstanceClass":      []string{"db.t3.micro"},
+		"Engine":               []string{"mysql"},
+		"MasterUsername":       []string{"admin"},
+		"MasterUserPassword":   []string{"Password1!"},
+		"AllocatedStorage":     []string{"20"},
+		"Tags.Tag.1.Key":       []string{"env"},
+		"Tags.Tag.1.Value":     []string{"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	arn := "arn:aws:rds:us-east-1:000000000000:db:tags-at-create-db"
+	tags := listRDSTags(t, srv, arn)
+	assert.Equal(t, map[string]string{"env": "prod"}, tags)
+}
+
+// TestCreateDBInstance_invalidTagRejected: an invalid tag passed to
+// CreateDBInstance must be rejected before the instance is created.
+func TestCreateDBInstance_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := rdsQuery(t, srv, "CreateDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"tags-rejected-db"},
+		"DBInstanceClass":      []string{"db.t3.micro"},
+		"Engine":               []string{"mysql"},
+		"MasterUsername":       []string{"admin"},
+		"MasterUserPassword":   []string{"Password1!"},
+		"AllocatedStorage":     []string{"20"},
+		"Tags.Tag.1.Key":       []string{"aws:reserved"},
+		"Tags.Tag.1.Value":     []string{"x"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertQueryXMLError(t, resp, "InvalidParameterValue")
+
+	desc := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
+		"DBInstanceIdentifier": []string{"tags-rejected-db"},
+	})
+	defer desc.Body.Close()
+	helpers.AssertQueryXMLError(t, desc, "DBInstanceNotFound")
+}
+
+// TestCreateDBCluster_tagsAppliedAtCreate is TestCreateDBInstance_tagsAppliedAtCreate
+// for CreateDBCluster.
+func TestCreateDBCluster_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := rdsQuery(t, srv, "CreateDBCluster", url.Values{
+		"DBClusterIdentifier": []string{"tags-at-create-cluster"},
+		"Engine":              []string{"aurora-mysql"},
+		"MasterUsername":      []string{"admin"},
+		"MasterUserPassword":  []string{"Password1!"},
+		"Tags.Tag.1.Key":      []string{"env"},
+		"Tags.Tag.1.Value":    []string{"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	arn := "arn:aws:rds:us-east-1:000000000000:cluster:tags-at-create-cluster"
+	tags := listRDSTags(t, srv, arn)
+	assert.Equal(t, map[string]string{"env": "prod"}, tags)
+}
+
+// TestCreateDBSubnetGroup_tagsAppliedAtCreate is
+// TestCreateDBInstance_tagsAppliedAtCreate for CreateDBSubnetGroup.
+func TestCreateDBSubnetGroup_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := rdsQuery(t, srv, "CreateDBSubnetGroup", url.Values{
+		"DBSubnetGroupName":        []string{"tags-at-create-sg"},
+		"DBSubnetGroupDescription": []string{"test"},
+		"SubnetIds.member.1":       []string{"subnet-00000000"},
+		"Tags.Tag.1.Key":           []string{"env"},
+		"Tags.Tag.1.Value":         []string{"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	arn := "arn:aws:rds:us-east-1:000000000000:subgrp:tags-at-create-sg"
+	tags := listRDSTags(t, srv, arn)
+	assert.Equal(t, map[string]string{"env": "prod"}, tags)
+}
+
 // TestAddTagsToResource_sdkWireForm sends the exact query keys the AWS
 // CLI/SDKs produce: the RDS model gives TagList's member the locationName
 // "Tag", so tags arrive as Tags.Tag.N.Key / Tags.Tag.N.Value — never

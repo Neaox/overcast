@@ -22,6 +22,7 @@ type xmlCreateKeyPairResponse struct {
 	KeyFingerprint string   `xml:"keyFingerprint"`
 	KeyMaterial    string   `xml:"keyMaterial"`
 	KeyPairID      string   `xml:"keyPairId"`
+	TagSet         []xmlTag `xml:"tagSet>item,omitempty"`
 }
 
 type xmlDescribeKeyPairsResponse struct {
@@ -32,9 +33,10 @@ type xmlDescribeKeyPairsResponse struct {
 }
 
 type xmlKeyPairItem struct {
-	KeyName        string `xml:"keyName"`
-	KeyFingerprint string `xml:"keyFingerprint"`
-	KeyPairID      string `xml:"keyPairId"`
+	KeyName        string   `xml:"keyName"`
+	KeyFingerprint string   `xml:"keyFingerprint"`
+	KeyPairID      string   `xml:"keyPairId"`
+	TagSet         []xmlTag `xml:"tagSet>item,omitempty"`
 }
 
 type xmlDeleteKeyPairResponse struct {
@@ -85,6 +87,15 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags := parseTagSpecifications(r, "key-pair")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a key pair behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	fingerprint, material := h.keyMaterialFor()
 	kpID := fmt.Sprintf("key-%s", shortID())
 
@@ -98,6 +109,13 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources. Keyed by
+	// KeyName, matching deleteKeyPair's existing tag cleanup.
+	if aerr := h.putResourceTags(r.Context(), keyName, tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateKeyPairResponse{
 		Xmlns:          ec2XMLNS,
@@ -106,6 +124,7 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 		KeyFingerprint: fingerprint,
 		KeyMaterial:    material,
 		KeyPairID:      kpID,
+		TagSet:         xmlTagsOf(tags),
 	})
 }
 
@@ -128,15 +147,22 @@ func (h *Handler) describeKeyPairs(ctx context.Context, q describeQuery) (*xmlDe
 		return nil, aerr
 	}
 
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	items := make([]xmlKeyPairItem, 0, len(all))
 	for _, kp := range all {
 		if !requested.has(kp.KeyName) || !filters.matches(kp) {
 			continue
 		}
+		tags, _ := tagsView.keep(kp.KeyName)
 		items = append(items, xmlKeyPairItem{
 			KeyName:        kp.KeyName,
 			KeyFingerprint: kp.KeyFingerprint,
 			KeyPairID:      kp.KeyPairID,
+			TagSet:         xmlTagsOf(tags),
 		})
 	}
 

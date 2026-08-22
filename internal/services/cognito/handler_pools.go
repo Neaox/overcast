@@ -1,7 +1,6 @@
 package cognito
 
 import (
-	"fmt"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -12,116 +11,25 @@ import (
 )
 
 // createUserPool — CreateUserPool.
+//
+// Delegates to CreateUserPoolTyped (typed_logic.go) so the legacy
+// JSON1.0/1.1 path and the CBOR typed path share one implementation — the
+// legacy copy previously re-implemented this inline and, like the typed
+// path, modeled no UserPoolTags request member at all (#1196).
 func (s *Service) createUserPool(w http.ResponseWriter, r *http.Request) {
-	log := s.log.WithRecorder(r.Context())
-	var req struct {
-		PoolName                    string                           `json:"PoolName"`
-		UserPoolTier                string                           `json:"UserPoolTier"`
-		VerificationMessageTemplate *verificationMessageTemplateWire `json:"VerificationMessageTemplate"`
-		AdminCreateUserConfig       *adminCreateUserConfigWire       `json:"AdminCreateUserConfig"`
-		EmailConfiguration          *emailConfigurationWire          `json:"EmailConfiguration"`
-		UserAttributeUpdateSettings *userAttributeUpdateSettingsWire `json:"UserAttributeUpdateSettings"`
-		DeviceConfiguration         *DeviceConfiguration             `json:"DeviceConfiguration"`
-		UsernameAttributes          []string                         `json:"UsernameAttributes"`
-		AliasAttributes             []string                         `json:"AliasAttributes"`
-		Policies                    *userPoolPoliciesWire            `json:"Policies"`
-		AccountRecoverySetting      *AccountRecoverySetting          `json:"AccountRecoverySetting"`
-		SmsConfiguration            *SmsConfiguration                `json:"SmsConfiguration"`
-		SmsAuthenticationMessage    string                           `json:"SmsAuthenticationMessage"`
-		SmsVerificationMessage      string                           `json:"SmsVerificationMessage"`
-		EmailVerificationMessage    string                           `json:"EmailVerificationMessage"`
-		EmailVerificationSubject    string                           `json:"EmailVerificationSubject"`
-		LambdaConfig                *LambdaConfig                    `json:"LambdaConfig"`
-	}
+	var req CreateUserPoolReq
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !serviceutil.RequireString(w, r, req.PoolName, "PoolName") {
 		return
 	}
-	if aerr := validateUserPoolPolicies(req.Policies); aerr != nil {
+	resp, aerr := s.CreateUserPoolTyped(r.Context(), &req)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if aerr := validateUserPoolTier(req.UserPoolTier); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if aerr := validateTierForSignInPolicy(req.UserPoolTier, req.Policies); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	region := s.region(r.Context())
-	poolID := region + "_" + generatePoolSuffix()
-	arn := fmt.Sprintf("arn:aws:cognito-idp:%s:%s:userpool/%s", region, s.cfg.AccountID, poolID)
-	pool := &UserPool{ID: poolID, Name: req.PoolName, ARN: arn, CreatedAt: s.clk.Now(), UserPoolTier: effectiveTierValue(req.UserPoolTier), UsernameAttributes: req.UsernameAttributes, AliasAttributes: req.AliasAttributes}
-
-	if v := req.VerificationMessageTemplate; v != nil {
-		opt := v.DefaultEmailOption
-		if opt == "" {
-			opt = "CONFIRM_WITH_CODE"
-		}
-		pool.VerificationMessageTemplate = &VerificationMessageTemplate{
-			DefaultEmailOption: opt,
-			EmailMessage:       v.EmailMessage,
-			EmailMessageByLink: v.EmailMessageByLink,
-			EmailSubject:       v.EmailSubject,
-			EmailSubjectByLink: v.EmailSubjectByLink,
-			SmsMessage:         v.SmsMessage,
-		}
-	}
-	if a := req.AdminCreateUserConfig; a != nil {
-		validityDays := a.UnusedAccountValidityDays
-		if validityDays == 0 {
-			validityDays = 7 // AWS default
-		}
-		cfg := &AdminCreateUserConfig{
-			AllowAdminCreateUserOnly:  a.AllowAdminCreateUserOnly,
-			UnusedAccountValidityDays: validityDays,
-		}
-		if t := a.InviteMessageTemplate; t != nil {
-			cfg.InviteMessageTemplate = &InviteMessageTemplate{
-				EmailMessage: t.EmailMessage,
-				EmailSubject: t.EmailSubject,
-				SMSMessage:   t.SMSMessage,
-			}
-		}
-		pool.AdminCreateUserConfig = cfg
-	}
-	if e := req.EmailConfiguration; e != nil {
-		pool.EmailConfiguration = &EmailConfiguration{
-			EmailSendingAccount: e.EmailSendingAccount,
-			SourceArn:           e.SourceArn,
-			From:                e.From,
-			ReplyToEmailAddress: e.ReplyToEmailAddress,
-		}
-	}
-	if aerr := applyUserAttributeUpdateSettings(pool, req.UserAttributeUpdateSettings); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if req.DeviceConfiguration != nil {
-		pool.DeviceConfiguration = req.DeviceConfiguration
-	}
-	if req.Policies != nil {
-		pool.Policies = mergeUserPoolPolicies(nil, req.Policies)
-	}
-	pool.AccountRecoverySetting = req.AccountRecoverySetting
-	pool.SmsConfiguration = req.SmsConfiguration
-	pool.SmsAuthenticationMessage = req.SmsAuthenticationMessage
-	pool.SmsVerificationMessage = req.SmsVerificationMessage
-	pool.EmailVerificationMessage = req.EmailVerificationMessage
-	pool.EmailVerificationSubject = req.EmailVerificationSubject
-	pool.LambdaConfig = req.LambdaConfig
-
-	if err := s.savePool(r.Context(), pool); err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-	log.Info("user pool created", zap.String("poolId", poolID), zap.String("name", req.PoolName))
-	s.publish(r, events.CognitoUserPoolCreated, events.ResourcePayload{Name: req.PoolName, ARN: arn})
-	s.writeJSON(w, r, http.StatusOK, map[string]any{"UserPool": toUserPoolWire(pool)})
+	s.writeJSON(w, r, http.StatusOK, map[string]any{"UserPool": resp.UserPool})
 }
 
 // describeUserPool — DescribeUserPool.

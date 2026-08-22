@@ -118,88 +118,22 @@ func (h *Handler) toHistoryWire(rec *ParameterRecord, v ParameterVersion, versio
 
 // PutParameter creates or overwrites a parameter.
 func (h *Handler) PutParameter(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name           string `json:"Name"`
-		Value          string `json:"Value"`
-		Type           string `json:"Type"`
-		Description    string `json:"Description"`
-		Tier           string `json:"Tier"`
-		DataType       string `json:"DataType"`
-		AllowedPattern string `json:"AllowedPattern"`
-		Policies       string `json:"Policies"`
-		Overwrite      bool   `json:"Overwrite"`
-	}
+	// Delegates to putParameterTyped (typed_logic.go) so the legacy
+	// JSON1.0/1.1 path and the CBOR typed path share one implementation —
+	// the legacy copy previously re-implemented this inline and silently
+	// ignored Tags (#1196).
+	var req putParameterRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Name"))
+	resp, aerr := h.putParameterTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if req.Value == "" {
-		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Value"))
-		return
-	}
-	if req.Type == "" {
-		req.Type = "String"
-	}
-
-	ctx := r.Context()
-	existing, err := h.store.Get(ctx, req.Name)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if existing != nil && !req.Overwrite {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ParameterAlreadyExists",
-			Message:    fmt.Sprintf("Parameter %s already exists.", req.Name),
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	var rec *ParameterRecord
-	if existing != nil {
-		rec = existing
-	} else {
-		rec = &ParameterRecord{
-			Name: req.Name,
-			Tags: map[string]string{},
-		}
-	}
-	applyPutParameterFields(rec, putParameterFields{
-		Description:    req.Description,
-		Tier:           req.Tier,
-		DataType:       req.DataType,
-		AllowedPattern: req.AllowedPattern,
-		Policies:       req.Policies,
-	})
-	rec.Versions = append(rec.Versions, ParameterVersion{
-		Value:     req.Value,
-		Type:      req.Type,
-		CreatedAt: h.clk.Now(),
-	})
-
-	if err := h.store.Put(ctx, rec); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	if h.bus != nil {
-		evType := events.SSMParameterCreated
-		if existing != nil {
-			evType = events.SSMParameterUpdated
-		}
-		h.bus.Publish(ctx, events.Event{
-			Type: evType, Time: h.clk.Now(), Source: "ssm",
-			Payload: events.ResourcePayload{Name: req.Name, ARN: h.paramARN(req.Name)},
-		})
-	}
-
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
-		"Version": rec.Version(),
-		"Tier":    rec.Tier,
+		"Version": resp.Version,
+		"Tier":    resp.Tier,
 	}, "application/x-amz-json-1.1")
 }
 

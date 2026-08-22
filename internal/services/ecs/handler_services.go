@@ -73,159 +73,20 @@ func (h *Handler) addServiceEventAt(svc *ecsService, msg string, occurredAt time
 
 // CreateService handles AmazonEC2ContainerServiceV20141113.CreateService.
 func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Cluster                  string                         `json:"cluster"`
-		ServiceName              string                         `json:"serviceName"`
-		TaskDefinition           string                         `json:"taskDefinition"`
-		DesiredCount             *int                           `json:"desiredCount"`
-		LaunchType               string                         `json:"launchType"`
-		SchedulingStrategy       string                         `json:"schedulingStrategy"`
-		NetworkConfiguration     *NetworkConfiguration          `json:"networkConfiguration"`
-		DeploymentController     *DeploymentController          `json:"deploymentController"`
-		DeploymentConfiguration  *DeploymentConfiguration       `json:"deploymentConfiguration"`
-		CapacityProviderStrategy []CapacityProviderStrategyItem `json:"capacityProviderStrategy"`
-		LoadBalancers            []ServiceLoadBalancer          `json:"loadBalancers"`
-		PlatformVersion          string                         `json:"platformVersion"`
-
-		HealthCheckGracePeriodSeconds *int              `json:"healthCheckGracePeriodSeconds"`
-		EnableExecuteCommand          bool              `json:"enableExecuteCommand"`
-		PropagateTags                 string            `json:"propagateTags"`
-		ServiceRegistries             []ServiceRegistry `json:"serviceRegistries"`
-		PlacementStrategy             []PlacementItem   `json:"placementStrategy"`
-		PlacementConstraints          []PlacementItem   `json:"placementConstraints"`
-	}
+	// Delegates to createServiceTyped (typed_logic.go) so the legacy
+	// JSON1.1 path and the CBOR typed path share one implementation — the
+	// legacy copy previously re-implemented this inline and silently
+	// ignored tags (#1196).
+	var req createServiceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-	if req.SchedulingStrategy == "" {
-		req.SchedulingStrategy = "REPLICA"
-	}
-	if req.DeploymentController == nil {
-		req.DeploymentController = &DeploymentController{Type: "ECS"}
-	}
-
-	clusterName := extractClusterName(req.Cluster)
-
-	// Validate cluster exists.
-	cluster, aerr := h.store.getCluster(r.Context(), clusterName)
+	resp, aerr := h.createServiceTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	// Validate service name.
-	if req.ServiceName == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "1 validation error detected: Value at 'serviceName' failed to satisfy constraint: Member must not be null",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	// Validate task definition.
-	if req.TaskDefinition == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "taskDefinition must be specified when creating a service.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	family, revision, hasRevision := parseTaskDefRef(req.TaskDefinition)
-	var td *TaskDefinition
-	if hasRevision {
-		td, aerr = h.store.getTaskDefinition(r.Context(), family, revision)
-	} else {
-		td, aerr = h.store.getLatestTaskDefinition(r.Context(), family)
-	}
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// awsvpc networking is required by the task definition's networkMode, so
-	// this can only be checked once the task definition has been resolved.
-	if aerr := validateAwsvpcNetworkConfiguration(td, req.LaunchType, req.NetworkConfiguration); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if _, placementErr := h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
-		protocol.WriteJSONError(w, r, placementErr)
-		return
-	}
-
-	// Check for duplicate.
-	existing, _ := h.store.getService(r.Context(), clusterName, req.ServiceName)
-	if existing != nil && existing.Status == "ACTIVE" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "Creation of service was not idempotent.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	desired := 0
-	if req.DesiredCount != nil {
-		desired = *req.DesiredCount
-	}
-
-	// Determine platform version.
-	platformVersion := req.PlatformVersion
-	if platformVersion == "" && req.LaunchType == "FARGATE" {
-		platformVersion = "LATEST"
-	}
-
-	now := h.clk.Now().Unix()
-
-	svc := &ecsService{
-		ServiceName:              req.ServiceName,
-		ServiceArn:               h.serviceARN(r.Context(), clusterName, req.ServiceName),
-		ClusterArn:               cluster.ClusterArn,
-		TaskDefinition:           td.TaskDefinitionArn,
-		DesiredCount:             desired,
-		RunningCount:             0,
-		PendingCount:             0,
-		Status:                   "ACTIVE",
-		LaunchType:               req.LaunchType,
-		CreatedAt:                now,
-		SchedulingStrategy:       req.SchedulingStrategy,
-		NetworkConfiguration:     req.NetworkConfiguration,
-		DeploymentController:     req.DeploymentController,
-		DeploymentConfiguration:  req.DeploymentConfiguration,
-		LoadBalancers:            req.LoadBalancers,
-		CapacityProviderStrategy: req.CapacityProviderStrategy,
-
-		HealthCheckGracePeriodSeconds: req.HealthCheckGracePeriodSeconds,
-		EnableExecuteCommand:          req.EnableExecuteCommand,
-		PropagateTags:                 req.PropagateTags,
-		ServiceRegistries:             req.ServiceRegistries,
-		PlacementStrategy:             req.PlacementStrategy,
-		PlacementConstraints:          req.PlacementConstraints,
-		PlatformVersion:               platformVersion,
-		Events:                        make([]ServiceEvent, 0),
-		Deployments:                   []Deployment{newPrimaryDeployment(td.TaskDefinitionArn, desired, now, platformVersion, req.NetworkConfiguration, req.DeploymentController)},
-	}
-
-	if aerr := h.store.putService(r.Context(), clusterName, svc); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Reconcile: start tasks to match desired count.
-	h.reconcile(r.Context(), clusterName, req.ServiceName)
-
-	// Re-read service with updated counts.
-	svc, _ = h.store.getService(r.Context(), clusterName, req.ServiceName)
-
-	h.publish(r, events.ECSServiceCreated, events.ResourcePayload{Name: req.ServiceName})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": resp.Service}, "application/x-amz-json-1.1")
 }
 
 // UpdateService handles AmazonEC2ContainerServiceV20141113.UpdateService.

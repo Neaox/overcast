@@ -19,6 +19,7 @@ type createClusterRequest struct {
 	ClusterName                     string                         `json:"clusterName" cbor:"clusterName"`
 	CapacityProviders               []string                       `json:"capacityProviders" cbor:"capacityProviders"`
 	DefaultCapacityProviderStrategy []CapacityProviderStrategyItem `json:"defaultCapacityProviderStrategy" cbor:"defaultCapacityProviderStrategy"`
+	Tags                            []Tag                          `json:"tags" cbor:"tags"`
 }
 
 type describeClustersRequest struct {
@@ -211,6 +212,7 @@ type createServiceRequest struct {
 	ServiceRegistries             []ServiceRegistry `json:"serviceRegistries" cbor:"serviceRegistries"`
 	PlacementStrategy             []PlacementItem   `json:"placementStrategy" cbor:"placementStrategy"`
 	PlacementConstraints          []PlacementItem   `json:"placementConstraints" cbor:"placementConstraints"`
+	Tags                          []Tag             `json:"tags" cbor:"tags"`
 }
 
 type updateServiceRequest struct {
@@ -555,6 +557,11 @@ func (h *Handler) createClusterTyped(ctx context.Context, req *createClusterRequ
 	if req.ClusterName == "" {
 		req.ClusterName = "default"
 	}
+	// Validated before the cluster is written (#1196) — a rejected create
+	// leaves no cluster behind.
+	if aerr := serviceutil.ValidateTags(ecsTagCfg, tagMap(req.Tags)); aerr != nil {
+		return nil, aerr
+	}
 	c := &Cluster{
 		ClusterName:                       req.ClusterName,
 		ClusterArn:                        h.clusterARN(ctx, req.ClusterName),
@@ -568,6 +575,11 @@ func (h *Handler) createClusterTyped(ctx context.Context, req *createClusterRequ
 	}
 	if aerr := h.store.putCluster(ctx, c); aerr != nil {
 		return nil, aerr
+	}
+	if len(req.Tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.tagStore(), h.tagKey(ctx, c.ClusterArn), tagMap(req.Tags), ecsTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSClusterCreated, Payload: events.ResourcePayload{Name: c.ClusterName}})
@@ -934,6 +946,11 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 			Code: "InvalidParameterException", Message: "taskDefinition must be specified when creating a service.", HTTPStatus: http.StatusBadRequest,
 		}
 	}
+	// Validated before the service is written (#1196) — a rejected create
+	// leaves no service behind.
+	if aerr := serviceutil.ValidateTags(ecsTagCfg, tagMap(req.Tags)); aerr != nil {
+		return nil, aerr
+	}
 	family, revision, hasRevision := parseTaskDefRef(req.TaskDefinition)
 	var td *TaskDefinition
 	if hasRevision {
@@ -997,6 +1014,11 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 	}
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
 		return nil, aerr
+	}
+	if len(req.Tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.tagStore(), h.tagKey(ctx, svc.ServiceArn), tagMap(req.Tags), ecsTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 	h.reconcile(ctx, clusterName, req.ServiceName)
 	svc, _ = h.store.getService(ctx, clusterName, req.ServiceName)
