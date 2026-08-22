@@ -75,6 +75,15 @@ go run ./cmd/compat --format agent
 go run ./cmd/compat --suite go-sdk --format json
 ```
 
+Run only one deterministic shard of the registry's test groups (`i/n`,
+1-based `i`) — useful for splitting a slow suite across parallel CI jobs.
+Group→shard assignment is a stable hash of the group name, so shard `2/4`
+always means the same groups, on any machine, run after run:
+
+```bash
+go run ./cmd/compat --shard 2/4 --format json
+```
+
 Target an instance you are already running (nothing is started or stopped for
 you):
 
