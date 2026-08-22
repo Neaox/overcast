@@ -13,6 +13,20 @@
 # on (the PR is CONFLICTING before the wait or by the time it ended, closed, or
 # no checks appeared), 8 pending (or the head moved while watching, making the
 # result stale).
+#
+# In a top-level session, run it in the BACKGROUND so its single completion
+# notification is the only thing the conversation gets.
+#
+# If you are a SUBAGENT, do NOT do that. A stopped subagent is re-invoked only
+# when a live tracked child completes, and this script routinely exits in
+# seconds (bad argument, `gh` auth hiccup, a PR that had already settled, its
+# own exit 2) -- the child is dead before your turn ends, the wake never comes,
+# and you are stranded owing a final report. Either run it in the FOREGROUND and
+# block (bounded by `gh pr checks --watch`'s own timeout), or skip the wait
+# entirely: once `gh pr merge <n> --squash --auto` is armed, auto-merge
+# completes the PR unattended and there is nothing to wait for. A subagent's
+# correct terminal state is "auto-merge armed, and one FOREGROUND
+# `gh pr checks <n>` shows no FAILED required check -> report and exit".
 
 $ErrorActionPreference = "Stop"
 
