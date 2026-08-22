@@ -47,16 +47,17 @@ type ecDeleteCacheClusterReq struct {
 }
 
 type ecCreateReplicationGroupReq struct {
-	ReplicationGroupId          string `json:"ReplicationGroupId"`
-	ReplicationGroupDescription string `json:"ReplicationGroupDescription"`
-	CacheNodeType               string `json:"CacheNodeType"`
-	Engine                      string `json:"Engine"`
-	EngineVersion               string `json:"EngineVersion"`
-	AutomaticFailoverEnabled    string `json:"AutomaticFailoverEnabled"`
-	MultiAZEnabled              string `json:"MultiAZEnabled"`
-	SnapshotRetentionLimit      int    `json:"SnapshotRetentionLimit"`
-	PrimaryClusterId            string `json:"PrimaryClusterId"`
-	CacheSubnetGroupName        string `json:"CacheSubnetGroupName"`
+	ReplicationGroupId          string  `json:"ReplicationGroupId"`
+	ReplicationGroupDescription string  `json:"ReplicationGroupDescription"`
+	CacheNodeType               string  `json:"CacheNodeType"`
+	Engine                      string  `json:"Engine"`
+	EngineVersion               string  `json:"EngineVersion"`
+	AutomaticFailoverEnabled    string  `json:"AutomaticFailoverEnabled"`
+	MultiAZEnabled              string  `json:"MultiAZEnabled"`
+	SnapshotRetentionLimit      int     `json:"SnapshotRetentionLimit"`
+	PrimaryClusterId            string  `json:"PrimaryClusterId"`
+	CacheSubnetGroupName        string  `json:"CacheSubnetGroupName"`
+	Tags                        []ecTag `json:"Tags"`
 }
 
 type ecDescribeReplicationGroupsReq struct {
@@ -690,8 +691,21 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 	if req.PrimaryClusterId != "" {
 		rg.MemberClusters = []string{req.PrimaryClusterId}
 	}
+	// Create-time tags are validated before anything is written, so a
+	// rejected tag set fails the create rather than leaving a replication
+	// group that exists with the tags the caller asked for missing. Mirrors
+	// the cache-cluster and serverless-cache create paths (#1196).
+	tags := ecTagsToMap(req.Tags)
+	if aerr := serviceutil.ValidateTags(cacheTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := h.store.putReplicationGroup(ctx, rg); aerr != nil {
 		return nil, aerr
+	}
+	if len(tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(ctx, h.store.tags(), arn, tags, cacheTagCfg); aerr != nil {
+			return nil, aerr
+		}
 	}
 	rgID := req.ReplicationGroupId
 	if h.dockerReady.Load() {

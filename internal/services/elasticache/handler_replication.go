@@ -12,6 +12,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ── XML types for replication groups ────────────────────────────────────────
@@ -157,9 +158,25 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		rg.MemberClusters = []string{primaryClusterID}
 	}
 
+	// Create-time tags are validated before anything is written, so a
+	// rejected tag set fails the create rather than leaving a replication
+	// group that exists with the tags the caller asked for missing. Mirrors
+	// the cache-cluster and serverless-cache create paths (#1196).
+	tags := formTags(r)
+	if aerr := serviceutil.ValidateTags(cacheTagCfg, tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	if aerr := h.store.putReplicationGroup(r.Context(), rg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
+	}
+	if len(tags) > 0 {
+		if _, aerr := serviceutil.ApplyStoreTags(r.Context(), h.store.tags(), arn, tags, cacheTagCfg); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
 	}
 
 	rgID := id

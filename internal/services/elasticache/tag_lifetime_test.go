@@ -12,6 +12,10 @@ import (
 	"context"
 	"testing"
 
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -129,6 +133,50 @@ func TestDelete_takesTagsWithIt(t *testing.T) {
 				t.Fatalf("stored tag blobs = %d, want 0 after the delete", got)
 			}
 		})
+	}
+}
+
+// TestCreateReplicationGroupTyped_tagsAppliedAtCreate exercises the CBOR
+// typed path directly (issue #1196, Axis B): createReplicationGroupTyped
+// used to be a second, independent implementation of CreateReplicationGroup
+// that ignored Tags entirely, alongside the Query-XML handler's own copy.
+func TestCreateReplicationGroupTyped_tagsAppliedAtCreate(t *testing.T) {
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
+	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
+	ctx := context.Background()
+
+	if _, aerr := s.handler.createReplicationGroupTyped(ctx, &ecCreateReplicationGroupReq{
+		ReplicationGroupId: "typed-tagged-rg",
+		Tags:               []ecTag{{Key: "env", Value: "prod"}},
+	}); aerr != nil {
+		t.Fatalf("createReplicationGroupTyped: %v", aerr)
+	}
+
+	tags, aerr := s.handler.store.tags().Load(ctx, "arn:aws:elasticache:us-east-1:000000000000:replicationgroup:typed-tagged-rg")
+	if aerr != nil {
+		t.Fatalf("load tags: %v", aerr)
+	}
+	if tags["env"] != "prod" {
+		t.Errorf("tags = %v, want env=prod", tags)
+	}
+}
+
+// TestCreateReplicationGroupTyped_invalidTagRejected: an invalid tag must be
+// rejected before the group is created.
+func TestCreateReplicationGroupTyped_invalidTagRejected(t *testing.T) {
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
+	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
+	ctx := context.Background()
+
+	_, aerr := s.handler.createReplicationGroupTyped(ctx, &ecCreateReplicationGroupReq{
+		ReplicationGroupId: "typed-rejected-rg",
+		Tags:               []ecTag{{Key: "aws:reserved", Value: "x"}},
+	})
+	if aerr == nil {
+		t.Fatal("expected tag validation to reject the create")
+	}
+	if _, notFoundErr := s.handler.store.getReplicationGroup(ctx, "typed-rejected-rg"); notFoundErr == nil {
+		t.Fatal("rejected create must leave no replication group behind")
 	}
 }
 
