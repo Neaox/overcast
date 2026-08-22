@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -184,18 +185,20 @@ func (h *Handler) AcceptVpcPeeringConnection(w http.ResponseWriter, r *http.Requ
 
 // DescribeVpcPeeringConnections lists peering connections, optionally filtered.
 func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := vpcPeeringFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "VpcPeeringConnectionId")
+	resp, aerr := h.describeVpcPeeringConnections(r.Context(), requestQuery(r, "VpcPeeringConnectionId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	ctx := r.Context()
+func (h *Handler) describeVpcPeeringConnections(ctx context.Context, q describeQuery) (*xmlDescribeVpcPeeringConnectionsResponse, *protocol.AWSError) {
+	filters, aerr := vpcPeeringFilters.parse(q.filters)
+	if aerr != nil {
+		return nil, aerr
+	}
+	requested := q.ids
+
 	all, aerr := h.store.listVpcPeeringConnections(ctx)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlVpcPeeringConnection, 0, len(all))
@@ -206,11 +209,11 @@ func (h *Handler) DescribeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 		items = append(items, pcxToXML(pcx))
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpcPeeringConnectionsResponse{
+	return &xmlDescribeVpcPeeringConnectionsResponse{
 		Xmlns:                   ec2XMLNS,
 		RequestID:               protocol.RequestIDFromContext(ctx),
 		VpcPeeringConnectionSet: items,
-	})
+	}, nil
 }
 
 // ── DeleteVpcPeeringConnection ───────────────────────────────────────────────

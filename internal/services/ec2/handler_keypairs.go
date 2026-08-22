@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/xml"
@@ -112,17 +113,20 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 // DescribeKeyPairs lists key pairs, optionally selected by KeyName.N or
 // filtered.
 func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := keyPairFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "KeyName")
+	resp, aerr := h.describeKeyPairs(r.Context(), requestQuery(r, "KeyName"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listKeyPairs(r.Context())
+func (h *Handler) describeKeyPairs(ctx context.Context, q describeQuery) (*xmlDescribeKeyPairsResponse, *protocol.AWSError) {
+	filters, aerr := keyPairFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listKeyPairs(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	items := make([]xmlKeyPairItem, 0, len(all))
@@ -137,11 +141,11 @@ func (h *Handler) DescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeKeyPairsResponse{
+	return &xmlDescribeKeyPairsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		KeySet:    items,
-	})
+	}, nil
 }
 
 // DeleteKeyPair deletes a key pair by name.

@@ -7,6 +7,7 @@ package ec2
 // configured. State is always "available" immediately after creation.
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -100,17 +101,20 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 // DescribeVpcEndpoints lists VPC endpoints, optionally selected by
 // VpcEndpointId.N or filtered.
 func (h *Handler) DescribeVpcEndpoints(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := vpcEndpointFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "VpcEndpointId")
+	resp, aerr := h.describeVpcEndpoints(r.Context(), requestQuery(r, "VpcEndpointId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listVpcEndpoints(r.Context())
+func (h *Handler) describeVpcEndpoints(ctx context.Context, q describeQuery) (*xmlDescribeVpcEndpointsResponse, *protocol.AWSError) {
+	filters, aerr := vpcEndpointFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listVpcEndpoints(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	var items []xmlVpcEndpoint
@@ -127,11 +131,11 @@ func (h *Handler) DescribeVpcEndpoints(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpcEndpointsResponse{
+	return &xmlDescribeVpcEndpointsResponse{
 		Xmlns:        ec2XMLNS,
-		RequestID:    protocol.RequestIDFromContext(r.Context()),
+		RequestID:    protocol.RequestIDFromContext(ctx),
 		VpcEndpoints: items,
-	})
+	}, nil
 }
 
 // ── DeleteVpcEndpoints ────────────────────────────────────────────────────────

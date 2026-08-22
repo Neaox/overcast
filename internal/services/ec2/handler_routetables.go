@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -127,23 +128,25 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 
 // DescribeRouteTables lists route tables, optionally filtered.
 func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := routeTableFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "RouteTableId")
+	resp, aerr := h.describeRouteTables(r.Context(), requestQuery(r, "RouteTableId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listRouteTables(r.Context())
+func (h *Handler) describeRouteTables(ctx context.Context, q describeQuery) (*xmlDescribeRouteTablesResponse, *protocol.AWSError) {
+	filters, aerr := routeTableFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listRouteTables(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlRouteTable, 0, len(all))
@@ -158,11 +161,11 @@ func (h *Handler) DescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 		items = append(items, routeTableToXML(rt, tags))
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeRouteTablesResponse{
+	return &xmlDescribeRouteTablesResponse{
 		Xmlns:         ec2XMLNS,
-		RequestID:     protocol.RequestIDFromContext(r.Context()),
+		RequestID:     protocol.RequestIDFromContext(ctx),
 		RouteTableSet: items,
-	})
+	}, nil
 }
 
 // ── DeleteRouteTable ─────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ package ec2
 // handler_tags.go — CreateTags, DeleteTags, DescribeTags handlers.
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strings"
@@ -99,13 +100,17 @@ type xmlTagItem struct {
 
 // DescribeTags lists tags for resources.
 func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := tagItemFilters.parse(r)
+	resp, aerr := h.describeTags(r.Context(), unselectedQuery(r))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeTags(ctx context.Context, q describeQuery) (*xmlDescribeTagsResponse, *protocol.AWSError) {
+	filters, aerr := tagItemFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
-	allTags, _ := h.store.listAllTags(r.Context())
+	allTags, _ := h.store.listAllTags(ctx)
 	items := tagItems(tagIndex(allTags),
 		func(rid string, tag Tag) xmlTagItem {
 			return xmlTagItem{
@@ -117,11 +122,11 @@ func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
 		},
 		filters.matches)
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeTagsResponse{
+	return &xmlDescribeTagsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		TagSet:    items,
-	})
+	}, nil
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

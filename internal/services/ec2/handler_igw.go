@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -80,23 +81,25 @@ func (h *Handler) CreateInternetGateway(w http.ResponseWriter, r *http.Request) 
 
 // DescribeInternetGateways lists internet gateways, optionally filtered.
 func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := internetGatewayFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "InternetGatewayId")
+	resp, aerr := h.describeInternetGateways(r.Context(), requestQuery(r, "InternetGatewayId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listInternetGateways(r.Context())
+func (h *Handler) describeInternetGateways(ctx context.Context, q describeQuery) (*xmlDescribeInternetGatewaysResponse, *protocol.AWSError) {
+	filters, aerr := internetGatewayFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listInternetGateways(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlInternetGateway, 0, len(all))
@@ -111,11 +114,11 @@ func (h *Handler) DescribeInternetGateways(w http.ResponseWriter, r *http.Reques
 		items = append(items, igwToXML(igw, tags))
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInternetGatewaysResponse{
+	return &xmlDescribeInternetGatewaysResponse{
 		Xmlns:              ec2XMLNS,
-		RequestID:          protocol.RequestIDFromContext(r.Context()),
+		RequestID:          protocol.RequestIDFromContext(ctx),
 		InternetGatewaySet: items,
-	})
+	}, nil
 }
 
 // ── DeleteInternetGateway ────────────────────────────────────────────────────

@@ -1,19 +1,124 @@
 # EC2 typed-dispatch migration — audit + design
 
-> **Status:** proposal, 2026-07-26 — **still unexecuted as of 2026-08-21.** `DispatchQuery` remains
-> legacy-only and the typed stubs stand (`describeInstancesReq` is still an empty struct; the
-> `_ = inst` discard remains). The §2 inventory is now stale in its particulars, though the three
-> root causes and the phase structure still hold: since the audit, #1032's unrecognised-filter work
-> (PRs #1033, #1038, #1040) and the tagging change (#1037) rewrote EC2's **legacy** filter
-> semantics — an unrecognised filter name is now refused via `internal/services/ec2/filters.go`,
-> and values match as AWS patterns (`*`/`?` wildcards) — and those commits also touched
-> `typed_logic.go`, so the divergence table's line references and per-op details need
-> re-baselining before any phase starts. No production code changed by this document. Written per
-> [level2-codegen.md](./level2-codegen.md) Track 2.3's explicit work queue: EC2 is the largest
-> "kept-on-legacy" item from the P1 Query-dispatch landing (~69 operations, entire typed branch
-> disabled at the dispatch level — the largest single item in that register). Modeled on
+> **Status:** first wave landed, 2026-08-22 (#754). Typed dispatch is **on** for EC2's twenty-one
+> `Describe*` operations and off for the remaining forty-eight, which stay on legacy. See
+> §0 for what shipped and what the strategy became; §§1–6 below are the original 2026-07-26
+> proposal, kept for the reasoning, with its §2 inventory stale in its particulars (see §0.3).
+> Written per [level2-codegen.md](./level2-codegen.md) Track 2.3's explicit work queue: EC2 is the
+> largest "kept-on-legacy" item from the P1 Query-dispatch landing (~69 operations, entire typed
+> branch disabled at the dispatch level — the largest single item in that register). Modeled on
 > [dynamodb-gsi-design.md](./dynamodb-gsi-design.md)'s shape: audit → root causes → design →
 > gated phases → deferred items.
+
+---
+
+## 0. What landed, and what the strategy became
+
+### 0.1 Shipped (#754, 2026-08-22)
+
+- **Phase 0 — the error codec.** `ec2ErrorCodec` is restored in
+  [service.go](../../internal/services/ec2/service.go) from the commit that deleted it (74479583),
+  so a typed operation's errors render EC2's `<Errors><Error>` envelope rather than the generic
+  Query one. `TestTypedDispatch_errorsUseEC2sEnvelope` pins it.
+- **Phase 5, scoped — dispatch is on, per operation.** `DispatchQuery` consults
+  `ec2TypedOps` ([typed_dispatch.go](../../internal/services/ec2/typed_dispatch.go)) and answers
+  those operations from `h.typedOp`; everything else falls through to the legacy map unchanged.
+  The list is an **allow-list**, not the empty denylist §5 Phase 5 proposed — see §0.2.
+- **Phases 1–3, for the twenty-one `Describe*` operations,** by a route the original plan did not
+  consider: rather than bringing each typed body up to its legacy twin, each operation now has
+  **one body** that both paths call. See §0.2.
+- **A differential parity test**
+  ([typed_parity_dev_test.go](../../internal/services/ec2/typed_parity_dev_test.go), `dev`-tagged):
+  every routed operation, over ~80 request cases, put to both dispatch paths against one seeded
+  region and required to answer the same status and the same bytes. An operation cannot be routed
+  without a row (`TestTypedParity_coversEveryRoutedOp`), and every operation declaring a filterSpec
+  must be checked with a filter name it does not implement, so #1032's rule cannot be lost on one
+  path only.
+
+### 0.2 What changed about the strategy, and why
+
+§4 decided to "fix the typed twins in place", on the grounds that the typed bodies were already
+independent, better-factored implementations worth keeping. Re-reading them against legacy after
+#1032/#1037/#1144 does not support that any more: the typed twins are **strictly poorer** in every
+`Describe*` — no filters, no ID selection, no tag view, and in `describeVpcAttributeTyped` a
+hardcoded `true` where legacy reads the store. Fixing twenty-one of them in place would have meant
+writing the same filter-and-select loop twice more per operation and then holding the two copies
+together by test.
+
+So the shape became **one body, two front doors**
+([describe.go](../../internal/services/ec2/describe.go)). A `describeQuery` carries what a describe
+selects on — the `<Resource>Id.N` selection and the filters — decoded either off the form
+(`requestQuery`) or out of the typed request struct (`typedQuery`). `filterSpec.parse` and
+`parseTagFilters` take a `filterSeq` rather than an `*http.Request`, which is the whole of the
+seam. Each `Describe*` then has a single implementation that both the legacy `http.HandlerFunc`
+and the typed operation call, and the typed operation returns the legacy `xmlDescribe…Response`
+type rather than a second declaration of the same XML.
+
+The consequence worth stating plainly: **parity is now structural, not tested-for.** The
+differential test guards the seam and the not-yet-migrated remainder; it is not what makes the
+twenty-one agree.
+
+Two smaller reversals:
+
+- **RC2 needs no fix.** §3 called for `decodeItem` in
+  [query.go](../../internal/protocol/codec/query.go) to recurse via `decodeStruct` for
+  struct-kind slice elements. It already does — the branch was added for IAM's
+  `ContextEntries.member.N.ContextKeyValues.member.M` after this document was written, and
+  `Filter.N.Name`/`Filter.N.Value.M` decodes correctly through it today. No codec change shipped.
+- **Allow-list, not denylist.** §5 Phase 5 proposed the `cfnLegacyOnlyOps` shape with an empty
+  denylist. A denylist re-enables everything not yet found broken, and the first attempt is the
+  evidence that "not yet found broken" is not "checked". `ec2TypedOps` names what has been checked;
+  `ec2TypedDispatchRemainder` names the rest with the defect each still carries, and
+  `TestTypedDispatch_everyOpIsClassified` fails on an operation in neither — which is how sixty-nine
+  of them came to be unreachable without anything failing.
+
+### 0.3 The §2 inventory, re-baselined
+
+§2's "46 correct twins, 23 diverged" predates #1032. Once the legacy path learned to refuse an
+unrecognised filter name and to read `*`/`?` as AWS does, **every** `Describe*` diverged, not the
+fifteen §2 lists: `DescribeRegions`, `DescribeAvailabilityZones`, `DescribeVpcs`,
+`DescribeAddresses`, `DescribeVpnGateways`, `DescribeNetworkInterfaces` and `DescribeDhcpOptions`
+joined the list without their entries changing. The correct-twin count as of 2026-08-21 was closer
+to **thirty than forty-six**. The list of *diverged mutations* in §2 held up exactly, and is now
+recorded per operation in `ec2TypedDispatchRemainder` rather than here, where it can go stale
+again.
+
+### 0.4 What remains — 48 operations
+
+All still answered by legacy, all listed with their reason in `ec2TypedDispatchRemainder`. In
+rough order of what a caller would notice:
+
+1. **Stubbed mutations (12)** — `TerminateInstances`, `StartInstances`, `StopInstances`,
+   `DeleteTags`, `DeleteVpcEndpoints`, `ModifyInstanceAttribute`, the four
+   `Authorize`/`RevokeSecurityGroup*`, `ModifySubnetAttribute`, `ModifyVpcAttribute`. These validate
+   a parameter and return success without touching the store; §3's RC3 describes them and remains
+   accurate. The two `Modify*Attribute` operations additionally have to persist the fields #1144
+   made real, which is what that PR routed around.
+2. **Creates that drop part of what they are given (5)** — `RunInstances` (no `SecurityGroupId.N`,
+   no `TagSpecification.N`), `CreateVpc` (omits `EnableDnsSupport=true`), `CreateSubnet`,
+   `CreateSecurityGroup`, `CreateTags` (lifecycle events, `TagSpecification.N`).
+3. **The remaining 31** — creates, deletes, attaches and accepts not yet read against legacy line
+   by line. Cheap individually; each needs a parity row and, where it writes, a state assertion the
+   byte-comparison cannot make.
+
+Each is a small, independent change now that the seam exists: give the typed request its missing
+fields, point it at a body shared with legacy or complete it, add a parity row, move the name from
+`ec2TypedDispatchRemainder` to `ec2TypedOps`. Mutations need more than the byte-comparison — a
+before/after state assertion — since two paths can agree on the response and disagree on what they
+wrote.
+
+**#754 stays open** until `ec2TypedDispatchRemainder` is empty.
+
+### 0.5 Known, deliberate imprecision in the seam
+
+The Query codec renders a gap in an indexed parameter (`Filter.3` present, `Filter.2` absent) as a
+zero-valued element, where the form readers truncate at the gap. `eachDecodedFilter` and
+`selectedIDs` both stop at the first unnamed/empty entry to match, which makes the two paths agree
+for every shape an AWS SDK emits and for the truncating case. A *sparse* index — a caller sending
+`Value.1` and `Value.3` but not `Value.2` — is read by the typed path as an empty middle value
+where legacy truncated. No SDK produces it; recorded here rather than fixed.
+
+---
 
 ---
 
@@ -429,6 +534,5 @@ change until Phase 5, so Phases 0-4 carry no user-facing risk at all).
 
 ---
 
-*This document makes no code changes. Phases 0-4 change no client-observable behavior (dispatch
-stays on legacy throughout); Phase 5 is the only phase that changes runtime routing, and only
-after every prior phase's gate is green.*
+*Sections 1-6 above are the original 2026-07-26 proposal and describe the plan as it stood before
+any of it ran. What actually shipped, and where the strategy departed from this, is §0.*

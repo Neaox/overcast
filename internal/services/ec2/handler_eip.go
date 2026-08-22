@@ -4,6 +4,7 @@ package ec2
 // AssociateAddress, DisassociateAddress handlers.
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -104,23 +105,25 @@ type xmlAddress struct {
 
 // DescribeAddresses lists Elastic IP addresses.
 func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := addressFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "AllocationId")
+	resp, aerr := h.describeAddresses(r.Context(), requestQuery(r, "AllocationId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listElasticIPs(r.Context())
+func (h *Handler) describeAddresses(ctx context.Context, q describeQuery) (*xmlDescribeAddressesResponse, *protocol.AWSError) {
+	filters, aerr := addressFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listElasticIPs(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlAddress, 0, len(all))
@@ -143,11 +146,11 @@ func (h *Handler) DescribeAddresses(w http.ResponseWriter, r *http.Request) {
 			TagSet:         xmlTagsOf(tags),
 		})
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeAddressesResponse{
+	return &xmlDescribeAddressesResponse{
 		Xmlns:      ec2XMLNS,
-		RequestID:  protocol.RequestIDFromContext(r.Context()),
+		RequestID:  protocol.RequestIDFromContext(ctx),
 		AddressSet: items,
-	})
+	}, nil
 }
 
 // ── AssociateAddress ────────────────────────────────────────────────────────

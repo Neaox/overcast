@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 
@@ -83,12 +84,16 @@ var syntheticAMIs = []xmlImage{
 
 // DescribeImages returns the synthetic AMIs that match the request.
 func (h *Handler) DescribeImages(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := imageFilters.parse(r)
+	resp, aerr := h.describeImages(r.Context(), requestQuery(r, "ImageId"))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeImages(ctx context.Context, q describeQuery) (*xmlDescribeImagesResponse, *protocol.AWSError) {
+	filters, aerr := imageFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
-	requested := requestedIDs(r, "ImageId")
+	requested := q.ids
 
 	images := make([]xmlImage, 0, len(syntheticAMIs))
 	for _, ami := range syntheticAMIs {
@@ -98,9 +103,9 @@ func (h *Handler) DescribeImages(w http.ResponseWriter, r *http.Request) {
 		images = append(images, ami)
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeImagesResponse{
+	return &xmlDescribeImagesResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		ImagesSet: images,
-	})
+	}, nil
 }

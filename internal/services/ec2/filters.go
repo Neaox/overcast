@@ -267,7 +267,7 @@ func wildcardMatch(pattern, value string) bool {
 	return p == len(pat)
 }
 
-// parse reads the request's filters and refuses any name the operation does not
+// parse reads a request's filters and refuses any name the operation does not
 // implement.
 //
 // Names are matched exactly, as AWS matches them: `VPC-ID` is not `vpc-id` and
@@ -277,9 +277,12 @@ func wildcardMatch(pattern, value string) bool {
 // is refused whether or not the region holds anything to filter. The empty case
 // is where an ignored filter is most dangerous: "no match" and "I did not
 // understand you" are indistinguishable in an empty response.
-func (spec filterSpec[T]) parse(r *http.Request) (filterQuery[T], *protocol.AWSError) {
+//
+// It takes a filterSeq rather than the request so that the same rule answers a
+// request decoded either way — see filterSeq.
+func (spec filterSpec[T]) parse(filters filterSeq) (filterQuery[T], *protocol.AWSError) {
 	var q filterQuery[T]
-	for name, values := range eachFilter(r) {
+	for name, values := range filters {
 		if spec.tagged && isTagFilter(name) {
 			continue // matched against the resource's tags by tagFilters
 		}
@@ -320,9 +323,21 @@ type idSelection map[string]bool
 
 // requestedIDs reads `<param>.1`, `<param>.2`, … from the request.
 func requestedIDs(r *http.Request, param string) idSelection {
-	values := parseIndexedParam(r, param)
-	sel := make(idSelection, len(values))
+	return selectedIDs(parseIndexedParam(r, param))
+}
+
+// selectedIDs turns an already-decoded ID list into a selection.
+//
+// It stops at the first empty entry, which is what parseIndexedParam does to a
+// gap in `<param>.N` and therefore what the two decode paths have to agree on:
+// the Query codec fills a gap with the zero string rather than truncating, and
+// an ID a caller never sent must not become a selection of "".
+func selectedIDs(values []string) idSelection {
+	sel := idSelection{}
 	for _, v := range values {
+		if v == "" {
+			break
+		}
 		sel[v] = true
 	}
 	return sel
@@ -334,13 +349,34 @@ func (sel idSelection) has(id string) bool {
 	return len(sel) == 0 || sel[id]
 }
 
-// eachFilter yields every Filter.N.Name and its Filter.N.Value.M values, in
-// index order, in a single pass.
+// ── The two ways a filter reaches a handler ──────────────────────────────────
+//
+// A Describe* is reached two ways: through the legacy http.HandlerFunc, which
+// reads Filter.N.Name / Filter.N.Value.M straight off the form, and through the
+// typed operation registry, which is handed a []ec2Filter the Query codec
+// already decoded. filterSeq is the seam between them, so filterSpec.parse and
+// parseTagFilters are written once and answer both identically — the property
+// #754 turns on, since the legacy path's filter rules (#1032) must survive the
+// switch byte for byte.
+
+// filterSeq yields every Filter.N.Name and its Filter.N.Value.M values, in
+// index order.
 //
 // Index order is not cosmetic: it is what makes the filter a request is refused
 // for the same one AWS would name, rather than whichever a map iteration
-// happened to reach first.
-func eachFilter(r *http.Request) iter.Seq2[string, []string] {
+// happened to reach first. Both producers below preserve it.
+type filterSeq = iter.Seq2[string, []string]
+
+// ec2Filter is one Filter.N of a typed request, in the shape the Query codec
+// decodes `Filter.1.Name` / `Filter.1.Value.1` into.
+type ec2Filter struct {
+	Name   string   `json:"Name"`
+	Values []string `json:"Value"`
+}
+
+// eachFilter yields a request's filters straight off the form, in a single
+// pass.
+func eachFilter(r *http.Request) filterSeq {
 	return func(yield func(string, []string) bool) {
 		for i := 1; ; i++ {
 			name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
@@ -356,6 +392,25 @@ func eachFilter(r *http.Request) iter.Seq2[string, []string] {
 				values = append(values, v[0])
 			}
 			if !yield(name, values) {
+				return
+			}
+		}
+	}
+}
+
+// eachDecodedFilter yields a typed request's already-decoded filters.
+//
+// It stops at the first unnamed filter for the same reason eachFilter stops at
+// the first absent Filter.N.Name: the codec renders a gap in the index as a
+// zero-valued element, and a filter the caller never sent must not be read as a
+// filter named "" and refused as unrecognised.
+func eachDecodedFilter(filters []ec2Filter) filterSeq {
+	return func(yield func(string, []string) bool) {
+		for _, f := range filters {
+			if f.Name == "" {
+				return
+			}
+			if !yield(f.Name, f.Values) {
 				return
 			}
 		}

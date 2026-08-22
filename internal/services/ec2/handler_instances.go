@@ -249,23 +249,25 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 
 // DescribeInstances returns instances, optionally filtered by ID or state.
 func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := instanceFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "InstanceId")
+	resp, aerr := h.describeInstances(r.Context(), requestQuery(r, "InstanceId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listInstances(r.Context())
+func (h *Handler) describeInstances(ctx context.Context, q describeQuery) (*xmlDescribeInstancesResponse, *protocol.AWSError) {
+	filters, aerr := instanceFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listInstances(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlInstance, 0, len(all))
@@ -290,7 +292,7 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 			LaunchTime:    inst.LaunchTime,
 			SubnetID:      inst.SubnetID,
 			VpcID:         inst.VpcID,
-			PrivateIP:     h.privateIPForAPI(r.Context(), inst.VpcID, inst.PrivateIPAddress),
+			PrivateIP:     h.privateIPForAPI(ctx, inst.VpcID, inst.PrivateIPAddress),
 			Placement:     xmlPlacement{AvailabilityZone: inst.Placement.AvailabilityZone},
 			GroupSet:      xmlSGs,
 			TagSet:        xmlTags,
@@ -308,11 +310,11 @@ func (h *Handler) DescribeInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInstancesResponse{
+	return &xmlDescribeInstancesResponse{
 		Xmlns:        ec2XMLNS,
-		RequestID:    protocol.RequestIDFromContext(r.Context()),
+		RequestID:    protocol.RequestIDFromContext(ctx),
 		Reservations: reservations,
-	})
+	}, nil
 }
 
 // ── TerminateInstances ───────────────────────────────────────────────────────
