@@ -8,6 +8,19 @@
 > just whether the operation exists — is #1052's, closed for all seventeen
 > services it named; see [Validator reach audit](#validator-reach-audit-1052).
 >
+> Fixed 2026-08-22 (#1309) — `AWS::CloudTrail::Trail`'s CloudFormation handler
+> read the trail name from a template property named `Name`; the real
+> resource schema's property is `TrailName`
+> (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudtrail-trail.html).
+> Found while writing #1197's tag-reconciliation tests (PR #1308) and tracked
+> separately because it is a property-name bug, not a tagging gap. The handler
+> now reads `TrailName` (create-only — a change forces replacement, matching
+> the schema and CloudTrail's own `UpdateTrail`, which cannot rename a trail);
+> `Name` is not accepted as an alias, per the alpha no-shims policy. `Ref` now
+> also returns the trail's name rather than its ARN, matching AWS ("Ref
+> returns the friendly name of the trail"). This is orthogonal to the Axis C
+> tag-propagation work below, which #1308/#1310 track.
+>
 > Re-verified 2026-08-23 (#1196) — Axis B is closed for all 14 services this
 > issue named. Three (`kms`, `appconfig`, `opensearch`) were already fixed
 > before this issue was picked up; the rest needed a real fix, several of

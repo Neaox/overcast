@@ -388,7 +388,12 @@ func (h *ecrRepositoryHandler) Update(ctx context.Context, router http.Handler, 
 type cloudtrailTrailHandler struct{}
 
 func (h *cloudtrailTrailHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	name, _ := props["Name"].(string)
+	// The schema's property is TrailName, not Name
+	// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudtrail-trail.html).
+	// Per the alpha no-shims policy, Name is not accepted as an alias: a
+	// template that sets it simply does not set the trail's name, exactly as
+	// a template setting any other unrecognised property would not.
+	name, _ := props["TrailName"].(string)
 	if name == "" {
 		name = fmt.Sprintf("%s-trail", rCtx.StackName)
 	}
@@ -431,7 +436,11 @@ func (h *cloudtrailTrailHandler) Create(ctx context.Context, router http.Handler
 	}
 
 	attrs := map[string]string{
-		"Arn":  arn,
+		"Arn": arn,
+		// Ref returns the trail's name, matching AWS: "Ref returns the
+		// friendly name of the trail, such as MyTrail." The physical ID stays
+		// the ARN (Delete recovers the name from it).
+		"Ref":  name,
 		"Name": name,
 	}
 	return arn, attrs, nil
@@ -448,7 +457,10 @@ func (h *cloudtrailTrailHandler) Delete(ctx context.Context, router http.Handler
 }
 
 func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	if n, ok := props["Name"].(string); ok && n != "" {
+	// TrailName is create-only in the schema — CloudTrail's UpdateTrail has no
+	// way to rename a trail — so a changed value forces replacement, same as
+	// the pre-fix "Name" comparison did.
+	if n, ok := props["TrailName"].(string); ok && n != "" {
 		tail := physicalID
 		if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
 			tail = physicalID[idx+1:]
@@ -458,7 +470,7 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 		}
 	}
 
-	name, _ := props["Name"].(string)
+	name, _ := props["TrailName"].(string)
 	if name == "" {
 		name = physicalID
 		if idx := strings.LastIndex(physicalID, "/"); idx >= 0 {
@@ -481,7 +493,7 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 	if _, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.UpdateTrail", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateTrail: %w", err)
 	}
-	return physicalID, map[string]string{"Arn": physicalID}, nil
+	return physicalID, map[string]string{"Arn": physicalID, "Ref": name, "Name": name}, nil
 }
 
 // ── AWS::Backup::BackupVault ────────────────────────────────────────────────
