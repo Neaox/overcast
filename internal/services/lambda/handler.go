@@ -91,6 +91,12 @@ type Handler struct {
 	// tarCacheStats reports the artifact cache for the debug endpoint; nil
 	// until the container runtime is up.
 	tarCacheStats func() (entries int, bytes, maxBytes int64)
+
+	// metrics is the shared service-metrics recorder (see metrics_lambda.go),
+	// nil until Service.InitMetrics is called (or when automatic collection
+	// is disabled). recordInvocationOutcome and recordConcurrency are both
+	// nil-safe against it.
+	metrics metricsRecorder
 }
 
 func (h *Handler) setVPCResolver(r VPCNetworkResolver) {

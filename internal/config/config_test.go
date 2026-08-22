@@ -1535,6 +1535,53 @@ func TestLoad_rdsModeRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+// Service metrics collection defaults to auto, and MetricsCollectionEnabled
+// reports true for it since CloudWatch is always wired (OVERCAST_SERVICES no
+// longer gates services) — see config.ServiceMetricsAuto's doc comment.
+func TestLoad_serviceMetricsDefaultsToAuto(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ServiceMetrics != config.ServiceMetricsAuto {
+		t.Fatalf("ServiceMetrics: expected %q, got %q", config.ServiceMetricsAuto, cfg.ServiceMetrics)
+	}
+	if !cfg.MetricsCollectionEnabled() {
+		t.Fatal("expected MetricsCollectionEnabled() to be true under the default auto mode")
+	}
+}
+
+func TestLoad_serviceMetricsDisabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_SERVICE_METRICS", "disabled")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ServiceMetrics != config.ServiceMetricsDisabled {
+		t.Fatalf("ServiceMetrics: expected %q, got %q", config.ServiceMetricsDisabled, cfg.ServiceMetrics)
+	}
+	if cfg.MetricsCollectionEnabled() {
+		t.Fatal("expected MetricsCollectionEnabled() to be false when explicitly disabled")
+	}
+}
+
+func TestLoad_serviceMetricsRejectsInvalidValues(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_SERVICE_METRICS", "sometimes")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for invalid OVERCAST_SERVICE_METRICS, got nil")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "OVERCAST_SERVICE_METRICS", "auto", "enabled", "disabled") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
 func TestLoad_efsModeRejectsInvalidValues(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_EFS_MODE", "nfs")
@@ -1770,7 +1817,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_HOSTNAME", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
 		// The mode defaults these assert are only defaults if the developer
 		// running the suite has not exported an opt-out of their own.
-		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE",
+		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",
 		"OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK",
 	}

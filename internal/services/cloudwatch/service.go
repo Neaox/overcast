@@ -132,6 +132,13 @@ type cloudwatchStore struct {
 	// keyed Get + Set, never across a scan, so it does not serialize reads or
 	// puts to different metrics for any meaningful duration.
 	metricDataMu sync.Mutex
+
+	// svcMetrics is the shared internal/metrics repository, when automatic
+	// service-metric collection is enabled (see (*Service).InitMetrics /
+	// metrics_bridge.go). Nil in unit tests and whenever collection is
+	// disabled — every read path treats nil as "no automatic series", never
+	// as an error.
+	svcMetrics metricsReader
 }
 
 func newCloudwatchStore(s state.Store, clk clock.Clock) *cloudwatchStore {
@@ -747,7 +754,7 @@ func (s *Service) listMetricsJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	metrics, err := s.store.listMetrics(r.Context(), in.Namespace)
+	metrics, err := s.store.mergedListMetrics(r.Context(), in.Namespace)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -885,7 +892,7 @@ func (s *Service) getMetricStatisticsJSON(w http.ResponseWriter, r *http.Request
 	}
 
 	dimensions := canonicalizeDimensions(in.Dimensions)
-	points, err := s.store.listMetricDataPoints(r.Context(), in.Namespace, in.MetricName, dimensions, startTime, endTime)
+	points, err := s.store.mergedMetricDataPoints(r.Context(), in.Namespace, in.MetricName, dimensions, startTime, endTime)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -1491,7 +1498,7 @@ func (s *Service) getMetricStatistics(w http.ResponseWriter, r *http.Request) {
 		requestedStats["Average"] = true
 	}
 
-	points, err := s.store.listMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
+	points, err := s.store.mergedMetricDataPoints(r.Context(), namespace, metricName, dimensions, startTime, endTime)
 	if err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
@@ -1656,7 +1663,7 @@ func (s *Service) computeMetricDataResults(ctx context.Context, queries []metric
 			continue
 		}
 
-		points, err := s.store.listMetricDataPoints(ctx, q.namespace, q.metricName, q.dimensions, startTime, endTime)
+		points, err := s.store.mergedMetricDataPoints(ctx, q.namespace, q.metricName, q.dimensions, startTime, endTime)
 		if err != nil {
 			return nil, protocol.ErrInternalError
 		}
@@ -1875,7 +1882,7 @@ func metricStatValue(stat string, b *metricBucket) (float64, bool) {
 
 func (s *Service) listMetrics(w http.ResponseWriter, r *http.Request) {
 	ns := r.FormValue("Namespace")
-	metrics, err := s.store.listMetrics(r.Context(), ns)
+	metrics, err := s.store.mergedListMetrics(r.Context(), ns)
 	if err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return

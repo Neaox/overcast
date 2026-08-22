@@ -248,18 +248,21 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 	}
 
 	tracked := inv.tracker.Begin(functionName, payload)
+	startedAt := inv.h.clk.Now()
 	inst, err := rt.Acquire(ctx, fn)
 	if err != nil {
 		tracked.Abandon(err.Error())
 		if _, throttled := asThrottle(err); throttled {
 			inv.logger.Warn("lambda: invoke: throttled",
 				zap.String("function", functionName), zap.Error(err))
+			inv.h.recordInvocationOutcome(ctx, functionName, startedAt, 0, true, false)
 			return nil, err
 		}
 		inv.logger.Error("lambda: invoke: acquire instance failed",
 			zap.String("function", functionName),
 			zap.Error(err),
 		)
+		inv.h.recordInvocationOutcome(ctx, functionName, startedAt, 0, false, true)
 		return nil, err
 	}
 	tracked.Bind(inst)
@@ -271,6 +274,7 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 			zap.String("function", functionName),
 			zap.Error(err),
 		)
+		inv.h.recordInvocationOutcome(ctx, functionName, startedAt, 0, false, true)
 		return nil, err
 	}
 	tracked.Running()
@@ -291,10 +295,14 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 	}
 
 	// No tail: InvokeOutcome carries no log field, so nothing would read it.
+	invokeStart := inv.h.clk.Now()
 	result, err := inst.Invoke(ctx, payload, InvokeOptions{})
+	invokeDuration := inv.h.clk.Now().Sub(invokeStart)
 	healthy := err == nil
 	rt.Release(ctx, inst, healthy)
-	tracked.Finish(invocationOutcome(err, result))
+	success, failureReason := invocationOutcome(err, result)
+	tracked.Finish(success, failureReason)
+	inv.h.recordInvocationOutcome(ctx, functionName, startedAt, invokeDuration, false, !success)
 	if err != nil {
 		return nil, err
 	}

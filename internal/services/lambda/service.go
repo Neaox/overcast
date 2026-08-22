@@ -155,6 +155,14 @@ type InvokeResult struct {
 	// handler turns it into AWS's 429 TooManyRequestsException rather than a
 	// 200 with a function error.
 	throttle *throttleError
+
+	// Duration is how long inst.Invoke's runtime round trip took — execution
+	// time after function code begins, excluding cold-start/init (plan:
+	// "Duration needs explicit start/end measurements in the execution
+	// layer"). Zero when the function never ran (acquire/init failure,
+	// throttle). Used only by recordInvocationOutcome; not part of any wire
+	// response.
+	Duration time.Duration
 }
 
 // LayerVersionLink is a reference to a specific layer version attached to a function.
@@ -488,6 +496,11 @@ type Service struct {
 	// dockerEventsSubscribed guards subscribeDockerEvents, which InitBus and
 	// initDockerRuntime both call because either may complete first.
 	dockerEventsSubscribed bool
+	// metricsRec mirrors handler.metrics under s.mu so initDockerRuntime's
+	// background goroutine — which may finish before or after InitMetrics is
+	// called, same race as bus/imageResolver above — can tell whether to wire
+	// a freshly-created InstancePool's concurrencyObserver.
+	metricsRec metricsRecorder
 }
 
 // WaitReady blocks until the first Docker probe has reported (successfully or
@@ -532,6 +545,23 @@ func (s *Service) InitBus(b *events.Bus) {
 	// Docker init runs on a background goroutine and may have finished before
 	// the bus existed, in which case it could not subscribe. Do it now.
 	s.subscribeDockerEvents(b)
+}
+
+// InitMetrics wires the shared service-metrics recorder
+// (docs/plans/service-metrics-platform.md) so every invocation path records
+// AWS/Lambda's Invocations/Errors/Duration/Throttles/ConcurrentExecutions
+// through recordInvocationOutcome (metrics_lambda.go). Called once from
+// router.New, after metrics.NewRecorder — mirrors InitBus/InitLogWriter's
+// "may run before or after Docker init completes" contract.
+func (s *Service) InitMetrics(m metricsRecorder) {
+	s.handler.metrics = m
+	s.mu.Lock()
+	s.metricsRec = m
+	pool := s.pool
+	s.mu.Unlock()
+	if pool != nil {
+		pool.concurrencyObserver = s.handler.recordConcurrency
+	}
 }
 
 // reloadProvisionedConcurrency re-applies every stored provisioned concurrency
@@ -923,6 +953,15 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	pool := NewInstancePool(containerRuntime, log, clk, limits.pool)
 	// Keep the instance tracker in step with the containers that actually exist.
 	pool.observer = s.tracker
+	// Wire ConcurrentExecutions sampling if InitMetrics already ran (it may
+	// run before or after Docker init completes — same race InitBus/InitLogWriter
+	// already handle for this goroutine's other optional wiring).
+	s.mu.Lock()
+	m := s.metricsRec
+	s.mu.Unlock()
+	if m != nil {
+		pool.concurrencyObserver = s.handler.recordConcurrency
+	}
 	// Let the tracker sample per-container memory/CPU for the instances UI.
 	s.tracker.SetStatsFunc(dc.ContainerStatsOneShot)
 	// Rebuild provisioned concurrency reservations from the store — an
