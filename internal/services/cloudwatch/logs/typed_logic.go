@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	eventsbus "github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -798,4 +800,97 @@ func (h *Handler) listTagsLogGroupTyped(ctx context.Context, req *listTagsLogGro
 		tags = map[string]string{}
 	}
 	return &listTagsLogGroupResponse{Tags: tags}, nil
+}
+
+// ─── TagResource / UntagResource / ListTagsForResource (#1195) ─────────────
+//
+// These are the modern, ARN-addressed siblings of TagLogGroup / UntagLogGroup
+// / ListTagsLogGroup above. AWS added them without deprecating the legacy
+// trio, and both spellings tag the same log group, so each modern operation
+// resolves its resourceArn to a log group name and delegates straight to the
+// legacy typed function — one validate-merge-store implementation shared by
+// both spellings, matching this file's own precedent (CreateLogGroup's doc
+// comment) for why a tag-validation contract must not be duplicated.
+//
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagResource.html
+
+type tagResourceRequest struct {
+	ResourceArn string            `json:"resourceArn" cbor:"resourceArn"`
+	Tags        map[string]string `json:"tags" cbor:"tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceArn string   `json:"resourceArn" cbor:"resourceArn"`
+	TagKeys     []string `json:"tagKeys" cbor:"tagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	ResourceArn string `json:"resourceArn" cbor:"resourceArn"`
+}
+
+type listTagsForResourceResponse struct {
+	Tags map[string]string `json:"tags" cbor:"tags"`
+}
+
+// resourceArnToLogGroupName resolves the modern operations' resourceArn
+// member to the log group name the legacy operations address directly.
+//
+// LogGroupName's modeled pattern (`^[.\-_/#A-Za-z0-9]+$`) excludes ':', so
+// splitting the ARN on ':' unambiguously separates the fixed
+// arn:aws:logs:region:account:log-group: prefix from the name. AWS accepts
+// the group ARN with or without its trailing ":*" — this only reads the name
+// segment, so both forms resolve identically.
+//
+// A log group ARN is not the only resourceArn these operations accept on
+// real AWS: a destination's ARN (arn:aws:logs:region:account:destination:name)
+// is equally valid there. This emulator does not implement CloudWatch Logs
+// destinations, so any ARN that does not name a log group is reported
+// not-found rather than silently accepted, the same stance taken for
+// unimplemented resource types elsewhere in this codebase (see
+// docs/plans/resource-tagging-coverage.md's ACM/IAM "out of scope" rows).
+func resourceArnToLogGroupName(arn string) (string, *protocol.AWSError) {
+	if arn == "" {
+		return "", errInvalidParameter("resourceArn is required")
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) < 7 || parts[0] != "arn" || parts[2] != "logs" || parts[5] != "log-group" || parts[6] == "" {
+		return "", errResourceArnNotFound(arn)
+	}
+	return parts[6], nil
+}
+
+func errResourceArnNotFound(arn string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    fmt.Sprintf("Resource not found: %s", arn),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	name, aerr := resourceArnToLogGroupName(req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return h.tagLogGroupTyped(ctx, &tagLogGroupRequest{LogGroupName: name, Tags: req.Tags})
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	name, aerr := resourceArnToLogGroupName(req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return h.untagLogGroupTyped(ctx, &untagLogGroupRequest{LogGroupName: name, Tags: req.TagKeys})
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	name, aerr := resourceArnToLogGroupName(req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	resp, aerr := h.listTagsLogGroupTyped(ctx, &listTagsLogGroupRequest{LogGroupName: name})
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &listTagsForResourceResponse{Tags: resp.Tags}, nil
 }

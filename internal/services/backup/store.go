@@ -27,6 +27,11 @@ type vaultRecord struct {
 	CreationDate     time.Time `json:"CreationDate"`
 	EncryptionKeyArn string    `json:"EncryptionKeyArn,omitempty"`
 	CreatorRequestID string    `json:"CreatorRequestId,omitempty"`
+	// Tags is stored inline so it dies with the vault record rather than in a
+	// side namespace nothing tears down on delete (#1195, #1037's "tags die
+	// with their resource" rule). Populated from BackupVaultTags at create
+	// time and mutated by TagResource/UntagResource thereafter.
+	Tags map[string]string `json:"Tags,omitempty"`
 }
 
 // planRecord is a backup plan as it is persisted.
@@ -42,6 +47,11 @@ type planRecord struct {
 	Rules          []map[string]any `json:"Rules,omitempty"`
 	Version        int              `json:"Version"`
 	CreationDate   time.Time        `json:"CreationDate"`
+	// Tags is stored inline for the same reason as vaultRecord.Tags above:
+	// populated from BackupPlanTags at create time (CreateBackupPlan is the
+	// only operation that accepts it — UpdateBackupPlan does not model tags),
+	// mutated by TagResource/UntagResource thereafter.
+	Tags map[string]string `json:"Tags,omitempty"`
 }
 
 // backupStore is every read and write Backup makes against state.Store.

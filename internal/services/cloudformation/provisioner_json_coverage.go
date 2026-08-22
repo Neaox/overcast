@@ -493,6 +493,13 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 const (
 	backupVaultsPath = "/backup-vaults"
 	backupPlansPath  = "/backup/plans"
+	// backupTagsPath and backupUntagPath are Backup's modeled tagging
+	// bindings (#1195): TagResource/ListTags share POST/GET /tags/{ResourceArn}
+	// while UntagResource is the separate POST /untag/{ResourceArn} — see
+	// internal/services/backup/handler_tags.go's header comment for why the
+	// service itself keeps them apart.
+	backupTagsPath  = "/tags"
+	backupUntagPath = "/untag"
 )
 
 // backupIDFromARN returns the identifier a Backup ARN's last segment carries —
@@ -509,6 +516,72 @@ func backupIDFromARN(physicalID string) string {
 	return id
 }
 
+// backupResourceTagMap converts CloudFormation's BackupVaultTags/
+// BackupPlanTags shape — already a string-keyed map on the wire, unlike the
+// [{Key,Value}] array most other resources use — to the map Backup's own
+// TagResource/CreateBackupVault/CreateBackupPlan expect. There is no shape
+// translation to do; this only guards against a template that put something
+// other than an object there.
+func backupResourceTagMap(raw any) (map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("Backup resource Tags must be an object")
+	}
+	tags := make(map[string]string, len(obj))
+	for k, v := range obj {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("Backup resource Tags[%q] must be a string", k)
+		}
+		tags[k] = s
+	}
+	return tags, nil
+}
+
+// putBackupResourceTags calls TagResource for a vault or plan ARN. Whether a
+// tag is acceptable (length, `aws:` prefix, the 50-tag limit) is the Backup
+// service's own business, checked there — this only ships the shape.
+// internalRequest already turns a >=400 response into a non-nil error
+// (statusError), so a rejected tag surfaces as a Create/Update failure rather
+// than silently succeeding.
+func putBackupResourceTags(ctx context.Context, router http.Handler, region, resourceArn string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(map[string]any{"Tags": tags})
+	if err != nil {
+		return err
+	}
+	if _, err := internalRequest(ctx, router, region, http.MethodPost,
+		backupTagsPath+"/"+url.PathEscape(resourceArn), "application/json", data); err != nil {
+		return fmt.Errorf("TagResource: %w", err)
+	}
+	return nil
+}
+
+// untagBackupResource calls UntagResource — Backup's separate POST
+// /untag/{ResourceArn}, not another member of the /tags dispatcher (see
+// backupTagsPath/backupUntagPath above). The member is TagKeyList, Backup's
+// own spelling (confirmed against the real AWS CLI, #1195) rather than the
+// TagKeys most other services use.
+func untagBackupResource(ctx context.Context, router http.Handler, region, resourceArn string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(map[string]any{"TagKeyList": keys})
+	if err != nil {
+		return err
+	}
+	if _, err := internalRequest(ctx, router, region, http.MethodPost,
+		backupUntagPath+"/"+url.PathEscape(resourceArn), "application/json", data); err != nil {
+		return fmt.Errorf("UntagResource: %w", err)
+	}
+	return nil
+}
+
 type backupBackupVaultHandler struct{}
 
 func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -523,6 +596,13 @@ func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handl
 	body := map[string]any{}
 	if v, ok := props["EncryptionKeyArn"].(string); ok && v != "" {
 		body["EncryptionKeyArn"] = v
+	}
+	tags, err := backupResourceTagMap(props["BackupVaultTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	if len(tags) > 0 {
+		body["BackupVaultTags"] = tags
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -573,7 +653,27 @@ func (h *backupBackupVaultHandler) Update(ctx context.Context, router http.Handl
 	// BackupVaultName is the only replacement property on real AWS, and
 	// CreateBackupVault rejects duplicates, so replacing under an unchanged
 	// name can never succeed. Nothing else this handler provisions is mutable
-	// (EncryptionKeyArn is create-only), so keeping the vault is the update.
+	// (EncryptionKeyArn is create-only) except its tags (#1195), which have no
+	// in-place UpdateBackupVault member to ride along with — CreateBackupVault
+	// is the only operation BackupVaultTags is modeled on — so a stack update
+	// reconciles them with a TagResource/UntagResource follow-up instead, the
+	// same pattern AWS::SNS::Topic uses for attributes SetTopicAttributes
+	// itself cannot carry.
+	newTags, err := backupResourceTagMap(props["BackupVaultTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	oldTags, err := backupResourceTagMap(oldProps["BackupVaultTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	upserts, removals := logsLogGroupTagChanges(newTags, oldTags)
+	if err := putBackupResourceTags(ctx, router, rCtx.Region, physicalID, upserts); err != nil {
+		return "", nil, err
+	}
+	if err := untagBackupResource(ctx, router, rCtx.Region, physicalID, removals); err != nil {
+		return "", nil, err
+	}
 	return physicalID, nil, nil
 }
 
@@ -583,7 +683,15 @@ type backupBackupPlanHandler struct{}
 
 func (h *backupBackupPlanHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	backupPlan, _ := props["BackupPlan"].(map[string]any)
-	data, err := json.Marshal(map[string]any{"BackupPlan": backupPlan})
+	body := map[string]any{"BackupPlan": backupPlan}
+	tags, err := backupResourceTagMap(props["BackupPlanTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	if len(tags) > 0 {
+		body["BackupPlanTags"] = tags
+	}
+	data, err := json.Marshal(body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateBackupPlan: %w", err)
 	}
@@ -629,8 +737,35 @@ func (h *backupBackupPlanHandler) Delete(ctx context.Context, router http.Handle
 	return teardownError("DeleteBackupPlan", rec, err)
 }
 
+// Update forces replacement for any BackupPlan structure or name change —
+// UpdateBackupPlan is not wired to this handler, a pre-existing gap this PR
+// does not extend. A tag-only change is handled without replacement, since
+// forcing one there would be a correctness regression this PR would
+// introduce: tags never force replacement on real AWS, and BackupPlanTags is
+// the one property #1195 makes mutable in place (via TagResource/
+// UntagResource — UpdateBackupPlan itself models no tags member either).
 func (h *backupBackupPlanHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	if changed, err := cfnPropertyChanged(props, oldProps, "BackupPlan"); err != nil {
+		return "", nil, err
+	} else if changed {
+		return "", nil, errReplacementRequired
+	}
+	newTags, err := backupResourceTagMap(props["BackupPlanTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	oldTags, err := backupResourceTagMap(oldProps["BackupPlanTags"])
+	if err != nil {
+		return "", nil, err
+	}
+	upserts, removals := logsLogGroupTagChanges(newTags, oldTags)
+	if err := putBackupResourceTags(ctx, router, rCtx.Region, physicalID, upserts); err != nil {
+		return "", nil, err
+	}
+	if err := untagBackupResource(ctx, router, rCtx.Region, physicalID, removals); err != nil {
+		return "", nil, err
+	}
+	return physicalID, nil, nil
 }
 
 // ── AWS::Transfer::Server ───────────────────────────────────────────────────

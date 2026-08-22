@@ -6,12 +6,20 @@
 // every ARN no service claimed, which meant an operation Overcast does not
 // implement read as success: `aws backup list-tags` got HTTP 200 {"tags":{}}
 // from a service the caller never addressed (#976, the #963 failure mode).
+// Backup itself was that example, until #1195 gave it real tag operations —
+// TestTagsDispatch_backupARN_keepsRoundTripping below is its replacement in
+// this file, alongside API Gateway's and AppRegistry's.
 //
 // An unclaimed ARN now falls back to the router's REST fallback, exactly as if
 // no /tags route had matched: a signed caller reaches the generated 501, and
 // unsigned traffic keeps S3's answer, which is the design the rest of the
 // router follows (see tests/integration/msk/routing_test.go for why the SigV4
-// scope is load-bearing).
+// scope is load-bearing). The "still unclaimed" tests below address a made-up
+// service name rather than a real one, so they cannot go stale the way the
+// Backup-addressed originals did the moment #1195 gave Backup real tag ops —
+// dozens of real AWS services model this exact path shape and none of them
+// are implemented here (docs/plans/resource-tagging-coverage.md's Axis A
+// tracks the ones this emulator does carry).
 //
 // Run: go test ./tests/integration/router/...
 package router_test
@@ -56,26 +64,34 @@ func tagsSignedRequest(t *testing.T, srv *helpers.TestServer, method, path, sign
 	return resp
 }
 
-// The defect from #976: Backup implements no tag operations at all (#815), yet
-// `aws backup list-tags --resource-arn <vault-arn>` succeeded and printed
-// nothing, because API Gateway's ARN-keyed tag store answered every ARN no
-// other service claimed. A signed caller addressing a service whose tag
-// operations are not implemented must reach the protocol-correct 501.
+// unclaimedServiceARN names a service no /tags owner in this codebase claims
+// and that Overcast does not implement at all, so this can never go stale the
+// way addressing Backup here did the moment #1195 gave it real tag ops. Dozens
+// of real AWS services (accessanalyzer, amp, amplify, aiops, among many
+// others — see internal/awsapi/manifest.gen.go) model TagResource/ListTags at
+// this exact path shape and are equally valid stand-ins; a made-up name is
+// used instead so the test's intent — "a service nobody implements" — cannot
+// be read as "a service Overcast merely hasn't implemented yet".
+const unclaimedServiceARN = "arn:aws:unclaimed-tagging-service:us-east-1:000000000000:thing:v1"
+
+// A signed caller addressing a service whose tag operations are not
+// implemented must reach the protocol-correct 501 — the general form of the
+// defect #976 found via Backup (see this file's header comment).
 //
 // Both ARN spellings matter: the AWS CLI percent-encodes the ARN whole into
-// one path segment (botocore also appends a trailing slash for Backup's
-// modeled URIs), while hand-written callers may leave the colons literal.
+// one path segment (botocore also appends a trailing slash for some services'
+// modeled URIs, Backup's ListTags among them), while hand-written callers may
+// leave the colons literal.
 func TestTagsDispatch_unclaimedARNSigned_returnsNotImplemented(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	const vaultARN = "arn:aws:backup:us-east-1:000000000000:backup-vault:v1"
 
 	for name, path := range map[string]string{
-		"escaped":                "/tags/" + url.PathEscape(vaultARN),
-		"escaped trailing slash": "/tags/" + url.PathEscape(vaultARN) + "/",
-		"literal":                "/tags/" + vaultARN,
+		"escaped":                "/tags/" + url.PathEscape(unclaimedServiceARN),
+		"escaped trailing slash": "/tags/" + url.PathEscape(unclaimedServiceARN) + "/",
+		"literal":                "/tags/" + unclaimedServiceARN,
 	} {
 		t.Run("ListTags/"+name, func(t *testing.T) {
-			resp := tagsSignedRequest(t, srv, http.MethodGet, path, "backup", nil)
+			resp := tagsSignedRequest(t, srv, http.MethodGet, path, "unclaimed-tagging-service", nil)
 			defer resp.Body.Close()
 
 			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
@@ -85,10 +101,10 @@ func TestTagsDispatch_unclaimedARNSigned_returnsNotImplemented(t *testing.T) {
 		})
 	}
 
-	// Backup's TagResource is modeled at POST /tags/{ResourceArn}; the write
-	// verb must not fall through to another service's tag store either.
+	// The write verb must not fall through to another service's tag store
+	// either.
 	t.Run("TagResource", func(t *testing.T) {
-		resp := tagsSignedRequest(t, srv, http.MethodPost, "/tags/"+url.PathEscape(vaultARN), "backup",
+		resp := tagsSignedRequest(t, srv, http.MethodPost, "/tags/"+url.PathEscape(unclaimedServiceARN), "unclaimed-tagging-service",
 			map[string]any{"Tags": map[string]string{"team": "platform"}})
 		defer resp.Body.Close()
 
@@ -105,7 +121,7 @@ func TestTagsDispatch_unclaimedARNSigned_returnsNotImplemented(t *testing.T) {
 func TestTagsDispatch_unclaimedARNUnsigned_doesNotFakeSuccess(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp, err := http.Get(srv.URL + "/tags/" + url.PathEscape("arn:aws:backup:us-east-1:000000000000:backup-vault:v1"))
+	resp, err := http.Get(srv.URL + "/tags/" + url.PathEscape(unclaimedServiceARN))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +130,38 @@ func TestTagsDispatch_unclaimedARNUnsigned_doesNotFakeSuccess(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 	if body := helpers.ReadBody(t, resp); strings.Contains(body, `"tags"`) {
 		t.Errorf("unsigned unclaimed ARN answered a tag body: %s", body)
+	}
+}
+
+// Backup is no longer an example of the #976 defect — #1195 gave it real
+// TagResource/ListTags — so its ARN must now round-trip through this shared
+// dispatch exactly as API Gateway's and AppRegistry's already do below.
+// UntagResource is deliberately not exercised here: it lives at Backup's own
+// /untag/{ResourceArn}, not this path (tests/integration/backup/tags_test.go
+// covers it, and TestBackupUntagResource_isNotServedUnderTags there pins that
+// /tags itself never answers it).
+func TestTagsDispatch_backupARN_keepsRoundTripping(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const vaultARN = "arn:aws:backup:us-east-1:000000000000:backup-vault:v1"
+
+	createResp := tagsSignedRequest(t, srv, http.MethodPut, "/backup-vaults/v1", "backup", map[string]any{})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	tag := tagsSignedRequest(t, srv, http.MethodPost, "/tags/"+url.PathEscape(vaultARN), "backup",
+		map[string]any{"Tags": map[string]string{"env": "prod"}})
+	defer tag.Body.Close()
+	helpers.AssertStatus(t, tag, http.StatusOK)
+
+	get := tagsSignedRequest(t, srv, http.MethodGet, "/tags/"+url.PathEscape(vaultARN), "backup", nil)
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusOK)
+	var result struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, get, &result)
+	if result.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %v", result.Tags)
 	}
 }
 

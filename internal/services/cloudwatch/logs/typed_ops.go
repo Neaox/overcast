@@ -53,6 +53,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"ListTagsLogGroup": op.NewTyped[listTagsLogGroupRequest, listTagsLogGroupResponse](
 			"ListTagsLogGroup", h.listTagsLogGroupTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 		"PutSubscriptionFilter": unsupportedOperation("PutSubscriptionFilter"),
 		"StartQuery":            unsupportedOperation("StartQuery"),
 		"GetQueryResults":       unsupportedOperation("GetQueryResults"),

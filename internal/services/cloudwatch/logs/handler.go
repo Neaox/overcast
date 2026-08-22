@@ -65,6 +65,9 @@ func (h *Handler) initOps() {
 		"TagLogGroup":           h.TagLogGroup,
 		"UntagLogGroup":         h.UntagLogGroup,
 		"ListTagsLogGroup":      h.ListTagsLogGroup,
+		"TagResource":           h.TagResource,
+		"UntagResource":         h.UntagResource,
+		"ListTagsForResource":   h.ListTagsForResource,
 		"PutMetricFilter":       h.PutMetricFilter,
 	}
 	h.typedOp = h.typedOps()
@@ -537,6 +540,52 @@ func (h *Handler) ListTagsLogGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, aerr := h.listTagsLogGroupTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
+}
+
+// TagResource is the modern, ARN-addressed sibling of TagLogGroup (#1195).
+// Delegates to tagResourceTyped (typed_logic.go), which resolves the ARN and
+// then reuses tagLogGroupTyped so both spellings share one implementation.
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagResource.html
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.tagResourceTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
+}
+
+// UntagResource is the modern, ARN-addressed sibling of UntagLogGroup (#1195).
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagResource.html
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	var req untagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.untagResourceTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
+}
+
+// ListTagsForResource is the modern, ARN-addressed sibling of
+// ListTagsLogGroup (#1195).
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsForResource.html
+func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req listTagsForResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	resp, aerr := h.listTagsForResourceTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return

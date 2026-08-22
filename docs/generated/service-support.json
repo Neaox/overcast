@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1446,
+  "total_ops": 1452,
   "services": [
     {
       "service": "s3",
@@ -6313,8 +6313,8 @@
     {
       "service": "cloudwatch-logs",
       "display_name": "CloudWatch Logs",
-      "total_ops": 19,
-      "implemented_ops": 15,
+      "total_ops": 22,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateLogGroup",
@@ -6429,6 +6429,24 @@
           "category": "Tagging",
           "status": "✅ Supported",
           "notes": "Returns tags for a log group"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tagging",
+          "status": "✅ Supported",
+          "notes": "Modern, ARN-addressed sibling of TagLogGroup (#1195); resolves `resourceArn` to a log group and shares its validation and storage"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tagging",
+          "status": "✅ Supported",
+          "notes": "Modern, ARN-addressed sibling of UntagLogGroup (#1195)"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tagging",
+          "status": "✅ Supported",
+          "notes": "Modern, ARN-addressed sibling of ListTagsLogGroup (#1195)"
         }
       ]
     },
@@ -7935,13 +7953,13 @@
     {
       "service": "backup",
       "display_name": "Backup",
-      "total_ops": 9,
-      "implemented_ops": 9,
+      "total_ops": 12,
+      "implemented_ops": 12,
       "operations": [
         {
           "operation": "CreateBackupVault",
-          "status": "⚠️ Partial",
-          "notes": "PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is accepted and dropped — Backup has no tag operations yet (#815)"
+          "status": "✅ Supported",
+          "notes": "PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is applied at create time, in the same store write as the vault (#1195)"
         },
         {
           "operation": "DeleteBackupVault",
@@ -7961,7 +7979,7 @@
         {
           "operation": "CreateBackupPlan",
           "status": "⚠️ Partial",
-          "notes": "PUT /backup/plans; `BackupPlanTags` is accepted and dropped (#815), and `AdvancedBackupSettings` is not stored or returned"
+          "notes": "PUT /backup/plans; `BackupPlanTags` is applied at create time (#1195); `AdvancedBackupSettings` is not stored or returned"
         },
         {
           "operation": "DeleteBackupPlan",
@@ -7982,6 +8000,21 @@
           "operation": "UpdateBackupPlan",
           "status": "⚠️ Partial",
           "notes": "POST /backup/plans/{BackupPlanId}; mints a new VersionId per update. Prior versions are not retained and `AdvancedBackupSettings` is not stored"
+        },
+        {
+          "operation": "TagResource",
+          "status": "✅ Supported",
+          "notes": "POST /tags/{ResourceArn}, shared with Pipes/EKS/Scheduler/AppConfig/API Gateway's ARN-dispatched path (#1195). Tags are stored inline on the vault or plan record, so they die with it"
+        },
+        {
+          "operation": "ListTags",
+          "status": "✅ Supported",
+          "notes": "GET /tags/{ResourceArn} (#1195)"
+        },
+        {
+          "operation": "UntagResource",
+          "status": "✅ Supported",
+          "notes": "POST /untag/{ResourceArn} — Backup's own path, not another member of the shared /tags dispatcher (#1195)"
         }
       ]
     },

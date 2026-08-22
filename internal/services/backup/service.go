@@ -45,6 +45,12 @@ const (
 	pathVaults = "/backup-vaults"
 	pathPlans  = "/backup/plans"
 
+	// pathUntag is UntagResource's modeled binding — POST /untag/{ResourceArn}
+	// — not another member of the shared "/tags" dispatcher every other tag
+	// operation on this path answers through (#1195; see
+	// docs/plans/resource-tagging-coverage.md's backup section for why).
+	pathUntag = "/untag"
+
 	// vaultTypeStandard and vaultStateAvailable are the only members of AWS's
 	// VaultType and VaultState enums a vault created here can be in: Overcast
 	// implements neither logically air-gapped nor restore-access vaults, and a
@@ -98,9 +104,8 @@ type backupVault struct {
 type createBackupVaultRequest struct {
 	EncryptionKeyArn string `json:"EncryptionKeyArn"`
 	CreatorRequestId string `json:"CreatorRequestId"`
-	// BackupVaultTags is declared so the accepted-and-dropped member is
-	// visible in the shape, and is deliberately not read — see
-	// createBackupVault.
+	// BackupVaultTags is applied at create time, in the same store write as
+	// the vault itself (#1195) — see createBackupVault.
 	BackupVaultTags map[string]string `json:"BackupVaultTags"`
 }
 
@@ -126,8 +131,9 @@ type backupPlanInput struct {
 type createBackupPlanRequest struct {
 	BackupPlan       backupPlanInput `json:"BackupPlan"`
 	CreatorRequestId string          `json:"CreatorRequestId"`
-	// BackupPlanTags is declared and deliberately not read, as
-	// BackupVaultTags is above.
+	// BackupPlanTags is applied at create time, as BackupVaultTags is above.
+	// UpdateBackupPlan models no equivalent member, so a plan's tags can only
+	// change through TagResource/UntagResource after creation.
 	BackupPlanTags map[string]string `json:"BackupPlanTags"`
 }
 
@@ -234,7 +240,14 @@ func (s *Service) Name() string { return serviceName }
 // PathPrefixes satisfies router.PathPrefixService, so a router built with a
 // service subset answers 501 on Backup's paths rather than dropping them into
 // S3's wildcard.
-func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlans} }
+//
+// "/tags" is deliberately absent: it is shared with Pipes, EKS, Scheduler,
+// AppConfig and API Gateway, and the main router already owns it (see
+// internal/router/router.go's "/tags service dispatch" block) via
+// TagsRouter(), below. "/untag" is Backup's alone — UntagResource is the one
+// tag operation Backup does not share this path space for (#1195) — so it is
+// registered directly in RegisterRoutes and belongs here.
+func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlans, pathUntag} }
 
 // RegisterRoutes registers Backup's modeled REST bindings:
 //
@@ -292,6 +305,11 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get(pathPlans+"/{BackupPlanId}/", s.getBackupPlan)
 	r.Post(pathPlans+"/{BackupPlanId}", s.updateBackupPlan)
 	r.Delete(pathPlans+"/{BackupPlanId}", s.deleteBackupPlan)
+
+	// UntagResource (#1195). Unlike TagResource/ListTags below, this path is
+	// Backup's alone, so it is registered directly rather than through the
+	// shared "/tags" ARN dispatcher — see TagsRouter's doc comment.
+	r.Post(pathUntag+"/{ResourceArn}", s.untagResource)
 }
 
 // ─── Vault handlers ───────────────────────────────────────────
@@ -304,6 +322,15 @@ func (s *Service) createBackupVault(w http.ResponseWriter, r *http.Request) {
 	}
 	var req createBackupVaultRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	// Tag validation is a request-shape constraint, checked before the
+	// duplicate-name check resolves against the store — the same ordering
+	// createLogGroupTyped uses (internal/services/cloudwatch/logs/typed_logic.go)
+	// and for the same reason: a rejected create must not depend on whether
+	// the name happens to collide.
+	if aerr := serviceutil.ValidateTags(backupTagCfg, req.BackupVaultTags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
@@ -332,13 +359,16 @@ func (s *Service) createBackupVault(w http.ResponseWriter, r *http.Request) {
 		EncryptionKeyArn: req.EncryptionKeyArn,
 		CreatorRequestID: req.CreatorRequestId,
 	}
+	if len(req.BackupVaultTags) > 0 {
+		vault.Tags = make(map[string]string, len(req.BackupVaultTags))
+		for k, v := range req.BackupVaultTags {
+			vault.Tags[k] = v
+		}
+	}
 	if err := s.store.putVault(r.Context(), region, vault); err != nil {
 		s.storeError(w, r, "CreateBackupVault", err)
 		return
 	}
-	// req.BackupVaultTags is accepted and dropped: Backup has no tag
-	// operations here yet, and storing tags nothing can read would be worse
-	// than not storing them. Tracked on #815; the capability row says so.
 	protocol.WriteJSON(w, r, http.StatusOK, createBackupVaultResponse{
 		BackupVaultName: vault.BackupVaultName,
 		BackupVaultArn:  vault.BackupVaultArn,
@@ -448,6 +478,12 @@ func (s *Service) createBackupPlan(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, missingParameterError("BackupPlan.BackupPlanName"))
 		return
 	}
+	// See createBackupVault: request-shape validation before resource
+	// resolution/creation.
+	if aerr := serviceutil.ValidateTags(backupTagCfg, req.BackupPlanTags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
 
 	// AWS mints a UUID here. The previous identifier was derived from the
@@ -464,12 +500,16 @@ func (s *Service) createBackupPlan(w http.ResponseWriter, r *http.Request) {
 		Version:        1,
 		CreationDate:   now,
 	}
+	if len(req.BackupPlanTags) > 0 {
+		plan.Tags = make(map[string]string, len(req.BackupPlanTags))
+		for k, v := range req.BackupPlanTags {
+			plan.Tags[k] = v
+		}
+	}
 	if err := s.store.putPlan(r.Context(), region, plan); err != nil {
 		s.storeError(w, r, "CreateBackupPlan", err)
 		return
 	}
-	// req.BackupPlanTags is dropped for the same reason as BackupVaultTags —
-	// see createBackupVault.
 	protocol.WriteJSON(w, r, http.StatusOK, planWriteResponse(plan))
 }
 
@@ -690,9 +730,22 @@ func planARN(region, accountID, planID string) string {
 // these operations, rather than the emulator's generic InternalError.
 func (s *Service) storeError(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	s.log.Error("state store failure", zap.String("operation", operation), zap.Error(err))
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+	protocol.WriteJSONError(w, r, serviceUnavailable())
+}
+
+// wrapStoreErr is storeError's non-writing half, for callers
+// (handler_tags.go's vaultTagStore/planTagStore) that build a
+// *protocol.AWSError to return rather than writing an HTTP response
+// directly, and so have no request/operation name to log alongside.
+func (s *Service) wrapStoreErr(err error) *protocol.AWSError {
+	s.log.Error("state store failure", zap.Error(err))
+	return serviceUnavailable()
+}
+
+func serviceUnavailable() *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       "ServiceUnavailableException",
 		Message:    "The request failed due to a temporary failure of the server.",
 		HTTPStatus: http.StatusInternalServerError,
-	})
+	}
 }

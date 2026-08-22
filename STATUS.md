@@ -44,7 +44,7 @@
 | AppConfigData   | 2   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 22  | Secret CRUD, versioning, tags, real rotation (invokes the configured Lambda, all four steps), resource policies (stored, not evaluated — #496)                                                            |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
-| CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
+| CloudWatch Logs | 22  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
 | SES             | 45  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 | Route 53        | 25  | Hosted zones (default NS/SOA, delegation sets), validated change batches, DNS-order pagination, tags, health checks — inert (no DNS served)                                                                |
@@ -91,7 +91,7 @@
 | AppConfigData   | 2   |
 | Secrets Manager | 22  |
 | SSM             | 18  |
-| CloudWatch Logs | 19  |
+| CloudWatch Logs | 22  |
 | SES             | 45  |
 | STS             | 11  |
 | Route 53        | 25  |
@@ -109,7 +109,7 @@
 | Glue            | 11  |
 | OpenSearch      | 8   |
 | AppRegistry     | 22  |
-| Backup          | 9   |
+| Backup          | 12  |
 | CloudTrail      | 12  |
 | EKS             | 50  |
 | ELBv2           | 21  |
