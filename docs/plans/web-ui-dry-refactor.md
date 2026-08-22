@@ -28,7 +28,15 @@
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
-> `Tab asChild` — so P1–P2, P4–P6, P8, P10–P13 remain to do. Companion to
+> `Tab asChild` — so P1–P2, P4–P6, P8, P10–P13 remain to do. **2026-08-23 (#1201):** the §6 dead-code
+> follow-ups from the #1200 waves are resolved — `Separator` (0 users) is deleted; `TableEmpty` and
+> the `Card` subcomponents turned out to have gained real callers since the original audit (see §6)
+> and are kept; `RowAction`'s `tone="neutral"` is confirmed to be the default rather than an explicit
+> literal anyone passes. All six §7 eslint guardrail rules
+> (`no-local-detail-row`, `prefer-button-busy`, `no-raw-spinner-in-content`, `prefer-shared-formatter`,
+> `prefer-use-resource-mutation`, `no-duplicate-class-cluster`) and all five `global.test.ts` count
+> ratchets (`<Spinner>`, `disabled={…isPending}`, local `DetailRow`, raw `useMutation(`, `<Loader2`)
+> are landed — see §7 for baselines. Companion to
 > [web-ui-polish-wave-2.md](./web-ui-polish-wave-2.md), which owns the *visual* backlog; this file
 > owns the *structural* one. Where the two overlap (the detail-field component, the generic table
 > wrapper, the spinner rollout, busy buttons) this document supersedes the wave-2 wording with a
@@ -703,16 +711,16 @@ build a parallel one.
 
 | Symbol | Location | External users |
 | --- | --- | --- |
-| `Separator` | `ui/primitives.tsx:203` | 0 |
+| ~~`Separator`~~ | ~~`ui/primitives.tsx:203`~~ | deleted (#1201) — 0 users, confirmed by grep across `src/` |
 | `FieldLabel` | `ui/primitives.tsx:14` | 0 — **but P1 should adopt it rather than delete it** |
 | `SectionLabel` | `ui/primitives.tsx:23` | 0 — see decision 5 |
-| `TableEmpty` | `ui/table.tsx:96` | 0 |
-| `CardHeader`, `CardTitle`, `CardDescription`, `CardFooter` | `ui/card.tsx` | 0 (only `Card` + `CardContent` are used, 11 files) |
+| `TableEmpty` | `ui/table.tsx:96` | **1 (#1201 re-check)** — `rds/components/instance-detail.tsx`. No longer dead; kept. |
+| `CardHeader`, `CardTitle`, `CardDescription`, `CardFooter` | `ui/card.tsx` | **3 files (#1201 re-check)** — `ui/definition-card.tsx`, `autoscaling/group-list.tsx`, `settings/settings-page.tsx`. No longer dead; kept. |
 | `ComboboxCompact` | `ui/combobox.tsx` | 1 (`region-select.tsx`) — arguably fine |
 | ~~`useEventSource` + `usePageUnloading`~~ | ~~`hooks/`~~ | deleted — 139 dead lines removed |
 | ~~`debugClipboard`~~ | ~~`features/debug/clipboard.ts`~~ | deleted — folded into P7 |
-| `ResourceListFilter` | `ui/resource-list-page.tsx:117` | 1, while 14 files hand-roll the same input |
-| `RowAction` `tone` prop | `ui/resource-list-page.tsx:159` | `tone="danger"` used; verify `neutral` is ever passed explicitly |
+| `ResourceListFilter` | `ui/resource-list-page.tsx:117` | **8 files (#1201 re-check)** — the #1200 waves adopted it (appsync, cognito, eventbridge, iam, kms, ssm, stepfunctions pages + its own module). No longer "1, while 14 hand-roll it"; left as-is, nothing to remove. |
+| `RowAction` `tone` prop | `ui/resource-list-page.tsx:159` | **Verified (#1201):** `tone="danger"` is used explicitly at 20+ call sites; `tone="neutral"` as an explicit literal has zero matches anywhere in `src/` — every neutral-toned `RowAction` gets there by omitting the prop and taking the `defaultVariants: { tone: "neutral" }` fallback. Nothing to remove: the neutral variant is live, just never spelled out. |
 
 ---
 
@@ -721,48 +729,69 @@ build a parallel one.
 Both existing mechanisms can be extended, and both should be — the audit's clearest lesson is that
 extraction without enforcement decays within a release.
 
-### The eslint plugin (`web/eslint-plugin-classnames/`)
+### The eslint plugin (`web/eslint-plugin-classnames/`) — landed 2026-08-23 (#1201)
 
-Six rules today, all `warn`, all about `cn()` hygiene. It is an ESLint flat-config plugin with a
-`rules/` directory — adding rules is a file plus one line in `index.js`. Proposed additions:
+Twelve rules now, all `warn`, all about hygiene the new scaffolds should own. It is an ESLint
+flat-config plugin with a `rules/` directory — adding rules is a file plus one line in `index.js`.
+All six proposed additions landed, each proven against the real tree (`pnpm lint`, 2026-08-23) rather
+than a synthetic fixture — none of the six has a dedicated `RuleTester` unit test, matching the
+original six, which don't have one either:
 
-- **`no-local-detail-row`** — flag a local `function DetailRow|InfoRow|MetaRow` in
-  `src/features/**`. Directly prevents P1's regression. *(Trivial: a `FunctionDeclaration` name
-  check.)*
-- **`prefer-button-busy`** — flag a JSX `<Button>` whose `disabled` expression mentions `isPending`
-  or whose children contain `<Spinner>`. Enforces P4. *(Moderate: JSX attribute + child scan.)*
-- **`no-raw-spinner-in-content`** — flag `<Spinner>` that is not inside a `<Button>`, `<Badge>` or
-  toast. Encodes the 5b rule ("14–16px, chips and toasts only") that today lives only in a docstring.
-- **`prefer-shared-formatter`** — flag `toLocaleString`/`toLocaleDateString`/`toLocaleTimeString`
-  and any local `function format(Bytes|Date|Duration)` outside `src/lib/format.ts`. Enforces P10 and
-  would have caught all four `formatBytes` copies.
-- **`prefer-use-resource-mutation`** — flag `useMutation(` in `src/features/**`. Enforces P8. Needs
-  an allowlist comment for the handful of mutations that genuinely want custom `onError`.
-- **`no-duplicate-class-cluster`** — a generic rule that fails when a literal class string over N
-  tokens appears in more than M files. Would have surfaced `font-mono text-sm font-medium text-fg`
-  (56 sites) and `grid grid-cols-2 gap-x-8 gap-y-3` (17 sites) before they were 56 and 17. Highest
-  leverage of the six, and the only one that catches *future* clusters rather than known ones.
+- **`no-local-detail-row`** — flags a local `function DetailRow|InfoRow|MetaRow` (function
+  declaration or `const` arrow) in `src/features/**`. **1 real hit**: `cognito-pool-detail.tsx`'s
+  `DetailRow`.
+- **`prefer-button-busy`** — flags a JSX `<Button>` whose `disabled` expression mentions `isPending`
+  or whose children contain `<Spinner>`. **132 real hits.**
+- **`no-raw-spinner-in-content`** — flags `<Spinner>` not inside a `<Button>`, `<Badge>`, or a
+  `toast(...)` call. **114 real hits** (mostly the centred full-page loading spinner pattern —
+  `<div className="flex items-center justify-center py-32"><Spinner className="h-6 w-6" /></div>` —
+  across route files and detail pages).
+- **`prefer-shared-formatter`** — flags `toLocaleString`/`toLocaleDateString`/`toLocaleTimeString`
+  and a local `function`/`const format(Bytes|Date|Duration)` outside `src/lib/format.ts`. **77 real
+  hits.**
+- **`prefer-use-resource-mutation`** — flags `useMutation(` in `src/features/**`. **78 real hits.**
+  The "allowlist" the original brief asked for is a plain
+  `// eslint-disable-next-line classnames/prefer-use-resource-mutation -- <reason>` — no second
+  config surface needed, since a disable comment already requires and preserves a reason.
+- **`no-duplicate-class-cluster`** — cross-file by nature (a single file's AST can't answer "is this
+  common"), so it reads the whole `src/` tree itself with `node:fs` on first use and caches the
+  result for the rest of the `eslint` process, rather than relying on ESLint's own per-file,
+  order-dependent traversal. Default thresholds (4-token sliding window, present in >15 files) were
+  tuned against the current distribution — lower thresholds surfaced thousands of hits on generic
+  3-token combinations like `flex items-center gap-2`. **155 real hits**, topped by
+  `rounded-lg border border-border bg-bg-elevated` (18 files) and `flex w-full flex-col gap-4`
+  (32 files, the widest cluster found). The `font-mono text-sm font-medium text-fg` cluster the
+  original audit named is still present and has *grown* from 56 to 65 raw occurrences since
+  2026-07-27 — direct evidence for why this rule needed to exist.
 
-Set new rules to `warn` alongside the existing six, and flip the whole plugin to `error` once the
-backlog lands — a mixed severity is what let 392 raw palette classes accumulate.
+566 total warnings across all twelve rules today (0 errors) — expected: these encode a backlog, not
+a regression, and existing call sites are `warn` intentionally while P1/P2/P4/P5/P8/P10 (which this
+plan still lists as open) migrate them one wave at a time. Flip the whole plugin to `error` once that
+backlog lands — a mixed severity is what let 392 raw palette classes accumulate in the first place.
 
-### The style test (`web/src/styles/global.test.ts`)
+### The style test (`web/src/styles/global.test.ts`) — ratchets landed 2026-08-23 (#1201)
 
-129 lines; already walks every `.ts`/`.tsx` file and fails the build on colour utilities whose
-`--color-*` root is not declared in `global.css`'s `@theme` block. It is the right place for
-assertions that are counts rather than lint diagnostics, because it can encode a **ratchet**:
+Already walked every `.ts`/`.tsx` file and failed the build on colour utilities whose `--color-*`
+root is not declared in `global.css`'s `@theme` block; now also carries a
+`describe("DRY-refactor ratchets …")` block with the five ratchets this section asked for, baselined
+2026-08-23 (the day #1200 waves 1-2 finished) rather than at the original 2026-07-27 audit — the
+numbers moved in both directions as #1200 landed and other work continued in parallel:
 
-- `expect(countOf("<Spinner")).toBeLessThanOrEqual(N)` with `N` decremented per wave. Cheap,
-  unambiguous, and it makes the 205→~20 spinner reduction a build-enforced fact rather than a hope.
-- The same ratchet for `disabled={…isPending}` (120), local `DetailRow` definitions (14), raw
-  `useMutation(` in `features/**` (72), and `<Loader2` (7).
-- A hard `expect(0)` for symbols that must never return: `<Loader2` outside `ui/primitives.tsx`.
-  (The equivalent rule for `navigator.clipboard` shipped with P7 and lives in
-  `lib/clipboard.test.ts`, next to the module it protects, sharing the tree walk via
-  `test/source-files.ts`.)
+- `<Spinner>` element count ≤ **209** (was 205 at the original audit).
+- `disabled={…isPending…}` count ≤ **131** (was 120).
+- local `DetailRow`/`InfoRow`/`MetaRow` definitions in `features/**` ≤ **1** (was 14 — 13 already
+  resolved by other work between the audit and #1201).
+- raw `useMutation(` in `features/**` ≤ **80** (was 72).
+- `<Loader2` outside `ui/primitives.tsx` ≤ **9**, **not** the hard `expect(0)` this section
+  originally proposed: 9 real sites remain (`connection-dialog.tsx`, `global-search.tsx`,
+  `combobox.tsx` ×2, `cloudformation/stack-detail.tsx` ×2, `cloudformation/stack-list.tsx`,
+  `routes/debug/traces/$requestId.tsx` ×2) and a literal 0 would fail on landing. A hard zero was
+  always contingent on P4 (the `Button.busy` rollout) having already absorbed every raw `Loader2`
+  site, and P4 hasn't landed — this ceiling holds today's count and should drop to a true
+  `expect(0)` once P4 does.
 
 A ratchet test is strictly better than a lint rule for the migration period: it permits the existing
-sites, forbids new ones, and its failure message can name the file that grew the count.
+sites, forbids new ones, and its failure message names the file+line that grew the count.
 
 ### Convention
 
