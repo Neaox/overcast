@@ -31,6 +31,10 @@ type createWorkGroupReq struct {
 	Name        string      `json:"Name" cbor:"Name"`
 	Description string      `json:"Description" cbor:"Description"`
 	Tags        []athenaTag `json:"Tags" cbor:"Tags"`
+	// Configuration is kept as the caller sent it (result location, bytes
+	// cutoff, engine version, …) and handed back verbatim by GetWorkGroup;
+	// Overcast does not act on any of it.
+	Configuration map[string]any `json:"Configuration" cbor:"Configuration"`
 }
 
 type startQueryExecResp struct {
@@ -135,7 +139,7 @@ func (s *Service) createWorkGroupTyped(ctx context.Context, req *createWorkGroup
 	if aerr := serviceutil.ValidateTags(athenaTagCfg, tags); aerr != nil {
 		return nil, aerr
 	}
-	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description, Tags: tags}
+	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description, Configuration: req.Configuration, Tags: tags}
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {
 		return nil, protocol.ErrInternalError
 	}
