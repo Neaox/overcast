@@ -21,9 +21,14 @@ import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 import { ArnText } from "@/components/ui/arn-link"
 
-export function StepFunctionsPage() {
+interface StepFunctionsPageProps {
+  /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+export function StepFunctionsPage({ filter, onFilterChange }: StepFunctionsPageProps) {
   const [showCreate, setShowCreate] = useState(false)
-  const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -71,7 +76,7 @@ export function StepFunctionsPage() {
     >
       <ResourceListFilter
         value={filter}
-        onChange={setFilter}
+        onChange={onFilterChange}
         placeholder="Filter state machines…"
       />
 
@@ -80,14 +85,12 @@ export function StepFunctionsPage() {
         noun="state machines"
         emptyIcon={Shuffle}
         emptyTitle="No state machines"
-        emptyDescription={
-          filter ? "No state machines match the filter." : "Create a state machine to get started."
-        }
+        emptyDescription="Create a state machine to get started."
         emptyAction={
-          !filter && (
-            <CreateAction onClick={() => setShowCreate(true)}>Create State Machine</CreateAction>
-          )
+          <CreateAction onClick={() => setShowCreate(true)}>Create State Machine</CreateAction>
         }
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(sm) => sm.stateMachineArn ?? ""}
         columns={[
           {

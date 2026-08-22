@@ -14,11 +14,21 @@
 > Policies, Groups; the Simulator tab is not a resource list and is untouched), and `ec2-dashboard`
 > (5 tabs — Instances, VPCs, Security Groups, Elastic IPs, NAT Gateways). `sts-page` stays bespoke
 > per this section's own recommendation. **All 12 pages in the Archetype C table are now resolved**
-> (11 converted + `sts-page` deliberately bespoke) — #1200 is closed. None of the other scaffold
+> (11 converted + `sts-page` deliberately bespoke) — #1200 is closed. **2026-08-23 (#1203):** P9's
+> URL-binding half landed — `useFilterSearchParam` (`hooks/use-filter-search-param.ts`) wires
+> `ResourceListFilter` to the route's `q` search param (deep-linkable, debounced, `replace: true`,
+> same contract Request Traces' filters use) — applied to the five single-list pages that had a
+> filter box (kms, ssm, appsync, stepfunctions, cognito) and to the tabbed `iam-page`/
+> `eventbridge-page` from #1200 wave 2 above, which also gained a `tab` search param so the selected
+> tab deep-links too (switching tabs clears `q`, matching `TabPanel`'s existing unmount-on-switch
+> behaviour). `ResourceTable`/`QueryListState` gained `isFiltered`/`onClearFilter` in the same
+> change, so the empty state distinguishes "nothing exists" from "nothing matches" without each page
+> hand-rolling the ternary. The client-side matching consolidation (`useResourceFilter` itself) is
+> still open — see P9. None of the other scaffold
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
-> `Tab asChild` — so P1–P2, P4–P6 and P8–P13 remain to do. Companion to
+> `Tab asChild` — so P1–P2, P4–P6, P8, P10–P13 remain to do. Companion to
 > [web-ui-polish-wave-2.md](./web-ui-polish-wave-2.md), which owns the *visual* backlog; this file
 > owns the *structural* one. Where the two overlap (the detail-field component, the generic table
 > wrapper, the spinner rollout, busy buttons) this document supersedes the wave-2 wording with a
@@ -455,6 +465,23 @@ at all when Overcast was served over plain HTTP from anything other than `localh
 - **Pure mechanical adoption. Highest lines-removed-per-thought of anything in this list.**
 
 ### P9 — `useResourceFilter` + wire up `ResourceListFilter` — **S** — depends on P3
+
+> **URL-binding half landed 2026-08-23 (#1203).** `hooks/use-filter-search-param.ts`
+> (`useFilterSearchParam`) two-way binds a filter box to the route's `q` search param — debounced
+> commit, `replace: true`, same contract as Request Traces' filters — wired into every page that
+> already called `ResourceListFilter`: the five single-list pages (kms, ssm, appsync,
+> stepfunctions, cognito) and the two tabbed pages from #1200 wave 2 (`iam-page`'s four resource
+> tabs, `eventbridge-page`'s two), which additionally gained a `tab` search param so the selected
+> tab itself deep-links — switching tabs clears `q` in the same navigation, matching `TabPanel`'s
+> existing behaviour of unmounting (and thereby resetting) every tab but the selected one.
+> `ResourceTable`/`QueryListState` also gained `isFiltered`/`onClearFilter`, so the empty state
+> reads "no matching {noun}" + a clear-filter action instead of each page computing
+> `filter ? … : …` by hand. **Not yet wired:** `apigateway/usage-plans-page` (its `apiId`/`planId`
+> search params predate this and are a one-way "open on this plan" deep link, not a live two-way
+> filter binding) and `ec2-dashboard` (no filter box today). The client-side matching consolidation
+> below (`useResourceFilter` itself, and the ~14 pages that still hand-roll a search input outside
+> `ResourceListFilter` entirely) is still open — the counts below predate this change and have not
+> been re-audited.
 
 - **Collapses:** 52 `toLowerCase().includes()` filter expressions in 24 files, 18 `useState("")`
   filter declarations, and ~14 hand-rolled search inputs that duplicate `ResourceListFilter`

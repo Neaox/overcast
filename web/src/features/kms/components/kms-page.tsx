@@ -27,12 +27,17 @@ import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
 import { ArnText } from "@/components/ui/arn-link"
 
-export function KmsPage() {
+interface KmsPageProps {
+  /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+export function KmsPage({ filter, onFilterChange }: KmsPageProps) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
   const [showCreate, setShowCreate] = useState(false)
-  const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const { data: keys = [], isLoading, isFetching, refetch, error } = useQuery(kmsKeysQueryOptions())
@@ -81,17 +86,17 @@ export function KmsPage() {
     >
       <InertBanner serviceName="KMS" />
 
-      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter keys…" />
+      <ResourceListFilter value={filter} onChange={onFilterChange} placeholder="Filter keys…" />
 
       <ResourceTable
         query={{ data: filtered, isLoading, error }}
         noun="keys"
         emptyIcon={Key}
         emptyTitle="No keys"
-        emptyDescription={filter ? "No keys match the filter." : "Create a key to get started."}
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create key</CreateAction>
-        }
+        emptyDescription="Create a key to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create key</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(key) => key.KeyId ?? ""}
         onRowClick={(key) => navigate({ to: "/kms/$keyId", params: { keyId: key.KeyId ?? "" } })}
         columns={[

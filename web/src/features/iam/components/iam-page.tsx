@@ -16,6 +16,7 @@ import {
   createRoleMutationOptions,
   createPolicyMutationOptions,
   createGroupMutationOptions,
+  type IamTab,
 } from "@/features/iam/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -27,8 +28,19 @@ import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 import { PolicySimulator, EnforcementNotice } from "./policy-simulator"
 
-export function IAMPage() {
-  const [tab, setTab] = useState("users")
+interface FilterProps {
+  /** Current filter text for whichever tab is active — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+interface IAMPageProps extends FilterProps {
+  /** Selected tab — owned by the route's `tab` search param, so the tab survives a reload/share. */
+  tab: IamTab
+  onTabChange: (tab: IamTab) => void
+}
+
+export function IAMPage({ tab, onTabChange, filter, onFilterChange }: IAMPageProps) {
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   return (
@@ -47,7 +59,7 @@ export function IAMPage() {
         }
       />
       <EnforcementNotice />
-      <Tabs selectedKey={tab} onSelectionChange={setTab}>
+      <Tabs selectedKey={tab} onSelectionChange={(key) => onTabChange(key as IamTab)}>
         <TabList>
           <Tab id="users">Users</Tab>
           <Tab id="roles">Roles</Tab>
@@ -56,16 +68,16 @@ export function IAMPage() {
           <Tab id="simulator">Simulator</Tab>
         </TabList>
         <TabPanel id="users">
-          <UsersTab />
+          <UsersTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
         <TabPanel id="roles">
-          <RolesTab />
+          <RolesTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
         <TabPanel id="policies">
-          <PoliciesTab />
+          <PoliciesTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
         <TabPanel id="groups">
-          <GroupsTab />
+          <GroupsTab filter={filter} onFilterChange={onFilterChange} />
         </TabPanel>
         <TabPanel id="simulator">
           <PolicySimulator />
@@ -77,10 +89,9 @@ export function IAMPage() {
 
 // ─── Users Tab ─────────────────────────────────────────────────────────────
 
-function UsersTab() {
+function UsersTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
-  const [filter, setFilter] = useState("")
   const {
     data: users = [],
     isLoading,
@@ -115,7 +126,7 @@ function UsersTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter users…"
             className="flex-1"
           />
@@ -130,12 +141,10 @@ function UsersTab() {
         noun="users"
         emptyIcon={Users}
         emptyTitle="No users"
-        emptyDescription={
-          filter ? "No users match the filter." : "Create an IAM user to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create User</CreateAction>
-        }
+        emptyDescription="Create an IAM user to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create User</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(u) => u.UserName ?? ""}
         columns={[
           { header: "User Name", cell: (u) => u.UserName },
@@ -177,10 +186,9 @@ function UsersTab() {
 
 // ─── Roles Tab ─────────────────────────────────────────────────────────────
 
-function RolesTab() {
+function RolesTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
-  const [filter, setFilter] = useState("")
   const {
     data: roles = [],
     isLoading,
@@ -212,7 +220,7 @@ function RolesTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter roles…"
             className="flex-1"
           />
@@ -227,12 +235,10 @@ function RolesTab() {
         noun="roles"
         emptyIcon={Users}
         emptyTitle="No roles"
-        emptyDescription={
-          filter ? "No roles match the filter." : "Create an IAM role to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Role</CreateAction>
-        }
+        emptyDescription="Create an IAM role to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create Role</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(r) => r.RoleName ?? ""}
         columns={[
           { header: "Role Name", cell: (r) => r.RoleName },
@@ -274,10 +280,9 @@ function RolesTab() {
 
 // ─── Policies Tab ──────────────────────────────────────────────────────────
 
-function PoliciesTab() {
+function PoliciesTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<(typeof policies)[number]>()
-  const [filter, setFilter] = useState("")
   const {
     data: policies = [],
     isLoading,
@@ -309,7 +314,7 @@ function PoliciesTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter policies…"
             className="flex-1"
           />
@@ -324,12 +329,10 @@ function PoliciesTab() {
         noun="policies"
         emptyIcon={Users}
         emptyTitle="No policies"
-        emptyDescription={
-          filter ? "No policies match the filter." : "Create an IAM policy to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Policy</CreateAction>
-        }
+        emptyDescription="Create an IAM policy to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create Policy</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(p) => p.PolicyName ?? ""}
         columns={[
           { header: "Policy Name", cell: (p) => p.PolicyName },
@@ -407,11 +410,10 @@ function GroupMembers({ groupName }: { groupName: string }) {
   )
 }
 
-function GroupsTab() {
+function GroupsTab({ filter, onFilterChange }: FilterProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [expanded, setExpanded] = useState<string>()
-  const [filter, setFilter] = useState("")
   const {
     data: groups = [],
     isLoading,
@@ -443,7 +445,7 @@ function GroupsTab() {
         <>
           <ResourceListFilter
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             placeholder="Filter groups…"
             className="flex-1"
           />
@@ -458,12 +460,10 @@ function GroupsTab() {
         noun="groups"
         emptyIcon={Users}
         emptyTitle="No groups"
-        emptyDescription={
-          filter ? "No groups match the filter." : "Create an IAM group to get started."
-        }
-        emptyAction={
-          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create Group</CreateAction>
-        }
+        emptyDescription="Create an IAM group to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create Group</CreateAction>}
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
         rowKey={(g) => g.GroupName ?? ""}
         columns={[
           {

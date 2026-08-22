@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, EmptyState } from "@/components/ui/primitives"
+import { QueryListState } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
@@ -32,11 +32,16 @@ import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs
 import { CreatePoolDialog } from "@/features/cognito/components/create-pool-dialog"
 import { formatDate } from "@/lib/format"
 
-export function CognitoPage() {
+interface CognitoPageProps {
+  /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
+  filter: string
+  onFilterChange: (value: string) => void
+}
+
+export function CognitoPage({ filter, onFilterChange }: CognitoPageProps) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string }>()
-  const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -84,7 +89,11 @@ export function CognitoPage() {
         </>
       }
     >
-      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter user pools…" />
+      <ResourceListFilter
+        value={filter}
+        onChange={onFilterChange}
+        placeholder="Filter user pools…"
+      />
 
       <ResourceListCard>
         {isLoading || filtered.length === 0 ? (
@@ -92,20 +101,14 @@ export function CognitoPage() {
             isLoading={isLoading}
             isEmpty={filtered.length === 0}
             error={error}
-            empty={
-              <EmptyState
-                icon={<UserCheck className="h-10 w-10" />}
-                title="No user pools"
-                description={
-                  filter ? "No pools match the filter." : "Create a user pool to get started."
-                }
-                action={
-                  filter ? undefined : (
-                    <CreateAction onClick={() => setShowCreate(true)}>Create pool</CreateAction>
-                  )
-                }
-              />
+            emptyIcon={<UserCheck className="h-10 w-10" />}
+            emptyTitle="No user pools"
+            emptyDescription="Create a user pool to get started."
+            emptyAction={
+              <CreateAction onClick={() => setShowCreate(true)}>Create pool</CreateAction>
             }
+            isFiltered={!!filter}
+            onClearFilter={() => onFilterChange("")}
             errorTitle="Failed to load user pools"
           />
         ) : (

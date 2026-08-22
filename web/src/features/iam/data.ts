@@ -3,6 +3,17 @@ import { iam } from "@/services/api/iam"
 import type { SimulationRequest } from "@/services/api/iam"
 import { endpointStore } from "@/services/endpoint-store"
 
+// ─── Tabs ───────────────────────────────────────────────────────────────────
+
+/**
+ * The IAM tabs that carry a resource list — `"simulator"` has no filter/noun
+ * of its own. Lives here rather than in `iam-page.tsx` because that file's
+ * exports must stay component-only for Fast Refresh; the route file needs
+ * this to validate the `tab` search param.
+ */
+export const IAM_TABS = ["users", "roles", "policies", "groups", "simulator"] as const
+export type IamTab = (typeof IAM_TABS)[number]
+
 // ─── Key factory ───────────────────────────────────────────────────────────
 
 export const iamKeys = {
