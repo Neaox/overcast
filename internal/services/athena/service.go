@@ -316,23 +316,16 @@ func (s *Service) listQueryExecutions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) createWorkGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name        string `json:"Name"`
-		Description string `json:"Description"`
-	}
+	// Delegates to createWorkGroupTyped (typed_logic.go) so the legacy
+	// JSON1.0/1.1 path and the CBOR typed path share one implementation —
+	// the legacy copy previously re-implemented this inline and silently
+	// ignored Tags (#1196).
+	var req createWorkGroupReq
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "InvalidRequestException", Message: "Name is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description}
-	if err := s.store.putWorkGroup(r.Context(), wg); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if _, aerr := s.createWorkGroupTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})

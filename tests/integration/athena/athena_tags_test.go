@@ -16,6 +16,53 @@ func createTagTestWorkGroup(t *testing.T, srv *helpers.TestServer) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
+// TestAthenaCreateWorkGroup_tagsAppliedAtCreate: Tags passed to
+// CreateWorkGroup (issue #1196, Axis B) must be stored inline and readable
+// via ListTagsForResource immediately, without a follow-up TagResource call.
+func TestAthenaCreateWorkGroup_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := athenaCall(t, srv, "CreateWorkGroup", map[string]any{
+		"Name": "tagged-wg",
+		"Tags": []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	list := athenaCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": athenaTagWGARN})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", out.Tags)
+	}
+}
+
+// TestAthenaCreateWorkGroup_invalidTagRejected: an over-limit tag set passed
+// to CreateWorkGroup must be rejected before the workgroup is created, not
+// silently dropped.
+func TestAthenaCreateWorkGroup_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := athenaCall(t, srv, "CreateWorkGroup", map[string]any{
+		"Name": "tagged-wg",
+		"Tags": []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidRequestException")
+
+	get := athenaCall(t, srv, "GetWorkGroup", map[string]any{"WorkGroup": "tagged-wg"})
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusNotFound)
+}
+
 // TestAthenaTagResource_invalidTagRejected: reserved aws: tag keys must be
 // rejected with Athena's InvalidRequestException, not silently stored.
 func TestAthenaTagResource_invalidTagRejected(t *testing.T) {
