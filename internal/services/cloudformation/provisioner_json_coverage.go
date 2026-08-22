@@ -1227,7 +1227,10 @@ func (h *athenaWorkGroupHandler) Create(ctx context.Context, router http.Handler
 	if v, ok := props["Description"].(string); ok && v != "" {
 		body["Description"] = v
 	}
-	if v, ok := props["Configuration"]; ok {
+	// The schema's property is WorkGroupConfiguration; Configuration is the
+	// CreateWorkGroup API member it maps onto
+	// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-athena-workgroup.html).
+	if v, ok := props["WorkGroupConfiguration"]; ok {
 		body["Configuration"] = v
 	}
 

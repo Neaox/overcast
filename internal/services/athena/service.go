@@ -51,10 +51,11 @@ func (wg *WorkGroup) SetTags(t map[string]string) { wg.Tags = t }
 
 // WorkGroup represents an Athena workgroup.
 type WorkGroup struct {
-	Name        string            `json:"Name"`
-	State       string            `json:"State"`
-	Description string            `json:"Description,omitempty"`
-	Tags        map[string]string `json:"Tags,omitempty"`
+	Name          string            `json:"Name"`
+	State         string            `json:"State"`
+	Description   string            `json:"Description,omitempty"`
+	Configuration map[string]any    `json:"Configuration,omitempty"`
+	Tags          map[string]string `json:"Tags,omitempty"`
 }
 
 // ─── Store ────────────────────────────────────────────────────
