@@ -27,7 +27,7 @@ func (h *Handler) typedOps() map[string]op.Operation {
 	ops["DescribeTable"] = op.NewTyped[describeTableRequest, describeTableResponse](
 		"DescribeTable", h.describeTableTyped,
 	)
-	ops["DeleteTable"] = op.NewTyped[deleteTableRequest, describeTableResponse](
+	ops["DeleteTable"] = op.NewTyped[deleteTableRequest, createTableResponse](
 		"DeleteTable", h.deleteTableTyped,
 	)
 	ops["UpdateTable"] = op.NewTyped[updateTableRequest, createTableResponse](

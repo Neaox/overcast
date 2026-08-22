@@ -131,19 +131,23 @@ func TestCreateTable_tableIdStableAcrossDescribeUpdateDelete(t *testing.T) {
 	deleteResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "stable-id-table"})
 	defer deleteResp.Body.Close()
 	helpers.AssertStatus(t, deleteResp, http.StatusOK)
-	// DeleteTable's response reuses describeTableResponse (json field "Table"),
-	// not "TableDescription" — a pre-existing, separate wire-shape question
-	// outside this fix's scope, so this test matches the field name the
-	// handler actually emits today.
+	// DeleteTable shares CreateTable/DescribeTable/UpdateTable's TableDescription
+	// wrapper (issue #1288) and reports TableStatus DELETING per AWS's
+	// documented DeleteTable response shape.
 	var deleted struct {
-		Table struct {
-			TableId string `json:"TableId"`
-		} `json:"Table"`
+		TableDescription struct {
+			TableId     string `json:"TableId"`
+			TableStatus string `json:"TableStatus"`
+		} `json:"TableDescription"`
 	}
 	helpers.DecodeJSON(t, deleteResp, &deleted)
-	if deleted.Table.TableId != created.TableDescription.TableId {
+	if deleted.TableDescription.TableId != created.TableDescription.TableId {
 		t.Errorf("DeleteTable TableId = %q, want %q (unchanged from CreateTable)",
-			deleted.Table.TableId, created.TableDescription.TableId)
+			deleted.TableDescription.TableId, created.TableDescription.TableId)
+	}
+	if deleted.TableDescription.TableStatus != "DELETING" {
+		t.Errorf("DeleteTable TableStatus = %q, want %q",
+			deleted.TableDescription.TableStatus, "DELETING")
 	}
 }
 

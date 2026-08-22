@@ -10,7 +10,7 @@
 // Coverage — deterministic, high-traffic operations:
 //
 //	CreateTable, DescribeTable, ListTables, PutItem, GetItem, Query, Scan,
-//	UpdateItem, DeleteItem
+//	UpdateItem, DeleteItem, DeleteTable
 //
 // Plus one error-shape golden (GetItem against a nonexistent table, mirroring
 // TestGetItem_tableNotFound / TestDescribeTable_notFound in dynamodb_test.go)
@@ -227,4 +227,16 @@ func TestGolden_DeleteItem(t *testing.T) {
 		},
 	})
 	helpers.GoldenTest(t, dynamodbGoldenDir, "DeleteItem", resp, nil)
+}
+
+// TestGolden_DeleteTable pins DeleteTable's wire shape (issue #1288):
+// TableDescription (not Table), with TableStatus DELETING, matching
+// CreateTable/DescribeTable/UpdateTable's response envelope and AWS's
+// documented DeleteTable ResponseSyntax.
+func TestGolden_DeleteTable(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createTable(t, srv, "golden-table")
+
+	resp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "golden-table"})
+	helpers.GoldenTest(t, dynamodbGoldenDir, "DeleteTable", resp, normalizeDynamoDBTableId)
 }
