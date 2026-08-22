@@ -247,6 +247,59 @@ func TestWaitForScannerIdle_warmContainerWaitsForItsOwnOutput(t *testing.T) {
 	}
 }
 
+// TestWaitForScannerIdle_parkedReaderSurvivesContention is the regression test
+// for issue #1325: a second timing window, one stage further down the pipeline
+// than #1160/#1166's.
+//
+// #1166 fixed the case where the reader had never connected to Docker's log
+// stream at all — a connect that races container start and can lose that race
+// under daemon contention. But once a warm container's reader HAS connected,
+// it spends essentially all of its time parked inside a live, blocking Read()
+// call on that connection — the ordinary state between any two invocations,
+// since the reader re-enters Read() the instant it hands the previous line
+// off. dockerSilentSince used to time that state exactly like a reconnect
+// backoff (logReaderNotReading): 25 ms of silence from this invocation's own
+// wait start, then give up. But a reader blocked in an already-open Read() is
+// not backing off from anything — it is waiting on the Docker daemon to
+// actually flush this invocation's bytes over a connection that is already
+// live, which is itself a round trip that daemon contention (a busy CI runner
+// juggling many containers' log streams at once) can push past 25 ms even
+// though the handler already wrote its line and nothing is actually stuck.
+//
+// This is what made TestInvoke_logTail's *second* (warm) invocation fail under
+// contention on PR #1314, after #1166 had already closed the cold-start
+// window: the container's log stream was already connected and parked, the
+// invoke completed, and the handler's line simply took the pipeline longer
+// than 25 ms to arrive.
+func TestWaitForScannerIdle_parkedReaderSurvivesContention(t *testing.T) {
+	// Given: a warm container whose reader has been parked in a live Read()
+	// call on an already-open connection since well before this invocation's
+	// wait begins — the ordinary state a warm container spends its idle time
+	// in, not a reconnect backoff.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	deliverLine(ci, "output from the previous invocation")
+	mock.Add(500 * time.Millisecond)
+	mark := ci.beginTail()
+
+	// When: this invocation's line takes 60 ms to come through Docker — well
+	// past the 25 ms bound that correctly governs a reconnect backoff, but
+	// still within the wait's own 100 ms deadline. Nothing here involves a
+	// reconnect: the connection has been open and parked the whole time.
+	elapsed := runScannerWait(t, mock, ci, mark, 60*time.Millisecond, "hello from lambda")
+
+	// Then: the wait held on for it. A live connection's own delivery delay
+	// under daemon contention is not the same evidence as a reader that has no
+	// connection to wait on at all, and must not be timed as harshly.
+	if !strings.Contains(tailContents(ci), "hello from lambda") {
+		t.Errorf("tail is missing the handler's output: %q", tailContents(ci))
+	}
+	if elapsed < 60*time.Millisecond {
+		t.Errorf("wait returned after %v, before the delayed line arrived at 60ms — a live, already-open connection's own delivery delay was timed as though the reader had backed off from one", elapsed)
+	}
+}
+
 // TestWaitForScannerIdle_partialLineIsNotIdle is the regression test for a tail
 // that goes missing even though Docker delivered the output in good time.
 //
@@ -487,7 +540,16 @@ func TestBeginTail_dropsThePreviousInvocationsStragglerOutput(t *testing.T) {
 // TestWaitForScannerIdle_silentHandlerReturnsPromptly pins the cost of the
 // ambiguity the fix introduces: a handler that prints nothing is
 // indistinguishable from one whose output has not arrived, so it waits. It must
-// wait out firstReadMax and stop there, not sit on the 100 ms deadline.
+// wait out its bound and stop there, not sit on the 100 ms deadline.
+//
+// newTailWaitInstance leaves the reader parked inside a live Read() (the
+// ordinary state a warm container is in), so this exercises the liveParked
+// bound (parkedReadMax, 80 ms) rather than firstReadMax (25 ms) — see
+// dockerSilentSince and waitForScannerIdle's docstring. Before issue #1325
+// widened that bound, this test pinned 25 ms; the higher number is the
+// deliberate cost of no longer bailing before a live, already-open
+// connection's own delivery delay under contention has had a fair chance to
+// clear.
 func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	// Given: a container invocation that will never produce a log line.
 	mock := clock.NewMock()
@@ -497,9 +559,13 @@ func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	// When: the wait runs with nothing ever delivered.
 	elapsed := runScannerWait(t, mock, ci, ci.beginTail(), -1, "")
 
-	// Then: it gives up at the first-read grace period rather than the deadline.
-	if elapsed > 30*time.Millisecond {
-		t.Errorf("silent handler waited %v, expected to give up around the 25ms first-read grace", elapsed)
+	// Then: it gives up at the liveParked grace period rather than the full
+	// 100ms deadline.
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("silent handler waited only %v, expected to run out the ~80ms parkedReadMax bound", elapsed)
+	}
+	if elapsed > 90*time.Millisecond {
+		t.Errorf("silent handler waited %v, expected to give up around the 80ms parkedReadMax bound rather than the 100ms deadline", elapsed)
 	}
 }
 
