@@ -5,9 +5,12 @@
 //     endpoints and return JSON the SPA expects
 //   - /* — SPA static files with index.html fallback for client-side routing
 //
-// The BFF is a like-for-like Go port of web/api/src/ (Hono/Node). Every
-// endpoint preserves the same method, path, request headers, response shape,
-// and streaming behaviour as the Node original.
+// This is the only implementation of /api/*. It began as a like-for-like Go
+// port of a Hono/Node BFF that lived in web/api/src/; that mirror was retired
+// in #1104, and the vite dev server's web/api/src/app.ts is now a thin proxy
+// that forwards every /api/* request here. Method, path, request headers,
+// response shape and streaming behaviour are therefore defined by this
+// package alone — see docs/plans/dev-bff-consolidation.md.
 package bff
 
 import (

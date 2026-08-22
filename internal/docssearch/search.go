@@ -36,8 +36,9 @@ var stopwords = map[string]bool{
 // The weighting happens once, at index time, in ScoreDocument — which field a
 // term came from, and how often, with repetition counting sub-linearly. By the
 // time a "term:score" pair is read here that judgement is already made, so
-// this function and its port in web/api/src/routes/docs.ts only have to apply
-// it identically.
+// this function only has to apply it. (A TypeScript port in the vite dev
+// server's Hono BFF used to have to apply it identically; that mirror was
+// retired in #1104 and the dev server now proxies /api/docs/search here.)
 func Search(query string, limit int) []Result { return index().search(query, limit) }
 
 // search is Search against a given index, so tests can rank a synthetic corpus
