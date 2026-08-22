@@ -1821,17 +1821,30 @@ func durationMillis(d time.Duration) float64 {
 //
 // logReadAt still earns its place, for the question it does answer — whether
 // this invocation produced *anything* — which is what separates the two ways of
-// having an empty tail. Four bounds shape the wait:
+// having an empty tail. Five bounds shape the wait:
 //
-//   - firstReadMax caps how long we wait when not a byte has arrived. A handler
-//     that prints nothing is indistinguishable from one whose output has not
-//     left Docker's pipe, so silence costs this much — paid only by
+//   - firstReadMax caps how long we wait when not a byte has arrived and the
+//     reader has no live connection open to Docker at all — a reconnect
+//     backoff, or (per dockerSilentSince) a stream that has never connected. A
+//     handler that prints nothing is indistinguishable from one whose output
+//     has not left Docker's pipe, so silence costs this much — paid only by
 //     tail-requesting invokes. It is measured from the moment the reader is
 //     actually blocked in a Read (dockerSilentSince), never from a moment it
 //     was away from the stream: a reader that has asked Docker nothing cannot
 //     have been told the container had nothing to say, and timing its backlog
 //     as though it had is what left warm invocations with a tail holding only
 //     START / END / REPORT (#873).
+//   - parkedReadMax replaces firstReadMax when the reader IS blocked inside an
+//     already-open Read() call — the ordinary state a warm container spends
+//     its idle time in, since the reader re-enters Read() the instant it hands
+//     the previous line off. That Read() is a live round trip to a daemon that
+//     may simply be busy (issue #1325), not a connection backing off from
+//     anything, so it is not fair to bound it as tightly as a reconnect: doing
+//     so is what let a genuinely-arriving warm-invoke line lose the race
+//     against firstReadMax under CI contention, the same shape of bug #1166
+//     fixed for a stream that had never connected at all, one stage further
+//     down the pipeline. It is still bounded well short of deadlineMax so a
+//     handler that really does print nothing does not pay the full deadline.
 //   - Once bytes have arrived, output exists and is on its way, so there is
 //     nothing to guess at: the wait holds for the line itself, bounded only by
 //     deadlineMax. A handler that writes without a trailing newline pays that
@@ -1844,8 +1857,13 @@ func durationMillis(d time.Duration) float64 {
 func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	const (
 		idleThreshold = 5 * time.Millisecond
-		firstReadMax  = 25 * time.Millisecond
 		deadlineMax   = 100 * time.Millisecond
+		firstReadMax  = 25 * time.Millisecond
+		// parkedReadMax is deliberately expressed relative to deadlineMax
+		// rather than as its own free-floating constant (issue #1325): it
+		// leaves just enough headroom past it for idleThreshold and one more
+		// tick's worth of processing once a line does land.
+		parkedReadMax = deadlineMax - 20*time.Millisecond // 80ms
 		tickInterval  = 1 * time.Millisecond
 	)
 	start := ci.clk.Now()
@@ -1896,31 +1914,47 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 			// Overcast's own scheduling. Grant the grace period from whichever
 			// came later — the start of the wait, or the reader's return to the
 			// stream — and hold on entirely while it is still away from it.
-			silentSince, asked := ci.dockerSilentSince(start)
+			silentSince, asked, liveParked := ci.dockerSilentSince(start)
 			if !asked {
 				continue
 			}
-			if ci.clk.Since(silentSince) >= firstReadMax {
+			// A reader blocked inside an already-open Read() (liveParked) is
+			// waiting on a live daemon round trip, not backed off from
+			// anything, so it earns the wider parkedReadMax bound rather than
+			// firstReadMax — see the docstring above and issue #1325.
+			bound := firstReadMax
+			if liveParked {
+				bound = parkedReadMax
+			}
+			if ci.clk.Since(silentSince) >= bound {
 				return
 			}
 		}
 	}
 }
 
-// dockerSilentSince answers the question the two first-read bounds are really
-// asking — waitForScannerIdle's firstReadMax and waitForLogDrain's
-// firstReadGrace: since when has Docker had an unanswered question from us and
-// given us nothing back? It reports false while there is no such question
-// outstanding, which is not the same as a negative answer and must not be timed
-// as one.
+// dockerSilentSince answers the question the read-side bounds are really
+// asking — waitForScannerIdle's firstReadMax/parkedReadMax and
+// waitForLogDrain's firstReadGrace: since when has Docker had an unanswered
+// question from us and given us nothing back? It reports asked=false while
+// there is no such question outstanding, which is not the same as a negative
+// answer and must not be timed as one.
 //
 // The three states of logParkedAt map onto it directly, except that "not
-// reading" splits in two depending on logStreamEverOpened (issue #1160):
+// reading" splits in two depending on logStreamEverOpened (issue #1160), and
+// "parked in a Read" carries a liveParked flag callers may use to bound it
+// more generously than a reader with no live connection at all (issue #1325):
 //
 //   - Parked in a Read. That Read covers everything Docker held from the moment
 //     it began, so silence counts from then — or from the start of the wait if
 //     the reader was already parked before it, since output from earlier
-//     invocations is not this one's to wait for.
+//     invocations is not this one's to wait for. Either way liveParked is
+//     true: this is a live round trip on a connection that is already open,
+//     not a reader backed off from one, and waitForScannerIdle uses that to
+//     pick parkedReadMax over firstReadMax. waitForLogDrain does not: a dying
+//     container's drain keeps the single firstReadGrace its caller chose,
+//     liveParked or not, so callers that do not need the distinction are free
+//     to ignore it.
 //   - Between Reads. The reader is somewhere in the loop that takes it back to
 //     the stream and cannot be told anything until it arrives; there is no
 //     question outstanding and no silence to measure.
@@ -1942,17 +1976,25 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 //     usefully outlast the backoff, and this container has already shown
 //     Docker will talk to it, so there is less reason to assume it just hasn't
 //     had the chance yet. Time it from the start of the wait, exactly as
-//     before this distinction existed.
-func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (time.Time, bool) {
+//     before this distinction existed. liveParked is false here — there is no
+//     live connection at all right now, which is exactly what tells this state
+//     apart from the one above.
+func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (since time.Time, asked bool, liveParked bool) {
 	switch parked := ci.logParkedAt.Load(); {
 	case parked == logReaderBetweenReads:
-		return time.Time{}, false
+		return time.Time{}, false, false
 	case parked == logReaderNotReading && !ci.logStreamEverOpened.Load():
-		return time.Time{}, false
+		return time.Time{}, false, false
 	case parked > waitStart.UnixNano():
-		return time.Unix(0, parked), true
+		return time.Unix(0, parked), true, true
 	default:
-		return waitStart, true
+		// parked is either logReaderNotReading (a reconnect backoff that has
+		// connected before — no live connection right now, liveParked stays
+		// false) or a real timestamp at or before waitStart (a Read that was
+		// already in flight when this invocation's wait began — liveParked is
+		// true, same as the fresh-park case above, just anchored at waitStart
+		// rather than the read's own, earlier start).
+		return waitStart, true, parked != logReaderNotReading
 	}
 }
 
@@ -2111,7 +2153,11 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace
 				if firstReadGrace == 0 {
 					return
 				}
-				silentSince, asked := ci.dockerSilentSince(start)
+				// The drain does not distinguish a live-parked Read from a
+				// reconnect backoff the way waitForScannerIdle does (issue
+				// #1325) — the caller already chose firstReadGrace for this
+				// specific teardown, so the third return value is unused here.
+				silentSince, asked, _ := ci.dockerSilentSince(start)
 				if !asked {
 					continue
 				}
