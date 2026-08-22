@@ -8,14 +8,19 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// Advisory severities. The web UI (see web/src/features/metrics) renders
-// these generically by severity — icon/color only — so adding a value here
-// requires a matching UI mapping, unlike adding a new *rule*, which requires
-// no UI change at all (see computeAdvisories's doc comment).
+// AdvisorySeverity is the severity of an Advisory: one of the constants below.
+// The web UI (see web/src/features/metrics) renders these generically by
+// severity — icon/color only — so adding a value here requires a matching UI
+// mapping, unlike adding a new *rule*, which requires no UI change at all (see
+// computeAdvisories's doc comment). cmd/tsgen renders the typed constants as
+// the TypeScript union, which is what makes the UI's mapping type-checked
+// against this list.
+type AdvisorySeverity = string
+
 const (
-	advisorySeverityInfo     = "info"
-	advisorySeverityWarning  = "warning"
-	advisorySeverityCritical = "critical"
+	advisorySeverityInfo     AdvisorySeverity = "info"
+	advisorySeverityWarning  AdvisorySeverity = "warning"
+	advisorySeverityCritical AdvisorySeverity = "critical"
 )
 
 // Advisory codes — stable identifiers a caller (or a future test) can key
@@ -67,7 +72,7 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // future rule to computeAdvisories never requires a web UI change.
 type Advisory struct {
 	// Severity is one of "info", "warning", "critical".
-	Severity string `json:"severity"`
+	Severity AdvisorySeverity `json:"severity"`
 	// Code is a stable, machine-readable identifier for this advisory rule
 	// (e.g. "journal-mode-not-wal") — safe to key UI behavior or tests off
 	// of, unlike Title/Detail, which are free text that may be reworded.

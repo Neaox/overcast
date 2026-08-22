@@ -194,6 +194,12 @@ Effects carry a high bar. Before adding `useEffect`, read and apply
   `"files": []` and only project references, so it compiles zero files and always passes.
   `pnpm run typecheck` checks `tsconfig.app.json` and `tsconfig.node.json` explicitly.
 - Type exports for API responses live in `web/src/services/api.ts` as `export interface` / `export type`.
+- **Server-side types are generated, not written.** `web/src/types/api.gen.ts` is rendered by
+  `cmd/tsgen` from the Go response structs (health, metrics, debug metrics/advisories, the SSE
+  envelope, diagnostics provenance) and re-exported through `web/src/types/common.ts`. To change one,
+  change the Go struct and run `make generate-ts`; to expose a new server type, add it to the
+  manifest in `cmd/tsgen/main.go`. `make check-ts` fails CI when the committed file is stale. Never
+  hand-mirror a Go struct into `web/src/types/` — see docs/plans/dev-bff-consolidation.md § B2.
 
 ---
 

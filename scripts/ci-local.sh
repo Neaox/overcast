@@ -277,6 +277,9 @@ if [ "$scope" != "web" ]; then
     go_cmd run -tags dev ./cmd/capgen --check || fail
     go_cmd run -tags dev ./cmd/capgen --generate || fail
     go_cmd run -tags dev ./cmd/capgen --write-docs || fail
+    # The web UI's server types are generated from the Go structs; a Go field
+    # rename without `make generate-ts` fails here, as it does in CI.
+    go_cmd run ./cmd/tsgen --check || fail
     go_cmd run ./scripts/docs-index.go --check || fail
     # The docs-index stage already regenerated both index files, so a docs/
     # edit committed without a regenerated index shows up here as a dirty
@@ -285,7 +288,7 @@ if [ "$scope" != "web" ]; then
     git -C "$ROOT" diff --exit-code -- \
         internal/capabilities/all.gen.go README.md STATUS.md \
         docs/README.md docs/services/ docs/generated/service-support.json \
-        internal/docssearch/index.gen.jsonl web/src/docs-nav.gen.ts \
+        internal/docssearch/index.gen.jsonl web/src/docs-nav.gen.ts web/src/types/api.gen.ts \
         || { echo "  generated files are stale — commit the regenerated files above" >&2; fail; }
 fi
 

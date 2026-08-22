@@ -49,6 +49,8 @@ function renderScreen(
       timestamp: "2026-07-29T00:00:00Z",
       version: "0.1.0-test",
       services,
+      serviceTiers: {},
+      serviceGoalTiers: {},
       storage: { default: "memory" },
     } satisfies HealthResponse)
   }

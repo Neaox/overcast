@@ -33,7 +33,7 @@ export function Dashboard() {
 
   // No health payload (loading or error) means the emulator's view is unknown —
   // fall back to treating every registry service as fully emulated.
-  const tierOf = (name: string): EmulationTier => data?.serviceTiers?.[name] ?? "full"
+  const tierOf = (name: string): EmulationTier => data?.serviceTiers[name] ?? "full"
 
   // Recently visited first (recentServices holds route paths), then A-Z.
   const recentRank = new Map(recentServices.map((key, index) => [key, index]))

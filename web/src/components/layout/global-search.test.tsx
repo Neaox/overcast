@@ -15,6 +15,7 @@ const HEALTH: HealthResponse = {
   version: "0.1.0-test",
   services: ["s3", "sqs", "ecr"],
   serviceTiers: { s3: "full", sqs: "full" },
+  serviceGoalTiers: {},
   storage: { default: "memory" },
 }
 

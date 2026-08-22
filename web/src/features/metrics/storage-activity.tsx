@@ -56,8 +56,12 @@ function TierBar({
 
 function StoreActivityCard({ store, index }: { store: DebugMetrics; index: number }) {
   const { counters } = store
-  // Older servers / fixtures omit counters entirely — render nothing for
-  // this store rather than crashing the whole Metrics & Health page.
+  // The generated type says the server always sends counters (it does), but
+  // the console can be pointed at an older emulator binary that predates
+  // them — render nothing for this store rather than crashing the whole
+  // Metrics & Health page. The runtime check is deliberate, hence the lint
+  // waiver: the type describes the current server, not every server.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!counters) return null
   // readsMemory is only populated for a hybrid-mode store (see
   // StoreCounters's Go doc comment) — checking it directly, rather than

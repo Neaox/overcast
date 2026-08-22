@@ -339,8 +339,10 @@ These generated sources are **committed** and must be regenerated through their 
 | `internal/capabilities/all.gen.go` | `make generate-caps` |
 | `internal/docssearch/index.gen.jsonl` | `make docs-index` |
 | `web/src/docs-nav.gen.ts` | `make docs-index` |
+| `web/src/types/api.gen.ts` | `make generate-ts` |
 | `internal/awsapi/manifest.gen.go` | `make generate-aws-operations` |
 
+- **After changing a Go response struct the web UI consumes, run `make generate-ts` and commit the result.** `web/src/types/api.gen.ts` is rendered by [cmd/tsgen](./cmd/tsgen/main.go) from the structs listed in its manifest (`/_overcast/health`, `/_overcast/metrics`, `/_overcast/debug/metrics`, the SSE envelope, …); `make check-ts` — part of `make docs-check`, and `go test ./cmd/tsgen` — fails when the committed file is stale. Never write a server type by hand in `web/src/types/common.ts`; to expose a new one, add it to the manifest. A struct that refers to a type the manifest does not list is an error naming the field, so the generated set grows only on purpose.
 - **After editing a published doc under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
 - **`docs/plans/` and `docs/dev/` are NOT indexed — skip `make docs-index` for them.** [scripts/docs-index.go](./scripts/docs-index.go) skips both directories outright (`filepath.SkipDir`) and `isPublishedDocPath` excludes them, so regenerating after a plan or dev-doc edit produces an identical file and only costs you a minute. They are working documents, not user-facing pages.
 - **A Markdown-only change needs no test run.** Editing a plan, a dev doc, or prose in a published doc cannot change Go behaviour, so `go test` proves nothing. Run tests when code, generated files, or test fixtures change. (Published docs still need `make docs-index`; the index is generated output, not a test.)
