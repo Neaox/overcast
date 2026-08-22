@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
-import { Mail, Plus, Trash2, RefreshCw } from "lucide-react"
+import { Mail } from "lucide-react"
 import {
   sesIdentitiesQueryOptions,
   sesKeys,
@@ -13,28 +13,19 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListPage } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-import { cn } from "@/lib/utils"
 
 export function SesPage() {
   const [showVerify, setShowVerify] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -42,7 +33,10 @@ export function SesPage() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(sesIdentitiesQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof identities)[number]>()
 
   const verifyMut = useResourceMutation({
     options: verifyIdentityMutationOptions(),
@@ -73,75 +67,57 @@ export function SesPage() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="SES Identities"
-        description="Simple Email Service — verified email addresses and domains"
-        actions={
-          <div className="flex items-center gap-2">
-            <ServiceDocsButton
-              service="ses"
-              label="SES"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-            >
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="sm" onClick={() => setShowVerify(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Verify identity
-            </Button>
-          </div>
-        }
+    <ResourceListPage
+      title="SES Identities"
+      description="Simple Email Service — verified email addresses and domains"
+      actions={
+        <>
+          <ServiceDocsButton
+            service="ses"
+            label="SES"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowVerify(true)}>Verify identity</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        query={{ data: identities, isLoading, error }}
+        noun="verified identities"
+        emptyIcon={Mail}
+        emptyTitle="No verified identities"
+        emptyDescription="Verify an email address or domain to send from it."
+        rowKey={(id) => id.IdentityName ?? ""}
+        columns={[
+          {
+            header: "Identity",
+            cellClassName: "font-medium",
+            cell: (id) => id.IdentityName,
+          },
+          {
+            header: "Type",
+            cellClassName: "text-fg-muted uppercase",
+            cell: (id) => id.IdentityType,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (id) => id.IdentityName ?? "",
+          label: (id) => id.IdentityName ?? "",
+          noun: "identity",
+          description: (id) => (
+            <>
+              <span className="font-mono font-medium">{id.IdentityName}</span> will be removed.
+            </>
+          ),
+        }}
       />
-
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : identities.length === 0 ? (
-        <EmptyState
-          icon={<Mail className="h-8 w-8 opacity-40" />}
-          title="No verified identities"
-          description="Verify an email address or domain to send from it."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Identity</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {identities.map((id) => (
-              <TableRow key={id.IdentityName}>
-                <TableCell className="font-medium">{id.IdentityName}</TableCell>
-                <TableCell className="text-fg-muted uppercase">{id.IdentityType}</TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(id.IdentityName ?? "")}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
 
       {/* Verify identity dialog */}
       <Dialog
@@ -199,30 +175,6 @@ export function SesPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Delete confirmation dialog */}
-      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete identity?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-fg-muted">
-            <span className="font-mono font-medium">{deleteTarget}</span> will be removed.
-          </p>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDeleteTarget(undefined)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              disabled={deleteMut.isPending}
-              onClick={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-            >
-              {deleteMut.isPending ? "Deleting…" : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </ResourceListPage>
   )
 }

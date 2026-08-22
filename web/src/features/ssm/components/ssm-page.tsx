@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Settings, Plus, Trash2, RefreshCw, Search } from "lucide-react"
+import { Settings } from "lucide-react"
 import {
   ssmParametersQueryOptions,
   ssmKeys,
@@ -15,35 +15,31 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListFilter,
+  ResourceListPage,
+} from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
-import { cn } from "@/lib/utils"
 
 export function SsmPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
@@ -52,7 +48,10 @@ export function SsmPage() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(ssmParametersQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof parameters)[number]>()
 
   const deleteMut = useResourceMutation({
     options: deleteParameterMutationOptions(),
@@ -93,113 +92,76 @@ export function SsmPage() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="SSM Parameter Store"
-        description="Manage configuration data and secrets"
-        actions={
-          <div className="flex items-center gap-2">
-            <ServiceDocsButton
-              service="ssm"
-              label="SSM"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-            >
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Create parameter
-            </Button>
-          </div>
-        }
-      />
+    <ResourceListPage
+      title="SSM Parameter Store"
+      description="Manage configuration data and secrets"
+      actions={
+        <>
+          <ServiceDocsButton
+            service="ssm"
+            label="SSM"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create parameter</CreateAction>
+        </>
+      }
+    >
       <InertBanner serviceName="SSM Parameter Store" />
 
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter parameters…"
-            className="pl-8"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </div>
-      </div>
+      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter parameters…" />
 
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Settings className="h-8 w-8 opacity-40" />}
-          title="No parameters"
-          description={
-            filter ? "No parameters match the filter." : "Create a parameter to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create parameter
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Last modified</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((param) => (
-              <TableRow
-                key={param.Name}
-                className="cursor-pointer"
-                onClick={() => navigate({ to: "/ssm/$name", params: { name: param.Name ?? "" } })}
-              >
-                <TableCell className="font-medium">{param.Name}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{param.Type}</Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">v{param.Version}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {formatDate(param.LastModifiedDate)}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-danger hover:text-danger"
-                    title="Delete"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget(param.Name)
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        query={{ data: filtered, isLoading, error }}
+        noun="parameters"
+        emptyIcon={Settings}
+        emptyTitle="No parameters"
+        emptyDescription={
+          filter ? "No parameters match the filter." : "Create a parameter to get started."
+        }
+        emptyAction={
+          !filter && (
+            <CreateAction onClick={() => setShowCreate(true)}>Create parameter</CreateAction>
+          )
+        }
+        rowKey={(param) => param.Name ?? ""}
+        onRowClick={(param) => navigate({ to: "/ssm/$name", params: { name: param.Name ?? "" } })}
+        columns={[
+          { header: "Name", cellClassName: "font-medium", cell: (param) => param.Name },
+          {
+            header: "Type",
+            cell: (param) => <Badge variant="outline">{param.Type}</Badge>,
+          },
+          {
+            header: "Version",
+            cellClassName: "text-fg-muted",
+            cell: (param) => `v${param.Version}`,
+          },
+          {
+            header: "Last modified",
+            cellClassName: "text-fg-muted",
+            cell: (param) => formatDate(param.LastModifiedDate),
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (param) => param.Name ?? "",
+          label: (param) => param.Name ?? "",
+          noun: "parameter",
+          title: "Delete Parameter",
+          description: (param) => (
+            <>
+              Delete parameter <span className="font-mono font-semibold">{param.Name}</span>? This
+              cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       {/* Create parameter dialog */}
       <Dialog
@@ -289,22 +251,6 @@ export function SsmPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Parameter"
-        description={
-          <>
-            Delete parameter <span className="font-mono font-semibold">{deleteTarget}</span>? This
-            cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
-    </div>
+    </ResourceListPage>
   )
 }

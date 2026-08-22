@@ -1,11 +1,19 @@
 # Web UI — DRY refactor and page-archetype componentisation
 
 > Status: audit 2026-07-27; backlog largely open as of 2026-08-21. Landed so far: P7 (clipboard
-> kernel, marked inline), Archetype E's virtualized-list kernel (2026-08-18), and the dead-code
-> deletions struck through in §5/§6. None of the other scaffold components exist yet —
-> no `detail-fields.tsx`, `resource-table.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
+> kernel, marked inline), Archetype E's virtualized-list kernel (2026-08-18), the dead-code
+> deletions struck through in §5/§6, and — 2026-08-22, tracked in #1200 — P3's `ResourceTable`
+> (`components/ui/resource-table.tsx`) plus 8 of the 9 unconverted Archetype-A index pages listed in
+> §1's Archetype C table: `kms`, `ssm`, `appsync`, `stepfunctions`, `secretsmanager`, `ses`, `eks`,
+> `apigateway/api-keys-page`. `ResourceListPage` also gained a `description` passthrough (the prose
+> subtitle every one of those pages needed) as part of the same change. Still remaining from that
+> table: `apigateway/usage-plans-page` (nested sub-table) and the wave-2 tabbed pages
+> (`eventbridge`, `iam`, `ec2-dashboard`) — those need the `ResourceListSection`/tab-strip variant
+> described in §1 Archetype C, which has not been built yet; `sts-page` stays bespoke per that
+> section. None of the other scaffold components exist yet —
+> no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
-> `Tab asChild` — so P1–P6 and P8–P13 remain to do. Companion to
+> `Tab asChild` — so P1–P2, P4–P6 and P8–P13 remain to do. Companion to
 > [web-ui-polish-wave-2.md](./web-ui-polish-wave-2.md), which owns the *visual* backlog; this file
 > owns the *structural* one. Where the two overlap (the detail-field component, the generic table
 > wrapper, the spinner rollout, busy buttons) this document supersedes the wave-2 wording with a
@@ -166,18 +174,18 @@ converted:
 
 | Page | LOC | Tab strips | `<Table>` | Verdict |
 | --- | --- | --- | --- | --- |
-| `kms/kms-page.tsx` | 201 | 0 | 1 | Archetype A, unconverted |
-| `ssm/ssm-page.tsx` | 310 | 0 | 1 | Archetype A, unconverted |
-| `appsync/appsync-page.tsx` | 179 | 0 | 1 | Archetype A, unconverted |
-| `stepfunctions/stepfunctions-page.tsx` | 181 | 0 | 1 | Archetype A, unconverted |
-| `secretsmanager/secrets-manager-page.tsx` | 273 | 0 | 1 | Archetype A, unconverted |
-| `ses/ses-page.tsx` | 230 | 0 | 1 | Archetype A, unconverted |
-| `eks/eks-page.tsx` | 219 | 0 | 1 | Archetype A, unconverted |
-| `apigateway/api-keys-page.tsx` | 223 | 0 | 1 | Archetype A, unconverted |
-| `apigateway/usage-plans-page.tsx` | 366 | 0 | 2 | A + one nested sub-table |
-| `eventbridge/eventbridge-page.tsx` | 324 | 1 | 2 | A ×2 behind tabs |
-| `iam/iam-page.tsx` | 574 | 1 | 4 | A ×4 behind tabs |
-| `ec2/ec2-dashboard.tsx` | 1260 | 1 | 5 | A ×5 behind tabs |
+| `kms/kms-page.tsx` | 201 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `ssm/ssm-page.tsx` | 310 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `appsync/appsync-page.tsx` | 179 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `stepfunctions/stepfunctions-page.tsx` | 181 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `secretsmanager/secrets-manager-page.tsx` | 273 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `ses/ses-page.tsx` | 230 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `eks/eks-page.tsx` | 219 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `apigateway/api-keys-page.tsx` | 223 | 0 | 1 | **Converted 2026-08-22** (#1200) |
+| `apigateway/usage-plans-page.tsx` | 366 | 0 | 2 | A + one nested sub-table — remaining, #1200 |
+| `eventbridge/eventbridge-page.tsx` | 324 | 1 | 2 | A ×2 behind tabs — remaining, needs `ResourceListSection` |
+| `iam/iam-page.tsx` | 574 | 1 | 4 | A ×4 behind tabs — remaining, needs `ResourceListSection` |
+| `ec2/ec2-dashboard.tsx` | 1260 | 1 | 5 | A ×5 behind tabs — remaining, needs `ResourceListSection` |
 | `sts/sts-page.tsx` | 90 | 0 | 0 | Genuinely different — a single read-only identity card |
 
 So the "third archetype" is really **A + tab strip**: a `<ResourceListSection>` (the list-page body
@@ -302,17 +310,28 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
 - **Highest risk reduced of any item:** it is the only way the skeleton treatment, the reduced-motion
   rule and the cold-boot state ever reach detail pages.
 
-### P3 — `ResourceTable` — **M** — depends on nothing; unblocks P5, P9
+### P3 — `ResourceTable` — **M** — **LANDED 2026-08-22** (#1200); still unblocks P5, P9
 
-- **Collapses:** the state-branch + table body of all 24 converted list pages, the 9 unconverted
-  index pages, and the ~33 files that render a `<Table>` outside `ResourceListCard` (105 `<Table>`
-  sites total; 150 sites of the bespoke `rounded-* border border-border` surface).
-- **API:** `query`, `columns: Column<T>[]`, `rowKey`, `rowTo`, `noun`, `emptyIcon`, `emptyAction`,
-  `select?`, `onDelete?`, `filter?`. Owns `QueryListState`, `ResourceListCard`, `TableHead`
-  treatment, the row-action column, and the empty/error copy.
+- **Collapses:** the state-branch + table body of the 8 index pages converted in #1200. **Not yet
+  applied to** the 24 already-converted list pages or the ~33 files rendering a bare `<Table>`
+  outside `ResourceListCard` — that adoption sweep is still open (tracked in #1101, not #1200,
+  which scoped to the unconverted index pages only).
+- **Shipped API** (`components/ui/resource-table.tsx`): `query: {data, isLoading, error}`,
+  `columns: ResourceTableColumn<T>[]` (`header`, `cell`, `headerClassName?`, `cellClassName?`,
+  `prose?` — routes the cell through `TableCellProse` instead of the mono default), `rowKey`,
+  `onRowClick?`, `noun`, `emptyIcon?/emptyTitle?/emptyDescription?/emptyAction?`, `errorTitle?`,
+  `rowActions?`, `variant?: "card" | "embedded"`. One deliberate deviation from the plan's original
+  sketch: `onDelete` is **caller-controlled** (`target`, `onRequest`, `onOpenChange`, `mutation`,
+  `getId`, `label`, `noun`, plus `title?`/`description?`/`confirmLabel?`/`actionLabel?` overrides)
+  rather than owning `deleteTarget` state itself — `useResourceMutation`'s `onSuccess` is what
+  clears the target today, and that callback lives on the page. `rowTo`/`select?`/`filter?` from
+  the original sketch were **not** built: no converted page needed row-level `<Link>` typing
+  against the router's route tree (row click handlers are caller-supplied closures instead, which
+  sidesteps that entirely), and none of the 8 pages use bulk selection or an in-table filter.
 - **Explicitly an extension of `ResourceListCard`, not a competitor** — per wave-2's instruction.
-  Sub-tables get `<ResourceTable variant="embedded">` (no card surface), which is what the 33
-  bypassing files need.
+  Sub-tables get `<ResourceTable variant="embedded">` (no card surface); not yet exercised by a
+  real caller, but `apigateway/usage-plans-page` (next in #1200's remaining list) is the first one
+  that needs it.
 
 ### P4 — Route the busy-button contract through `Button.busy` — **S** — depends on nothing
 
@@ -484,7 +503,8 @@ touch the same glob.
 ```
 Wave 0 (all parallel — new files only, no call-site edits)
   ├── A: create components/ui/detail-fields.tsx        (P1)   owns: components/ui/detail-fields.tsx
-  ├── B: create components/ui/resource-table.tsx       (P3)   owns: components/ui/resource-table.tsx
+  ├── B: DONE (#1200) — components/ui/resource-table.tsx (P3), plus a `description`
+  │      passthrough on `ResourceListPage`
   ├── C: create components/ui/status-badge.tsx         (P6)   owns: components/ui/status-badge.tsx
   ├── D: DONE — lib/clipboard.ts + hooks/use-clipboard.ts + ui/copy-button.tsx (P7), call sites migrated
   ├── E: extend lib/format.ts + ui/timestamp.tsx       (P10)  owns: lib/format.ts, components/ui/timestamp.tsx
@@ -509,7 +529,10 @@ Wave 2 (call-site migration — partition by FEATURE DIRECTORY, one agent per gr
 
 Wave 3 (needs Wave 2 in the affected directories)
   ├── O: ResourceFormDialog + migrate the 14 create dialogs   (P5)
-  ├── P: convert the 9 unconverted index pages to Archetype A (§1 Archetype C)
+  ├── P: convert the 9 unconverted index pages to Archetype A (§1 Archetype C) —
+  │      8/9 done (#1200); remaining: `apigateway/usage-plans-page` (needs `variant="embedded"`
+  │      sub-table support, which `ResourceTable` already has) and the three tabbed pages
+  │      (`eventbridge`, `iam`, `ec2-dashboard`), which need `ResourceListSection` built first
   └── Q: useResourceFilter rollout                            (P9)
 
 Wave 4

@@ -2,19 +2,11 @@ import { useState, useMemo } from "react"
 import { useForm } from "@tanstack/react-form"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Key, Plus, RefreshCw, Search } from "lucide-react"
+import { Key } from "lucide-react"
 import { kmsKeysQueryOptions, kmsKeys, createKeyMutationOptions } from "@/features/kms/data"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow } from "@/components/ui/form"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -22,11 +14,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
+import {
+  CreateAction,
+  RefreshAction,
+  ResourceListFilter,
+  ResourceListPage,
+} from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
-import { cn } from "@/lib/utils"
 import { ArnText } from "@/components/ui/arn-link"
 
 export function KmsPage() {
@@ -37,7 +35,7 @@ export function KmsPage() {
   const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
-  const { data: keys = [], isLoading, isFetching, refetch } = useQuery(kmsKeysQueryOptions())
+  const { data: keys = [], isLoading, isFetching, refetch, error } = useQuery(kmsKeysQueryOptions())
 
   const createMut = useMutation({
     ...createKeyMutationOptions(),
@@ -64,90 +62,47 @@ export function KmsPage() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="KMS"
-        description="Customer-managed encryption keys"
-        actions={
-          <div className="flex items-center gap-2">
-            <ServiceDocsButton
-              service="kms"
-              label="KMS"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-            >
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Create key
-            </Button>
-          </div>
-        }
-      />
+    <ResourceListPage
+      title="KMS"
+      description="Customer-managed encryption keys"
+      actions={
+        <>
+          <ServiceDocsButton
+            service="kms"
+            label="KMS"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create key</CreateAction>
+        </>
+      }
+    >
       <InertBanner serviceName="KMS" />
 
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            placeholder="Filter keys…"
-            className="pl-8"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </div>
-      </div>
+      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter keys…" />
 
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Key className="h-8 w-8 opacity-40" />}
-          title="No keys"
-          description={filter ? "No keys match the filter." : "Create a key to get started."}
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create key
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key ID</TableHead>
-              <TableHead>ARN</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((key) => (
-              <TableRow
-                key={key.KeyId}
-                className="cursor-pointer"
-                onClick={() => navigate({ to: "/kms/$keyId", params: { keyId: key.KeyId ?? "" } })}
-              >
-                <TableCell className="font-medium">{key.KeyId}</TableCell>
-                <TableCell className="text-fg-muted">
-                  <ArnText arn={key.KeyArn ?? ""} />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        query={{ data: filtered, isLoading, error }}
+        noun="keys"
+        emptyIcon={Key}
+        emptyTitle="No keys"
+        emptyDescription={filter ? "No keys match the filter." : "Create a key to get started."}
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create key</CreateAction>
+        }
+        rowKey={(key) => key.KeyId ?? ""}
+        onRowClick={(key) => navigate({ to: "/kms/$keyId", params: { keyId: key.KeyId ?? "" } })}
+        columns={[
+          { header: "Key ID", cellClassName: "font-medium", cell: (key) => key.KeyId },
+          {
+            header: "ARN",
+            cellClassName: "text-fg-muted",
+            cell: (key) => <ArnText arn={key.KeyArn ?? ""} />,
+          },
+        ]}
+      />
 
       {/* Create key dialog */}
       <Dialog
@@ -196,6 +151,6 @@ export function KmsPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </ResourceListPage>
   )
 }

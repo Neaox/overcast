@@ -35,8 +35,10 @@ import { cn } from "@/lib/utils"
 interface ResourceListPageProps {
   title: string
   count?: number
-  /** Secondary line beneath the title, e.g. "9 active · 15 resources". */
+  /** Secondary mono line beneath the title, e.g. "9 active · 15 resources". */
   meta?: React.ReactNode
+  /** Prose subtitle beneath the title, e.g. "Customer-managed encryption keys". */
+  description?: React.ReactNode
   actions?: React.ReactNode
   children: React.ReactNode
   className?: string
@@ -46,13 +48,20 @@ function ResourceListPage({
   title,
   count,
   meta,
+  description,
   actions,
   children,
   className,
 }: ResourceListPageProps) {
   return (
     <div className={cn("flex w-full flex-col gap-4", className)}>
-      <PageHeader title={title} count={count} meta={meta} actions={actions} />
+      <PageHeader
+        title={title}
+        count={count}
+        meta={meta}
+        description={description}
+        actions={actions}
+      />
       {children}
     </div>
   )

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useForm } from "@tanstack/react-form"
 import { useQuery } from "@tanstack/react-query"
-import { RefreshCw, Boxes, Plus } from "lucide-react"
+import { Boxes } from "lucide-react"
 import { z } from "zod"
 import {
   createEksClusterMutationOptions,
@@ -21,18 +21,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListPage } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
 
 export function EksPage() {
   const [showCreate, setShowCreate] = useState(false)
@@ -42,6 +35,7 @@ export function EksPage() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(eksClustersQueryOptions())
 
   const createMut = useResourceMutation({
@@ -53,85 +47,67 @@ export function EksPage() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="EKS Clusters"
-        description={`${clusters.length} cluster${clusters.length !== 1 ? "s" : ""}`}
-        actions={
-          <div className="flex gap-2">
-            <ServiceDocsButton
-              service="eks"
-              label="EKS"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          </div>
-        }
-      />
-
+    <ResourceListPage
+      title="EKS Clusters"
+      description={`${clusters.length} cluster${clusters.length !== 1 ? "s" : ""}`}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="eks"
+            label="EKS"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create Cluster</CreateAction>
+        </>
+      }
+    >
       <DockerBanner forService="eks" />
 
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : clusters.length === 0 ? (
-        <EmptyState
-          icon={<Boxes className="h-6 w-6" />}
-          title="No clusters"
-          description="Create a cluster to start working with EKS resources."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Cluster
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Endpoint</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clusters.map((c) => (
-              <TableRow key={c.arn || c.name}>
-                <TableCell className="font-medium">{c.name}</TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      c.status === "ACTIVE"
-                        ? "success"
-                        : c.status === "CREATING" || c.status === "UPDATING"
-                          ? "warning"
-                          : c.status === "FAILED" || c.status === "DELETING"
-                            ? "danger"
-                            : "default"
-                    }
-                  >
-                    {c.status}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">{c.version || "-"}</TableCell>
-                <TableCell className="text-fg-muted">{c.endpoint || "-"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        query={{ data: clusters, isLoading, error }}
+        noun="clusters"
+        emptyIcon={Boxes}
+        emptyTitle="No clusters"
+        emptyDescription="Create a cluster to start working with EKS resources."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create Cluster</CreateAction>
+        }
+        rowKey={(c) => c.arn || c.name || ""}
+        columns={[
+          { header: "Name", cellClassName: "font-medium", cell: (c) => c.name },
+          {
+            header: "Status",
+            cell: (c) => (
+              <Badge
+                variant={
+                  c.status === "ACTIVE"
+                    ? "success"
+                    : c.status === "CREATING" || c.status === "UPDATING"
+                      ? "warning"
+                      : c.status === "FAILED" || c.status === "DELETING"
+                        ? "danger"
+                        : "default"
+                }
+              >
+                {c.status}
+              </Badge>
+            ),
+          },
+          {
+            header: "Version",
+            cellClassName: "text-fg-muted",
+            cell: (c) => c.version || "-",
+          },
+          {
+            header: "Endpoint",
+            cellClassName: "text-fg-muted",
+            cell: (c) => c.endpoint || "-",
+          },
+        ]}
+      />
 
       <CreateClusterDialog
         open={showCreate}
@@ -139,7 +115,7 @@ export function EksPage() {
         isPending={createMut.isPending}
         onSubmit={(name) => createMut.mutate(name)}
       />
-    </div>
+    </ResourceListPage>
   )
 }
 

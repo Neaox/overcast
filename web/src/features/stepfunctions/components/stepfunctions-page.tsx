@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Shuffle, Plus, Trash2, RefreshCw, Search } from "lucide-react"
+import { Shuffle } from "lucide-react"
 import {
   sfnStateMachinesQueryOptions,
   sfnKeys,
@@ -9,27 +9,20 @@ import {
   createStateMachineMutationOptions,
 } from "@/features/stepfunctions/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+  CreateAction,
+  RefreshAction,
+  ResourceListFilter,
+  ResourceListPage,
+} from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
-import { cn } from "@/lib/utils"
 import { ArnText } from "@/components/ui/arn-link"
 
 export function StepFunctionsPage() {
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{ name: string; arn: string }>()
   const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
@@ -38,7 +31,10 @@ export function StepFunctionsPage() {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(sfnStateMachinesQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof machines)[number]>()
 
   const deleteMut = useResourceMutation({
     options: deleteStateMachineMutationOptions(),
@@ -56,106 +52,80 @@ export function StepFunctionsPage() {
   )
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="Step Functions"
-        description={`${machines.length} state machine${machines.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="stepfunctions"
-              label="Step Functions"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create State Machine
-            </Button>
-          </>
-        }
+    <ResourceListPage
+      title="Step Functions"
+      description={`${machines.length} state machine${machines.length !== 1 ? "s" : ""}`}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="stepfunctions"
+            label="Step Functions"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create State Machine</CreateAction>
+        </>
+      }
+    >
+      <ResourceListFilter
+        value={filter}
+        onChange={setFilter}
+        placeholder="Filter state machines…"
       />
-      <div className="relative">
-        <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-        <Input
-          placeholder="Filter state machines…"
-          className="pl-8"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Shuffle className="h-6 w-6" />}
-          title="No state machines"
-          description={
-            filter
-              ? "No state machines match the filter."
-              : "Create a state machine to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create State Machine
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>ARN</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((sm) => (
-              <TableRow key={sm.stateMachineArn}>
-                <TableCell>
-                  <Link
-                    className="font-medium text-accent hover:underline"
-                    to="/stepfunctions/$name"
-                    params={{ name: sm.name ?? "" }}
-                  >
-                    {sm.name}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="default">{sm.type}</Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">
-                  <ArnText arn={sm.stateMachineArn ?? ""} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() =>
-                      setDeleteTarget({ name: sm.name ?? "", arn: sm.stateMachineArn ?? "" })
-                    }
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        query={{ data: filtered, isLoading, error }}
+        noun="state machines"
+        emptyIcon={Shuffle}
+        emptyTitle="No state machines"
+        emptyDescription={
+          filter ? "No state machines match the filter." : "Create a state machine to get started."
+        }
+        emptyAction={
+          !filter && (
+            <CreateAction onClick={() => setShowCreate(true)}>Create State Machine</CreateAction>
+          )
+        }
+        rowKey={(sm) => sm.stateMachineArn ?? ""}
+        columns={[
+          {
+            header: "Name",
+            cell: (sm) => (
+              <Link
+                className="font-medium text-accent hover:underline"
+                to="/stepfunctions/$name"
+                params={{ name: sm.name ?? "" }}
+              >
+                {sm.name}
+              </Link>
+            ),
+          },
+          { header: "Type", cell: (sm) => <Badge variant="default">{sm.type}</Badge> },
+          {
+            header: "ARN",
+            cellClassName: "text-fg-muted",
+            cell: (sm) => <ArnText arn={sm.stateMachineArn ?? ""} />,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (sm) => sm.stateMachineArn ?? "",
+          label: (sm) => sm.name ?? "",
+          noun: "state machine",
+          title: "Delete State Machine",
+          description: (sm) => (
+            <>
+              Delete <span className="font-mono font-semibold">{sm.name}</span>? This cannot be
+              undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -167,21 +137,6 @@ export function StepFunctionsPage() {
         invalidateKeys={[sfnKeys.stateMachines()]}
         successTitle="State machine created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete State Machine"
-        description={
-          <>
-            Delete <span className="font-mono font-semibold">{deleteTarget?.name}</span>? This
-            cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.arn)}
-      />
-    </div>
+    </ResourceListPage>
   )
 }
