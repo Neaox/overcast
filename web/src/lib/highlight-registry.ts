@@ -188,6 +188,15 @@ const liveApplications = new Set<RangeApplication>()
 let garbageRanges = 0
 let swapQueued = false
 let sweepTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * The debounce timer `queueSwap` arms for a rapid successor swap. Tracked
+ * (unlike an ordinary fire-and-forget `setTimeout`) so the test seam below
+ * can cancel it: left to fire on its own, it reads the page-global `CSS`
+ * whenever the real clock gets there, which in a test is whatever the
+ * *current* test stubbed `CSS` to — or, once `vi.unstubAllGlobals()` has run,
+ * the unstubbed jsdom global that has no `.highlights` at all.
+ */
+let swapTimer: ReturnType<typeof setTimeout> | null = null
 const pendingDisposals: RangeApplication[] = []
 let triageQueued = false
 
@@ -268,7 +277,8 @@ function queueSwap(): void {
   swapQueued = true
   const elapsed = Date.now() - lastSwapAt
   if (elapsed < SWAP_MIN_INTERVAL_MS) {
-    setTimeout(() => {
+    swapTimer = setTimeout(() => {
+      swapTimer = null
       swapQueued = false
       swapHighlights()
     }, SWAP_MIN_INTERVAL_MS - elapsed)
@@ -314,9 +324,22 @@ function scheduleDisposalTriage(): void {
   })
 }
 
-/** Test seam: run any pending triage and swap now, instead of waiting. */
+/**
+ * Test seam: run any pending triage and swap now, instead of waiting.
+ *
+ * Also cancels a pending debounced swap (see `swapTimer`): otherwise it
+ * survives this synchronous flush and fires on its own clock, which in a
+ * test can land after `vi.unstubAllGlobals()` has restored jsdom's real
+ * (highlight-less) `CSS` — an unhandled exception unrelated to whatever
+ * test happens to be running when the timer's turn comes up.
+ */
 export function sweepHighlightGarbageForTests(): void {
   triageDisposals()
+  if (swapTimer !== null) {
+    clearTimeout(swapTimer)
+    swapTimer = null
+  }
+  swapQueued = false
   swapHighlights()
 }
 
