@@ -154,3 +154,60 @@ func TestMergedMetricDataPoints_CombinesCustomAndAutomatic(t *testing.T) {
 		t.Fatalf("expected 1 custom point + 1 automatic bucket = 2 points, got %d: %+v", len(points), points)
 	}
 }
+
+// TestSQSApproximateNumberOfMessagesVisibleAlarm_FiresFromAutomaticMetrics is
+// phase 2's (docs/plans/service-metrics-platform.md) namespace-agnostic
+// twin of TestLambdaErrorsAlarm_FiresFromAutomaticMetrics: an alarm on
+// AWS/SQS's gauge-shaped ApproximateNumberOfMessagesVisible metric — recorded
+// by internal/services/sqs's periodic gauge sampler (metrics_sqs.go), proven
+// end-to-end in that package's own tests — evaluates and fires purely from
+// internal/metrics observations, via the *existing, unmodified* alarm
+// evaluator. This is what "the read-through and alarm evaluator are
+// namespace-agnostic" means in practice: the bridge added for Lambda needed
+// no per-namespace code to serve SQS/SNS/DynamoDB/ApiGateway series too.
+func TestSQSApproximateNumberOfMessagesVisibleAlarm_FiresFromAutomaticMetrics(t *testing.T) {
+	svc, rec, mock := newLambdaAlarmHarness(t)
+	dims := []Dimension{{Name: "QueueName", Value: "orders"}}
+
+	alarm := &MetricAlarm{
+		AlarmName:          "queue-depth",
+		AlarmArn:           "arn:aws:cloudwatch:us-east-1:000000000000:alarm:queue-depth",
+		Namespace:          "AWS/SQS",
+		MetricName:         "ApproximateNumberOfMessagesVisible",
+		Dimensions:         dims,
+		Statistic:          "Maximum",
+		Period:             60,
+		EvaluationPeriods:  1,
+		DatapointsToAlarm:  1,
+		Threshold:          10,
+		ComparisonOperator: "GreaterThanThreshold",
+		ActionsEnabled:     true,
+		StateValue:         "INSUFFICIENT_DATA",
+		StateReason:        "Unchecked: Initial alarm creation",
+	}
+	storeAlarm(t, svc, alarm)
+
+	// Given: no gauge sample yet, the alarm stays INSUFFICIENT_DATA.
+	svc.evaluateAlarmsOnce(context.Background())
+	if got := readAlarm(t, svc, "queue-depth").StateValue; got != "INSUFFICIENT_DATA" {
+		t.Fatalf("StateValue before any sample = %q, want INSUFFICIENT_DATA", got)
+	}
+
+	// When: the SQS gauge sampler observes a queue depth over threshold —
+	// exactly what sampleQueueGaugesOnce records for an active queue.
+	now := mock.Now().UTC()
+	if err := rec.Observe(context.Background(), metrics.Observation{
+		Namespace: "AWS/SQS", Name: "ApproximateNumberOfMessagesVisible",
+		Dimensions: toMetricsDimensions(dims), Unit: "Count", Value: 42, Timestamp: now,
+	}); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	mock.Set(now.Add(90 * time.Second))
+	svc.evaluateAlarmsOnce(context.Background())
+
+	got := readAlarm(t, svc, "queue-depth")
+	if got.StateValue != "ALARM" {
+		t.Fatalf("StateValue after a 42-message queue depth (threshold 10) = %q (reason %q), want ALARM", got.StateValue, got.StateReason)
+	}
+}

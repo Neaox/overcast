@@ -40,11 +40,12 @@ const serviceName = "sqs"
 
 // Service implements router.Service for SQS.
 type Service struct {
-	cfg        *config.Config
-	store      state.Store
-	log        *serviceutil.ServiceLogger
-	handler    *Handler
-	cancelFunc context.CancelFunc // cancels the watchVisibility goroutine
+	cfg               *config.Config
+	store             state.Store
+	log               *serviceutil.ServiceLogger
+	handler           *Handler
+	cancelFunc        context.CancelFunc // cancels the watchVisibility goroutine
+	metricsCancelFunc context.CancelFunc // cancels the gauge-sampler goroutine (metrics_sqs.go)
 }
 
 // New returns a configured SQS Service.
@@ -69,11 +70,34 @@ func (s *Service) InitBus(b *events.Bus) {
 	go s.watchVisibility(ctx, b)
 }
 
-// Stop cancels the background watchVisibility goroutine.
+// InitMetrics wires the shared service-metrics recorder
+// (docs/plans/service-metrics-platform.md phase 2) so every message
+// operation records its AWS/SQS outcome metrics (metrics_sqs.go), and starts
+// the periodic gauge sampler that publishes
+// ApproximateNumberOfMessagesVisible/NotVisible/Delayed and
+// ApproximateAgeOfOldestMessage for every existing queue once a minute — the
+// same fact AWS samples whether or not the queue has traffic. Called once
+// from router.New, after metrics.NewRecorder; a Service without it (unit
+// tests, or OVERCAST_SERVICE_METRICS=disabled) simply never records or
+// samples anything, matching Lambda's InitMetrics contract.
+func (s *Service) InitMetrics(m metricsRecorder) {
+	s.handler.metrics = m
+	if m == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.metricsCancelFunc = cancel
+	go s.sampleQueueGauges(ctx)
+}
+
+// Stop cancels the background watchVisibility and gauge-sampler goroutines.
 // Implements router.Stopper so the router calls it on shutdown.
 func (s *Service) Stop(_ context.Context) {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
+	}
+	if s.metricsCancelFunc != nil {
+		s.metricsCancelFunc()
 	}
 }
 

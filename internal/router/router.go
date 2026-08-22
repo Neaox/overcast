@@ -548,6 +548,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		svcMetrics = metrics.NewRecorder(store, clk, logger)
 		cloudwatchSvc.InitMetrics(svcMetrics)
 		lambdaSvc.InitMetrics(svcMetrics)
+		sqsSvc.InitMetrics(svcMetrics)
+		snsSvc.InitMetrics(svcMetrics)
+		ddbSvc.InitMetrics(svcMetrics)
+		apigwSvc.InitMetrics(svcMetrics)
 		prof.mark("  new: metrics")
 	}
 

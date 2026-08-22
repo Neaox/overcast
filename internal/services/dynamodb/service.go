@@ -267,6 +267,16 @@ func (s *Service) GetStreamRecordsSince(ctx context.Context, tableName string, a
 	return recs, latestSeq, nil
 }
 
+// InitMetrics wires the shared service-metrics recorder
+// (docs/plans/service-metrics-platform.md phase 2) so every data-plane
+// operation records its AWS/DynamoDB outcome metrics (metrics_dynamodb.go).
+// Called once from router.New, after metrics.NewRecorder; a Service without
+// it (unit tests, or OVERCAST_SERVICE_METRICS=disabled) simply never records
+// anything.
+func (s *Service) InitMetrics(m metricsRecorder) {
+	s.handler.metrics = m
+}
+
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 

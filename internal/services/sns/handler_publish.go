@@ -259,6 +259,8 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	h.recordMessagePublished(r.Context(), topic.Name, len(message))
+
 	origin := publishOrigin(r.Context())
 	h.wg.Add(1)
 	go func() {
@@ -705,6 +707,8 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		h.recordMessagePublished(r.Context(), topic.Name, len(message))
+
 		// Deliver to all subscribers — runs asynchronously after the response is sent.
 		h.wg.Add(1)
 		envCopy := envelope
@@ -851,6 +855,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 					},
 				})
 			}
+			h.recordNotificationDelivered(ctx, topicName)
 
 		case "lambda":
 			h.deliverToLambda(ctx, d, msgAttrs)
@@ -891,6 +896,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 					},
 				})
 			}
+			h.recordNotificationDelivered(ctx, topicName)
 		case "sms":
 			if h.smsSender == nil {
 				continue
@@ -913,6 +919,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 					},
 				})
 			}
+			h.recordNotificationDelivered(ctx, topicName)
 
 		case "http", "https":
 			if h.outbound == nil {
@@ -935,6 +942,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 					},
 				})
 			}
+			h.recordNotificationDelivered(ctx, topicName)
 
 		case "application":
 			if h.outbound == nil {
@@ -957,6 +965,7 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 					},
 				})
 			}
+			h.recordNotificationDelivered(ctx, topicName)
 
 		default:
 			// Every protocol Subscribe accepts has a case above. Anything that
@@ -1028,6 +1037,7 @@ func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[
 			},
 		})
 	}
+	h.recordNotificationDelivered(ctx, d.topicName)
 }
 
 // failDelivery records a notification that did not reach its subscriber. It
@@ -1076,6 +1086,7 @@ func (h *Handler) failDelivery(ctx context.Context, d delivery, reason string) {
 			},
 		})
 	}
+	h.recordNotificationFailed(ctx, d.topicName)
 }
 
 // deadLetterQueueName returns the SQS queue named by a subscription's

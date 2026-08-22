@@ -1,18 +1,26 @@
-# Service metrics platform plan (Lambda pilot)
+# Service metrics platform plan (Lambda pilot + service rollout)
 
-> **Status:** **Lambda pilot (phase 1) shipped 2026-08-22**, tracked by
+> **Status:** **Lambda pilot (phase 1) shipped 2026-08-22; SQS/SNS/DynamoDB/
+> API Gateway rollout (phase 2) shipped 2026-08-22**, tracked by
 > [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100).
 > `internal/metrics` exists and is wired: Lambda automatically records
-> `Invocations`/`Errors`/`Duration`/`Throttles`/`ConcurrentExecutions`, and
-> CloudWatch's `PutMetricData`/`ListMetrics`/`GetMetricStatistics`/
-> `GetMetricData` — and its alarm evaluator — see that data merged alongside
-> user-supplied custom metrics. An `AWS/Lambda Errors` alarm evaluates and
-> fires end-to-end from automatic observations alone (see
-> `internal/services/cloudwatch/metrics_bridge_test.go`'s
-> `TestLambdaErrorsAlarm_FiresFromAutomaticMetrics`). Cost/benefit recorded in
-> the issue: Overcast already evaluates CloudWatch alarms but no service
-> emitted the metrics they watch, so configured alarms silently never fired —
-> the §2.1 "shape 2" divergence.
+> `Invocations`/`Errors`/`Duration`/`Throttles`/`ConcurrentExecutions`; SQS
+> records its message-operation and queue-depth-gauge catalogue; SNS records
+> its publish/delivery catalogue; DynamoDB records its per-operation
+> latency/capacity/error catalogue; API Gateway records its per-request
+> execution catalogue for both REST (v1) and HTTP (v2) APIs. CloudWatch's
+> `PutMetricData`/`ListMetrics`/`GetMetricStatistics`/`GetMetricData` — and
+> its alarm evaluator — see all of this merged alongside user-supplied custom
+> metrics, through the same namespace-agnostic read-through phase 1 built: no
+> per-namespace CloudWatch code was needed for phase 2's four new namespaces.
+> An `AWS/Lambda Errors` alarm and an `AWS/SQS ApproximateNumberOfMessagesVisible`
+> alarm both evaluate and fire end-to-end from automatic observations alone
+> (see `internal/services/cloudwatch/metrics_bridge_test.go`'s
+> `TestLambdaErrorsAlarm_FiresFromAutomaticMetrics` and
+> `TestSQSApproximateNumberOfMessagesVisibleAlarm_FiresFromAutomaticMetrics`).
+> Cost/benefit recorded in the issue: Overcast already evaluates CloudWatch
+> alarms but no service emitted the metrics they watch, so configured alarms
+> silently never fired — the §2.1 "shape 2" divergence.
 >
 > **What phase 1 deliberately narrowed from this document, and why** (see the
 > "Phase 1 delivered scope" section below for the full list): CloudWatch's own
@@ -25,12 +33,24 @@
 > builds (`metrics:series:v1`/`metrics:buckets:v1`) was not built; those
 > configurations get correct in-memory-only automatic metrics (no restart
 > continuity). The fuller 300s/3600s resolution rollup ladder for 7d/30d
-> graphs, the web Monitor tab, and non-Lambda services are phase 2+ — see that
-> section for the complete remainder.
+> graphs and the web Monitor tab remain phase 3+ — see the "Phase 2 delivered
+> scope" section below for the complete phase-3 remainder.
+>
+> **What phase 2 deliberately narrowed, and why** (see "Phase 2 delivered
+> scope" below for the full list): DynamoDB's `ConsumedReadCapacityUnits`/
+> `ConsumedWriteCapacityUnits` are computed from an item's DynamoDB-JSON
+> encoded byte length, not AWS's precise per-attribute-type size algorithm —
+> a disclosed, proportionate approximation, not a wire-exact replica of AWS's
+> billing math. DynamoDB `ThrottledRequests`/`ReadThrottleEvents`/
+> `WriteThrottleEvents` are not recorded because this emulator does not model
+> throttling at all — there is no underlying fact to observe. API Gateway
+> records only the most granular documented dimension combination per request
+> (never the coarser `ApiName+Stage`-only aggregate AWS also publishes),
+> mirroring Lambda phase 1's own `FunctionName`-only narrowing.
 >
 > **Scope:** an AWS-shaped metrics substrate shared by every emulated service,
-> delivered first for Lambda and designed for subsequent SQS, SNS, and service
-> integrations. This is a plan, not an API commitment.
+> delivered first for Lambda (phase 1) and now for SQS, SNS, DynamoDB, and
+> API Gateway (phase 2). This is a plan, not an API commitment.
 
 ## Outcome
 
@@ -639,6 +659,137 @@ Explicitly deferred to phase 2+ (not started, not partially built):
   of the persisted backend never seeing a smaller total than the largest flush
   so far for a bucket (irrelevant in practice since a bucket only grows).
 
+## Phase 2 delivered scope (2026-08-22)
+
+Design Phase 5's service rollout, prioritized per that section's own order
+(SQS, then SNS, then services with clear execution boundaries — DynamoDB and
+API Gateway). Each service's outcome helper follows the "Architectural
+decision" pattern exactly: one narrow per-service helper called at the
+authoritative lifecycle boundary, never through `internal/services/cloudwatch`.
+
+Delivered:
+
+- **SQS** (`internal/services/sqs/metrics_sqs.go`), `AWS/SQS`, `QueueName`
+  dimension: `NumberOfMessagesSent`/`SentMessageSize` (SendMessage/
+  SendMessageBatch, skipped on a FIFO content-based-dedup resend since no
+  message is newly enqueued), `NumberOfMessagesReceived`/
+  `NumberOfEmptyReceives` (ReceiveMessage, recorded once per call after any
+  long-poll retry settles — never once per internal poll attempt),
+  `NumberOfMessagesDeleted` (DeleteMessage/DeleteMessageBatch). Both the
+  typed and legacy per-operation implementations record identically (SQS's
+  two dispatch paths converge on separate handler functions, unlike
+  DynamoDB's, so each of the 5 operations has 2 call sites, not 1).
+  `ApproximateNumberOfMessagesVisible`/`NotVisible`/`Delayed` are gauges: a
+  new periodic sampler (`Service.sampleQueueGauges`, started from
+  `InitMetrics`, stopped alongside the existing `watchVisibility` goroutine)
+  samples every existing queue once a minute and always records all three —
+  including zero — matching AWS's documented behavior of publishing these
+  every minute for every active queue regardless of traffic (a real sampled
+  fact, not a synthetic zero standing in for a missing observation).
+  `ApproximateAgeOfOldestMessage` is recorded only when the queue is
+  non-empty — there is no "age of oldest message" fact for an empty queue.
+- **SNS** (`internal/services/sns/metrics_sns.go`), `AWS/SNS`, `TopicName`
+  dimension: `NumberOfMessagesPublished`/`PublishSize` (Publish/PublishBatch,
+  recorded once per successfully-accepted message before fan-out is
+  dispatched). `NumberOfNotificationsDelivered`/`NumberOfNotificationsFailed`
+  (once per subscription delivery attempt, from `fanOut`'s per-protocol
+  success branches and `failDelivery`'s single failure funnel respectively,
+  covering all 7 protocol cases including the no-delivery-implementation
+  default). A protocol whose delivery dependency was never wired (nil
+  enqueuer/mailer/smsSender/outbound) currently `continue`s silently in
+  `fanOut` without calling `failDelivery` — that pre-existing gap means such
+  an attempt records neither Delivered nor Failed, per "only where the
+  emulator can observe the underlying fact"; flagged as a candidate
+  follow-up (also calling `failDelivery` there), not fixed here since it is
+  a behavior change beyond pure metrics wiring.
+- **DynamoDB** (`internal/services/dynamodb/metrics_dynamodb.go`), `AWS/DynamoDB`:
+  `SuccessfulRequestLatency` (`TableName`+`Operation`, success only),
+  `ConsumedReadCapacityUnits`/`ConsumedWriteCapacityUnits` (`TableName`
+  [+`GlobalSecondaryIndexName` on Query/Scan when `IndexName` names a real
+  GSI, never an LSI] [+`Source=Customer` on writes — global tables are not
+  modeled, so every write is a customer write]), `UserErrors` (account/
+  region-wide, no dimensions, matching AWS's own dimensionless publication —
+  excludes `ConditionalCheckFailedException` and
+  `ProvisionedThroughputExceededException` per AWS's documented carve-outs),
+  `SystemErrors` (`TableName`+`Operation`, HTTP 5xx). Covers the 10
+  operations AWS's own `Operation` dimension documents that this emulator
+  implements: PutItem, GetItem, DeleteItem, UpdateItem, BatchGetItem,
+  BatchWriteItem, Scan, Query, TransactWriteItems, TransactGetItems
+  (TransactWriteItems/TransactGetItems record the 2x transactional-capacity
+  weighting AWS documents). `ThrottledRequests`/`ReadThrottleEvents`/
+  `WriteThrottleEvents` are **not recorded** — this emulator does not model
+  DynamoDB throttling at all, so there is no underlying fact to observe.
+  Since DynamoDB has no single dispatch chokepoint that already knows every
+  operation's table name/success/timing (both its dispatch paths converge on
+  the same "xxxTyped" business-logic function per operation, but the
+  generic `op.Typed`/`TypedAny` layer between them never sees `TableName`),
+  each instrumented operation's original function was renamed
+  "xxxTypedCore" and a same-named "xxxTyped" wrapper (the name both dispatch
+  paths already call) records the outcome around it — one wrapper per
+  operation rather than Lambda's one function shared by several call sites,
+  but still exactly the plan's "one per-service outcome helper" pattern.
+- **API Gateway** (`internal/services/apigateway/metrics_apigateway.go`),
+  `AWS/ApiGateway`: `Count`, `4XXError`/`5XXError`, `Latency`,
+  `IntegrationLatency`. REST (v1) and HTTP (v2) APIs do **not** share one
+  execution seam (`ExecuteRestAPI` and `ExecuteV2API` are independent
+  top-level dispatchers with different per-integration-type sub-functions),
+  so there are two outcome helpers — `recordRestAPIOutcome`
+  (`ApiName`+`Stage`+`Method`+`Resource`, matching AWS's REST dimension set)
+  and `recordV2APIOutcome` (`ApiId`+`Stage`+`HttpMethod`+`RouteKey`, matching
+  AWS's distinct HTTP API dimension set) — each installed once via a defer at
+  the top of its own dispatcher, over a new `statusCapturingResponseWriter`
+  (neither dispatcher had a status-capturing writer or a request timer
+  before this phase). Both skip the wrapper allocation and every clock read
+  entirely when collection is disabled (`h.metrics == nil`), matching the
+  plan's "disabled collection adds no allocations" acceptance criterion. An
+  unresolvable API (unknown restApiId/apiId) records nothing when no
+  dimension-able identity was ever resolved (REST) — AWS itself never
+  publishes a datapoint it cannot dimension.
+- Router wiring (`internal/router/router.go`): `sqsSvc.InitMetrics`,
+  `snsSvc.InitMetrics`, `ddbSvc.InitMetrics`, `apigwSvc.InitMetrics` added
+  alongside phase 1's `lambdaSvc.InitMetrics`, all gated by the same
+  `cfg.MetricsCollectionEnabled()` check — no new configuration surface.
+- CloudWatch (`internal/services/cloudwatch`): **zero changes**. Phase 1's
+  read-through (`metrics_bridge.go`) and alarm evaluator are namespace- and
+  metric-shape-agnostic, so all four new namespaces are served by the exact
+  code that already served `AWS/Lambda` — proven by
+  `TestSQSApproximateNumberOfMessagesVisibleAlarm_FiresFromAutomaticMetrics`
+  in `metrics_bridge_test.go`.
+- Tests: a `metrics_*_test.go` per service driving the real operation
+  through a real `*metrics.Service` (never a stub) and reading it back via
+  `metrics.Service.QueryRange` — the same call CloudWatch's read-through
+  itself makes — plus one alarm-fires acceptance test in the cloudwatch
+  package. Benchmarks: a `metrics_*_bench_test.go` per service (`-benchmem`,
+  collection disabled vs enabled) on each service's representative hot path
+  (SendMessage, Publish, PutItem, ExecuteRestAPI). See the PR for recorded
+  numbers and machine/mode.
+
+Explicitly deferred to phase 3+ (not started, not partially built):
+
+- The web Lambda Monitor tab and its BFF `/_metrics` allowlist endpoint,
+  and the equivalent SQS/SNS/DynamoDB/API Gateway monitor panels (design
+  "Web UI plan" / Phase 3) — no `web/` changes are in this phase.
+- The 300s/3600s resolution rollup ladder and its 7d/30d retention tiers —
+  phase 2 keeps only the 60s/1h tier phase 1 shipped.
+- Lambda's P1/P2 tiers (`AsyncEventsReceived`/`AsyncEventAge`/
+  `AsyncEventsDropped`/`DeadLetterErrors`/`DestinationDeliveryFailures`,
+  ESM `IteratorAge`/`EventCount`/`ErrorCount`, provisioned-concurrency
+  metrics, function URL request metrics) and `Resource`/`ExecutedVersion`
+  dimensions — unchanged from phase 1's own deferral.
+- The generic versioned-K/V persistence path for `WALStore`/`-tags nosqlite`
+  — unchanged from phase 1's own deferral; phase 2's new SQS/SNS/DynamoDB/
+  API Gateway series inherit the same in-memory-only behavior there.
+- DynamoDB throttling modeling (and, downstream of it,
+  `ThrottledRequests`/`ReadThrottleEvents`/`WriteThrottleEvents`) — no
+  underlying fact exists to observe yet.
+- SNS's silent-`continue` gap for an unwired delivery dependency (see
+  "Delivered" above) — a candidate follow-up, not phase-2 scope.
+- API Gateway's coarser documented dimension combinations (`ApiName+Stage`
+  only, etc.) — only the most granular combination is recorded, mirroring
+  Lambda phase 1's `FunctionName`-only narrowing.
+- Migrating `PutMetricData`'s own storage onto `internal/metrics` — unchanged
+  from phase 1's own deferral.
+
 ## Implementation phases
 
 ### Phase 0 — evidence and contracts
@@ -700,7 +851,7 @@ Explicitly deferred to phase 2+ (not started, not partially built):
   scenario tests for empty polls, filters, batches, retries, delete success /
   failure, disabled mappings, and destination failure.
 
-### Phase 5 — service rollout
+### Phase 5 — service rollout (shipped 2026-08-22)
 
 For each service, add a declarative metric catalogue plus a thin local adapter
 rather than new infrastructure. Prioritize SQS (queue depth/age/send/receive/
@@ -709,6 +860,11 @@ delete and DLQ transitions from authoritative state transitions), then SNS
 execution boundaries. Each rollout requires AWS docs evidence, a scenario
 matrix, SDK/API query tests, UI catalogue entries where useful, and capability
 documentation updates.
+
+Shipped for SQS, SNS, DynamoDB, and API Gateway — see "Phase 2 delivered
+scope" above for the exact catalogue, dimensions, and disclosed narrowing per
+service. UI catalogue entries remain phase 3 (no `web/` changes shipped with
+this rollout).
 
 ## Acceptance criteria and guardrails
 
@@ -736,3 +892,7 @@ documentation updates.
 - [Viewing Lambda metrics and dimensions](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-metrics-view.html)
 - [Lambda concurrency monitoring](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)
 - [CloudWatch GetMetricData API](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricData.html)
+- [Available CloudWatch metrics for Amazon SQS](https://docs.aws.amazon.com/AmazonSQS/latest/dg/sqs-available-cloudwatch-metrics.html)
+- [Monitoring Amazon SNS topics using CloudWatch](https://docs.aws.amazon.com/sns/latest/dg/sns-monitoring-using-cloudwatch.html)
+- [DynamoDB metrics and dimensions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/metrics-dimensions.html)
+- [Amazon API Gateway metrics and dimensions](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-metrics-and-dimensions.html)

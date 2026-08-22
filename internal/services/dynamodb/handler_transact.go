@@ -76,7 +76,10 @@ func (h *Handler) TransactWriteItems(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) transactWriteItemsTyped(ctx context.Context, req *transactWriteItemsRequest) (*struct{}, *protocol.AWSError) {
+// transactWriteItemsTypedCore is TransactWriteItems' business logic. See
+// transactWriteItemsTyped (metrics_dynamodb.go) for the metrics-recording
+// wrapper.
+func (h *Handler) transactWriteItemsTypedCore(ctx context.Context, req *transactWriteItemsRequest) (*struct{}, *protocol.AWSError) {
 	if len(req.TransactItems) > 100 {
 		return nil, &protocol.AWSError{
 			Code:       "ValidationException",
@@ -327,7 +330,10 @@ func (h *Handler) TransactGetItems(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) transactGetItemsTyped(ctx context.Context, req *transactGetItemsRequest) (*transactGetItemsResponse, *protocol.AWSError) {
+// transactGetItemsTypedCore is TransactGetItems' business logic. See
+// transactGetItemsTyped (metrics_dynamodb.go) for the metrics-recording
+// wrapper.
+func (h *Handler) transactGetItemsTypedCore(ctx context.Context, req *transactGetItemsRequest) (*transactGetItemsResponse, *protocol.AWSError) {
 	if len(req.TransactItems) > 100 {
 		return nil, &protocol.AWSError{
 			Code:       "ValidationException",
