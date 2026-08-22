@@ -382,9 +382,10 @@ public final class LambdaGroup implements ServiceGroup {
     }
 
     private void listLayers(TestContext ctx) throws Exception {
-        var resp = lambda().listLayers();
-        // Just verify the call succeeds and returns a valid response.
-        Assertions.assertNotNull(resp.layers(), "ListLayers: layers list is null");
+        String name = ctx.getString("lambdaLayerName");
+        var resp = lambda().listLayers(r -> r.maxItems(50));
+        boolean found = resp.layers().stream().anyMatch(l -> name.equals(l.layerName()));
+        Assertions.assertTrue(found, "ListLayers: published layer " + name + " not found in list");
     }
 
     private void deleteLayerVersion(TestContext ctx) throws Exception {

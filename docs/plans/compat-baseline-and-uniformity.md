@@ -347,9 +347,10 @@ emulator or suite bug.
    test that fails in exactly one suite while at least two other suites
    implementing the same test pass it — informational only, does not gate
    the run. A shared behaviour spec remains not worth it at this scale.
-3. ~~**Go/py/java assert idiom sweep.**~~ **Done for Go and Python in
-   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23; Java
-   only partially.** Python: 36 bare `assert cond, msg` statements across 12
+3. ~~**Go/py/java assert idiom sweep.**~~ **Done for Go, Python and Java in
+   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23 (Java's
+   deeper per-method pass landed in the follow-up to #1295 the same day);
+   dotnet/rust got the deeper pass too and came back clean.** Python: 36 bare `assert cond, msg` statements across 12
    files in `compat/suites/python-sdk/groups/` converted to
    `if not (cond): raise AssertionError(msg)` — a bare `assert` is stripped
    entirely under `python -O`/`PYTHONOPTIMIZE`, the same silently-vanishing-
@@ -366,17 +367,57 @@ emulator or suite bug.
    turned out to be dead code — never registered in an ImplMap, not in
    `registry.json`, never executed — left alone pending a follow-up
    decision (delete vs. wire up as real coverage). `cli` (the other Go
-   suite) audited clean. Java: confirmed the specific idiom (the bare `assert`
-   keyword, disabled unless run with `-ea`) is not used anywhere — it
-   consistently uses the `Assertions` helper — so that bug class doesn't
-   apply, but a deeper "is every response actually asserted" pass wasn't
-   completed reliably in the time available (a quick regex heuristic across
-   Java's nested braces/lambdas was too noisy to trust) and needs a manual
-   per-service follow-up. `dotnet-sdk`/`rust-sdk` (outside the issue's
-   original scope) got the same shallow keyword check and came back clean
-   (no `Debug.Assert`/`Trace.Assert` misuse in dotnet, no bare `assert!`/
-   `debug_assert!` misuse in rust — both already use explicit Result/exception
-   idioms) but not the deeper per-service pass either.
+   suite) audited clean. Java: the bare `assert` keyword (disabled unless run
+   with `-ea`) is not used anywhere — the suite consistently uses the
+   `Assertions` helper — so that bug class doesn't apply; the deeper "is every
+   response actually asserted" pass was then done by hand, per service.
+   Method: every registered test in `groups/*.java` is a 4-space-indented
+   `private void x(TestContext)` body closed by a bare `    }` (which is what
+   makes the earlier brace-matching problem disappear), so each was split out,
+   flagged if it calls a Describe/Get/List-shaped operation and either drops
+   the response at statement level, never references the bound variable, or
+   references it only outside an `Assertions.*` call — then every flagged body
+   was read. 31 flagged → **18 real** (the other 13 were expect-NotFound
+   probes or input gathering): AppSync ×9 (`ListApiKeys`, `ListDataSources`,
+   `ListFunctions`, `ListResolvers`, `GetType`, `ListTypes`, `GetDomainName`,
+   `ListDomainNames`, `GetApiCache` — all bare calls), Cognito
+   `DescribeUserPoolClientTokenValidity` (described the client and asserted
+   nothing about the 2/3/7 validity values it exists to check), EC2
+   `DescribeAvailabilityZones`/`DescribeInstanceTypes` (the latter now asks
+   for `t3.micro` explicitly — an unfiltered call is legitimately empty), IAM
+   `UpdateUser` (the `GetUser` after the rename was discarded), RDS
+   `DescribeDBEngineVersions`, Shield `DescribeSubscription`, and SQS
+   `ChangeMessageVisibility`/`DeleteMessageBatch`, which `return`ed silently
+   on an empty receive where every sibling suite fails. Two more shapes
+   surfaced on the way and were fixed in the same pass: (a) ~18
+   `assertNotNull(resp.<list>())` on SDK-v2 list fields, which the SDK
+   auto-constructs and never returns null — an assertion that cannot fail —
+   replaced with membership/non-empty checks against what the group created
+   (AppSync `ListGraphqlApis`/`ListResolversByFunction`, Cognito
+   `ListUserPools`/`ListUserPoolClients`/`ListUsers`, EC2 `DescribeImages`,
+   IAM `ListRoles`/`ListPolicies`/`ListAttachedRolePolicies`, Logs
+   `GetLogEvents`/`FilterLogEvents`, Kinesis `GetRecords`, KMS
+   `ListResourceTags`, Lambda `ListLayers`, Shield `ListProtections`, SSM
+   `DescribeParameters`/`ListTagsForResource`); the CloudFront `*List()` and
+   STS `credentials()` hits are structs that can be null and were left alone.
+   (b) IAM `AttachRolePolicy`/`ListAttachedRolePolicies`/`DetachRolePolicy`
+   read `managedPolicyArn`, which only the *iam-policies* group's context ever
+   sets — the runner hands each group its own `TestContext` — so all three
+   no-op'd and passed; they now attach/list/detach the AWS-managed
+   `AmazonS3ReadOnlyAccess` like node/go do. Verified by building the suite
+   image (compile + registry unit tests) and running the 22 touched groups
+   against a throwaway `ghcr.io/neaox/overcast:dev` container: 148/148 pass,
+   every changed test confirmed executed. `dotnet-sdk`/`rust-sdk` (outside the
+   issue's original scope) got the same deeper pass: dotnet's flags were all
+   multi-line `Assertions.*` continuations, teardowns or expect-NotFound
+   probes, and its `NotNull(<list>)` checks are meaningful on AWSSDK 4.0
+   (collections are nullable there); rust binds all 131 read responses across
+   174 registered tests with `let` and checks each. Both **audited clean, no
+   changes**. What the pass did find is that the *siblings* share the Java
+   discard shape verbatim — go-sdk drops ~51 read responses on the `_, err :=`
+   line (a shape the `_ = resp` grep above never saw), python-sdk has ~32 bare
+   read calls, node-js-sdk a handful plus `Array.isArray` on always-array
+   fields — tracked in [#1321](https://github.com/Neaox/overcast/issues/1321).
 4. **cli suite runtime** (4m16s in CI, the slowest matrix job): one process
    spawn per aws-cli call. Acceptable; revisit only if the matrix wall-time
    starts to bind.
