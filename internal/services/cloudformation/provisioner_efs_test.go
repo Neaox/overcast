@@ -30,35 +30,38 @@ type fakeEFS struct {
 	empty bool
 }
 
+// ServeHTTP answers EFS's own REST bindings under /2015-02-01/ — the surface
+// the provisioner dispatches to since #1226 retired the invented
+// "EFS.<Op>" X-Amz-Target prefix.
 func (f *fakeEFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	switch r.Header.Get("X-Amz-Target") {
-	case "EFS.CreateFileSystem":
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/2015-02-01/file-systems":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"FileSystemId": "fs-0001", "LifeCycleState": "creating",
 			"FileSystemArn": "arn:aws:elasticfilesystem:us-east-1:000000000000:file-system/fs-0001",
 		})
-	case "EFS.DescribeFileSystems":
+	case r.Method == http.MethodGet && r.URL.Path == "/2015-02-01/file-systems":
 		f.writeList(w, "FileSystems", map[string]any{"FileSystemId": "fs-0001"})
 
-	case "EFS.CreateMountTarget":
+	case r.Method == http.MethodPost && r.URL.Path == "/2015-02-01/mount-targets":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"MountTargetId": "fsmt-0001", "IpAddress": "10.0.0.10", "LifeCycleState": "creating",
 		})
-	case "EFS.DescribeMountTargets":
+	case r.Method == http.MethodGet && r.URL.Path == "/2015-02-01/mount-targets":
 		f.writeList(w, "MountTargets", map[string]any{"MountTargetId": "fsmt-0001"})
 
-	case "EFS.CreateAccessPoint":
+	case r.Method == http.MethodPost && r.URL.Path == "/2015-02-01/access-points":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"AccessPointId": "fsap-0001", "LifeCycleState": "creating",
 			"AccessPointArn": "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-0001",
 		})
-	case "EFS.DescribeAccessPoints":
+	case r.Method == http.MethodGet && r.URL.Path == "/2015-02-01/access-points":
 		f.writeList(w, "AccessPoints", map[string]any{"AccessPointId": "fsap-0001"})
 
 	default:
-		http.Error(w, "unexpected target "+r.Header.Get("X-Amz-Target"), http.StatusBadRequest)
+		http.Error(w, "unexpected request "+r.Method+" "+r.URL.Path, http.StatusBadRequest)
 	}
 }
 

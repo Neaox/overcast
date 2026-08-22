@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"time"
@@ -1080,6 +1081,21 @@ func copyStringAnyMap(in map[string]any) map[string]any {
 }
 
 // ── AWS::EKS::Cluster ──────────────────────────────────────────────────────
+//
+// EKS's handlers dispatch over its own REST-JSON bindings (/clusters/{name},
+// /clusters/{name}/node-groups/..., etc.) instead of the invented "EKS.<Op>"
+// X-Amz-Target prefix #1226 retired: EKS is restJson1 and the pinned models
+// never gave it one, so nothing but this provisioner and Overcast's own tests
+// ever spoke it.
+
+// eksJSON POSTs/PUTs a JSON body to one EKS REST path.
+func eksJSON(ctx context.Context, router http.Handler, region, method, path string, body map[string]any) (*httptest.ResponseRecorder, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	return internalRequest(ctx, router, region, method, path, "application/json", data)
+}
 
 type eksClusterHandler struct{}
 
@@ -1102,7 +1118,7 @@ func (h *eksClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 		body["resourcesVpcConfig"] = v
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreateCluster", body)
+	rec, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, "/clusters", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateCluster: %w", err)
 	}
@@ -1158,8 +1174,8 @@ func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, 
 		timeout:  eksStabilizeTimeout,
 		statuses: eksClusterStatuses,
 		describe: func(ctx context.Context) (string, string, error) {
-			rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DescribeCluster",
-				map[string]any{"name": name})
+			rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodGet,
+				"/clusters/"+url.PathEscape(name), "", nil)
 			if err != nil {
 				return "", "", fmt.Errorf("DescribeCluster: %s: %w", subject, err)
 			}
@@ -1193,8 +1209,13 @@ func (h *eksClusterHandler) Stabilize(ctx context.Context, router http.Handler, 
 }
 
 func (h *eksClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"name": physicalID}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteCluster", body)
+	// Physical ID is the cluster ARN, "arn:…:cluster/{name}".
+	name := physicalID
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+url.PathEscape(name), "", nil)
 	return teardownError("DeleteCluster", rec, err)
 }
 
@@ -1216,15 +1237,17 @@ func (h *eksClusterHandler) Update(ctx context.Context, router http.Handler, _ *
 	}
 
 	if v, ok := props["ResourcesVpcConfig"].(map[string]any); ok && v != nil {
-		body := map[string]any{"name": oldName, "resourcesVpcConfig": v}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateClusterConfig", body); err != nil {
+		body := map[string]any{"resourcesVpcConfig": v}
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+			"/clusters/"+url.PathEscape(oldName)+"/update-config", body); err != nil {
 			return "", nil, fmt.Errorf("UpdateClusterConfig: %w", err)
 		}
 	}
 	if v, ok := props["Version"].(string); ok && v != "" {
 		if ov, _ := oldProps["Version"].(string); ov != v {
-			body := map[string]any{"name": oldName, "version": v}
-			if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateClusterVersion", body); err != nil {
+			body := map[string]any{"version": v}
+			if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+				"/clusters/"+url.PathEscape(oldName)+"/updates", body); err != nil {
 				return "", nil, fmt.Errorf("UpdateClusterVersion: %w", err)
 			}
 		}
@@ -1244,7 +1267,6 @@ func (h *eksNodegroupHandler) Create(ctx context.Context, router http.Handler, c
 	}
 
 	body := map[string]any{
-		"clusterName":   clusterName,
 		"nodegroupName": nodegroupName,
 	}
 	if v, ok := props["NodeRole"].(string); ok && v != "" {
@@ -1257,7 +1279,8 @@ func (h *eksNodegroupHandler) Create(ctx context.Context, router http.Handler, c
 		body["scalingConfig"] = v
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreateNodegroup", body)
+	rec, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/clusters/"+url.PathEscape(clusterName)+"/node-groups", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateNodegroup: %w", err)
 	}
@@ -1287,11 +1310,8 @@ func (h *eksNodegroupHandler) Delete(ctx context.Context, router http.Handler, c
 	}
 	clusterName, nodegroupName := parts[0], parts[1]
 
-	body := map[string]any{
-		"clusterName":   clusterName,
-		"nodegroupName": nodegroupName,
-	}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteNodegroup", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+url.PathEscape(clusterName)+"/node-groups/"+url.PathEscape(nodegroupName), "", nil)
 	return teardownError("DeleteNodegroup", rec, err)
 }
 
@@ -1316,12 +1336,9 @@ func (h *eksNodegroupHandler) Update(ctx context.Context, router http.Handler, _
 	}
 
 	if v, ok := props["ScalingConfig"].(map[string]any); ok && v != nil {
-		body := map[string]any{
-			"name":          parts[0],
-			"nodegroupName": parts[1],
-			"scalingConfig": v,
-		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateNodegroupConfig", body); err != nil {
+		body := map[string]any{"scalingConfig": v}
+		path := "/clusters/" + url.PathEscape(parts[0]) + "/node-groups/" + url.PathEscape(parts[1]) + "/update-config"
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, path, body); err != nil {
 			return "", nil, fmt.Errorf("UpdateNodegroupConfig: %w", err)
 		}
 	}
@@ -1340,7 +1357,6 @@ func (h *eksFargateProfileHandler) Create(ctx context.Context, router http.Handl
 	}
 
 	body := map[string]any{
-		"clusterName":        clusterName,
 		"fargateProfileName": fargateProfileName,
 	}
 	if v, ok := props["PodExecutionRoleArn"].(string); ok && v != "" {
@@ -1350,7 +1366,8 @@ func (h *eksFargateProfileHandler) Create(ctx context.Context, router http.Handl
 		body["selectors"] = v
 	}
 
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreateFargateProfile", body)
+	_, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/clusters/"+url.PathEscape(clusterName)+"/fargate-profiles", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateFargateProfile: %w", err)
 	}
@@ -1366,11 +1383,8 @@ func (h *eksFargateProfileHandler) Delete(ctx context.Context, router http.Handl
 	}
 	clusterName, fargateProfileName := parts[0], parts[1]
 
-	body := map[string]any{
-		"clusterName":        clusterName,
-		"fargateProfileName": fargateProfileName,
-	}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteFargateProfile", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+url.PathEscape(clusterName)+"/fargate-profiles/"+url.PathEscape(fargateProfileName), "", nil)
 	return teardownError("DeleteFargateProfile", rec, err)
 }
 
@@ -1390,14 +1404,14 @@ func (h *eksAddonHandler) Create(ctx context.Context, router http.Handler, cfg *
 	}
 
 	body := map[string]any{
-		"clusterName": clusterName,
-		"addonName":   addonName,
+		"addonName": addonName,
 	}
 	if v, ok := props["AddonVersion"].(string); ok && v != "" {
 		body["addonVersion"] = v
 	}
 
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreateAddon", body)
+	_, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/clusters/"+url.PathEscape(clusterName)+"/addons", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateAddon: %w", err)
 	}
@@ -1413,11 +1427,8 @@ func (h *eksAddonHandler) Delete(ctx context.Context, router http.Handler, cfg *
 	}
 	clusterName, addonName := parts[0], parts[1]
 
-	body := map[string]any{
-		"clusterName": clusterName,
-		"addonName":   addonName,
-	}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAddon", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+url.PathEscape(clusterName)+"/addons/"+url.PathEscape(addonName), "", nil)
 	return teardownError("DeleteAddon", rec, err)
 }
 
@@ -1434,11 +1445,11 @@ func (h *eksAccessEntryHandler) Create(ctx context.Context, router http.Handler,
 	principalArn, _ := props["PrincipalArn"].(string)
 
 	body := map[string]any{
-		"clusterName":  clusterName,
 		"principalArn": principalArn,
 	}
 
-	_, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreateAccessEntry", body)
+	_, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/clusters/"+url.PathEscape(clusterName)+"/access-entries", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateAccessEntry: %w", err)
 	}
@@ -1454,11 +1465,8 @@ func (h *eksAccessEntryHandler) Delete(ctx context.Context, router http.Handler,
 	}
 	clusterName, principalArn := parts[0], parts[1]
 
-	body := map[string]any{
-		"clusterName":  clusterName,
-		"principalArn": principalArn,
-	}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeleteAccessEntry", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+url.PathEscape(clusterName)+"/access-entries/"+url.PathEscape(principalArn), "", nil)
 	return teardownError("DeleteAccessEntry", rec, err)
 }
 
@@ -1477,7 +1485,7 @@ func (h *eksAccessEntryHandler) Update(ctx context.Context, router http.Handler,
 		return "", nil, errReplacementRequired
 	}
 
-	body := map[string]any{"name": parts[0], "principalArn": parts[1]}
+	body := map[string]any{}
 	send := false
 	if v, _ := props["Username"].(string); v != "" {
 		body["username"] = v
@@ -1488,7 +1496,8 @@ func (h *eksAccessEntryHandler) Update(ctx context.Context, router http.Handler,
 		send = true
 	}
 	if send {
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdateAccessEntry", body); err != nil {
+		path := "/clusters/" + url.PathEscape(parts[0]) + "/access-entries/" + url.PathEscape(parts[1])
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, path, body); err != nil {
 			return "", nil, fmt.Errorf("UpdateAccessEntry: %w", err)
 		}
 	}
@@ -1506,13 +1515,13 @@ func (h *eksPodIdentityAssociationHandler) Create(ctx context.Context, router ht
 	roleArn, _ := props["RoleArn"].(string)
 
 	body := map[string]any{
-		"clusterName":    clusterName,
 		"namespace":      namespace,
 		"serviceAccount": serviceAccount,
 		"roleArn":        roleArn,
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.CreatePodIdentityAssociation", body)
+	rec, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/clusters/"+url.PathEscape(clusterName)+"/pod-identity-associations", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreatePodIdentityAssociation: %w", err)
 	}
@@ -1533,8 +1542,17 @@ func (h *eksPodIdentityAssociationHandler) Create(ctx context.Context, router ht
 }
 
 func (h *eksPodIdentityAssociationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"associationId": physicalID}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EKS.DeletePodIdentityAssociation", body)
+	// Physical ID is the opaque association ID alone (see Create) — the
+	// owning cluster's name is not recoverable from it, and Delete is never
+	// handed the resource's properties to read ClusterName back out of. Real
+	// AWS's DeleteAssociation binding requires the cluster name as an
+	// httpLabel regardless, so a placeholder that names no real cluster is
+	// used here; it 404s the same "no cluster found" way an empty ClusterName
+	// always has, which teardownError already treats as already-gone. See
+	// #1226 — this predates the REST migration and is not this issue's fix.
+	const noClusterOwnerRecorded = "-"
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/clusters/"+noClusterOwnerRecorded+"/pod-identity-associations/"+url.PathEscape(physicalID), "", nil)
 	return teardownError("DeletePodIdentityAssociation", rec, err)
 }
 
@@ -1553,12 +1571,9 @@ func (h *eksPodIdentityAssociationHandler) Update(ctx context.Context, router ht
 
 	clusterName, _ := props["ClusterName"].(string)
 	if v, _ := props["RoleArn"].(string); v != "" {
-		body := map[string]any{
-			"name":          clusterName,
-			"associationId": physicalID,
-			"roleArn":       v,
-		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EKS.UpdatePodIdentityAssociation", body); err != nil {
+		body := map[string]any{"roleArn": v}
+		path := "/clusters/" + url.PathEscape(clusterName) + "/pod-identity-associations/" + url.PathEscape(physicalID)
+		if _, err := eksJSON(ctx, router, rCtx.Region, http.MethodPost, path, body); err != nil {
 			return "", nil, fmt.Errorf("UpdatePodIdentityAssociation: %w", err)
 		}
 	}

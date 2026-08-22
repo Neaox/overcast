@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,8 +17,18 @@ import (
 )
 
 // EFS resource handlers translate AWS::EFS::* CloudFormation properties to the
-// EFS API and dispatch through the emulator router (X-Amz-Target "EFS.<Op>"),
-// so all validation, defaulting, and lifecycle behaviour stays in the service.
+// EFS API and dispatch through the emulator router over EFS's own REST-JSON
+// bindings (/2015-02-01/...), the same paths any EFS SDK call reaches, so all
+// validation, defaulting, and lifecycle behaviour stays in the service.
+//
+// This used to go through the X-Amz-Target dispatcher ("EFS.<Op>" on POST /),
+// which nothing but this provisioner and Overcast's own tests ever spoke: EFS
+// is restJson1, and the pinned models give it no target prefix at all. #1226
+// retired that invented door, so the internal caller moved to the same REST
+// surface a real SDK uses instead of losing its own way in.
+
+// efsAPIPrefix is EFS's versioned REST path prefix — see efs.apiPrefix.
+const efsAPIPrefix = "/2015-02-01"
 
 // ── EFS stabilization ──────────────────────────────────────────────────────
 //
@@ -71,17 +83,22 @@ type describedEFSResources struct {
 // EFS records no reason of its own: LifeCycleState is the whole of what the API
 // says about a mount target whose export failed, so the state is what a failure
 // here has to report.
-func efsWait(router http.Handler, region, subject, target, idParam, id string,
+//
+// listPath is the REST collection endpoint (e.g. efsAPIPrefix+"/file-systems")
+// and idParam is the query parameter EFS's Describe* operations filter it by
+// (FileSystemId, MountTargetId, AccessPointId) — every one of the three reads
+// its subject from a query string, never a path label.
+func efsWait(router http.Handler, region, subject, operation, listPath, idParam, id string,
 	stateOf func(describedEFSResources) (string, bool),
 ) stabilizeWait {
-	operation := strings.TrimPrefix(target, "EFS.")
 	return stabilizeWait{
 		subject:  subject,
 		goal:     `reach lifecycle state "available"`,
 		timeout:  efsStabilizeTimeout,
 		statuses: efsLifecycleStatuses,
 		describe: func(ctx context.Context) (string, string, error) {
-			rec, err := internalJSON(ctx, router, region, target, map[string]any{idParam: id})
+			path := listPath + "?" + url.Values{idParam: {id}}.Encode()
+			rec, err := internalRequest(ctx, router, region, http.MethodGet, path, "", nil)
 			if err != nil {
 				return "", "", fmt.Errorf("%s: %s: %w", operation, subject, err)
 			}
@@ -96,6 +113,15 @@ func efsWait(router http.Handler, region, subject, target, idParam, id string,
 			return state, "", nil
 		},
 	}
+}
+
+// efsJSON POSTs/PUTs a JSON body to one EFS REST path.
+func efsJSON(ctx context.Context, router http.Handler, region, method, path string, body map[string]any) (*httptest.ResponseRecorder, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	return internalRequest(ctx, router, region, method, path, "application/json", data)
 }
 
 // ── AWS::EFS::FileSystem ───────────────────────────────────────────────────
@@ -133,7 +159,7 @@ func (h *efsFileSystemHandler) Create(ctx context.Context, router http.Handler, 
 		body["Tags"] = tags
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.CreateFileSystem", body)
+	rec, err := efsJSON(ctx, router, rCtx.Region, http.MethodPost, efsAPIPrefix+"/file-systems", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateFileSystem: %w", err)
 	}
@@ -161,8 +187,8 @@ func (h *efsFileSystemHandler) Create(ctx context.Context, router http.Handler, 
 // See resourceStabilizer.
 func (h *efsFileSystemHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
 	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
-		fmt.Sprintf("file system %s", physicalID),
-		"EFS.DescribeFileSystems", "FileSystemId", physicalID,
+		fmt.Sprintf("file system %s", physicalID), "DescribeFileSystems",
+		efsAPIPrefix+"/file-systems", "FileSystemId", physicalID,
 		func(d describedEFSResources) (string, bool) {
 			if len(d.FileSystems) == 0 {
 				return "", false
@@ -172,7 +198,8 @@ func (h *efsFileSystemHandler) Stabilize(ctx context.Context, router http.Handle
 }
 
 func (h *efsFileSystemHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteFileSystem", map[string]any{"FileSystemId": physicalID})
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		efsAPIPrefix+"/file-systems/"+url.PathEscape(physicalID), "", nil)
 	return teardownError("DeleteFileSystem", rec, err)
 }
 
@@ -189,14 +216,15 @@ func (h *efsFileSystemHandler) Update(ctx context.Context, router http.Handler, 
 	newTP, hasNewTP := cfnFloatProp(props, "ProvisionedThroughputInMibps")
 	oldTP, hasOldTP := cfnFloatProp(oldProps, "ProvisionedThroughputInMibps")
 	if newMode != oldMode || hasNewTP != hasOldTP || newTP != oldTP {
-		body := map[string]any{"FileSystemId": physicalID}
+		body := map[string]any{}
 		if newMode != "" {
 			body["ThroughputMode"] = newMode
 		}
 		if hasNewTP {
 			body["ProvisionedThroughputInMibps"] = newTP
 		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.UpdateFileSystem", body); err != nil {
+		if _, err := efsJSON(ctx, router, rCtx.Region, http.MethodPut,
+			efsAPIPrefix+"/file-systems/"+url.PathEscape(physicalID), body); err != nil {
 			return "", nil, fmt.Errorf("UpdateFileSystem: %w", err)
 		}
 	}
@@ -216,28 +244,30 @@ func (h *efsFileSystemHandler) Update(ctx context.Context, router http.Handler, 
 // properties that ride on AWS::EFS::FileSystem but map to separate EFS APIs.
 // oldProps is nil on create; on update, unchanged groups are skipped.
 func (h *efsFileSystemHandler) applySubResources(ctx context.Context, router http.Handler, region, fsID string, props, oldProps map[string]any) error {
+	fsPath := efsAPIPrefix + "/file-systems/" + url.PathEscape(fsID)
+
 	if policy, ok := props["FileSystemPolicy"]; ok && policy != nil {
 		if oldProps == nil || !efsPropEqual(policy, oldProps["FileSystemPolicy"]) {
 			policyJSON, err := json.Marshal(policy)
 			if err != nil {
 				return fmt.Errorf("FileSystemPolicy: %w", err)
 			}
-			if _, err := internalJSON(ctx, router, region, "EFS.PutFileSystemPolicy", map[string]any{
-				"FileSystemId": fsID, "Policy": string(policyJSON),
+			if _, err := efsJSON(ctx, router, region, http.MethodPut, fsPath+"/policy", map[string]any{
+				"Policy": string(policyJSON),
 			}); err != nil {
 				return fmt.Errorf("PutFileSystemPolicy: %w", err)
 			}
 		}
 	} else if oldProps != nil && oldProps["FileSystemPolicy"] != nil {
-		if _, err := internalJSON(ctx, router, region, "EFS.DeleteFileSystemPolicy", map[string]any{"FileSystemId": fsID}); err != nil {
+		if _, err := internalRequest(ctx, router, region, http.MethodDelete, fsPath+"/policy", "", nil); err != nil {
 			return fmt.Errorf("DeleteFileSystemPolicy: %w", err)
 		}
 	}
 
 	if policies, ok := props["LifecyclePolicies"].([]any); ok && len(policies) > 0 {
 		if oldProps == nil || !efsPropEqual(props["LifecyclePolicies"], oldProps["LifecyclePolicies"]) {
-			if _, err := internalJSON(ctx, router, region, "EFS.PutLifecycleConfiguration", map[string]any{
-				"FileSystemId": fsID, "LifecyclePolicies": policies,
+			if _, err := efsJSON(ctx, router, region, http.MethodPut, fsPath+"/lifecycle-configuration", map[string]any{
+				"LifecyclePolicies": policies,
 			}); err != nil {
 				return fmt.Errorf("PutLifecycleConfiguration: %w", err)
 			}
@@ -246,8 +276,8 @@ func (h *efsFileSystemHandler) applySubResources(ctx context.Context, router htt
 
 	if oldProps != nil {
 		if status := efsBackupPolicyStatus(props); status != "" && status != efsBackupPolicyStatus(oldProps) {
-			if _, err := internalJSON(ctx, router, region, "EFS.PutBackupPolicy", map[string]any{
-				"FileSystemId": fsID, "BackupPolicy": map[string]any{"Status": status},
+			if _, err := efsJSON(ctx, router, region, http.MethodPut, fsPath+"/backup-policy", map[string]any{
+				"BackupPolicy": map[string]any{"Status": status},
 			}); err != nil {
 				return fmt.Errorf("PutBackupPolicy: %w", err)
 			}
@@ -257,8 +287,8 @@ func (h *efsFileSystemHandler) applySubResources(ctx context.Context, router htt
 	if protection, ok := props["FileSystemProtection"].(map[string]any); ok {
 		if rop, _ := protection["ReplicationOverwriteProtection"].(string); rop != "" {
 			if oldProps == nil || !efsPropEqual(props["FileSystemProtection"], oldProps["FileSystemProtection"]) {
-				if _, err := internalJSON(ctx, router, region, "EFS.UpdateFileSystemProtection", map[string]any{
-					"FileSystemId": fsID, "ReplicationOverwriteProtection": rop,
+				if _, err := efsJSON(ctx, router, region, http.MethodPut, fsPath+"/protection", map[string]any{
+					"ReplicationOverwriteProtection": rop,
 				}); err != nil {
 					return fmt.Errorf("UpdateFileSystemProtection: %w", err)
 				}
@@ -287,7 +317,7 @@ func (h *efsMountTargetHandler) Create(ctx context.Context, router http.Handler,
 		body["SecurityGroups"] = v
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.CreateMountTarget", body)
+	rec, err := efsJSON(ctx, router, rCtx.Region, http.MethodPost, efsAPIPrefix+"/mount-targets", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateMountTarget: %w", err)
 	}
@@ -309,8 +339,8 @@ func (h *efsMountTargetHandler) Create(ctx context.Context, router http.Handler,
 // wait rather than running it out. See resourceStabilizer.
 func (h *efsMountTargetHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
 	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
-		fmt.Sprintf("mount target %s", physicalID),
-		"EFS.DescribeMountTargets", "MountTargetId", physicalID,
+		fmt.Sprintf("mount target %s", physicalID), "DescribeMountTargets",
+		efsAPIPrefix+"/mount-targets", "MountTargetId", physicalID,
 		func(d describedEFSResources) (string, bool) {
 			if len(d.MountTargets) == 0 {
 				return "", false
@@ -320,7 +350,8 @@ func (h *efsMountTargetHandler) Stabilize(ctx context.Context, router http.Handl
 }
 
 func (h *efsMountTargetHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteMountTarget", map[string]any{"MountTargetId": physicalID})
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		efsAPIPrefix+"/mount-targets/"+url.PathEscape(physicalID), "", nil)
 	return teardownError("DeleteMountTarget", rec, err)
 }
 
@@ -332,11 +363,12 @@ func (h *efsMountTargetHandler) Update(ctx context.Context, router http.Handler,
 		}
 	}
 	if !efsPropEqual(props["SecurityGroups"], oldProps["SecurityGroups"]) {
-		body := map[string]any{"MountTargetId": physicalID}
+		body := map[string]any{}
 		if v, ok := props["SecurityGroups"].([]any); ok {
 			body["SecurityGroups"] = v
 		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "EFS.ModifyMountTargetSecurityGroups", body); err != nil {
+		if _, err := efsJSON(ctx, router, rCtx.Region, http.MethodPut,
+			efsAPIPrefix+"/mount-targets/"+url.PathEscape(physicalID)+"/security-groups", body); err != nil {
 			return "", nil, fmt.Errorf("ModifyMountTargetSecurityGroups: %w", err)
 		}
 	}
@@ -366,7 +398,7 @@ func (h *efsAccessPointHandler) Create(ctx context.Context, router http.Handler,
 		body["Tags"] = tags
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.CreateAccessPoint", body)
+	rec, err := efsJSON(ctx, router, rCtx.Region, http.MethodPost, efsAPIPrefix+"/access-points", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateAccessPoint: %w", err)
 	}
@@ -388,8 +420,8 @@ func (h *efsAccessPointHandler) Create(ctx context.Context, router http.Handler,
 // that mounts through one cannot do so before then. See resourceStabilizer.
 func (h *efsAccessPointHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
 	return awaitResourceReady(ctx, clk, efsWait(router, rCtx.Region,
-		fmt.Sprintf("access point %s", physicalID),
-		"EFS.DescribeAccessPoints", "AccessPointId", physicalID,
+		fmt.Sprintf("access point %s", physicalID), "DescribeAccessPoints",
+		efsAPIPrefix+"/access-points", "AccessPointId", physicalID,
 		func(d describedEFSResources) (string, bool) {
 			if len(d.AccessPoints) == 0 {
 				return "", false
@@ -399,7 +431,8 @@ func (h *efsAccessPointHandler) Stabilize(ctx context.Context, router http.Handl
 }
 
 func (h *efsAccessPointHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	rec, err := internalJSON(ctx, router, rCtx.Region, "EFS.DeleteAccessPoint", map[string]any{"AccessPointId": physicalID})
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		efsAPIPrefix+"/access-points/"+url.PathEscape(physicalID), "", nil)
 	return teardownError("DeleteAccessPoint", rec, err)
 }
 
@@ -439,7 +472,10 @@ func efsPropEqual(a, b any) bool {
 }
 
 // efsSyncTags diffs old and new CFN tag lists ({Key,Value} maps) and applies
-// the difference via EFS.TagResource / EFS.UntagResource.
+// the difference via POST/DELETE .../resource-tags/{resourceID} — TagResource
+// and UntagResource's own REST bindings. UntagResource carries its keys as a
+// repeated ?tagKeys= query parameter, not a body, so it is built differently
+// from every other EFS write here.
 func efsSyncTags(ctx context.Context, router http.Handler, region, resourceID string, newTags, oldTags any) error {
 	toMap := func(v any) map[string]string {
 		out := map[string]string{}
@@ -472,17 +508,21 @@ func efsSyncTags(ctx context.Context, router http.Handler, region, resourceID st
 		}
 	}
 
+	resourceTagsPath := efsAPIPrefix + "/resource-tags/" + url.PathEscape(resourceID)
 	if len(upserts) > 0 {
-		if _, err := internalJSON(ctx, router, region, "EFS.TagResource", map[string]any{
-			"ResourceId": resourceID, "Tags": upserts,
+		if _, err := efsJSON(ctx, router, region, http.MethodPost, resourceTagsPath, map[string]any{
+			"Tags": upserts,
 		}); err != nil {
 			return fmt.Errorf("TagResource: %w", err)
 		}
 	}
 	if len(removals) > 0 {
-		if _, err := internalJSON(ctx, router, region, "EFS.UntagResource", map[string]any{
-			"ResourceId": resourceID, "TagKeys": removals,
-		}); err != nil {
+		query := url.Values{}
+		for _, k := range removals {
+			query.Add("tagKeys", k)
+		}
+		if _, err := internalRequest(ctx, router, region, http.MethodDelete,
+			resourceTagsPath+"?"+query.Encode(), "", nil); err != nil {
 			return fmt.Errorf("UntagResource: %w", err)
 		}
 	}

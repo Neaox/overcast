@@ -3,6 +3,7 @@
 package router
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,30 @@ import (
 // operations are reachable over each, is *this* operation reachable over both?
 // That needs no per-service configuration and cannot drift out of date,
 // because the calibration is the emulator's own behaviour.
+//
+// # rpcv2Cbor (#1228)
+//
+// All three protocols the manifest can declare for a dispatched operation are
+// probed, including rpcv2Cbor: the probe sends a well-formed rpc-v2-cbor
+// request (an empty CBOR map is a valid body for every generated request
+// struct, whose members are all optional to the decoder) to the Smithy RPC v2
+// URI the router already dispatches on, and the same 501/503 "nobody answers
+// this" signal writeNotImplemented always produces — regardless of wire
+// protocol — is what "not reached" means for it too.
+//
+// CloudWatch is the only dispatched service the pinned models declare
+// rpcv2Cbor for. Running the probe finds its declared operations answered
+// over awsJson and awsQuery and *never* over rpcv2Cbor — the smithyRPCService
+// wiring for it has no ProtocolService (no Operations()/SupportedProtocols()),
+// so CBOR support is never even claimed, not merely dropped for a few
+// operations. That is uniform non-coverage, not the #794 shape this test's
+// asymmetry definition exists to catch (a protocol the service demonstrably
+// speaks somewhere, withheld from one operation) — spoken["cloudwatch"][cbor]
+// never becomes true, so nothing is flagged. It is a real gap (the Java v2 SDK
+// picks rpcv2Cbor for a service that declares it, and a caller who cannot
+// force another protocol gets a wall of 501s where AWS would answer), just not
+// one this gate's narrow contract reports; wiring CloudWatch's CBOR dispatch is
+// its own, separate piece of work.
 func TestDeclaredProtocols_areDispatchedSymmetrically(t *testing.T) {
 	// Given: the running emulator, and every dispatched capability's modeled
 	// protocol set.
@@ -96,14 +121,12 @@ func TestDeclaredProtocols_areDispatchedSymmetrically(t *testing.T) {
 }
 
 // wireProtocol names a protocol this test can put a request on the wire in.
-// rpcv2Cbor is modeled for several services and is deliberately absent: it
-// needs a CBOR encoder, and an operation Overcast serves over neither JSON nor
-// Query is already reported by the binding gate.
 type wireProtocol string
 
 const (
-	protocolTarget wireProtocol = "awsJson (X-Amz-Target)"
-	protocolQuery  wireProtocol = "awsQuery (Action=)"
+	protocolTarget    wireProtocol = "awsJson (X-Amz-Target)"
+	protocolQuery     wireProtocol = "awsQuery (Action=)"
+	protocolRPCV2CBOR wireProtocol = "rpcv2Cbor (Smithy-Protocol: rpc-v2-cbor)"
 )
 
 type protocolProbe struct {
@@ -111,6 +134,12 @@ type protocolProbe struct {
 	target   string
 	action   string
 	version  string
+	// serviceShape and operation address a Smithy RPC v2 request, which names
+	// the service and operation outright in the URI (/service/{serviceShape}
+	// /operation/{operation}) rather than in a header or form field — see the
+	// protocolRPCV2CBOR case in (*probeServer).answers.
+	serviceShape string
+	operation    string
 }
 
 // protocolProbes returns one probe per protocol the operation's service
@@ -123,7 +152,49 @@ func protocolProbes(op awsapi.Operation) []protocolProbe {
 	if op.Protocols&awsapi.ProtocolsAWSQuery != 0 && op.APIVersion != "" {
 		probes = append(probes, protocolProbe{protocol: protocolQuery, action: op.Name, version: op.APIVersion})
 	}
+	if op.Protocols&awsapi.ProtocolsRPCV2CBOR != 0 && op.ServiceShape != "" {
+		probes = append(probes, protocolProbe{protocol: protocolRPCV2CBOR, serviceShape: op.ServiceShape, operation: op.Name})
+	}
 	return probes
+}
+
+// TestProtocolProbes_rpcv2CBOR pins the #1228 addition against the unit that
+// decides whether a probe is emitted at all, ahead of the far more expensive
+// whole-router walk in TestDeclaredProtocols_areDispatchedSymmetrically.
+func TestProtocolProbes_rpcv2CBOR(t *testing.T) {
+	declared := awsapi.Operation{
+		Service: "cloudwatch", ServiceShape: "GraniteServiceVersion20100801",
+		Name: "ListMetrics", Protocols: awsapi.ProtocolsRPCV2CBOR,
+	}
+	probes := protocolProbes(declared)
+	if len(probes) != 1 {
+		t.Fatalf("declared rpcv2Cbor operation: got %d probes, want 1: %+v", len(probes), probes)
+	}
+	if probes[0].protocol != protocolRPCV2CBOR {
+		t.Errorf("protocol = %v, want %v", probes[0].protocol, protocolRPCV2CBOR)
+	}
+	if probes[0].serviceShape != declared.ServiceShape || probes[0].operation != declared.Name {
+		t.Errorf("probe = %+v, want serviceShape %q operation %q", probes[0], declared.ServiceShape, declared.Name)
+	}
+
+	// An operation with no ServiceShape cannot be addressed by the RPC v2 URI
+	// at all — the model itself never leaves this combination declared, but
+	// the probe builder must not emit an unaddressable request if it somehow
+	// were.
+	noShape := declared
+	noShape.ServiceShape = ""
+	if probes := protocolProbes(noShape); len(probes) != 0 {
+		t.Errorf("no ServiceShape: got %d probes, want 0: %+v", len(probes), probes)
+	}
+
+	// An operation that does not declare rpcv2Cbor at all gets no probe for it.
+	notDeclared := declared
+	notDeclared.Protocols = awsapi.ProtocolsAWSJSON10
+	for _, probe := range protocolProbes(notDeclared) {
+		if probe.protocol == protocolRPCV2CBOR {
+			t.Errorf("operation without ProtocolsRPCV2CBOR got a CBOR probe: %+v", probe)
+		}
+	}
 }
 
 type probeServer struct{ url string }
@@ -150,6 +221,15 @@ func protocolProbeServer(t *testing.T) *probeServer {
 	return &probeServer{url: srv.URL}
 }
 
+// rpcv2CBOREmptyMap is the two-byte CBOR encoding of an empty definite-length
+// map (major type 5, 0 pairs) — the whole of what the probe needs to send.
+// The probe asks only whether the operation was dispatched, not whether the
+// body decodes into anything real, so an empty map (which every generated
+// request struct accepts — every member is optional to the decoder) is enough
+// to reach the handler exactly as an empty JSON "{}" is for the other two
+// probes.
+var rpcv2CBOREmptyMap = []byte{0xa0}
+
 // answers reports whether some handler took the operation.
 //
 // It asks only whether the request was dispatched, not whether it succeeded: a
@@ -157,7 +237,11 @@ func protocolProbeServer(t *testing.T) *probeServer {
 // from a working handler and means the operation was reached. Only the router's
 // own "nobody serves this" replies count as unreachable — 501 from the
 // generated-registry fallback, and the 400 UnknownOperationException a service
-// returns from the default arm of its own dispatch.
+// returns from the default arm of its own dispatch. The CBOR probe shares
+// that same 501/503 signal — writeNotImplemented always answers ErrNotImplemented
+// as HTTP 501 regardless of wire protocol — so no CBOR-specific status check is
+// needed; the body-contains check is simply moot for it, since CBOR never
+// spells UnknownOperationException as that literal JSON shape.
 func (s *probeServer) answers(t *testing.T, probe protocolProbe) bool {
 	t.Helper()
 
@@ -175,6 +259,17 @@ func (s *probeServer) answers(t *testing.T, probe protocolProbe) bool {
 		request, err = http.NewRequest(http.MethodPost, s.url+"/", strings.NewReader(body))
 		if err == nil {
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	case protocolRPCV2CBOR:
+		// The Smithy RPC v2 URI names the service and operation outright; the
+		// Smithy-Protocol header is what tells the router this is RPC v2
+		// rather than an S3 object read of "operation/<Op>" in a bucket named
+		// after the service — see smithyRPCDispatch.
+		uri := "/service/" + probe.serviceShape + "/operation/" + probe.operation
+		request, err = http.NewRequest(http.MethodPost, s.url+uri, bytes.NewReader(rpcv2CBOREmptyMap))
+		if err == nil {
+			request.Header.Set("Content-Type", "application/cbor")
+			request.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
 		}
 	}
 	if err != nil {

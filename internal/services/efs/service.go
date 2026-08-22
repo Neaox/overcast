@@ -3,9 +3,11 @@
 //
 // The REST-JSON API is served under the real AWS path prefix /2015-02-01/
 // (file systems, mount targets, access points, policies, lifecycle and backup
-// configuration, tagging, account preferences). The same operations are also
-// reachable through the typed dispatcher (X-Amz-Target "EFS.<Operation>" and
-// Smithy RPCv2), which CloudFormation's resource handlers use internally.
+// configuration, tagging, account preferences) — the only wire EFS answers.
+// EFS is restJson1 and the pinned models give it no X-Amz-Target prefix, so
+// unlike some JSON services this package has no typed dispatcher sharing
+// POST /; CloudFormation's resource handlers reach it the same way any EFS
+// SDK call does, over these REST bindings (see #1226).
 //
 // Emulation is metadata-only: no NFS data plane exists, so file systems are
 // not mountable. Resources follow the real lifecycle (creating → available →
@@ -29,15 +31,12 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
 const (
-	serviceName  = "efs"
-	targetPrefix = "EFS."
+	serviceName = "efs"
 	// apiPrefix is the versioned REST path prefix every EFS operation uses.
 	apiPrefix = "/2015-02-01"
 )
@@ -49,7 +48,6 @@ type Service struct {
 	clk       clock.Clock
 	log       *serviceutil.ServiceLogger
 	scheduler *lifecycle.Scheduler
-	typedOp   map[string]op.Operation
 
 	// docker backs live-mode volumes (OVERCAST_EFS_MODE=live); nil until the
 	// router's Docker probe succeeds. See live_volumes.go.
@@ -116,7 +114,7 @@ func (s *Service) zoneForSubnet(ctx context.Context, region, subnetID string) (n
 // New returns a configured EFS service. Pure field assignment — no store
 // reads or I/O (startup-budget rule).
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
-	s := &Service{
+	return &Service{
 		cfg:       cfg,
 		store:     st,
 		clk:       clk,
@@ -124,8 +122,6 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		scheduler: lifecycle.NewScheduler(clk),
 		instances: serviceutil.NewInstanceDomain(st, nsInstance),
 	}
-	s.typedOp = s.typedOps()
-	return s
 }
 
 func (s *Service) Name() string { return serviceName }
@@ -136,8 +132,6 @@ func (s *Service) Name() string { return serviceName }
 func (s *Service) InitBus(bus *events.Bus) {
 	bus.Subscribe(events.DockerContainerDied, s.handleExportContainerDied)
 }
-
-func (s *Service) TargetPrefix() string { return targetPrefix }
 
 // PathPrefixes satisfies router.PathPrefixService.
 func (s *Service) PathPrefixes() []string { return []string{apiPrefix} }
@@ -160,21 +154,6 @@ func (s *Service) Stop(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 	}
-}
-
-// Dispatch handles typed-protocol requests (X-Amz-Target JSON, Smithy RPCv2).
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
 }
 
 // RegisterRoutes mounts the EFS REST-JSON API under /2015-02-01, mirroring the

@@ -30,8 +30,6 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -180,8 +178,6 @@ type Service struct {
 	clk   clock.Clock
 	log   *serviceutil.ServiceLogger
 
-	typedOp map[string]op.Operation
-
 	docker      *docker.Client
 	puller      *docker.ImagePuller
 	dockerReady atomic.Bool
@@ -250,7 +246,6 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		instances:    serviceutil.NewInstanceDomain(st, nsInstance),
 	}
 	s.liveCtx, s.liveCancel = context.WithCancel(context.Background())
-	s.typedOp = s.typedOps()
 	return s
 }
 
@@ -261,22 +256,6 @@ func (s *Service) Name() string { return serviceName }
 // ReconcileContainers.
 func (s *Service) InitBus(bus *events.Bus) {
 	bus.Subscribe(events.DockerContainerDied, s.handleLiveRuntimeDied)
-}
-
-func (s *Service) TargetPrefix() string { return "EKS." }
-
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
 }
 
 // SetVPCResolver wires the EC2 VPC resolver, so a cluster whose

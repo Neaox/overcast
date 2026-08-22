@@ -52,24 +52,25 @@ import (
 // unmodeledTargetPrefixes is the ratchet for services that dispatch on an
 // X-Amz-Target prefix the pinned models do not give them.
 //
-// Each of these four is a REST-modeled service — AWS declares restJson1 for it
-// and no `awsJson1_x` target prefix anywhere — that nevertheless answers
-// `POST /` for `<Prefix><Operation>`. That is an accepted wire real AWS rejects,
-// and it is the exact mechanism of #815: a service whose only reachable
-// dispatch was a target prefix nothing modeled, with its modeled REST paths
-// unregistered. These four do register their REST routes (the binding gate
-// proves it), so the prefix is redundant surface rather than the whole service —
-// which is why they are a ledger rather than a build failure today.
+// A REST-modeled service — AWS declares restJson1 for it and no `awsJson1_x`
+// target prefix anywhere — that nevertheless answered `POST /` for
+// `<Prefix><Operation>` was an accepted wire real AWS rejects, and the exact
+// mechanism of #815: a service whose only reachable dispatch was a target
+// prefix nothing modeled, with its modeled REST paths unregistered.
+//
+// #1226 closed the four entries this ledger used to carry (AppRegistry, EFS,
+// EKS, Scheduler): each registered its modeled REST routes already, so the
+// prefix was redundant surface rather than the whole service, and each has
+// been retired along with the internal callers (CloudFormation's own
+// provisioners) that used to speak it. The ledger is empty rather than
+// deleted so a new unmodeled prefix still has somewhere to be recorded on its
+// way to being fixed, and so the ratchet's stale-entry direction keeps
+// proving the four that are gone stay gone.
 //
 // Like every ledger in this repo it is a ratchet in both directions: a prefix
 // absent from here fails the build, and so does an entry whose service has
 // stopped declaring an unmodeled prefix.
-var unmodeledTargetPrefixes = map[string]string{
-	"appregistry": "#1226: `AppRegistry.` — Service Catalog AppRegistry is restJson1 only; the models declare no target prefix for it",
-	"efs":         "#1226: `EFS.` — EFS is restJson1 only; the models declare no target prefix for it",
-	"eks":         "#1226: `EKS.` — EKS is restJson1 only; the models declare no target prefix for it. #858 is what its hand-written wire facts cost the routes",
-	"scheduler":   "#1226: `Scheduler.` — EventBridge Scheduler is restJson1 only; the models declare no target prefix for it, and #793 is the same service's path fault",
-}
+var unmodeledTargetPrefixes = map[string]string{}
 
 // docOnlyRowsOutsideTheModel records the DocOnly rows whose Operation reads like
 // an AWS operation name and is not one for that service.

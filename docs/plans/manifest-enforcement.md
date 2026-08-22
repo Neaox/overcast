@@ -12,14 +12,24 @@ and not "is this registered path modeled by *someone*" (point 9), but "does the
 service that *registered* this route model this path".
 Gates: [#863](https://github.com/Neaox/overcast/issues/863) (closed).
 Audit that prompted it: [#861](https://github.com/Neaox/overcast/issues/861).
-Remainder, all filed and none of it #864's or #1227's: the shape artefact
-[#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884)
-and the rpcv2Cbor probe [#1228](https://github.com/Neaox/overcast/issues/1228),
-plus the four unmodeled target prefixes
-[#1226](https://github.com/Neaox/overcast/issues/1226).
+[#1226](https://github.com/Neaox/overcast/issues/1226) retired the
+`unmodeledTargetPrefixes` ledger to empty: AppRegistry, EFS, EKS and Scheduler
+no longer answer `POST /` for the invented target prefix, and CloudFormation's
+own provisioner — the one internal caller that used to speak it — now
+dispatches over each service's modeled REST bindings instead.
+[#1228](https://github.com/Neaox/overcast/issues/1228) added the third of the
+protocol-symmetry gate's probes, rpcv2Cbor — the narrow limit named below —
+and found `protocolAsymmetries` stays empty: CloudWatch is the only dispatched
+service the models declare it for, and its rpcv2Cbor coverage is uniformly
+absent rather than partial, which is outside this gate's asymmetry definition
+(see the rpcv2Cbor entry below).
+Remainder, all filed and none of it #864's, #1227's, #1226's or #1228's: the
+shape artefact
+[#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884).
 As of 2026-08-22 the `unservedBindings` ledger is **empty** — all 43 opening
 rows retired as #854–#860, #862 and #815 landed — and `protocolAsymmetries` is
-empty too (#886 landed). `routeOwnershipViolations` (point 13) opened **empty**
+empty too (#886 landed, #1228 confirmed it holds with rpcv2Cbor probed too).
+`routeOwnershipViolations` (point 13) opened **empty**
 too: every currently-registered route's attributed owner already models the
 path it registered, once the pre-existing exceptions in `nonManifestRoutes`
 (point 9's ledger) and the reserved `/_overcast/` namespace are excluded — see
@@ -145,7 +155,8 @@ string. It is a different generator, a different file, and a different issue.
 make.**
 
 Three narrower limits, all visible in the code rather than assumed. The first
-has since been half closed, and the entry says which half:
+has since been half closed, and the third fully probed — both entries say
+what changed:
 
 - **Query-discriminated bindings.** 139 modeled URIs pin a query parameter. chi
   routes on the path, so two operations differing only in the query reach one
@@ -178,9 +189,29 @@ has since been half closed, and the entry says which half:
   are graded `coverageBroad` and recorded in `weaklyServedBindings` rather than
   passed silently, because a broader route is how a shared prefix comes to
   answer for a service nobody asked — #854's worst symptom.
-- **rpcv2Cbor.** Modeled for several services and not probed by the protocol
-  gate, which would need a CBOR encoder. An operation Overcast serves over
+- **rpcv2Cbor.** Modeled for several services and, until
+  [#1228](https://github.com/Neaox/overcast/issues/1228), not probed by the
+  protocol gate — it needed a CBOR encoder, which an empty CBOR map
+  (`0xa0`) turns out not to: the probe only asks whether the request was
+  dispatched, and a decode failure counts as reached exactly as a validation
+  error does for the other two probes. An operation Overcast serves over
   neither JSON nor Query is already reported by the binding gate.
+
+  CloudWatch is the only dispatched service the pinned models declare
+  rpcv2Cbor for. Running the probe finds its declared operations answered
+  over awsJson and awsQuery and never over rpcv2Cbor: the `smithyRPCService`
+  wiring for it has no `ProtocolService` (no `Operations()`/
+  `SupportedProtocols()`), so CBOR support is never even claimed for any
+  operation, not merely dropped for a few. That is uniform non-coverage, not
+  the #794 shape this gate's asymmetry definition exists to catch (a protocol
+  a service demonstrably speaks somewhere, withheld from one operation) —
+  `spoken["cloudwatch"][rpcv2Cbor]` never becomes true, so nothing is
+  flagged, and `protocolAsymmetries` opened and stayed empty. It is a real
+  gap (the Java v2 SDK selects rpcv2Cbor for a service that declares it, and
+  a caller who cannot force another protocol gets a wall of 501s where AWS
+  would answer), just not one this gate's narrow contract reports; wiring
+  CloudWatch's own CBOR dispatch is separate, further-out work this closes
+  the boundary around rather than does.
 
 ## Fallout, and why it is a ledger rather than exemptions
 
@@ -202,8 +233,8 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 | --- | --- |
 | `unservedBindings` | Bindings no route serves, each naming the issue that owns the fix. Shrinks as they land. |
 | `weaklyServedBindings` | Not faults — the gate's honest margin, where a wildcard or a fallback handler delivers the request without the route table proving which operation it reaches. |
-| `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. Empty since #886. |
-| `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger: every row names the issue that retires it (#1226). |
+| `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. Empty since #886; #1228 added the rpcv2Cbor probe and it stayed empty. |
+| `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger, ratcheted in both directions — opened with AppRegistry, EFS, EKS and Scheduler, all four retired by #1226, and it stays empty rather than deleted so the next unmodeled prefix has somewhere to be recorded on its way to being fixed. |
 | `docOnlyRowsOutsideTheModel` | Not faults — the honest margin of the DocOnly name check. Rows whose Operation reads like an AWS operation and documents something else, each saying what. |
 | `queryBranchNotProvable` | Services the generated REST indexes deliberately exclude, so their query-discriminated bindings cannot be proven from the model. `s3` is the only one. |
 | `routeOwnershipViolations` | A fault ledger: a registered route whose attributed owner does not model the path, each naming the issue that owns the fix. Opened empty (#1227) — see the axis's own section. |
@@ -340,11 +371,21 @@ stops the next declaration of that shape. Every prefix in the tree passes today,
 so it opens with no ledger; injecting `/_eks` into EKS's list is what proved it
 fires.
 
-`TargetPrefix()` opens with a ledger and an issue that owns it (#1226): four
-REST-only services — AppRegistry, EFS, EKS and Scheduler — answer `POST /` for a
-target prefix the models never give them. They do register their modeled REST
-routes, so the prefix is redundant surface rather than the whole service, which
-is why it is a ledger rather than a build failure today.
+`TargetPrefix()` opened with a ledger and an issue that owned it (#1226): four
+REST-only services — AppRegistry, EFS, EKS and Scheduler — answered `POST /` for
+a target prefix the models never gave them. They did register their modeled
+REST routes, so the prefix was redundant surface rather than the whole
+service, which is why it was a ledger rather than a build failure — and #1226
+closed all four: `TargetPrefix()`/`Dispatch()` are gone from the four
+services, along with the Smithy RPC v2 label alias
+(`/service/<name>/operation/<op>`) the same `TargetDispatcher` registration
+opened regardless of whether RPC v2 was itself modeled for the service.
+CloudFormation's own EFS/EKS/Scheduler resource handlers were the one internal
+caller of the invented wire (AppRegistry's already spoke REST); they now
+dispatch over each service's modeled REST bindings instead, the same move
+#815's fix made for AWS Backup. A target-header or RPC v2 request to any of
+the four now gets the router's ordinary "unknown operation"/"unsupported
+protocol" answer, never a 200.
 
 ### The exemption sweep
 
