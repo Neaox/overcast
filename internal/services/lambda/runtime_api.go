@@ -128,7 +128,7 @@ const (
 // invokeResponse is sent back from the container via the Runtime API.
 type invokeResponse struct {
 	Payload       []byte
-	FunctionError string // "" for success, "Handled" or "Unhandled"
+	FunctionError string // "" for success, "Unhandled" for a runtime-reported error
 	IsInitError   bool   // true if POST /runtime/init/error was called
 	ErrorPayload  []byte // error details JSON when FunctionError != ""
 }
@@ -1428,14 +1428,15 @@ func (s *RuntimeAPIServer) handleInvocationAction(w http.ResponseWriter, r *http
 	case "response":
 		inv.ResultCh <- invokeResponse{Payload: body}
 	case "error":
-		// Parse the error type from Lambda-Runtime-Function-Error-Type header.
-		errorType := r.Header.Get("Lambda-Runtime-Function-Error-Type")
-		funcError := "Handled"
-		if errorType == "Runtime.ExitError" || errorType == "Runtime.Unknown" {
-			funcError = "Unhandled"
-		}
+		// Every error a runtime reports here — a thrown exception, a
+		// Runtime.ExitError, anything — reaches the invoker as
+		// X-Amz-Function-Error: Unhandled, exactly as AWS reports it; the
+		// error class itself travels in the payload's errorType. "Handled" is
+		// a value no current AWS runtime produces for an exception (it dates
+		// from the callback-era Node.js runtimes), and defaulting to it here
+		// was a fidelity gap the compat suites' InvokeWithError exposed.
 		inv.ResultCh <- invokeResponse{
-			FunctionError: funcError,
+			FunctionError: "Unhandled",
 			ErrorPayload:  body,
 		}
 	default:
