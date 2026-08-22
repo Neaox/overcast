@@ -4,20 +4,29 @@ Status: **implemented and merged** — the route gates landed on `main` in PR #8
 with point 9's path-namespace gate completed by #921 (and the debug/data-plane
 namespace moves in #929/#935). The **wire-fact gates** (points 6 and 10 below,
 plus the exemption ratchet) landed second, closing the rest of
-[#864](https://github.com/Neaox/overcast/issues/864).
+[#864](https://github.com/Neaox/overcast/issues/864). Point 13, the
+route-ownership gate, landed third, closing
+[#1227](https://github.com/Neaox/overcast/issues/1227) — the axis neither route
+gate had: not "does the declaring service's own binding have a route" (point 1)
+and not "is this registered path modeled by *someone*" (point 9), but "does the
+service that *registered* this route model this path".
 Gates: [#863](https://github.com/Neaox/overcast/issues/863) (closed).
 Audit that prompted it: [#861](https://github.com/Neaox/overcast/issues/861).
-Remainder, all filed and none of it #864's: the shape artefact
-[#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884),
-route-to-owner attribution [#1227](https://github.com/Neaox/overcast/issues/1227),
-the rpcv2Cbor probe [#1228](https://github.com/Neaox/overcast/issues/1228), and
-the four unmodeled target prefixes
+Remainder, all filed and none of it #864's or #1227's: the shape artefact
+[#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884)
+and the rpcv2Cbor probe [#1228](https://github.com/Neaox/overcast/issues/1228),
+plus the four unmodeled target prefixes
 [#1226](https://github.com/Neaox/overcast/issues/1226).
 As of 2026-08-22 the `unservedBindings` ledger is **empty** — all 43 opening
 rows retired as #854–#860, #862 and #815 landed — and `protocolAsymmetries` is
-empty too (#886 landed). The wire-fact gates add three more ledgers; as with the
-first three, their contents live in the code the build reads and are not
-restated here.
+empty too (#886 landed). `routeOwnershipViolations` (point 13) opened **empty**
+too: every currently-registered route's attributed owner already models the
+path it registered, once the pre-existing exceptions in `nonManifestRoutes`
+(point 9's ledger) and the reserved `/_overcast/` namespace are excluded — see
+the axis's own section below for why that is a real result rather than a gate
+that found nothing because it looked nowhere. The wire-fact gates add three
+more ledgers; as with the first three (and point 13's), their contents live in
+the code the build reads and are not restated here.
 
 ## The problem, in one sentence
 
@@ -49,13 +58,14 @@ repository.
 | 10 | A `DocOnly` row named like an operation **is** one, for its own service | `cmd/capgen` `checkDocOnlyRowsNameRealOperations` | `docOnlyRowsOutsideTheModel` |
 | 11 | An exemption is deleted when its reason stops being true | `cmd/capgen` `checkModelExemptionsAreStillNeeded` | — |
 | 12 | A query-discriminated binding is identified from method + path + query | `internal/router/modelquerybinding_dev_test.go` | `queryBranchNotProvable` |
+| 13 | A registered route's owner is a service the model actually binds that path to | `internal/router/routeownership_dev_test.go` | `routeOwnershipViolations` |
 
-Point 9 is the only one that walks **route → model**. Every other row starts
-from something Overcast declares and asks whether it is served correctly; that
-direction is structurally blind to a path the emulator *invented*, because an
-invented path is declared nowhere. It answers requests, breaks no gate, and is
-found only when somebody reads the routing table — which is what #793, #815 and
-#854–#860 were.
+Point 9 is the one that walks **route → model** for *any* modeling service.
+Every other row through point 12 starts from something Overcast declares and
+asks whether it is served correctly; that direction is structurally blind to a
+path the emulator *invented*, because an invented path is declared nowhere. It
+answers requests, breaks no gate, and is found only when somebody reads the
+routing table — which is what #793, #815 and #854–#860 were.
 
 On its first run it reported six invented paths a hand audit had missed, all of
 them nested inside prefixes AWS really does bind (`/2015-03-31/functions/{name}/source`
@@ -66,6 +76,18 @@ operation, the plural route serves it, and the gate is satisfied.
 
 The migration it enforces is [One namespace for every non-canonical
 URL](./non-canonical-url-namespace.md).
+
+Point 13 is the axis in between, and neither point 1 nor point 9 implies it.
+Point 1 asks whether the declaring service's *own* modeled binding has a route
+— it never looks at who else might have registered that path. Point 9 asks
+whether a registered path is modeled by *anyone* — `modeledURIIndex` there is
+built from every service's operations at once, with no service filter. Point
+13 asks the question sitting between them: does the service that *registered*
+this route model this path? A route registered by service X at a path only
+service Y models passes both point 1 (X's own bindings are all fine elsewhere)
+and point 9 (the path is modeled, by Y) — and that is #854's worst symptom
+restated as a routing-table fact rather than a runtime one. See "Route
+ownership: the axis between point 1 and point 9" below.
 
 Points 6a–6d are the second half of point 6, and they are the answer to the
 question the audit below leaves open for `detectService`: *which* hand-maintained
@@ -184,6 +206,7 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 | `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger: every row names the issue that retires it (#1226). |
 | `docOnlyRowsOutsideTheModel` | Not faults — the honest margin of the DocOnly name check. Rows whose Operation reads like an AWS operation and documents something else, each saying what. |
 | `queryBranchNotProvable` | Services the generated REST indexes deliberately exclude, so their query-discriminated bindings cannot be proven from the model. `s3` is the only one. |
+| `routeOwnershipViolations` | A fault ledger: a registered route whose attributed owner does not model the path, each naming the issue that owns the fix. Opened empty (#1227) — see the axis's own section. |
 
 **The counts are deliberately not repeated here.** They are derivable from
 `internal/router/modelbinding_ledger_dev_test.go`, which the build reads and
@@ -352,6 +375,132 @@ document something else keep saying so in their own spelling
 names and are not — AppSync's VTL resolver operations,
 `dynamodb/GetShardIterator` (a Streams operation), `ses/V2Other` and
 `sns/PublishToEndpoint` — are recorded with what they really are.
+
+## Route ownership: the axis between point 1 and point 9
+
+Point 1 (`internal/router/modelbinding_dev_test.go`) walks model → route for
+the *declaring* service's own bindings: for a capability the declaring service
+owns, is a route registered at the modeled method and URI? It never asks
+whether the route it found belongs to that service — any registered route at
+that method and path satisfies it, whoever registered it. Point 9
+(`internal/router/pathnamespace_dev_test.go`) walks route → model the other
+way: is this registered path one *some* modeled operation binds, anywhere?
+`modeledURIIndex` there is built from `awsapi.WalkOperations` with no service
+filter, so a route registered by service X at a path AWS models only for
+service Y satisfies it too.
+
+Neither asks the question in between, and #854 is what it looks like when
+nobody does: AppRegistry registered `r.Route("/applications", …)`, and because
+a chi sub-router owns its whole subtree, AppConfig's own requests answered from
+AppRegistry's router instead — four of them came back a Service Catalog
+resource with a `200`. A plausible answer from a service nobody asked is worse
+than a `501`, and it is exactly the shape a path-only gate cannot see, because
+`/applications` **is** modeled — by eight services.
+
+### The mechanism: attributing a route to the service that registered it
+
+`dispatchMount` (`internal/router/routeinventory.go`) already attributes every
+route reached through one of the four runtime-dispatched sub-routers — S3,
+`/v2/apis`, `/v1/tags`, `/applications` and `/tags` — to the service that owns
+it, because `chi.Walk` stops at the dispatcher and the mount is the only record
+of what is really served underneath. It never had to attribute the other
+~95% of the router's surface: every route a service registers directly on the
+shared mux via `RegisterRoutes(r)`, because nothing downstream ever asked which
+service that was.
+
+`routeOwnerTracker` (`internal/router/routeinventory_dev.go`, no-op counterpart
+in `routeinventory_prod.go` — the split `withDispatchMounts` already uses)
+closes that gap the same way `dispatchMount` closes its own: `router.New` calls
+`attribute(r, svc.Name())` immediately after each service's own
+`RegisterRoutes(r)` call, diffing the mux's registered patterns against what
+was already seen and crediting every new one to that service. A snapshot
+before the loop begins (`attribute(r, "")`) marks the router's own
+pre-registered endpoints — `/favicon.ico`, `/_overcast/init`, and friends — as
+belonging to no service, so the first service processed in the loop is not
+silently credited with all of them.
+
+The attribution lands in a new `DirectOwner` field on `registeredRoute`, kept
+separate from the existing `Owner` field (which `dispatchMount` populates) so
+that populating it cannot change what the gates that predate #1227 —
+`TestModeledBindings_areServedWhereAWSBindsThem` and
+`TestNoRouteIsRegisteredOutsideTheNamespace` — read `Owner` to mean. Extending
+an existing gate mechanism should not silently tighten a different one; a route
+ownership axis is a new question, not a retroactive filter on the questions
+already answered.
+
+`internal/router/routeownership_dev_test.go`'s
+`TestRegisteredRouteBelongsToAModelingOwner` then asks the question directly:
+for every registered route, resolve its owner (`Owner`, falling back to
+`DirectOwner`), look that owner up in a *per-service* modeled-URI index built
+the same way point 9's unfiltered one is (`modeledURIIndex.add`, factored out
+so both gates agree on what "modeled" means), and assert the owner's own index
+covers the route. A route attributed to no service at all is not a pass — it
+is either one of router.go's own protocol-root endpoints (already accounted
+for by point 9's `nonManifestRoutes`) or a gap in the tracker, and the gate
+fails loudly on the latter rather than silently skipping it, which is how #854
+stayed hidden in the first place
+(`TestModeledURIIndexByService_isPartitionedPerService` is the companion
+fail-open guard, pinning that the per-service partition does not collapse into
+one shared bucket — the same risk `TestModeledURIIndex_covers` guards for
+point 9's unfiltered index).
+
+### The shared-path cases needed no allow-list
+
+The multi-owner paths dispatched through `dispatchMount` — `/tags/{arn}`
+(#1122's Pipes/EKS/Scheduler/AppConfig/API-Gateway dispatch), `/v1/tags`,
+`/v2/apis`, and S3's deliberately broad bucket/object routes — all pass without
+a special case, because each dispatched sub-router's `Owner` already names a
+real service and that service really does model the path it shares. AppRegistry
+sharing API Gateway's ARN-keyed tag store is the case worth naming: the same
+`chi.Routes` is recorded under two owners (`internal/router/router.go`'s two
+`recordDispatchMount` calls for `/tags`), so the gate judges it once per owner
+— and both API Gateway and AppRegistry (Service Catalog) model a
+`ListTagsForResource`-shaped binding at that path, so neither judgment fails.
+
+Three existing ledgers absorbed the exceptions this gate would otherwise have
+flagged, rather than a fourth one being invented: `nonManifestRoutes` (point
+9's ledger of paths no AWS model can ever describe — LocalStack's
+`_user_request_` compatibility shape, Cognito's OIDC discovery documents, SQS's
+path-style queue URL), the reserved `/_overcast/` namespace (a service's own
+extension endpoint, correctly attributed to that service but not an AWS
+operation), and point 9's dispatch-stub patterns (the bare `/*` and `/` chi
+entries a dispatcher registers to pick a sub-router at request time, which
+answer for no one on their own).
+
+### Failing-first evidence and cost
+
+`TestRegisteredRouteBelongsToAModelingOwner` was proved by injecting the fault
+shape it exists for: EKS registering `POST /2025-11-30/capacity-providers`, a
+path Lambda models and EKS does not — attributed to `eks` by the same
+`routeOwnerTracker` call every other EKS route goes through. The gate reported
+it (`eks registered POST /2025-11-30/capacity-providers, which eks does not
+model`) and passed clean once the injection was reverted.
+
+`routeOwnershipViolations` opened **empty**. Every one of the 802 routes the
+router registers today was checked; 530 distinct owner/method/pattern
+combinations were judged after excluding dispatch stubs, the reserved
+namespace and the two ledgers above, and none failed. That is a real result,
+not a gate that found nothing because it looked nowhere:
+`TestModeledURIIndexByService_isPartitionedPerService` pins that the partition
+actually separates services (Lambda's own Invoke binding is covered by
+`byService["lambda"]` and, deliberately, by neither `byService["eks"]` nor
+`byService["s3"]`), and the failing-first injection above proves the whole path
+from a wrong registration through to a build failure.
+
+Added cost: `go test -tags dev ./internal/router` moved from roughly 6.5–7.1s
+to roughly 9.0–9.6s in local measurement (`go test -tags dev -count=1
+./internal/router/...`, several runs each side) — on the same order as #1229's
+own +1.4s for two new gates, and dominated by the same thing: `router.New` runs
+several more times across the package's existing tests
+(`TestModeledBindings_areServedWhereAWSBindsThem`,
+`TestWeaklyServedBindings_areRecorded`,
+`TestNoRouteIsRegisteredOutsideTheNamespace`), and this gate adds one more
+construction rather than changing the cost of any single one. The tracker
+itself is bounded by (service count) × (routes registered so far) chi.Walk
+visits per `New()` — a few dozen services against a few hundred routes,
+sub-millisecond in Go — and is compiled out entirely in production builds (the
+`!dev`-tagged `routeOwnerTracker` in `routeinventory_prod.go` is a no-op struct
+with empty methods).
 
 ## Point 6 — `detectService` is a justified second source, `detectOperation` is not one
 

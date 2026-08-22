@@ -240,22 +240,33 @@ type modeledURIIndex struct {
 func newModeledURIIndex() *modeledURIIndex {
 	index := &modeledURIIndex{byFirstSegment: map[string][][]string{}}
 	awsapi.WalkOperations(func(op awsapi.Operation) bool {
-		if op.URI == "" {
-			return true
-		}
-		segments := uriSegments(op.URI)
-		index.all = append(index.all, segments)
-		switch {
-		case len(segments) < 2:
-			index.parameterised = append(index.parameterised, segments)
-		case isLabelSegment(segments[1]):
-			index.parameterised = append(index.parameterised, segments)
-		default:
-			index.byFirstSegment[segments[1]] = append(index.byFirstSegment[segments[1]], segments)
+		if op.URI != "" {
+			index.add(op.URI)
 		}
 		return true
 	})
 	return index
+}
+
+// add buckets one modeled URI the same way newModeledURIIndex does for the
+// whole corpus. Factored out so newModeledURIIndexByService (routeownership_dev_test.go,
+// #1227) builds one index per Overcast service key from the identical rule —
+// a route-ownership gate that graded coverage by a second, slightly different
+// definition of "modeled" would be worse than not having it.
+func (m *modeledURIIndex) add(uri string) {
+	segments := uriSegments(uri)
+	m.all = append(m.all, segments)
+	switch {
+	case len(segments) < 2:
+		m.parameterised = append(m.parameterised, segments)
+	case isLabelSegment(segments[1]):
+		m.parameterised = append(m.parameterised, segments)
+	default:
+		if m.byFirstSegment == nil {
+			m.byFirstSegment = map[string][][]string{}
+		}
+		m.byFirstSegment[segments[1]] = append(m.byFirstSegment[segments[1]], segments)
+	}
 }
 
 // covers reports whether any modeled URI is served by this route pattern.

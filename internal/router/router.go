@@ -463,6 +463,21 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	var dispatchMounts []dispatchMount
 	dispatchMounts = recordDispatchMount(dispatchMounts, "", "s3", s3Router)
 
+	// Attributes each pattern registered directly on r to the service whose
+	// RegisterRoutes call produced it — the other half of dispatchMount's
+	// attribution, for routes that never go through a dispatched sub-router.
+	// See routeOwnerTracker (routeinventory_dev.go / routeinventory_prod.go).
+	//
+	// The empty-owner snapshot below has to run before the loop: r already
+	// carries the router's own endpoints registered above (favicon, the
+	// /_overcast/init, /_overcast/tls, /_overcast/events, /_overcast/domains,
+	// /_overcast/metrics, /_overcast/info and /_overcast/debug families), none
+	// of which any service registered. Without this call the first service's
+	// attribute() would silently credit all of them to itself, because
+	// routeOwnerTracker attributes every pattern it has not yet seen.
+	routeOwners := newRouteOwnerTracker()
+	routeOwners.attribute(r, "")
+
 	for _, svc := range allServices {
 		// Test-only isolation. nil in every production path — see
 		// config.TestOnlyServiceSubset for why this exists and why it is not
@@ -495,6 +510,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			svc.RegisterRoutes(s3Router)
 		} else {
 			svc.RegisterRoutes(r)
+			routeOwners.attribute(r, svc.Name())
 		}
 		prof.mark("  routes: " + svc.Name())
 		if td, ok := svc.(TargetDispatcher); ok {
@@ -1078,7 +1094,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		cleanups = append(cleanups, mon.Stop)
 	}
 
-	return withDispatchMounts(r, dispatchMounts), preShutdown, func(ctx context.Context) {
+	return withDispatchMounts(r, dispatchMounts, routeOwners.ownersByKey()), preShutdown, func(ctx context.Context) {
 			// Stop background service resources (e.g. Runtime API long-poll server).
 			for _, st := range stoppers {
 				t0 := time.Now()
