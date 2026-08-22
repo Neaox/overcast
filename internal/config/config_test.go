@@ -1534,6 +1534,360 @@ func TestLoad_localstackHostAlias_unsetLeavesHostnameAsBefore(t *testing.T) {
 	}
 }
 
+// ---- LocalStack-compatibility alias audit (#1190, second PR) --------------
+
+// TestLoad_edgePortAlias verifies LocalStack's EDGE_PORT is accepted as a
+// direct alias for OVERCAST_PORT, and is recorded in LocalStackAliasesUsed.
+func TestLoad_edgePortAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EDGE_PORT", "9999")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 9999 {
+		t.Errorf("Port: expected 9999, got %d", cfg.Port)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_PORT"]; got != "EDGE_PORT" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_PORT]: expected EDGE_PORT, got %q", got)
+	}
+}
+
+// TestLoad_edgePortAlias_conflictFails verifies EDGE_PORT disagreeing with
+// an explicit OVERCAST_PORT fails startup naming both.
+func TestLoad_edgePortAlias_conflictFails(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EDGE_PORT", "9999")
+	t.Setenv("OVERCAST_PORT", "4566")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when EDGE_PORT disagrees with OVERCAST_PORT, got none")
+	}
+	for _, want := range []string{"EDGE_PORT", "OVERCAST_PORT", "9999", "4566"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_gatewayListenAlias verifies LocalStack's GATEWAY_LISTEN
+// ("<ip>:<port>[,<ip>:<port>...]") maps its addresses onto OVERCAST_LISTEN
+// and its (agreeing) port onto OVERCAST_PORT, when OVERCAST_LISTEN itself
+// was not set explicitly (so the environment-dependent default is not
+// mistaken for an explicit conflict).
+func TestLoad_gatewayListenAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GATEWAY_LISTEN", "127.0.0.1:4566,172.17.0.1:4566")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"127.0.0.1", "172.17.0.1"}
+	if !slices.Equal(cfg.Hosts, want) {
+		t.Errorf("Hosts: expected %v, got %v", want, cfg.Hosts)
+	}
+	if cfg.Port != 4566 {
+		t.Errorf("Port: expected 4566, got %d", cfg.Port)
+	}
+	if cfg.ListenSource != config.ListenSourceExplicit {
+		t.Errorf("ListenSource: expected explicit (GATEWAY_LISTEN counts as an explicit setting), got %q", cfg.ListenSource)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_LISTEN"]; got != "GATEWAY_LISTEN" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_LISTEN]: expected GATEWAY_LISTEN, got %q", got)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_PORT"]; got != "GATEWAY_LISTEN" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_PORT]: expected GATEWAY_LISTEN, got %q", got)
+	}
+}
+
+// TestLoad_gatewayListenAlias_mismatchedPortsFail verifies a GATEWAY_LISTEN
+// whose entries name different ports is a documented non-match: there is no
+// single OVERCAST_PORT to map it to, so it fails loudly rather than picking
+// one port and silently dropping the other bind.
+func TestLoad_gatewayListenAlias_mismatchedPortsFail(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GATEWAY_LISTEN", "127.0.0.1:4566,0.0.0.0:9999")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when GATEWAY_LISTEN entries disagree on port, got none")
+	}
+	for _, want := range []string{"GATEWAY_LISTEN", "4566", "9999"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_gatewayListenAlias_conflictsWithExplicitListen verifies
+// GATEWAY_LISTEN disagreeing with an explicit OVERCAST_LISTEN fails startup
+// naming both.
+func TestLoad_gatewayListenAlias_conflictsWithExplicitListen(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_LISTEN", "127.0.0.1")
+	t.Setenv("GATEWAY_LISTEN", "0.0.0.0:4566")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when GATEWAY_LISTEN disagrees with OVERCAST_LISTEN, got none")
+	}
+	for _, want := range []string{"OVERCAST_LISTEN", "GATEWAY_LISTEN", "127.0.0.1", "0.0.0.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_defaultRegionAlias verifies LocalStack's DEFAULT_REGION is
+// accepted as a direct alias for OVERCAST_DEFAULT_REGION.
+func TestLoad_defaultRegionAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DEFAULT_REGION", "eu-west-1")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Region != "eu-west-1" {
+		t.Errorf("Region: expected eu-west-1, got %q", cfg.Region)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_DEFAULT_REGION"]; got != "DEFAULT_REGION" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_DEFAULT_REGION]: expected DEFAULT_REGION, got %q", got)
+	}
+}
+
+// TestLoad_dataDirAlias verifies LocalStack's DATA_DIR is accepted as a
+// direct alias for OVERCAST_DATA_DIR, and that it counts as "explicitly
+// configured" for OVERCAST_STATE=auto's detection the same way
+// OVERCAST_DATA_DIR itself would.
+func TestLoad_dataDirAlias(t *testing.T) {
+	// This assumes a build with SQLite support: in a -tags nosqlite build,
+	// auto never resolves to hybrid regardless of evidence (see
+	// TestResolveAutoState_sqliteUnavailableOverridesEveryEvidenceSignal in
+	// state_auto_internal_test.go, which covers that gate directly).
+	if !config.SQLiteSupported() {
+		t.Skip("hybrid is unavailable in a -tags nosqlite build; the SQLite gate is covered directly in state_auto_internal_test.go")
+	}
+
+	// No OVERCAST_DATA_DIR_SOURCE=image marker here: that marker means "this
+	// is the Docker image's own baked-in default", which suppresses the
+	// explicit-data-dir signal precisely because it is not real user intent
+	// (see TestLoad_autoResolvesToHybridWhenDataDirExplicit, which this test
+	// mirrors for the DATA_DIR alias instead of OVERCAST_DATA_DIR itself).
+	clearEnv(t)
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DataDir != dir {
+		t.Errorf("DataDir: expected %q, got %q", dir, cfg.DataDir)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_DATA_DIR"]; got != "DATA_DIR" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_DATA_DIR]: expected DATA_DIR, got %q", got)
+	}
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("State: expected hybrid (DATA_DIR should count as an explicit data dir), got %q", cfg.State)
+	}
+}
+
+// TestLoad_debugAlias verifies LocalStack's DEBUG=1 maps to
+// OVERCAST_LOG_LEVEL=debug, and that DEBUG=0 is a no-op (behaves as unset)
+// rather than forcing any particular log level.
+func TestLoad_debugAlias(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		debugValue string
+		wantLevel  string
+		wantAlias  string
+	}{
+		{name: "DEBUG=1", debugValue: "1", wantLevel: "debug", wantAlias: "DEBUG"},
+		{name: "DEBUG=0 is a no-op", debugValue: "0", wantLevel: "info", wantAlias: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("DEBUG", tc.debugValue)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.LogLevel != tc.wantLevel {
+				t.Errorf("LogLevel: expected %q, got %q", tc.wantLevel, cfg.LogLevel)
+			}
+			if got := cfg.LocalStackAliasesUsed["OVERCAST_LOG_LEVEL"]; got != tc.wantAlias {
+				t.Errorf("LocalStackAliasesUsed[OVERCAST_LOG_LEVEL]: expected %q, got %q", tc.wantAlias, got)
+			}
+		})
+	}
+}
+
+// TestLoad_debugAlias_conflictFails verifies DEBUG=1 disagreeing with an
+// explicit, non-debug OVERCAST_LOG_LEVEL fails startup naming both.
+func TestLoad_debugAlias_conflictFails(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DEBUG", "1")
+	t.Setenv("OVERCAST_LOG_LEVEL", "warn")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when DEBUG=1 disagrees with an explicit OVERCAST_LOG_LEVEL, got none")
+	}
+	for _, want := range []string{"DEBUG", "OVERCAST_LOG_LEVEL", "warn", "debug"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_persistenceAlias verifies LocalStack's PERSISTENCE=1 maps to
+// OVERCAST_STATE=persistent, and that PERSISTENCE=0 is a no-op.
+func TestLoad_persistenceAlias(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		persistenceVal string
+		wantState      config.StateBackend
+		wantAlias      string
+	}{
+		{name: "PERSISTENCE=1", persistenceVal: "1", wantState: config.StateBackendPersistent, wantAlias: "PERSISTENCE"},
+		{name: "PERSISTENCE=0 is a no-op", persistenceVal: "0", wantState: config.StateBackendMemory, wantAlias: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("PERSISTENCE", tc.persistenceVal)
+			t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+			t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.State != tc.wantState {
+				t.Errorf("State: expected %q, got %q", tc.wantState, cfg.State)
+			}
+			if got := cfg.LocalStackAliasesUsed["OVERCAST_STATE"]; got != tc.wantAlias {
+				t.Errorf("LocalStackAliasesUsed[OVERCAST_STATE]: expected %q, got %q", tc.wantAlias, got)
+			}
+		})
+	}
+}
+
+// TestLoad_persistenceAlias_conflictFails verifies PERSISTENCE=1 disagreeing
+// with an explicit, non-persistent OVERCAST_STATE fails startup naming both.
+func TestLoad_persistenceAlias_conflictFails(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PERSISTENCE", "1")
+	t.Setenv("OVERCAST_STATE", "memory")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when PERSISTENCE=1 disagrees with an explicit OVERCAST_STATE, got none")
+	}
+	for _, want := range []string{"PERSISTENCE", "OVERCAST_STATE", "memory", "persistent"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_hostnameExternalAlias verifies the legacy LocalStack name
+// HOSTNAME_EXTERNAL (which LOCALSTACK_HOST replaced) is also accepted as an
+// alias for OVERCAST_HOSTNAME, chained after LOCALSTACK_HOST.
+func TestLoad_hostnameExternalAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("HOSTNAME_EXTERNAL", "legacy.internal")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "legacy.internal" {
+		t.Errorf("Hostname: expected legacy.internal, got %q", cfg.Hostname)
+	}
+	if cfg.HostnameAliasSource != "HOSTNAME_EXTERNAL" {
+		t.Errorf("HostnameAliasSource: expected HOSTNAME_EXTERNAL, got %q", cfg.HostnameAliasSource)
+	}
+}
+
+// TestLoad_hostnameExternalAlias_conflictsWithLocalstackHost verifies all
+// three hostname spellings must agree: HOSTNAME_EXTERNAL disagreeing with
+// LOCALSTACK_HOST fails startup naming both, even though OVERCAST_HOSTNAME
+// itself was never set.
+func TestLoad_hostnameExternalAlias_conflictsWithLocalstackHost(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LOCALSTACK_HOST", "localhost.localstack.cloud")
+	t.Setenv("HOSTNAME_EXTERNAL", "legacy.internal")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when HOSTNAME_EXTERNAL disagrees with LOCALSTACK_HOST, got none")
+	}
+	for _, want := range []string{"LOCALSTACK_HOST", "HOSTNAME_EXTERNAL", "localhost.localstack.cloud", "legacy.internal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_lambdaInitTimeoutAlias verifies LocalStack's
+// LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT is accepted as an alias for
+// LAMBDA_INIT_TIMEOUT_SECONDS — the same concept (seconds to wait for the
+// Lambda runtime environment to start up) under a different name.
+func TestLoad_lambdaInitTimeoutAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT", "17")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LambdaInitTimeout != 17*time.Second {
+		t.Errorf("LambdaInitTimeout: expected 17s, got %s", cfg.LambdaInitTimeout)
+	}
+	if got := cfg.LocalStackAliasesUsed["LAMBDA_INIT_TIMEOUT_SECONDS"]; got != "LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT" {
+		t.Errorf("LocalStackAliasesUsed[LAMBDA_INIT_TIMEOUT_SECONDS]: expected LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT, got %q", got)
+	}
+}
+
+// TestLoad_ignoredLocalStackVars verifies SERVICES, LOCALSTACK_API_KEY, and
+// LOCALSTACK_AUTH_TOKEN are recognised-but-inert: present in
+// IgnoredLocalStackVars (so a startup log line can say they were seen), but
+// never rejected and never given any functional effect.
+func TestLoad_ignoredLocalStackVars(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("SERVICES", "s3,sqs,dynamodb")
+	t.Setenv("LOCALSTACK_API_KEY", "test-key")
+	t.Setenv("LOCALSTACK_AUTH_TOKEN", "test-token")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"SERVICES", "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN"}
+	if !slices.Equal(cfg.IgnoredLocalStackVars, want) {
+		t.Errorf("IgnoredLocalStackVars: expected %v, got %v", want, cfg.IgnoredLocalStackVars)
+	}
+}
+
+// TestLoad_ignoredLocalStackVarsUnset verifies the default is an empty list,
+// not a false positive when none of the ignored variables are set.
+func TestLoad_ignoredLocalStackVarsUnset(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.IgnoredLocalStackVars) != 0 {
+		t.Errorf("IgnoredLocalStackVars: expected none, got %v", cfg.IgnoredLocalStackVars)
+	}
+}
+
 func TestLoad_eksModeDefault(t *testing.T) {
 	clearEnv(t)
 
@@ -1938,7 +2292,10 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_DEBUG", "OVERCAST_TLS", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
-		"OVERCAST_HOSTNAME", "LOCALSTACK_HOST", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		"OVERCAST_HOSTNAME", "LOCALSTACK_HOST", "HOSTNAME_EXTERNAL", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		// LocalStack-compatibility aliases (#1190, second PR).
+		"EDGE_PORT", "GATEWAY_LISTEN", "DEFAULT_REGION", "DATA_DIR", "DEBUG", "PERSISTENCE",
+		"LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT", "SERVICES", "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN",
 		// The mode defaults these assert are only defaults if the developer
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",

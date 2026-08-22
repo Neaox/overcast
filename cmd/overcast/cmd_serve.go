@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,6 +132,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	warnIfExistingDatabaseIgnored(cfg, logger)
 	logListenResolution(logger, cfg)
 	logHostnameAlias(logger, cfg)
+	logLocalStackAliases(logger, cfg)
 
 	// Whether OVERCAST_HOSTNAME's subdomains resolve on this host is a
 	// property of the host's resolver, not of Overcast, and it breaks
@@ -750,6 +752,44 @@ func logHostnameAlias(logger *zap.Logger, cfg *config.Config) {
 		zap.String("hostname", cfg.Hostname),
 		zap.String("hostnameAliasSource", cfg.HostnameAliasSource),
 	)
+}
+
+// logLocalStackAliases names, once at startup per variable, every other
+// LocalStack-compatibility alias (#1190, config.Config.LocalStackAliasesUsed)
+// that supplied or confirmed an Overcast setting, and every
+// LocalStack-documented variable Overcast recognises but ignores
+// (config.Config.IgnoredLocalStackVars) — so an operator migrating a
+// LocalStack compose file sees every one of their settings was seen, whether
+// it took effect or was deliberately inert. Hostname's own alias
+// (LOCALSTACK_HOST/HOSTNAME_EXTERNAL) is reported separately by
+// logHostnameAlias, which predates this and already has its own line.
+//
+// Keys are sorted before logging so the line order is deterministic across
+// runs (map iteration order is not) — this also keeps test assertions
+// stable.
+func logLocalStackAliases(logger *zap.Logger, cfg *config.Config) {
+	overcastVars := make([]string, 0, len(cfg.LocalStackAliasesUsed))
+	for overcastVar := range cfg.LocalStackAliasesUsed {
+		overcastVars = append(overcastVars, overcastVar)
+	}
+	sort.Strings(overcastVars)
+	for _, overcastVar := range overcastVars {
+		source := cfg.LocalStackAliasesUsed[overcastVar]
+		logger.Info(
+			fmt.Sprintf("%s recognised as a LocalStack-compatibility alias for %s", source, overcastVar),
+			zap.String("overcastVar", overcastVar),
+			zap.String("localStackAliasSource", source),
+		)
+	}
+
+	ignored := append([]string(nil), cfg.IgnoredLocalStackVars...)
+	sort.Strings(ignored)
+	for _, name := range ignored {
+		logger.Info(
+			fmt.Sprintf("%s is a recognised LocalStack setting with no Overcast effect: %s", name, config.IgnoredLocalStackReason(name)),
+			zap.String("ignoredLocalStackVar", name),
+		)
+	}
 }
 
 // buildHookEnv returns the environment variables passed to init hook scripts.

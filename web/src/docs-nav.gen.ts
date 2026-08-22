@@ -604,6 +604,11 @@ export const DOCS_NAV = [
         "id": "environment-variable-mapping"
       },
       {
+        "depth": 3,
+        "text": "Not aliased",
+        "id": "not-aliased"
+      },
+      {
         "depth": 2,
         "text": "Endpoint mapping",
         "id": "endpoint-mapping"
