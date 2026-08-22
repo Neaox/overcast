@@ -112,6 +112,11 @@ type InstancePool struct {
 	// when the function is admitted again, so a recreated function pools
 	// normally.
 	evicted map[string]bool
+	// starting holds the cold starts in flight for each function — the one
+	// window in which a container can exist while nothing else here can name
+	// it. See coldStart. Never emptied by stop: a creation that outlives the
+	// pool still has to deregister itself.
+	starting map[string]map[*coldStart]struct{}
 	// provisioned holds the provisioned-concurrency target per function.
 	provisioned map[string]*provisionedState
 	// provisionedInstances records which execution environments hold each
@@ -228,6 +233,7 @@ func NewInstancePool(rt Runtime, log *zap.Logger, clk clock.Clock, limits PoolLi
 		checkedOut:           make(map[string]int),
 		expected:             make(map[string]string),
 		evicted:              make(map[string]bool),
+		starting:             make(map[string]map[*coldStart]struct{}),
 		provisioned:          make(map[string]*provisionedState),
 		provisionedInstances: make(map[string]map[string]bool),
 		provisionedPending:   make(map[string]int),
@@ -418,12 +424,23 @@ func (p *InstancePool) acquire(ctx context.Context, fn *Function, progress Progr
 	}
 
 	p.log.Debug("lambda pool: cold start", zap.String("function", fn.Name))
+	// Registered for the whole creation: until it returns, the container it is
+	// making answers to nothing else in the pool, and DeleteFunction has to be
+	// able to reach it.
+	startCtx, cs := p.beginColdStart(ctx, fn.Name)
 	var inst RuntimeInstance
 	var err error
 	if cr, ok := p.rt.(*ContainerRuntime); ok && progress != nil {
-		inst, err = cr.AcquireWithProgress(ctx, fn, progress)
+		inst, err = cr.AcquireWithProgress(startCtx, fn, progress)
 	} else {
-		inst, err = p.rt.Acquire(ctx, fn)
+		inst, err = p.rt.Acquire(startCtx, fn)
+	}
+	if p.finishColdStart(fn.Name, cs) {
+		// The function was deleted while this environment was being created.
+		// If the abort landed too late to stop it, the container is here and
+		// this is the only place that will ever know about it.
+		p.abandonColdStart(fn.Name, inst, memMB)
+		return nil, errFunctionDeletedDuringColdStart(fn.Name)
 	}
 	if err != nil || inst == nil {
 		// A runtime that returns no instance and no error would otherwise leak
@@ -643,11 +660,91 @@ func (p *InstancePool) CanHandle(runtimeID string) bool {
 	return p.rt.CanHandle(runtimeID)
 }
 
+// ─── Cold starts in flight ───────────────────────────────────────────────────
+
+// coldStart is one execution environment being created. Between the moment the
+// runtime is asked for it and the moment the pool takes ownership of the
+// result, its container can already exist on the Docker daemon while no map
+// here can name it: not the warm set, not the provisioned reservation, not the
+// instance tracker. Every creation registers one of these for exactly that
+// window, so EvictFunction has something to reach — otherwise a function
+// deleted mid cold start leaves a container running that nothing will ever
+// reclaim (#1336).
+type coldStart struct {
+	// cancel stops the creation at the next step that can be stopped. The
+	// runtime removes whatever it has already made on the way out.
+	cancel context.CancelFunc
+	// evicted records that the function was deleted while this creation was in
+	// flight, so an environment that lands anyway is destroyed rather than
+	// used. Guarded by InstancePool.mu.
+	evicted bool
+}
+
+// beginColdStart registers a creation of one environment for name and returns
+// the context it must run under. Every caller must pair it with
+// finishColdStart.
+func (p *InstancePool) beginColdStart(ctx context.Context, name string) (context.Context, *coldStart) {
+	ctx, cancel := context.WithCancel(ctx)
+	cs := &coldStart{cancel: cancel}
+
+	p.mu.Lock()
+	if p.starting[name] == nil {
+		p.starting[name] = make(map[*coldStart]struct{})
+	}
+	p.starting[name][cs] = struct{}{}
+	p.mu.Unlock()
+
+	return ctx, cs
+}
+
+// finishColdStart deregisters cs and reports whether the function was deleted
+// while it was in flight — in which case the caller owns whatever the creation
+// produced and must destroy it, because nothing else can see it.
+func (p *InstancePool) finishColdStart(name string, cs *coldStart) bool {
+	p.mu.Lock()
+	if starts := p.starting[name]; starts != nil {
+		delete(starts, cs)
+		if len(starts) == 0 {
+			delete(p.starting, name)
+		}
+	}
+	evicted := cs.evicted
+	p.mu.Unlock()
+
+	// Always: the context wraps the caller's, and leaving it uncancelled leaks
+	// the parent's child list for as long as that parent lives.
+	cs.cancel()
+	return evicted
+}
+
+// errFunctionDeletedDuringColdStart is what an invocation gets when its
+// environment was abandoned because the function went away underneath it.
+// Named for what happened rather than surfacing the bare "context canceled"
+// the abort produces.
+func errFunctionDeletedDuringColdStart(name string) error {
+	return fmt.Errorf("function %q was deleted while its execution environment was starting", name)
+}
+
+// abandonColdStart gives back everything a creation reserved and destroys the
+// environment it produced, if it produced one. Used by every path that learns
+// from finishColdStart that its function was deleted.
+func (p *InstancePool) abandonColdStart(name string, inst RuntimeInstance, memMB int) {
+	p.unreservePendingMem(memMB)
+	p.releaseSlot(name)
+	if inst != nil {
+		p.closeInstance(name, inst, "close environment created for a deleted function failed")
+	}
+}
+
 // ─── Eviction and retirement ─────────────────────────────────────────────────
 
-// EvictFunction closes and removes every warm instance for the named function
-// and forgets its provisioned-concurrency target. Called by DeleteFunction so
-// containers do not linger after deletion.
+// EvictFunction closes and removes every warm instance for the named function,
+// aborts the environments still being created for it, and forgets its
+// provisioned-concurrency target. Called by DeleteFunction so containers do not
+// linger after deletion.
+//
+// An invocation still in flight is not interrupted — AWS does not either — and
+// is destroyed on release instead, via the evicted marker.
 func (p *InstancePool) EvictFunction(name string) {
 	p.mu.Lock()
 	warm := p.entries[name]
@@ -658,8 +755,19 @@ func (p *InstancePool) EvictFunction(name string) {
 	if p.evicted != nil {
 		p.evicted[name] = true
 	}
+	// Environments still being created hold no entry above, and their
+	// containers may already be running. Mark each one so whatever it produces
+	// is destroyed, and cancel it so it stops making more.
+	aborting := make([]*coldStart, 0, len(p.starting[name]))
+	for cs := range p.starting[name] {
+		cs.evicted = true
+		aborting = append(aborting, cs)
+	}
 	p.mu.Unlock()
 
+	for _, cs := range aborting {
+		cs.cancel()
+	}
 	for _, entry := range warm {
 		p.closeInstance(name, entry.inst, "evict close failed")
 	}
@@ -922,7 +1030,17 @@ func (p *InstancePool) replenishProvisioned(name string) {
 			// Provisioned capacity is reserved, so it does not queue behind
 			// the emulator's instance limits the way an on-demand invocation
 			// does — the reservation was accepted up front.
-			inst, err := p.acquireProvisioned(context.Background(), &fn)
+			startCtx, cs := p.beginColdStart(context.Background(), fn.Name)
+			inst, err := p.acquireProvisioned(startCtx, &fn)
+			if p.finishColdStart(fn.Name, cs) {
+				// The function was deleted while this reservation was being
+				// filled. Destroy whatever came up and stop replenishing a
+				// target that no longer exists.
+				if inst != nil {
+					p.closeInstance(fn.Name, inst, "close environment created for a deleted function failed")
+				}
+				break
+			}
 			if err != nil {
 				p.log.Warn("lambda pool: provisioned concurrency cold start failed",
 					zap.String("function", fn.Name),
@@ -1033,7 +1151,16 @@ func (p *InstancePool) ProactiveInit(fn *Function) proactiveOutcome {
 		defer p.warmWG.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		inst, err := pr.AcquireProactive(ctx, &snapshot)
+		startCtx, cs := p.beginColdStart(ctx, name)
+		inst, err := pr.AcquireProactive(startCtx, &snapshot)
+		if p.finishColdStart(name, cs) {
+			// Deleted mid-creation: give back the slot and memory reserved
+			// above and destroy the environment if one landed anyway. Nothing
+			// else has heard of it — the observer is told below, on the path
+			// where it survives.
+			p.abandonColdStart(name, inst, memMB)
+			return
+		}
 		if err != nil || inst == nil {
 			p.unreservePendingMem(memMB)
 			p.releaseSlot(name)

@@ -176,9 +176,9 @@ func (d *recordingDaemon) recordedCreates() []docker.CreateContainerRequest {
 	return append([]docker.CreateContainerRequest(nil), d.creates...)
 }
 
-// newECRContainerRuntime builds a ContainerRuntime pointed at daemon, with a
-// resolver that serves cdkImageURI from the local registry.
-func newECRContainerRuntime(t *testing.T, daemon *recordingDaemon) *ContainerRuntime {
+// newDaemonContainerRuntime builds a ContainerRuntime pointed at a fake Docker
+// daemon, with a resolver that serves cdkImageURI from the local registry.
+func newDaemonContainerRuntime(t *testing.T, daemon *httptest.Server) *ContainerRuntime {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -217,7 +217,7 @@ func TestAcquire_imageFromEmulatedECR_pullsAndRunsTheServedReference(t *testing.
 	// Given: a Docker daemon that holds no images, and a container runtime
 	// whose resolver serves the function's ECR image from the local registry.
 	daemon := newRecordingDaemon(t)
-	cr := newECRContainerRuntime(t, daemon)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
 	fn := imageFunction()
 
 	// When: the function is acquired. The fake daemon refuses to start the
@@ -268,7 +268,7 @@ func TestAcquire_imageFromEmulatedECR_pullsAndRunsTheServedReference(t *testing.
 func TestPrewarmFunction_imageFromEmulatedECR_pullsTheServedReference(t *testing.T) {
 	// Given: a container runtime whose resolver serves the function's ECR image.
 	daemon := newRecordingDaemon(t)
-	cr := newECRContainerRuntime(t, daemon)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
 	fn := imageFunction()
 
 	// When: CreateFunction prewarms the image.
@@ -300,7 +300,7 @@ func TestPrewarmFunction_publicImage_isPulledAsWritten(t *testing.T) {
 	// Given: a runtime with the same ECR resolver, and a function on a public
 	// image the resolver does not serve.
 	daemon := newRecordingDaemon(t)
-	cr := newECRContainerRuntime(t, daemon)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
 	fn := imageFunction()
 	fn.ImageUri = "public.ecr.aws/lambda/nodejs:22"
 
