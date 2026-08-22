@@ -124,7 +124,7 @@ importers:
         version: 5.3.0
       '@hono/node-server':
         specifier: ^1.19.11
-        version: 1.19.15(hono@4.12.34)
+        version: 1.19.15(hono@4.13.0)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -220,7 +220,7 @@ importers:
         version: 4.1.0
       hono:
         specifier: ^4.12.9
-        version: 4.12.34
+        version: 4.13.0
       lucide-react:
         specifier: ^1.7.0
         version: 1.7.0(react@19.2.4)
@@ -3331,8 +3331,8 @@ packages:
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
 
-  hono@4.12.34:
-    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
+  hono@4.13.0:
+    resolution: {integrity: sha512-jhunvfHWxd7J5EFfSgH4xsYJzSe/lfqbUCxiyyeaQasUsXeEHXtzVid+7EOGByc5JnFa23SSFL3Y2RV/z1T+eQ==}
     engines: {node: '>=16.9.0'}
 
   html-comment-regex@1.1.2:
@@ -7182,9 +7182,9 @@ snapshots:
 
   '@fontsource/jetbrains-mono@5.3.0': {}
 
-  '@hono/node-server@1.19.15(hono@4.12.34)':
+  '@hono/node-server@1.19.15(hono@4.13.0)':
     dependencies:
-      hono: 4.12.34
+      hono: 4.13.0
 
   '@humanfs/core@0.19.1': {}
 
@@ -9377,7 +9377,7 @@ snapshots:
     dependencies:
       hermes-estree: 0.25.1
 
-  hono@4.12.34: {}
+  hono@4.13.0: {}
 
   html-comment-regex@1.1.2: {}
 
