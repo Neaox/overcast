@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"__type\":\"AWS.SimpleQueueService.NonExistentQueue\",\"message\":\"The specified queue does not exist: ghost-queue\"}"
+}

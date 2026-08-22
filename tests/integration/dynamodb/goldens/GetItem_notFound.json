@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"__type\":\"ResourceNotFoundException\",\"message\":\"Requested resource not found: Table: no-such-golden-table not found\"}"
+}

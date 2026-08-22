@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAttachedRolePoliciesResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><ListAttachedRolePoliciesResult><AttachedPolicies><member><PolicyArn>arn:aws:iam::aws:policy/ReadOnlyAccess</PolicyArn><PolicyName>ReadOnlyAccess</PolicyName></member></AttachedPolicies><IsTruncated>false</IsTruncated></ListAttachedRolePoliciesResult><ResponseMetadata><RequestId>REDACTED-REQUEST-ID</RequestId></ResponseMetadata></ListAttachedRolePoliciesResponse>"
+}

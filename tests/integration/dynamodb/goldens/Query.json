@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"Items\":[{\"eventId\":{\"S\":\"event-1\"},\"kind\":{\"S\":\"login\"},\"userId\":{\"S\":\"user-1\"}},{\"eventId\":{\"S\":\"event-2\"},\"kind\":{\"S\":\"logout\"},\"userId\":{\"S\":\"user-1\"}}],\"Count\":2,\"ScannedCount\":2}"
+}

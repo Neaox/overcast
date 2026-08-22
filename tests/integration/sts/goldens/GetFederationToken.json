@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/xml"
+  },
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<GetFederationTokenResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><GetFederationTokenResult><Credentials><AccessKeyId>ASIAREDACTEDREDACTED</AccessKeyId><SecretAccessKey>REDACTEDREDACTEDREDACTEDREDACTEDREDACTED</SecretAccessKey><SessionToken>REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED</SessionToken><Expiration>1970-01-01T01:00:00Z</Expiration></Credentials><FederatedUser><Arn>arn:aws:sts::000000000000:federated-user/golden-federated-user</Arn><FederatedUserId>000000000000:golden-federated-user</FederatedUserId></FederatedUser></GetFederationTokenResult><ResponseMetadata><RequestId>00000000-0000-0000-0000-000000000000</RequestId></ResponseMetadata></GetFederationTokenResponse>"
+}

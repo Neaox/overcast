@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/x-amz-json-1.0"
+  },
+  "body": "{\"Item\":{\"age\":{\"N\":\"30\"},\"id\":{\"S\":\"item-1\"},\"name\":{\"S\":\"Alice\"}}}"
+}
