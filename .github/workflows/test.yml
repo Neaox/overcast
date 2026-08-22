@@ -686,10 +686,25 @@ jobs:
       - name: Validate generated operation ownership
         run: make aws-models-check
 
-  # Gated like the Go jobs, with one extra consequence: this job produces the
-  # web-dist artifact, so anything downstream of it has to be gated on the same
-  # output or it will wait for an upload that is not coming. cross-build is the
-  # only such consumer.
+  # Gated like the Go jobs from `Lint` down, with one extra consequence: this
+  # job produces the web-dist artifact, so anything downstream of it has to be
+  # gated on the same output or it will wait for an upload that is not coming.
+  # cross-build is the only such consumer.
+  #
+  # The install is NOT gated. Two pull requests that each regenerate
+  # web/pnpm-lock.yaml can both be green and still leave main with a lockfile
+  # neither of them had: #1257 and #1258 did exactly that (jest-dom's peer
+  # suffix naming a vitest snapshot the file no longer held), and
+  # `pnpm install --frozen-lockfile` failed on main for five commits while every
+  # pull request in between was prose-only and skipped this job. The push runs
+  # on main did go red, and nothing gates on those. So the install runs on
+  # every pull request whatever the paths say: with the store cache hit it is
+  # ~20 s all told (checkout, pnpm, node, install), and a broken lockfile fails
+  # at the first step that reads it. Nothing cheaper catches it — pnpm's
+  # `--lockfile-only` checks that the lockfile satisfies package.json, which a
+  # badly merged lockfile still does; the missing-snapshot error only fires when
+  # the dependency graph is built for a real install (verified against the
+  # #1257/#1258 lockfile: `--frozen-lockfile --lockfile-only` exits 0 on it).
   web:
     name: Web UI
     needs: [changes, release-gate]
@@ -704,23 +719,22 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: env.RUN_BUILD == 'true'
       # No setup-go: the docs index is committed, so the SPA build no longer
       # shells out to the Go generator. This job is Node-only.
       # pnpm/action-setup must precede setup-node: `cache: pnpm` resolves the
       # store path by running pnpm, so pnpm has to be on PATH by then.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        if: env.RUN_BUILD == 'true'
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: env.RUN_BUILD == 'true'
         with:
           node-version-file: .node-version
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        if: env.RUN_BUILD == 'true'
+      # Ungated on purpose — see the note above the job. This is the lockfile
+      # validity check for main; everything below it is the SPA build.
+      - name: Install (lockfile validity check, every pull request)
+        run: pnpm install --frozen-lockfile
       - name: Lint
         if: env.RUN_BUILD == 'true'
         run: pnpm run lint
