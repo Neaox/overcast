@@ -10,13 +10,14 @@
 #   scripts/go.sh run ./cmd/verify                 # go run <pkg>
 #   scripts/go.sh shell                            # interactive shell
 #
-# Docker fallback details: image from OVERCAST_GO_IMAGE (default
-# golang:1.24-bookworm); module and build caches live in named Docker
-# volumes. git is not usable inside the container for worktree checkouts
-# (the .git file points at a host path). The fallback is CPU-capped the same
-# way scripts/docker-go.sh is (OVERCAST_GO_CPUS / OVERCAST_GO_TEST_P). The
-# native path is not: `docker run --cpus` has nothing to bound there, and a
-# host toolchain is the user's own to schedule.
+# Docker fallback details: image from OVERCAST_GO_IMAGE (default: the
+# devcontainer's, read from .devcontainer/Dockerfile — see lib/go-image.sh);
+# module and build caches live in named Docker volumes. git is not usable
+# inside the container for worktree checkouts (the .git file points at a host
+# path). The fallback is CPU-capped the same way scripts/docker-go.sh is
+# (OVERCAST_GO_CPUS / OVERCAST_GO_TEST_P). The native path is not: `docker run
+# --cpus` has nothing to bound there, and a host toolchain is the user's own to
+# schedule.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -36,7 +37,9 @@ if command -v go >/dev/null 2>&1; then
 fi
 
 # ---- Docker fallback ----------------------------------------------------------
-IMAGE="${OVERCAST_GO_IMAGE:-golang:1.24-bookworm}"
+# Image resolution lives in lib/go-image.sh, shared with scripts/docker-go.sh.
+. "$script_dir/lib/go-image.sh"
+IMAGE="$GO_IMAGE"
 MOD_CACHE_VOLUME="${OVERCAST_GO_MOD_CACHE:-overcast-go-mod-cache}"
 BUILD_CACHE_VOLUME="${OVERCAST_GO_BUILD_CACHE:-overcast-go-build-cache}"
 

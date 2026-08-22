@@ -13,8 +13,9 @@
 #   scripts/docker-go.sh shell                            # interactive shell
 #
 # Details:
-#   - Image defaults to the devcontainer's Go image; override with
-#     OVERCAST_GO_IMAGE.
+#   - Image defaults to the devcontainer's Go image — read from
+#     .devcontainer/Dockerfile's FROM line, so the two cannot drift (see
+#     lib/go-image.sh); override with OVERCAST_GO_IMAGE.
 #   - Module and build caches live in named Docker volumes (the mod cache is
 #     shared with the devcontainer), so repeated runs are fast.
 #   - CPU use is capped to half the available cores so a long test run leaves
@@ -34,7 +35,6 @@
 
 set -eu
 
-IMAGE="${OVERCAST_GO_IMAGE:-golang:1.24-bookworm}"
 MOD_CACHE_VOLUME="${OVERCAST_GO_MOD_CACHE:-overcast-go-mod-cache}"
 BUILD_CACHE_VOLUME="${OVERCAST_GO_BUILD_CACHE:-overcast-go-build-cache}"
 
@@ -42,6 +42,11 @@ BUILD_CACHE_VOLUME="${OVERCAST_GO_BUILD_CACHE:-overcast-go-build-cache}"
 # Windows-style path that Docker Desktop accepts; elsewhere plain pwd is fine.
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && (pwd -W 2>/dev/null || pwd))
+
+# Image resolution lives in lib/go-image.sh, shared with scripts/go.sh; it
+# sets GO_IMAGE from OVERCAST_GO_IMAGE or the devcontainer's FROM line.
+. "$script_dir/lib/go-image.sh"
+IMAGE="$GO_IMAGE"
 
 if [ "$#" -eq 0 ]; then
     echo "usage: $0 <go-subcommand and args> | shell" >&2
@@ -57,14 +62,15 @@ fi
 # different:
 #
 #   --cpus      caps what the container may consume. Nothing else does.
-#   GOMAXPROCS  must be set explicitly. Container-aware GOMAXPROCS — the runtime
-#               reading the cgroup CPU quota — arrived in Go 1.25, and this image
-#               is golang:1.24-bookworm, whose runtime still sees every host
-#               core. Without it the container spawns host-wide parallelism into
-#               a fraction of a machine and thrashes on context switches instead
-#               of running slower cleanly. Setting it stays correct on 1.25+: an
-#               explicit GOMAXPROCS just disables the automatic default in favour
-#               of the same number.
+#   GOMAXPROCS  is set explicitly. Container-aware GOMAXPROCS — the runtime
+#               reading the cgroup CPU quota — only arrived in Go 1.25. On an
+#               older image (this script shipped against golang:1.24-bookworm,
+#               and OVERCAST_GO_IMAGE can still name one) the runtime sees every
+#               host core and spawns host-wide parallelism into a fraction of a
+#               machine, thrashing on context switches instead of running slower
+#               cleanly. On the current 1.26 image an explicit GOMAXPROCS just
+#               replaces the automatic default with the same number, so setting
+#               it is correct either way.
 #   -p          bounds concurrent test *binaries*, and defaults to GOMAXPROCS.
 #               Each binary inherits GOMAXPROCS from the environment, so leaving
 #               -p at its default puts cpus × cpus runnable Ps into a cpus-CPU

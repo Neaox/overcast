@@ -69,11 +69,12 @@ services:
       # The race detector needs cgo. With CGO_ENABLED=0 the command below fails
       # outright: "go: -race requires cgo; enable cgo by setting CGO_ENABLED=1".
       CGO_ENABLED: "1"
-      # Has to be set by hand to match cpus:. Container-aware GOMAXPROCS — the
-      # runtime reading the cgroup CPU quota — arrived in Go 1.25, and this image
-      # is golang:1.24-bookworm, so the cap alone would leave the runtime seeing
-      # every host core and thrashing on context switches instead of running
-      # slower cleanly.
+      # Set by hand to match cpus:. Container-aware GOMAXPROCS — the runtime
+      # reading the cgroup CPU quota — only arrived in Go 1.25. This service
+      # builds from .devcontainer/Dockerfile (golang:1.26-bookworm today, whose
+      # runtime would derive the same number itself); the explicit value keeps
+      # the cap holding whatever Go that file names, instead of leaving an older
+      # runtime seeing every host core and thrashing on context switches.
       GOMAXPROCS: ${OVERCAST_GO_CPUS:-0}
       # -p bounds concurrent test *binaries* and defaults to GOMAXPROCS; each
       # binary then inherits GOMAXPROCS, so leaving it alone squares the

@@ -2,7 +2,8 @@
 # This is NOT the production Dockerfile (that's in the project root).
 #
 # Contains everything a contributor needs:
-#   - Go 1.23 (official image)
+#   - Go 1.26 (official image — the FROM line below, which scripts/docker-go.sh
+#     and scripts/go.sh also read for their default image)
 #   - Node.js 24 (for Lambda work)
 #   - golangci-lint (linter)
 #   - Task (cross-platform make alternative)

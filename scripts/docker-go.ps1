@@ -17,7 +17,10 @@
 
 $ErrorActionPreference = "Stop"
 
-$image = if ($env:OVERCAST_GO_IMAGE) { $env:OVERCAST_GO_IMAGE } else { "golang:1.24-bookworm" }
+# Image resolution lives in lib\go-image.ps1 (OVERCAST_GO_IMAGE, else the
+# devcontainer's FROM line in .devcontainer\Dockerfile); it sets $goImage.
+. "$PSScriptRoot\lib\go-image.ps1"
+$image = $goImage
 $modCache = if ($env:OVERCAST_GO_MOD_CACHE) { $env:OVERCAST_GO_MOD_CACHE } else { "overcast-go-mod-cache" }
 $buildCache = if ($env:OVERCAST_GO_BUILD_CACHE) { $env:OVERCAST_GO_BUILD_CACHE } else { "overcast-go-build-cache" }
 
@@ -31,10 +34,11 @@ if ($args.Count -eq 0) {
 # ---- CPU bound --------------------------------------------------------------
 #
 # Rationale in full lives in scripts/docker-go.sh. In short: --cpus caps the
-# container, GOMAXPROCS has to be set by hand because container-aware
-# GOMAXPROCS only arrived in Go 1.25 and this image is golang:1.24-bookworm,
-# and -p bounds concurrent test binaries (it defaults to GOMAXPROCS, and each
-# binary inherits GOMAXPROCS, so the default squares the parallelism).
+# container, GOMAXPROCS is set by hand because container-aware GOMAXPROCS only
+# arrived in Go 1.25 and OVERCAST_GO_IMAGE can still name an older image (on
+# 1.25+ it merely restates the automatic default), and -p bounds concurrent
+# test binaries (it defaults to GOMAXPROCS, and each binary inherits
+# GOMAXPROCS, so the default squares the parallelism).
 #
 # The counts are derived, never hardcoded -- `docker run --cpus=N` is rejected
 # when N exceeds the CPUs the daemon reports. The detection and the derivation
