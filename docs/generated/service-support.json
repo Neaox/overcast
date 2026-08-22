@@ -7087,13 +7087,13 @@
           "operation": "StartExecution",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "Interprets the ASL; returns while the execution is RUNNING, as AWS does"
+          "notes": "Interprets the ASL; returns while the execution is RUNNING, as AWS does; a standard workflow's RUNNING and terminal status transitions each emit a Step Functions Execution Status Change event to the default EventBridge bus"
         },
         {
           "operation": "StartSyncExecution",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "EXPRESS only — same interpreter, run to completion before returning"
+          "notes": "EXPRESS only — same interpreter, run to completion before returning; EXPRESS executions do not emit EventBridge events, matching AWS"
         },
         {
           "operation": "DescribeExecution",
@@ -7117,7 +7117,7 @@
           "operation": "StopExecution",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "Interrupts a running execution; it reaches ABORTED asynchronously"
+          "notes": "Interrupts a running execution; it reaches ABORTED asynchronously; a standard workflow's ABORTED transition emits a Step Functions Execution Status Change event to the default EventBridge bus"
         },
         {
           "operation": "TagResource",

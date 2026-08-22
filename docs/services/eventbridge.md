@@ -82,10 +82,15 @@ same-process target delivery.
   (`CloudWatch Alarm State Change`, every transition), S3 (`Object Created` / `Object Deleted`,
   when a bucket's `EventBridgeConfiguration` is set), EC2 (`EC2 Instance State-change
   Notification`, every time an instance's state changes — including its first transition into
-  `pending`), and ECS (`ECS Task State Change`, every time a task's `lastStatus` changes). Real
-  AWS emits substantially more service-originated events than these four (Step Functions
-  execution status and others); a rule matching one of those will never fire here — see
-  [#758](https://github.com/Neaox/overcast/issues/758).
+  `pending`), ECS (`ECS Task State Change`, every time a task's `lastStatus` changes), and Step
+  Functions (`Step Functions Execution Status Change`, source `aws.states`, every time a
+  standard-workflow execution's status changes — RUNNING on start, then SUCCEEDED, FAILED,
+  TIMED_OUT or ABORTED on completion; the FAILED/TIMED_OUT detail carries the execution's
+  `error`/`cause`). Real AWS emits substantially more service-originated events than these five;
+  a rule matching one of those will never fire here — see
+  [#758](https://github.com/Neaox/overcast/issues/758) (closed out by
+  [#1225](https://github.com/Neaox/overcast/pull/1225) and
+  [#1221](https://github.com/Neaox/overcast/issues/1221)).
 - **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
   has not been explicitly created.
 - **CDK compatible management plane.** Sufficient for CDK deployments that create buses,

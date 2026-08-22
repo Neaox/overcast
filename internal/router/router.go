@@ -690,6 +690,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// (EC2 Instance State-change Notification, ECS Task State Change).
 	ec2Svc.InitEventBridge(ebSvc.BusPublisher())
 	ecsSvc.InitEventBridge(ebSvc.BusPublisher())
+	// Step Functions: wire the EventBridge bus publisher so execution status
+	// transitions emit a Step Functions Execution Status Change event, the
+	// remainder of #758 (#1221).
+	sfnSvc.InitEventBridge(ebSvc.BusPublisher())
 	// Lambda: wire the root router so a dead-lettered async invocation reaches
 	// its SQS queue or SNS topic over the same path an SDK client would take.
 	lambdaSvc.InitRouter(r)
