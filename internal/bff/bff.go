@@ -141,6 +141,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/debug/traces/count", handleDebugTraceCount)
 	r.Get("/api/debug/traces/search", handleDebugTraceSearch)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_overcast/lambda/runtimes"))
+	r.Get("/api/lambda/layers/{layerName}/versions/{version}/metadata", handleLambdaLayerMetadata)
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
 	r.Put("/api/lambda/functions/{name}/source", handleLambdaSourcePut)
@@ -1139,6 +1140,34 @@ func handleLambdaSourcePut(w http.ResponseWriter, r *http.Request) {
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPut,
 		fmt.Sprintf("%s/_overcast/lambda/functions/%s/source", ep, url.PathEscape(name)), r.Body)
 	req.Header.Set("Content-Type", "application/json")
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// handleLambdaLayerMetadata proxies GET /_overcast/lambda/layers/{layerName}/versions/{version}/metadata
+// — whether a layer version's archive carries an external (non-runtime-native)
+// Lambda extension, shown on the layer detail page. This route was missing
+// from the BFF entirely until the dev-BFF-consolidation audit (#1104) found
+// it: the Node dev server called the emulator directly for it, so a built
+// binary 404'd here while dev worked — the drift class this proxy layer
+// exists to make impossible.
+func handleLambdaLayerMetadata(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	layerName := chi.URLParam(r, "layerName")
+	version := chi.URLParam(r, "version")
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/lambda/layers/%s/versions/%s/metadata",
+			ep, url.PathEscape(layerName), url.PathEscape(version)), nil)
 	forwardRegion(req, r)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {

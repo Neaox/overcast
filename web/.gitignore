@@ -17,6 +17,10 @@ dist/*
 !dist/.gitkeep
 dist-server
 dist-ssr
+# `web/api`'s own tsc output (tsconfig.json's outDir) — unlike `web/dist`
+# above, nothing embeds this at a fixed path, so there's no .gitkeep to keep
+# resolving and no reason to track it.
+api/dist
 *.local
 *.tsbuildinfo
 

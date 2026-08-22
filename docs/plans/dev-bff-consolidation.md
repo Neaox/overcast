@@ -1,10 +1,12 @@
 # Dev BFF consolidation — kill the dual-BFF drift class
 
-> **Status:** planned, still not started as of 2026-08-21 (releases are well past the alpha.24
-> gate this was parked behind). The Hono mirrors remain — and have since grown a `settings.ts`
-> route, more evidence of the drift class — the hand-mirrored types are still in
-> `web/src/types/common.ts`, and there is no `cmd/tsgen` / `api.gen.ts`. Owner: TBD.
-> **Scope:** the vite dev server's Hono BFF (`web/api/src`) vs the production Go BFF (`internal/bff`), plus the hand-mirrored TypeScript API types. Shipped artifacts are unaffected — this is dev tooling and build discipline.
+> **Status:** B1 and B3 shipped 2026-08-22 (#1104). The Hono route mirrors in `web/api/src/routes/`
+> are gone — `web/api/src/app.ts` is now a single `/api/*` proxy to the Go BFF (see §2, B1) — and
+> the docs-slug pairing (B3) is pinned by a test. **B2 (tsgen) is deferred**, filed as a follow-up
+> on #1104: the hand-mirrored types in `web/src/types/common.ts` are unchanged by this pass (B1
+> doesn't touch wire shapes, so there's no new drift risk from landing B1 without B2) but still
+> aren't generated. Owner: TBD.
+> **Scope:** the vite dev server's Hono BFF (`web/api/src`) vs the production Go BFF (`internal/bff`), plus the hand-mirrored TypeScript API types. Shipped artifacts are unaffected — this is dev tooling and build discipline, except where the B1 route audit found a Go-side gap (the Lambda layer metadata endpoint was missing from `internal/bff/bff.go` entirely, a real 404 in every build — fixed alongside the proxy since the proxy would otherwise have turned a dev-only regression into one, and the fix is a two-line addition to the audit's target file anyway).
 
 ## 1. Why this plan exists
 
@@ -21,21 +23,24 @@ Both fixes were "mirror the change into the second implementation" — i.e., mor
 
 ## 2. Items
 
-### B1 — Collapse the Hono BFF into a thin proxy
+### B1 — Collapse the Hono BFF into a thin proxy — shipped 2026-08-22 (#1104)
 
-**Change.** Replace the per-route mirrors in `web/api/src/routes/` with one catch-all: `/api/* → <emulator>:4567/api/*` against the Go BFF, forwarding method, body, query, and the service-discovery headers (`x-overcast-endpoint`, `x-overcast-region` — resolve the target emulator exactly as `service-discovery.ts` does today). Delete the mirrored route files.
+**Change.** Replaced the per-route mirrors in `web/api/src/routes/` with one catch-all in `web/api/src/app.ts`: `/api/*` forwards method, path, query string, headers (including `x-overcast-endpoint`/`x-overcast-region`, however the browser delivered them) and body verbatim to the Go BFF's own UI port (`web/api/src/service-discovery.ts`'s `GO_BFF_ENDPOINT`, default `http://localhost:4567`, overridable via `GO_BFF_ENDPOINT` or `OVERCAST_UI_PORT`). All fourteen route files under `web/api/src/routes/` and `web/api/src/client/aws.ts` are deleted.
 
-**Pre-work: route audit.** Catalogue every Hono route against `internal/bff` and classify: *mirror* (proxy replaces it — expected: all of debug/docs/health/metrics/topology/service routes) vs *genuinely dev-only* (no Go counterpart — expected: none; if any exist, they stay and are documented as dev-only in the plugin). The audit table goes in the PR description.
+**Route audit (as landed).** Every existing Hono route had a Go BFF counterpart except one: `GET /api/lambda/layers/{layerName}/versions/{version}/metadata` (Lambda layer detail page) was never registered in `internal/bff/bff.go` at all — the dev mirror called the emulator directly, so the feature worked under `pnpm dev` and 404'd in every built binary. Fixed by adding the route + a thin proxy handler to `bff.go` (mirroring `handleLambdaSourceGet`'s shape) rather than keeping it dev-only, since it isn't dev-only — it's a real console feature the Go BFF was simply missing. No other dev-only routes were found; the "genuinely dev-only, keep in the plugin" case in the original plan didn't materialize.
+Two more drift instances the audit surfaced, both fixed for free by deleting the mirror rather than porting it: the Go BFF's richer debug-trace endpoints (`/api/debug/trace*`) had no Hono mirror at all (dev-only 404s, now fixed), and the Hono lambda routes never forwarded `x-overcast-region` upstream the way `bff.go`'s handlers do (a silent region-scoping bug in dev only, also now fixed).
 
-**Streaming caveat (design constraint, not optional):** the Events page consumes a live stream (SSE or WebSocket — confirm which during the audit; the event-history work may also have touched this). The proxy must pass streaming responses through unbuffered — Hono/undici can do this, but it must be verified with the Events page live-tailing through the proxy before the mirrors are deleted. Same check for any long-poll/chunked endpoint (Lambda `invoke-with-progress`).
+**Streaming.** Verified live end-to-end, not just unit-tested: built `overcast`, ran it with `OVERCAST_PORT=14566 OVERCAST_UI_PORT=14567`, ran `pnpm dev` pointed at it, and confirmed `/api/events` streams SSE chunks through the proxy continuously (`curl -N`) and that `/api/cloudformation/stacks/<nonexistent>/diagnostics` — the motivating Go-only route — correctly 404s through the proxy instead of never having existed. `web/api/src/app.test.ts` covers the same shapes (streaming pass-through, header stripping, method/body/query forwarding, the `OvercastUnavailable` 502) against a mocked Go BFF for CI, since a real one isn't available there.
 
-**Dev-workflow consequence:** dev requires a running emulator built from current Go code. This is a de facto requirement already (the mirrors call through to the emulator for all real data); the change makes it honest. `docs/dev/development-setup.md` gains one paragraph: build/run the emulator (docker-go one-liner), then `npm run dev`.
+**Dev-workflow consequence:** `web/README.md` and `web/AGENTS.md` now say dev requires a running `overcast serve` (both its API port and its UI port, started together by default) — this was already true for AWS calls; the change makes `/api/*` honest about needing the UI port too.
 
-**Accept when:** every web UI page works in dev through the proxy (manual sweep: dashboard, map, events incl. live tail + history, metrics & health incl. debug-gated panels, debug/raw-state, inbox, docs incl. frontmatter-stripped rendering and `docs/dev` exclusion); the mirrored route files are deleted; a `git grep` for the old route registrations is empty; #289/#290's bug classes are structurally impossible (asserted by the route audit, not by tests that would themselves be mirrors).
+**Accept when:** the mirrored route files are deleted (done); `git grep` for the old route registrations is empty (verified); #289/#290's bug classes are structurally impossible (there is exactly one implementation now); every route audited above works through the proxy against a live `overcast serve` (verified manually, see above) and against a mocked one (verified in CI, `app.test.ts`).
 
-### B2 — Generate TypeScript API types from the Go structs
+### B2 — Generate TypeScript API types from the Go structs — deferred, follow-up filed on #1104
 
-**Change.** A small `cmd/tsgen` (house codegen pattern — `capgen` is the template) that renders the BFF-consumed response structs (`state.DebugMetrics`, `router.Advisory`, the `/_health` payload, `DataDirProbe`, flush records, and whatever the audit in B1 surfaces as wire-visible) into a checked-in `web/src/types/api.gen.ts`: `json` tags → field names, `omitempty` → optional, doc comments carried over. Hand-written mirrors in `web/src/types/common.ts` are deleted in favor of re-exports.
+**Not done in this pass.** B1 doesn't touch any wire shape — the Go BFF was already the source of truth for every response the console renders, mirror or proxy — so landing B1 without B2 introduces no new drift risk; `web/src/types/common.ts` is exactly as hand-mirrored after this PR as before it. Building `cmd/tsgen` (parsing Go struct tags/doc comments, rendering `.ts`, a `--check` CI gate, retiring `common.ts` in favor of the generated file) is its own multi-file effort with its own review surface, and doing it hastily inside the PR that also deleted fourteen files risked half-finishing both. Follow-up filed on #1104 rather than silently dropped.
+
+**Change (unchanged from the original plan).** A small `cmd/tsgen` (house codegen pattern — `capgen` is the template) that renders the BFF-consumed response structs (`state.DebugMetrics`, `router.Advisory`, the `/_health` payload, `DataDirProbe`, flush records) into a checked-in `web/src/types/api.gen.ts`: `json` tags → field names, `omitempty` → optional, doc comments carried over. Hand-written mirrors in `web/src/types/common.ts` are deleted in favor of re-exports.
 
 **CI:** a regen-and-diff step exactly like `capgen --check` — drift between Go structs and committed TS types fails the build with a "run tsgen" message.
 
@@ -43,11 +48,9 @@ Both fixes were "mirror the change into the second implementation" — i.e., mor
 
 **Accept when:** `common.ts` contains no hand-mirrored server types; a deliberate Go field rename makes CI fail at the tsgen-diff step (verified once, then reverted, as the failing-first evidence).
 
-### B3 — Pin the remaining cross-language constants
+### B3 — Pin the remaining cross-language constants — shipped 2026-08-22 (#1104)
 
-Small, but it closes the loop:
-
-- **Docs heading slugs:** `internal/router/advisories.go` ships a fragment (`#data-dir-placement-…`) computed by `web/src/routes/docs.tsx`'s `slug()`. **Still open, and now half-covered:** `scripts/docs-index.go --check` (run by `make docs-check`) validates every in-page anchor a *published doc* writes against the real heading ids — that gate caught four GitHub-shaped anchors and one anchor to a since-renamed heading. It cannot see the advisory constant, which is a Go string rather than a Markdown link, so the cross-language pairing itself is still pinned by nothing. Add a web test asserting `slug("Data dir placement — avoid host bind mounts on Docker Desktop")` equals the exact Go constant (import the string via a tiny fixture or duplicate-with-test — the test IS the pairing). Any future advisory fragment gets added to the same table test.
+- **Docs heading slugs:** `internal/router/advisories.go` ships a fragment (`#data-dir-placement-…`) computed by `web/src/routes/docs.tsx`'s `slug()` (now exported for this). `web/src/routes/docs.slug.test.ts` asserts `slug()` on the two literal Go headings (`docs/performance.md`'s "Data dir placement — …" and `docs/storage.md`'s "Builds without SQLite") equals the exact fragments `dataDirDocsPath`/`noSQLiteDocsPath` compute in Go. Any future advisory fragment gets added to the same test.
 - **Path strings** in the web client (`API_BASE + "/debug/metrics"` etc.): deliberately NOT generated or pinned. Post-B1 they fail loudly in dev (real 404 from the real BFF on first render), which is the cheap, honest guard.
 
 ## 3. What deliberately stays out
@@ -58,11 +61,11 @@ Small, but it closes the loop:
 
 ## 4. Phasing
 
-| Phase | Contents | Effort | Gate |
-|---|---|---|---|
-| 1 | B1 route audit + proxy + streaming verification + mirror deletion + dev-setup docs | M | manual page sweep green through proxy; audit table in PR |
-| 2 | B2 tsgen + CI diff gate + mirror-type deletion | S–M | deliberate-drift CI failure demonstrated |
-| 3 | B3 slug pinning test | S | table test green; referenced from CONTRIBUTING's DRY notes |
+| Phase | Contents | Effort | Gate | Status |
+|---|---|---|---|---|
+| 1 | B1 route audit + proxy + streaming verification + mirror deletion + dev-setup docs | M | manual page sweep green through proxy; audit table in PR | done (#1104) |
+| 2 | B2 tsgen + CI diff gate + mirror-type deletion | S–M | deliberate-drift CI failure demonstrated | deferred — follow-up on #1104 |
+| 3 | B3 slug pinning test | S | table test green; referenced from CONTRIBUTING's DRY notes | done (#1104) |
 
 Phases land independently; B2/B3 don't depend on B1 (types drift regardless of who serves the routes).
 
