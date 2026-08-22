@@ -1,5 +1,7 @@
 import { awsClients } from "../aws-clients"
 import { apiFetch } from "./base"
+import type { MonitorResponse } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 import {
   CreateQueueCommand,
   DeleteQueueCommand,
@@ -131,6 +133,10 @@ export const sqs = {
     await client.send(new PurgeQueueCommand({ QueueUrl: urlRes.QueueUrl }))
     return { ok: true }
   },
+
+  /** Monitor section read-through — docs/plans/service-metrics-platform.md phase 3. */
+  getMetrics: (name: string, range: ChartRangeToken) =>
+    apiFetch<MonitorResponse>(`/sqs/queues/${encodeURIComponent(name)}/metrics?range=${range}`),
 
   /** Custom peek endpoint — reads messages without incrementing receive count. */
   receiveMessages: (name: string) => {

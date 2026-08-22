@@ -16,6 +16,7 @@ import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { sqs } from "@/services/api"
 import { endpointStore } from "@/services/endpoint-store"
 import type { SQSMessage } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -27,6 +28,8 @@ export const sqsKeys = {
   messages: () => [...sqsKeys.all(), "messages"] as const,
   messageList: (name: string) => [...sqsKeys.messages(), name] as const,
   mapPeek: () => [...sqsKeys.all(), "map-peek"] as const,
+  metrics: (name: string, range: ChartRangeToken) =>
+    [...sqsKeys.all(), "metrics", name, range] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -35,6 +38,20 @@ export function sqsQueuesQueryOptions() {
   return queryOptions({
     queryKey: sqsKeys.queues(),
     queryFn: () => sqs.listQueues(),
+  })
+}
+
+/**
+ * Monitor section read-through (docs/plans/service-metrics-platform.md phase
+ * 3). Polls while the section is visible, mirroring Lambda's
+ * lambdaMetricsQueryOptions.
+ */
+export function sqsMetricsQueryOptions(name: string, range: ChartRangeToken) {
+  return queryOptions({
+    queryKey: sqsKeys.metrics(name, range),
+    queryFn: () => sqs.getMetrics(name, range),
+    refetchInterval: 30_000,
+    enabled: Boolean(name),
   })
 }
 

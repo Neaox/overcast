@@ -926,3 +926,60 @@ export interface TraceSearchResponse {
   scanned: number
   remaining: number
 }
+
+/**
+ * MonitorResponse is the Monitor tab's per-resource BFF response shape.
+ *
+ * Generated from Go `metrics.MonitorResponse` (internal/metrics/monitor.go).
+ */
+export interface MonitorResponse {
+  /**
+   * Enabled is false when service-metric collection is off
+   * (OVERCAST_SERVICE_METRICS=disabled, or CloudWatch disabled under
+   * auto) — the Monitor tab shows a "collection is disabled" state, never
+   * an empty chart pretending nothing has ever happened.
+   */
+  enabled: boolean
+  /**
+   * Range echoes the requested range token so the client can confirm what
+   * it got back matches what it asked for.
+   */
+  range: string
+  /**
+   * PeriodSeconds is the display period the response's points are aligned
+   * to — a multiple of ResolutionSeconds.
+   */
+  periodSeconds?: number
+  /**
+   * ResolutionSeconds is the stored tier that actually answered the
+   * request (SelectResolution's result) — surfaced so the UI can disclose
+   * e.g. "showing hourly data" for an old range.
+   */
+  resolutionSeconds?: number
+  series: MonitorSeries[]
+  /** Error is set only alongside a non-2xx status — an invalid range token. */
+  error?: string
+}
+
+/**
+ * MonitorSeries is one requested (metric, statistic) series' rendered points.
+ *
+ * Generated from Go `metrics.MonitorSeries` (internal/metrics/monitor.go).
+ */
+export interface MonitorSeries {
+  metric: string
+  statistic: string
+  unit: string
+  points: ChartPoint[]
+}
+
+/**
+ * ChartPoint is one rendered (timestamp, value) pair — the JSON shape the
+ * web Monitor tab's BFF read endpoint returns for one series.
+ *
+ * Generated from Go `metrics.ChartPoint` (internal/metrics/chart.go).
+ */
+export interface ChartPoint {
+  timestamp: string
+  value: number
+}

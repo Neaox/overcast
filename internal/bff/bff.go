@@ -146,6 +146,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_overcast/lambda/runtimes"))
 	r.Get("/api/lambda/layers/{layerName}/versions/{version}/metadata", handleLambdaLayerMetadata)
 	r.Get("/api/lambda/instances", handleLambdaInstances)
+	r.Get("/api/lambda/functions/{name}/metrics", handleLambdaMetrics)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
 	r.Put("/api/lambda/functions/{name}/source", handleLambdaSourcePut)
 	r.Post("/api/lambda/functions/{name}/invoke-with-progress", handleLambdaInvoke)
@@ -180,6 +181,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 
 	// ── SQS routes ────────────────────────────────────────────────────────
 	r.Get("/api/sqs/queues/{name}/messages", handleSQSPeek)
+	r.Get("/api/sqs/queues/{name}/metrics", handleSQSMetrics)
 
 	// ── Docs ──────────────────────────────────────────────────────────────
 	r.Get("/api/docs/search", handleDocsSearch)
@@ -949,6 +951,31 @@ type sqsMsgAttr struct {
 	StringValue string `json:"stringValue"`
 }
 
+// handleSQSMetrics proxies GET /_overcast/sqs/queues/{name}/metrics — SQS's
+// half of the Monitor tab read-through, mirroring handleLambdaMetrics.
+func handleSQSMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	name := chi.URLParam(r, "name")
+	qs := ""
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		qs = "?range=" + url.QueryEscape(rng)
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/sqs/queues/%s/metrics%s", ep, url.PathEscape(name), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
 func handleSQSPeek(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	name := chi.URLParam(r, "name")
@@ -1111,6 +1138,34 @@ func handleLambdaInstances(w http.ResponseWriter, r *http.Request) {
 func forwardRegion(upstream *http.Request, incoming *http.Request) {
 	if region := incoming.Header.Get(regionHeader); region != "" {
 		upstream.Header.Set("X-Overcast-Region", region)
+	}
+}
+
+// handleLambdaMetrics proxies GET /_overcast/lambda/functions/{name}/metrics —
+// the web Monitor tab's read-through into the shared service-metrics
+// repository (docs/plans/service-metrics-platform.md phase 3). Forwards only
+// the "range" query parameter the emulator-side allowlist endpoint accepts;
+// this proxy never constructs or parses CloudWatch protocol itself.
+func handleLambdaMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	name := chi.URLParam(r, "name")
+	qs := ""
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		qs = "?range=" + url.QueryEscape(rng)
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/metrics%s", ep, url.PathEscape(name), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
 	}
 }
 

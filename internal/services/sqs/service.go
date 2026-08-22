@@ -295,6 +295,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Post("/{accountID:[0-9]+}/{queueName}", s.Dispatch)
 	// GET: non-AWS peek endpoint — read-only, no state changes, all messages visible.
 	r.Get("/{accountID:[0-9]+}/{queueName}", s.handler.PeekMessages)
+
+	// Emulator-specific: the web UI Monitor tab's metrics read-through
+	// (docs/plans/service-metrics-platform.md phase 3). Lives under
+	// /_overcast/, not the AWS-shaped path above — see
+	// docs/plans/non-canonical-url-namespace.md.
+	r.Get("/_overcast/sqs/queues/{name}/metrics", s.handler.GetQueueMetrics)
 }
 
 // Enqueuer returns an events.MessageEnqueuer backed by this service's store.

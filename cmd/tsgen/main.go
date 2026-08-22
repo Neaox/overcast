@@ -149,6 +149,15 @@ var manifest = []target{
 	{"internal/trace", "Match", "TraceMatch"},
 	{"internal/trace", "MatchField", "TraceMatchField"},
 	{"internal/trace", "DeepResult", "TraceSearchResponse"},
+
+	// GET /_overcast/lambda/functions/{name}/metrics and
+	// GET /_overcast/sqs/queues/{name}/metrics — the web Monitor tab's
+	// read-through into the shared service-metrics repository
+	// (docs/plans/service-metrics-platform.md phase 3). Shared by every
+	// service's Monitor endpoint (internal/metrics/monitor.go).
+	{"internal/metrics", "MonitorResponse", "MonitorResponse"},
+	{"internal/metrics", "MonitorSeries", "MonitorSeries"},
+	{"internal/metrics", "ChartPoint", "ChartPoint"},
 }
 
 // basicTS maps Go predeclared types to TypeScript.

@@ -1393,6 +1393,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 
 	// Emulator-specific: list warm/running instances for the topology map UI.
 	r.Get("/_overcast/lambda/instances", s.handler.ListInstances)
+	// Emulator-specific: the web UI Monitor tab's metrics read-through
+	// (docs/plans/service-metrics-platform.md phase 3).
+	r.Get(emulatorBase+"/functions/{name}/metrics", s.handler.GetFunctionMetrics)
 	// Emulator-specific: runtime catalog for the web UI.
 	r.Get("/_overcast/lambda/runtimes", s.handler.ListRuntimes)
 	// Emulator-specific: layer zip metadata for the web UI.
