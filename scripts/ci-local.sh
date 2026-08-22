@@ -244,9 +244,6 @@ if [ "$scope" != "go" ]; then
     # attributable failure.
     stage "web-build"
     web_cmd env VITE_BUNDLED=true pnpm exec vite build || fail
-
-    stage "web-build-server"
-    web_cmd pnpm run build:server || fail
 fi
 
 # ─── Go ──────────────────────────────────────────────────────────────────────

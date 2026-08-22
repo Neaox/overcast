@@ -71,7 +71,8 @@ any client requests. `sys_bytes` is total memory obtained from the OS
 `docker images --format '{{.Size}}'` after `docker build`. Multi-stage build;
 slim target includes only the Go binary (Lambda functions run in their own
 Docker containers pulled from `public.ecr.aws/lambda/{runtime}`). Console
-target adds Node.js (for the BFF server), the web UI SPA, and BFF bundle.
+target is the same base with the web UI SPA embedded in the binary
+(`//go:embed all:web/dist`, served by `internal/bff`) — no Node.js runtime.
 
 **Request-path allocation (`internal/middleware`, `internal/trace`):**
 `go test -bench` in-process against the middleware chain — no network, no
@@ -492,16 +493,16 @@ The binary is fully static and can run in a scratch container.
 
 The Dockerfile uses a multi-stage, multi-target build:
 
-- `go-builder`: `golang:1.24-alpine` — cross-compiles the Go binary (not shipped)
-- `web-builder`: `node:22-alpine` — builds the SPA and BFF server (not shipped)
+- `go-builder-slim` / `go-builder-console`: `golang:1.24-alpine` — cross-compile the Go binary (not shipped)
+- `web-builder`: `node:22-alpine` — builds the SPA that the console binary embeds (not shipped)
 - `slim` target: `alpine:3.20` + Go binary only (~36 MB)
-- default (console) target: extends `slim` with Node.js, the web UI SPA, and BFF server
+- default (console) target: the same base with a Go binary that has the web UI SPA embedded (`//go:embed all:web/dist`, served by `internal/bff`)
 
 Keep the runtime image lean:
 
 - Don't add unnecessary `apk` packages
 - Use `--no-cache` on every `apk add` to avoid the package index staying in the layer
-- Node.js is only in the console image (for the BFF server); Lambda functions run in their own Docker containers
+- Node.js is not present in any runtime image — it is a build-stage tool only; Lambda functions run in their own Docker containers
 
 ---
 
