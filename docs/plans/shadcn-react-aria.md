@@ -1,9 +1,15 @@
 # shadcn React Aria migration — plan
 
-> Status: proposal — no migration started as of 2026-08-21. There is no `web/components.json`,
-> no `components/aria/` namespace, and no React Aria dependency; the app remains Radix-based
-> (and the direct-Radix dependency list in §1 has since grown: `package.json` now also carries
-> alert-dialog, dropdown-menu, scroll-area, select, separator and tabs packages).
+> Status: **closed — not adopted (2026-08-22)**, recorded as
+> [#1182](https://github.com/Neaox/overcast/issues/1182) (closed, not planned). The web UI
+> stays on Radix; #1101/#1102/#1103 proceed on it. Cost/benefit: no user-facing value for an
+> AWS emulator, a11y goals reachable within Radix, and a base migration would have to precede
+> the #1101 scaffolds or they get built twice. **Reopen trigger:** a concrete primitive the
+> console needs that Radix lacks or does materially worse. The design below is kept as the
+> incremental approach to use if that trigger fires.
+> (As of 2026-08-21 no migration had started: no `web/components.json`, no `components/aria/`,
+> no React Aria dependency; direct-Radix usage in §1 had grown to include alert-dialog,
+> dropdown-menu, scroll-area, select, separator and tabs.)
 > Goal: adopt shadcn's React Aria component base for new complex UI primitives,
 > while preserving Overcast's stable app-facing component APIs and avoiding a
 > broad feature-page rewrite.
