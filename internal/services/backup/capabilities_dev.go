@@ -22,8 +22,8 @@ import "github.com/Neaox/overcast/internal/capabilities"
 // no reachable state can produce one.
 func init() {
 	capabilities.Default.RegisterForService(serviceName,
-		capabilities.Capability{Operation: "CreateBackupVault", Status: capabilities.StatusPartial,
-			Notes: "PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is accepted and dropped — Backup has no tag operations yet (#815)"},
+		capabilities.Capability{Operation: "CreateBackupVault", Status: capabilities.StatusSupported,
+			Notes: "PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is applied at create time, in the same store write as the vault (#1195)"},
 		capabilities.Capability{Operation: "DeleteBackupVault", Status: capabilities.StatusSupported,
 			Notes: "DELETE /backup-vaults/{BackupVaultName}; empty 200, the modeled Unit output"},
 		capabilities.Capability{Operation: "DescribeBackupVault", Status: capabilities.StatusPartial,
@@ -31,7 +31,7 @@ func init() {
 		capabilities.Capability{Operation: "ListBackupVaults", Status: capabilities.StatusPartial,
 			Notes: "GET /backup-vaults; `vaultType`, `shared`, `maxResults` and `nextToken` query params. Every vault is a standard unshared vault, so `shared=true` lists none"},
 		capabilities.Capability{Operation: "CreateBackupPlan", Status: capabilities.StatusPartial,
-			Notes: "PUT /backup/plans; `BackupPlanTags` is accepted and dropped (#815), and `AdvancedBackupSettings` is not stored or returned"},
+			Notes: "PUT /backup/plans; `BackupPlanTags` is applied at create time (#1195); `AdvancedBackupSettings` is not stored or returned"},
 		capabilities.Capability{Operation: "DeleteBackupPlan", Status: capabilities.StatusSupported,
 			Notes: "DELETE /backup/plans/{BackupPlanId}; returns the modeled id, ARN, VersionId and DeletionDate"},
 		capabilities.Capability{Operation: "GetBackupPlan", Status: capabilities.StatusPartial,
@@ -40,5 +40,11 @@ func init() {
 			Notes: "GET /backup/plans; `maxResults` and `nextToken` query params. Plans are deleted outright rather than tombstoned, so `includeDeleted` adds nothing"},
 		capabilities.Capability{Operation: "UpdateBackupPlan", Status: capabilities.StatusPartial,
 			Notes: "POST /backup/plans/{BackupPlanId}; mints a new VersionId per update. Prior versions are not retained and `AdvancedBackupSettings` is not stored"},
+		capabilities.Capability{Operation: "TagResource", Status: capabilities.StatusSupported,
+			Notes: "POST /tags/{ResourceArn}, shared with Pipes/EKS/Scheduler/AppConfig/API Gateway's ARN-dispatched path (#1195). Tags are stored inline on the vault or plan record, so they die with it"},
+		capabilities.Capability{Operation: "ListTags", Status: capabilities.StatusSupported,
+			Notes: "GET /tags/{ResourceArn} (#1195)"},
+		capabilities.Capability{Operation: "UntagResource", Status: capabilities.StatusSupported,
+			Notes: "POST /untag/{ResourceArn} — Backup's own path, not another member of the shared /tags dispatcher (#1195)"},
 	)
 }

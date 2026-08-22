@@ -1004,23 +1004,25 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 
 	// ---- /tags service dispatch ---------------------------------------------
-	// Pipes, EKS, Scheduler, AppConfig and API Gateway (whose endpoint
-	// AppRegistry's SDK shares) all answer tag operations at
-	// /tags/{resourceArn}. Left to their own RegisterRoutes they race for the
-	// same chi patterns and the last registration silently wins, so the main
-	// router owns the path and dispatches on the ARN's service prefix, exactly
-	// like /v1/tags above.
+	// Pipes, EKS, Scheduler, AppConfig, API Gateway (whose endpoint
+	// AppRegistry's SDK shares) and Backup (TagResource/ListTags only — see
+	// below) all answer tag operations at /tags/{resourceArn}. Left to their
+	// own RegisterRoutes they race for the same chi patterns and the last
+	// registration silently wins, so the main router owns the path and
+	// dispatches on the ARN's service prefix, exactly like /v1/tags above.
 	// API Gateway's ARN-keyed tag store answers its own ARNs and AppRegistry's
 	// "servicecatalog" ones — AppRegistry's SDK shares API Gateway's endpoint
 	// and stores tags in the same ARN-keyed map, see
 	// internal/services/appregistry/service.go. It is deliberately NOT the
 	// owner of every other ARN: it used to be, and dozens of services'
 	// unimplemented tag operations read as HTTP 200 {"tags":{}} — #976 found
-	// `aws backup list-tags` succeeding against a service that implements no
-	// tag operations at all, which is #963's failure mode. An ARN no router
-	// claims now falls back to restFallback, exactly as if no /tags route had
-	// matched: a signed caller reaches the generated 501, and unsigned traffic
-	// gets S3's answer, the router-wide design for unclaimed paths.
+	// `aws backup list-tags` succeeding against a service that, at the time,
+	// implemented no tag operations at all, which is #963's failure mode.
+	// Backup now has real tag operations of its own (#1195) and is dispatched
+	// here like every other owner. An ARN no router claims now falls back to
+	// restFallback, exactly as if no /tags route had matched: a signed caller
+	// reaches the generated 501, and unsigned traffic gets S3's answer, the
+	// router-wide design for unclaimed paths.
 	{
 		tagRouters := map[string]http.Handler{}
 		if registeredForTest(cfg, "pipes") {
@@ -1049,6 +1051,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			tagRouters["servicecatalog"] = routes
 			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "apigateway", routes)
 			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "appregistry", routes)
+		}
+		if registeredForTest(cfg, "backup") {
+			// Backup's TagResource and ListTags share this path space
+			// (#1195); UntagResource does not — it lives at
+			// /untag/{ResourceArn}, registered directly by Backup's own
+			// RegisterRoutes, since no other service answers there.
+			routes := backupSvc.TagsRouter()
+			tagRouters["backup"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "backup", routes)
 		}
 		if len(tagRouters) > 0 {
 			r.Route("/tags", func(sub chi.Router) {

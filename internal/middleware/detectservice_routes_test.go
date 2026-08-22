@@ -117,6 +117,11 @@ var registeredRouteClassification = map[string]string{
 	// rather than that root: "backup" is a legal S3 bucket name.
 	"/backup":        "backup",
 	"/backup-vaults": "backup",
+	// Backup's UntagResource (#1195), POST /untag/{ResourceArn} — its own path,
+	// not another member of the shared "/tags" family below. Unsigned it falls
+	// to "s3" for the same reason "/tags" does: "untag" is a legal S3 bucket
+	// name, and only signed Backup traffic ever reaches this route.
+	"/untag": "s3",
 	// AppConfig Data's two modeled bindings. detectService claims both
 	// prefixes explicitly: they are root-level paths with no version
 	// segment, so nothing else identifies them before the credential scope.

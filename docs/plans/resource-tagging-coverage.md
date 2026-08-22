@@ -1,29 +1,35 @@
 # Resource Tagging Coverage Audit
 
-> Status: audit complete. Every **Axis A** gap outside the fenced `logs`
-> service is closed, together with the Axis B gaps in the same services. The
-> remaining Axis B and Axis C sets are listed under
-> [What remains](#what-remains).
+> Status: audit complete. Every **Axis A** gap is closed (#1195 filled the
+> last two, `logs` and `backup`), together with the Axis B gaps in the
+> services that closed alongside them. The remaining Axis B and Axis C sets
+> are listed under [What remains](#what-remains).
 >
-> Re-verified 2026-08-21 — movement since the audit:
-> - **`logs` Axis A is mostly closed**: `TagLogGroup` / `UntagLogGroup` /
->   `ListTagsLogGroup` shipped (the #794 fence is long lifted); the modern
->   `TagResource` / `UntagResource` / `ListTagsForResource` spelling is still
->   absent from `cloudwatch-logs`.
-> - **`backup` is still open on both axes**: #815/#904 rebound the service to
->   its modeled REST paths, but the capability notes still read
->   "`BackupVaultTags` is accepted and dropped — Backup has no tag operations
->   yet".
-> - **Two Axis B rows have since closed**: `opensearch` `CreateDomain` (inline
->   `TagList` applied at creation, per its #893 rebind) and `appconfig`
->   creates (tags applied inline since the #899 rewrite). The remaining Axis B
->   rows below were spot-checked (kms, rds, elasticache, stepfunctions, ssm,
->   ecs, eventbridge…) and are still open, but re-verify a row against the
->   handler before acting on it.
-> - EC2's duplicate `TagSpecification.N` parsers were unified by #1033 (per the
->   tagging architecture review, closed with every finding fixed and its plan
->   doc deleted 2026-08-21); the create operations outside RunInstances/NAT/VPN
->   gateways still ignore the member.
+> Re-verified 2026-08-22 (#1195) — movement since the previous update:
+> - **`logs` Axis A is closed**: the modern `TagResource` / `UntagResource` /
+>   `ListTagsForResource` spelling now sits alongside the legacy
+>   `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup` trio, resolving a
+>   resource ARN to the log group name and sharing the legacy spelling's
+>   validation and storage rather than duplicating it.
+> - **`backup` is closed on both axes**: `TagResource` (`POST
+>   /tags/{ResourceArn}`), `ListTags` (`GET /tags/{ResourceArn}`) and
+>   `UntagResource` (`POST /untag/{ResourceArn}`, deliberately not another
+>   member of the shared `/tags` dispatcher) are implemented, tags are stored
+>   inline on the vault/plan record so they die with it, and
+>   `BackupVaultTags`/`BackupPlanTags` now stick at create time instead of
+>   being accepted and dropped. The CloudFormation provisioner forwards both
+>   members at create and reconciles a tag-only stack update in place via
+>   TagResource/UntagResource (`internal/services/cloudformation/provisioner_json_coverage.go`),
+>   without forcing the replacement a structural `BackupPlan`/`BackupVaultName`
+>   change still requires.
+> - Previously re-verified (2026-08-21): two Axis B rows closed —
+>   `opensearch` `CreateDomain` (inline `TagList` applied at creation, per its
+>   #893 rebind) and `appconfig` creates (tags applied inline since the #899
+>   rewrite). The remaining Axis B rows below were spot-checked (kms, rds,
+>   elasticache, stepfunctions, ssm, ecs, eventbridge…) and are still open,
+>   but re-verify a row against the handler before acting on it. EC2's
+>   duplicate `TagSpecification.N` parsers were unified by #1033; the create
+>   operations outside RunInstances/NAT/VPN gateways still ignore the member.
 >
 > Goal: **every resource at service tier `inert` or above that is taggable in real
 > AWS must be taggable in Overcast.**
@@ -84,11 +90,11 @@ Tier is the Overcast service tier. "Status" is Overcast's, verified in code.
 
 | Service | Tier | Resource | AWS mechanism | Overcast status |
 | --- | --- | --- | --- | --- |
-| `logs` | partial | Log group, log stream, destination | `TagResource` / `UntagResource` / `ListTagsForResource`, plus the deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup` | **missing** — no tag operation of any spelling; log groups cannot be tagged at all |
+| `logs` | partial | Log group, log stream, destination | `TagResource` / `UntagResource` / `ListTagsForResource`, plus the deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup` | ~~missing~~ **closed for log groups** (#1195); log streams and destinations are not emulated |
 | `kinesis` | partial | Stream | `TagResource` / `UntagResource` / `ListTagsForResource` (ARN-based, alongside the older stream-name ops) | ~~partial~~ **closed** |
 | `ses` | partial | Email identity, configuration set | SESv2 `TagResource` / `UntagResource` / `ListTagsForResource` (`POST`/`DELETE`/`GET /v2/email/tags`) | ~~missing~~ **closed for identities**; configuration sets are not emulated |
 | `acm` | inert | Certificate | `TagResource` / `UntagResource` / `ListTagsForResource` (modern aliases of `AddTagsToCertificate` / `RemoveTagsFromCertificate` / `ListTagsForCertificate`) | ~~partial~~ **closed** |
-| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | **missing — not filled**; the protocol blocker is gone since #815, the tagging is not done, see [`backup` was not reachable by a real SDK at all](#backup-was-not-reachable-by-a-real-sdk-at-all--since-fixed-and-the-gap-is-now-unblocked) |
+| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | ~~missing~~ **closed** (#1195); see [`backup` was not reachable by a real SDK at all](#backup-was-not-reachable-by-a-real-sdk-at-all--since-fixed-and-the-gap-is-now-unblocked) |
 | `cloudtrail` | inert | Trail | `AddTags` / `RemoveTags` / `ListTags` | ~~missing~~ **closed** |
 | `iam` | inert | Managed policy | `TagPolicy` / `UntagPolicy` / `ListPolicyTags` | ~~missing~~ **closed** |
 | `iam` | inert | Instance profile | `TagInstanceProfile` / `UntagInstanceProfile` / `ListInstanceProfileTags` | ~~missing~~ **closed** |
@@ -101,9 +107,9 @@ Every other in-scope service's tagging operations are present and reachable:
 `dynamodb`, `ec2`, `ecr`, `ecs`, `efs`, `eks`, `elasticache`, `kms`, `msk`,
 `pipes`, `rds`, `scheduler`, `secretsmanager`, `ssm`, `stepfunctions`,
 `appconfig`, `appregistry`, `appsync`, `athena`, `cloudwatch`, `elbv2`,
-`eventbridge`, `firehose`, `glue`, `opensearch`, `route53`. `appconfigdata`,
-`cloudformation`, `dynamodbstreams` and `sts` model no tagging operations at
-all.
+`eventbridge`, `firehose`, `glue`, `opensearch`, `route53`, `logs`, `backup`.
+`appconfigdata`, `cloudformation`, `dynamodbstreams` and `sts` model no
+tagging operations at all.
 
 ### Axis B — missing tag-on-create
 
@@ -123,7 +129,7 @@ all.
 | `acm` | inert | `RequestCertificate` | `Tags` | ~~missing~~ **closed** |
 | `athena` | inert | `CreateWorkGroup` | `Tags` | **missing** |
 | `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` | `Tags` | **missing** |
-| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | **missing — not filled**, same as Axis A: unblocked by #815, still not done; both members are accepted and dropped |
+| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | ~~missing~~ **closed** (#1195); both members are stored at create time, and the CloudFormation provisioner forwards them and reconciles a tag-only update in place |
 | `cloudtrail` | inert | `CreateTrail` | `TagsList` | ~~missing~~ **closed** |
 | `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` | `Tags` | **missing** |
 | `eventbridge` | inert | `CreateEventBus`, `PutRule` | `Tags` | **missing** |
@@ -159,20 +165,29 @@ deliberately.
 
 **#815 has since done it**: all nine operations are served under
 `/backup-vaults` and `/backup/plans`, and the target prefix is gone. The
-blocker in both axes is therefore lifted — but the tagging work itself is still
-outstanding, and #815 did not attempt it. What remains:
+blocker in both axes was therefore lifted, and #1195 has now done the tagging
+work itself:
 
 - **Axis A** — `TagResource` (`POST /tags/{ResourceArn}`), `ListTags`
-  (`GET /tags/{ResourceArn}`) and `UntagResource` (`POST /untag/{ResourceArn}`).
-  Note the third: Backup unbinds tags at `/untag`, not with `DELETE /tags`, so
-  it is not simply another member of the shared `/tags` dispatcher. The first
-  two are, and must join it through a `TagsRouter()` recorded as a
-  `dispatchMount`, exactly as Scheduler's do — registering competing `/tags`
-  patterns from `RegisterRoutes` is what `internal/router/router.go`'s
-  ARN-dispatcher exists to prevent.
+  (`GET /tags/{ResourceArn}`) and `UntagResource` (`POST /untag/{ResourceArn}`)
+  are implemented (`internal/services/backup/handler_tags.go`). `UntagResource`
+  unbinds tags at `/untag`, not with `DELETE /tags`, so it is not another
+  member of the shared `/tags` dispatcher; it is registered directly by
+  Backup's own `RegisterRoutes` instead. `TagResource` and `ListTags` do share
+  `/tags`, joining it through a `TagsRouter()` recorded as a `dispatchMount`,
+  exactly as Scheduler's do — registering competing `/tags` patterns from
+  `RegisterRoutes` is what `internal/router/router.go`'s ARN-dispatcher exists
+  to prevent. Tags are stored inline on the vault/plan record rather than in a
+  namespace of their own, so they die with the resource in the same store
+  write that deletes it, matching #1037's tags-die-with-their-resource rule.
 - **Axis B** — `BackupVaultTags` on `CreateBackupVault` and `BackupPlanTags` on
-  `CreateBackupPlan`. Both members are accepted and dropped today, which the
-  capability rows and `docs/services/backup.md` say plainly.
+  `CreateBackupPlan` are validated (via the shared `serviceutil.ValidateTags`)
+  and stored at create time, so they are readable through `ListTags`
+  immediately. `UpdateBackupPlan` models no tags member and Backup models no
+  `UpdateBackupVault` at all, so a plan or vault's tags can only change
+  in-place through a follow-up `TagResource`/`UntagResource` — which is also
+  what the CloudFormation provisioner now does for a tag-only stack update,
+  rather than forcing the replacement a structural change still requires.
 
 ### Duplicate legacy/typed tag handlers
 
@@ -224,11 +239,12 @@ protocols and HTTP bindings but **not member shapes**.
 
 ## Fenced services
 
-`internal/services/cloudwatch/**` is owned by another task (issue #794) for the
-duration of this branch, and `internal/services/cloudwatch/logs/` sits inside
-that path. The `logs` gap in Axis A is therefore **reported, not fixed**, even
-though it is the highest-tier hard gap in the audit. `internal/services/scheduler/**`
-is likewise fenced (issue #793); it has no tagging gap.
+`internal/services/scheduler/**` was fenced during the original audit branch
+(issue #793); it has no tagging gap. `internal/services/cloudwatch/**` was
+fenced for issue #794 at the same time, which is why the `logs` Axis A gap —
+the highest-tier hard gap the audit found — was reported rather than fixed
+there. That fence was long lifted before #1195 closed the gap directly (see
+the Status note at the top of this document).
 
 ## What this branch filled
 
@@ -251,18 +267,10 @@ succeeded and stranded the tags under an unowned ARN, and
 
 ## What remains
 
-**Axis A — one service, fenced.** `logs` (tier partial) has no tag operation of
-any spelling: log groups cannot be tagged at all. It is the highest-tier hard
-gap in this audit and it is untouched, because `internal/services/cloudwatch/logs/`
-sits inside the `internal/services/cloudwatch/**` path fenced for issue #794.
-It needs `TagResource` / `UntagResource` / `ListTagsForResource` plus the
-deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup`;
-`CreateLogGroup` already stores its inline tags, so the tags exist and are
-merely unreadable.
-
-**Axis A — one service, open.** `backup`. It was blocked for the protocol
-reason above; #815 removed the block and did not close the gap, so this is now
-ordinary tagging work with nothing in front of it.
+**Axis A — closed.** Both services this section used to track — `logs`
+(fenced for issue #794 at the time of the original audit) and `backup`
+(blocked on the REST-rebind #815 did) — were closed by #1195. See the Status
+note at the top of this document.
 
 **Axis B — fourteen services.** Every one of these already has working tagging
 operations; what is missing is only the inline tags on the create call.

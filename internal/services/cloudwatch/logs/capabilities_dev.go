@@ -31,5 +31,8 @@ func init() {
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "TagLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "UntagLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Removes tags from a log group"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "ListTagsLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Returns tags for a log group"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "TagResource", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Modern, ARN-addressed sibling of TagLogGroup (#1195); resolves `resourceArn` to a log group and shares its validation and storage"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "UntagResource", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Modern, ARN-addressed sibling of UntagLogGroup (#1195)"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "ListTagsForResource", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Modern, ARN-addressed sibling of ListTagsLogGroup (#1195)"},
 	)
 }

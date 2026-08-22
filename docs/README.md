@@ -122,7 +122,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 2   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
-| CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 19  | Core CRUD + common workflows  |
+| CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 22  | Core CRUD + common workflows  |
 | SES              | [ses.md](./services/ses.md)                         | 45  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
@@ -140,7 +140,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Glue             | [glue.md](./services/glue.md)                       | 11  | Minimal / targeted support    |
 | OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
 | AppRegistry      | [appregistry.md](./services/appregistry.md)         | 22  | IaC/discovery-oriented stub   |
-| Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
+| Backup           | [backup.md](./services/backup.md)                   | 12  | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 12  | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 50  | IaC/discovery-oriented stub   |
 | ELBv2            | [elb.md](./services/elb.md)                         | 21  | IaC/discovery-oriented stub   |

@@ -69,7 +69,7 @@ Storage and retention behavior:
 | Log events  | 4            |                |
 | Insights    |              | 3              |
 | Retention   | 2            | 1              |
-| Tagging     | 3            |                |
+| Tagging     | 6            |                |
 
 ---
 
@@ -118,10 +118,13 @@ Storage and retention behavior:
 
 ### Tagging
 
-| Operation          | Status       | Notes                                                                                                               | AWS Docs                                                                                               |
-| ------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `TagLogGroup`      | ✅ Supported | Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagLogGroup.html)      |
-| `UntagLogGroup`    | ✅ Supported | Removes tags from a log group                                                                                       | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagLogGroup.html)    |
-| `ListTagsLogGroup` | ✅ Supported | Returns tags for a log group                                                                                        | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsLogGroup.html) |
+| Operation             | Status       | Notes                                                                                                                             | AWS Docs                                                                                                  |
+| --------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `TagLogGroup`         | ✅ Supported | Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating               | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagLogGroup.html)         |
+| `UntagLogGroup`       | ✅ Supported | Removes tags from a log group                                                                                                     | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagLogGroup.html)       |
+| `ListTagsLogGroup`    | ✅ Supported | Returns tags for a log group                                                                                                      | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsLogGroup.html)    |
+| `TagResource`         | ✅ Supported | Modern, ARN-addressed sibling of TagLogGroup (#1195); resolves `resourceArn` to a log group and shares its validation and storage | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Modern, ARN-addressed sibling of UntagLogGroup (#1195)                                                                            | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Modern, ARN-addressed sibling of ListTagsLogGroup (#1195)                                                                         | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->
