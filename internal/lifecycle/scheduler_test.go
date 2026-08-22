@@ -270,6 +270,77 @@ func TestScheduler_Settle_transitionCancelled(t *testing.T) {
 	}
 }
 
+// TestScheduler_StopRacesSelfReschedulingAfter reproduces the shape of the
+// race from issue #1282: readiness.Watch's health-check loop reschedules
+// itself from inside its own callback (the callback calls Scheduler.After
+// again, for the next probe attempt) for as long as its probe keeps
+// answering Waiting — here modelled directly, since nothing bounds how long
+// that can go on for. Against the unfixed scheduler this hangs: Stop's
+// wg.Wait has nothing to fence the chain, so a callback can always land one
+// more After — including, on an unlucky interleaving, one whose wg.Add races
+// Stop's wg.Wait exactly as reported (scheduler.go:81 vs :211 at the time).
+// Fixed, After after Stop is a no-op, so the chain breaks on the first After
+// call that lands once Stop's critical section has run, and Stop returns
+// promptly. Run under `go test -race -count=20`.
+func TestScheduler_StopRacesSelfReschedulingAfter(t *testing.T) {
+	s := NewScheduler(clock.New())
+
+	var hammer func()
+	hammer = func() {
+		s.After("hammer", time.Microsecond, func() {
+			hammer()
+		})
+	}
+	hammer()
+
+	// Give the chain a moment to actually be alternating between an in-flight
+	// callback and a freshly scheduled one — the window Stop must race
+	// against — before racing Stop against it.
+	time.Sleep(time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Stop(ctx)
+
+	if ctx.Err() != nil {
+		t.Fatal("Stop() did not complete before its deadline — a callback kept rescheduling past Stop")
+	}
+	if s.PendingCount() != 0 {
+		t.Fatalf("expected 0 pending after Stop, got %d", s.PendingCount())
+	}
+}
+
+// TestScheduler_After_isANoOpAfterStop is the deterministic half of the
+// #1282 fix: DoD requires that After after Stop be a defined no-op rather
+// than touching torn-down state. This nails that contract down directly,
+// with no reliance on winning a race window — After must neither run fn
+// inline (the 0-delay fast path) nor ever schedule it.
+func TestScheduler_After_isANoOpAfterStop(t *testing.T) {
+	mock := clock.NewMock()
+	s := NewScheduler(mock)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Stop(ctx)
+
+	var ran atomic.Bool
+	s.After("late", 0, func() { ran.Store(true) })
+	if ran.Load() {
+		t.Fatal("After ran its callback inline after Stop — the 0-delay fast path must be a no-op too")
+	}
+
+	s.After("late-delayed", time.Hour, func() { ran.Store(true) })
+	if s.PendingCount() != 0 {
+		t.Fatalf("PendingCount = %d after a post-Stop After, want 0 — it must not schedule", s.PendingCount())
+	}
+
+	mock.Add(2 * time.Hour)
+	time.Sleep(10 * time.Millisecond)
+	if ran.Load() {
+		t.Fatal("a transition scheduled after Stop ran anyway")
+	}
+}
+
 func TestScheduler_multipleKeys(t *testing.T) {
 	mock := clock.NewMock()
 	s := NewScheduler(mock)

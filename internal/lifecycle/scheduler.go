@@ -36,6 +36,18 @@ type Scheduler struct {
 	// and return while the transition was still working.
 	inflight map[chan struct{}]struct{}
 	wg       sync.WaitGroup
+	// stopped is set under mu by Stop, before it spawns the goroutine that
+	// waits on wg. Every After checks it under the same mu before it ever
+	// touches wg, so once Stop's critical section has run, no After call still
+	// to come can call wg.Add: it either finished its own critical section
+	// (and so its Add, if any) strictly before Stop's ran, or it is blocked on
+	// mu until Stop's has, and then observes stopped and skips wg entirely.
+	// That gives wg.Add and wg.Wait — which Stop calls without holding mu, so
+	// it does not block callbacks already in flight — a happens-before edge
+	// that mu alone would not, closing the race in #1282 where a callback
+	// still in flight rescheduled itself (After calling After) concurrently
+	// with Stop's wait.
+	stopped bool
 }
 
 // NewScheduler creates a Scheduler using the given clock.
@@ -57,8 +69,20 @@ func NewScheduler(clk clock.Clock) *Scheduler {
 // immediately see the updated state instead of racing with a goroutine.
 // With a mock clock, 0-delay timers remain pending until clock.Add is called,
 // preserving test-time control.
+//
+// After after Stop is a defined no-op: it neither runs fn nor schedules it,
+// including the 0-delay inline fast path. That is deliberate — a service's
+// shutdown must be able to rely on nothing it manages through this Scheduler
+// starting new work once Stop has been called, and a callback that
+// reschedules itself (as readiness.Watch's health-check loop does) must stop
+// doing so rather than run forever underneath a stopped service.
 func (s *Scheduler) After(key string, delay time.Duration, fn func()) {
 	s.mu.Lock()
+
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
 
 	// Cancel existing timer for this key if present.
 	if existing, ok := s.pending[key]; ok {
@@ -189,10 +213,20 @@ func (s *Scheduler) PendingCount() int {
 	return len(s.pending)
 }
 
-// Stop cancels all pending transitions and waits for any in-flight callbacks
-// to complete. Respects ctx for timeout on the wait.
+// Stop marks the scheduler stopped, cancels all pending transitions, and
+// waits for any in-flight callbacks to complete. Respects ctx for timeout on
+// the wait.
+//
+// stopped is set inside this same critical section, before any pending
+// transition is cancelled and before the wg.Wait below. That ordering is what
+// makes wg.Add and wg.Wait race-free without either taking mu: every After
+// call that has not yet reached its own critical section when Stop reaches
+// this one will, once it does, see stopped and return without calling
+// wg.Add — so by the time this critical section ends, no more Adds are
+// coming, and it is safe to wait.
 func (s *Scheduler) Stop(ctx context.Context) {
 	s.mu.Lock()
+	s.stopped = true
 	for key, entry := range s.pending {
 		if entry.timer.Stop() {
 			s.wg.Done()
