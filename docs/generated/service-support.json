@@ -3131,12 +3131,14 @@
         {
           "operation": "DeleteSecurityGroup",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Fails with DependencyViolation while attached to a running/pending instance; the VPC's default group answers CannotDelete"
         },
         {
           "operation": "DeleteSubnet",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Fails with DependencyViolation while ENIs, non-terminated instances, or NAT gateways remain in the subnet"
         },
         {
           "operation": "DeleteTags",
@@ -3148,7 +3150,7 @@
           "operation": "DeleteVpc",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Removes Docker network; fails if subnets/IGW attached"
+          "notes": "Removes Docker network; fails with DependencyViolation while subnets, gateways, endpoints, peering connections, ENIs, or instances remain"
         },
         {
           "operation": "DeleteVpcEndpoints",
