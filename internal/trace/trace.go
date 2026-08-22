@@ -687,44 +687,127 @@ func isInternalPath(p string) bool {
 	return false
 }
 
-// MarshalJSON overrides the default []byte → base64 encoding so that body
-// fields appear as plain strings in the JSON output.
-func (e Entry) MarshalJSON() ([]byte, error) {
-	type shadow struct {
-		RequestID             string         `json:"requestId"`
-		Timestamp             time.Time      `json:"timestamp"`
-		Duration              time.Duration  `json:"duration"`
-		Method                string         `json:"method"`
-		Path                  string         `json:"path"`
-		Host                  string         `json:"host"`
-		Query                 string         `json:"query,omitempty"`
-		Service               string         `json:"service"`
-		Operation             string         `json:"operation,omitempty"`
-		Region                string         `json:"region"`
-		Stack                 string         `json:"stack,omitempty"`
-		RequestHeaders        http.Header    `json:"requestHeaders"`
-		RequestBody           string         `json:"requestBody,omitempty"`
-		RequestBodyOmitted    OmitReason     `json:"requestBodyOmitted,omitempty"`
-		RequestBodyTruncated  bool           `json:"requestBodyTruncated,omitempty"`
-		RequestSize           int64          `json:"requestSize,omitempty"`
-		ResponseHeaders       http.Header    `json:"responseHeaders"`
-		ResponseBody          string         `json:"responseBody,omitempty"`
-		ResponseBodyOmitted   OmitReason     `json:"responseBodyOmitted,omitempty"`
-		ResponseBodyTruncated bool           `json:"responseBodyTruncated,omitempty"`
-		StatusCode            int            `json:"statusCode"`
-		Streaming             bool           `json:"streaming,omitempty"`
-		Hops                  []Hop          `json:"hops,omitempty"`
-		LogEntries            []LogEntry     `json:"logEntries,omitempty"`
-		AWSErrorCode          string         `json:"awsErrorCode,omitempty"`
-		AWSErrorMessage       string         `json:"awsErrorMessage,omitempty"`
-		RemoteAddr            string         `json:"remoteAddr,omitempty"`
-		UserAgent             string         `json:"userAgent,omitempty"`
-		Referer               string         `json:"referer,omitempty"`
-		ParentRequestID       string         `json:"parentRequestId,omitempty"`
-		XRayTraceID           string         `json:"xrayTraceId,omitempty"`
-		Metadata              map[string]any `json:"metadata,omitempty"`
+// entryJSON is Entry's wire shape — what GET /_overcast/debug/trace/{id}
+// returns and what cmd/tsgen renders as the console's TraceEntry. It differs
+// from Entry in two ways: the body fields are strings rather than []byte
+// (encoding/json would base64 them otherwise), and the derived
+// *BodyTruncated booleans are added for callers that predate OmitReason.
+// Hops are likewise rendered through hopJSON. Keep the two in step: Entry is
+// the in-memory type, this is the contract.
+type entryJSON struct {
+	RequestID string        `json:"requestId"`
+	Timestamp time.Time     `json:"timestamp"`
+	Duration  time.Duration `json:"duration"`
+	Method    string        `json:"method"`
+	Path      string        `json:"path"`
+	Host      string        `json:"host"`
+	Query     string        `json:"query,omitempty"`
+	Service   string        `json:"service"`
+	Operation string        `json:"operation,omitempty"`
+	Region    string        `json:"region"`
+	Stack     string        `json:"stack,omitempty"`
+
+	RequestHeaders     http.Header `json:"requestHeaders"`
+	RequestBody        string      `json:"requestBody,omitempty"`
+	RequestBodyOmitted OmitReason  `json:"requestBodyOmitted,omitempty"`
+	// RequestBodyTruncated is derived from RequestBodyOmitted and kept for
+	// compatibility; prefer the reason, which says *which* loss occurred.
+	RequestBodyTruncated bool  `json:"requestBodyTruncated,omitempty"`
+	RequestSize          int64 `json:"requestSize,omitempty"`
+
+	ResponseHeaders     http.Header `json:"responseHeaders"`
+	ResponseBody        string      `json:"responseBody,omitempty"`
+	ResponseBodyOmitted OmitReason  `json:"responseBodyOmitted,omitempty"`
+	// ResponseBodyTruncated is derived from ResponseBodyOmitted; see
+	// RequestBodyTruncated.
+	ResponseBodyTruncated bool `json:"responseBodyTruncated,omitempty"`
+	StatusCode            int  `json:"statusCode"`
+	Streaming             bool `json:"streaming,omitempty"`
+
+	Hops       []hopJSON  `json:"hops,omitempty"`
+	LogEntries []LogEntry `json:"logEntries,omitempty"`
+
+	AWSErrorCode    string `json:"awsErrorCode,omitempty"`
+	AWSErrorMessage string `json:"awsErrorMessage,omitempty"`
+
+	RemoteAddr      string `json:"remoteAddr,omitempty"`
+	UserAgent       string `json:"userAgent,omitempty"`
+	Referer         string `json:"referer,omitempty"`
+	ParentRequestID string `json:"parentRequestId,omitempty"`
+
+	XRayTraceID string         `json:"xrayTraceId,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// hopJSON is Hop's wire shape — bodies as strings, plus the derived
+// *BodyTruncated booleans — and what cmd/tsgen renders as TraceHop. See
+// entryJSON.
+type hopJSON struct {
+	ID                 string      `json:"id"`
+	RequestID          string      `json:"requestId,omitempty"`
+	Order              int         `json:"order"`
+	CallerService      string      `json:"callerService"`
+	CallerOperation    string      `json:"callerOperation,omitempty"`
+	Service            string      `json:"service"`
+	Operation          string      `json:"operation"`
+	TargetURI          string      `json:"targetUri,omitempty"`
+	RequestHeaders     http.Header `json:"requestHeaders,omitempty"`
+	RequestBody        string      `json:"requestBody,omitempty"`
+	RequestBodyOmitted OmitReason  `json:"requestBodyOmitted,omitempty"`
+	// RequestBodyTruncated is derived from RequestBodyOmitted and kept for
+	// compatibility; prefer the reason.
+	RequestBodyTruncated bool       `json:"requestBodyTruncated,omitempty"`
+	ResponseStatus       int        `json:"responseStatus"`
+	ResponseBody         string     `json:"responseBody,omitempty"`
+	ResponseBodyOmitted  OmitReason `json:"responseBodyOmitted,omitempty"`
+	// ResponseBodyTruncated is derived from ResponseBodyOmitted; see
+	// RequestBodyTruncated.
+	ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
+	Duration              time.Duration `json:"duration"`
+	Error                 string        `json:"error,omitempty"`
+	Timestamp             time.Time     `json:"timestamp"`
+	Noisy                 bool          `json:"noisy,omitempty"`
+	Stack                 string        `json:"stack,omitempty"`
+}
+
+// wire converts a Hop to its JSON shape.
+func (h Hop) wire() hopJSON {
+	return hopJSON{
+		ID:                    h.ID,
+		RequestID:             h.RequestID,
+		Order:                 h.Order,
+		CallerService:         h.CallerService,
+		CallerOperation:       h.CallerOperation,
+		Service:               h.Service,
+		Operation:             h.Operation,
+		TargetURI:             h.TargetURI,
+		RequestHeaders:        h.RequestHeaders,
+		RequestBody:           string(h.RequestBody),
+		RequestBodyOmitted:    h.RequestBodyOmitted,
+		RequestBodyTruncated:  h.RequestBodyOmitted.Omitted(),
+		ResponseStatus:        h.ResponseStatus,
+		ResponseBody:          string(h.ResponseBody),
+		ResponseBodyOmitted:   h.ResponseBodyOmitted,
+		ResponseBodyTruncated: h.ResponseBodyOmitted.Omitted(),
+		Duration:              h.Duration,
+		Error:                 h.Error,
+		Timestamp:             h.Timestamp,
+		Noisy:                 h.Noisy,
+		Stack:                 h.Stack,
 	}
-	return json.Marshal(shadow{
+}
+
+// MarshalJSON encodes the Entry as entryJSON, so that body fields appear as
+// plain strings in the JSON output rather than base64.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	var hops []hopJSON
+	if e.Hops != nil {
+		hops = make([]hopJSON, len(e.Hops))
+		for i, h := range e.Hops {
+			hops[i] = h.wire()
+		}
+	}
+	return json.Marshal(entryJSON{
 		RequestID:             e.RequestID,
 		Timestamp:             e.Timestamp,
 		Duration:              e.Duration,
@@ -747,7 +830,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		ResponseBodyTruncated: e.ResponseBodyOmitted.Omitted(),
 		StatusCode:            e.StatusCode,
 		Streaming:             e.Streaming,
-		Hops:                  e.Hops,
+		Hops:                  hops,
 		LogEntries:            e.LogEntries,
 		AWSErrorCode:          e.AWSErrorCode,
 		AWSErrorMessage:       e.AWSErrorMessage,
@@ -760,53 +843,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// MarshalJSON overrides the default []byte → base64 encoding for Hop body
-// fields.
+// MarshalJSON encodes the Hop as hopJSON, so that body fields appear as plain
+// strings in the JSON output rather than base64.
 func (h Hop) MarshalJSON() ([]byte, error) {
-	type shadow struct {
-		ID                    string        `json:"id"`
-		RequestID             string        `json:"requestId,omitempty"`
-		Order                 int           `json:"order"`
-		CallerService         string        `json:"callerService"`
-		CallerOperation       string        `json:"callerOperation,omitempty"`
-		Service               string        `json:"service"`
-		Operation             string        `json:"operation"`
-		TargetURI             string        `json:"targetUri,omitempty"`
-		RequestHeaders        http.Header   `json:"requestHeaders,omitempty"`
-		RequestBody           string        `json:"requestBody,omitempty"`
-		RequestBodyOmitted    OmitReason    `json:"requestBodyOmitted,omitempty"`
-		RequestBodyTruncated  bool          `json:"requestBodyTruncated,omitempty"`
-		ResponseStatus        int           `json:"responseStatus"`
-		ResponseBody          string        `json:"responseBody,omitempty"`
-		ResponseBodyOmitted   OmitReason    `json:"responseBodyOmitted,omitempty"`
-		ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
-		Duration              time.Duration `json:"duration"`
-		Error                 string        `json:"error,omitempty"`
-		Timestamp             time.Time     `json:"timestamp"`
-		Noisy                 bool          `json:"noisy,omitempty"`
-		Stack                 string        `json:"stack,omitempty"`
-	}
-	return json.Marshal(shadow{
-		ID:                    h.ID,
-		RequestID:             h.RequestID,
-		Order:                 h.Order,
-		CallerService:         h.CallerService,
-		CallerOperation:       h.CallerOperation,
-		Service:               h.Service,
-		Operation:             h.Operation,
-		TargetURI:             h.TargetURI,
-		RequestHeaders:        h.RequestHeaders,
-		RequestBody:           string(h.RequestBody),
-		RequestBodyOmitted:    h.RequestBodyOmitted,
-		RequestBodyTruncated:  h.RequestBodyOmitted.Omitted(),
-		ResponseStatus:        h.ResponseStatus,
-		ResponseBody:          string(h.ResponseBody),
-		ResponseBodyOmitted:   h.ResponseBodyOmitted,
-		ResponseBodyTruncated: h.ResponseBodyOmitted.Omitted(),
-		Duration:              h.Duration,
-		Error:                 h.Error,
-		Timestamp:             h.Timestamp,
-		Noisy:                 h.Noisy,
-		Stack:                 h.Stack,
-	})
+	return json.Marshal(h.wire())
 }

@@ -18,7 +18,7 @@ import { LambdaInvokeDialog } from "@/features/lambda/components/lambda-invoke-d
 import { LambdaInvocationsDrawer, type Invocation } from "./lambda-invocations-drawer"
 import type { LogStreamTarget } from "./log-stream-peek"
 import { logsStreamsQueryOptions } from "@/features/cloudwatch/logs/data"
-import type { LogStream, StreamEvent } from "@/types"
+import type { LogStream, StreamEvent, TopologyECSResourceType } from "@/types"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { SERVICES } from "@/lib/service-registry"
@@ -203,7 +203,7 @@ export interface ServiceNodeData extends Record<string, unknown> {
   /** AppSync only — number of resolvers */
   resolverCount?: number
   /** ECS only — distinguishes cluster, service, and task map nodes. */
-  ecsResourceType?: "cluster" | "service" | "task"
+  ecsResourceType?: TopologyECSResourceType
   /** ECS service/task owner used for navigation. */
   clusterName?: string
   /** ECS task UUID used for task detail navigation. */

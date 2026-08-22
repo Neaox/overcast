@@ -39,7 +39,9 @@
 //     union of the string constants declared with that type in the same
 //     package, in declaration order — `type EmulationTier = string` plus
 //     `TierFull EmulationTier = "full"` renders as `"full" | …`. With no such
-//     constants it is `string`.
+//     constants it is `string`. An empty-string constant (the type's zero
+//     value, which omitempty elides) is not a union member.
+//   - `net/http.Header` → `Record<string, string[]>`.
 //   - Go doc comments on the type and on each field (including a trailing
 //     line comment) are carried over verbatim as JSDoc, so the reasoning that
 //     lives on the Go side is visible from the editor on the TypeScript side.
@@ -47,7 +49,9 @@
 // Embedded fields, anonymous struct fields, generics and non-string map keys
 // are rejected rather than guessed at — none of the consumed structs use them,
 // and an error names the field so the rule can be added deliberately when one
-// does.
+// does. A type with its own MarshalJSON is rejected too: its wire shape is
+// whatever that method writes, so the manifest must name the package-level
+// struct the method encodes (trace.Entry → trace.entryJSON is the pattern).
 //
 // Files are read through go/build pinned to linux/amd64 (the platform the
 // shipped binary runs on), so the output does not depend on the host that
@@ -119,6 +123,32 @@ var manifest = []target{
 	// CloudFormation stack diagnostics — the provenance tier each evidence
 	// section carries (web/src/services/api/cloudformation.ts).
 	{"internal/services/cloudformation", "DiagnosticProvenance", "DiagnosticProvenance"},
+
+	// GET /_overcast/topology — the Map page's graph.
+	{"internal/router", "topologyResponse", "TopologyResponse"},
+	{"internal/router", "topologyNode", "TopologyNode"},
+	{"internal/router", "topologyEdge", "TopologyEdge"},
+	{"internal/router", "topologyECSResourceType", "TopologyECSResourceType"},
+
+	// GET /_overcast/ses/inbox/messages — the Inbox page.
+	{"internal/smtp", "CapturedMessage", "CapturedMessage"},
+	{"internal/smtp", "MessageKind", "MessageKind"},
+
+	// GET /_overcast/debug/trace{,s}{,/count,/search} — the request-tracing UI.
+	// Entry and Hop marshal through package-level wire structs (their bodies
+	// are []byte in memory and strings on the wire), so the manifest names
+	// those, not the in-memory types.
+	{"internal/trace", "entryJSON", "TraceEntry"},
+	{"internal/trace", "hopJSON", "TraceHop"},
+	{"internal/trace", "LogEntry", "TraceLogEntry"},
+	{"internal/trace", "OmitReason", "TraceOmitReason"},
+	{"internal/trace", "Summary", "TraceSummary"},
+	{"internal/router", "debugTraceListResponse", "TraceListResponse"},
+	{"internal/trace", "RetentionStats", "TraceCountResponse"},
+	{"internal/trace", "DroppedCounts", "TraceDroppedCounts"},
+	{"internal/trace", "Match", "TraceMatch"},
+	{"internal/trace", "MatchField", "TraceMatchField"},
+	{"internal/trace", "DeepResult", "TraceSearchResponse"},
 }
 
 // basicTS maps Go predeclared types to TypeScript.
@@ -135,9 +165,10 @@ var basicTS = map[string]string{
 // externalTS maps types from outside the module that the consumed structs use,
 // keyed by "<import path>.<name>", to the TypeScript they marshal as.
 var externalTS = map[string]string{
-	"time.Time":                "string",  // RFC 3339
-	"time.Duration":            "number",  // nanoseconds
-	"encoding/json.RawMessage": "unknown", // opaque JSON
+	"time.Time":                "string",                   // RFC 3339
+	"time.Duration":            "number",                   // nanoseconds
+	"encoding/json.RawMessage": "unknown",                  // opaque JSON
+	"net/http.Header":          "Record<string, string[]>", // map[string][]string
 }
 
 func main() {
@@ -270,6 +301,11 @@ type stringConst struct {
 type pkgInfo struct {
 	types  map[string]*typeDecl
 	consts map[string][]stringConst // type name → its string constants, in declaration order
+	// marshalers is the set of type names with a MarshalJSON method. Such a
+	// type's wire shape is whatever that method writes, not its struct, so
+	// rendering the struct would be silently wrong — the manifest has to name
+	// the struct the method encodes instead.
+	marshalers map[string]bool
 }
 
 type generator struct {
@@ -349,7 +385,7 @@ func (g *generator) loadPackage(dir string) (*pkgInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
-	p := &pkgInfo{types: map[string]*typeDecl{}, consts: map[string][]stringConst{}}
+	p := &pkgInfo{types: map[string]*typeDecl{}, consts: map[string][]stringConst{}, marshalers: map[string]bool{}}
 	fset := token.NewFileSet()
 	for _, name := range bp.GoFiles {
 		f, err := parser.ParseFile(fset, filepath.Join(abs, name), nil, parser.ParseComments)
@@ -369,6 +405,18 @@ func (g *generator) loadPackage(dir string) (*pkgInfo, error) {
 			fi.imports[local] = ip
 		}
 		for _, decl := range f.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				if fd.Recv != nil && fd.Name.Name == "MarshalJSON" && len(fd.Recv.List) == 1 {
+					recv := fd.Recv.List[0].Type
+					if star, ok := recv.(*ast.StarExpr); ok {
+						recv = star.X
+					}
+					if id, ok := recv.(*ast.Ident); ok {
+						p.marshalers[id.Name] = true
+					}
+				}
+				continue
+			}
 			gd, ok := decl.(*ast.GenDecl)
 			if !ok {
 				continue
@@ -432,6 +480,9 @@ func (g *generator) renderType(b *bytes.Buffer, t target, decl *typeDecl) error 
 	if decl.spec.TypeParams != nil {
 		return fmt.Errorf("%s.%s: generic types are not supported", t.pkg, t.goName)
 	}
+	if g.pkgs[t.pkg].marshalers[t.goName] {
+		return fmt.Errorf("%s.%s has a custom MarshalJSON, so its wire shape is not its struct; hoist the struct that method encodes to package level and name that in the manifest instead", t.pkg, t.goName)
+	}
 	origin := fmt.Sprintf("Generated from Go `%s.%s` (%s).", path.Base(t.pkg), t.goName, decl.file.name)
 	writeJSDoc(b, "", append(commentLines(decl.doc), "", origin))
 
@@ -460,6 +511,14 @@ func (g *generator) renderStringType(b *bytes.Buffer, t target) error {
 	members := make([]string, 0, len(consts))
 	seen := map[string]bool{}
 	for _, c := range consts {
+		if c.value == "" {
+			// The type's zero value — what omitempty elides. Every such
+			// field in the manifest is omitempty, so "" never reaches the
+			// wire and a `""` union member would describe a field that is
+			// absent instead. A non-omitempty field of such a type would
+			// need this rule revisited, not silently widened.
+			continue
+		}
 		if seen[c.value] {
 			continue // two names for one wire value are one union member
 		}

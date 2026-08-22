@@ -78,7 +78,7 @@ export function InboxPage() {
   const messages = useMemo(() => {
     let filtered = allMessages
     if (kindFilter !== "all") {
-      filtered = filtered.filter((m) => (m.kind ?? "email") === kindFilter)
+      filtered = filtered.filter((m) => m.kind === kindFilter)
     }
     if (readFilter === "unread") {
       filtered = filtered.filter((m) => m.id === selectedId || !isRead(m.id))

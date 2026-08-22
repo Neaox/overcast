@@ -683,11 +683,16 @@ func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
 		if entries == nil {
 			entries = []trace.Summary{}
 		}
-		writeDebugJSON(w, http.StatusOK, map[string]any{
-			"traces":     entries,
-			"nextCursor": nextCursor,
-		})
+		writeDebugJSON(w, http.StatusOK, debugTraceListResponse{Traces: entries, NextCursor: nextCursor})
 	}
+}
+
+// debugTraceListResponse is one page of GET /_overcast/debug/traces. Traces is
+// never null (empty when nothing matched); NextCursor is absent on the last
+// page, and is what the caller passes back as ?after= for the next one.
+type debugTraceListResponse struct {
+	Traces     []trace.Summary `json:"traces"`
+	NextCursor string          `json:"nextCursor,omitempty"`
 }
 
 // minDeepSearchQuery is the shortest query the deep scan will run.
