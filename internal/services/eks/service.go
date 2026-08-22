@@ -203,8 +203,9 @@ type Service struct {
 	// in flight leaves that container behind. Same shape as the dockerWg that
 	// RDS, ElastiCache and MSK track their container starts with.
 	liveWg sync.WaitGroup
-	// liveLifecycleMu closes the WaitGroup Add/Wait boundary for recovery
-	// goroutines when service shutdown begins.
+	// liveLifecycleMu closes the WaitGroup Add/Wait boundary when service
+	// shutdown begins: launchLiveBootstrap is the only liveWg.Add site, and
+	// it checks liveStopping under this mutex first.
 	liveLifecycleMu sync.Mutex
 	liveStopping    bool
 	// liveRecoveries coalesces startup, reconnect, and watcher-driven recovery
