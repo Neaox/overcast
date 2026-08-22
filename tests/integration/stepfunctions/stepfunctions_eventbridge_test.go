@@ -153,7 +153,30 @@ func receiveSFNEventBridgeMessages(t *testing.T, srv *helpers.TestServer, queueU
 	}
 }
 
-// ---- Delivery ---------------------------------------------------------------
+// findByStatus returns the delivered envelope whose detail.status matches,
+// and fails the test if it is missing or duplicated.
+//
+// This must not assume delivery order: AWS's own docs for this event say
+// rule matches are delivered "on a best-effort basis" and "events might be
+// delivered out of order"
+// (https://docs.aws.amazon.com/step-functions/latest/dg/eventbridge-integration.html#supported-events).
+// Overcast's SQS emulator is faithful to that for a standard (non-FIFO)
+// queue — receiveCandidates deliberately does not sort standard-queue
+// messages (see internal/services/sqs/message_backend.go), so ReceiveMessage
+// can return them in either order.
+func findByStatus(t *testing.T, envelopes []sfnEventBridgeEnvelope, status string) sfnEventBridgeEnvelope {
+	t.Helper()
+	var found []sfnEventBridgeEnvelope
+	for _, e := range envelopes {
+		if e.Detail.Status == status {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("expected exactly 1 delivered event with status %q, got %d: %+v", status, len(found), envelopes)
+	}
+	return found[0]
+}
 
 func TestStartExecution_deliversRunningThenSucceededToEventBridge(t *testing.T) {
 	// Given: a rule matching Step Functions' execution status-change event,
@@ -174,13 +197,16 @@ func TestStartExecution_deliversRunningThenSucceededToEventBridge(t *testing.T) 
 		t.Fatalf("status = %q, want SUCCEEDED (error=%q cause=%q)", got.Status, got.Error, got.Cause)
 	}
 
-	// Then: EventBridge delivers exactly two events, in order: the initial
-	// RUNNING transition and the terminal SUCCEEDED one.
+	// Then: EventBridge delivers exactly two events — the initial RUNNING
+	// transition and the terminal SUCCEEDED one. Delivery order is not
+	// guaranteed (see findByStatus), so each is located by its own
+	// detail.status rather than by position.
 	envelopes := receiveSFNEventBridgeMessages(t, srv, queueURL, 2)
 	if len(envelopes) != 2 {
 		t.Fatalf("expected 2 delivered events, got %d: %+v", len(envelopes), envelopes)
 	}
-	running, succeeded := envelopes[0], envelopes[1]
+	running := findByStatus(t, envelopes, "RUNNING")
+	succeeded := findByStatus(t, envelopes, "SUCCEEDED")
 
 	for _, e := range []sfnEventBridgeEnvelope{running, succeeded} {
 		if e.Source != "aws.states" {
@@ -209,9 +235,6 @@ func TestStartExecution_deliversRunningThenSucceededToEventBridge(t *testing.T) 
 		}
 	}
 
-	if running.Detail.Status != "RUNNING" {
-		t.Errorf("first event status = %q, want RUNNING", running.Detail.Status)
-	}
 	if running.Detail.StopDate != nil {
 		t.Errorf("RUNNING event stopDate = %v, want nil", running.Detail.StopDate)
 	}
@@ -219,9 +242,6 @@ func TestStartExecution_deliversRunningThenSucceededToEventBridge(t *testing.T) 
 		t.Errorf("RUNNING event output/outputDetails = %v/%v, want nil/nil", running.Detail.Output, running.Detail.OutputDetails)
 	}
 
-	if succeeded.Detail.Status != "SUCCEEDED" {
-		t.Errorf("second event status = %q, want SUCCEEDED", succeeded.Detail.Status)
-	}
 	if succeeded.Detail.StopDate == nil || *succeeded.Detail.StopDate <= 0 {
 		t.Errorf("SUCCEEDED event stopDate = %v, want a positive timestamp", succeeded.Detail.StopDate)
 	}
@@ -254,17 +274,15 @@ func TestStartExecution_deliversFailedWithErrorAndCauseToEventBridge(t *testing.
 		t.Fatalf("status = %q, want FAILED", got.Status)
 	}
 
-	// Then: EventBridge delivers RUNNING then FAILED, and the FAILED event
-	// carries the declared error/cause — AWS emits on every status, not just
-	// SUCCEEDED.
+	// Then: EventBridge delivers a RUNNING and a FAILED event (delivery order
+	// is not guaranteed — see findByStatus), and the FAILED event carries the
+	// declared error/cause — AWS emits on every status, not just SUCCEEDED.
 	envelopes := receiveSFNEventBridgeMessages(t, srv, queueURL, 2)
 	if len(envelopes) != 2 {
 		t.Fatalf("expected 2 delivered events, got %d: %+v", len(envelopes), envelopes)
 	}
-	failed := envelopes[1]
-	if failed.Detail.Status != "FAILED" {
-		t.Fatalf("second event status = %q, want FAILED", failed.Detail.Status)
-	}
+	findByStatus(t, envelopes, "RUNNING")
+	failed := findByStatus(t, envelopes, "FAILED")
 	if failed.Detail.ExecutionArn != execARN {
 		t.Errorf("detail.executionArn = %q, want %q", failed.Detail.ExecutionArn, execARN)
 	}
