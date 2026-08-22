@@ -101,18 +101,54 @@ func TestCreateSchedule_rejectsUnknownState(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "ValidationException")
 }
 
-func TestCreateSchedule_targetDispatchKeepsStartAndEndDate(t *testing.T) {
+func TestCreateSchedule_keepsStartAndEndDate(t *testing.T) {
 	// Given: an emulator
 	srv := helpers.NewTestServer(t)
 
-	// When: the schedule is created over X-Amz-Target — the path CloudFormation
-	// and the JSON/CBOR protocols take, rather than the REST route
-	body, err := json.Marshal(map[string]any{
-		"Name":               "dated",
+	// When: the schedule is created over Scheduler's own REST route — the only
+	// wire it answers on since #1226 retired the invented "Scheduler.<Op>"
+	// X-Amz-Target dispatch CloudFormation's provisioner used to speak.
+	resp := schDo(t, srv, http.MethodPost, "/schedules/dated", map[string]any{
 		"ScheduleExpression": "rate(1 hour)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"StartDate":          "2030-01-01T00:00:00Z",
 		"EndDate":            "2031-01-01T00:00:00Z",
+		"Target": map[string]any{
+			"Arn":     "arn:aws:sqs:us-east-1:000000000000:my-queue",
+			"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role",
+		},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: both dates survive.
+	get := schDo(t, srv, http.MethodGet, "/schedules/dated", nil)
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusOK)
+	var stored struct {
+		StartDate string `json:"StartDate"`
+		EndDate   string `json:"EndDate"`
+	}
+	helpers.DecodeJSON(t, get, &stored)
+	if !strings.HasPrefix(stored.StartDate, "2030-01-01") {
+		t.Errorf("expected StartDate to survive, got %q", stored.StartDate)
+	}
+	if !strings.HasPrefix(stored.EndDate, "2031-01-01") {
+		t.Errorf("expected EndDate to survive, got %q", stored.EndDate)
+	}
+}
+
+// TestXAmzTarget_noLongerDispatches pins #1226: Scheduler is restJson1 and the
+// pinned models give it no X-Amz-Target prefix, so a request shaped like one
+// must get the same honest "unknown operation" answer any nonsense target
+// gets — never a 200, and never silently proxied to another service.
+func TestXAmzTarget_noLongerDispatches(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	body, err := json.Marshal(map[string]any{
+		"Name":               "ghost",
+		"ScheduleExpression": "rate(1 hour)",
+		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
 			"Arn":     "arn:aws:sqs:us-east-1:000000000000:my-queue",
 			"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role",
@@ -131,25 +167,17 @@ func TestCreateSchedule_targetDispatchKeepsStartAndEndDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	defer resp.Body.Close()
 
-	// Then: both dates survive. They used to be dropped here and honoured on
-	// the REST route, because the two ran separate copies of the operation.
-	get := schDo(t, srv, http.MethodGet, "/schedules/dated", nil)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("X-Amz-Target: Scheduler.CreateSchedule answered 200 — the invented wire is still reachable")
+	}
+	helpers.AssertJSONError(t, resp, "UnknownOperationException")
+
+	// And nothing was actually created on the strength of the invented call.
+	get := schDo(t, srv, http.MethodGet, "/schedules/ghost", nil)
 	defer get.Body.Close()
-	helpers.AssertStatus(t, get, http.StatusOK)
-	var stored struct {
-		StartDate string `json:"StartDate"`
-		EndDate   string `json:"EndDate"`
-	}
-	helpers.DecodeJSON(t, get, &stored)
-	if !strings.HasPrefix(stored.StartDate, "2030-01-01") {
-		t.Errorf("expected StartDate to survive, got %q", stored.StartDate)
-	}
-	if !strings.HasPrefix(stored.EndDate, "2031-01-01") {
-		t.Errorf("expected EndDate to survive, got %q", stored.EndDate)
-	}
+	helpers.AssertStatus(t, get, http.StatusNotFound)
 }
 
 func TestDeleteScheduleGroup_deletesTheSchedulesInIt(t *testing.T) {

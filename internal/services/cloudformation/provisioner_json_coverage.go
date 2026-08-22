@@ -1329,6 +1329,21 @@ func cloudwatchAlarmTagMap(raw any) map[string]string {
 }
 
 // ── AWS::Scheduler::Schedule ────────────────────────────────────────────────
+//
+// Scheduler's handlers dispatch over its own REST-JSON bindings
+// (/schedules/{Name}, /schedule-groups/{Name}) instead of the invented
+// "Scheduler.<Op>" X-Amz-Target prefix #1226 retired: EventBridge Scheduler is
+// restJson1 and the pinned models never gave it one, so nothing but this
+// provisioner and Overcast's own tests ever spoke it.
+
+// schedulerJSON POSTs/PUTs a JSON body to one Scheduler REST path.
+func schedulerJSON(ctx context.Context, router http.Handler, region, method, path string, body map[string]any) (*httptest.ResponseRecorder, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	return internalRequest(ctx, router, region, method, path, "application/json", data)
+}
 
 type schedulerScheduleHandler struct{}
 
@@ -1373,7 +1388,8 @@ func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handl
 		groupName = "default"
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateSchedule", schedulerScheduleBody(name, groupName, props))
+	rec, err := schedulerJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/schedules/"+url.PathEscape(name), schedulerScheduleBody(name, groupName, props))
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateSchedule: %w", err)
 	}
@@ -1397,11 +1413,8 @@ func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handl
 	if len(parts) != 2 {
 		return nil
 	}
-	body := map[string]any{
-		"Name":      parts[1],
-		"GroupName": parts[0],
-	}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteSchedule", body)
+	path := "/schedules/" + url.PathEscape(parts[1]) + "?" + url.Values{"groupName": {parts[0]}}.Encode()
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
 	return teardownError("DeleteSchedule", rec, err)
 }
 
@@ -1425,7 +1438,8 @@ func (h *schedulerScheduleHandler) Update(ctx context.Context, router http.Handl
 		return "", nil, errReplacementRequired
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.UpdateSchedule", schedulerScheduleBody(name, groupName, props))
+	rec, err := schedulerJSON(ctx, router, rCtx.Region, http.MethodPut,
+		"/schedules/"+url.PathEscape(name), schedulerScheduleBody(name, groupName, props))
 	if err != nil {
 		return "", nil, fmt.Errorf("UpdateSchedule: %w", err)
 	}
@@ -1467,7 +1481,8 @@ func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.
 		body["Tags"] = tags
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.CreateScheduleGroup", body)
+	rec, err := schedulerJSON(ctx, router, rCtx.Region, http.MethodPost,
+		"/schedule-groups/"+url.PathEscape(name), body)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateScheduleGroup: %w", err)
 	}
@@ -1492,8 +1507,13 @@ func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.
 }
 
 func (h *schedulerScheduleGroupHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"Name": physicalID}
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Scheduler.DeleteScheduleGroup", body)
+	// Physical ID is the group ARN, "arn:…:schedule-group/{name}".
+	name := physicalID
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		"/schedule-groups/"+url.PathEscape(name), "", nil)
 	return teardownError("DeleteScheduleGroup", rec, err)
 }
 

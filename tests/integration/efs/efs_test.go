@@ -248,13 +248,16 @@ func TestPoliciesAndConfiguration_OverREST(t *testing.T) {
 	}
 }
 
-func TestTypedDispatch_XAmzTarget(t *testing.T) {
+// TestXAmzTarget_noLongerDispatches pins #1226: EFS is restJson1 and the
+// pinned models give it no X-Amz-Target prefix, so a request shaped like the
+// invented "EFS.<Op>" wire CloudFormation's provisioner used to speak
+// internally must get the same honest "unknown operation" answer any
+// nonsense target gets — never a 200, and never silently proxied elsewhere.
+func TestXAmzTarget_noLongerDispatches(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	created := createFileSystem(t, srv, "typed", nil)
 	fsID := created["FileSystemId"].(string)
 
-	// The typed dispatcher (used internally by CloudFormation) answers
-	// X-Amz-Target requests for the same operations.
 	payload, _ := json.Marshal(map[string]any{"FileSystemId": fsID})
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(payload))
 	if err != nil {
@@ -266,10 +269,12 @@ func TestTypedDispatch_XAmzTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http request: %v", err)
 	}
-	body := expectJSONStatus(t, resp, http.StatusOK)
-	if fsList, _ := body["FileSystems"].([]any); len(fsList) != 1 {
-		t.Fatalf("expected 1 file system via typed dispatch, got %#v", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("X-Amz-Target: EFS.DescribeFileSystems answered 200 — the invented wire is still reachable")
 	}
+	helpers.AssertJSONError(t, resp, "UnknownOperationException")
 }
 
 func TestUnimplementedOperation_Returns501(t *testing.T) {

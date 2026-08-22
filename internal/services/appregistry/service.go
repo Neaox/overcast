@@ -15,17 +15,12 @@
 package appregistry
 
 import (
-	"net/http"
-
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -36,18 +31,15 @@ const serviceName = "appregistry"
 type Service struct {
 	log     *serviceutil.ServiceLogger
 	handler *Handler
-	typedOp map[string]op.Operation
 }
 
 // New returns a configured AppRegistry Service.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	s := &Service{
+	return &Service{
 		log:     log,
 		handler: newHandler(cfg, store, log, clk),
 	}
-	s.typedOp = s.typedOps()
-	return s
 }
 
 // InitBus wires the event bus for application lifecycle events.
@@ -57,22 +49,6 @@ func (s *Service) InitBus(bus *events.Bus) {
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
-
-func (s *Service) TargetPrefix() string { return "AppRegistry." }
-
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
-}
 
 // ApplicationsRouter returns the /applications sub-tree, for the main router to
 // dispatch to.

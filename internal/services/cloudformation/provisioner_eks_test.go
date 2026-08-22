@@ -28,17 +28,20 @@ type fakeEKS struct {
 	notFound bool
 }
 
+// ServeHTTP answers EKS's own REST bindings — POST /clusters and
+// GET /clusters/{name} — the surface the provisioner dispatches to since
+// #1226 retired the invented "EKS.<Op>" X-Amz-Target prefix.
 func (f *fakeEKS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+	w.Header().Set("Content-Type", "application/json")
 	const arn = "arn:aws:eks:us-east-1:000000000000:cluster/app-eks"
 
-	switch r.Header.Get("X-Amz-Target") {
-	case "EKS.CreateCluster":
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/clusters":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"cluster": map[string]any{"name": "app-eks", "arn": arn, "status": "CREATING"},
 		})
 
-	case "EKS.DescribeCluster":
+	case r.Method == http.MethodGet && r.URL.Path == "/clusters/app-eks":
 		if f.notFound {
 			http.Error(w, `{"__type":"ResourceNotFoundException"}`, http.StatusNotFound)
 			return
@@ -50,7 +53,7 @@ func (f *fakeEKS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"cluster": cluster})
 
 	default:
-		http.Error(w, "unexpected target "+r.Header.Get("X-Amz-Target"), http.StatusBadRequest)
+		http.Error(w, "unexpected request "+r.Method+" "+r.URL.Path, http.StatusBadRequest)
 	}
 }
 

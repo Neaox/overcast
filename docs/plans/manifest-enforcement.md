@@ -12,11 +12,15 @@ and not "is this registered path modeled by *someone*" (point 9), but "does the
 service that *registered* this route model this path".
 Gates: [#863](https://github.com/Neaox/overcast/issues/863) (closed).
 Audit that prompted it: [#861](https://github.com/Neaox/overcast/issues/861).
-Remainder, all filed and none of it #864's or #1227's: the shape artefact
+[#1226](https://github.com/Neaox/overcast/issues/1226) retired the
+`unmodeledTargetPrefixes` ledger to empty: AppRegistry, EFS, EKS and Scheduler
+no longer answer `POST /` for the invented target prefix, and CloudFormation's
+own provisioner — the one internal caller that used to speak it — now
+dispatches over each service's modeled REST bindings instead.
+Remainder, all filed and none of it #864's, #1227's or #1226's: the shape
+artefact
 [#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884)
-and the rpcv2Cbor probe [#1228](https://github.com/Neaox/overcast/issues/1228),
-plus the four unmodeled target prefixes
-[#1226](https://github.com/Neaox/overcast/issues/1226).
+and the rpcv2Cbor probe [#1228](https://github.com/Neaox/overcast/issues/1228).
 As of 2026-08-22 the `unservedBindings` ledger is **empty** — all 43 opening
 rows retired as #854–#860, #862 and #815 landed — and `protocolAsymmetries` is
 empty too (#886 landed). `routeOwnershipViolations` (point 13) opened **empty**
@@ -203,7 +207,7 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 | `unservedBindings` | Bindings no route serves, each naming the issue that owns the fix. Shrinks as they land. |
 | `weaklyServedBindings` | Not faults — the gate's honest margin, where a wildcard or a fallback handler delivers the request without the route table proving which operation it reaches. |
 | `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. Empty since #886. |
-| `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger: every row names the issue that retires it (#1226). |
+| `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger, ratcheted in both directions — opened with AppRegistry, EFS, EKS and Scheduler, all four retired by #1226, and it stays empty rather than deleted so the next unmodeled prefix has somewhere to be recorded on its way to being fixed. |
 | `docOnlyRowsOutsideTheModel` | Not faults — the honest margin of the DocOnly name check. Rows whose Operation reads like an AWS operation and documents something else, each saying what. |
 | `queryBranchNotProvable` | Services the generated REST indexes deliberately exclude, so their query-discriminated bindings cannot be proven from the model. `s3` is the only one. |
 | `routeOwnershipViolations` | A fault ledger: a registered route whose attributed owner does not model the path, each naming the issue that owns the fix. Opened empty (#1227) — see the axis's own section. |
@@ -340,11 +344,21 @@ stops the next declaration of that shape. Every prefix in the tree passes today,
 so it opens with no ledger; injecting `/_eks` into EKS's list is what proved it
 fires.
 
-`TargetPrefix()` opens with a ledger and an issue that owns it (#1226): four
-REST-only services — AppRegistry, EFS, EKS and Scheduler — answer `POST /` for a
-target prefix the models never give them. They do register their modeled REST
-routes, so the prefix is redundant surface rather than the whole service, which
-is why it is a ledger rather than a build failure today.
+`TargetPrefix()` opened with a ledger and an issue that owned it (#1226): four
+REST-only services — AppRegistry, EFS, EKS and Scheduler — answered `POST /` for
+a target prefix the models never gave them. They did register their modeled
+REST routes, so the prefix was redundant surface rather than the whole
+service, which is why it was a ledger rather than a build failure — and #1226
+closed all four: `TargetPrefix()`/`Dispatch()` are gone from the four
+services, along with the Smithy RPC v2 label alias
+(`/service/<name>/operation/<op>`) the same `TargetDispatcher` registration
+opened regardless of whether RPC v2 was itself modeled for the service.
+CloudFormation's own EFS/EKS/Scheduler resource handlers were the one internal
+caller of the invented wire (AppRegistry's already spoke REST); they now
+dispatch over each service's modeled REST bindings instead, the same move
+#815's fix made for AWS Backup. A target-header or RPC v2 request to any of
+the four now gets the router's ordinary "unknown operation"/"unsupported
+protocol" answer, never a 200.
 
 ### The exemption sweep
 

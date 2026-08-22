@@ -36,8 +36,6 @@ import (
 	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -168,11 +166,10 @@ type flexibleTimeWindow struct {
 
 // Service implements router.Service for EventBridge Scheduler.
 type Service struct {
-	cfg     *config.Config
-	store   state.Store
-	clk     clock.Clock
-	log     *serviceutil.ServiceLogger
-	typedOp map[string]op.Operation
+	cfg   *config.Config
+	store state.Store
+	clk   clock.Clock
+	log   *serviceutil.ServiceLogger
 
 	// targets dispatches a firing to whatever the target ARN names. Built once
 	// from the root router in InitRouter; nil until then.
@@ -218,7 +215,6 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		inflight:   make(map[string]struct{}),
 		stopCh:     make(chan struct{}),
 	}
-	s.typedOp = s.typedOps()
 	return s
 }
 
@@ -265,22 +261,6 @@ func (s *Service) startDelivery() {
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
-
-func (s *Service) TargetPrefix() string { return "Scheduler." }
-
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
-}
 
 // RegisterRoutes satisfies router.Service.
 //

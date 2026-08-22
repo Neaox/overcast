@@ -94,10 +94,17 @@ func TestUpdateStack_eksClusterVersionChange_updatesInPlace(t *testing.T) {
 		t.Errorf("cluster was replaced: physical ID %q, want original %q", got, originalID)
 	}
 
-	// And the cluster still exists with the new version applied
-	resp := awsJSONCall(t, srv, "EKS.", "DescribeCluster", "application/x-amz-json-1.1", map[string]any{
-		"name": "pinned-eks-cluster",
-	})
+	// And the cluster still exists with the new version applied. EKS is
+	// restJson1 with no X-Amz-Target dispatch (#1226), so this reads its own
+	// REST binding rather than an invented JSON target.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/clusters/pinned-eks-cluster", nil)
+	if err != nil {
+		t.Fatalf("build DescribeCluster request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	body := string(readBody(t, resp))
