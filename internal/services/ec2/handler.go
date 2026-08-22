@@ -363,9 +363,14 @@ type xmlCidrState struct {
 }
 
 // publish emits an event if the bus is wired.
-func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
+//
+// Takes a context rather than an *http.Request so the typed dispatch path —
+// which never has one, only ctx — can call the same lifecycle-event seam the
+// legacy handlers do. See #754 wave 2: routing a mutation typed must not mean
+// its create/delete goes unpublished on the internal event bus.
+func (h *Handler) publish(ctx context.Context, t events.Type, payload any) {
 	if h.bus != nil {
-		h.bus.Publish(r.Context(), events.Event{Type: t, Payload: payload})
+		h.bus.Publish(ctx, events.Event{Type: t, Payload: payload})
 	}
 }
 
@@ -445,7 +450,7 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
+	h.publish(r.Context(), events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateVpcResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -583,7 +588,7 @@ func (h *Handler) DeleteVpc(w http.ResponseWriter, r *http.Request) {
 		h.vpcStrategy.OnDelete(r.Context(), vpc)
 	}
 
-	h.publish(r, events.EC2VpcDeleted, events.ResourcePayload{Name: vpcID})
+	h.publish(r.Context(), events.EC2VpcDeleted, events.ResourcePayload{Name: vpcID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteVpcResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -643,7 +648,7 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.EC2SubnetCreated, events.ResourcePayload{Name: subnetID})
+	h.publish(r.Context(), events.EC2SubnetCreated, events.ResourcePayload{Name: subnetID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateSubnetResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -688,7 +693,7 @@ func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.EC2SubnetDeleted, events.ResourcePayload{Name: subnetID})
+	h.publish(r.Context(), events.EC2SubnetDeleted, events.ResourcePayload{Name: subnetID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteSubnetResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -734,7 +739,7 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.EC2SecurityGroupCreated, events.ResourcePayload{Name: name})
+	h.publish(r.Context(), events.EC2SecurityGroupCreated, events.ResourcePayload{Name: name})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateSGResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
@@ -776,7 +781,7 @@ func (h *Handler) DeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-	h.publish(r, events.EC2SecurityGroupDeleted, events.ResourcePayload{Name: groupID})
+	h.publish(r.Context(), events.EC2SecurityGroupDeleted, events.ResourcePayload{Name: groupID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteSGResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),

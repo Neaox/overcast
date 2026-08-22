@@ -20,9 +20,24 @@ package ec2
 // parity table (typed_parity_dev_test.go) proving the two dispatch paths answer
 // one request identically, byte for byte.
 //
-// Everything absent stays on legacy, unchanged, and is listed in
-// ec2TypedDispatchRemainder below with what it needs first. #754 stays open
-// until that map is empty.
+// Wave 2 (#754) closes the remainder: every mutation whose typed body was a
+// stub (validated a parameter, touched no store) now does the write — state
+// transitions, security-group rules, tag deletes, DNS/public-IP attribute
+// persistence — and every create that dropped part of its input now carries
+// all of it (RunInstances' SecurityGroupId.N/TagSpecification.N, CreateVpc's
+// EnableDnsSupport default, NAT/VPN gateway TagSpecification.N). The three
+// deletes DeleteSecurityGroup/DeleteSubnet/DeleteVpc now run the #1233
+// dependency checks (delete_dependencies.go) on both paths, so a
+// DependencyViolation answer is byte-identical whichever decoder read the
+// request. The rest of the remainder turned out, on reading both bodies side
+// by side, to already be correct twins — same store calls, same validation,
+// same (absence of) event-bus publish — and needed only a parity row to prove
+// it, not a code change.
+//
+// ec2TypedDispatchRemainder is kept, empty, as the ledger's terminal state:
+// TestTypedDispatch_everyOpIsClassified still fails on an operation in
+// neither map, so a newly registered typed operation cannot arrive
+// unclassified in the future.
 
 // ec2TypedOps names the operations Service.DispatchQuery answers from
 // h.typedOp. Each shares one body with its legacy counterpart, so routing here
@@ -54,6 +69,68 @@ var ec2TypedOps = map[string]bool{
 	"DescribeVpcPeeringConnections": true,
 	"DescribeVpcs":                  true,
 	"DescribeVpnGateways":           true,
+
+	// Wave 2: the 12 stubbed mutations, now performing the write.
+	"TerminateInstances":            true,
+	"StartInstances":                true,
+	"StopInstances":                 true,
+	"DeleteTags":                    true,
+	"DeleteVpcEndpoints":            true,
+	"ModifyInstanceAttribute":       true,
+	"AuthorizeSecurityGroupIngress": true,
+	"AuthorizeSecurityGroupEgress":  true,
+	"RevokeSecurityGroupIngress":    true,
+	"RevokeSecurityGroupEgress":     true,
+	"ModifySubnetAttribute":         true,
+	"ModifyVpcAttribute":            true,
+
+	// Wave 2: the 5 creates that dropped part of their input, now carrying
+	// all of it.
+	"RunInstances":        true,
+	"CreateVpc":           true,
+	"CreateSubnet":        true,
+	"CreateSecurityGroup": true,
+	"CreateTags":          true,
+
+	// Wave 2: DeleteVpc/DeleteSubnet/DeleteSecurityGroup now run the #1233
+	// dependency checks and publish the same lifecycle event legacy does.
+	"DeleteVpc":           true,
+	"DeleteSubnet":        true,
+	"DeleteSecurityGroup": true,
+
+	// Wave 2: read against legacy line by line and confirmed correct twins
+	// (same store calls, same validation, same absence of event-bus
+	// publish); CreateNatGateway/CreateVpnGateway additionally gained the
+	// TagSpecification.N support legacy already had, and CreateVpcEndpoint
+	// gained the VpcEndpointType default legacy already honoured.
+	"CreateKeyPair":              true,
+	"DeleteKeyPair":              true,
+	"CreateRouteTable":           true,
+	"DeleteRouteTable":           true,
+	"CreateRoute":                true,
+	"DeleteRoute":                true,
+	"AssociateRouteTable":        true,
+	"DisassociateRouteTable":     true,
+	"CreateInternetGateway":      true,
+	"DeleteInternetGateway":      true,
+	"AttachInternetGateway":      true,
+	"DetachInternetGateway":      true,
+	"CreateVpcPeeringConnection": true,
+	"AcceptVpcPeeringConnection": true,
+	"DeleteVpcPeeringConnection": true,
+	"AllocateAddress":            true,
+	"ReleaseAddress":             true,
+	"AssociateAddress":           true,
+	"DisassociateAddress":        true,
+	"CreateNatGateway":           true,
+	"DeleteNatGateway":           true,
+	"CreateVpnGateway":           true,
+	"AttachVpnGateway":           true,
+	"DetachVpnGateway":           true,
+	"DeleteVpnGateway":           true,
+	"CreateNetworkInterface":     true,
+	"DeleteNetworkInterface":     true,
+	"CreateVpcEndpoint":          true,
 }
 
 // ec2TypedDispatchRemainder is every registered typed operation still answered
@@ -61,65 +138,13 @@ var ec2TypedOps = map[string]bool{
 //
 // It is a work ledger, not an exemption list: each entry names a real defect in
 // the typed implementation, and an operation leaves the map by being fixed and
-// moved to ec2TypedOps, never by being excused. TestTypedDispatch_everyOpIsRouted
+// moved to ec2TypedOps, never by being excused. TestTypedDispatch_everyOpIsClassified
 // fails if an operation is in neither map, so a newly registered typed
 // operation cannot arrive unclassified — which is how 69 of them came to be
 // unreachable without anything failing.
-var ec2TypedDispatchRemainder = map[string]string{
-	// Mutations whose typed body validates its parameters and returns success
-	// without touching the store. Routing any of these would silently drop the
-	// write.
-	"TerminateInstances": "typed body is a stub: ignores InstanceId.N, changes no state, returns an empty instancesSet",
-	"StartInstances":     "typed body is a stub: ignores InstanceId.N and changes no state",
-	"StopInstances":      "typed body is a stub: ignores InstanceId.N and changes no state",
-	"DeleteTags":         "typed body is a stub: ResourceId.N / Tag.N.* are never applied and nothing is deleted",
-	"DeleteVpcEndpoints": "typed body is a stub: VpcEndpointId.N is never read and nothing is deleted",
-	"ModifyInstanceAttribute": "typed body fetches the instance and discards it (`_ = inst`); " +
-		"InstanceType.Value is never applied or persisted",
-	"AuthorizeSecurityGroupIngress": "typed body checks GroupId and returns true; IpPermissions.N.* is never appended to the group",
-	"AuthorizeSecurityGroupEgress":  "typed body checks GroupId and returns true; IpPermissions.N.* is never appended to the group",
-	"RevokeSecurityGroupIngress":    "typed body checks GroupId and returns true; no rule is removed and InvalidPermission.NotFound is never raised",
-	"RevokeSecurityGroupEgress":     "typed body checks GroupId and returns true; no rule is removed",
-	"ModifySubnetAttribute":         "typed body does not persist MapPublicIpOnLaunch.Value, which #1144 made a stored field",
-	"ModifyVpcAttribute":            "typed body does not persist EnableDnsSupport.Value / EnableDnsHostnames.Value, which #1144 made stored fields",
-
-	// Creates and deletes whose typed body drops part of what legacy stores or
-	// renders. Smaller gaps than the stubs above, but each is a wrong answer.
-	"RunInstances": "runInstancesReq has no SecurityGroupId.N or TagSpecification.N, so the instance is stored with " +
-		"neither and the response omits groupSet/tagSet; the lifecycle event is not published either",
-	"CreateVpc":                  "typed body omits EnableDnsSupport=true, which is real AWS's CreateVpc default and a stored field since #1144",
-	"CreateSubnet":               "typed body does not apply TagSpecification.N, and skips the subnet-created lifecycle event",
-	"CreateSecurityGroup":        "typed body does not apply TagSpecification.N, and skips the security-group-created lifecycle event",
-	"CreateTags":                 "typed body is correct on the wire but skips the tag lifecycle event legacy publishes",
-	"DeleteVpc":                  "typed body skips the vpc-deleted lifecycle event",
-	"DeleteSubnet":               "typed body skips the subnet-deleted lifecycle event",
-	"DeleteSecurityGroup":        "typed body skips the security-group-deleted lifecycle event",
-	"CreateKeyPair":              "not yet compared against legacy line by line",
-	"DeleteKeyPair":              "not yet compared against legacy line by line",
-	"CreateRouteTable":           "not yet compared against legacy line by line",
-	"DeleteRouteTable":           "not yet compared against legacy line by line",
-	"CreateRoute":                "not yet compared against legacy line by line",
-	"DeleteRoute":                "not yet compared against legacy line by line",
-	"AssociateRouteTable":        "not yet compared against legacy line by line",
-	"DisassociateRouteTable":     "not yet compared against legacy line by line",
-	"CreateInternetGateway":      "not yet compared against legacy line by line",
-	"DeleteInternetGateway":      "not yet compared against legacy line by line",
-	"AttachInternetGateway":      "not yet compared against legacy line by line",
-	"DetachInternetGateway":      "not yet compared against legacy line by line",
-	"CreateVpcPeeringConnection": "not yet compared against legacy line by line",
-	"AcceptVpcPeeringConnection": "not yet compared against legacy line by line",
-	"DeleteVpcPeeringConnection": "not yet compared against legacy line by line",
-	"AllocateAddress":            "not yet compared against legacy line by line",
-	"ReleaseAddress":             "not yet compared against legacy line by line",
-	"AssociateAddress":           "not yet compared against legacy line by line",
-	"DisassociateAddress":        "not yet compared against legacy line by line",
-	"CreateNatGateway":           "not yet compared against legacy line by line",
-	"DeleteNatGateway":           "not yet compared against legacy line by line",
-	"CreateVpnGateway":           "not yet compared against legacy line by line",
-	"AttachVpnGateway":           "not yet compared against legacy line by line",
-	"DetachVpnGateway":           "not yet compared against legacy line by line",
-	"DeleteVpnGateway":           "not yet compared against legacy line by line",
-	"CreateNetworkInterface":     "not yet compared against legacy line by line",
-	"DeleteNetworkInterface":     "not yet compared against legacy line by line",
-	"CreateVpcEndpoint":          "not yet compared against legacy line by line",
-}
+//
+// Empty as of wave 2 (#754): every operation this map once named has either
+// had its typed body completed to match legacy (the 12 stubs, the 5
+// input-dropping creates) or been read against legacy and found already
+// equivalent (the remaining 31). #754 is closed by this map staying empty.
+var ec2TypedDispatchRemainder = map[string]string{}

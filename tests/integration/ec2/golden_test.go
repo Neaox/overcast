@@ -12,10 +12,12 @@
 //	DescribeSubnets, RunInstances, DescribeInstances, TerminateInstances
 //
 // Plus one error-shape golden: CreateSubnet against a nonexistent VpcId,
-// pinning the InvalidVpcID.NotFound fault. CreateSubnet is answered by the
-// legacy handler (handler.go), not createSubnetTyped: it is one of the
-// mutations still listed in ec2TypedDispatchRemainder (typed_dispatch.go),
-// so the typed body is never reached for this action today.
+// pinning the InvalidVpcID.NotFound fault. CreateSubnet is now answered by
+// the typed registry too (#754 wave 2 emptied ec2TypedDispatchRemainder,
+// typed_dispatch.go) — this golden is unchanged from when it pinned the
+// legacy path, which is exactly the property the differential parity test
+// (typed_parity_mutations_dev_test.go) exists to guarantee: whichever
+// decoder read the request, the error is byte-identical.
 //
 // Determinism — EC2 is the trickiest of the five priority services because
 // EVERY resource ID (instance, VPC, subnet, security group, ENI,
@@ -276,10 +278,10 @@ func TestGolden_TerminateInstances(t *testing.T) {
 
 // TestGolden_CreateSubnet_invalidVpc pins the InvalidVpcID.NotFound fault —
 // the error-shape golden for this service. CreateSubnet is answered by the
-// legacy handler (handler.go's CreateSubnet), not createSubnetTyped: it is
-// one of the mutations still listed in ec2TypedDispatchRemainder
-// (typed_dispatch.go), so the typed body is never reached for this action
-// today.
+// typed registry as of #754 wave 2 (typed_dispatch.go); this test still
+// drives it through the same ec2GoldenCall as every other golden here
+// (real HTTP, real dispatch), so it exercises whichever path DispatchQuery
+// currently routes to rather than pinning one deliberately.
 func TestGolden_CreateSubnet_invalidVpc(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 

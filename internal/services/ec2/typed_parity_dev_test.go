@@ -422,9 +422,20 @@ func TestTypedParity(t *testing.T) {
 // An operation routed to the typed path with no parity row is an operation
 // nobody checked — which is the state #754 records, arrived at one unnoticed
 // registration at a time.
+//
+// This covers only the Describe* half of the ledger — answerBoth's "put the
+// same request to both dispatch paths, in sequence, against one handler"
+// shape is only sound for a read. Wave 2's mutations get their own table
+// (mutationCases, typed_parity_mutations_dev_test.go) and their own coverage
+// check (TestTypedParityMutations_coversEveryRoutedMutation), because running
+// a create or delete twice against the same store answers a different
+// question than running it once each against two.
 func TestTypedParity_coversEveryRoutedOp(t *testing.T) {
 	cases := parityCases()
 	for action := range ec2TypedOps {
+		if _, isMutation := mutationCases()[action]; isMutation {
+			continue
+		}
 		rows, ok := cases[action]
 		if !ok || len(rows) == 0 {
 			t.Errorf("%s is routed to the typed registry with no row in parityCases", action)

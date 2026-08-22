@@ -6,8 +6,47 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 )
+
+// ec2TagSpecification decodes one TagSpecification.N entry: the resource type
+// it targets and the tags to apply if that type matches — the typed twin of
+// parseTagSpecifications' per-N loop in tags.go.
+type ec2TagSpecification struct {
+	ResourceType string `json:"ResourceType"`
+	Tags         []Tag  `json:"Tag"`
+}
+
+// typedTagSpecifications extracts resourceType's tags from decoded
+// TagSpecification.N entries, mirroring parseTagSpecifications' resourceType
+// filter (tags.go) for the typed request path.
+func typedTagSpecifications(specs []ec2TagSpecification, resourceType string) []Tag {
+	var tags []Tag
+	for _, spec := range specs {
+		if resourceType != "" && spec.ResourceType != resourceType {
+			continue
+		}
+		tags = append(tags, spec.Tags...)
+	}
+	return tags
+}
+
+// ec2AttributeBoolValue decodes AWS's `Attribute.Value=true|false` boolean
+// attribute wrapper — ModifySubnetAttribute's MapPublicIpOnLaunch,
+// ModifyVpcAttribute's EnableDnsSupport/EnableDnsHostnames. A nil pointer
+// means the caller did not send the attribute at all, which every one of
+// these operations treats as "leave the stored value alone" rather than as a
+// false value.
+type ec2AttributeBoolValue struct {
+	Value bool `json:"Value"`
+}
+
+// ec2AttributeStringValue is ec2AttributeBoolValue's string-valued twin —
+// ModifyInstanceAttribute's InstanceType.Value.
+type ec2AttributeStringValue struct {
+	Value string `json:"Value"`
+}
 
 // ── Request types (json tags for codec.Decode QueryXML form mapping) ───
 //
@@ -69,19 +108,23 @@ type deleteSecurityGroupReq struct {
 }
 
 type authorizeSGIngressReq struct {
-	GroupID string `json:"GroupId"`
+	GroupID       string         `json:"GroupId"`
+	IpPermissions []IpPermission `json:"IpPermissions"`
 }
 
 type authorizeSGEgressReq struct {
-	GroupID string `json:"GroupId"`
+	GroupID       string         `json:"GroupId"`
+	IpPermissions []IpPermission `json:"IpPermissions"`
 }
 
 type revokeSGIngressReq struct {
-	GroupID string `json:"GroupId"`
+	GroupID       string         `json:"GroupId"`
+	IpPermissions []IpPermission `json:"IpPermissions"`
 }
 
 type revokeSGEgressReq struct {
-	GroupID string `json:"GroupId"`
+	GroupID       string         `json:"GroupId"`
+	IpPermissions []IpPermission `json:"IpPermissions"`
 }
 
 type describeSecurityGroupsReq struct {
@@ -95,18 +138,26 @@ type describeSubnetsReq struct {
 }
 
 type runInstancesReq struct {
-	ImageID      string `json:"ImageId"`
-	InstanceType string `json:"InstanceType"`
-	MinCount     int    `json:"MinCount"`
-	MaxCount     int    `json:"MaxCount"`
-	SubnetID     string `json:"SubnetId"`
+	ImageID           string                `json:"ImageId"`
+	InstanceType      string                `json:"InstanceType"`
+	MinCount          int                   `json:"MinCount"`
+	MaxCount          int                   `json:"MaxCount"`
+	SubnetID          string                `json:"SubnetId"`
+	SecurityGroupIDs  []string              `json:"SecurityGroupId"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
-type terminateInstancesReq struct{}
+type terminateInstancesReq struct {
+	InstanceIDs []string `json:"InstanceId"`
+}
 
-type stopInstancesReq struct{}
+type stopInstancesReq struct {
+	InstanceIDs []string `json:"InstanceId"`
+}
 
-type startInstancesReq struct{}
+type startInstancesReq struct {
+	InstanceIDs []string `json:"InstanceId"`
+}
 
 type describeImagesReq struct {
 	ImageIDs []string    `json:"ImageId"`
@@ -209,13 +260,18 @@ type ec2TagRequest struct {
 	Value string `json:"Value"`
 }
 
-type deleteTagsReq struct{}
+type deleteTagsReq struct {
+	ResourceIDs []string `json:"ResourceId"`
+	Tags        []Tag    `json:"Tag"`
+}
 
 type describeTagsReq struct {
 	Filters []ec2Filter `json:"Filter"`
 }
 
-type allocateAddressReq struct{}
+type allocateAddressReq struct {
+	Domain string `json:"Domain"`
+}
 
 type releaseAddressReq struct {
 	AllocationID string `json:"AllocationId"`
@@ -236,8 +292,9 @@ type disassociateAddressReq struct {
 }
 
 type createNatGatewayReq struct {
-	SubnetID     string `json:"SubnetId"`
-	AllocationID string `json:"AllocationId"`
+	SubnetID          string                `json:"SubnetId"`
+	AllocationID      string                `json:"AllocationId"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeNatGatewaysReq struct {
@@ -250,11 +307,14 @@ type deleteNatGatewayReq struct {
 }
 
 type modifySubnetAttributeReq struct {
-	SubnetID string `json:"SubnetId"`
+	SubnetID            string                 `json:"SubnetId"`
+	MapPublicIpOnLaunch *ec2AttributeBoolValue `json:"MapPublicIpOnLaunch"`
 }
 
 type modifyVpcAttributeReq struct {
-	VpcID string `json:"VpcId"`
+	VpcID              string                 `json:"VpcId"`
+	EnableDnsSupport   *ec2AttributeBoolValue `json:"EnableDnsSupport"`
+	EnableDnsHostnames *ec2AttributeBoolValue `json:"EnableDnsHostnames"`
 }
 
 type describeVpcAttributeReq struct {
@@ -269,9 +329,10 @@ type describeDhcpOptionsReq struct {
 type describeAccountAttributesReq struct{}
 
 type createVpnGatewayReq struct {
-	Type             string `json:"Type"`
-	AmazonSideAsn    string `json:"AmazonSideAsn"`
-	AvailabilityZone string `json:"AvailabilityZone"`
+	Type              string                `json:"Type"`
+	AmazonSideAsn     string                `json:"AmazonSideAsn"`
+	AvailabilityZone  string                `json:"AvailabilityZone"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type attachVpnGatewayReq struct {
@@ -308,12 +369,14 @@ type deleteNetworkInterfaceReq struct {
 }
 
 type modifyInstanceAttributeReq struct {
-	InstanceID string `json:"InstanceId"`
+	InstanceID   string                   `json:"InstanceId"`
+	InstanceType *ec2AttributeStringValue `json:"InstanceType"`
 }
 
 type createVpcEndpointReq struct {
-	VpcID       string `json:"VpcId"`
-	ServiceName string `json:"ServiceName"`
+	VpcID           string `json:"VpcId"`
+	ServiceName     string `json:"ServiceName"`
+	VpcEndpointType string `json:"VpcEndpointType"`
 }
 
 type describeVpcEndpointsReq struct {
@@ -321,7 +384,9 @@ type describeVpcEndpointsReq struct {
 	Filters        []ec2Filter `json:"Filter"`
 }
 
-type deleteVpcEndpointsReq struct{}
+type deleteVpcEndpointsReq struct {
+	VpcEndpointIDs []string `json:"VpcEndpointId"`
+}
 
 // ── Response types (xml tags for QueryXML codec WriteResponse) ────
 //
@@ -532,6 +597,7 @@ type typedRouteTableXML struct {
 	VpcID          string                          `xml:"vpcId"`
 	RouteSet       []typedRouteXML                 `xml:"routeSet>item"`
 	AssociationSet []typedRouteTableAssociationXML `xml:"associationSet>item,omitempty"`
+	Tags           []typedTagXML                   `xml:"tagSet>item,omitempty"`
 }
 
 type typedRouteXML struct {
@@ -594,6 +660,7 @@ type createIGWResp struct {
 type typedIGWXML struct {
 	InternetGatewayID string                  `xml:"internetGatewayId"`
 	AttachmentSet     []typedIGWAttachmentXML `xml:"attachmentSet>item,omitempty"`
+	Tags              []typedTagXML           `xml:"tagSet>item,omitempty"`
 }
 
 type typedIGWAttachmentXML struct {
@@ -808,14 +875,15 @@ type createNetworkInterfaceResp struct {
 }
 
 type typedNetworkInterfaceXML struct {
-	NetworkInterfaceID string `xml:"networkInterfaceId"`
-	SubnetID           string `xml:"subnetId"`
-	VpcID              string `xml:"vpcId"`
-	AvailabilityZone   string `xml:"availabilityZone"`
-	Description        string `xml:"description"`
-	PrivateIPAddress   string `xml:"privateIpAddress"`
-	Status             string `xml:"status"`
-	MacAddress         string `xml:"macAddress"`
+	NetworkInterfaceID string        `xml:"networkInterfaceId"`
+	SubnetID           string        `xml:"subnetId"`
+	VpcID              string        `xml:"vpcId"`
+	AvailabilityZone   string        `xml:"availabilityZone"`
+	Description        string        `xml:"description"`
+	PrivateIPAddress   string        `xml:"privateIpAddress"`
+	Status             string        `xml:"status"`
+	MacAddress         string        `xml:"macAddress"`
+	TagSet             []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type deleteNetworkInterfaceResp struct {
@@ -877,7 +945,14 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 		return nil, ec2err("MissingParameter", "CidrBlock is required", http.StatusBadRequest)
 	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
-	vpc := &VPC{VpcID: vpcID, CidrBlock: req.CidrBlock, State: "available", CreateTime: h.clk.Now().UnixMilli()}
+	// Matches real AWS: every new VPC has DNS resolution on; DNS hostnames
+	// stay off until ModifyVpcAttribute turns them on. See legacy's CreateVpc
+	// and #1144 — EnableDnsSupport is a stored field, not a wire default this
+	// body gets to skip.
+	vpc := &VPC{
+		VpcID: vpcID, CidrBlock: req.CidrBlock, State: "available", CreateTime: h.clk.Now().UnixMilli(),
+		EnableDnsSupport: true, EnableDnsHostnames: false,
+	}
 	if h.vpcStrategy != nil {
 		if aerr := h.vpcStrategy.EnsureNetwork(ctx, vpc); aerr != nil {
 			return nil, aerr
@@ -886,6 +961,7 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	if aerr := h.putVPCWithMainRouteTable(ctx, vpc); aerr != nil {
 		return nil, aerr
 	}
+	h.publish(ctx, events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
 	return &createVpcResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -914,6 +990,11 @@ func (h *Handler) deleteVpcTyped(ctx context.Context, req *deleteVpcReq) (*delet
 		return nil, ec2err("MissingParameter", "VpcId is required", http.StatusBadRequest)
 	}
 	vpc, _ := h.store.getVPC(ctx, req.VpcID)
+	if vpc != nil {
+		if aerr := h.vpcDependencyError(ctx, req.VpcID); aerr != nil {
+			return nil, aerr
+		}
+	}
 	if aerr := h.store.deleteVPC(ctx, req.VpcID); aerr != nil {
 		return nil, aerr
 	}
@@ -923,6 +1004,7 @@ func (h *Handler) deleteVpcTyped(ctx context.Context, req *deleteVpcReq) (*delet
 	if vpc != nil && h.vpcStrategy != nil {
 		h.vpcStrategy.OnDelete(ctx, vpc)
 	}
+	h.publish(ctx, events.EC2VpcDeleted, events.ResourcePayload{Name: req.VpcID})
 	return &deleteVpcResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -946,6 +1028,7 @@ func (h *Handler) createSubnetTyped(ctx context.Context, req *createSubnetReq) (
 	if aerr := h.store.putSubnet(ctx, subnet); aerr != nil {
 		return nil, aerr
 	}
+	h.publish(ctx, events.EC2SubnetCreated, events.ResourcePayload{Name: subnetID})
 	return &createSubnetResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -966,9 +1049,13 @@ func (h *Handler) deleteSubnetTyped(ctx context.Context, req *deleteSubnetReq) (
 	if req.SubnetID == "" {
 		return nil, ec2err("MissingParameter", "SubnetId is required", http.StatusBadRequest)
 	}
+	if aerr := h.subnetDependencyError(ctx, req.SubnetID); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := h.store.deleteSubnet(ctx, req.SubnetID); aerr != nil {
 		return nil, aerr
 	}
+	h.publish(ctx, events.EC2SubnetDeleted, events.ResourcePayload{Name: req.SubnetID})
 	return &deleteSubnetResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -994,6 +1081,7 @@ func (h *Handler) createSecurityGroupTyped(ctx context.Context, req *createSecur
 	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
 		return nil, aerr
 	}
+	h.publish(ctx, events.EC2SecurityGroupCreated, events.ResourcePayload{Name: req.GroupName})
 	return &createSGResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1006,9 +1094,17 @@ func (h *Handler) deleteSecurityGroupTyped(ctx context.Context, req *deleteSecur
 	if req.GroupID == "" {
 		return nil, ec2err("MissingParameter", "GroupId is required", http.StatusBadRequest)
 	}
+	sg, aerr := h.store.getSecurityGroup(ctx, req.GroupID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.securityGroupDependencyError(ctx, sg); aerr != nil {
+		return nil, aerr
+	}
 	if aerr := h.store.deleteSecurityGroup(ctx, req.GroupID); aerr != nil {
 		return nil, aerr
 	}
+	h.publish(ctx, events.EC2SecurityGroupDeleted, events.ResourcePayload{Name: req.GroupID})
 	return &deleteSGResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1019,6 +1115,17 @@ func (h *Handler) deleteSecurityGroupTyped(ctx context.Context, req *deleteSecur
 func (h *Handler) authorizeSGIngressTyped(ctx context.Context, req *authorizeSGIngressReq) (*authorizeSGIngressResp, *protocol.AWSError) {
 	if req.GroupID == "" {
 		return nil, ec2err("MissingParameter", "GroupId is required", http.StatusBadRequest)
+	}
+	if len(req.IpPermissions) == 0 {
+		return nil, ec2err("MissingParameter", "IpPermissions are required", http.StatusBadRequest)
+	}
+	sg, aerr := h.store.getSecurityGroup(ctx, req.GroupID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	sg.IpPermissions = append(sg.IpPermissions, req.IpPermissions...)
+	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
+		return nil, aerr
 	}
 	return &authorizeSGIngressResp{
 		Xmlns:     ec2XMLNS,
@@ -1031,6 +1138,17 @@ func (h *Handler) authorizeSGEgressTyped(ctx context.Context, req *authorizeSGEg
 	if req.GroupID == "" {
 		return nil, ec2err("MissingParameter", "GroupId is required", http.StatusBadRequest)
 	}
+	if len(req.IpPermissions) == 0 {
+		return nil, ec2err("MissingParameter", "IpPermissions are required", http.StatusBadRequest)
+	}
+	sg, aerr := h.store.getSecurityGroup(ctx, req.GroupID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	sg.IpPermissionsEgress = append(sg.IpPermissionsEgress, req.IpPermissions...)
+	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
+		return nil, aerr
+	}
 	return &authorizeSGEgressResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1042,6 +1160,21 @@ func (h *Handler) revokeSGIngressTyped(ctx context.Context, req *revokeSGIngress
 	if req.GroupID == "" {
 		return nil, ec2err("MissingParameter", "GroupId is required", http.StatusBadRequest)
 	}
+	if len(req.IpPermissions) == 0 {
+		return nil, ec2err("MissingParameter", "IpPermissions are required", http.StatusBadRequest)
+	}
+	sg, aerr := h.store.getSecurityGroup(ctx, req.GroupID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, revoke := range req.IpPermissions {
+		if !removePermission(&sg.IpPermissions, revoke) {
+			return nil, ec2err("InvalidPermission.NotFound", "The specified rule does not exist in this security group", http.StatusBadRequest)
+		}
+	}
+	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
+		return nil, aerr
+	}
 	return &revokeSGIngressResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1052,6 +1185,21 @@ func (h *Handler) revokeSGIngressTyped(ctx context.Context, req *revokeSGIngress
 func (h *Handler) revokeSGEgressTyped(ctx context.Context, req *revokeSGEgressReq) (*revokeSGEgressResp, *protocol.AWSError) {
 	if req.GroupID == "" {
 		return nil, ec2err("MissingParameter", "GroupId is required", http.StatusBadRequest)
+	}
+	if len(req.IpPermissions) == 0 {
+		return nil, ec2err("MissingParameter", "IpPermissions are required", http.StatusBadRequest)
+	}
+	sg, aerr := h.store.getSecurityGroup(ctx, req.GroupID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, revoke := range req.IpPermissions {
+		if !removePermission(&sg.IpPermissionsEgress, revoke) {
+			return nil, ec2err("InvalidPermission.NotFound", "The specified rule does not exist in this security group", http.StatusBadRequest)
+		}
+	}
+	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
+		return nil, aerr
 	}
 	return &revokeSGEgressResp{
 		Xmlns:     ec2XMLNS,
@@ -1085,6 +1233,22 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		maxCount = minCount
 	}
 	subnetID := req.SubnetID
+	tags := typedTagSpecifications(req.TagSpecifications, "instance")
+	// Create-time tags are checked before anything is launched, as on AWS: a
+	// rejected tag must fail the call rather than leave instances running.
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
+	// Resolve SG names for the response.
+	sgRefs := make([]InstanceSG, 0, len(req.SecurityGroupIDs))
+	for _, sgID := range req.SecurityGroupIDs {
+		sg, _ := h.store.getSecurityGroup(ctx, sgID)
+		name := ""
+		if sg != nil {
+			name = sg.GroupName
+		}
+		sgRefs = append(sgRefs, InstanceSG{GroupID: sgID, GroupName: name})
+	}
 	now := h.clk.Now().UTC().Format(time.RFC3339)
 	az := h.cfg.Region + "a"
 	resolvedVpcID := ""
@@ -1119,10 +1283,16 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 			LaunchTime:       now,
 			SubnetID:         subnetID,
 			PrivateIPAddress: realPrivateIP,
+			SecurityGroups:   sgRefs,
 			Placement:        Placement{AvailabilityZone: az},
 			VpcID:            vpcID,
 		}
 		if aerr := h.store.putInstance(ctx, inst); aerr != nil {
+			return nil, aerr
+		}
+		// Create-time tags go to the tag store, the same place CreateTags
+		// writes, so a later describe sees both without reading two sources.
+		if aerr := h.putResourceTags(ctx, instID, tags); aerr != nil {
 			return nil, aerr
 		}
 		id := instID
@@ -1136,6 +1306,11 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 				_ = h.store.putInstance(bgCtx, got)
 			}
 		})
+		h.publish(ctx, events.EC2InstanceLaunched, events.ResourcePayload{Name: instID})
+		xmlSGs := make([]typedSGRefXML, 0, len(sgRefs))
+		for _, sg := range sgRefs {
+			xmlSGs = append(xmlSGs, typedSGRefXML(sg))
+		}
 		instances = append(instances, typedInstanceXML{
 			InstanceID:    instID,
 			ImageID:       req.ImageID,
@@ -1146,6 +1321,8 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 			VpcID:         inst.VpcID,
 			PrivateIP:     apiPrivateIP,
 			Placement:     typedPlacementXML{AvailabilityZone: az},
+			GroupSet:      xmlSGs,
+			TagSet:        typedTagsOf(sortTags(tags)),
 		})
 	}
 	return &runInstancesResp{
@@ -1157,24 +1334,129 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 	}, nil
 }
 
-func (h *Handler) terminateInstancesTyped(ctx context.Context, _ *terminateInstancesReq) (*terminateInstancesResp, *protocol.AWSError) {
+func (h *Handler) terminateInstancesTyped(ctx context.Context, req *terminateInstancesReq) (*terminateInstancesResp, *protocol.AWSError) {
+	if len(req.InstanceIDs) == 0 {
+		return nil, ec2err("MissingParameter", "InstanceId is required", http.StatusBadRequest)
+	}
+	changes := make([]typedInstanceStateChangeXML, 0, len(req.InstanceIDs))
+	for _, id := range req.InstanceIDs {
+		inst, aerr := h.store.getInstance(ctx, id)
+		if aerr != nil {
+			return nil, aerr
+		}
+		prev := typedInstanceStateXML{Code: inst.State.Code, Name: inst.State.Name}
+		inst.State = InstanceState{Code: 32, Name: "shutting-down"}
+		if aerr := h.store.putInstance(ctx, inst); aerr != nil {
+			return nil, aerr
+		}
+		instID := id
+		h.scheduler.AfterScoped(h.store.region(ctx), instID, "terminate", 500*time.Millisecond, func(bgCtx context.Context) {
+			got, aerr := h.store.getInstance(bgCtx, instID)
+			if aerr != nil {
+				return
+			}
+			if got.State.Code == 32 {
+				got.State = InstanceState{Code: 48, Name: "terminated"}
+				_ = h.store.putInstance(bgCtx, got)
+			}
+		})
+		h.publish(ctx, events.EC2InstanceTerminated, events.ResourcePayload{Name: id})
+		changes = append(changes, typedInstanceStateChangeXML{
+			InstanceID:    id,
+			PreviousState: prev,
+			CurrentState:  typedInstanceStateXML{Code: 32, Name: "shutting-down"},
+		})
+	}
 	return &terminateInstancesResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
+		Instances: changes,
 	}, nil
 }
 
-func (h *Handler) stopInstancesTyped(ctx context.Context, _ *stopInstancesReq) (*stopInstancesResp, *protocol.AWSError) {
+func (h *Handler) stopInstancesTyped(ctx context.Context, req *stopInstancesReq) (*stopInstancesResp, *protocol.AWSError) {
+	if len(req.InstanceIDs) == 0 {
+		return nil, ec2err("MissingParameter", "InstanceId is required", http.StatusBadRequest)
+	}
+	changes := make([]typedInstanceStateChangeXML, 0, len(req.InstanceIDs))
+	for _, id := range req.InstanceIDs {
+		inst, aerr := h.store.getInstance(ctx, id)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if inst.State.Code != 16 && inst.State.Code != 0 {
+			return nil, ec2err("IncorrectInstanceState", fmt.Sprintf("Instance %s is not in the 'running' state", id), http.StatusBadRequest)
+		}
+		prev := typedInstanceStateXML{Code: inst.State.Code, Name: inst.State.Name}
+		inst.State = InstanceState{Code: 64, Name: "stopping"}
+		if aerr := h.store.putInstance(ctx, inst); aerr != nil {
+			return nil, aerr
+		}
+		instID := id
+		h.scheduler.AfterScoped(h.store.region(ctx), instID, "stop", 0, func(bgCtx context.Context) {
+			got, aerr := h.store.getInstance(bgCtx, instID)
+			if aerr != nil {
+				return
+			}
+			if got.State.Code == 64 {
+				got.State = InstanceState{Code: 80, Name: "stopped"}
+				_ = h.store.putInstance(bgCtx, got)
+			}
+		})
+		h.publish(ctx, events.EC2InstanceStopped, events.ResourcePayload{Name: id})
+		changes = append(changes, typedInstanceStateChangeXML{
+			InstanceID:    id,
+			PreviousState: prev,
+			CurrentState:  typedInstanceStateXML{Code: 64, Name: "stopping"},
+		})
+	}
 	return &stopInstancesResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
+		Instances: changes,
 	}, nil
 }
 
-func (h *Handler) startInstancesTyped(ctx context.Context, _ *startInstancesReq) (*startInstancesResp, *protocol.AWSError) {
+func (h *Handler) startInstancesTyped(ctx context.Context, req *startInstancesReq) (*startInstancesResp, *protocol.AWSError) {
+	if len(req.InstanceIDs) == 0 {
+		return nil, ec2err("MissingParameter", "InstanceId is required", http.StatusBadRequest)
+	}
+	changes := make([]typedInstanceStateChangeXML, 0, len(req.InstanceIDs))
+	for _, id := range req.InstanceIDs {
+		inst, aerr := h.store.getInstance(ctx, id)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if inst.State.Code != 80 {
+			return nil, ec2err("IncorrectInstanceState", fmt.Sprintf("Instance %s is not in the 'stopped' state", id), http.StatusBadRequest)
+		}
+		prev := typedInstanceStateXML{Code: inst.State.Code, Name: inst.State.Name}
+		inst.State = InstanceState{Code: 0, Name: "pending"}
+		if aerr := h.store.putInstance(ctx, inst); aerr != nil {
+			return nil, aerr
+		}
+		instID := id
+		h.scheduler.AfterScoped(h.store.region(ctx), instID, "start", 0, func(bgCtx context.Context) {
+			got, aerr := h.store.getInstance(bgCtx, instID)
+			if aerr != nil {
+				return
+			}
+			if got.State.Code == 0 {
+				got.State = InstanceState{Code: 16, Name: "running"}
+				_ = h.store.putInstance(bgCtx, got)
+			}
+		})
+		h.publish(ctx, events.EC2InstanceStarted, events.ResourcePayload{Name: id})
+		changes = append(changes, typedInstanceStateChangeXML{
+			InstanceID:    id,
+			PreviousState: prev,
+			CurrentState:  typedInstanceStateXML{Code: 0, Name: "pending"},
+		})
+	}
 	return &startInstancesResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
+		Instances: changes,
 	}, nil
 }
 
@@ -1602,7 +1884,25 @@ func (h *Handler) createTagsTyped(ctx context.Context, req *createTagsReq) (*cre
 	}, nil
 }
 
-func (h *Handler) deleteTagsTyped(ctx context.Context, _ *deleteTagsReq) (*deleteTagsResp, *protocol.AWSError) {
+func (h *Handler) deleteTagsTyped(ctx context.Context, req *deleteTagsReq) (*deleteTagsResp, *protocol.AWSError) {
+	// The same key-only match the Query path uses (collectFormTags, tags.go):
+	// a Tag.N entry deletes by key regardless of the value sent alongside it.
+	keys := make(map[string]bool, len(req.Tags))
+	for _, t := range req.Tags {
+		keys[t.Key] = true
+	}
+	for _, rid := range req.ResourceIDs {
+		existing, _ := h.store.getTags(ctx, rid)
+		if existing == nil {
+			continue
+		}
+		for k := range keys {
+			delete(existing, k)
+		}
+		if aerr := h.store.putTags(ctx, rid, existing); aerr != nil {
+			return nil, aerr
+		}
+	}
 	return &deleteTagsResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1614,13 +1914,17 @@ func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (
 	return h.describeTags(ctx, typedQuery(nil, req.Filters))
 }
 
-func (h *Handler) allocateAddressTyped(ctx context.Context, _ *allocateAddressReq) (*allocateAddressResp, *protocol.AWSError) {
+func (h *Handler) allocateAddressTyped(ctx context.Context, req *allocateAddressReq) (*allocateAddressResp, *protocol.AWSError) {
 	allocID := fmt.Sprintf("eipalloc-%s", shortID())
 	ip := fmt.Sprintf("203.0.113.%d", syntheticIPCounter.Add(1)%254+1)
+	domain := req.Domain
+	if domain == "" {
+		domain = "vpc"
+	}
 	addr := &ElasticIP{
 		AllocationID: allocID,
 		PublicIP:     ip,
-		Domain:       "vpc",
+		Domain:       domain,
 	}
 	if aerr := h.store.putElasticIP(ctx, addr); aerr != nil {
 		return nil, aerr
@@ -1705,6 +2009,12 @@ func (h *Handler) createNatGatewayTyped(ctx context.Context, req *createNatGatew
 	if req.SubnetID == "" {
 		return nil, ec2err("MissingParameter", "SubnetId is required", http.StatusBadRequest)
 	}
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a NAT gateway behind.
+	tags := typedTagSpecifications(req.TagSpecifications, "natgateway")
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	sub, aerr := h.store.getSubnet(ctx, req.SubnetID)
 	if aerr != nil {
 		return nil, ec2err("InvalidSubnetID.NotFound", fmt.Sprintf("The subnet ID '%s' does not exist", req.SubnetID), http.StatusBadRequest)
@@ -1732,6 +2042,11 @@ func (h *Handler) createNatGatewayTyped(ctx context.Context, req *createNatGatew
 	if aerr := h.store.putNatGateway(ctx, ngw); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without having to read two sources.
+	if aerr := h.putResourceTags(ctx, natID, tags); aerr != nil {
+		return nil, aerr
+	}
 	addrs := []typedNatGWAddrXML{{AllocationID: req.AllocationID, PublicIP: publicIP, PrivateIP: ngw.PrivateIP}}
 	return &createNatGatewayResp{
 		Xmlns:     ec2XMLNS,
@@ -1743,6 +2058,7 @@ func (h *Handler) createNatGatewayTyped(ctx context.Context, req *createNatGatew
 			State:        "available",
 			CreateTime:   now,
 			Addresses:    addrs,
+			Tags:         typedResourceTagsOf(sortTags(tags)),
 		},
 	}, nil
 }
@@ -1773,8 +2089,15 @@ func (h *Handler) modifySubnetAttributeTyped(ctx context.Context, req *modifySub
 	if req.SubnetID == "" {
 		return nil, ec2err("MissingParameter", "SubnetId is required", http.StatusBadRequest)
 	}
-	if _, aerr := h.store.getSubnet(ctx, req.SubnetID); aerr != nil {
+	sub, aerr := h.store.getSubnet(ctx, req.SubnetID)
+	if aerr != nil {
 		return nil, aerr
+	}
+	if req.MapPublicIpOnLaunch != nil {
+		sub.MapPublicIpOnLaunch = req.MapPublicIpOnLaunch.Value
+		if aerr := h.store.putSubnet(ctx, sub); aerr != nil {
+			return nil, aerr
+		}
 	}
 	return &modifySubnetAttributeResp{
 		Xmlns:     ec2XMLNS,
@@ -1787,8 +2110,23 @@ func (h *Handler) modifyVpcAttributeTyped(ctx context.Context, req *modifyVpcAtt
 	if req.VpcID == "" {
 		return nil, ec2err("MissingParameter", "VpcId is required", http.StatusBadRequest)
 	}
-	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
+	vpc, aerr := h.store.getVPC(ctx, req.VpcID)
+	if aerr != nil {
 		return nil, aerr
+	}
+	changed := false
+	if req.EnableDnsSupport != nil {
+		vpc.EnableDnsSupport = req.EnableDnsSupport.Value
+		changed = true
+	}
+	if req.EnableDnsHostnames != nil {
+		vpc.EnableDnsHostnames = req.EnableDnsHostnames.Value
+		changed = true
+	}
+	if changed {
+		if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+			return nil, aerr
+		}
 	}
 	return &modifyVpcAttributeResp{
 		Xmlns:     ec2XMLNS,
@@ -1824,6 +2162,12 @@ func (h *Handler) createVpnGatewayTyped(ctx context.Context, req *createVpnGatew
 	if aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a gateway behind.
+	tags := typedTagSpecifications(req.TagSpecifications, "vpn-gateway")
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	vgw := &VpnGateway{
 		VpnGatewayID:     fmt.Sprintf("vgw-%s", shortID()),
 		State:            "available",
@@ -1834,10 +2178,15 @@ func (h *Handler) createVpnGatewayTyped(ctx context.Context, req *createVpnGatew
 	if aerr := h.store.putVpnGateway(ctx, vgw); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without having to read two sources.
+	if aerr := h.putResourceTags(ctx, vgw.VpnGatewayID, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createVpnGatewayResp{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(ctx),
-		VpnGateway: vpnGatewayToTypedXML(vgw, nil),
+		VpnGateway: vpnGatewayToTypedXML(vgw, sortTags(tags)),
 	}, nil
 }
 
@@ -2005,7 +2354,12 @@ func (h *Handler) modifyInstanceAttributeTyped(ctx context.Context, req *modifyI
 	if aerr != nil {
 		return nil, aerr
 	}
-	_ = inst
+	if req.InstanceType != nil && req.InstanceType.Value != "" {
+		inst.InstanceType = req.InstanceType.Value
+		if aerr := h.store.putInstance(ctx, inst); aerr != nil {
+			return nil, aerr
+		}
+	}
 	return &modifyInstanceAttributeResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -2017,6 +2371,10 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 	if req.VpcID == "" || req.ServiceName == "" {
 		return nil, ec2err("MissingParameter", "VpcId and ServiceName are required.", http.StatusBadRequest)
 	}
+	epType := req.VpcEndpointType
+	if epType == "" {
+		epType = "Gateway"
+	}
 	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
 		return nil, aerr
 	}
@@ -2026,7 +2384,7 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 		VpcID:           req.VpcID,
 		ServiceName:     req.ServiceName,
 		State:           "available",
-		VpcEndpointType: "Gateway",
+		VpcEndpointType: epType,
 	}
 	if aerr := h.store.putVpcEndpoint(ctx, ep); aerr != nil {
 		return nil, aerr
@@ -2048,7 +2406,10 @@ func (h *Handler) describeVpcEndpointsTyped(ctx context.Context, req *describeVp
 	return h.describeVpcEndpoints(ctx, typedQuery(req.VpcEndpointIDs, req.Filters))
 }
 
-func (h *Handler) deleteVpcEndpointsTyped(ctx context.Context, _ *deleteVpcEndpointsReq) (*deleteVpcEndpointsResp, *protocol.AWSError) {
+func (h *Handler) deleteVpcEndpointsTyped(ctx context.Context, req *deleteVpcEndpointsReq) (*deleteVpcEndpointsResp, *protocol.AWSError) {
+	for _, id := range req.VpcEndpointIDs {
+		_ = h.store.deleteVpcEndpoint(ctx, id)
+	}
 	return &deleteVpcEndpointsResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -2085,14 +2446,21 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 	}
 }
 
+// typedResourceTagsOf renders tags for the typed operations that use
+// typedResourceTagXML rather than typedTagXML for their tagSet — NAT gateway
+// and VPN gateway, whose response types predate typedTagsOf (tags.go).
+func typedResourceTagsOf(tags []Tag) []typedResourceTagXML {
+	out := make([]typedResourceTagXML, 0, len(tags))
+	for _, tag := range tags {
+		out = append(out, typedResourceTagXML(tag))
+	}
+	return out
+}
+
 func vpnGatewayToTypedXML(vgw *VpnGateway, tags []Tag) typedVpnGatewayXML {
 	attachments := make([]typedVpnGatewayAttachmentXML, 0, len(vgw.Attachments))
 	for _, att := range vgw.Attachments {
 		attachments = append(attachments, typedVpnGatewayAttachmentXML(att))
-	}
-	resourceTags := make([]typedResourceTagXML, 0, len(tags))
-	for _, tag := range tags {
-		resourceTags = append(resourceTags, typedResourceTagXML(tag))
 	}
 	return typedVpnGatewayXML{
 		VpnGatewayID:     vgw.VpnGatewayID,
@@ -2101,7 +2469,7 @@ func vpnGatewayToTypedXML(vgw *VpnGateway, tags []Tag) typedVpnGatewayXML {
 		AvailabilityZone: vgw.AvailabilityZone,
 		Attachments:      attachments,
 		AmazonSideAsn:    vgw.AmazonSideAsn,
-		Tags:             resourceTags,
+		Tags:             typedResourceTagsOf(tags),
 	}
 }
 
