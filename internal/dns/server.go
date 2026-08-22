@@ -62,6 +62,7 @@ type Server struct {
 
 	locator Locator
 	guard   atomic.Pointer[Guard]
+	r53     atomic.Pointer[Route53Source]
 
 	// listenTCP is net.Listen, replaced only by tests so the ephemeral-port
 	// search can be driven without depending on which ports this machine
@@ -429,6 +430,31 @@ func (s *Server) respond(ctx context.Context, query, dst []byte, peer netip.Addr
 			return appendHeaderOnlyError(dst, query, rcodeFormErr), false
 		}
 		return nil, false
+	}
+
+	// Route 53 hosted zones are a namespace entirely separate from the
+	// split-horizon domains s.zone claims — a customer's own "example.com",
+	// not one of Overcast's own emulator hostnames. When some hosted zone in
+	// the store claims this name, Overcast IS that zone's name server: the
+	// answer (including a negative one) is always authoritative and never
+	// forwarded, exactly as s.zone's own names are. Checked ahead of s.zone so
+	// a Route 53 zone that happens to share a name with a split-horizon
+	// domain still gets the customer's own records.
+	if q.qclass == classIN {
+		if src := s.loadRoute53(); src != nil {
+			if ans, found := src.Lookup(ctx, string(trimTrailingDot(q.name)), q.qtype); found {
+				if ans.Alias && (q.qtype == typeA || q.qtype == typeANY) {
+					if addr := s.answerAddr(peer); addr.IsValid() {
+						ans.Answers = append(ans.Answers, RR{Name: ans.AliasName, Type: typeA, TTL: ans.AliasTTL, Value: addr.String()})
+					} else {
+						// Same honesty rule as the owned-zone path below: no
+						// address to give is SERVFAIL, not a cacheable NODATA.
+						ans.Rcode, ans.Answers, ans.Authority = rcodeServFail, nil, nil
+					}
+				}
+				return appendRoute53Answer(dst, query, q, ans), false
+			}
+		}
 	}
 
 	if q.qclass != classIN || !s.zone.ownsWire(q.name) {

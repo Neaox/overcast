@@ -1,6 +1,9 @@
-// Package route53 emulates Amazon Route 53 at inert level: hosted zones,
-// resource record sets, tags, and health checks exist as real metadata with
-// AWS-faithful validation, defaults, and error codes — but no DNS is served.
+// Package route53 emulates Amazon Route 53: hosted zones, resource record
+// sets, tags, and health checks exist as real metadata with AWS-faithful
+// validation, defaults, and error codes, and — since issue #1189 —
+// Overcast's own DNS resolver (internal/dns) actually answers queries from
+// them. See dns_resolve.go for the resolver integration and
+// docs/services/route53.md for what is and is not served.
 //
 // Implemented operations (REST-XML at /2013-04-01/):
 //
