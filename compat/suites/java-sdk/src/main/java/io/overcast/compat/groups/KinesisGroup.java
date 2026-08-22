@@ -181,7 +181,7 @@ public final class KinesisGroup implements ServiceGroup {
             iterator = savedIterator;
         }
         var resp = kinesis().getRecords(r -> r.shardIterator(iterator).limit(10));
-        Assertions.assertNotNull(resp.records(), "GetRecords: records is null");
+        Assertions.assertNotEmpty(resp.records(), "GetRecords: no records returned from TRIM_HORIZON after PutRecord(s)");
     }
 
     // ── kinesis-shards ────────────────────────────────────────────────────────

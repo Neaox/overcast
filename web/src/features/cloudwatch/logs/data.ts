@@ -153,7 +153,7 @@ export function logsFilterInfiniteQueryOptions(
         const events = []
         let searchedLogStreams: Awaited<
           ReturnType<typeof logs.filterEvents>
-        >["searchedLogStreams"] = []
+        >["searchedLogStreams"]
         let token: string | undefined
         do {
           const page = await logs.filterEvents(groupName, {

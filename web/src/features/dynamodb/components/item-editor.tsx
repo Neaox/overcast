@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback } from "react"
 import { Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { JsonEditor } from "@/components/ui/json-editor"
@@ -203,15 +203,27 @@ export function ItemEditorDialog({
   const [rows, setRows] = useState<AttrRow[]>(() => defaultRows(requiredKeys, initialItem))
 
   // Re-populate when a different item is opened for editing.
-  useEffect(() => {
+  //
+  // This is React's "adjusting state when a prop changes" — done during render,
+  // guarded by the props it is a function of, rather than from an effect. An
+  // effect would paint the previous item's attributes first and only then
+  // replace them, which is both a wasted render and a visible flash of the
+  // wrong item; React instead discards this render and re-runs with the new
+  // state before touching the DOM. `requiredKeys` is deliberately not part of
+  // the guard: it is static per table, and reading it here is not a trigger.
+  const [seededFor, setSeededFor] = useState<{ open: boolean; item: DynamoItem | undefined }>({
+    open,
+    item: initialItem,
+  })
+  if (seededFor.open !== open || seededFor.item !== initialItem) {
+    setSeededFor({ open, item: initialItem })
     if (open) {
       setRows(defaultRows(requiredKeys, initialItem))
       setInputMode("form")
       setJsonText("")
       setJsonError(null)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- requiredKeys are static per table and should not trigger re-population
-  }, [open, initialItem])
+  }
 
   // Live validation: parse on every keystroke
   const handleJsonChange = useCallback((value: string) => {

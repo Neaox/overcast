@@ -6,7 +6,16 @@
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client", "vitest/globals"],
+    // `node` is here for the *tests*, which live in src/ alongside the code they
+    // cover: src/test/source-files.ts and the token/typography/global-css guards
+    // read repo files with node:fs and node:path. An explicit `types` array turns
+    // OFF automatic @types inclusion, so `node` only ever reached this project
+    // by accident — vite's and vitest's own d.ts graph used to pull @types/node
+    // in transitively, and a dependency bump can (and did) drop that edge. Name
+    // it here so the test files depend on a declared type package instead of a
+    // transitive one. Browser code must still not import node builtins; the Vite
+    // build is what enforces that.
+    "types": ["vite/client", "vitest/globals", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */

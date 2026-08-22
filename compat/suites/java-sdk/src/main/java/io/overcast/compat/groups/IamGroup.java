@@ -165,7 +165,8 @@ public final class IamGroup implements ServiceGroup {
         final String cur = current;
         String updated = current + "-updated";
         iam().updateUser(r -> r.userName(cur).newUserName(updated));
-        iam().getUser(r -> r.userName(updated));
+        var resp = iam().getUser(r -> r.userName(updated));
+        Assertions.assertEquals(updated, resp.user().userName(), "UpdateUser: renamed user not readable under new name");
         // Rename back so teardown works.
         iam().updateUser(r -> r.userName(updated).newUserName(cur));
     }
@@ -228,10 +229,7 @@ public final class IamGroup implements ServiceGroup {
     private void teardownRoles(TestContext ctx) {
         String name = ctx.getString("iamRole");
         if (name == null) return;
-        String policyArn = ctx.getString("managedPolicyArn");
-        if (policyArn != null) {
-            try { iam().detachRolePolicy(r -> r.roleName(name).policyArn(policyArn)); } catch (Exception ignored) {}
-        }
+        try { iam().detachRolePolicy(r -> r.roleName(name).policyArn(ATTACHED_MANAGED_POLICY_ARN)); } catch (Exception ignored) {}
         try { iam().deleteRolePolicy(r -> r.roleName(name).policyName("inline")); } catch (Exception ignored) {}
         // Clean up instance profile
         String ipName = ctx.getString("iamInstanceProfile");
@@ -258,8 +256,10 @@ public final class IamGroup implements ServiceGroup {
     }
 
     private void listIamRoles(TestContext ctx) throws Exception {
-        var resp = iam().listRoles(r -> r.maxItems(100));
-        Assertions.assertNotNull(resp.roles(), "ListIamRoles: roles is null");
+        String name = ctx.getString("iamRole");
+        var resp = iam().listRoles(r -> r.maxItems(1000));
+        boolean found = resp.roles().stream().anyMatch(role -> name.equals(role.roleName()));
+        Assertions.assertTrue(found, "ListIamRoles: created role " + name + " not found in list");
     }
 
     private void putRolePolicy(TestContext ctx) throws Exception {
@@ -284,24 +284,29 @@ public final class IamGroup implements ServiceGroup {
         iam().deleteRolePolicy(r -> r.roleName(name).policyName("inline"));
     }
 
+    // Each group gets its own TestContext, so the managed policy the
+    // iam-policies group creates is never visible here. Attach an AWS-managed
+    // policy instead (as the node-js/go suites do) so these three tests
+    // actually exercise attach → list → detach rather than silently no-op'ing.
+    private static final String ATTACHED_MANAGED_POLICY_ARN =
+            "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess";
+
     private void attachRolePolicy(TestContext ctx) throws Exception {
         String name = ctx.getString("iamRole");
-        String arn  = ctx.getString("managedPolicyArn");
-        if (arn == null) return; // requires CreateIamPolicy group to ran first
-        iam().attachRolePolicy(r -> r.roleName(name).policyArn(arn));
+        iam().attachRolePolicy(r -> r.roleName(name).policyArn(ATTACHED_MANAGED_POLICY_ARN));
     }
 
     private void listAttachedRolePolicies(TestContext ctx) throws Exception {
         String name = ctx.getString("iamRole");
         var resp = iam().listAttachedRolePolicies(r -> r.roleName(name));
-        Assertions.assertNotNull(resp.attachedPolicies(), "ListAttachedRolePolicies: attachedPolicies is null");
+        boolean found = resp.attachedPolicies().stream()
+                .anyMatch(p -> ATTACHED_MANAGED_POLICY_ARN.equals(p.policyArn()));
+        Assertions.assertTrue(found, "ListAttachedRolePolicies: attached policy not found in list");
     }
 
     private void detachRolePolicy(TestContext ctx) throws Exception {
         String name = ctx.getString("iamRole");
-        String arn  = ctx.getString("managedPolicyArn");
-        if (arn == null) return;
-        iam().detachRolePolicy(r -> r.roleName(name).policyArn(arn));
+        iam().detachRolePolicy(r -> r.roleName(name).policyArn(ATTACHED_MANAGED_POLICY_ARN));
     }
 
     private void deleteIamRole(TestContext ctx) throws Exception {
@@ -368,8 +373,10 @@ public final class IamGroup implements ServiceGroup {
     }
 
     private void listIamPolicies(TestContext ctx) throws Exception {
-        var resp = iam().listPolicies(r -> r.scope(PolicyScopeType.LOCAL).maxItems(100));
-        Assertions.assertNotNull(resp.policies(), "ListIamPolicies: policies is null");
+        String name = ctx.getString("iamManagedPolicyName");
+        var resp = iam().listPolicies(r -> r.scope(PolicyScopeType.LOCAL).maxItems(1000));
+        boolean found = resp.policies().stream().anyMatch(p -> name.equals(p.policyName()));
+        Assertions.assertTrue(found, "ListIamPolicies: created policy " + name + " not found in list");
     }
 
     private void deleteIamPolicy(TestContext ctx) throws Exception {

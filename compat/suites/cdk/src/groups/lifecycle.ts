@@ -367,9 +367,75 @@ async function verifyDynamoDBEsm(ctx: TestContext): Promise<void> {
     (resp.EventSourceMappings?.length ?? 0) > 0,
     `expected at least one ESM for stream ${streamArn}`,
   );
-  const esm = resp.EventSourceMappings![0];
+  // Two mappings sit on this stream: this one and the INSERT-filtered one
+  // VerifyFilteredDdbEsm covers. ListEventSourceMappings returns them in the
+  // emulator's store-key order and that key is the mapping's random UUID, so
+  // taking [0] picked a different mapping from run to run — half the time
+  // VerifyLambdaInvokedByStream was asserting against the filtered mapping,
+  // duplicating VerifyFilteredEsmDelivery and leaving the plain mapping
+  // untested. Select by shape so each test asserts on the mapping it names.
+  const plain = (resp.EventSourceMappings ?? []).filter(
+    (m) => !m.FilterCriteria,
+  );
+  assert.strictEqual(
+    plain.length,
+    1,
+    `expected exactly one unfiltered ESM on ${streamArn}, got ${plain.length}`,
+  );
+  const esm = plain[0]!;
   assert.ok(esm.UUID, "ESM UUID missing");
   (ctx as Record<string, unknown>)["_ddbEsmId"] = esm.UUID;
+}
+
+// The stream record put by PutStreamTriggerItem is the first invocation of the
+// stack's function, so no processing result can appear until a Lambda container
+// has cold started — and because two mappings sit on this stream, two
+// containers cold start at the same instant for the same record.
+//
+// Overcast gives one such invocation up to 30 s to acquire an execution
+// environment (invokeSyncOnce) plus LAMBDA_INIT_TIMEOUT_SECONDS — 10 s by
+// default — for the runtime to reach its first GET /next, so it does not record
+// any result for up to ~40 s. A shorter poll fails the run while the emulator
+// is still inside its own tolerance, and that is how this test failed on PR
+// #1263: the compat sweep found one Lambda container still running after
+// teardown and could not remove it, i.e. a cold start was still in INIT long
+// after the old 15 s deadline had expired. Every green CI run in the sample
+// resolved on the first or second poll (508 ms), so the budget below only ever
+// costs time on a run that would otherwise be a false regression.
+const streamResultPollIntervalMs = 500;
+const streamResultPollAttempts = 90; // 45 s > the emulator's own ~40 s budget
+
+// awaitEsmProcessingResult polls an ESM until it reports a processing result,
+// returning the last value seen. "No records processed" is the value
+// CreateEventSourceMapping seeds, so anything else means the mapping picked the
+// record up.
+async function awaitEsmProcessingResult(
+  ctx: TestContext,
+  esmId: string,
+  label: string,
+): Promise<string> {
+  const { lambda } = makeClients(ctx.endpoint, ctx.region);
+  const startedAt = Date.now();
+  let lastResult = "";
+  for (let i = 0; i < streamResultPollAttempts; i++) {
+    const resp = await lambda.send(
+      new GetEventSourceMappingCommand({ UUID: esmId }),
+    );
+    lastResult = resp.LastProcessingResult ?? "";
+    if (lastResult && lastResult !== "No records processed") {
+      break;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, streamResultPollIntervalMs),
+    );
+  }
+  // Log the wait even on the happy path: a green run that took 30 s is one
+  // environment hiccup away from red, and without this the log records only
+  // that it passed.
+  ctx.log(
+    `${label}: LastProcessingResult "${lastResult}" after ${Date.now() - startedAt}ms`,
+  );
+  return lastResult;
 }
 
 async function putStreamTriggerItem(ctx: TestContext): Promise<void> {
@@ -391,23 +457,15 @@ async function verifyLambdaInvokedByStream(ctx: TestContext): Promise<void> {
   const esmId = (ctx as Record<string, unknown>)["_ddbEsmId"] as string;
   assert.ok(esmId, "ddbEsmId missing from prior test");
 
-  const { lambda } = makeClients(ctx.endpoint, ctx.region);
-  let lastResult = "";
-  for (let i = 0; i < 30; i++) {
-    const resp = await lambda.send(
-      new GetEventSourceMappingCommand({ UUID: esmId }),
-    );
-    lastResult = resp.LastProcessingResult ?? "";
-    if (lastResult && lastResult !== "No records processed") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
+  const lastResult = await awaitEsmProcessingResult(
+    ctx,
+    esmId,
+    "DynamoDB Stream ESM",
+  );
   assert.ok(
     lastResult && lastResult !== "No records processed",
     `expected LastProcessingResult to change after item put, got "${lastResult}"`,
   );
-  ctx.log(`DynamoDB Stream ESM LastProcessingResult: ${lastResult}`);
 }
 
 async function verifyFilteredDdbEsm(ctx: TestContext): Promise<void> {
@@ -443,23 +501,15 @@ async function verifyFilteredEsmDelivery(ctx: TestContext): Promise<void> {
   const esmId = (ctx as Record<string, unknown>)["_filteredDdbEsmId"] as string;
   assert.ok(esmId, "filteredDdbEsmId missing from prior test");
 
-  const { lambda } = makeClients(ctx.endpoint, ctx.region);
-  let lastResult = "";
-  for (let i = 0; i < 30; i++) {
-    const resp = await lambda.send(
-      new GetEventSourceMappingCommand({ UUID: esmId }),
-    );
-    lastResult = resp.LastProcessingResult ?? "";
-    if (lastResult && lastResult !== "No records processed") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
+  const lastResult = await awaitEsmProcessingResult(
+    ctx,
+    esmId,
+    "Filtered DDB ESM",
+  );
   assert.ok(
     lastResult && lastResult !== "No records processed",
     `filtered ESM: expected LastProcessingResult to be set after INSERT, got "${lastResult}"`,
   );
-  ctx.log(`Filtered DDB ESM LastProcessingResult: ${lastResult}`);
 }
 
 async function verifyLogGroup(ctx: TestContext): Promise<void> {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { serverInfoQueryOptions } from "@/hooks/use-server-info"
-import { createTestQueryClient, renderWithRouter, screen } from "@/test/render"
+import { createTestQueryClient, renderWithRouter, screen, seedServerInfo } from "@/test/render"
 import { RawStateLink } from "./raw-state-link"
 
 function RawStateLinkOnly() {
@@ -9,7 +8,7 @@ function RawStateLinkOnly() {
 
 function renderLink(debug: boolean) {
   const queryClient = createTestQueryClient()
-  queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+  seedServerInfo(queryClient, { debug })
   return renderWithRouter(RawStateLinkOnly, { queryClient })
 }
 

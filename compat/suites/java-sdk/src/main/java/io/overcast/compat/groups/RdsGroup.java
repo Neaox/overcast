@@ -89,7 +89,10 @@ public final class RdsGroup implements ServiceGroup {
     private void setupNoop(TestContext ctx) {}
 
     private void describeDbEngineVersions(TestContext ctx) throws Exception {
-        rds().describeDBEngineVersions(r -> r.engine("mysql"));
+        var resp = rds().describeDBEngineVersions(r -> r.engine("mysql"));
+        Assertions.assertNotEmpty(resp.dbEngineVersions(), "DescribeDBEngineVersions: no mysql versions returned");
+        boolean allMysql = resp.dbEngineVersions().stream().allMatch(v -> "mysql".equals(v.engine()));
+        Assertions.assertTrue(allMysql, "DescribeDBEngineVersions: Engine filter not honoured");
     }
 
     private void createDbInstance(TestContext ctx) throws Exception {

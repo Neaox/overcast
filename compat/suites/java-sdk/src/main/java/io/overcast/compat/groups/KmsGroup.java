@@ -168,7 +168,9 @@ public final class KmsGroup implements ServiceGroup {
     private void listKmsResourceTags(TestContext ctx) throws Exception {
         String keyId = ctx.getString("kmsKeyId");
         var resp = kms().listResourceTags(r -> r.keyId(keyId));
-        Assertions.assertNotNull(resp.tags(), "ListKMSResourceTags: tags is null");
+        boolean found = resp.tags().stream()
+                .anyMatch(t -> "env".equals(t.tagKey()) && "test".equals(t.tagValue()));
+        Assertions.assertTrue(found, "ListKMSResourceTags: env=test tag not found");
     }
 
     // ── kms-crypto ────────────────────────────────────────────────────────────

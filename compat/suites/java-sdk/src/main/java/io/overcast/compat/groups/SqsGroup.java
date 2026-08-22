@@ -173,23 +173,29 @@ public final class SqsGroup implements ServiceGroup {
         String url = ctx.getString("sqsMsgQueueUrl");
         // Send a fresh message to change visibility on.
         sqs().sendMessage(r -> r.queueUrl(url).messageBody("vis-test"));
-        var recv = sqs().receiveMessage(r -> r.queueUrl(url).maxNumberOfMessages(1).waitTimeSeconds(0));
-        if (recv.messages().isEmpty()) return; // skip gracefully if queue is empty
+        var recv = sqs().receiveMessage(r -> r.queueUrl(url).maxNumberOfMessages(1).waitTimeSeconds(1));
+        Assertions.assertNotEmpty(recv.messages(), "ChangeMessageVisibility: no message to change visibility for");
         String rh = recv.messages().get(0).receiptHandle();
-        sqs().changeMessageVisibility(r -> r.queueUrl(url).receiptHandle(rh).visibilityTimeout(30));
+        sqs().changeMessageVisibility(r -> r.queueUrl(url).receiptHandle(rh).visibilityTimeout(0));
+        // With the timeout set to 0 the message must be immediately receivable again.
+        var recv2 = sqs().receiveMessage(r -> r.queueUrl(url).maxNumberOfMessages(1).waitTimeSeconds(1));
+        Assertions.assertNotEmpty(recv2.messages(),
+                "ChangeMessageVisibility: message not re-visible after setting timeout to 0");
     }
 
     private void deleteMessageBatch(TestContext ctx) throws Exception {
         String url = ctx.getString("sqsMsgQueueUrl");
         sqs().sendMessage(r -> r.queueUrl(url).messageBody("batch-del-1"));
         sqs().sendMessage(r -> r.queueUrl(url).messageBody("batch-del-2"));
-        var recv = sqs().receiveMessage(r -> r.queueUrl(url).maxNumberOfMessages(10).waitTimeSeconds(0));
-        if (recv.messages().isEmpty()) return;
+        var recv = sqs().receiveMessage(r -> r.queueUrl(url).maxNumberOfMessages(10).waitTimeSeconds(1));
+        Assertions.assertNotEmpty(recv.messages(), "DeleteMessageBatch: no messages received to delete");
         var entries = recv.messages().stream()
                 .map(m -> DeleteMessageBatchRequestEntry.builder()
                         .id(m.messageId()).receiptHandle(m.receiptHandle()).build())
                 .toList();
-        sqs().deleteMessageBatch(r -> r.queueUrl(url).entries(entries));
+        var resp = sqs().deleteMessageBatch(r -> r.queueUrl(url).entries(entries));
+        Assertions.assertEquals(entries.size(), resp.successful().size(),
+                "DeleteMessageBatch: not every entry deleted successfully (failed=" + resp.failed() + ")");
     }
 
     private void purgeQueue(TestContext ctx) throws Exception {

@@ -120,8 +120,16 @@ public final class SsmGroup implements ServiceGroup {
     }
 
     private void describeParameters(TestContext ctx) throws Exception {
-        var resp = ssm().describeParameters(r -> r.maxResults(10));
-        Assertions.assertNotNull(resp.parameters(), "DescribeParameters: parameters is null");
+        String n1 = ctx.getString("ssmParam1");
+        String n2 = ctx.getString("ssmParam2");
+        String prefix = "/" + ctx.runId() + "/param";
+        var resp = ssm().describeParameters(r -> r
+                .parameterFilters(ParameterStringFilter.builder()
+                        .key("Name").option("BeginsWith").values(prefix).build())
+                .maxResults(10));
+        var names = resp.parameters().stream().map(ParameterMetadata::name).toList();
+        Assertions.assertContains(names, n1, "DescribeParameters: " + n1 + " missing");
+        Assertions.assertContains(names, n2, "DescribeParameters: " + n2 + " missing");
     }
 
     private void tagParameter(TestContext ctx) throws Exception {
@@ -138,7 +146,9 @@ public final class SsmGroup implements ServiceGroup {
         var resp = ssm().listTagsForResource(r -> r
                 .resourceType(ResourceTypeForTagging.PARAMETER)
                 .resourceId(name));
-        Assertions.assertNotNull(resp.tagList(), "ListSSMTagsForResource: tagList is null");
+        boolean found = resp.tagList().stream()
+                .anyMatch(t -> "env".equals(t.key()) && "test".equals(t.value()));
+        Assertions.assertTrue(found, "ListSSMTagsForResource: env=test tag not found");
     }
 
     private void deleteParameters(TestContext ctx) throws Exception {

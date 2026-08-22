@@ -98,8 +98,8 @@ public final class Ec2Group implements ServiceGroup {
     }
 
     private void describeImages(TestContext ctx) throws Exception {
-        var resp = ec2().describeImages(r -> r.owners("self").maxResults(5));
-        Assertions.assertNotNull(resp.images(), "DescribeImages: images is null");
+        var resp = ec2().describeImages(r -> r.owners("amazon").maxResults(5));
+        Assertions.assertNotEmpty(resp.images(), "DescribeImages: no images returned");
     }
 
     private void runInstances(TestContext ctx) throws Exception {
@@ -273,11 +273,18 @@ public final class Ec2Group implements ServiceGroup {
     }
 
     private void describeAvailabilityZones(TestContext ctx) throws Exception {
-        ec2().describeAvailabilityZones(r -> {});
+        var resp = ec2().describeAvailabilityZones(r -> {});
+        Assertions.assertNotEmpty(resp.availabilityZones(), "DescribeAvailabilityZones: no zones returned");
     }
 
     private void describeInstanceTypes(TestContext ctx) throws Exception {
-        ec2().describeInstanceTypes(r -> {});
+        // An unfiltered DescribeInstanceTypes is legitimately empty-able (the
+        // emulator returns nothing without an explicit type list), so ask for
+        // a concrete type and assert it comes back.
+        var resp = ec2().describeInstanceTypes(r -> r.instanceTypes(InstanceType.T3_MICRO));
+        boolean found = resp.instanceTypes().stream()
+                .anyMatch(t -> t.instanceType() == InstanceType.T3_MICRO);
+        Assertions.assertTrue(found, "DescribeInstanceTypes: t3.micro not returned");
     }
 
     private void startInstances(TestContext ctx) throws Exception {

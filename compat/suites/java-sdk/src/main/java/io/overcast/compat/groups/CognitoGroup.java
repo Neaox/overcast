@@ -90,8 +90,10 @@ public final class CognitoGroup implements ServiceGroup {
     }
 
     private void listUserPools(TestContext ctx) throws Exception {
+        String poolId = ctx.getString("cognitoPoolId");
         var resp = cognito().listUserPools(r -> r.maxResults(60));
-        Assertions.assertNotNull(resp.userPools(), "ListUserPools: userPools is null");
+        boolean found = resp.userPools().stream().anyMatch(p -> poolId.equals(p.id()));
+        Assertions.assertTrue(found, "ListUserPools: created pool " + poolId + " not found in list");
     }
 
     private void createUserPoolClient(TestContext ctx) throws Exception {
@@ -106,8 +108,10 @@ public final class CognitoGroup implements ServiceGroup {
 
     private void listUserPoolClients(TestContext ctx) throws Exception {
         String poolId = ctx.getString("cognitoPoolId");
+        String clientId = ctx.getString("cognitoClientId");
         var resp = cognito().listUserPoolClients(r -> r.userPoolId(poolId).maxResults(60));
-        Assertions.assertNotNull(resp.userPoolClients(), "ListUserPoolClients: userPoolClients is null");
+        boolean found = resp.userPoolClients().stream().anyMatch(c -> clientId.equals(c.clientId()));
+        Assertions.assertTrue(found, "ListUserPoolClients: created client " + clientId + " not found in list");
     }
 
     private void adminCreateUser(TestContext ctx) throws Exception {
@@ -123,8 +127,10 @@ public final class CognitoGroup implements ServiceGroup {
 
     private void listUsers(TestContext ctx) throws Exception {
         String poolId = ctx.getString("cognitoPoolId");
+        String username = ctx.getString("cognitoUsername");
         var resp = cognito().listUsers(r -> r.userPoolId(poolId).limit(60));
-        Assertions.assertNotNull(resp.users(), "ListUsers: users is null");
+        boolean found = resp.users().stream().anyMatch(u -> username.equals(u.username()));
+        Assertions.assertTrue(found, "ListUsers: created user " + username + " not found in list");
     }
 
     private void adminDeleteUser(TestContext ctx) throws Exception {
@@ -179,7 +185,18 @@ public final class CognitoGroup implements ServiceGroup {
         String clientId = ctx.getString("tvClientId");
         Assertions.assertNotBlank(poolId, "DescribeClientTokenValidity: missing poolId");
         Assertions.assertNotBlank(clientId, "DescribeClientTokenValidity: missing clientId");
-        cognito().describeUserPoolClient(r -> r.userPoolId(poolId).clientId(clientId));
+        var resp = cognito().describeUserPoolClient(r -> r.userPoolId(poolId).clientId(clientId));
+        var client = resp.userPoolClient();
+        Assertions.assertEquals(2, client.accessTokenValidity(), "DescribeClientTokenValidity: AccessTokenValidity");
+        Assertions.assertEquals(3, client.idTokenValidity(), "DescribeClientTokenValidity: IdTokenValidity");
+        Assertions.assertEquals(7, client.refreshTokenValidity(), "DescribeClientTokenValidity: RefreshTokenValidity");
+        Assertions.assertNotNull(client.tokenValidityUnits(), "DescribeClientTokenValidity: TokenValidityUnits");
+        Assertions.assertEquals("hours", client.tokenValidityUnits().accessTokenAsString(),
+                "DescribeClientTokenValidity: TokenValidityUnits.AccessToken");
+        Assertions.assertEquals("hours", client.tokenValidityUnits().idTokenAsString(),
+                "DescribeClientTokenValidity: TokenValidityUnits.IdToken");
+        Assertions.assertEquals("days", client.tokenValidityUnits().refreshTokenAsString(),
+                "DescribeClientTokenValidity: TokenValidityUnits.RefreshToken");
     }
 
     private void updateClientTokenValidity(TestContext ctx) throws Exception {

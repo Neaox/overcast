@@ -85,7 +85,7 @@ jobs:
     outputs:
       code: ${{ steps.scope.outputs.code }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -172,7 +172,7 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -221,7 +221,7 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -266,7 +266,7 @@ jobs:
       RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN_SUITES == 'true'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -276,11 +276,11 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: env.RUN_SUITES == 'true'
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: env.RUN_SUITES == 'true'
         with:
           node-version-file: .node-version
@@ -332,7 +332,7 @@ jobs:
         suite: ${{ fromJson(needs.prepare-matrix.outputs.suites) }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN_SUITES == 'true'
 
       - name: Download binaries
@@ -373,7 +373,7 @@ jobs:
             go.sum
             compat/suites/go-sdk/go.sum
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: env.RUN_SUITES == 'true' && contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
         with:
           node-version-file: .node-version
@@ -382,10 +382,10 @@ jobs:
             compat/suites/node-js-sdk/package-lock.json
             compat/suites/cdk/package-lock.json
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: env.RUN_SUITES == 'true' && matrix.suite == 'python-sdk'
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: compat/suites/python-sdk/requirements.txt
 
@@ -534,7 +534,7 @@ jobs:
           echo "Prose-only pull request: no suite ran, so there are no results" \
                "to merge and no baseline to compare. Reporting success."
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN_SUITES == 'true'
 
       # The two lint steps below compare this PR's compat files against the
@@ -554,7 +554,7 @@ jobs:
       # — and so the lint agrees with the diff a reviewer sees on the PR.
       - name: Check out base compat files
         if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
@@ -688,7 +688,7 @@ jobs:
 
       - name: Publish JUnit check run
         if: always() && env.RUN_SUITES == 'true' && hashFiles('compat-junit.xml') != ''
-        uses: mikepenz/action-junit-report@65fe03598d8d251738592a497a9e8547a5c48eaa # v5.6.0
+        uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
         with:
           report_paths: compat-junit.xml
           check_name: Compat Report
