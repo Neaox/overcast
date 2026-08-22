@@ -19,11 +19,12 @@ package sns
 //     once per subscription delivery attempt, from fanOut's per-protocol
 //     success branches and failDelivery's single failure funnel
 //     respectively. A protocol whose delivery dependency is un-wired (nil
-//     enqueuer/mailer/smsSender/outbound) currently `continue`s silently
-//     without calling failDelivery — see fanOut's doc comment — so that path
-//     records neither Delivered nor Failed, matching the plan's "only where
-//     the emulator can observe the underlying fact" rule: there is no
-//     delivery outcome to observe when the dependency was never wired.
+//     enqueuer/mailer/smsSender/outbound) goes through failDelivery too, same
+//     as any other delivery failure — see fanOut's doc comment (#1306): on
+//     real AWS the delivery would be attempted and either succeed or fail, so
+//     an emulator configuration gap is honestly a failed delivery, not an
+//     absence of any fact to observe. It records NumberOfNotificationsFailed
+//     exactly like a runtime failure would.
 import (
 	"context"
 	"time"
