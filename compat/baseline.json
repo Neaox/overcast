@@ -1266,21 +1266,21 @@
       "service": "backup",
       "group": "backup-tags",
       "test": "ListTags",
-      "status": "unimplemented"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "backup",
       "group": "backup-tags",
       "test": "TagResource",
-      "status": "unimplemented"
+      "status": "pass"
     },
     {
       "suite": "cli",
       "service": "backup",
       "group": "backup-tags",
       "test": "UntagResource",
-      "status": "unimplemented"
+      "status": "pass"
     },
     {
       "suite": "cli",
