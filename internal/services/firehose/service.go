@@ -20,7 +20,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
@@ -173,38 +172,20 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, opName 
 // ─── Handlers ─────────────────────────────────────────────────
 
 func (s *Service) createDeliveryStream(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeliveryStreamName string `json:"DeliveryStreamName"`
-		DeliveryStreamType string `json:"DeliveryStreamType"`
-	}
+	// Delegates to createDeliveryStreamTyped (typed_logic.go) so the legacy
+	// JSON1.0/1.1 path and the CBOR typed path share one implementation —
+	// the legacy copy previously re-implemented this inline and silently
+	// ignored Tags (#1196).
+	var req createDeliveryStreamReq
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.DeliveryStreamName == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "InvalidArgumentException", Message: "DeliveryStreamName is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	resp, aerr := s.createDeliveryStreamTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	arn := fmt.Sprintf("arn:aws:firehose:%s:%s:deliverystream/%s", region, s.cfg.AccountID, req.DeliveryStreamName)
-	dsType := req.DeliveryStreamType
-	if dsType == "" {
-		dsType = "DirectPut"
-	}
-	ds := &DeliveryStream{
-		DeliveryStreamName:   req.DeliveryStreamName,
-		DeliveryStreamARN:    arn,
-		DeliveryStreamStatus: "ACTIVE",
-		DeliveryStreamType:   dsType,
-		Tags:                 make(map[string]string),
-	}
-	if err := s.store.putStream(r.Context(), ds); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"DeliveryStreamARN": arn})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (s *Service) describeDeliveryStream(w http.ResponseWriter, r *http.Request) {

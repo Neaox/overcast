@@ -14,8 +14,9 @@ import (
 )
 
 type createDeliveryStreamReq struct {
-	DeliveryStreamName string `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
-	DeliveryStreamType string `json:"DeliveryStreamType" cbor:"DeliveryStreamType"`
+	DeliveryStreamName string                `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
+	DeliveryStreamType string                `json:"DeliveryStreamType" cbor:"DeliveryStreamType"`
+	Tags               []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
 type describeDeliveryStreamReq struct {
@@ -79,6 +80,12 @@ func (s *Service) createDeliveryStreamTyped(ctx context.Context, req *createDeli
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
+	tags := serviceutil.TagsFromList(req.Tags)
+	// Validated before the stream is written (#1196) — a rejected create
+	// leaves no delivery stream behind.
+	if aerr := serviceutil.ValidateTags(firehoseTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 	region := middleware.RegionFromContext(ctx, s.cfg.Region)
 	arn := fmt.Sprintf("arn:aws:firehose:%s:%s:deliverystream/%s", region, s.cfg.AccountID, req.DeliveryStreamName)
 	dsType := req.DeliveryStreamType
@@ -90,7 +97,7 @@ func (s *Service) createDeliveryStreamTyped(ctx context.Context, req *createDeli
 		DeliveryStreamARN:    arn,
 		DeliveryStreamStatus: "ACTIVE",
 		DeliveryStreamType:   dsType,
-		Tags:                 make(map[string]string),
+		Tags:                 tags,
 	}
 	if err := s.store.putStream(ctx, ds); err != nil {
 		return nil, protocol.ErrInternalError

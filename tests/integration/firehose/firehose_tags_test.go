@@ -16,6 +16,53 @@ type fhTag struct {
 	Value string `json:"Value"`
 }
 
+// TestCreateDeliveryStream_tagsAppliedAtCreate: Tags passed to
+// CreateDeliveryStream (issue #1196, Axis B) must be stored and readable
+// immediately, without a follow-up TagDeliveryStream call.
+func TestCreateDeliveryStream_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := fhCall(t, srv, "CreateDeliveryStream", map[string]any{
+		"DeliveryStreamName": "created-tagged",
+		"Tags":               []fhTag{{Key: "env", Value: "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	listResp := fhCall(t, srv, "ListTagsForDeliveryStream", map[string]any{
+		"DeliveryStreamName": "created-tagged",
+	})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	var list struct {
+		Tags []fhTag `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, listResp, &list)
+	if len(list.Tags) != 1 || list.Tags[0].Key != "env" || list.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", list.Tags)
+	}
+}
+
+// TestCreateDeliveryStream_invalidTagRejected: an invalid tag passed to
+// CreateDeliveryStream must be rejected before the stream is created.
+func TestCreateDeliveryStream_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := fhCall(t, srv, "CreateDeliveryStream", map[string]any{
+		"DeliveryStreamName": "rejected-stream",
+		"Tags":               []fhTag{{Key: "aws:reserved", Value: "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidArgumentException")
+
+	desc := fhCall(t, srv, "DescribeDeliveryStream", map[string]any{
+		"DeliveryStreamName": "rejected-stream",
+	})
+	defer desc.Body.Close()
+	helpers.AssertStatus(t, desc, http.StatusNotFound)
+}
+
 // TestTagDeliveryStream_sdkListShape sends the exact JSON shape the Firehose
 // SDK produces — Tags as a list of {Key,Value} structs.
 func TestTagDeliveryStream_sdkListShape(t *testing.T) {
