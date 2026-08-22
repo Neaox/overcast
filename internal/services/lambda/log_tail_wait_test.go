@@ -488,6 +488,11 @@ func TestBeginTail_dropsThePreviousInvocationsStragglerOutput(t *testing.T) {
 // ambiguity the fix introduces: a handler that prints nothing is
 // indistinguishable from one whose output has not arrived, so it waits. It must
 // wait out firstReadMax and stop there, not sit on the 100 ms deadline.
+//
+// The container here has never been heard from — no line of its own has ever
+// reached the tail buffer — which is what makes silence worth timing at all,
+// and what separates this from
+// TestWaitForScannerIdle_silentInvokeOnAPrintingContainerRunsToTheDeadline.
 func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	// Given: a container invocation that will never produce a log line.
 	mock := clock.NewMock()
@@ -500,6 +505,89 @@ func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	// Then: it gives up at the first-read grace period rather than the deadline.
 	if elapsed > 30*time.Millisecond {
 		t.Errorf("silent handler waited %v, expected to give up around the 25ms first-read grace", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_containerThatHasPrintedHoldsPastTheSilenceGrace is the
+// regression test for issue #1325 — the warm half of the window #1166 closed on
+// the cold-start side.
+//
+// The state here is the ordinary one for a warm container between invocations,
+// and the one neither earlier fix reaches: the log stream connected long ago,
+// the reader has finished with the previous invocation's line and is parked in
+// a Read waiting for the next, and the handler has just answered. That is not
+// the never-connected stream of #1160 and not the between-Reads backlog of
+// #873 — dockerSilentSince reports a question genuinely outstanding with Docker
+// from the moment the wait begins, so the 25 ms firstReadMax started counting
+// down on the wait's first tick.
+//
+// 25 ms is a guess at how long Docker takes to hand a line over, and it is a
+// guess made on an idle machine. On a CI runner with the whole suite on it the
+// hand-over routinely outruns it, and the wait gave up while the line was still
+// in flight — leaving TestInvoke_logTail's warm assertion looking at a tail
+// holding only START / END / REPORT. The container's own append watermark is
+// the evidence that settles it: only ingestContainerLine stamps it, so a
+// non-zero one means this container prints and its output reaches us, and its
+// silence is the pipeline running late rather than the handler having nothing
+// to say.
+func TestWaitForScannerIdle_containerThatHasPrintedHoldsPastTheSilenceGrace(t *testing.T) {
+	// Given: a container that printed on an earlier invocation, whose reader
+	// has long since dealt with that line and gone back to the Docker stream.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	deliverLine(ci, "output from the previous invocation")
+	mock.Add(500 * time.Millisecond)
+	readerParks(ci)
+
+	// And: a fresh invocation, whose boundary carries that append watermark.
+	mark := ci.beginTail()
+	if mark.appended == 0 {
+		t.Fatalf("a container that has printed should carry an append watermark, got %+v", mark)
+	}
+
+	// When: this invocation's line takes 60 ms to come through Docker — past
+	// the 25 ms silence grace, well inside the 100 ms deadline.
+	elapsed := runScannerWait(t, mock, ci, mark, 60*time.Millisecond, "hello from invocation two")
+
+	// Then: the wait was still there for it.
+	if !strings.Contains(tailContents(ci), "hello from invocation two") {
+		t.Errorf("tail is missing this invocation's output: %q", tailContents(ci))
+	}
+	if elapsed < 60*time.Millisecond {
+		t.Errorf("wait returned after %v — it read a slow Docker hand-over as the handler's silence", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_silentInvokeOnAPrintingContainerRunsToTheDeadline pins
+// what the fix above costs, so that the trade is a decision on the record
+// rather than a surprise in a profile.
+//
+// A container that has printed before and prints nothing this time is
+// indistinguishable from one whose line is still crossing Docker's pipe, so it
+// waits out the whole deadline instead of the 25 ms grace. That is charged only
+// to invokes that asked for a tail — every other path discards LogResult and
+// never runs this wait — and at most once each. The failure on the other side
+// is a tail that promised the execution log and returned it without the
+// handler's own output, which is the worse answer to give.
+func TestWaitForScannerIdle_silentInvokeOnAPrintingContainerRunsToTheDeadline(t *testing.T) {
+	// Given: the same warm, already-heard-from container.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	deliverLine(ci, "output from the previous invocation")
+	mock.Add(500 * time.Millisecond)
+	readerParks(ci)
+
+	// When: this invocation prints nothing at all.
+	elapsed := runScannerWait(t, mock, ci, ci.beginTail(), -1, "")
+
+	// Then: it holds to the deadline, and no further.
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("silent invoke on a printing container returned after %v, expected to hold to the 100ms deadline", elapsed)
+	}
+	if elapsed > 110*time.Millisecond {
+		t.Errorf("silent invoke on a printing container ran %v past the 100ms deadline", elapsed)
 	}
 }
 

@@ -1821,10 +1821,11 @@ func durationMillis(d time.Duration) float64 {
 //
 // logReadAt still earns its place, for the question it does answer — whether
 // this invocation produced *anything* — which is what separates the two ways of
-// having an empty tail. Four bounds shape the wait:
+// having an empty tail. Five rules shape the wait:
 //
-//   - firstReadMax caps how long we wait when not a byte has arrived. A handler
-//     that prints nothing is indistinguishable from one whose output has not
+//   - firstReadMax caps how long we wait when not a byte has arrived, and only
+//     for a container that has never been heard from at all. Such a handler,
+//     if it prints nothing, is indistinguishable from one whose output has not
 //     left Docker's pipe, so silence costs this much — paid only by
 //     tail-requesting invokes. It is measured from the moment the reader is
 //     actually blocked in a Read (dockerSilentSince), never from a moment it
@@ -1832,6 +1833,19 @@ func durationMillis(d time.Duration) float64 {
 //     have been told the container had nothing to say, and timing its backlog
 //     as though it had is what left warm invocations with a tail holding only
 //     START / END / REPORT (#873).
+//   - A container that has already delivered a line of its own output gets no
+//     silence bound at all. mark.appended is non-zero only because
+//     ingestContainerLine stamped it, and only container output reaches that
+//     path — the synthetic START / END / REPORT lines go in through
+//     deliverSynthLine, which does not — so a non-zero appended watermark is
+//     proof that this container prints and that its output reaches us.
+//     Silence from it is therefore a fact about how far behind the Docker log
+//     pipeline is running right now, not a fact about the handler, and
+//     firstReadMax is a guess at that latency taken on an idle machine. On a
+//     loaded CI runner the hand-over routinely outruns 25 ms, and the wait was
+//     giving up on a line that was still in flight: the warm half of #1325,
+//     left over after #1166 closed the cold-start half. Such a container holds
+//     for its line until deadlineMax instead.
 //   - Once bytes have arrived, output exists and is on its way, so there is
 //     nothing to guess at: the wait holds for the line itself, bounded only by
 //     deadlineMax. A handler that writes without a trailing newline pays that
@@ -1841,6 +1855,15 @@ func durationMillis(d time.Duration) float64 {
 //     the output is treated as complete; a handler's lines can span reads.
 //   - deadlineMax bounds the whole thing, so a wedged log pipeline can never
 //     hold up the invoke response.
+//
+// Dropping the silence bound for a container that has printed costs something
+// real, and deliberately. A handler that printed on an earlier invocation and
+// prints nothing on this one now waits out deadlineMax rather than
+// firstReadMax, because nothing tells it apart from one whose line is still
+// coming. That is charged only to invokes that asked for a tail, at most once
+// each, and it buys back the failure on the other side — a tail that promised
+// the execution log and returned it without the handler's own output, which is
+// a fidelity bug before it is a flaky test.
 func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	const (
 		idleThreshold = 5 * time.Millisecond
@@ -1849,6 +1872,15 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 		tickInterval  = 1 * time.Millisecond
 	)
 	start := ci.clk.Now()
+	// Which of the two bounds governs silence, decided once from the boundary
+	// rather than re-read each tick: appended is a container-lifetime watermark
+	// and mark froze it, so this cannot change under the wait. See firstReadMax
+	// above — a container that has already been heard from is not silent, it is
+	// behind, and only the deadline bounds that.
+	firstRead := firstReadMax
+	if mark.appended > 0 {
+		firstRead = deadlineMax
+	}
 	deadline := ci.clk.Timer(deadlineMax)
 	defer deadline.Stop()
 	tick := ci.clk.Ticker(tickInterval)
@@ -1900,7 +1932,7 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 			if !asked {
 				continue
 			}
-			if ci.clk.Since(silentSince) >= firstReadMax {
+			if ci.clk.Since(silentSince) >= firstRead {
 				return
 			}
 		}

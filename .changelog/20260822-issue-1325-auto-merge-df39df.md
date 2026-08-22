@@ -1,0 +1,1 @@
+* [lambda] a warm invocation's `X-Amz-Log-Result` tail no longer drops the handler's own output when Docker is slow to hand the line over; a container that has already delivered a line of its own output now holds for its next one until the tail deadline, instead of giving up after 25 ms of silence sized for a container that has never printed
