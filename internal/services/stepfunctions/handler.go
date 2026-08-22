@@ -36,8 +36,19 @@ type Handler struct {
 	// the live ones (for DescribeExecution, GetExecutionHistory and
 	// StopExecution), wg lets shutdown drain them, and shutdownCancel unwinds
 	// an execution parked in a Wait so it cannot hold shutdown open.
+	//
+	// stopping is guarded by runsMu, the same lock reserveRun (runs.go) takes
+	// to register a run and Add to wg. Stop sets it inside that critical
+	// section before it ever calls wg.Wait, so a StartExecution/
+	// StartSyncExecution/nested-startExecution arriving concurrently either
+	// completes its reserveRun call — Add and all — strictly before Stop's
+	// critical section runs, or observes stopping and refuses before
+	// touching wg at all. Either way, wg.Add can never race wg.Wait (issue
+	// #1315, the same shape #1290 fixed in lifecycle.Scheduler and #1298
+	// fixed in EKS).
 	runs           map[string]*executionRun
 	runsMu         sync.Mutex
+	stopping       bool
 	wg             sync.WaitGroup
 	shutdown       context.Context
 	shutdownCancel context.CancelFunc

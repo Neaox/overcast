@@ -114,7 +114,15 @@ func (h *Handler) startExecution(ctx context.Context, smARN, execName, input str
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		run.cancel = cancel
-		h.registerRun(execARN, run)
+		// reserveRun (runs.go) is the fenced choke point every launcher in
+		// this package funnels through — StartExecution, StartSyncExecution
+		// and a nested states:startExecution all call startExecution, and
+		// startExecution never registers a run any other way. Once Stop has
+		// begun, this refuses rather than run a state machine shutdown will
+		// never wait for (issue #1315).
+		if !h.reserveRun(execARN, run, false) {
+			return nil, h.refuseStartAfterShutdown(ctx, exec, run)
+		}
 		defer h.releaseRun(execARN)
 		if err := h.completeExecution(runCtx, sm, exec, region, depth, run); err != nil {
 			return nil, protocol.Wrap(protocol.ErrInternalError, err)
@@ -128,12 +136,18 @@ func (h *Handler) startExecution(ctx context.Context, smARN, execName, input str
 	// request to read it from).
 	runCtx, cancel := context.WithCancel(middleware.ContextWithRegion(h.shutdown, region))
 	run.cancel = cancel
-	h.registerRun(execARN, run)
 
 	// The goroutine mutates its own copy: the caller still holds exec for the
 	// response body.
 	running := *exec
-	h.wg.Add(1)
+	// reserveRun registers the run and Adds to wg atomically with the
+	// stopping check, under the same lock Stop uses to set it — so this Add
+	// can never race Stop's wg.Wait (issue #1315; the #1290/#1298 pattern).
+	// Refused, no goroutine is launched and wg is never touched.
+	if !h.reserveRun(execARN, run, true) {
+		cancel()
+		return nil, h.refuseStartAfterShutdown(ctx, exec, run)
+	}
 	go func() {
 		defer h.wg.Done()
 		defer cancel()
