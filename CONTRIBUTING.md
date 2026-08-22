@@ -198,6 +198,11 @@ These guide every decision — from architecture to variable naming. Read them b
 9. **Maintainability is a feature.** Code is read 10× more than it is written. Optimise for the next reader: consistent structure, clear naming, small interfaces, minimal coupling. If a change in one package forces changes in three others, the design is wrong.
 10. **Honest TODOs.** Every `// TODO:` includes a description and priority:
     `// TODO(priority:P1): implement SigV4 validation` — picked up by the TODO-to-issue Action.
+    The marker only ever *opens* a comment, in exactly that form, and its description is
+    one line — the Action takes the rest of that line as the issue title. Naming a marker
+    mid-sentence files an issue out of the middle of your prose ([#1138](https://github.com/Neaox/overcast/issues/1138)),
+    so refer to deferred work in prose without writing the word: "the P3 note on
+    `apigateway.Method`". `make lint-todos` enforces this.
 11. **AWS compatibility over test convenience.** Never diverge from real AWS behaviour to make tests easier.
     Async behaviour (SNS delivery, SQS visibility timeouts, Lambda cold starts) stays async. Tests adapt.
 12. **AWS fidelity on core APIs — extensions are strictly additive.** Implemented AWS API
@@ -493,7 +498,7 @@ See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 - **Format:** `gofmt`. Run `make fmt` before committing. Non-formatted code fails CI.
 - **Lint:** `golangci-lint` v2.x (pinned in the Makefile, fetched via `go run` — no install needed). Run `make lint`. Config in `.golangci.yml`, which uses the v2 schema.
 - **Naming:** Exported types get doc comments. Error sentinels: `ErrBucketNotFound`. Constructors: `NewHandler(...)`.
-- **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):`.
+- **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):` opening the comment — never mid-sentence (`make lint-todos`, see [Honest TODOs](#core-principles)).
 - **HTTP errors:** Use `protocol.WriteXMLError` (S3) or `protocol.WriteJSONError` (JSON services) — never raw `http.Error`.
 - **HTTP success responses:** Use protocol writers (`protocol.WriteXML`, `protocol.WriteQueryXML`, `protocol.WriteJSON`, `protocol.WriteAWSJSON`) rather than ad-hoc `json.Marshal` + header writing in handlers.
 - **Unimplemented:** Return `501` via the protocol-matching helper (`protocol.NotImplementedXML`, `protocol.NotImplementedQueryXML`, `protocol.NotImplementedJSON`) — never a bare `404`.

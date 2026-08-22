@@ -301,12 +301,11 @@ func WithDataDir(dir string) Option {
 // to avoid 1000+ unnecessary Docker daemon round-trips across the test suite.
 // Use this option for tests that invoke real Lambda container runtimes.
 //
-// TODO(perf): For Approach B — share a single Docker client, RuntimeAPI server,
-// and InstancePool across all test servers in a package via a package-level
-// sync.Once. This would enable warm-container reuse across tests and further
-// reduce Docker daemon pressure. Wire shared runtime via a new
-// lambda.WithSharedRuntime(...) service option instead of each server probing
-// independently.
+// TODO(priority:P3): share one Docker client, RuntimeAPI server and InstancePool per package.
+// Approach B: hold them behind a package-level sync.Once and wire them in
+// through a new lambda.WithSharedRuntime(...) service option, so warm
+// containers are reused across tests and further Docker daemon pressure goes
+// away, instead of every server probing independently.
 func WithLambdaDocker() Option {
 	return func(so *serverOptions) {
 		so.cfg.LambdaDockerSocket = TestDockerSocket()

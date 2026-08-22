@@ -479,6 +479,13 @@ jobs:
       # `--fix` repairs locally.
       - name: Encoding lint
         run: python3 scripts/check_encoding.py
+      # Comment markers the TODO-to-issue Action would misread. It matches its
+      # marker anywhere in a comment and takes the rest of the line as the
+      # issue title, so prose that merely mentions one files a nonsense issue
+      # (#1138). Nothing in the action's config anchors the match, so the
+      # anchoring is this gate.
+      - name: Comment marker lint
+        run: python3 scripts/check_todos.py
 
   # The compat suites carry unit tests, and until this job nothing ran them.
   #

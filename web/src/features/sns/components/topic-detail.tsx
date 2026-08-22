@@ -187,7 +187,7 @@ export function TopicDetail({ topicName }: Props) {
       void navigate({ to: "/sns" })
       toast({ title: "Topic deleted", description: topicName })
     }
-    // TODO: navigate and toast are stable references; topicName is a prop.
+    // navigate and toast are stable references; topicName is a prop.
     // All three are included here to satisfy exhaustive-deps.
   }, [lastEvent, navigate, toast, topicName])
 
