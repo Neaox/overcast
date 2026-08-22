@@ -50,3 +50,16 @@ func (p *RepoProvider) readServiceCoverage() ([]serviceCoverageEntry, error) {
 	}
 	return coverage, nil
 }
+
+// splitMarkdownRow splits a markdown table row into its trimmed, non-empty cells.
+func splitMarkdownRow(line string) []string {
+	parts := strings.Split(line, "|")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			clean = append(clean, part)
+		}
+	}
+	return clean
+}
