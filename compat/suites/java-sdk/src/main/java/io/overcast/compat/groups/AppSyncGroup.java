@@ -235,8 +235,10 @@ public final class AppSyncGroup implements ServiceGroup {
     }
 
     private void listGraphqlApis(TestContext ctx) throws Exception {
+        String apiId = ctx.getString("appSyncApiId");
         var resp = appSync().listGraphqlApis(r -> r.maxResults(25));
-        Assertions.assertNotNull(resp.graphqlApis(), "ListGraphqlApis: graphqlApis is null");
+        boolean found = resp.graphqlApis().stream().anyMatch(a -> apiId.equals(a.apiId()));
+        Assertions.assertTrue(found, "ListGraphqlApis: created api " + apiId + " not found in list");
     }
 
     private void deleteGraphqlApi(TestContext ctx) throws Exception {
@@ -272,7 +274,10 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void listApiKeys(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().listApiKeys(r -> r.apiId(apiId));
+        String keyId = ctx.getString("keyId");
+        var resp = appSync().listApiKeys(r -> r.apiId(apiId));
+        boolean found = resp.apiKeys().stream().anyMatch(k -> k.id().equals(keyId));
+        Assertions.assertTrue(found, "ListApiKeys: created key " + keyId + " not found in list");
     }
 
     private void updateApiKey(TestContext ctx) throws Exception {
@@ -310,7 +315,9 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void listDataSources(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().listDataSources(r -> r.apiId(apiId));
+        var resp = appSync().listDataSources(r -> r.apiId(apiId));
+        boolean found = resp.dataSources().stream().anyMatch(d -> "CompatNoneDS".equals(d.name()));
+        Assertions.assertTrue(found, "ListDataSources: CompatNoneDS not found in list");
     }
 
     private void deleteDataSource(TestContext ctx) throws Exception {
@@ -349,7 +356,10 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void listFunctions(TestContext ctx) throws Exception {
         String apiId = ctx.getString("fnApiId");
-        appSync().listFunctions(r -> r.apiId(apiId));
+        String fnId = ctx.getString("fnFuncId");
+        var resp = appSync().listFunctions(r -> r.apiId(apiId));
+        boolean found = resp.functions().stream().anyMatch(f -> f.functionId().equals(fnId));
+        Assertions.assertTrue(found, "ListFunctions: created function " + fnId + " not found in list");
     }
 
     private void deleteFunction(TestContext ctx) throws Exception {
@@ -389,7 +399,9 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void listResolvers(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().listResolvers(r -> r.apiId(apiId).typeName("Query"));
+        var resp = appSync().listResolvers(r -> r.apiId(apiId).typeName("Query"));
+        boolean found = resp.resolvers().stream().anyMatch(res -> "hello".equals(res.fieldName()));
+        Assertions.assertTrue(found, "ListResolvers: Query.hello resolver not found in list");
     }
 
     private void listResolversByFunction(TestContext ctx) throws Exception {
@@ -401,7 +413,8 @@ public final class AppSyncGroup implements ServiceGroup {
                 .pipelineConfig(p -> p.functions(fnId))
                 .requestMappingTemplate("{}").responseMappingTemplate("$util.toJson($context.result)"));
         var resp = appSync().listResolversByFunction(r -> r.apiId(apiId).functionId(fnId));
-        Assertions.assertNotNull(resp.resolvers(), "ListResolversByFunction: resolvers is null");
+        boolean found = resp.resolvers().stream().anyMatch(res -> "goodbye".equals(res.fieldName()));
+        Assertions.assertTrue(found, "ListResolversByFunction: Query.goodbye pipeline resolver not found in list");
     }
 
     private void deleteResolver(TestContext ctx) throws Exception {
@@ -425,7 +438,9 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void getType(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().getType(r -> r.apiId(apiId).typeName("CompatType").format(TypeDefinitionFormat.SDL));
+        var resp = appSync().getType(r -> r.apiId(apiId).typeName("CompatType").format(TypeDefinitionFormat.SDL));
+        Assertions.assertEquals("CompatType", resp.type().name(), "GetType: name mismatch");
+        Assertions.assertNotBlank(resp.type().definition(), "GetType: definition is blank");
     }
 
     private void updateType(TestContext ctx) throws Exception {
@@ -438,7 +453,9 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void listTypes(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().listTypes(r -> r.apiId(apiId).format(TypeDefinitionFormat.SDL));
+        var resp = appSync().listTypes(r -> r.apiId(apiId).format(TypeDefinitionFormat.SDL));
+        boolean found = resp.types().stream().anyMatch(t -> "CompatType".equals(t.name()));
+        Assertions.assertTrue(found, "ListTypes: CompatType not found in list");
     }
 
     private void deleteType(TestContext ctx) throws Exception {
@@ -497,7 +514,8 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void getDomainName(TestContext ctx) throws Exception {
         String dn = ctx.getString("domainName");
-        appSync().getDomainName(r -> r.domainName(dn));
+        var resp = appSync().getDomainName(r -> r.domainName(dn));
+        Assertions.assertEquals(dn, resp.domainNameConfig().domainName(), "GetDomainName: domainName mismatch");
     }
 
     private void updateDomainName(TestContext ctx) throws Exception {
@@ -506,7 +524,10 @@ public final class AppSyncGroup implements ServiceGroup {
     }
 
     private void listDomainNames(TestContext ctx) throws Exception {
-        appSync().listDomainNames(r -> {});
+        String dn = ctx.getString("domainName");
+        var resp = appSync().listDomainNames(r -> {});
+        boolean found = resp.domainNameConfigs().stream().anyMatch(d -> dn.equals(d.domainName()));
+        Assertions.assertTrue(found, "ListDomainNames: created domain " + dn + " not found in list");
     }
 
     private void associateApi(TestContext ctx) throws Exception {
@@ -549,7 +570,9 @@ public final class AppSyncGroup implements ServiceGroup {
 
     private void getApiCache(TestContext ctx) throws Exception {
         String apiId = ctx.getString("apiId");
-        appSync().getApiCache(r -> r.apiId(apiId));
+        var resp = appSync().getApiCache(r -> r.apiId(apiId));
+        Assertions.assertNotNull(resp.apiCache(), "GetApiCache: missing apiCache");
+        Assertions.assertEquals(ApiCacheType.T2_SMALL, resp.apiCache().type(), "GetApiCache: type mismatch");
     }
 
     private void updateApiCache(TestContext ctx) throws Exception {

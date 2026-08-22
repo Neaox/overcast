@@ -70,12 +70,16 @@ public final class ShieldGroup implements ServiceGroup {
     }
 
     private void listProtections(TestContext ctx) throws Exception {
+        String id = ctx.getString("shieldProtectionId");
         var resp = shield().listProtections(r -> r.maxResults(100));
-        Assertions.assertNotNull(resp.protections(), "ListProtections: protections is null");
+        boolean found = resp.protections().stream().anyMatch(p -> id.equals(p.id()));
+        Assertions.assertTrue(found, "ListProtections: created protection " + id + " not found in list");
     }
 
     private void describeSubscription(TestContext ctx) throws Exception {
-        shield().describeSubscription();
+        var resp = shield().describeSubscription();
+        Assertions.assertNotNull(resp.subscription(), "DescribeSubscription: missing subscription");
+        Assertions.assertNotNull(resp.subscription().startTime(), "DescribeSubscription: missing StartTime");
     }
 
     private void deleteProtection(TestContext ctx) throws Exception {

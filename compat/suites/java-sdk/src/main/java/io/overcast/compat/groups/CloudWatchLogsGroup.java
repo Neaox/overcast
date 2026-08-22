@@ -153,14 +153,14 @@ public final class CloudWatchLogsGroup implements ServiceGroup {
         String stream = ctx.getString("logsEventsStream");
         var resp = logs().getLogEvents(r -> r
                 .logGroupName(grp).logStreamName(stream).limit(10));
-        Assertions.assertNotNull(resp.events(), "GetLogEvents: events is null");
+        Assertions.assertNotEmpty(resp.events(), "GetLogEvents: no events returned after PutLogEvents");
     }
 
     private void filterLogEvents(TestContext ctx) throws Exception {
         String grp = ctx.getString("logsEventsGroup");
         var resp = logs().filterLogEvents(r -> r
                 .logGroupName(grp).filterPattern("compat"));
-        Assertions.assertNotNull(resp.events(), "FilterLogEvents: events is null");
+        Assertions.assertNotEmpty(resp.events(), "FilterLogEvents: no event matched the 'compat' pattern");
     }
 
     private void putRetentionPolicy(TestContext ctx) throws Exception {
