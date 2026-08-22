@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { KeyRound, Plus, Trash2, RefreshCw } from "lucide-react"
+import { KeyRound } from "lucide-react"
 import {
   secretsListQueryOptions,
   smKeys,
@@ -15,27 +15,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListPage } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useToast } from "@/components/ui/toast"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { formatDate } from "@/lib/format"
-import { cn } from "@/lib/utils"
 
 export function SecretsManagerPage() {
   const qc = useQueryClient()
@@ -46,7 +37,13 @@ export function SecretsManagerPage() {
   const [deleteTarget, setDeleteTarget] = useState<SecretSummary>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
-  const { data: secrets = [], isLoading, isFetching, refetch } = useQuery(secretsListQueryOptions())
+  const {
+    data: secrets = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(secretsListQueryOptions())
 
   const createMut = useMutation({
     ...createSecretMutationOptions(),
@@ -59,15 +56,13 @@ export function SecretsManagerPage() {
       toast({ title: "Create failed", description: err.message, variant: "danger" }),
   })
 
-  const deleteMut = useMutation({
-    ...deleteSecretMutationOptions(),
-    onSuccess: (_, name) => {
-      void qc.invalidateQueries({ queryKey: smKeys.secrets() })
-      setDeleteTarget(undefined)
-      toast({ title: "Secret deleted", description: name })
-    },
-    onError: (err: Error) =>
-      toast({ title: "Delete failed", description: err.message, variant: "danger" }),
+  const deleteMut = useResourceMutation({
+    options: deleteSecretMutationOptions(),
+    invalidateKeys: [smKeys.secrets()],
+    successTitle: "Secret deleted",
+    successDescription: (name) => name,
+    errorTitle: "Delete failed",
+    onSuccess: () => setDeleteTarget(undefined),
   })
 
   const form = useForm({
@@ -88,90 +83,66 @@ export function SecretsManagerPage() {
   })
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="Secrets Manager"
-        description="Store, manage, and retrieve secrets"
-        actions={
-          <div className="flex items-center gap-2">
-            <ServiceDocsButton
-              service="secretsmanager"
-              label="Secrets Manager"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-            >
-              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Create secret
-            </Button>
-          </div>
+    <ResourceListPage
+      title="Secrets Manager"
+      description="Store, manage, and retrieve secrets"
+      actions={
+        <>
+          <ServiceDocsButton
+            service="secretsmanager"
+            label="Secrets Manager"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create secret</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        query={{ data: secrets, isLoading, error }}
+        noun="secrets"
+        emptyIcon={KeyRound}
+        emptyTitle="No secrets"
+        emptyDescription="Create a secret to store sensitive data."
+        rowKey={(sec) => sec.Name ?? ""}
+        onRowClick={(sec) =>
+          navigate({
+            to: "/secretsmanager/$secretName",
+            params: { secretName: sec.Name ?? "" },
+          })
         }
+        columns={[
+          { header: "Name", cellClassName: "font-medium", cell: (sec) => sec.Name },
+          {
+            header: "Description",
+            prose: true,
+            cell: (sec) => sec.Description || "—",
+          },
+          {
+            header: "Last changed",
+            cellClassName: "text-fg-muted",
+            cell: (sec) => formatDate(sec.LastChangedDate),
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (sec) => sec.Name ?? "",
+          label: (sec) => sec.Name ?? "",
+          noun: "secret",
+          title: "Delete secret",
+          confirmLabel: "Delete secret",
+          description: (sec) => (
+            <>
+              Permanently delete <strong>{sec.Name}</strong>? This cannot be undone.
+            </>
+          ),
+        }}
       />
-
-      {isLoading ? (
-        <div className="flex justify-center py-24">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : secrets.length === 0 ? (
-        <EmptyState
-          icon={<KeyRound className="h-8 w-8 opacity-40" />}
-          title="No secrets"
-          description="Create a secret to store sensitive data."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Last changed</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {secrets.map((sec) => (
-              <TableRow
-                key={sec.Name}
-                className="cursor-pointer"
-                onClick={() =>
-                  navigate({
-                    to: "/secretsmanager/$secretName",
-                    params: { secretName: sec.Name ?? "" },
-                  })
-                }
-              >
-                <TableCell className="font-medium">{sec.Name}</TableCell>
-                <TableCellProse>{sec.Description || "—"}</TableCellProse>
-                <TableCell className="text-fg-muted">{formatDate(sec.LastChangedDate)}</TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-danger hover:text-danger"
-                    title="Delete"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget(sec)
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
 
       {/* Create secret dialog */}
       <Dialog
@@ -258,22 +229,6 @@ export function SecretsManagerPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Delete confirmation */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete secret"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget?.Name}</strong>? This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete secret"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.Name ?? "")}
-      />
-    </div>
+    </ResourceListPage>
   )
 }

@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Plus, Trash2, RefreshCw } from "lucide-react"
 import {
   apiKeysQueryOptions,
   apigwKeys,
@@ -9,14 +8,6 @@ import {
 } from "@/features/apigateway/data"
 import { Button } from "@/components/ui/button"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -24,8 +15,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, QueryListState, Spinner } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
+import { CreateAction, RefreshAction, ResourceListPage } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
 import { fieldLabel } from "@/lib/typography"
@@ -76,87 +68,55 @@ export function ApiKeysPage() {
   })
 
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-4">
-      <PageHeader
-        title="API Keys"
-        actions={
-          <>
-            <Button size="sm" variant="ghost" onClick={() => void refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create API Key
-            </Button>
-          </>
-        }
-      />
-
-      {isLoading || apiKeys.length === 0 ? (
-        <QueryListState
-          isLoading={isLoading}
-          isEmpty={apiKeys.length === 0}
-          error={error}
-          emptyTitle="No API keys yet"
-          errorTitle="Failed to load API keys"
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>ID</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead>Enabled</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {apiKeys.map((key) => (
-              <TableRow key={key.id}>
-                <TableCell className="font-medium">{key.name}</TableCell>
-                <TableCell className="text-fg-muted">{key.id}</TableCell>
-                <TableCell>
-                  <ApiKeyValue value={key.value} />
-                </TableCell>
-                <TableCell>
-                  <Badge variant={key.enabled ? "success" : "default"}>
-                    {key.enabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">
-                  {formatDate(new Date(key.createdDate))}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(key)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-
-      {/* Delete confirmation */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete API Key"
-        description={
-          <>
-            Delete API key <span className="font-mono font-semibold">{deleteTarget?.name}</span>?
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+    <ResourceListPage
+      title="API Keys"
+      className="max-w-5xl"
+      actions={
+        <>
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create API Key</CreateAction>
+        </>
+      }
+    >
+      <ResourceTable
+        query={{ data: apiKeys, isLoading, error }}
+        noun="API keys"
+        emptyTitle="No API keys yet"
+        errorTitle="Failed to load API keys"
+        rowKey={(key) => key.id}
+        columns={[
+          { header: "Name", cellClassName: "font-medium", cell: (key) => key.name },
+          { header: "ID", cellClassName: "text-fg-muted", cell: (key) => key.id },
+          { header: "Value", cell: (key) => <ApiKeyValue value={key.value} /> },
+          {
+            header: "Enabled",
+            cell: (key) => (
+              <Badge variant={key.enabled ? "success" : "default"}>
+                {key.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            ),
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            cell: (key) => formatDate(new Date(key.createdDate)),
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (key) => key.id,
+          label: (key) => key.name,
+          noun: "API key",
+          title: "Delete API Key",
+          description: (key) => (
+            <>
+              Delete API key <span className="font-mono font-semibold">{key.name}</span>?
+            </>
+          ),
+        }}
       />
 
       {/* Create dialog */}
@@ -219,6 +179,6 @@ export function ApiKeysPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </ResourceListPage>
   )
 }

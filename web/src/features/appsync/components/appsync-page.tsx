@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Workflow, Plus, Trash2, RefreshCw, Search } from "lucide-react"
+import { Workflow } from "lucide-react"
 import {
   appsyncApisQueryOptions,
   appsyncKeys,
@@ -9,31 +9,32 @@ import {
   createApiMutationOptions,
 } from "@/features/appsync/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+  CreateAction,
+  RefreshAction,
+  ResourceListFilter,
+  ResourceListPage,
+} from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
-import { cn } from "@/lib/utils"
 
 export function AppSyncPage() {
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{ name: string; apiId: string }>()
   const [filter, setFilter] = useState("")
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
   const navigate = useNavigate()
 
-  const { data: apis = [], isLoading, isFetching, refetch } = useQuery(appsyncApisQueryOptions())
+  const {
+    data: apis = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery(appsyncApisQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof apis)[number]>()
 
   const deleteMut = useResourceMutation({
     options: deleteApiMutationOptions(),
@@ -51,101 +52,65 @@ export function AppSyncPage() {
   )
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <PageHeader
-        title="AppSync"
-        description={`${apis.length} GraphQL API${apis.length !== 1 ? "s" : ""}`}
-        actions={
-          <>
-            <ServiceDocsButton
-              service="appsync"
-              label="AppSync"
-              open={docsOpen}
-              onOpen={openDocs}
-              onClose={closeDocs}
-            />
-            <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create API
-            </Button>
-          </>
-        }
-      />
-      <div className="relative">
-        <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-        <Input
-          placeholder="Filter APIs…"
-          className="pl-8"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
+    <ResourceListPage
+      title="AppSync"
+      description={`${apis.length} GraphQL API${apis.length !== 1 ? "s" : ""}`}
+      actions={
+        <>
+          <ServiceDocsButton
+            service="appsync"
+            label="AppSync"
+            open={docsOpen}
+            onOpen={openDocs}
+            onClose={closeDocs}
+          />
+          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <CreateAction onClick={() => setShowCreate(true)}>Create API</CreateAction>
+        </>
+      }
+    >
+      <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter APIs…" />
 
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Workflow className="h-6 w-6" />}
-          title="No GraphQL APIs"
-          description={
-            filter ? "No APIs match the filter." : "Create a GraphQL API to get started."
-          }
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create API
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>API ID</TableHead>
-              <TableHead>Auth Type</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((api) => (
-              <TableRow
-                key={api.apiId}
-                className="cursor-pointer"
-                onClick={() =>
-                  navigate({ to: "/appsync/$apiId", params: { apiId: api.apiId ?? "" } })
-                }
-              >
-                <TableCell>{api.name}</TableCell>
-                <TableCell className="text-fg-muted">{api.apiId}</TableCell>
-                <TableCell>
-                  <Badge variant="default">{api.authenticationType}</Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget({ name: api.name ?? "", apiId: api.apiId ?? "" })
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        query={{ data: filtered, isLoading, error }}
+        noun="GraphQL APIs"
+        emptyIcon={Workflow}
+        emptyTitle="No GraphQL APIs"
+        emptyDescription={
+          filter ? "No APIs match the filter." : "Create a GraphQL API to get started."
+        }
+        emptyAction={
+          !filter && <CreateAction onClick={() => setShowCreate(true)}>Create API</CreateAction>
+        }
+        rowKey={(api) => api.apiId ?? ""}
+        onRowClick={(api) =>
+          navigate({ to: "/appsync/$apiId", params: { apiId: api.apiId ?? "" } })
+        }
+        columns={[
+          { header: "Name", cell: (api) => api.name },
+          { header: "API ID", cellClassName: "text-fg-muted", cell: (api) => api.apiId },
+          {
+            header: "Auth Type",
+            cell: (api) => <Badge variant="default">{api.authenticationType}</Badge>,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (api) => api.apiId ?? "",
+          label: (api) => api.name ?? "",
+          noun: "GraphQL API",
+          title: "Delete GraphQL API",
+          description: (api) => (
+            <>
+              Delete <span className="font-mono font-semibold">{api.name}</span>? This cannot be
+              undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateResourceDialog
         open={showCreate}
@@ -157,21 +122,6 @@ export function AppSyncPage() {
         invalidateKeys={[appsyncKeys.apis()]}
         successTitle="GraphQL API created"
       />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete GraphQL API"
-        description={
-          <>
-            Delete <span className="font-mono font-semibold">{deleteTarget?.name}</span>? This
-            cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.apiId)}
-      />
-    </div>
+    </ResourceListPage>
   )
 }
