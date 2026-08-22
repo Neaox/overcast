@@ -504,6 +504,7 @@ class DependencyBotTest(unittest.TestCase):
 			"go.sum",
 			"Dockerfile",
 			".node-version",
+			"Makefile",
 			"web/package.json",
 			"web/pnpm-lock.yaml",
 			"web/pnpm-workspace.yaml",
@@ -519,7 +520,6 @@ class DependencyBotTest(unittest.TestCase):
 			"scripts/changelog-required.py",
 			"compat/suites/cdk/package.json",
 			"web/src/main.tsx",
-			"Makefile",
 			".github/dependabot.yml",
 		):
 			self.assertFalse(gate.dependency_manifest(path), path)
