@@ -7,6 +7,84 @@ import (
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
+// TestPutParameter_tagsAppliedAtCreate: Tags passed to PutParameter (issue
+// #1196, Axis B) must be stored and readable via ListTagsForResource
+// immediately, without a follow-up AddTagsToResource call. Covers both the
+// legacy JSON1.1 path and the CBOR typed path, since PutParameter used to
+// have two independent implementations.
+func TestPutParameter_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ssmCall(t, srv, "PutParameter", map[string]any{
+		"Name": "/tag/created", "Value": "v", "Type": "String", "Overwrite": false,
+		"Tags": []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	list := ssmCall(t, srv, "ListTagsForResource", map[string]any{
+		"ResourceType": "Parameter", "ResourceId": "/tag/created",
+	})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.TagList) != 1 || out.TagList[0].Key != "env" || out.TagList[0].Value != "prod" {
+		t.Errorf("TagList: got %v, want env=prod", out.TagList)
+	}
+}
+
+// TestPutParameterCBOR_tagsAppliedAtCreate is TestPutParameter_tagsAppliedAtCreate
+// over the CBOR typed path.
+func TestPutParameterCBOR_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ssmCBORCall(t, srv, "PutParameter", map[string]any{
+		"Name": "/tag/created-cbor", "Value": "v", "Type": "String", "Overwrite": false,
+		"Tags": []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	list := ssmCall(t, srv, "ListTagsForResource", map[string]any{
+		"ResourceType": "Parameter", "ResourceId": "/tag/created-cbor",
+	})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.TagList) != 1 || out.TagList[0].Key != "env" || out.TagList[0].Value != "prod" {
+		t.Errorf("TagList: got %v, want env=prod", out.TagList)
+	}
+}
+
+// TestPutParameter_invalidTagRejected: an invalid tag passed to PutParameter
+// must be rejected before the parameter is created.
+func TestPutParameter_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ssmCall(t, srv, "PutParameter", map[string]any{
+		"Name": "/tag/rejected", "Value": "v", "Type": "String", "Overwrite": false,
+		"Tags": []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+
+	get := ssmCall(t, srv, "GetParameter", map[string]any{"Name": "/tag/rejected"})
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusBadRequest)
+}
+
 // TestAddTagsToResource_missingResource: real SSM returns InvalidResourceId —
 // not ParameterNotFound — when the tagged resource does not exist.
 func TestAddTagsToResource_missingResource(t *testing.T) {

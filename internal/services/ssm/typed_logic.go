@@ -12,15 +12,16 @@ import (
 )
 
 type putParameterRequest struct {
-	Name           string `json:"Name" cbor:"Name"`
-	Value          string `json:"Value" cbor:"Value"`
-	Type           string `json:"Type" cbor:"Type"`
-	Description    string `json:"Description" cbor:"Description"`
-	Tier           string `json:"Tier" cbor:"Tier"`
-	DataType       string `json:"DataType" cbor:"DataType"`
-	AllowedPattern string `json:"AllowedPattern" cbor:"AllowedPattern"`
-	Policies       string `json:"Policies" cbor:"Policies"`
-	Overwrite      bool   `json:"Overwrite" cbor:"Overwrite"`
+	Name           string        `json:"Name" cbor:"Name"`
+	Value          string        `json:"Value" cbor:"Value"`
+	Type           string        `json:"Type" cbor:"Type"`
+	Description    string        `json:"Description" cbor:"Description"`
+	Tier           string        `json:"Tier" cbor:"Tier"`
+	DataType       string        `json:"DataType" cbor:"DataType"`
+	AllowedPattern string        `json:"AllowedPattern" cbor:"AllowedPattern"`
+	Policies       string        `json:"Policies" cbor:"Policies"`
+	Overwrite      bool          `json:"Overwrite" cbor:"Overwrite"`
+	Tags           []resourceTag `json:"Tags" cbor:"Tags"`
 }
 
 type putParameterResponse struct {
@@ -152,7 +153,19 @@ func (h *Handler) putParameterTyped(ctx context.Context, req *putParameterReques
 
 	rec := existing
 	if rec == nil {
-		rec = &ParameterRecord{Name: req.Name, Tags: map[string]string{}}
+		// Tags on PutParameter apply only at creation (#1196): AWS documents
+		// that "you can't use the Tags parameter to update tags already
+		// assigned to this parameter" — AddTagsToResource is the way to
+		// change tags on a parameter that already exists, so a Tags value
+		// accompanying an Overwrite of an existing parameter is left alone.
+		tags := make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tags[t.Key] = t.Value
+		}
+		if aerr := serviceutil.ValidateTags(ssmTagCfg, tags); aerr != nil {
+			return nil, aerr
+		}
+		rec = &ParameterRecord{Name: req.Name, Tags: tags}
 	}
 	applyPutParameterFields(rec, putParameterFields{
 		Description:    req.Description,
