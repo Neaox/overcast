@@ -12,6 +12,40 @@
 > merge. AGENTS.md's "router coverage" wording (supporting note below) was
 > corrected in the same change. The results tables are kept as the record of
 > the audit; the script remains the release-time re-check.
+>
+> **Update 2026-08-23 (#1199): the two remaining process gaps are closed.**
+> Both residual items under "What would stop this recurring" (points 3 and 4)
+> named a real gap: the script had no automated caller, and the service-addition
+> checklist step it exists to back had no mechanical check behind it. Point 1's
+> model-vs-route gate proves a *route is registered* at the modeled binding; it
+> does not prove the wire actually reaches a handler when it answers — see
+> `internal/routecheck`'s package doc for the AppConfig/AppRegistry sub-router
+> case that shows the difference. Two things now close that gap:
+>
+> - The reusable half of this script — the model index, request builder, and
+>   verdict logic — moved into `internal/routecheck` (`//go:build dev`), so it
+>   is one implementation shared by two callers rather than something to
+>   re-derive per caller.
+> - `tests/integration/router/route_reachability_dev_test.go`'s
+>   `TestAllDeclaredCapabilitiesAreReachable` runs the same sweep in-process,
+>   against a full-service `httptest` server (`tests/helpers.NewTestServer`),
+>   reading the live `capabilities.Default` registry rather than the generated
+>   snapshot so a newly declared capability is swept immediately. It needs no
+>   Docker instance and no network, so it runs on every PR under
+>   `-tags slim,dev` — which is what gives AGENTS.md's "verify no custom
+>   endpoints were introduced" checklist step the teeth point 4 asked for,
+>   rather than only checking at release time.
+>
+> The script itself is unchanged in purpose and stays the release-time
+> re-check against a real instance/image — see
+> [RELEASE.md](../../RELEASE.md#creating-an-alpha-release) and the
+> [`release` skill](../../.agents/skills/release/SKILL.md#1-smoke--is-it-alive-and-correctly-wired),
+> both of which now name it as a required RC step. Failing-first evidence:
+> temporarily flipping `elasticache/DescribeCacheEngineVersions` back to
+> `StatusSupported` (the exact historical shape this audit already
+> documented in Category B) reproduced a single red
+> `TestAllDeclaredCapabilitiesAreReachable` naming that operation; reverting
+> the flag turned it green again.
 
 ## Why this audit happened
 
@@ -169,7 +203,7 @@ Three `shared-path` groups were checked by hand with real ARNs and are correct b
 
 In rough order of value:
 
-1. A model-vs-route gate, per the `rest_operations_dev.go` note above. This is the only option that fails *before* merge.
-2. Correct the "router coverage" claim in AGENTS.md so the next contributor does not trust a guarantee that is not there.
-3. Keep `scripts/route-reachability.go` runnable and run it at release-candidate time. It needs a live instance so it does not belong in unit CI as-is, but it is cheap against an RC container.
-4. When adding a service, the AGENTS.md checklist step "verify no custom endpoints were introduced" needs teeth. Every finding here is a custom endpoint that passed that step.
+1. A model-vs-route gate, per the `rest_operations_dev.go` note above. This is the only option that fails *before* merge. **Done** — [manifest-enforcement.md](./manifest-enforcement.md), PR #876/#921.
+2. Correct the "router coverage" claim in AGENTS.md so the next contributor does not trust a guarantee that is not there. **Done**, same change.
+3. Keep `scripts/route-reachability.go` runnable and run it at release-candidate time. It needs a live instance so it does not belong in unit CI as-is, but it is cheap against an RC container. **Done (#1199)** — named as a required step with the exact command in [RELEASE.md](../../RELEASE.md#creating-an-alpha-release) and the [`release` skill](../../.agents/skills/release/SKILL.md#1-smoke--is-it-alive-and-correctly-wired); the live-instance requirement is satisfied by the RC container the Smoke pass already starts.
+4. When adding a service, the AGENTS.md checklist step "verify no custom endpoints were introduced" needs teeth. Every finding here is a custom endpoint that passed that step. **Done (#1199)** — `TestAllDeclaredCapabilitiesAreReachable` (`tests/integration/router/route_reachability_dev_test.go`) runs the same reachability sweep in-process on every PR under `-tags slim,dev`, via the shared `internal/routecheck` package, with no live instance or unit-CI cost the way the script itself would need. This is a stronger, per-PR version of point 3's release-time check, not a duplicate of it: the script proves the exact built RC binary/image is wired correctly (real build tags, real embedded assets, a real Docker daemon behind container-backed services); the in-process test proves the same wire-level claim continuously, at the moment a capability is declared, on plain `router.New` rather than the shipped artifact.

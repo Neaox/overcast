@@ -385,6 +385,23 @@ For an alpha release:
    binary in the `Dockerfile`'s builder stages, and at runtime by the
    `Docker build (slim)` CI job — so this step is a confirmation, not the only
    line of defence.
+12. **Required: route reachability against the RC image itself.**
+    `scripts/route-reachability.go` probes every capability Overcast declares
+    Supported/Partial/Inert/WIP at its AWS-modeled wire binding and reports any
+    that no SDK could actually reach — the fault class
+    [docs/plans/route-reachability-audit.md](docs/plans/route-reachability-audit.md)
+    exists to close, and its own residual "keep this in the RC process" item.
+    `TestAllDeclaredCapabilitiesAreReachable` already runs the same sweep
+    in-process on every PR (`go test -tags slim,dev ./tests/integration/router/...`),
+    so this step's live-instance requirement — the one thing the in-process test
+    cannot cover — is satisfied by the RC container already running from step 11,
+    or from [Smoke](.agents/skills/release/SKILL.md#1-smoke--is-it-alive-and-correctly-wired)
+    in the `release` skill:
+    ```sh
+    go run -tags dev ./scripts/route-reachability.go -endpoint http://localhost:4576
+    ```
+    `0 declared operations are unreachable at their modeled binding.` is the
+    clean report. Any `unreachable` row is a release blocker.
 
 ## Keeping The Release PR Current
 

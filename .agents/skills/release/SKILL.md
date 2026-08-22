@@ -183,6 +183,23 @@ scripts/run-test-instance.sh --mount-docker-socket \
   --image ghcr.io/neaox/overcast:<version>-rc.<n>
 ```
 
+**Required: route reachability against this same instance.** `TestAllDeclaredCapabilitiesAreReachable`
+(`tests/integration/router/route_reachability_dev_test.go`) already runs this in-process on every PR,
+but it exercises `router.New` directly, not the built image — different embedded web assets, whatever
+build tags actually shipped, and no real Docker daemon behind the container-backed services. Re-run it
+against the RC container above, which is where its live-instance requirement is satisfied — no separate
+instance to stand up:
+
+```sh
+go run -tags dev ./scripts/route-reachability.go -endpoint <the URL run-test-instance.sh printed>
+```
+
+A clean report is `0 declared operations are unreachable at their modeled binding.` Any `unreachable`
+row blocks the release: it means an implementation is mounted somewhere no AWS SDK will ever call it,
+the exact fault [docs/plans/route-reachability-audit.md](../../../docs/plans/route-reachability-audit.md)
+was written to close out. Re-run with `-show-body` on any `shared-path` row to see which service actually
+answered before deciding it is one of the audit's already-verified shared bindings rather than a new one.
+
 ### 2. Regression — the compatibility suite
 
 Point the runner at the candidate image rather than letting it build. **This is two commands, and
