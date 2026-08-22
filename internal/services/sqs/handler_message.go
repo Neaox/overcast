@@ -264,6 +264,7 @@ func (h *Handler) sendMessageTyped(ctx context.Context, in *sendMessageRequest) 
 			MessageID: msgID,
 		},
 	})
+	h.recordMessageSent(ctx, queueName, len(in.MessageBody))
 
 	return &sendMessageResponse{
 		MessageId:        msgID,
@@ -311,6 +312,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 			return nil, aerr
 		}
 		if received != nil {
+			h.recordMessagesReceived(ctx, queueName, len(received))
 			return &receiveMessageResponse{Messages: received}, nil
 		}
 	}
@@ -318,6 +320,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 	received, aerr := h.selectVisibleMessages(storeCtx, queueName, q, maxMessages, visibilityTimeout, systemAttrNames, in.MessageAttributeNames)
 	if aerr != nil {
 		if waitTimeSeconds > 0 && isLongPollContextDone(aerr) {
+			h.recordMessagesReceived(ctx, queueName, 0)
 			return &receiveMessageResponse{Messages: []receivedMessage{}}, nil
 		}
 		return nil, aerr
@@ -359,6 +362,7 @@ func (h *Handler) receiveMessageTyped(ctx context.Context, in *receiveMessageReq
 		}
 	}
 
+	h.recordMessagesReceived(ctx, queueName, len(received))
 	return &receiveMessageResponse{Messages: received}, nil
 }
 
@@ -531,6 +535,7 @@ func (h *Handler) deleteMessageTyped(ctx context.Context, in *deleteMessageReque
 			},
 		})
 	}
+	h.recordMessageDeleted(ctx, queueName)
 
 	return &struct{}{}, nil
 }
@@ -564,6 +569,7 @@ func (h *Handler) sendMessageBatchTyped(ctx context.Context, in *sendMessageBatc
 				MessageID: msgID,
 			},
 		})
+		h.recordMessageSent(ctx, queueName, len(entry.MessageBody))
 		successful = append(successful, sendMessageBatchResultEntry{
 			Id:               entry.Id,
 			MessageId:        msgID,
@@ -613,6 +619,7 @@ func (h *Handler) deleteMessageBatchTyped(ctx context.Context, in *deleteMessage
 				},
 			})
 		}
+		h.recordMessageDeleted(ctx, queueName)
 		successful = append(successful, deleteMessageBatchResultEntry{Id: entry.Id})
 	}
 	if successful == nil {
@@ -880,6 +887,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 			MessageID: msgID,
 		},
 	})
+	h.recordMessageSent(r.Context(), queueName, len(req.MessageBody))
 
 	protocol.WriteJSON(w, r, http.StatusOK, &sendMessageResponse{
 		MessageId:        msgID,
@@ -947,6 +955,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if received != nil {
+			h.recordMessagesReceived(r.Context(), queueName, len(received))
 			protocol.WriteJSON(w, r, http.StatusOK, &receiveMessageResponse{Messages: received})
 			return
 		}
@@ -1003,6 +1012,7 @@ func (h *Handler) ReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.recordMessagesReceived(r.Context(), queueName, len(received))
 	protocol.WriteJSON(w, r, http.StatusOK, &receiveMessageResponse{Messages: received})
 }
 
@@ -1302,6 +1312,7 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	h.recordMessageDeleted(r.Context(), queueName)
 
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
@@ -1341,6 +1352,7 @@ func (h *Handler) SendMessageBatch(w http.ResponseWriter, r *http.Request) {
 				MessageID: msgID,
 			},
 		})
+		h.recordMessageSent(r.Context(), queueName, len(entry.MessageBody))
 		successful = append(successful, sendMessageBatchResultEntry{
 			Id:               entry.Id,
 			MessageId:        msgID,
@@ -1396,6 +1408,7 @@ func (h *Handler) DeleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 		}
+		h.recordMessageDeleted(r.Context(), queueName)
 		successful = append(successful, deleteMessageBatchResultEntry{Id: entry.Id})
 	}
 	if successful == nil {

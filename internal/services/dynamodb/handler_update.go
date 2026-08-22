@@ -45,7 +45,9 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) updateItemTyped(ctx context.Context, req *updateItemRequest) (*updateItemResponse, *protocol.AWSError) {
+// updateItemTypedCore is UpdateItem's business logic. See updateItemTyped
+// (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) updateItemTypedCore(ctx context.Context, req *updateItemRequest) (*updateItemResponse, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}

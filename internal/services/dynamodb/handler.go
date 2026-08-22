@@ -28,6 +28,12 @@ type Handler struct {
 	clk   clock.Clock
 	ops   map[string]http.HandlerFunc
 	rawOp map[string]op.Operation
+
+	// metrics is nil until Service.InitMetrics is called (or when automatic
+	// collection is disabled — see config.ServiceMetricsMode). Every call
+	// site in metrics_dynamodb.go is nil-safe, matching Lambda's
+	// metrics_lambda.go/handler.go pattern.
+	metrics metricsRecorder
 }
 
 // newHandler constructs a Handler from the raw dependencies.
@@ -451,7 +457,10 @@ func (h *Handler) PutItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) putItemTyped(ctx context.Context, req *putItemRequest) (*putItemResponse, *protocol.AWSError) {
+// putItemTypedCore is PutItem's business logic. See putItemTyped
+// (metrics_dynamodb.go) for the metrics-recording wrapper both dispatch
+// paths actually call.
+func (h *Handler) putItemTypedCore(ctx context.Context, req *putItemRequest) (*putItemResponse, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -539,7 +548,9 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) getItemTyped(ctx context.Context, req *getItemRequest) (*getItemResponse, *protocol.AWSError) {
+// getItemTypedCore is GetItem's business logic. See getItemTyped
+// (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) getItemTypedCore(ctx context.Context, req *getItemRequest) (*getItemResponse, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -587,7 +598,9 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) deleteItemTyped(ctx context.Context, req *deleteItemRequest) (*deleteItemResponse, *protocol.AWSError) {
+// deleteItemTypedCore is DeleteItem's business logic. See deleteItemTyped
+// (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) deleteItemTypedCore(ctx context.Context, req *deleteItemRequest) (*deleteItemResponse, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -671,7 +684,9 @@ func (h *Handler) Scan(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) scanTyped(ctx context.Context, req *scanRequest) (any, *protocol.AWSError) {
+// scanTypedCore is Scan's business logic. See scanTyped (metrics_dynamodb.go)
+// for the metrics-recording wrapper.
+func (h *Handler) scanTypedCore(ctx context.Context, req *scanRequest) (any, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -974,7 +989,9 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) queryTyped(ctx context.Context, req *queryRequest) (any, *protocol.AWSError) {
+// queryTypedCore is Query's business logic. See queryTyped
+// (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) queryTypedCore(ctx context.Context, req *queryRequest) (any, *protocol.AWSError) {
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -1768,7 +1785,9 @@ func (h *Handler) BatchGetItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) batchGetItemTyped(ctx context.Context, req *batchGetItemRequest) (*batchGetItemResponse, *protocol.AWSError) {
+// batchGetItemTypedCore is BatchGetItem's business logic. See
+// batchGetItemTyped (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) batchGetItemTypedCore(ctx context.Context, req *batchGetItemRequest) (*batchGetItemResponse, *protocol.AWSError) {
 	responses := make(map[string][]Item, len(req.RequestItems))
 
 	for tableName, tableReq := range req.RequestItems {
@@ -1833,7 +1852,9 @@ func (h *Handler) BatchWriteItem(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) batchWriteItemTyped(ctx context.Context, req *batchWriteItemRequest) (*batchWriteItemResponse, *protocol.AWSError) {
+// batchWriteItemTypedCore is BatchWriteItem's business logic. See
+// batchWriteItemTyped (metrics_dynamodb.go) for the metrics-recording wrapper.
+func (h *Handler) batchWriteItemTypedCore(ctx context.Context, req *batchWriteItemRequest) (*batchWriteItemResponse, *protocol.AWSError) {
 	// Count total operations — AWS limit is 25.
 	var totalOps int
 	for _, ops := range req.RequestItems {

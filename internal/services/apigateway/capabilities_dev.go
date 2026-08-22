@@ -226,8 +226,8 @@ func init() {
 		capabilities.Capability{Service: "apigateway", Operation: "GetV2Tags", Category: "HTTP API v2 other",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "apigateway", Operation: "ExecuteRestAPI", Category: "REST API v1 execution",
-			Status: capabilities.StatusSupported, Notes: "Lambda proxy/non-proxy, HTTP_PROXY, HTTP, and MOCK integrations; stage variable substitution; base64 Lambda responses decoded before write"},
+			Status: capabilities.StatusSupported, Notes: "Lambda proxy/non-proxy, HTTP_PROXY, HTTP, and MOCK integrations; stage variable substitution; base64 Lambda responses decoded before write; records AWS/ApiGateway CloudWatch metrics Count, 4XXError, 5XXError, Latency, and IntegrationLatency once per dispatched request, dimensioned by ApiName+Stage+Method+Resource (service-metrics-platform.md phase 2) — an unresolvable restApiId records nothing, since there is no ApiName to dimension a series with"},
 		capabilities.Capability{Service: "apigateway", Operation: "ExecuteV2API", Category: "HTTP API v2 other",
-			Status: capabilities.StatusSupported, Notes: "AWS_PROXY and HTTP_PROXY integration types"},
+			Status: capabilities.StatusSupported, Notes: "AWS_PROXY and HTTP_PROXY integration types; records the same Count/4XXError/5XXError/Latency/IntegrationLatency metrics, dimensioned by ApiId+Stage+HttpMethod+RouteKey per AWS's own HTTP API dimension set"},
 	)
 }

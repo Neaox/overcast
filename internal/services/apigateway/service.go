@@ -106,6 +106,16 @@ func (s *Service) InitDomainRegistry(reg *domainregistry.Registry) {
 	s.handler.domainRegistry = reg
 }
 
+// InitMetrics wires the shared service-metrics recorder
+// (docs/plans/service-metrics-platform.md phase 2) so every executed
+// REST/HTTP API request records its AWS/ApiGateway outcome metrics
+// (metrics_apigateway.go). Called once from router.New, after
+// metrics.NewRecorder; a Service without it (unit tests, or
+// OVERCAST_SERVICE_METRICS=disabled) simply never records anything.
+func (s *Service) InitMetrics(m metricsRecorder) {
+	s.handler.metrics = m
+}
+
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 

@@ -47,6 +47,23 @@ var proxyHTTPClient = &http.Client{Timeout: 30 * time.Second}
 // ExecuteRestAPI handles incoming requests to a deployed REST API stage.
 // Route: /restapis/{restApiId}/{stageName}/_user_request_/*.
 func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
+	// Collection disabled: skip the status-capturing writer allocation and
+	// every clock read below entirely — matches the plan's "disabled
+	// collection adds no allocations" acceptance criterion (see
+	// metrics_apigateway.go's benchmarks).
+	var sw *statusCapturingResponseWriter
+	var start time.Time
+	var apiName, stageName, resourcePath string
+	var integrationLatency time.Duration
+	if h.metrics != nil {
+		start = h.clk.Now()
+		sw = &statusCapturingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		w = sw
+		defer func() {
+			h.recordRestAPIOutcome(r.Context(), apiName, stageName, resourcePath, r.Method, sw.status, h.clk.Now().Sub(start), integrationLatency)
+		}()
+	}
+
 	apiID := chi.URLParam(r, "restApiId")
 	requestPath := chi.URLParam(r, "*")
 	if requestPath == "" {
@@ -72,9 +89,10 @@ func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusForbidden, "Forbidden")
 		return
 	}
+	apiName = api.Name
 
 	// 1b. Load stage for stage variables.
-	stageName := chi.URLParam(r, "stageName")
+	stageName = chi.URLParam(r, "stageName")
 	var stageVars map[string]string
 	stage, serr := h.store.getStage(r.Context(), apiID, stageName)
 	if serr == nil && stage != nil {
@@ -94,6 +112,7 @@ func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusForbidden, "Missing Authentication Token")
 		return
 	}
+	resourcePath = resource.Path
 
 	// 3. Find matching method.
 	method, ok := resource.ResourceMethods[r.Method]
@@ -140,6 +159,10 @@ func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. Dispatch to integration.
+	var integrationStart time.Time
+	if h.metrics != nil {
+		integrationStart = h.clk.Now()
+	}
 	switch effectiveIntegration.Type {
 	case "AWS_PROXY":
 		h.executeRestLambdaProxy(w, r, api, resource, method, effectiveIntegration, stageVars, requestPath)
@@ -154,6 +177,10 @@ func (h *Handler) ExecuteRestAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeGatewayError(w, http.StatusInternalServerError,
 			fmt.Sprintf("Integration type %s not yet supported", integration.Type))
+		return
+	}
+	if h.metrics != nil {
+		integrationLatency = h.clk.Now().Sub(integrationStart)
 	}
 }
 
@@ -303,7 +330,22 @@ func (h *Handler) executeRestMock(w http.ResponseWriter, integration *Integratio
 
 // ExecuteV2API handles incoming requests to a deployed HTTP API stage.
 func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
+	// Collection disabled: skip the allocation/clock reads — see
+	// ExecuteRestAPI's identical guard.
+	var sw *statusCapturingResponseWriter
+	var start time.Time
+	var stageName, routeKey string
+	var integrationLatency time.Duration
 	apiID := chi.URLParam(r, "apiId")
+	if h.metrics != nil {
+		start = h.clk.Now()
+		sw = &statusCapturingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		w = sw
+		defer func() {
+			h.recordV2APIOutcome(r.Context(), apiID, stageName, routeKey, r.Method, sw.status, h.clk.Now().Sub(start), integrationLatency)
+		}()
+	}
+
 	requestPath := chi.URLParam(r, "*")
 	if requestPath == "" {
 		requestPath = "/"
@@ -325,7 +367,7 @@ func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1b. Load stage for stage variables.
-	stageName := chi.URLParam(r, "stageName")
+	stageName = chi.URLParam(r, "stageName")
 	var stageVars map[string]string
 	stg, serr := h.store.getV2Stage(r.Context(), apiID, stageName)
 	if serr == nil && stg != nil {
@@ -345,6 +387,7 @@ func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	routeKey = route.RouteKey
 
 	// 2b. Enforce JWT authorizer before forwarding to the integration.
 	if !h.checkV2JWTAuthorizer(w, r, apiID, route) {
@@ -379,6 +422,10 @@ func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. Dispatch by integration type.
+	var integrationStart time.Time
+	if h.metrics != nil {
+		integrationStart = h.clk.Now()
+	}
 	switch integ.IntegrationType {
 	case "AWS_PROXY":
 		h.executeV2LambdaProxy(w, r, api, route, integ, stageVars, requestPath)
@@ -387,6 +434,10 @@ func (h *Handler) ExecuteV2API(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeGatewayError(w, http.StatusInternalServerError,
 			fmt.Sprintf("Integration type %s not yet supported", integ.IntegrationType))
+		return
+	}
+	if h.metrics != nil {
+		integrationLatency = h.clk.Now().Sub(integrationStart)
 	}
 }
 

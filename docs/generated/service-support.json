@@ -335,7 +335,7 @@
           "operation": "GetQueueAttributes",
           "category": "Queue management",
           "status": "✅ Supported",
-          "notes": "All standard attributes; All wildcard supported"
+          "notes": "All standard attributes; All wildcard supported; ApproximateNumberOfMessages(NotVisible) reflects the same counts a background sampler also publishes to CloudWatch every minute as ApproximateNumberOfMessagesVisible/NotVisible/Delayed (service-metrics-platform.md phase 2), whether or not the queue has traffic"
         },
         {
           "operation": "SetQueueAttributes",
@@ -369,30 +369,31 @@
           "operation": "SendMessage",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "DelaySeconds, MessageAttributes supported"
+          "notes": "DelaySeconds, MessageAttributes supported; records AWS/SQS CloudWatch metrics NumberOfMessagesSent and SentMessageSize (service-metrics-platform.md phase 2), skipped for a FIFO content-based-deduplication resend since no new message is enqueued"
         },
         {
           "operation": "SendMessageBatch",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages per batch"
+          "notes": "Up to 10 messages per batch; records NumberOfMessagesSent/SentMessageSize per successful entry"
         },
         {
           "operation": "ReceiveMessage",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId"
+          "notes": "MaxNumberOfMessages, VisibilityTimeout, WaitTimeSeconds, queue default long polling, FIFO ReceiveRequestAttemptId; records NumberOfMessagesReceived (non-empty) or NumberOfEmptyReceives (zero messages) once per call, after any long-poll retry settles"
         },
         {
           "operation": "DeleteMessage",
           "category": "Message operations",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Records NumberOfMessagesDeleted"
         },
         {
           "operation": "DeleteMessageBatch",
           "category": "Message operations",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages per batch"
+          "notes": "Up to 10 messages per batch; records NumberOfMessagesDeleted per successful entry"
         },
         {
           "operation": "ChangeMessageVisibility",
@@ -481,61 +482,61 @@
           "operation": "PutItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Includes `ConditionExpression`, `ReturnValues` (`ALL_OLD`)"
+          "notes": "Includes `ConditionExpression`, `ReturnValues` (`ALL_OLD`); records AWS/DynamoDB CloudWatch metrics SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors (service-metrics-platform.md phase 2)"
         },
         {
           "operation": "GetItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Includes `ProjectionExpression`"
+          "notes": "Includes `ProjectionExpression`; records SuccessfulRequestLatency, ConsumedReadCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "UpdateItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "SET/REMOVE/ADD/DELETE clauses; all `ReturnValues` variants; upsert"
+          "notes": "SET/REMOVE/ADD/DELETE clauses; all `ReturnValues` variants; upsert; records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "DeleteItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "`ConditionExpression`, `ReturnValues` (`ALL_OLD`)"
+          "notes": "`ConditionExpression`, `ReturnValues` (`ALL_OLD`); records SuccessfulRequestLatency, ConsumedWriteCapacityUnits, UserErrors/SystemErrors"
         },
         {
           "operation": "BatchGetItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Up to 100 items across tables"
+          "notes": "Up to 100 items across tables; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table touched"
         },
         {
           "operation": "BatchWriteItem",
           "category": "Item operations",
           "status": "✅ Supported",
-          "notes": "Up to 25 put/delete operations"
+          "notes": "Up to 25 put/delete operations; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table touched"
         },
         {
           "operation": "Query",
           "category": "Query \u0026 scan",
           "status": "✅ Supported",
-          "notes": "`KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does"
+          "notes": "`KeyConditionExpression`, `FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, `ScanIndexForward`, `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does; records SuccessfulRequestLatency and ConsumedReadCapacityUnits (with GlobalSecondaryIndexName when IndexName names a real GSI)"
         },
         {
           "operation": "Scan",
           "category": "Query \u0026 scan",
           "status": "✅ Supported",
-          "notes": "`FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does"
+          "notes": "`FilterExpression`, `Limit` (applied before `FilterExpression` per AWS semantics), `ExclusiveStartKey`/`LastEvaluatedKey` pagination, parallel scan (`Segment`/`TotalSegments`), `Select=COUNT`; `ConsistentRead=true` on a GSI is rejected as AWS does; records SuccessfulRequestLatency and ConsumedReadCapacityUnits (with GlobalSecondaryIndexName when IndexName names a real GSI)"
         },
         {
           "operation": "TransactGetItems",
           "category": "Transactions",
           "status": "✅ Supported",
-          "notes": "Up to 100 items across tables"
+          "notes": "Up to 100 items across tables; records SuccessfulRequestLatency/ConsumedReadCapacityUnits per table (2x weighted, matching AWS's transactional-read capacity accounting)"
         },
         {
           "operation": "TransactWriteItems",
           "category": "Transactions",
           "status": "✅ Supported",
-          "notes": "Put, Update, Delete, ConditionCheck; all-or-nothing"
+          "notes": "Put, Update, Delete, ConditionCheck; all-or-nothing; records SuccessfulRequestLatency/ConsumedWriteCapacityUnits per table (2x weighted, matching AWS's transactional-write capacity accounting)"
         },
         {
           "operation": "TagResource",
@@ -1537,13 +1538,13 @@
           "operation": "ExecuteRestAPI",
           "category": "REST API v1 execution",
           "status": "✅ Supported",
-          "notes": "Lambda proxy/non-proxy, HTTP_PROXY, HTTP, and MOCK integrations; stage variable substitution; base64 Lambda responses decoded before write"
+          "notes": "Lambda proxy/non-proxy, HTTP_PROXY, HTTP, and MOCK integrations; stage variable substitution; base64 Lambda responses decoded before write; records AWS/ApiGateway CloudWatch metrics Count, 4XXError, 5XXError, Latency, and IntegrationLatency once per dispatched request, dimensioned by ApiName+Stage+Method+Resource (service-metrics-platform.md phase 2) — an unresolvable restApiId records nothing, since there is no ApiName to dimension a series with"
         },
         {
           "operation": "ExecuteV2API",
           "category": "HTTP API v2 other",
           "status": "✅ Supported",
-          "notes": "AWS_PROXY and HTTP_PROXY integration types"
+          "notes": "AWS_PROXY and HTTP_PROXY integration types; records the same Count/4XXError/5XXError/Latency/IntegrationLatency metrics, dimensioned by ApiId+Stage+HttpMethod+RouteKey per AWS's own HTTP API dimension set"
         }
       ]
     },
@@ -3492,13 +3493,13 @@
           "operation": "Publish",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "TopicArn/PhoneNumber/TargetArn destination selection (exactly one required); MessageStructure=json per-protocol payload selection; Message (256 KB) and Subject (\u003c100 chars, no control/line-break chars) validation; async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers"
+          "notes": "TopicArn/PhoneNumber/TargetArn destination selection (exactly one required); MessageStructure=json per-protocol payload selection; Message (256 KB) and Subject (\u003c100 chars, no control/line-break chars) validation; async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers; records AWS/SNS CloudWatch metrics NumberOfMessagesPublished and PublishSize on accept, and NumberOfNotificationsDelivered/NumberOfNotificationsFailed per subscription delivery attempt (service-metrics-platform.md phase 2) — a delivery whose protocol dependency was never wired (nil enqueuer/mailer/etc.) records neither, since there is no delivery outcome to observe"
         },
         {
           "operation": "PublishBatch",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "Up to 10 messages; each entry independently validated (Message/Subject/MessageStructure=json), a bad entry fails without aborting the batch"
+          "notes": "Up to 10 messages; each entry independently validated (Message/Subject/MessageStructure=json), a bad entry fails without aborting the batch; records NumberOfMessagesPublished/PublishSize per successful entry"
         },
         {
           "operation": "Message filtering (subscription filter policy)",

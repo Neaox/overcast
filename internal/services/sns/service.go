@@ -89,6 +89,16 @@ func (s *Service) InitBus(b *events.Bus) {
 	s.handler.setBus(b)
 }
 
+// InitMetrics wires the shared service-metrics recorder
+// (docs/plans/service-metrics-platform.md phase 2) so Publish/PublishBatch
+// and every subscription delivery attempt record their AWS/SNS outcome
+// metrics (metrics_sns.go). Called once from router.New, after
+// metrics.NewRecorder; a Service without it (unit tests, or
+// OVERCAST_SERVICE_METRICS=disabled) simply never records anything.
+func (s *Service) InitMetrics(m metricsRecorder) {
+	s.handler.metrics = m
+}
+
 // TopicPublisher returns the narrow internal-publish seam other services use
 // to deliver service-originated notifications to SNS topics — the S3 bucket
 // notification dispatcher publishes through it. Fan-out uses whatever delivery

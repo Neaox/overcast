@@ -37,6 +37,12 @@ type Handler struct {
 	ops     map[string]http.HandlerFunc
 	typedOp map[string]op.Operation // Smithy-aligned typed registry; see typed_ops.go
 	seqNum  atomic.Int64            // FIFO sequence number counter
+
+	// metrics is nil until Service.InitMetrics is called (or when automatic
+	// collection is disabled — see config.ServiceMetricsMode). Every call site
+	// in metrics_sqs.go is nil-safe, matching Lambda's
+	// metrics_lambda.go/handler.go pattern.
+	metrics metricsRecorder
 }
 
 func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {

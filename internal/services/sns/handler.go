@@ -32,6 +32,12 @@ type Handler struct {
 	ops       map[string]http.HandlerFunc
 	typedOp   map[string]op.Operation
 	wg        sync.WaitGroup
+
+	// metrics is nil until Service.InitMetrics is called (or when automatic
+	// collection is disabled — see config.ServiceMetricsMode). Every call
+	// site in metrics_sns.go is nil-safe, matching Lambda's
+	// metrics_lambda.go/handler.go pattern.
+	metrics metricsRecorder
 }
 
 // newHandler constructs a Handler from the raw dependencies.

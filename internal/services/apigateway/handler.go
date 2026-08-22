@@ -38,6 +38,12 @@ type Handler struct {
 	// (usage plan, API key). In-memory only, no background goroutine —
 	// see usage.go.
 	usage *usageTracker
+
+	// metrics is nil until Service.InitMetrics is called (or when automatic
+	// collection is disabled — see config.ServiceMetricsMode). Every call
+	// site in metrics_apigateway.go is nil-safe, matching Lambda's
+	// metrics_lambda.go/handler.go pattern.
+	metrics metricsRecorder
 }
 
 // enforceThrottle reports whether over-limit requests are rejected rather than
