@@ -327,9 +327,19 @@ func TestDispatchQuery_consultsTheAllowList(t *testing.T) {
 		t.Errorf("an unregistered action should reach the legacy fallback: status %d", legacy.Code)
 	}
 
-	deferred := dispatch("AllocateAddress")
+	// Wave 2 (#754) closed ec2TypedDispatchRemainder, so no operation is
+	// permanently deferred to pin this against. Prove the mechanism instead:
+	// pull a routed operation off the allow-list for the duration of this
+	// test and confirm DispatchQuery falls through to legacy for it — the
+	// legacy branch never consults ProtocolStrict, so it answers 200 rather
+	// than refusing JSON 1.0 the way the typed branch does above.
+	const deferredForTest = "AllocateAddress"
+	delete(ec2TypedOps, deferredForTest)
+	defer func() { ec2TypedOps[deferredForTest] = true }()
+
+	deferred := dispatch(deferredForTest)
 	if deferred.Code != http.StatusOK {
-		t.Errorf("AllocateAddress is in ec2TypedDispatchRemainder and must stay on legacy: status %d, body %s",
+		t.Errorf("an operation pulled off the allow-list must fall through to legacy regardless of protocol: status %d, body %s",
 			deferred.Code, deferred.Body.String())
 	}
 }

@@ -1,14 +1,15 @@
 # EC2 typed-dispatch migration — audit + design
 
-> **Status:** first wave landed, 2026-08-22 (#754). Typed dispatch is **on** for EC2's twenty-one
-> `Describe*` operations and off for the remaining forty-eight, which stay on legacy. See
-> §0 for what shipped and what the strategy became; §§1–6 below are the original 2026-07-26
-> proposal, kept for the reasoning, with its §2 inventory stale in its particulars (see §0.3).
-> Written per [level2-codegen.md](./level2-codegen.md) Track 2.3's explicit work queue: EC2 is the
-> largest "kept-on-legacy" item from the P1 Query-dispatch landing (~69 operations, entire typed
-> branch disabled at the dispatch level — the largest single item in that register). Modeled on
-> [dynamodb-gsi-design.md](./dynamodb-gsi-design.md)'s shape: audit → root causes → design →
-> gated phases → deferred items.
+> **Status:** closed, 2026-08-23 (#754). Both waves landed: wave 1 (#1217) routed the twenty-one
+> `Describe*` operations; wave 2 routes the remaining forty-eight, so `ec2TypedDispatchRemainder`
+> is empty and every one of EC2's 69 registered typed operations now answers from the typed
+> registry. See §0 for what shipped and what the strategy became across both waves; §§1–6 below
+> are the original 2026-07-26 proposal, kept for the reasoning, with its §2 inventory stale in its
+> particulars (see §0.3). Written per [level2-codegen.md](./level2-codegen.md) Track 2.3's explicit
+> work queue: EC2 is the largest "kept-on-legacy" item from the P1 Query-dispatch landing (~69
+> operations, entire typed branch disabled at the dispatch level — the largest single item in that
+> register). Modeled on [dynamodb-gsi-design.md](./dynamodb-gsi-design.md)'s shape: audit → root
+> causes → design → gated phases → deferred items.
 
 ---
 
@@ -83,31 +84,59 @@ to **thirty than forty-six**. The list of *diverged mutations* in §2 held up ex
 recorded per operation in `ec2TypedDispatchRemainder` rather than here, where it can go stale
 again.
 
-### 0.4 What remains — 48 operations
+### 0.4 What wave 2 closed — 48 operations (2026-08-23)
 
-All still answered by legacy, all listed with their reason in `ec2TypedDispatchRemainder`. In
-rough order of what a caller would notice:
+All 48 are now routed; `ec2TypedDispatchRemainder` is empty. In the same grouping wave 1 left them:
 
 1. **Stubbed mutations (12)** — `TerminateInstances`, `StartInstances`, `StopInstances`,
    `DeleteTags`, `DeleteVpcEndpoints`, `ModifyInstanceAttribute`, the four
-   `Authorize`/`RevokeSecurityGroup*`, `ModifySubnetAttribute`, `ModifyVpcAttribute`. These validate
-   a parameter and return success without touching the store; §3's RC3 describes them and remains
-   accurate. The two `Modify*Attribute` operations additionally have to persist the fields #1144
-   made real, which is what that PR routed around.
-2. **Creates that drop part of what they are given (5)** — `RunInstances` (no `SecurityGroupId.N`,
-   no `TagSpecification.N`), `CreateVpc` (omits `EnableDnsSupport=true`), `CreateSubnet`,
-   `CreateSecurityGroup`, `CreateTags` (lifecycle events, `TagSpecification.N`).
-3. **The remaining 31** — creates, deletes, attaches and accepts not yet read against legacy line
-   by line. Cheap individually; each needs a parity row and, where it writes, a state assertion the
-   byte-comparison cannot make.
+   `Authorize`/`RevokeSecurityGroup*`, `ModifySubnetAttribute`, `ModifyVpcAttribute`. Every one of
+   these now performs the write its response claimed: state transitions (with the same scheduler
+   callback and `h.publish` calls legacy makes), security-group rule append/remove (using the same
+   `IpPermission`/`IpRange` store types the legacy path fills, decoded straight off the
+   `IpPermissions.N.*` wire shape — RC2's decodeStruct recursion, already proven for `CreateTags`,
+   turns out to need no further codec work for a doubly-nested list), tag deletion, VPC-endpoint
+   deletion, and — the two `Modify*Attribute` operations `#1144` had routed around — persisting
+   `MapPublicIpOnLaunch.Value` / `EnableDnsSupport.Value` / `EnableDnsHostnames.Value` /
+   `InstanceType.Value` via a small `ec2AttributeBoolValue`/`ec2AttributeStringValue` wrapper type
+   that decodes AWS's `Attribute.Value=x` shape (a nested single-field struct, not a list — the
+   same top-level `decodeStruct` recursion RC2 already does, just not through the list branch).
+2. **Creates that dropped part of what they were given (5)** — `RunInstances` now carries
+   `SecurityGroupId.N` (resolved to `groupSet` the same way legacy does) and `TagSpecification.N`
+   (validated and persisted through `putResourceTags`, the same store `CreateTags` uses) and
+   publishes `EC2InstanceLaunched`; `CreateVpc` now defaults `EnableDnsSupport=true` (matching the
+   stored field #1144 made real) and publishes `EC2VpcCreated`; `CreateSubnet`/`CreateSecurityGroup`
+   publish their lifecycle events (`TagSpecification.N` turned out not to be something *legacy*
+   supported for either op either — the original classification was wrong on that count, corrected
+   here rather than carried forward); `CreateTags` turned out to already be a correct twin — there
+   is no EC2 tag lifecycle event for legacy to publish and typed to have skipped, so nothing to fix
+   beyond routing it.
+3. **The remaining 31**, read against legacy line by line: three (`DeleteVpc`/`DeleteSubnet`/
+   `DeleteSecurityGroup`) needed the `#1233` dependency checks
+   ([delete_dependencies.go](../../internal/services/ec2/delete_dependencies.go)) wired into the
+   typed body, plus the same `h.publish` calls legacy makes; `CreateNatGateway`/`CreateVpnGateway`
+   were missing `TagSpecification.N` support legacy already had; `CreateVpcEndpoint` was missing the
+   `VpcEndpointType` default legacy already honoured; `AllocateAddress` was ignoring `Domain`
+   entirely (found only once the mutation parity harness existed to catch it — a divergence the
+   line-by-line read had missed); `CreateInternetGateway`/`CreateRouteTable`/`CreateNetworkInterface`
+   were missing a `tagSet` element their legacy twin renders (empty, since none of the three support
+   create-time tags either — a pure wire-shape gap, not a behavioral one). The other twenty-four
+   were, on inspection, already correct twins — same store calls, same validation, same (absence
+   of) event-bus publish — and needed only a parity row to prove it.
 
-Each is a small, independent change now that the seam exists: give the typed request its missing
-fields, point it at a body shared with legacy or complete it, add a parity row, move the name from
-`ec2TypedDispatchRemainder` to `ec2TypedOps`. Mutations need more than the byte-comparison — a
-before/after state assertion — since two paths can agree on the response and disagree on what they
-wrote.
+**Mutation parity** ([typed_parity_mutations_dev_test.go](../../internal/services/ec2/typed_parity_mutations_dev_test.go))
+is a second differential table alongside wave 1's describe-only one
+([typed_parity_dev_test.go](../../internal/services/ec2/typed_parity_dev_test.go)): a mutation
+cannot be checked by replaying the same request against both paths on one handler the way a
+describe can (a second `DeleteVpc` against the same store answers "there is nothing left to
+delete", not "the two paths disagree"), so each case runs against two independently seeded
+handlers — one legacy, one typed — and compares the masked result, following up with a legacy-driven
+`Describe*` where the mutation's own response (often a bare `Return: true`) cannot show what was
+written. 80 cases across the 48 operations.
 
-**#754 stays open** until `ec2TypedDispatchRemainder` is empty.
+**#754 is closed.** `ec2TypedDispatchRemainder` is kept, empty, so
+`TestTypedDispatch_everyOpIsClassified` still refuses a newly registered typed operation that
+arrives unclassified.
 
 ### 0.5 Known, deliberate imprecision in the seam
 

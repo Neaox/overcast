@@ -214,7 +214,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 
-		h.publish(r, events.EC2InstanceLaunched, events.ResourcePayload{Name: instID})
+		h.publish(r.Context(), events.EC2InstanceLaunched, events.ResourcePayload{Name: instID})
 
 		xmlSGs := make([]xmlSGRef, 0, len(sgRefs))
 		for _, sg := range sgRefs {
@@ -359,7 +359,7 @@ func (h *Handler) TerminateInstances(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 
-		h.publish(r, events.EC2InstanceTerminated, events.ResourcePayload{Name: id})
+		h.publish(r.Context(), events.EC2InstanceTerminated, events.ResourcePayload{Name: id})
 
 		changes = append(changes, xmlStateChangeItem{
 			InstanceID:    id,
@@ -427,7 +427,7 @@ func (h *Handler) StopInstances(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 
-		h.publish(r, events.EC2InstanceStopped, events.ResourcePayload{Name: id})
+		h.publish(r.Context(), events.EC2InstanceStopped, events.ResourcePayload{Name: id})
 
 		changes = append(changes, xmlStateChangeItem{
 			InstanceID:    id,
@@ -495,7 +495,7 @@ func (h *Handler) StartInstances(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 
-		h.publish(r, events.EC2InstanceStarted, events.ResourcePayload{Name: id})
+		h.publish(r.Context(), events.EC2InstanceStarted, events.ResourcePayload{Name: id})
 
 		changes = append(changes, xmlStateChangeItem{
 			InstanceID:    id,
