@@ -276,7 +276,7 @@ not silently narrow platform support or document a single-machine workaround as 
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
 | golangci-lint | v2.8.0  | `make lint-go` uses pinned `go run` automatically          |
 | actionlint    | v1.7.7  | `make lint-actions` uses pinned `go run` automatically         |
-| Node.js       | 18+     | For web UI builds and Lambda work — https://nodejs.org    |
+| Node.js       | see `.node-version` | For web UI builds and Lambda work — https://nodejs.org. The file at the repo root is the one source of truth: CI's `setup-node` steps, fnm, nodenv and n read it, and Renovate moves it (with the Dockerfile's node base, in one PR) when the next LTS arrives |
 
 ---
 

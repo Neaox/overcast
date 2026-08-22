@@ -503,6 +503,7 @@ class DependencyBotTest(unittest.TestCase):
 			"go.mod",
 			"go.sum",
 			"Dockerfile",
+			".node-version",
 			"web/package.json",
 			"web/pnpm-lock.yaml",
 			"web/pnpm-workspace.yaml",

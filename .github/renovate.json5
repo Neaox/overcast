@@ -47,7 +47,7 @@
   // ignorePaths alone still let the nuget manager pick up a compat suite's
   // .csproj. These four cover every surface that ships or gates a release —
   // the image bases, the Go module, the web workspace, and the workflows.
-  enabledManagers: ['dockerfile', 'gomod', 'npm', 'github-actions'],
+  enabledManagers: ['dockerfile', 'gomod', 'npm', 'github-actions', 'nodenv'],
   // Setting ignorePaths replaces the preset's list, so node_modules comes
   // along. tests/ holds repro fixtures (a pinned package.json is the repro);
   // .devcontainer is a dev environment, not a shipped artifact.
@@ -60,6 +60,23 @@
   semanticCommitScope: 'deps',
 
   minimumReleaseAge: '7 days',
+  // Left at Renovate's default of timestamp-required on purpose: a release
+  // whose age cannot be established counts as too new, not as old enough,
+  // so the floor is never quietly skipped. Known consequence: an
+  // unauthenticated run gets a 403 from Docker Hub past page 10 of a tag
+  // listing, which drops timestamps for tag-heavy images (`golang`, `node`)
+  // and parks their version bumps in the dependency dashboard's "pending"
+  // list until ticked. If that shows up under the App, the fix is Docker
+  // Hub credentials via hostRules, not loosening the behaviour. Digest
+  // advances (rebuilds of the same tag, which is how base-image CVE fixes
+  // arrive) are not age-gated and flow on the weekly schedule.
+
+  // Vulnerability fixes come from two sources and bypass the schedule, the
+  // grouping and the age floor (a fix is wanted on day zero). OSV needs no
+  // GitHub feature; `vulnerabilityAlerts` additionally reads GitHub's
+  // Dependabot *alerts* (a repo security setting, separate from the retired
+  // dependabot.yml) when they are enabled and the App can read them.
+  osvVulnerabilityAlerts: true,
 
   // Weekly, matching the cadence dependabot.yml had. The dashboard still
   // updates between runs, and a security advisory bypasses the schedule.
@@ -78,6 +95,29 @@
       matchDatasources: ['docker'],
       matchPackageNames: ['node'],
       versioning: 'node',
+    },
+    {
+      // One source of truth for the Node that builds the SPA: .node-version
+      // (read by every setup-node step via node-version-file, and by fnm,
+      // nodenv and n) and the Dockerfile's node base, which cannot read a
+      // file, so the group is what keeps the two in step — one PR moves
+      // both. Both datasources are LTS-aware. Never automerged: a Node
+      // major is a decision.
+      //
+      // No age floor here, deliberately. Both values are major *lines* —
+      // `.node-version` says 22 and the tag is 22-alpine — resolved to the
+      // newest patch at install time, so a floor on the line number gates
+      // nothing real; the bytes are pinned by the digest, which the floor
+      // never covered. What gates a Node major is LTS status, above. And a
+      // floor would actively harm this group: when one member is held
+      // pending and the other is not, Renovate ships the branch without
+      // the pending one ("removing pending upgrades" in the dry run) —
+      // the file would move and the image would not, which is the drift
+      // this group exists to prevent.
+      groupName: 'node toolchain',
+      matchDatasources: ['docker', 'node-version'],
+      matchPackageNames: ['node'],
+      minimumReleaseAge: null,
     },
     {
       // Where the Go toolchain actually advances. go.mod's bare `go 1.24`

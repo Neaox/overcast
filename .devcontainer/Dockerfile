@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Node.js 24 (for Lambda emulation work).
 # Using NodeSource for a clean, versioned install.
+# Keep the major in step with .node-version at the repo root, which is the
+# source of truth for the SPA build; Renovate does not reach this file
+# (.devcontainer is outside its scope), so this line is bumped by hand.
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
