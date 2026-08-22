@@ -695,9 +695,6 @@ jobs:
       - name: Build SPA
         if: env.RUN_BUILD == 'true'
         run: VITE_BUNDLED=true pnpm run build
-      - name: Build BFF server
-        if: env.RUN_BUILD == 'true'
-        run: pnpm run build:server
       - name: Upload web assets
         if: env.RUN_BUILD == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

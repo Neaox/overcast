@@ -603,8 +603,10 @@ The console provides:
 - Topology map showing cross-service relationships
 - Real-time updates via SSE
 
-The web UI is non-critical — if the BFF server fails to start, the Go backend
-runs normally without it.
+The web UI is non-critical — the AWS API on port 4566 does not depend on it.
+It is served in-process by the same binary (there is no separate console
+server to start or supervise), and `OVERCAST_UI_PORT=0` / `--ui-port 0` turns
+it off entirely.
 
 > [!TIP]
 > If the console feels sluggish or stops responding to clicks while many
