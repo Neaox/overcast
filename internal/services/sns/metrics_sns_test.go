@@ -151,6 +151,30 @@ func TestPublish_UnimplementedProtocol_RecordsNotificationsFailed(t *testing.T) 
 	}
 }
 
+// TestPublish_UnwiredEmailDependency_RecordsNotificationsFailed pins #1306's
+// fix: a protocol whose delivery dependency was never wired into this
+// instance (no svc.InitEmailDelivery call — the mailer stays nil) must still
+// record NumberOfNotificationsFailed via failDelivery, not silently continue
+// past the subscriber recording neither Delivered nor Failed — the exact gap
+// metrics_sns.go's file doc (from #1268) flagged as a candidate follow-up.
+// See handler_publish_unwired_test.go for the DLQ/Warn/regression coverage.
+func TestPublish_UnwiredEmailDependency_RecordsNotificationsFailed(t *testing.T) {
+	svc, rec, mock := newMetricsFanOutFixture(t, "orders")
+	// Deliberately no svc.InitEmailDelivery call — the mailer stays nil.
+	addSubscription(t, svc, "orders", "email", "someone@example.com", nil)
+	topicARN := protocol.TopicARN(svc.cfg.Region, svc.cfg.AccountID, "orders")
+
+	snsPublish(t, svc, map[string]string{"TopicArn": topicARN, "Message": "hi"})
+
+	now := mock.Now().UTC()
+	if got, want := snsSum(t, rec, "NumberOfNotificationsFailed", "orders", now), 1.0; got != want {
+		t.Fatalf("NumberOfNotificationsFailed Sum = %v, want %v", got, want)
+	}
+	if got := snsSum(t, rec, "NumberOfNotificationsDelivered", "orders", now); got != 0 {
+		t.Fatalf("NumberOfNotificationsDelivered Sum on an unwired dependency = %v, want 0", got)
+	}
+}
+
 func TestSNSMetrics_NilRecorderIsNoOp(t *testing.T) {
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Port: 4566}
 	svc := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())

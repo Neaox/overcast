@@ -38,6 +38,14 @@ type Handler struct {
 	// site in metrics_sns.go is nil-safe, matching Lambda's
 	// metrics_lambda.go/handler.go pattern.
 	metrics metricsRecorder
+
+	// unwiredWarned records which (topicName, protocol) pairs fanOut has
+	// already logged an unwired-delivery-dependency Warn for — see
+	// warnUnwiredOnce in handler_publish.go. Every publish to an unwired
+	// subscription still fails the delivery and records the metric, but the
+	// Warn itself is only useful once per pair: it exists to point an
+	// operator at a missing wiring step, not to repeat on every message.
+	unwiredWarned sync.Map
 }
 
 // newHandler constructs a Handler from the raw dependencies.

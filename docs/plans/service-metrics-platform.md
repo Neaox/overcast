@@ -732,12 +732,15 @@ Delivered:
   success branches and `failDelivery`'s single failure funnel respectively,
   covering all 7 protocol cases including the no-delivery-implementation
   default). A protocol whose delivery dependency was never wired (nil
-  enqueuer/mailer/smsSender/outbound) currently `continue`s silently in
-  `fanOut` without calling `failDelivery` — that pre-existing gap means such
-  an attempt records neither Delivered nor Failed, per "only where the
-  emulator can observe the underlying fact"; flagged as a candidate
-  follow-up (also calling `failDelivery` there), not fixed here since it is
-  a behavior change beyond pure metrics wiring.
+  enqueuer/mailer/smsSender/outbound) recorded neither Delivered nor Failed
+  at the time this phase shipped — `fanOut` `continue`d silently past it
+  without calling `failDelivery` — flagged here as a candidate follow-up
+  rather than fixed, since it was a behavior change beyond pure metrics
+  wiring. Closed by #1306: `fanOut` now runs that case through `failDelivery`
+  like any other delivery failure (NumberOfNotificationsFailed, DLQ redirect
+  when configured, plus a one-time Warn per topic+protocol), so this is no
+  longer a live gap — see `internal/services/sns/handler_publish.go`'s
+  `warnUnwiredOnce`.
 - **DynamoDB** (`internal/services/dynamodb/metrics_dynamodb.go`), `AWS/DynamoDB`:
   `SuccessfulRequestLatency` (`TableName`+`Operation`, success only),
   `ConsumedReadCapacityUnits`/`ConsumedWriteCapacityUnits` (`TableName`
@@ -818,8 +821,9 @@ Explicitly deferred to phase 3+ (not started, not partially built):
 - DynamoDB throttling modeling (and, downstream of it,
   `ThrottledRequests`/`ReadThrottleEvents`/`WriteThrottleEvents`) — no
   underlying fact exists to observe yet.
-- SNS's silent-`continue` gap for an unwired delivery dependency (see
-  "Delivered" above) — a candidate follow-up, not phase-2 scope.
+- ~~SNS's silent-`continue` gap for an unwired delivery dependency (see
+  "Delivered" above) — a candidate follow-up, not phase-2 scope.~~ Closed by
+  #1306 — no longer deferred.
 - API Gateway's coarser documented dimension combinations (`ApiName+Stage`
   only, etc.) — only the most granular combination is recorded, mirroring
   Lambda phase 1's `FunctionName`-only narrowing.

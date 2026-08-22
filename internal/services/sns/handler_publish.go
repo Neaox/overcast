@@ -776,7 +776,12 @@ func publishOrigin(ctx context.Context) string {
 // not any one protocol's selected payload.
 // It handles sqs, lambda, email, email-json, sms, http/https, and application
 // protocols and respects FilterPolicy. A protocol with no delivery
-// implementation is reported through failDelivery rather than dropped.
+// implementation is reported through failDelivery rather than dropped — and
+// so is a protocol that does have an implementation but whose dependency was
+// never wired into this Overcast instance (nil enqueuer/mailer/smsSender/
+// outbound): on real AWS the delivery would be attempted and either succeed
+// or fail, so an emulator configuration gap is honestly a delivery failure,
+// never a silent no-op. See failDelivery and warnUnwiredOnce (#1306).
 func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute, structuredMsgs map[string]string) {
 	log := h.log.WithRecorder(ctx)
 	// Filter-policy matching works on plain string values. Derive them at most
@@ -835,7 +840,13 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 		}
 		switch strings.ToLower(sub.Protocol) {
 		case "sqs":
-			if h.enqueuer == nil || sub.QueueName == "" {
+			if h.enqueuer == nil {
+				h.warnUnwiredOnce(topicName, sub.Protocol, "SQS enqueuer is not wired on this server")
+				h.failDelivery(ctx, d, "SQS delivery is not available on this server")
+				continue
+			}
+			if sub.QueueName == "" {
+				h.failDelivery(ctx, d, "subscription has no queue name")
 				continue
 			}
 			if err := h.enqueuer.EnqueueRaw(ctx, sub.QueueName, deliveryBody); err != nil {
@@ -862,6 +873,8 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 
 		case "email", "email-json":
 			if h.mailer == nil {
+				h.warnUnwiredOnce(topicName, sub.Protocol, "SMTP mailer is not configured")
+				h.failDelivery(ctx, d, "email delivery is not available on this server")
 				continue
 			}
 			from := h.cfg.SMTPFrom
@@ -899,6 +912,8 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 			h.recordNotificationDelivered(ctx, topicName)
 		case "sms":
 			if h.smsSender == nil {
+				h.warnUnwiredOnce(topicName, sub.Protocol, "SMS sender is not configured")
+				h.failDelivery(ctx, d, "SMS delivery is not available on this server")
 				continue
 			}
 			// SNS sms-protocol endpoint is the destination phone number.
@@ -923,6 +938,8 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 
 		case "http", "https":
 			if h.outbound == nil {
+				h.warnUnwiredOnce(topicName, sub.Protocol, "outbound webhook capture is not configured")
+				h.failDelivery(ctx, d, "webhook delivery is not available on this server")
 				continue
 			}
 			if err := h.outbound.CaptureWebhook("sns", sub.Endpoint, deliveryBody, msgID, topicName); err != nil {
@@ -946,6 +963,8 @@ func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject,
 
 		case "application":
 			if h.outbound == nil {
+				h.warnUnwiredOnce(topicName, sub.Protocol, "outbound push capture is not configured")
+				h.failDelivery(ctx, d, "push delivery is not available on this server")
 				continue
 			}
 			if err := h.outbound.CapturePush("sns", sub.Endpoint, jsonBody, msgID, topicName); err != nil {
@@ -1004,6 +1023,7 @@ type delivery struct {
 // accepted.
 func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[string]messageAttribute) {
 	if h.invoker == nil {
+		h.warnUnwiredOnce(d.topicName, d.sub.Protocol, "Lambda invoker is not wired on this server")
 		h.failDelivery(ctx, d, "Lambda delivery is not available on this server")
 		return
 	}
@@ -1087,6 +1107,26 @@ func (h *Handler) failDelivery(ctx context.Context, d delivery, reason string) {
 		})
 	}
 	h.recordNotificationFailed(ctx, d.topicName)
+}
+
+// warnUnwiredOnce logs, at Warn, the first time fanOut hits a given
+// (topicName, protocol) pair whose delivery dependency was never wired into
+// this Overcast instance. failDelivery already records the per-message facts
+// (metric, event-bus notification, DLQ redirect, an Error log line naming
+// this specific subscription) for every delivery attempt, including this
+// one; this Warn is a separate, deliberately once-only signal aimed at an
+// operator reading startup/steady-state logs rather than per-message
+// delivery records — it exists to say "this protocol will never deliver
+// until you wire it", not to repeat on every publish (#1306).
+func (h *Handler) warnUnwiredOnce(topicName, proto, reason string) {
+	key := topicName + "|" + strings.ToLower(proto)
+	if _, alreadyWarned := h.unwiredWarned.LoadOrStore(key, struct{}{}); alreadyWarned {
+		return
+	}
+	h.log.Logger().Warn("SNS fan-out: delivery dependency not wired for this protocol — every delivery to it will fail until this server is configured for it",
+		zap.String("topic", topicName),
+		zap.String("protocol", proto),
+		zap.String("reason", reason))
 }
 
 // deadLetterQueueName returns the SQS queue named by a subscription's
