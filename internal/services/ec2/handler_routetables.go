@@ -100,6 +100,14 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags := parseTagSpecifications(r, "route-table")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a route table behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	rtID := fmt.Sprintf("rtb-%s", shortID())
 	rt := &RouteTable{
 		RouteTableID: rtID,
@@ -116,11 +124,17 @@ func (h *Handler) CreateRouteTable(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), rtID, tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateRouteTableResponse{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(r.Context()),
-		RouteTable: routeTableToXML(rt, nil),
+		RouteTable: routeTableToXML(rt, tags),
 	})
 }
 

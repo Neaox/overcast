@@ -18,11 +18,12 @@ import (
 // ── XML types ──────────────────────────────────────────────────────────────────
 
 type xmlVpcEndpoint struct {
-	VpcEndpointID   string `xml:"vpcEndpointId"`
-	VpcID           string `xml:"vpcId"`
-	ServiceName     string `xml:"serviceName"`
-	State           string `xml:"state"`
-	VpcEndpointType string `xml:"vpcEndpointType"`
+	VpcEndpointID   string   `xml:"vpcEndpointId"`
+	VpcID           string   `xml:"vpcId"`
+	ServiceName     string   `xml:"serviceName"`
+	State           string   `xml:"state"`
+	VpcEndpointType string   `xml:"vpcEndpointType"`
+	TagSet          []xmlTag `xml:"tagSet>item,omitempty"`
 }
 
 type xmlCreateVpcEndpointResponse struct {
@@ -70,6 +71,15 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags := parseTagSpecifications(r, "vpc-endpoint")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave an endpoint behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	id := fmt.Sprintf("vpce-%s", shortID())
 	ep := &VpcEndpoint{
 		VpcEndpointID:   id,
@@ -79,6 +89,12 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 		VpcEndpointType: epType,
 	}
 	if aerr := h.store.putVpcEndpoint(r.Context(), ep); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), id, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -92,6 +108,7 @@ func (h *Handler) CreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 			ServiceName:     ep.ServiceName,
 			State:           ep.State,
 			VpcEndpointType: ep.VpcEndpointType,
+			TagSet:          xmlTagsOf(tags),
 		},
 	})
 }
@@ -117,17 +134,24 @@ func (h *Handler) describeVpcEndpoints(ctx context.Context, q describeQuery) (*x
 		return nil, aerr
 	}
 
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	var items []xmlVpcEndpoint
 	for _, ep := range all {
 		if !requested.has(ep.VpcEndpointID) || !filters.matches(ep) {
 			continue
 		}
+		tags, _ := tagsView.keep(ep.VpcEndpointID)
 		items = append(items, xmlVpcEndpoint{
 			VpcEndpointID:   ep.VpcEndpointID,
 			VpcID:           ep.VpcID,
 			ServiceName:     ep.ServiceName,
 			State:           ep.State,
 			VpcEndpointType: ep.VpcEndpointType,
+			TagSet:          xmlTagsOf(tags),
 		})
 	}
 

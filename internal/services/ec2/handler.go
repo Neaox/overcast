@@ -443,6 +443,13 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	tags := parseTagSpecifications(r, "vpc")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a VPC behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
 	// Every VPC gets a DHCP options set at creation, real AWS's default-set
 	// behavior absent an explicit association. Minted once and persisted on
@@ -464,6 +471,12 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), vpcID, tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	h.publish(r.Context(), events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateVpcResponse{
 		Xmlns:     ec2XMLNS,
@@ -482,6 +495,7 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 					CidrBlockState: xmlCidrState{State: "associated"},
 				},
 			},
+			TagSet: xmlTagsOf(tags),
 		},
 	})
 }
@@ -653,6 +667,13 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	tags := parseTagSpecifications(r, "subnet")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a subnet behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	subnetID := fmt.Sprintf("subnet-%s", shortID())
 	az := r.FormValue("AvailabilityZone")
 	if az == "" {
@@ -660,6 +681,12 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 	}
 	subnet := &Subnet{SubnetID: subnetID, VpcID: vpcID, CidrBlock: cidr, AvailabilityZone: az, State: "available"}
 	if aerr := h.store.putSubnet(r.Context(), subnet); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), subnetID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
@@ -676,6 +703,7 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
+			TagSet:                  typedTagsOf(tags),
 		},
 	})
 }
@@ -739,6 +767,14 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	tags := parseTagSpecifications(r, "security-group")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a security group
+	// behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	groupID := fmt.Sprintf("sg-%s", shortID())
 	sg := &SecurityGroup{
 		GroupID:     groupID,
@@ -751,6 +787,12 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		}},
 	}
 	if aerr := h.store.putSecurityGroup(r.Context(), sg); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), groupID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}

@@ -296,6 +296,15 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	tags := parseTagSpecifications(r, "network-interface")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave an interface behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	eniID := fmt.Sprintf("eni-%s", shortID())
 	apiPrivateIP, realPrivateIP, _ := h.allocatePrivateIPForSubnet(r.Context(), subnetID)
 	mac := fmt.Sprintf("02:%s:%s:%s:%s:%s",
@@ -315,6 +324,12 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(r.Context(), eniID, tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateNetworkInterfaceResponse{
 		Xmlns:     ec2XMLNS,
@@ -328,6 +343,7 @@ func (h *Handler) CreateNetworkInterface(w http.ResponseWriter, r *http.Request)
 			PrivateIPAddress:   apiPrivateIP,
 			Status:             "available",
 			MacAddress:         mac,
+			TagSet:             xmlTagsOf(tags),
 		},
 	})
 }
