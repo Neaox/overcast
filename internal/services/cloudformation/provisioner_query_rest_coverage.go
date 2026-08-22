@@ -1895,7 +1895,7 @@ func (h *iamUserHandler) Create(ctx context.Context, router http.Handler, cfg *c
 	if v, _ := props["PermissionsBoundary"].(string); v != "" {
 		params["PermissionsBoundary"] = v
 	}
-	tags, err := iamTags(props)
+	tags, err := iamEffectiveTags(props, rCtx.StackTags)
 	if err != nil {
 		return "", nil, err
 	}
@@ -2037,7 +2037,7 @@ func (h *iamUserHandler) Update(ctx context.Context, router http.Handler, _ *con
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}
-	tags, err := iamTagMutations("User", physicalID, props, oldProps)
+	tags, err := iamTagMutations("User", physicalID, props, oldProps, rCtx.StackTags, rCtx.PreviousStackTags)
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}

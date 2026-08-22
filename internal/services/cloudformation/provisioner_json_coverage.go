@@ -417,6 +417,13 @@ func (h *cloudtrailTrailHandler) Create(ctx context.Context, router http.Handler
 		"IncludeGlobalServiceEvents": includeGlobal,
 		"IsMultiRegionTrail":         isMultiRegion,
 	}
+	// CreateTrail is the only trail operation that carries tags inline
+	// (internal/services/cloudtrail/typed_logic.go); Update reconciles via
+	// AddTags/RemoveTags below. Stack tags merge in here the same way every
+	// other propagating resource type does (#1310).
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["TagsList"] = cloudtrailTagsWire(tags)
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.CreateTrail", body)
 	if err != nil {
@@ -493,7 +500,81 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 	if _, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.UpdateTrail", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateTrail: %w", err)
 	}
+
+	tags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	prior := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if !reflect.DeepEqual(tags, prior) {
+		if err := cloudtrailReconcileTags(ctx, router, rCtx.Region, physicalID, tags, prior); err != nil {
+			return "", nil, failUpdate(fmt.Errorf("cloudtrail tags: %w", err))
+		}
+	}
+
 	return physicalID, map[string]string{"Arn": physicalID, "Ref": name, "Name": name}, nil
+}
+
+// cloudtrailTagsWire renders a merged tag map in CloudTrail's TagsList wire
+// shape ([{Key,Value}]).
+func cloudtrailTagsWire(tags map[string]string) []map[string]string {
+	out := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, map[string]string{"Key": k, "Value": v})
+	}
+	return out
+}
+
+func cloudtrailAddTags(ctx context.Context, router http.Handler, region, resourceID string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	if _, err := internalJSON(ctx, router, region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.AddTags", map[string]any{
+		"ResourceId": resourceID,
+		"TagsList":   cloudtrailTagsWire(tags),
+	}); err != nil {
+		return fmt.Errorf("cloudtrail AddTags: %w", err)
+	}
+	return nil
+}
+
+func cloudtrailRemoveTags(ctx context.Context, router http.Handler, region, resourceID string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// RemoveTags matches on each TagsList entry's Key alone and ignores Value
+	// (internal/services/cloudtrail/typed_logic.go's removeTagsTyped).
+	entries := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		entries = append(entries, map[string]string{"Key": k})
+	}
+	if _, err := internalJSON(ctx, router, region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.RemoveTags", map[string]any{
+		"ResourceId": resourceID,
+		"TagsList":   entries,
+	}); err != nil {
+		return fmt.Errorf("cloudtrail RemoveTags: %w", err)
+	}
+	return nil
+}
+
+// cloudtrailReconcileTags diffs desired against previous and applies only the
+// change, mirroring sfnReconcileTags' and the SSM parameter handler's
+// add/remove split.
+func cloudtrailReconcileTags(ctx context.Context, router http.Handler, region, resourceID string, tags, prior map[string]string) error {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if err := cloudtrailAddTags(ctx, router, region, resourceID, added); err != nil {
+		return err
+	}
+	return cloudtrailRemoveTags(ctx, router, region, resourceID, removed)
 }
 
 // ── AWS::Backup::BackupVault ────────────────────────────────────────────────
@@ -801,8 +882,8 @@ func (h *transferServerHandler) Create(ctx context.Context, router http.Handler,
 	if v, ok := props["Protocols"]; ok {
 		body["Protocols"] = v
 	}
-	if v, ok := props["Tags"]; ok {
-		body["Tags"] = v
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = transferTagsWire(tags)
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TransferService.CreateServer", body)
@@ -819,7 +900,7 @@ func (h *transferServerHandler) Create(ctx context.Context, router http.Handler,
 
 	attrs := map[string]string{
 		"ServerId": resp.ServerId,
-		"Arn":      fmt.Sprintf("arn:aws:transfer:%s:%s:server/%s", rCtx.Region, rCtx.AccountID, resp.ServerId),
+		"Arn":      transferServerARN(rCtx.Region, rCtx.AccountID, resp.ServerId),
 	}
 	return resp.ServerId, attrs, nil
 }
@@ -830,8 +911,96 @@ func (h *transferServerHandler) Delete(ctx context.Context, router http.Handler,
 	return teardownError("DeleteServer", rec, err)
 }
 
+// transferServerARN builds the ARN transferReconcileTags addresses a server
+// by; Transfer's Tag/UntagResource key on Arn, not ServerId.
+func transferServerARN(region, accountID, serverID string) string {
+	return fmt.Sprintf("arn:aws:transfer:%s:%s:server/%s", region, accountID, serverID)
+}
+
 func (h *transferServerHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// Every property but Tags forces replacement — real AWS lets several of
+	// these change in place, but this handler predates that and widening it is
+	// a separate change (see PR #1308). A tags-only change reconciles via
+	// TagResource/UntagResource instead of replacing the server (#1310).
+	for _, property := range []string{"EndpointType", "IdentityProviderType", "Protocols"} {
+		if !reflect.DeepEqual(props[property], oldProps[property]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+
+	tags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	prior := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if !reflect.DeepEqual(tags, prior) {
+		if err := transferReconcileTags(ctx, router, rCtx.Region, transferServerARN(rCtx.Region, rCtx.AccountID, physicalID), tags, prior); err != nil {
+			return "", nil, failUpdate(fmt.Errorf("transfer tags: %w", err))
+		}
+	}
+
+	attrs := map[string]string{
+		"ServerId": physicalID,
+		"Arn":      transferServerARN(rCtx.Region, rCtx.AccountID, physicalID),
+	}
+	return physicalID, attrs, nil
+}
+
+// transferTagsWire renders a merged tag map in Transfer's Tags wire shape
+// ([{Key,Value}]), shared by CreateServer/CreateUser's inline Tags and
+// Tag/UntagResource.
+func transferTagsWire(tags map[string]string) []map[string]string {
+	out := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, map[string]string{"Key": k, "Value": v})
+	}
+	return out
+}
+
+func transferTagResource(ctx context.Context, router http.Handler, region, arn string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	if _, err := internalJSON(ctx, router, region, "TransferService.TagResource", map[string]any{
+		"Arn":  arn,
+		"Tags": transferTagsWire(tags),
+	}); err != nil {
+		return fmt.Errorf("transfer TagResource: %w", err)
+	}
+	return nil
+}
+
+func transferUntagResource(ctx context.Context, router http.Handler, region, arn string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if _, err := internalJSON(ctx, router, region, "TransferService.UntagResource", map[string]any{
+		"Arn":     arn,
+		"TagKeys": keys,
+	}); err != nil {
+		return fmt.Errorf("transfer UntagResource: %w", err)
+	}
+	return nil
+}
+
+// transferReconcileTags diffs desired against previous and applies only the
+// change, mirroring sfnReconcileTags' and the SSM parameter handler's
+// add/remove split.
+func transferReconcileTags(ctx context.Context, router http.Handler, region, arn string, tags, prior map[string]string) error {
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if err := transferTagResource(ctx, router, region, arn, added); err != nil {
+		return err
+	}
+	return transferUntagResource(ctx, router, region, arn, removed)
 }
 
 // ── AWS::Transfer::User ─────────────────────────────────────────────────────
@@ -847,6 +1016,9 @@ func (h *transferUserHandler) Create(ctx context.Context, router http.Handler, c
 		"ServerId": serverID,
 		"UserName": userName,
 		"Role":     role,
+	}
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = transferTagsWire(tags)
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TransferService.CreateUser", body)
@@ -875,8 +1047,15 @@ func (h *transferUserHandler) Create(ctx context.Context, router http.Handler, c
 	attrs := map[string]string{
 		"ServerId": sid,
 		"UserName": uname,
+		"Arn":      transferUserARN(rCtx.Region, rCtx.AccountID, sid, uname),
 	}
 	return physicalID, attrs, nil
+}
+
+// transferUserARN builds the ARN transferReconcileTags addresses a user by;
+// Transfer's Tag/UntagResource key on Arn, not the ServerId/UserName pair.
+func transferUserARN(region, accountID, serverID, userName string) string {
+	return fmt.Sprintf("arn:aws:transfer:%s:%s:user/%s/%s", region, accountID, serverID, userName)
 }
 
 func (h *transferUserHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -923,7 +1102,17 @@ func (h *transferUserHandler) Update(ctx context.Context, router http.Handler, _
 	if _, err := internalJSON(ctx, router, rCtx.Region, "TransferService.UpdateUser", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateUser: %w", err)
 	}
-	return physicalID, nil, nil
+
+	arn := transferUserARN(rCtx.Region, rCtx.AccountID, parts[0], parts[1])
+	tags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	prior := mergeResourceTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	if !reflect.DeepEqual(tags, prior) {
+		if err := transferReconcileTags(ctx, router, rCtx.Region, arn, tags, prior); err != nil {
+			return "", nil, failUpdate(fmt.Errorf("transfer tags: %w", err))
+		}
+	}
+
+	return physicalID, map[string]string{"ServerId": parts[0], "UserName": parts[1], "Arn": arn}, nil
 }
 
 // ── AWS::Shield::Protection ─────────────────────────────────────────────────

@@ -21,6 +21,18 @@
 > returns the friendly name of the trail"). This is orthogonal to the Axis C
 > tag-propagation work below, which #1308/#1310 track.
 >
+> Closed 2026-08-22 (#1310) — **Axis C is now closed** and the
+> stack-tag-propagation gap it left is closed with it; see
+> [What #1310 filled](#what-1310-filled). The five resource types #1310 named
+> (found while writing #1197's tests, PR #1308) had no `Tags` support in their
+> CloudFormation handler at all, so Tags-support and stack-tag propagation
+> were done together rather than as two stacked PRs. The audit also found and
+> fixed three resource types whose tag-reconciliation code already existed but
+> was unreachable for a stack-tag-only change (missing from
+> `stackTagPropagationResourceTypes`), and added a dev-tagged structural test
+> that fails if a future resource type forwards `Tags` without joining that
+> set or its documented exclusions.
+>
 > Re-verified 2026-08-23 (#1196) — Axis B is closed for all 14 services this
 > issue named. Three (`kms`, `appconfig`, `opensearch`) were already fixed
 > before this issue was picked up; the rest needed a real fix, several of
@@ -328,6 +340,63 @@ Left as feature gaps, not tag gaps, and out of scope: `stepfunctions`
 `CreateActivity`, `ssm` `CreateDocument` (both return 501 — not implemented),
 and `elbv2` `CreateRule` (`StatusUnsupported` — not implemented).
 
+## What #1310 filled
+
+Closes Axis C and the stack-tag-propagation gap together: the five resource
+types named by #1310 (found while writing #1197's CloudTrail tests, PR #1308)
+had no `Tags` support in their CloudFormation handler at all, so there was
+nothing for stack-tag propagation to extend — both are done in one pass here
+rather than as two PRs stacked on the same handlers.
+
+| Resource type | Tags support | Stack-tag propagation |
+| --- | --- | --- |
+| `AWS::CloudTrail::Trail` | Added — `Create` forwards to `CreateTrail`'s `TagsList`; `Update` reconciles via `AddTags`/`RemoveTags` (`ResourceId` = the trail ARN) | Added |
+| `AWS::Transfer::Server` | `Create` already forwarded `Tags`; `Update` forced replacement on every change, tags included | `Update` now reconciles a tags-only change via `TagResource`/`UntagResource` instead of forcing replacement; any other property change still forces it (unchanged from #1308's description of the pre-existing gap) |
+| `AWS::Transfer::User` | Added — `Create` forwards to `CreateUser`'s `Tags`; `Update` reconciles via `TagResource`/`UntagResource` (`UpdateUser` has no tags member) | Added |
+| `AWS::IAM::ManagedPolicy` | Added — `Create` threads `Tags` inline via the shared `iamTagParams`; `Update` reconciles via a new `iamPolicyTagMutations` (`TagPolicy`/`UntagPolicy` key on `PolicyArn`, not a `<Principal>Name` parameter, so it needed its own builder, refactored to share the diff logic with `iamTagMutations` via `iamTagMutationsKeyed`) | Added |
+| `AWS::IAM::InstanceProfile` | Added — `Create` threads `Tags` inline via `iamTagParams`; `Update` reconciles via the existing `iamTagMutations("InstanceProfile", …)` | Added |
+
+**IAM::Role and IAM::User included too, not just listed.** Both already
+threaded `Tags` via the same `iamTags`/`iamTagMutations` helpers `ManagedPolicy`
+and `InstanceProfile` now use, but neither merged the stack's own tags.
+Extending `iamTagMutations`/adding `iamEffectiveTags` to also merge stack tags
+was a few lines once `ManagedPolicy`/`InstanceProfile` needed the same
+mechanism, and leaving Role/User on the old, narrower behavior would have been
+exactly the parallel mechanism #1310 asked not to create.
+
+**Audit: three more resource types found already inside the mechanism's
+*code* but outside its *reach*.** `AWS::DynamoDB::Table`, `AWS::SSM::Parameter`
+and `AWS::StepFunctions::StateMachine` already merged stack tags on create and
+reconciled them on update (`reconcileDynamoDBTags`, `reconcileSSMParameterTags`,
+`sfnReconcileTags`) — but none was in `hashResourceProperties`/
+`resourcePropertiesMatch`'s effective-stack-tag switch. Without that
+membership, a stack-tag-only change (no change to the resource's own template
+properties) never reached `Update` at all: the engine treats the resource as
+unchanged and skips it, so the tag-reconciliation code was correct but
+unreachable for the one case #1143 exists to handle. All three are added to
+`stackTagPropagationResourceTypes` here; each has a failing-first test
+(`stack_tag_reconciliation_gap_1310_test.go`) reproducing exactly that
+stack-tag-only-change shape.
+
+**The propagation set is now named and derivable, per the issue's ask.**
+`stackTagPropagationResourceTypes` (provisioner.go) replaced the two
+duplicated case-list literals `hashResourceProperties` and
+`resourcePropertiesMatch` used to carry independently. Every other taggable
+CFN resource type whose handler forwards `Tags` — found by parsing every
+`provisioner*.go` handler's `Create`/`Update` method — is either in that set or
+in `stackTagPropagationExclusions`
+(`stack_tag_propagation_coverage_dev_test.go`) with the reason it is out of
+scope: EC2's nine `CreateTags`-based handlers (a materially different,
+resource-ID-keyed mechanism with no stack-tag merge of any kind yet), four
+ApiGateway/ApiGatewayV2 types and AppRegistry (`Update` has no tag
+reconciliation at all, a gap broader than stack-tag propagation),
+AutoScaling::AutoScalingGroup, CloudWatch::Alarm, Scheduler::ScheduleGroup, two
+AppSync types, two ElastiCache types, and KMS::Key (all forward tags with no
+stack-tag merge, but otherwise work). `TestStackTagPropagationCoverage`
+(dev-tagged) parses the handler source itself and fails if a resource type
+forwards `Tags` while being in neither list, so the coverage gap that let the
+five types above go unnoticed cannot recur silently.
+
 ## What remains
 
 **Axis A — closed.** Both services this section used to track — `logs`
@@ -339,18 +408,19 @@ note at the top of this document.
 [What #1196 filled](#what-1196-filled) above and the updated
 [Axis B table](#axis-b--missing-tag-on-create).
 
-**Axis C — CloudFormation passthrough, eight resource types.** A third gap that
-only becomes reachable now that the services accept the tags. These handlers in
-[provisioner.go](../../internal/services/cloudformation/provisioner.go) build
-their create call from named properties and never read `Tags`, so a template
-carrying `Tags:` on one of them has them silently dropped:
-`AWS::Kinesis::Stream`, `AWS::CloudTrail::Trail`, `AWS::Transfer::Server`,
-`AWS::Transfer::User`, `AWS::IAM::Role`, `AWS::IAM::User`,
-`AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`. Each needs one property
-forwarded to the create call it already dispatches — `AWS::SNS::Topic` is the
-worked example, though it applies tags with a follow-up `TagResource` rather
-than inline. Left out of this branch to keep it reviewable; it is a single
-coherent follow-up rather than eight scattered ones.
+**Axis C — closed (#1310).** The eight resource types this section used to
+track — `AWS::Kinesis::Stream`, `AWS::CloudTrail::Trail`,
+`AWS::Transfer::Server`, `AWS::Transfer::User`, `AWS::IAM::Role`,
+`AWS::IAM::User`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile` — all
+now thread `Tags` to the create call they dispatch. See
+[What #1310 filled](#what-1310-filled) below, which also closes the
+stack-tag-propagation gap these eight (and three pre-existing ones) had: the
+effective-stack-tag mechanism #1143 built for
+Lambda/LogGroup/SecretsManager/SQS/Kinesis/ECR is now `stackTagPropagationResourceTypes`
+in [provisioner.go](../../internal/services/cloudformation/provisioner.go),
+and #1310 both added the five newly-fixed types to it directly (no template
+carrying `Tags:` and a tagged stack was ever a two-step gap here) and fixed
+three that had fallen out of it unnoticed.
 
 **Also proposed, not done:** move the typed-operation JSON adapter into
 `serviceutil` (see above), and consider whether `serviceutil` should grow a
