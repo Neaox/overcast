@@ -134,17 +134,49 @@ func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
 		autoSetUsernameAttribute(pool.UsernameAttributes, &attrs, req.Username)
 	}
 
+	// PreSignUp runs immediately before Amazon Cognito completes creation of
+	// the new user (AWS's own wording) — after validation, before the record
+	// is persisted. A failure here means SignUp fails and no user is created.
+	preSignUp, aerr := s.runPreSignUp(r.Context(), pool, triggerSourcePreSignUpSignUp, c.ClientID, req.Username, attrs)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	status := StatusUnconfirmed
+	if preSignUp.AutoConfirmUser {
+		status = StatusConfirmed
+	}
+	var emailVal, phoneVal string
+	for _, a := range attrs {
+		switch a.Name {
+		case "email":
+			emailVal = a.Value
+		case "phone_number":
+			phoneVal = a.Value
+		}
+	}
+	if preSignUp.AutoVerifyEmail && emailVal != "" {
+		setAttrIfMissing(&attrs, "email_verified", "true")
+	}
+	if preSignUp.AutoVerifyPhone && phoneVal != "" {
+		setAttrIfMissing(&attrs, "phone_number_verified", "true")
+	}
+
 	u := &User{
 		Username:          internalUsername,
 		Sub:               sub,
 		UserPoolID:        c.UserPoolID,
 		CreatedAt:         s.clk.Now(),
-		Status:            StatusUnconfirmed,
+		Status:            status,
 		Enabled:           true,
 		PasswordHash:      string(hash),
 		PlaintextPassword: req.Password,
 		Attributes:        attrs,
 		ConfirmationCode:  code,
+	}
+	if status == StatusConfirmed {
+		u.ConfirmationCode = ""
 	}
 	u.setAttr("sub", u.Sub)
 	if err := s.saveUser(r.Context(), u); err != nil {
@@ -152,18 +184,42 @@ func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if emailAddr := u.email(); emailAddr != "" {
-		s.sendVerificationEmail(pool, emailAddr, u.Username, code)
+	// AWS fires PostConfirmation_ConfirmSignUp within the same SignUp call
+	// when PreSignUp auto-confirmed the user — there is no separate
+	// ConfirmSignUp call for a Lambda-driven auto-confirm to hang off.
+	if status == StatusConfirmed {
+		s.runPostConfirmation(r.Context(), pool, triggerSourcePostConfirmSignUp, c.ClientID, u.Username, u.Attributes)
 	}
-	if phone := u.phoneNumber(); phone != "" {
-		s.sendVerificationSMS(pool, phone, u.Username, code)
+
+	// A confirmation code only makes sense for a user who still has to
+	// confirm — an auto-confirmed user (PreSignUp autoConfirmUser) has
+	// nothing left to verify, so AWS sends no message and CustomMessage_SignUp
+	// does not fire.
+	if status != StatusConfirmed {
+		// CustomMessage lets the trigger customize the verification email/SMS
+		// text; a failure here fails SignUp too (AWS's general Lambda
+		// trigger error rule — see triggers.go).
+		msgOverride, aerr := s.runCustomMessage(r.Context(), pool, triggerSourceCustomMessageSignUp, c.ClientID, req.Username, code, "", u.Attributes)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if emailAddr := u.email(); emailAddr != "" {
+			s.sendVerificationEmail(pool, emailAddr, u.Username, code, msgOverride)
+		}
+		if phone := u.phoneNumber(); phone != "" {
+			s.sendVerificationSMS(pool, phone, u.Username, code, msgOverride)
+		}
 	}
 
 	log.Info("user signed up",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserCreated, events.ResourcePayload{Name: req.Username})
+	if status == StatusConfirmed {
+		s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})
+	}
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
-		"UserConfirmed": false,
+		"UserConfirmed": status == StatusConfirmed,
 		"UserSub":       u.Sub,
 	})
 }
@@ -243,6 +299,7 @@ func (s *Service) confirmSignUp(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	s.runPostConfirmation(r.Context(), pool, triggerSourcePostConfirmSignUp, c.ClientID, u.Username, u.Attributes)
 	session, err := s.issueOpaqueToken(r.Context(), c.UserPoolID, u.Username, "confirm", 5*time.Minute)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
@@ -289,17 +346,21 @@ func (s *Service) resendConfirmationCode(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	pool, err := s.loadPool(r.Context(), c.UserPoolID)
+	if err != nil || pool == nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	msgOverride, aerr := s.runCustomMessage(r.Context(), pool, triggerSourceCustomMessageResend, c.ClientID, req.Username, code, "", u.Attributes)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	if emailAddr := u.email(); emailAddr != "" {
-		pool, _ := s.loadPool(r.Context(), c.UserPoolID)
-		if pool != nil {
-			s.sendVerificationEmail(pool, emailAddr, u.Username, code)
-		}
+		s.sendVerificationEmail(pool, emailAddr, u.Username, code, msgOverride)
 	}
 	if phone := u.phoneNumber(); phone != "" {
-		pool, _ := s.loadPool(r.Context(), c.UserPoolID)
-		if pool != nil {
-			s.sendVerificationSMS(pool, phone, u.Username, code)
-		}
+		s.sendVerificationSMS(pool, phone, u.Username, code, msgOverride)
 	}
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
 }
@@ -689,10 +750,14 @@ func (s *Service) handleUserAuthWithConfirmSession(w http.ResponseWriter, r *htt
 		})
 		return
 	}
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	issuer := s.issuerURL(r, client.UserPoolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	_ = s.removeToken(r.Context(), session)
@@ -877,10 +942,14 @@ func (s *Service) completeChoicePasswordChallenge(w http.ResponseWriter, r *http
 		protocol.WriteJSONError(w, r, errNotAuthorized("Incorrect username or password."))
 		return
 	}
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	issuer := s.issuerURL(r, client.UserPoolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	_ = s.removeToken(r.Context(), session)
@@ -933,10 +1002,14 @@ func (s *Service) completeOTPChallenge(w http.ResponseWriter, r *http.Request, c
 		protocol.WriteJSONError(w, r, errExpiredCode())
 		return
 	}
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	issuer := s.issuerURL(r, client.UserPoolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	removeAuthChallengeCode(u, challengeName)
@@ -982,10 +1055,19 @@ func (s *Service) completeSRPVerifierChallenge(w http.ResponseWriter, r *http.Re
 		s.writeJSON(w, r, http.StatusOK, map[string]any{"ChallengeName": "CUSTOM_CHALLENGE", "ChallengeParameters": map[string]string{"USERNAME": u.Username}, "Session": customSession})
 		return
 	}
-	issuer := s.issuerURL(r, client.UserPoolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
+	pool, err := s.loadPool(r.Context(), client.UserPoolID)
+	if err != nil || pool == nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	issuer := s.issuerURL(r, client.UserPoolID)
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	_ = s.removeToken(r.Context(), session)
@@ -1084,10 +1166,14 @@ func (s *Service) handlePasswordAuth(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	issuer := s.issuerURL(r, poolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	s.attachNewDeviceMetadata(r.Context(), pool, result, params)
@@ -1145,9 +1231,9 @@ func (s *Service) handleRefreshTokenAuth(w http.ResponseWriter, r *http.Request,
 	}
 
 	issuer := s.issuerURL(r, poolID)
-	result, err := s.issueTokens(r.Context(), u, c, issuer, t.OriginJTI, "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, c, issuer, t.OriginJTI, "", triggerSourceTokenGenRefreshTokens)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	// AWS omits RefreshToken in the response for refresh-token flows.
@@ -1384,9 +1470,9 @@ func (s *Service) handleNewPasswordChallenge(w http.ResponseWriter, r *http.Requ
 	_ = s.removeToken(r.Context(), session) // consume the one-time session token
 
 	issuer := s.issuerURL(r, poolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenNewPassword)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	log.Info("user completed new-password challenge",
@@ -1444,10 +1530,19 @@ func (s *Service) handleMFAChallenge(w http.ResponseWriter, r *http.Request, cli
 
 	_ = s.removeToken(r.Context(), session)
 
-	issuer := s.issuerURL(r, poolID)
-	result, err := s.issueTokens(r.Context(), u, client, issuer, "", "")
-	if err != nil {
+	pool, err := s.loadPool(r.Context(), poolID)
+	if err != nil || pool == nil {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	if aerr := s.runPostAuthentication(r.Context(), pool, client.ClientID, u); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	issuer := s.issuerURL(r, poolID)
+	result, aerr := s.issueTokens(r.Context(), u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	log.Info("user completed MFA challenge",
@@ -1493,17 +1588,21 @@ func (s *Service) forgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pool, err := s.loadPool(r.Context(), c.UserPoolID)
+	if err != nil || pool == nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	msgOverride, aerr := s.runCustomMessage(r.Context(), pool, triggerSourceCustomMessageForgotPwd, c.ClientID, req.Username, code, "", u.Attributes)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	if emailAddr := u.email(); emailAddr != "" {
-		pool, _ := s.loadPool(r.Context(), c.UserPoolID)
-		if pool != nil {
-			s.sendPasswordResetEmail(pool, emailAddr, u.Username, code)
-		}
+		s.sendPasswordResetEmail(pool, emailAddr, u.Username, code, msgOverride)
 	}
 	if phone := u.phoneNumber(); phone != "" {
-		pool, _ := s.loadPool(r.Context(), c.UserPoolID)
-		if pool != nil {
-			s.sendPasswordResetSMS(pool, phone, u.Username, code)
-		}
+		s.sendPasswordResetSMS(pool, phone, u.Username, code, msgOverride)
 	}
 
 	// Return delivery details matching AWS wire format.
@@ -1605,6 +1704,7 @@ func (s *Service) confirmForgotPassword(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	s.runPostConfirmation(r.Context(), pool, triggerSourcePostConfirmForgotPass, c.ClientID, u.Username, u.Attributes)
 	log.Info("user confirmed password reset",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoPasswordChanged, events.ResourcePayload{Name: req.Username})

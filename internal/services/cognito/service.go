@@ -44,6 +44,11 @@ type Service struct {
 	smsSender smtp.SMSSender // nil when SMS capture is not configured
 	emailWg   sync.WaitGroup
 	typedOp   map[string]op.Operation
+	// invoker is the synchronous Lambda invoker LambdaConfig triggers
+	// (PreSignUp, PostConfirmation, PreTokenGeneration, PostAuthentication,
+	// CustomMessage) run through. nil until InitLambdaInvoker is called —
+	// see triggers.go and issue #1171.
+	invoker events.FunctionSyncInvoker
 }
 
 // New returns a configured Cognito Service.
@@ -68,6 +73,13 @@ func (s *Service) InitSMSDelivery(ss smtp.SMSSender) { s.smsSender = ss }
 
 // InitBus wires the event bus for resource lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) { s.bus = bus }
+
+// InitLambdaInvoker wires the synchronous Lambda invoker LambdaConfig
+// triggers run through — the same seam Secrets Manager rotation, API
+// Gateway, and AppSync already use for a request handler that must call out
+// to a Lambda function and use its response before continuing. See
+// triggers.go.
+func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker) { s.invoker = invoker }
 
 // publish emits a lifecycle event to the event bus (if wired).
 func (s *Service) publish(r *http.Request, t events.Type, payload any) {

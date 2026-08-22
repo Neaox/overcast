@@ -180,14 +180,14 @@ func (s *Service) issueUserAuthOTP(pool *UserPool, u *User, challengeName string
 			return nil, errNoSupportedFirstAuthFactors()
 		}
 		setAuthChallengeCode(u, challengeName, code, s.clk.Now().Add(userAuthOTPCodeTTL))
-		s.sendVerificationEmail(pool, u.email(), u.Username, code)
+		s.sendVerificationEmail(pool, u.email(), u.Username, code, nil)
 		return map[string]string{"CODE_DELIVERY_DELIVERY_MEDIUM": "EMAIL", "CODE_DELIVERY_DESTINATION": u.email(), "USERNAME": u.Username}, nil
 	case "SMS_OTP":
 		if u.phoneNumber() == "" {
 			return nil, errNoSupportedFirstAuthFactors()
 		}
 		setAuthChallengeCode(u, challengeName, code, s.clk.Now().Add(userAuthOTPCodeTTL))
-		s.sendVerificationSMS(pool, u.phoneNumber(), u.Username, code)
+		s.sendVerificationSMS(pool, u.phoneNumber(), u.Username, code, nil)
 		return map[string]string{"CODE_DELIVERY_DELIVERY_MEDIUM": "SMS", "CODE_DELIVERY_DESTINATION": u.phoneNumber(), "USERNAME": u.Username}, nil
 	default:
 		return nil, &protocol.AWSError{Code: "InvalidParameterException", Message: "Unsupported challenge answer: " + challengeName, HTTPStatus: 400}

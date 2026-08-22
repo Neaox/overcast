@@ -125,11 +125,13 @@ func (s *Service) updateAttributesWithVerification(ctx context.Context, pool *Us
 }
 
 func (s *Service) sendAttributeVerification(pool *UserPool, username, attrName, value, code string) codeDeliveryDetails {
+	// CustomMessage_UpdateUserAttribute / CustomMessage_VerifyUserAttribute are
+	// not wired yet — see triggers.go's deferred-scope note.
 	if attrName == "phone_number" {
-		s.sendVerificationSMS(pool, value, username, code)
+		s.sendVerificationSMS(pool, value, username, code, nil)
 		return codeDeliveryDetails{AttributeName: attrName, DeliveryMedium: "SMS", Destination: value}
 	}
-	s.sendVerificationEmail(pool, value, username, code)
+	s.sendVerificationEmail(pool, value, username, code, nil)
 	return codeDeliveryDetails{AttributeName: attrName, DeliveryMedium: "EMAIL", Destination: value}
 }
 

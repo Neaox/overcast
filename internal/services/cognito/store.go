@@ -651,12 +651,23 @@ func (s *Service) removeToken(ctx context.Context, tokenValue string) error {
 // issueTokens creates RS256-signed access and ID JWTs plus an opaque refresh
 // token for the given user. The issuer URL is embedded in JWT claims so that
 // jwt-validation libraries can locate the JWKS endpoint.
-func (s *Service) issueTokens(ctx context.Context, u *User, client *UserPoolClient, issuer, originJTI, nonce string) (*authResultWire, error) {
+//
+// tokenGenSource is the triggerSource value the pool's PreTokenGeneration
+// trigger (if configured) is invoked with — every path that mints tokens
+// funnels through this one function, so hooking the trigger here gives full
+// coverage across every auth flow (and both the classic and Smithy RPC v2
+// protocols) without repeating the invocation at each call site. See
+// triggers.go and issue #1171.
+//
+// The return type is *protocol.AWSError rather than a plain error so a
+// PreTokenGeneration failure can surface as AWS's own
+// UserLambdaValidationException instead of a generic InternalError.
+func (s *Service) issueTokens(ctx context.Context, u *User, client *UserPoolClient, issuer, originJTI, nonce, tokenGenSource string) (*authResultWire, *protocol.AWSError) {
 	now := s.clk.Now()
 
 	priv, kid, err := s.getOrCreateSigningKey(ctx, u.UserPoolID)
 	if err != nil {
-		return nil, err
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 
 	// Compute token lifetimes from client configuration, falling back to AWS defaults.
@@ -716,19 +727,8 @@ func (s *Service) issueTokens(ctx context.Context, u *User, client *UserPoolClie
 	if len(u.Groups) > 0 {
 		accessClaims["cognito:groups"] = u.Groups
 	}
-	accessJWT, err := signJWT(priv, kid, accessClaims)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.saveToken(ctx, &Token{
-		Value: accessJTI, Type: "access",
-		Username: u.Username, UserPoolID: u.UserPoolID,
-		CreatedAt: now, ExpiresAt: now.Add(accessTTL),
-	}); err != nil {
-		return nil, err
-	}
 
-	// ── ID token ──────────────────────────────────────────────────────────────
+	// ── ID token claims ────────────────────────────────────────────────────────
 	idJTI := uuid.NewString()
 	idClaims := map[string]any{
 		"sub":              u.Sub,
@@ -759,9 +759,34 @@ func (s *Service) issueTokens(ctx context.Context, u *User, client *UserPoolClie
 	if nonce != "" {
 		idClaims["nonce"] = nonce
 	}
+
+	// PreTokenGeneration runs after both claim sets are built (it can override
+	// group claims on both) and before either JWT is signed (its overrides
+	// must land in the signature). A pool-load failure here is treated the
+	// same as any other internal error — it is not the trigger's fault.
+	if pool, err := s.loadPool(ctx, u.UserPoolID); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	} else if pool != nil {
+		if aerr := s.runPreTokenGeneration(ctx, pool, tokenGenSource, clientID, u, idClaims, accessClaims); aerr != nil {
+			return nil, aerr
+		}
+	}
+
+	accessJWT, err := signJWT(priv, kid, accessClaims)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.saveToken(ctx, &Token{
+		Value: accessJTI, Type: "access",
+		Username: u.Username, UserPoolID: u.UserPoolID,
+		CreatedAt: now, ExpiresAt: now.Add(accessTTL),
+	}); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+
 	idJWT, err := signJWT(priv, kid, idClaims)
 	if err != nil {
-		return nil, err
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 
 	// ── Refresh token (opaque) ────────────────────────────────────────────────
@@ -772,7 +797,7 @@ func (s *Service) issueTokens(ctx context.Context, u *User, client *UserPoolClie
 		CreatedAt: now, ExpiresAt: now.Add(refreshTTL),
 		OriginJTI: originJTI,
 	}); err != nil {
-		return nil, err
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 
 	// Store ID token JTI for completeness (not validated server-side, but keeps store symmetric).

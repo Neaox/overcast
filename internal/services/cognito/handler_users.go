@@ -132,6 +132,15 @@ func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// PreSignUp fires for AdminCreateUser too, but AWS documents that its
+	// autoConfirmUser/autoVerifyEmail/autoVerifyPhone response fields are
+	// ignored for this trigger source — only a function error is honored,
+	// failing AdminCreateUser the way AWS does.
+	if _, aerr := s.runPreSignUp(r.Context(), pool, triggerSourcePreSignUpAdminCreate, "", req.Username, attrs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	u := &User{
 		Username:          internalUsername,
 		Sub:               sub,
@@ -152,11 +161,16 @@ func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// Send temp-password email/SMS unless suppressed.
 	if req.MessageAction != "SUPPRESS" {
+		msgOverride, aerr := s.runCustomMessage(r.Context(), pool, triggerSourceCustomMessageAdminUser, "", u.Username, tempPw, req.Username, u.Attributes)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
 		if emailAddr := u.email(); emailAddr != "" {
-			s.sendTempPasswordEmail(pool, emailAddr, u.Username, tempPw)
+			s.sendTempPasswordEmail(pool, emailAddr, u.Username, tempPw, msgOverride)
 		}
 		if phone := u.phoneNumber(); phone != "" {
-			s.sendTempPasswordSMS(pool, phone, u.Username, tempPw)
+			s.sendTempPasswordSMS(pool, phone, u.Username, tempPw, msgOverride)
 		}
 	}
 
@@ -299,7 +313,8 @@ func (s *Service) adminConfirmSignUp(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.RequireString(w, r, req.Username, "Username") {
 		return
 	}
-	if _, ok := s.requirePool(r.Context(), w, r, req.UserPoolID); !ok {
+	pool, ok := s.requirePool(r.Context(), w, r, req.UserPoolID)
+	if !ok {
 		return
 	}
 	u, ok := s.requireUser(r.Context(), w, r, req.UserPoolID, req.Username)
@@ -315,6 +330,7 @@ func (s *Service) adminConfirmSignUp(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	s.runPostConfirmation(r.Context(), pool, triggerSourcePostConfirmSignUp, "", u.Username, u.Attributes)
 	log.Info("admin confirmed user signup",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})

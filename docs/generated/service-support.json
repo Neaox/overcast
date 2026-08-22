@@ -2547,7 +2547,7 @@
           "operation": "CreateUserPool",
           "category": "User Pool operations",
           "status": "✅ Supported",
-          "notes": "Returns Id and Arn; Id format {region}_{8-char-hex}; accepts SignInPolicy, email templates, UserAttributeUpdateSettings, DeviceConfiguration, AliasAttributes, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig; LambdaConfig is stored and echoed only — no configured trigger (PreSignUp, PostConfirmation, etc.) is ever invoked, see issue #536 and follow-up #1171"
+          "notes": "Returns Id and Arn; Id format {region}_{8-char-hex}; accepts SignInPolicy, email templates, UserAttributeUpdateSettings, DeviceConfiguration, AliasAttributes, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig; LambdaConfig's PreSignUp, PostConfirmation, PreTokenGeneration, PostAuthentication, and CustomMessage are invoked on the classic X-Amz-Target API (issue #1171); PreAuthentication, UserMigration, the CUSTOM_AUTH challenge triggers (#88/#94/#101), and the Smithy RPC v2 duplicate dispatch path are not"
         },
         {
           "operation": "DescribeUserPool",
@@ -2619,7 +2619,7 @@
           "operation": "AdminCreateUser",
           "category": "User operations",
           "status": "✅ Supported",
-          "notes": "Bcrypt hashes password; sends email unless MessageAction=SUPPRESS"
+          "notes": "Bcrypt hashes password; sends email unless MessageAction=SUPPRESS; invokes PreSignUp_AdminCreateUser (its autoConfirm/autoVerify response fields are ignored, matching AWS) and CustomMessage_AdminCreateUser (issue #1171)"
         },
         {
           "operation": "AdminDeleteUser",
@@ -2643,7 +2643,7 @@
           "operation": "AdminConfirmSignUp",
           "category": "User operations",
           "status": "✅ Supported",
-          "notes": "Confirms a UNCONFIRMED user"
+          "notes": "Confirms a UNCONFIRMED user; invokes PostConfirmation_ConfirmSignUp fire-and-forget — a trigger error is logged but does not fail the call or roll back the confirmation (issue #1171)"
         },
         {
           "operation": "AdminUpdateUserAttributes",
@@ -2679,43 +2679,43 @@
           "operation": "SignUp",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "Sends confirmation email; returns UserSub"
+          "notes": "Sends confirmation email; returns UserSub; invokes PreSignUp_SignUp (autoConfirmUser/autoVerifyEmail/autoVerifyPhone honored — an auto-confirmed user also fires PostConfirmation_ConfirmSignUp within the same call, and no confirmation message is sent) and CustomMessage_SignUp; either failing fails SignUp with UserLambdaValidationException (issue #1171)"
         },
         {
           "operation": "ConfirmSignUp",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "CodeMismatchException / ExpiredCodeException on failure; returns Session for USER_AUTH sign-in"
+          "notes": "CodeMismatchException / ExpiredCodeException on failure; returns Session for USER_AUTH sign-in; invokes PostConfirmation_ConfirmSignUp fire-and-forget (issue #1171)"
         },
         {
           "operation": "ResendConfirmationCode",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "Generates and emails a new confirmation code"
+          "notes": "Generates and emails a new confirmation code; invokes CustomMessage_ResendCode, failing the call on a trigger error (issue #1171)"
         },
         {
           "operation": "InitiateAuth",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "USER_PASSWORD_AUTH + USER_SRP_AUTH + REFRESH_TOKEN_AUTH + CUSTOM_AUTH; USER_AUTH with ConfirmSignUp Session, SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, or preferred PASSWORD/WEB_AUTHN/EMAIL_OTP/SMS_OTP; returns NEW_PASSWORD_REQUIRED, SOFTWARE_TOKEN_MFA, or DEVICE_SRP_AUTH"
+          "notes": "USER_PASSWORD_AUTH + USER_SRP_AUTH + REFRESH_TOKEN_AUTH + CUSTOM_AUTH; USER_AUTH with ConfirmSignUp Session, SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, or preferred PASSWORD/WEB_AUTHN/EMAIL_OTP/SMS_OTP; returns NEW_PASSWORD_REQUIRED, SOFTWARE_TOKEN_MFA, or DEVICE_SRP_AUTH; a completed authentication invokes PostAuthentication_Authentication then PreTokenGeneration (TokenGeneration_Authentication/_RefreshTokens/_NewPasswordChallenge/_AuthenticateDevice as appropriate), each able to fail the call (issue #1171)"
         },
         {
           "operation": "AdminInitiateAuth",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "USER_PASSWORD_AUTH + USER_SRP_AUTH + REFRESH_TOKEN_AUTH + CUSTOM_AUTH with UserPoolId; USER_AUTH with ConfirmSignUp Session, SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, or preferred PASSWORD/WEB_AUTHN/EMAIL_OTP/SMS_OTP"
+          "notes": "USER_PASSWORD_AUTH + USER_SRP_AUTH + REFRESH_TOKEN_AUTH + CUSTOM_AUTH with UserPoolId; USER_AUTH with ConfirmSignUp Session, SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, or preferred PASSWORD/WEB_AUTHN/EMAIL_OTP/SMS_OTP; same PostAuthentication/PreTokenGeneration trigger invocation as InitiateAuth (issue #1171)"
         },
         {
           "operation": "RespondToAuthChallenge",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, PASSWORD, PASSWORD_VERIFIER, CUSTOM_CHALLENGE, DEVICE_SRP_AUTH, DEVICE_PASSWORD_VERIFIER, WEB_AUTHN, EMAIL_OTP, SMS_OTP, NEW_PASSWORD_REQUIRED, and SOFTWARE_TOKEN_MFA challenges"
+          "notes": "SELECT_CHALLENGE/PASSWORD/PASSWORD_SRP/WEB_AUTHN/EMAIL_OTP/SMS_OTP, PASSWORD, PASSWORD_VERIFIER, CUSTOM_CHALLENGE, DEVICE_SRP_AUTH, DEVICE_PASSWORD_VERIFIER, WEB_AUTHN, EMAIL_OTP, SMS_OTP, NEW_PASSWORD_REQUIRED, and SOFTWARE_TOKEN_MFA challenges; a challenge completion that issues tokens invokes PostAuthentication_Authentication (skipped for NEW_PASSWORD_REQUIRED) then PreTokenGeneration, each able to fail the call (issue #1171)"
         },
         {
           "operation": "AdminRespondToAuthChallenge",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "Same as above with admin credentials"
+          "notes": "Same as above with admin credentials, including the same trigger invocation (issue #1171)"
         },
         {
           "operation": "ConfirmDevice",
@@ -2775,13 +2775,13 @@
           "operation": "ForgotPassword",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "Sends password-reset code by email"
+          "notes": "Sends password-reset code by email; invokes CustomMessage_ForgotPassword, failing the call on a trigger error (issue #1171)"
         },
         {
           "operation": "ConfirmForgotPassword",
           "category": "Auth / Token operations",
           "status": "✅ Supported",
-          "notes": "Validates reset code; sets new bcrypt password"
+          "notes": "Validates reset code; sets new bcrypt password; invokes PostConfirmation_ConfirmForgotPassword fire-and-forget (issue #1171)"
         },
         {
           "operation": "ChangePassword",
