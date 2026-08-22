@@ -681,6 +681,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
 	ebSvc.InitRouter(r)
+	// EC2 and ECS: wire the EventBridge bus publisher so instance/task state
+	// transitions emit the same service-originated events real AWS does
+	// (EC2 Instance State-change Notification, ECS Task State Change).
+	ec2Svc.InitEventBridge(ebSvc.BusPublisher())
+	ecsSvc.InitEventBridge(ebSvc.BusPublisher())
 	// Lambda: wire the root router so a dead-lettered async invocation reaches
 	// its SQS queue or SNS topic over the same path an SDK client would take.
 	lambdaSvc.InitRouter(r)

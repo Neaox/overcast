@@ -77,6 +77,15 @@ same-process target delivery.
   would never fire, and the error names the expression and the field at fault. The
   five-field Unix form is the common mistake and AWS refuses it too — every five
   minutes is `cron(*/5 * * * ? *)`, not `cron(*/5 * * * *)`.
+- **Service-originated events.** A handful of emulated services publish their own events onto
+  the default bus, the way real AWS services do on a customer's behalf: CloudWatch alarms
+  (`CloudWatch Alarm State Change`, every transition), S3 (`Object Created` / `Object Deleted`,
+  when a bucket's `EventBridgeConfiguration` is set), EC2 (`EC2 Instance State-change
+  Notification`, every time an instance's state changes — including its first transition into
+  `pending`), and ECS (`ECS Task State Change`, every time a task's `lastStatus` changes). Real
+  AWS emits substantially more service-originated events than these four (Step Functions
+  execution status and others); a rule matching one of those will never fire here — see
+  [#758](https://github.com/Neaox/overcast/issues/758).
 - **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
   has not been explicitly created.
 - **CDK compatible management plane.** Sufficient for CDK deployments that create buses,

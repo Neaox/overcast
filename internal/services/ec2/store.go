@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -109,10 +110,17 @@ type SecurityGroup struct {
 type ec2Store struct {
 	store         state.Store
 	defaultRegion string
+	accountID     string
+
+	// eventBridge is the EventBridge bus publisher wired by
+	// Service.InitEventBridge. nil in most tests, and delivery is skipped
+	// then rather than attempted against nothing — see notifyInstanceStateChange
+	// in eventbridge.go.
+	eventBridge events.BusPublisher
 }
 
-func newEC2Store(store state.Store, defaultRegion string) *ec2Store {
-	return &ec2Store{store: store, defaultRegion: defaultRegion}
+func newEC2Store(store state.Store, defaultRegion, accountID string) *ec2Store {
+	return &ec2Store{store: store, defaultRegion: defaultRegion, accountID: accountID}
 }
 
 // region extracts the per-request region from context, falling back to the default.
@@ -322,6 +330,13 @@ type Tag struct {
 }
 
 func (s *ec2Store) putInstance(ctx context.Context, inst *Instance) *protocol.AWSError {
+	// Read the prior record before overwriting it so the write below can tell
+	// whether the instance's state actually changed — see
+	// notifyInstanceStateChange in eventbridge.go. A lookup failure (including
+	// "not found", the very first write for this instance) just means prev is
+	// nil; it is not fatal to the put itself.
+	prev, _ := s.getInstance(ctx, inst.InstanceID)
+
 	raw, err := json.Marshal(inst)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -329,6 +344,7 @@ func (s *ec2Store) putInstance(ctx context.Context, inst *Instance) *protocol.AW
 	if err := s.store.Set(ctx, nsInstances, serviceutil.RegionKey(s.region(ctx), inst.InstanceID), string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	s.notifyInstanceStateChange(ctx, prev, inst)
 	return nil
 }
 

@@ -1,0 +1,2 @@
++ [ec2/eventbridge] EC2 instance state transitions (RunInstances, StartInstances, StopInstances, TerminateInstances, and the scheduler callbacks that fast-forward pending/stopping) now publish an AWS-shaped `EC2 Instance State-change Notification` onto the default EventBridge bus, so a rule matching one actually fires (#758)
++ [ecs/eventbridge] ECS task lastStatus transitions (RunTask, StopTask, and container-exit-driven stops) now publish an AWS-shaped `ECS Task State Change` event onto the default EventBridge bus (#758)
