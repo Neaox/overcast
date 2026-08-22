@@ -272,7 +272,7 @@ So there is no shim. A `changes` job classifies the diff
 its name and still runs, and only the expensive *steps* are conditional. A
 prose-only pull request gets the same green checks in seconds.
 
-Two consequences that are easy to miss and are commented in place:
+Three consequences that are easy to miss and are commented in place:
 
 - **`web` produces the `web-dist` artifact**, so anything downstream has to be
   gated on the same output or it waits for an upload that is not coming.
@@ -283,6 +283,19 @@ Two consequences that are easy to miss and are commented in place:
   changed `VERSION`. `web`, `docker` and `cross-build` therefore gate on
   `code || rc`, which also keeps the existing release-candidate steps — whose
   conditions assume a checkout happened — correct.
+- **`web`'s install step is not gated at all.** Two pull requests that each
+  regenerate `web/pnpm-lock.yaml` can both be green and still leave `main`
+  with a lockfile neither had — #1257 and #1258 did, and
+  `pnpm install --frozen-lockfile` was broken on `main` for five commits
+  (#1330 §0) while every pull request in between was prose-only and skipped
+  the job; only the push runs on `main` went red, and nothing gates on those.
+  So checkout, pnpm, node and `pnpm install --frozen-lockfile` run on every
+  pull request — ~20 s with the store cache hit — and only `Lint` down to the
+  artifact upload stay behind `RUN_BUILD`. Nothing cheaper catches it:
+  `--frozen-lockfile --lockfile-only` only checks that the lockfile satisfies
+  `package.json`, which that badly merged lockfile still did (verified: exit
+  0 on it); the missing-snapshot error fires when the dependency graph is
+  built for a real install.
 
 ### Also worth fixing: a required-set gap
 
