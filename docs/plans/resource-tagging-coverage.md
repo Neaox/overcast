@@ -8,6 +8,24 @@
 > just whether the operation exists — is #1052's, closed for all seventeen
 > services it named; see [Validator reach audit](#validator-reach-audit-1052).
 >
+> Re-verified 2026-08-23 (#1196) — Axis B is closed for all 14 services this
+> issue named. Three (`kms`, `appconfig`, `opensearch`) were already fixed
+> before this issue was picked up; the rest needed a real fix, several of
+> which were double-fixes because the legacy JSON/Query handler and the CBOR
+> typed path were two independent implementations, only one of which had ever
+> been touched: `athena` (`CreateWorkGroup`), `eventbridge` (`CreateEventBus`,
+> `PutRule`), `firehose` (`CreateDeliveryStream`), `ssm` (`PutParameter`),
+> `rds` (`CreateDBInstance`/`CreateDBCluster`/`CreateDBSubnetGroup`),
+> `elasticache` (`CreateReplicationGroup`), `stepfunctions`
+> (`CreateStateMachine`), `cognito` (`CreateUserPool`), `ecs` (`CreateCluster`,
+> `CreateService`), and `ec2` (nine more `Create*` operations, using the
+> `parseTagSpecifications`/`validateTagSpecifications`/`putResourceTags`
+> helpers #1033 already unified). `stepfunctions` `CreateActivity`, `ssm`
+> `CreateDocument` and `elbv2` `CreateRule` are not implemented in this
+> emulator at all — feature gaps, not tag gaps, and out of #1196's scope. See
+> [What #1196 filled](#what-1196-filled) and the updated
+> [Axis B table](#axis-b--missing-tag-on-create).
+>
 > Re-verified 2026-08-22 (#1052) — every one of the 17 services #1052 named
 > now routes its tag-accepting writes through `serviceutil.ValidateTags`
 > (directly, via `ApplyStoreTags`, or via `ApplyInlineTags`); three
@@ -126,25 +144,25 @@ tagging operations at all.
 | --- | --- | --- | --- | --- |
 | `sns` | **full** | `CreateTopic` | `Tags` | ~~missing~~ **closed** |
 | `kinesis` | partial | `CreateStream` | `Tags` | ~~missing~~ **closed** |
-| `kms` | partial | `CreateKey` | `Tags` | **missing** |
-| `rds` | partial | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` | `Tags` | **missing** |
-| `elasticache` | partial | `CreateCacheCluster`, `CreateReplicationGroup`, `CreateServerlessCache` | `Tags` | **missing** |
-| `stepfunctions` | partial | `CreateStateMachine`, `CreateActivity` | `tags` | **missing** |
-| `ssm` | partial | `PutParameter`, `CreateDocument` | `Tags` | **missing** |
-| `cognito` | partial | `CreateUserPool` | `UserPoolTags` | **missing** |
-| `ecs` | partial | `CreateCluster`, `CreateService`, `RegisterTaskDefinition` | `tags` | **missing** (capacity providers and task sets do honour `tags`) |
+| `kms` | partial | `CreateKey` | `Tags` | ~~missing~~ **closed** (already fixed pre-#1196; re-verified) |
+| `rds` | partial | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` | `Tags` | ~~missing~~ **closed** (#1196) |
+| `elasticache` | partial | `CreateCacheCluster`, `CreateReplicationGroup`, `CreateServerlessCache` | `Tags` | ~~missing~~ **closed** (#1196; `CreateCacheCluster`/`CreateServerlessCache` were already fixed, `CreateReplicationGroup` — including its independent CBOR typed path — was the remaining gap) |
+| `stepfunctions` | partial | `CreateStateMachine`, `CreateActivity` | `tags` | ~~missing~~ **closed for `CreateStateMachine`** (#1196; the request modeled no `tags` member at all). `CreateActivity` is not implemented in this emulator — a feature gap, not a tag gap |
+| `ssm` | partial | `PutParameter`, `CreateDocument` | `Tags` | ~~missing~~ **closed for `PutParameter`** (#1196; tags apply only when the call creates a new parameter, per AWS's own documented behavior). `CreateDocument` is not implemented (returns 501) — a feature gap, not a tag gap |
+| `cognito` | partial | `CreateUserPool` | `UserPoolTags` | ~~missing~~ **closed** (#1196; the request modeled no `UserPoolTags` member at all) |
+| `ecs` | partial | `CreateCluster`, `CreateService`, `RegisterTaskDefinition` | `tags` | ~~missing~~ **closed** (#1196 for `CreateCluster`/`CreateService`; `RegisterTaskDefinition` was already fixed via `storeTaskDefinitionTags`) |
 | `ses` | partial | `CreateEmailIdentity` | `Tags` | ~~missing~~ **closed** |
-| `ec2` | partial | most `Create*` and `RunInstances` | `TagSpecifications` | **partial** — only `RunInstances`, `CreateNatGateway` and `CreateVpnGateway` parse `TagSpecification.N`; the other create operations ignore it. Two near-identical parsers exist for it (`parseTagSpecifications` in `handler_instances.go`, `collectTagSpecifications` in `handler_natgw.go`) |
+| `ec2` | partial | most `Create*` and `RunInstances` | `TagSpecifications` | ~~partial~~ **closed** (#1196) — `CreateVpc`, `CreateSubnet`, `CreateSecurityGroup`, `CreateInternetGateway`, `CreateRouteTable`, `CreateVpcEndpoint`, `CreateVpcPeeringConnection`, `CreateNetworkInterface` and `CreateKeyPair` now parse `TagSpecification.N` through the same `parseTagSpecifications`/`validateTagSpecifications`/`putResourceTags` helpers `RunInstances`, `CreateNatGateway` and `CreateVpnGateway` already used (unified by #1033) |
 | `acm` | inert | `RequestCertificate` | `Tags` | ~~missing~~ **closed** |
-| `athena` | inert | `CreateWorkGroup` | `Tags` | **missing** |
-| `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` | `Tags` | **missing** |
+| `athena` | inert | `CreateWorkGroup` | `Tags` | ~~missing~~ **closed** (#1196) |
+| `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` | `Tags` | ~~missing~~ **closed** (already fixed since the #899 rewrite; re-verified) |
 | `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | ~~missing~~ **closed** (#1195); both members are stored at create time, and the CloudFormation provisioner forwards them and reconciles a tag-only update in place |
 | `cloudtrail` | inert | `CreateTrail` | `TagsList` | ~~missing~~ **closed** |
-| `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` | `Tags` | **missing** |
-| `eventbridge` | inert | `CreateEventBus`, `PutRule` | `Tags` | **missing** |
-| `firehose` | inert | `CreateDeliveryStream` | `Tags` | **missing** |
+| `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` | `Tags` | ~~missing~~ **closed for `CreateLoadBalancer`/`CreateTargetGroup`** (already fixed; re-verified). `CreateRule` is not implemented in this emulator (`StatusUnsupported`) — a feature gap, not a tag gap |
+| `eventbridge` | inert | `CreateEventBus`, `PutRule` | `Tags` | ~~missing~~ **closed** (#1196; `PutRule`'s tags merge with the rule's existing tags, matching AWS's documented merge semantic) |
+| `firehose` | inert | `CreateDeliveryStream` | `Tags` | ~~missing~~ **closed** (#1196) |
 | `iam` | inert | `CreateUser`, `CreateRole`, `CreatePolicy`, `CreateInstanceProfile` | `Tags` | ~~missing~~ **closed** |
-| `opensearch` | inert | `CreateDomain` | `TagList` | **missing** |
+| `opensearch` | inert | `CreateDomain` | `TagList` | ~~missing~~ **closed** (already fixed per its #893 rebind; re-verified) |
 | `transfer` | inert | `CreateServer`, `CreateUser` | `Tags` | ~~missing~~ **closed** |
 
 Services that already apply tags at creation: `sqs` (`CreateQueue`), `lambda`
@@ -274,6 +292,29 @@ sat in the code the gap sat in: tagging a certificate that does not exist
 succeeded and stranded the tags under an unowned ARN, and
 `ListTagsForCertificate` returned a different tag order on every call.
 
+## What #1196 filled
+
+One commit per service, re-verifying each against current code before
+touching it — three (`kms`, `appconfig`, `opensearch`) turned out to already
+be fixed and needed no change.
+
+| Commit | Service | Create operation(s) fixed | Notes |
+| --- | --- | --- | --- |
+| `feat(athena)` | `athena` | `CreateWorkGroup` | Legacy JSON handler was a full duplicate of the typed path; now delegates to it |
+| `feat(eventbridge)` | `eventbridge` | `CreateEventBus`, `PutRule` | Same legacy/typed duplication; `PutRule`'s tags merge with the rule's existing tags |
+| `feat(firehose)` | `firehose` | `CreateDeliveryStream` | Same legacy/typed duplication |
+| `feat(ssm)` | `ssm` | `PutParameter` | Same legacy/typed duplication; tags apply only when creating a new parameter, not on `Overwrite` |
+| `feat(rds)` | `rds` | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` | Single (Query-protocol) implementation per operation; no decoder change needed — the Query codec already supports `Tags.Tag.N.Key` for any slice field |
+| `feat(elasticache)` | `elasticache` | `CreateReplicationGroup` | `CreateCacheCluster`/`CreateServerlessCache` were already fixed; `CreateReplicationGroup` had its own independent CBOR typed path too |
+| `feat(stepfunctions)` | `stepfunctions` | `CreateStateMachine` | Request modeled no `tags` member at all; fixed a pre-existing region bug in the typed path while unifying it with the legacy handler |
+| `feat(cognito)` | `cognito` | `CreateUserPool` | Request modeled no `UserPoolTags` member at all; legacy/typed duplication |
+| `feat(ecs)` | `ecs` | `CreateCluster`, `CreateService` | `RegisterTaskDefinition` was already fixed; both remaining operations had legacy/typed duplication |
+| `feat(ec2)` | `ec2` | 9 operations (see the Axis B table) | Single implementation per operation (EC2's Query protocol has no legacy/typed split for these); `CreateVpcEndpoint`/`CreateVpcPeeringConnection` previously rendered no `TagSet` in any response at all |
+
+Left as feature gaps, not tag gaps, and out of scope: `stepfunctions`
+`CreateActivity`, `ssm` `CreateDocument` (both return 501 — not implemented),
+and `elbv2` `CreateRule` (`StatusUnsupported` — not implemented).
+
 ## What remains
 
 **Axis A — closed.** Both services this section used to track — `logs`
@@ -281,25 +322,9 @@ succeeded and stranded the tags under an unowned ARN, and
 (blocked on the REST-rebind #815 did) — were closed by #1195. See the Status
 note at the top of this document.
 
-**Axis B — fourteen services.** Every one of these already has working tagging
-operations; what is missing is only the inline tags on the create call.
-
-| Service | Tier | Create operations |
-| --- | --- | --- |
-| `kms` | partial | `CreateKey` |
-| `rds` | partial | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` |
-| `elasticache` | partial | `CreateCacheCluster`, `CreateReplicationGroup`, `CreateServerlessCache` |
-| `stepfunctions` | partial | `CreateStateMachine`, `CreateActivity` |
-| `ssm` | partial | `PutParameter`, `CreateDocument` |
-| `cognito` | partial | `CreateUserPool` (`UserPoolTags`) |
-| `ecs` | partial | `CreateCluster`, `CreateService`, `RegisterTaskDefinition` |
-| `ec2` | partial | the create operations that ignore `TagSpecifications` |
-| `athena` | inert | `CreateWorkGroup` |
-| `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` |
-| `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` |
-| `eventbridge` | inert | `CreateEventBus`, `PutRule` |
-| `firehose` | inert | `CreateDeliveryStream` |
-| `opensearch` | inert | `CreateDomain` (`TagList`) |
+**Axis B — closed.** All 14 services #1196 named are closed; see
+[What #1196 filled](#what-1196-filled) above and the updated
+[Axis B table](#axis-b--missing-tag-on-create).
 
 **Axis C — CloudFormation passthrough, eight resource types.** A third gap that
 only becomes reachable now that the services accept the tags. These handlers in
