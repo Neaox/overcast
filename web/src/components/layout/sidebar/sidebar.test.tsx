@@ -5,8 +5,7 @@ import { inboxMessagesQueryOptions } from "@/features/mail/data"
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FavouritesProvider } from "@/hooks/use-favourites"
-import { serverInfoQueryOptions } from "@/hooks/use-server-info"
-import { createTestQueryClient, renderWithRouter, screen } from "@/test/render"
+import { createTestQueryClient, renderWithRouter, screen, seedServerInfo } from "@/test/render"
 import { Sidebar } from "./sidebar"
 import {
   NARROW_SIDEBAR_QUERY,
@@ -42,7 +41,7 @@ function renderScreen(
 ) {
   const queryClient = createTestQueryClient()
   queryClient.setQueryData(inboxMessagesQueryOptions().queryKey, messages)
-  queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+  seedServerInfo(queryClient, { debug })
   if (services) {
     queryClient.setQueryData(["health"], {
       status: "ok",

@@ -81,6 +81,8 @@ import userEventDefault from "@testing-library/user-event"
 import { advanceTimers } from "@/test/fake-timers"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ToastContextProvider } from "@/components/ui/toast"
+import { serverInfoQueryOptions } from "@/hooks/use-server-info"
+import type { ServerInfo } from "@/services/discovery"
 
 // Re-export everything from RTL so tests only need one import.
 export * from "@testing-library/react"
@@ -121,6 +123,25 @@ export function createTestQueryClient(): QueryClient {
       },
     },
   })
+}
+
+// ─── Server info seed ─────────────────────────────────────────────────────
+
+/**
+ * Seed `GET /_overcast/info` into the cache — the query behind `useDebugEnabled`
+ * and every "is this a debug build?" branch in the UI.
+ *
+ * Why a helper rather than a bare `setQueryData` at each call site: the query
+ * resolves to `ServerInfo | null`, and `setQueryData`'s updater parameter is
+ * `Updater<NoInfer<T> | undefined, …>`. TypeScript will not relate a *fresh
+ * object literal* to a deferred `NoInfer<…>` of a union — even a literal that
+ * spells out every field — so `setQueryData(key, { debug })` is rejected while
+ * the identical value held in a `ServerInfo`-typed binding is accepted. Passing
+ * the seed through this parameter gives it that binding, so callers keep full
+ * checking against `ServerInfo` with no cast in sight.
+ */
+export function seedServerInfo(queryClient: QueryClient, info: ServerInfo): void {
+  queryClient.setQueryData(serverInfoQueryOptions().queryKey, info)
 }
 
 // ─── Wrapper ─────────────────────────────────────────────────────────────
