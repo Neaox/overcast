@@ -2946,15 +2946,13 @@ func statusError(rec *httptest.ResponseRecorder) error {
 // refusal is an errDeletionBlocked the stack has to see.
 //
 // EC2's own refusal answers here too: DeleteInternetGateway, the main-table
-// case of DeleteRouteTable, and DeleteVpnGateway all reject a delete with
+// case of DeleteRouteTable, DeleteVpnGateway, and — since #1135 —
+// DeleteSecurityGroup, DeleteSubnet, and DeleteVpc all reject a delete with
 // DependencyViolation while something is still attached, and every EC2
 // handler's Delete dispatches through this same function — so wrapping that
 // one code in errDeletionBlocked here reaches every one of them at once
 // rather than needing a per-handler classifier the way IAM's DeleteConflict
-// does. AWS::EC2::VPC, Subnet, and SecurityGroup delete without any
-// dependency check at all in this emulator today, so they cannot yet answer
-// DependencyViolation; when that check is added, it will classify correctly
-// through this same path with no further change here.
+// does.
 func teardownError(op string, rec *httptest.ResponseRecorder, err error) error {
 	if err == nil || resourceAlreadyGone(rec) {
 		return nil

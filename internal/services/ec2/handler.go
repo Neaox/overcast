@@ -561,6 +561,12 @@ func (h *Handler) DeleteVpc(w http.ResponseWriter, r *http.Request) {
 	}
 	// Fetch VPC before deleting so we can clean up the Docker network.
 	vpc, _ := h.store.getVPC(r.Context(), vpcID)
+	if vpc != nil {
+		if aerr := h.vpcDependencyError(r.Context(), vpcID); aerr != nil {
+			protocol.WriteEC2QueryXMLError(w, r, aerr)
+			return
+		}
+	}
 
 	if aerr := h.store.deleteVPC(r.Context(), vpcID); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
@@ -674,6 +680,10 @@ func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if aerr := h.subnetDependencyError(r.Context(), subnetID); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
 	if aerr := h.store.deleteSubnet(r.Context(), subnetID); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
@@ -751,6 +761,15 @@ func (h *Handler) DeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 			Message:    "GroupId is required",
 			HTTPStatus: http.StatusBadRequest,
 		})
+		return
+	}
+	sg, aerr := h.store.getSecurityGroup(r.Context(), groupID)
+	if aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.securityGroupDependencyError(r.Context(), sg); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
 	if aerr := h.store.deleteSecurityGroup(r.Context(), groupID); aerr != nil {

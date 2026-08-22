@@ -2702,6 +2702,205 @@ func TestDeleteInternetGateway_attachedFails(t *testing.T) {
 	}
 }
 
+// ─── DeleteSecurityGroup / DeleteSubnet / DeleteVpc dependency checks ───────
+//
+// AWS refuses each of these with DependencyViolation while something still
+// points at the resource (or, for a VPC's default security group,
+// CannotDelete outright) rather than deleting it out from under a dependent.
+// See #1135.
+
+func TestDeleteSecurityGroup_defaultGroupFails(t *testing.T) {
+	// Given: the account's default VPC and its default security group.
+	// DescribeVpcs is what seeds the default VPC (and its default group) on
+	// first read; DescribeSecurityGroups itself does not.
+	srv := helpers.NewTestServer(t)
+	ec2Query(t, srv, "DescribeVpcs", nil).Body.Close()
+
+	descResp := ec2Query(t, srv, "DescribeSecurityGroups", nil)
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+	var desc struct {
+		Groups []struct {
+			GroupID   string `xml:"groupId"`
+			GroupName string `xml:"groupName"`
+		} `xml:"securityGroupInfo>item"`
+	}
+	xml.Unmarshal(readBody(t, descResp), &desc) //nolint:errcheck
+	var defaultGroupID string
+	for _, g := range desc.Groups {
+		if g.GroupName == "default" {
+			defaultGroupID = g.GroupID
+		}
+	}
+	if defaultGroupID == "" {
+		t.Fatalf("expected a default security group, got: %+v", desc.Groups)
+	}
+
+	// When: DeleteSecurityGroup is called against the default group
+	resp := ec2Query(t, srv, "DeleteSecurityGroup", url.Values{"GroupId": []string{defaultGroupID}})
+	defer resp.Body.Close()
+
+	// Then: CannotDelete, not an ordinary success
+	assertEC2QueryError(t, resp, http.StatusBadRequest, "CannotDelete")
+}
+
+func TestDeleteSecurityGroup_attachedToInstanceFails(t *testing.T) {
+	// Given: a security group attached to a running instance. Mock clock so
+	// the shutting-down → terminated transition can be advanced deterministically
+	// instead of sleeping the real 500ms out.
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	sgResp := ec2Query(t, srv, "CreateSecurityGroup", url.Values{
+		"GroupName":   []string{"test-sg-dep"},
+		"Description": []string{"test"},
+	})
+	defer sgResp.Body.Close()
+	helpers.AssertStatus(t, sgResp, http.StatusOK)
+	var sg struct {
+		GroupID string `xml:"groupId"`
+	}
+	xml.Unmarshal(readBody(t, sgResp), &sg) //nolint:errcheck
+	if sg.GroupID == "" {
+		t.Fatal("expected groupId to be set")
+	}
+
+	runResp := ec2Query(t, srv, "RunInstances", url.Values{
+		"ImageId":           []string{"ami-12345678"},
+		"MinCount":          []string{"1"},
+		"MaxCount":          []string{"1"},
+		"SecurityGroupId.1": []string{sg.GroupID},
+	})
+	defer runResp.Body.Close()
+	helpers.AssertStatus(t, runResp, http.StatusOK)
+	var run struct {
+		Instances []struct {
+			InstanceID string `xml:"instanceId"`
+		} `xml:"instancesSet>item"`
+	}
+	xml.Unmarshal(readBody(t, runResp), &run) //nolint:errcheck
+	if len(run.Instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(run.Instances))
+	}
+	instanceID := run.Instances[0].InstanceID
+
+	// When: DeleteSecurityGroup is called while the instance is still up
+	blockedResp := ec2Query(t, srv, "DeleteSecurityGroup", url.Values{"GroupId": []string{sg.GroupID}})
+	defer blockedResp.Body.Close()
+
+	// Then: DependencyViolation
+	assertEC2QueryError(t, blockedResp, http.StatusBadRequest, "DependencyViolation")
+
+	// Control: once the instance is terminated, the same delete succeeds
+	termResp := ec2Query(t, srv, "TerminateInstances", url.Values{"InstanceId.1": []string{instanceID}})
+	defer termResp.Body.Close()
+	helpers.AssertStatus(t, termResp, http.StatusOK)
+	srv.Clock.Add(1 * time.Second) // shutting-down → terminated
+
+	retryResp := ec2Query(t, srv, "DeleteSecurityGroup", url.Values{"GroupId": []string{sg.GroupID}})
+	defer retryResp.Body.Close()
+	helpers.AssertStatus(t, retryResp, http.StatusOK)
+}
+
+func TestDeleteSubnet_eniPresentFails(t *testing.T) {
+	// Given: a subnet holding a network interface
+	srv := helpers.NewTestServer(t)
+	vpcResp := ec2Query(t, srv, "CreateVpc", url.Values{"CidrBlock": []string{"10.44.0.0/16"}})
+	defer vpcResp.Body.Close()
+	helpers.AssertStatus(t, vpcResp, http.StatusOK)
+	var vpc struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+		} `xml:"vpc"`
+	}
+	xml.Unmarshal(readBody(t, vpcResp), &vpc) //nolint:errcheck
+
+	subResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":     []string{vpc.Vpc.VpcID},
+		"CidrBlock": []string{"10.44.1.0/24"},
+	})
+	defer subResp.Body.Close()
+	helpers.AssertStatus(t, subResp, http.StatusOK)
+	var subnet struct {
+		Subnet struct {
+			SubnetID string `xml:"subnetId"`
+		} `xml:"subnet"`
+	}
+	xml.Unmarshal(readBody(t, subResp), &subnet) //nolint:errcheck
+
+	eniResp := ec2Query(t, srv, "CreateNetworkInterface", url.Values{
+		"SubnetId": []string{subnet.Subnet.SubnetID},
+	})
+	defer eniResp.Body.Close()
+	helpers.AssertStatus(t, eniResp, http.StatusOK)
+	eniBody := string(readBody(t, eniResp))
+	idx := strings.Index(eniBody, "eni-")
+	if idx < 0 {
+		t.Fatalf("expected eni- in CreateNetworkInterface response, got: %s", eniBody)
+	}
+	eniID := eniBody[idx:]
+	if end := strings.IndexAny(eniID, "<\""); end > 0 {
+		eniID = eniID[:end]
+	}
+
+	// When: DeleteSubnet is called while the ENI still lives in it
+	blockedResp := ec2Query(t, srv, "DeleteSubnet", url.Values{"SubnetId": []string{subnet.Subnet.SubnetID}})
+	defer blockedResp.Body.Close()
+
+	// Then: DependencyViolation
+	assertEC2QueryError(t, blockedResp, http.StatusBadRequest, "DependencyViolation")
+
+	// Control: once the ENI is removed, the same delete succeeds
+	delENIResp := ec2Query(t, srv, "DeleteNetworkInterface", url.Values{"NetworkInterfaceId": []string{eniID}})
+	defer delENIResp.Body.Close()
+	helpers.AssertStatus(t, delENIResp, http.StatusOK)
+
+	retryResp := ec2Query(t, srv, "DeleteSubnet", url.Values{"SubnetId": []string{subnet.Subnet.SubnetID}})
+	defer retryResp.Body.Close()
+	helpers.AssertStatus(t, retryResp, http.StatusOK)
+}
+
+func TestDeleteVpc_subnetPresentFails(t *testing.T) {
+	// Given: a VPC holding a subnet
+	srv := helpers.NewTestServer(t)
+	vpcResp := ec2Query(t, srv, "CreateVpc", url.Values{"CidrBlock": []string{"10.55.0.0/16"}})
+	defer vpcResp.Body.Close()
+	helpers.AssertStatus(t, vpcResp, http.StatusOK)
+	var vpc struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+		} `xml:"vpc"`
+	}
+	xml.Unmarshal(readBody(t, vpcResp), &vpc) //nolint:errcheck
+
+	subResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":     []string{vpc.Vpc.VpcID},
+		"CidrBlock": []string{"10.55.1.0/24"},
+	})
+	defer subResp.Body.Close()
+	helpers.AssertStatus(t, subResp, http.StatusOK)
+	var subnet struct {
+		Subnet struct {
+			SubnetID string `xml:"subnetId"`
+		} `xml:"subnet"`
+	}
+	xml.Unmarshal(readBody(t, subResp), &subnet) //nolint:errcheck
+
+	// When: DeleteVpc is called while the subnet still lives in it
+	blockedResp := ec2Query(t, srv, "DeleteVpc", url.Values{"VpcId": []string{vpc.Vpc.VpcID}})
+	defer blockedResp.Body.Close()
+
+	// Then: DependencyViolation
+	assertEC2QueryError(t, blockedResp, http.StatusBadRequest, "DependencyViolation")
+
+	// Control: once the subnet is removed, the same delete succeeds
+	delSubResp := ec2Query(t, srv, "DeleteSubnet", url.Values{"SubnetId": []string{subnet.Subnet.SubnetID}})
+	defer delSubResp.Body.Close()
+	helpers.AssertStatus(t, delSubResp, http.StatusOK)
+
+	retryResp := ec2Query(t, srv, "DeleteVpc", url.Values{"VpcId": []string{vpc.Vpc.VpcID}})
+	defer retryResp.Body.Close()
+	helpers.AssertStatus(t, retryResp, http.StatusOK)
+}
+
 // ─── VPC + IGW full lifecycle ────────────────────────────────────────────────
 
 func TestVpcWithIGW_fullLifecycle(t *testing.T) {
