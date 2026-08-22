@@ -57,6 +57,7 @@ type Table struct {
 	BillingModeSummary     *BillingModeSummary      `json:"BillingModeSummary,omitempty"`
 	ProvisionedThroughput  *ProvisionedThroughput   `json:"ProvisionedThroughput,omitempty"`
 	TableARN               string                   `json:"TableArn"`
+	TableId                string                   `json:"TableId,omitempty"`
 	CreationDateTime       float64                  `json:"CreationDateTime"`
 	ItemCount              int64                    `json:"ItemCount"`
 	StreamSpecification    *StreamSpecification     `json:"StreamSpecification,omitempty"`

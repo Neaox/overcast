@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -262,6 +263,7 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 		TableStatus:          "ACTIVE",
 		BillingMode:          req.BillingMode,
 		TableARN:             "arn:aws:dynamodb:" + region + ":" + h.cfg.AccountID + ":table/" + req.TableName,
+		TableId:              uuid.New().String(),
 		CreationDateTime:     float64(h.clk.Now().UnixMilli()) / 1000.0,
 		ItemCount:            0,
 	}

@@ -18,18 +18,17 @@
 //
 //	GetItem_notFound
 //
-// No substitution was needed from the ~9-op list in the issue: none of
-// CreateTable/DescribeTable/ListTables/PutItem/GetItem/Query/Scan/UpdateItem/
-// DeleteItem mints a UUID or other random value on this emulator's response
-// path (verified: no crypto/rand, math/rand, or uuid.New under
-// internal/services/dynamodb, other than in a *_test.go helper unrelated to
-// any handler). Table ARNs are built deterministically from region + account
-// + table name (internal/protocol/arn.go), timestamps (CreationDateTime) are
-// driven by the injected clock, and Query/Scan read from an ordered
-// (hashKey, sortKey) tree/SQL index (see the itemBackend doc comment in
-// item_store.go) — never a Go map — so item order is stable across runs
-// without a normalize step. No NormalizeFunc is defined or needed anywhere in
-// this file; every GoldenTest call below passes nil.
+// Table ARNs are built deterministically from region + account + table name
+// (internal/protocol/arn.go), timestamps (CreationDateTime) are driven by the
+// injected clock, and Query/Scan read from an ordered (hashKey, sortKey)
+// tree/SQL index (see the itemBackend doc comment in item_store.go) — never a
+// Go map — so item order is stable across runs without a normalize step for
+// any of that. CreateTable and DescribeTable are the two exceptions: TableId
+// (#1272) is a uuid.New()-minted UUID, so normalizeDynamoDBTableId redacts it
+// to a fixed placeholder, following the same pattern as
+// tests/integration/ec2/golden_test.go's normalizeEC2IDs and
+// tests/integration/iam/golden_test.go's normalizeIAM. Every other GoldenTest
+// call below still passes nil.
 //
 // Excluded (message-plane / non-deterministic / no golden value):
 //
@@ -47,12 +46,25 @@
 package dynamodb_test
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
 const dynamodbGoldenDir = "goldens"
+
+// tableIdRE matches DynamoDB's TableId — a UUID minted once by CreateTable
+// (internal/services/dynamodb/handler.go's createTableTyped, via
+// uuid.New()) and echoed unchanged by DescribeTable/UpdateTable/DeleteTable.
+var tableIdRE = regexp.MustCompile(`"TableId":"[0-9a-fA-F-]+"`)
+
+// normalizeDynamoDBTableId redacts TableId to a fixed placeholder so
+// CreateTable/DescribeTable goldens compare byte-for-byte across the record
+// run and every later assert run.
+func normalizeDynamoDBTableId(body []byte) []byte {
+	return tableIdRE.ReplaceAll(body, []byte(`"TableId":"00000000-0000-0000-0000-000000000000"`))
+}
 
 func TestGolden_CreateTable(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
@@ -67,7 +79,7 @@ func TestGolden_CreateTable(t *testing.T) {
 		},
 		"BillingMode": "PAY_PER_REQUEST",
 	})
-	helpers.GoldenTest(t, dynamodbGoldenDir, "CreateTable", resp, nil)
+	helpers.GoldenTest(t, dynamodbGoldenDir, "CreateTable", resp, normalizeDynamoDBTableId)
 }
 
 func TestGolden_DescribeTable(t *testing.T) {
@@ -75,7 +87,7 @@ func TestGolden_DescribeTable(t *testing.T) {
 	createTable(t, srv, "golden-table")
 
 	resp := ddbCall(t, srv, "DescribeTable", map[string]any{"TableName": "golden-table"})
-	helpers.GoldenTest(t, dynamodbGoldenDir, "DescribeTable", resp, nil)
+	helpers.GoldenTest(t, dynamodbGoldenDir, "DescribeTable", resp, normalizeDynamoDBTableId)
 }
 
 func TestGolden_ListTables(t *testing.T) {

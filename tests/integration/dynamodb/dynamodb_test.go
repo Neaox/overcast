@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,10 @@ import (
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
+
+// uuidRE matches a canonical (lowercase, hyphenated) UUID such as the one
+// google/uuid.New().String() produces.
+var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // ---- CreateTable -----------------------------------------------------------
 
@@ -43,6 +48,7 @@ func TestCreateTable_success(t *testing.T) {
 		TableDescription struct {
 			TableName   string `json:"TableName"`
 			TableStatus string `json:"TableStatus"`
+			TableId     string `json:"TableId"`
 		} `json:"TableDescription"`
 	}
 	helpers.DecodeJSON(t, resp, &result)
@@ -52,6 +58,92 @@ func TestCreateTable_success(t *testing.T) {
 	}
 	if result.TableDescription.TableStatus != "ACTIVE" {
 		t.Errorf("expected TableStatus ACTIVE, got %q", result.TableDescription.TableStatus)
+	}
+	if !uuidRE.MatchString(result.TableDescription.TableId) {
+		t.Errorf("expected TableId to be a UUID, got %q", result.TableDescription.TableId)
+	}
+}
+
+// TestCreateTable_tableIdStableAcrossDescribeUpdateDelete verifies TableId is
+// minted once at CreateTable time and echoed unchanged by DescribeTable,
+// UpdateTable, and DeleteTable — not regenerated on every read, matching
+// real AWS's fixed-for-the-table's-lifetime TableId.
+func TestCreateTable_tableIdStableAcrossDescribeUpdateDelete(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	createResp := ddbCall(t, srv, "CreateTable", map[string]any{
+		"TableName": "stable-id-table",
+		"AttributeDefinitions": []map[string]any{
+			{"AttributeName": "id", "AttributeType": "S"},
+		},
+		"KeySchema": []map[string]any{
+			{"AttributeName": "id", "KeyType": "HASH"},
+		},
+		"BillingMode": "PAY_PER_REQUEST",
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	var created struct {
+		TableDescription struct {
+			TableId string `json:"TableId"`
+		} `json:"TableDescription"`
+	}
+	helpers.DecodeJSON(t, createResp, &created)
+	if !uuidRE.MatchString(created.TableDescription.TableId) {
+		t.Fatalf("expected TableId to be a UUID, got %q", created.TableDescription.TableId)
+	}
+
+	describeResp := ddbCall(t, srv, "DescribeTable", map[string]any{"TableName": "stable-id-table"})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	var described struct {
+		Table struct {
+			TableId string `json:"TableId"`
+		} `json:"Table"`
+	}
+	helpers.DecodeJSON(t, describeResp, &described)
+	if described.Table.TableId != created.TableDescription.TableId {
+		t.Errorf("DescribeTable TableId = %q, want %q (unchanged from CreateTable)",
+			described.Table.TableId, created.TableDescription.TableId)
+	}
+
+	updateResp := ddbCall(t, srv, "UpdateTable", map[string]any{
+		"TableName":   "stable-id-table",
+		"BillingMode": "PROVISIONED",
+		"ProvisionedThroughput": map[string]any{
+			"ReadCapacityUnits": 5, "WriteCapacityUnits": 5,
+		},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	var updated struct {
+		TableDescription struct {
+			TableId string `json:"TableId"`
+		} `json:"TableDescription"`
+	}
+	helpers.DecodeJSON(t, updateResp, &updated)
+	if updated.TableDescription.TableId != created.TableDescription.TableId {
+		t.Errorf("UpdateTable TableId = %q, want %q (unchanged from CreateTable)",
+			updated.TableDescription.TableId, created.TableDescription.TableId)
+	}
+
+	deleteResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "stable-id-table"})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+	// DeleteTable's response reuses describeTableResponse (json field "Table"),
+	// not "TableDescription" — a pre-existing, separate wire-shape question
+	// outside this fix's scope, so this test matches the field name the
+	// handler actually emits today.
+	var deleted struct {
+		Table struct {
+			TableId string `json:"TableId"`
+		} `json:"Table"`
+	}
+	helpers.DecodeJSON(t, deleteResp, &deleted)
+	if deleted.Table.TableId != created.TableDescription.TableId {
+		t.Errorf("DeleteTable TableId = %q, want %q (unchanged from CreateTable)",
+			deleted.Table.TableId, created.TableDescription.TableId)
 	}
 }
 
