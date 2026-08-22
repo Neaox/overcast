@@ -30,6 +30,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -543,6 +544,13 @@ type Service struct {
 	clk   clock.Clock
 	ops   map[string]http.HandlerFunc
 
+	// typedOp is the codec-agnostic view of the same operations, keyed by AWS
+	// operation name. It is what answers Smithy RPC v2 CBOR (#1280); the JSON
+	// and Query handlers reach the same cores through their own decode steps.
+	// Built once in New rather than per call: op.NewTyped allocates an
+	// Operation per entry, and Dispatch looks the map up on the request path.
+	typedOp map[string]op.Operation
+
 	// actions delivers alarm transitions to their configured action ARNs.
 	// Nil until InitAlarmActions is called, which keeps the service usable
 	// in unit tests that wire no router.
@@ -598,6 +606,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		"EnableAlarmActions":      s.enableAlarmActions,
 		"DisableAlarmActions":     s.disableAlarmActions,
 	}
+	s.typedOp = s.typedOps()
 	// -1 = unknown: the first tick learns the real count from the store,
 	// after construction, so a restart with existing alarms still evaluates.
 	s.alarmCount.Store(-1)
@@ -635,23 +644,58 @@ func (s *Service) TargetPrefix() string { return cloudwatchJSONTargetPrefix }
 // X-Amz-Target itself; the header-trimming fallback below only covers
 // callers that invoke Dispatch without going through the router's
 // middleware chain (e.g. a unit test constructing a bare request).
+//
+// It is also where a Smithy RPC v2 CBOR request lands (#1280): the router's
+// smithyRPCDispatch resolves /service/GraniteServiceVersion20100801/operation/
+// <Op> against this service's Operations() and then calls Dispatch, with the
+// codec already in context. CBOR goes through the typed operations; awsJson
+// stays on dispatchJSON, whose handlers keep their own decode step so their
+// wire bytes are unchanged — both reach the same cores.
 func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	_, action := codec.FromContext(r.Context())
-	if action == "" {
-		target := r.Header.Get("X-Amz-Target")
-		trimmed := strings.TrimPrefix(target, cloudwatchJSONTargetPrefix)
-		if trimmed == target {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code:       "UnknownOperationException",
-				Message:    "Unknown target: " + target,
-				HTTPStatus: http.StatusBadRequest,
+	if c, action := codec.FromContext(r.Context()); c != nil && action != "" {
+		if !serviceutil.AllowProtocolDrift(s.cfg, s.log, action, c, s.SupportedProtocols()) {
+			w.Header().Set("x-emulator-unsupported-protocol", c.Name())
+			c.WriteError(w, r, &protocol.AWSError{
+				Code:       "UnsupportedProtocol",
+				Message:    "CloudWatch does not support wire protocol " + c.Name() + ".",
+				HTTPStatus: http.StatusUnsupportedMediaType,
 			})
 			return
 		}
-		action = trimmed
+		switch c.Name() {
+		case codec.NameAWSJSON10, codec.NameAWSJSON11:
+			s.dispatchJSON(w, r, action)
+		default:
+			// Anything else — rpcv2Cbor today — is answered by the typed
+			// operations. An operation with no typed binding does not reach
+			// here over RPC v2: smithyRPCDispatch consults Operations() first
+			// and answers 501 itself, so this arm's error covers only a caller
+			// that put an unknown operation in the context directly.
+			typed, ok := s.typedOp[action]
+			if !ok {
+				c.WriteError(w, r, &protocol.AWSError{
+					Code:       "UnknownOperationException",
+					Message:    "Unknown CloudWatch operation: " + action,
+					HTTPStatus: http.StatusBadRequest,
+				})
+				return
+			}
+			typed.Invoke(w, r, c)
+		}
+		return
 	}
 
-	s.dispatchJSON(w, r, action)
+	target := r.Header.Get("X-Amz-Target")
+	trimmed := strings.TrimPrefix(target, cloudwatchJSONTargetPrefix)
+	if trimmed == target {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "UnknownOperationException",
+			Message:    "Unknown target: " + target,
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	s.dispatchJSON(w, r, trimmed)
 }
 
 func (s *Service) Stop(ctx context.Context) {
@@ -736,6 +780,18 @@ func writeJSONResult(w http.ResponseWriter, r *http.Request, body any) {
 	protocol.WriteJSON(w, r, http.StatusOK, body)
 }
 
+// errInvalidJSONBody is the answer the awsJson handlers have always given a
+// body that will not parse. The typed dispatcher has its own spelling of the
+// same fault (codec.Decode's "could not be parsed as JSON/CBOR"), which is why
+// these handlers keep their own decode step rather than delegating the whole
+// request to the typed operation: the cores are shared, the wire bytes of an
+// established protocol are not moved to share them.
+var errInvalidJSONBody = &protocol.AWSError{
+	Code:       "InvalidParameterValue",
+	Message:    "Invalid JSON body",
+	HTTPStatus: http.StatusBadRequest,
+}
+
 func parseEpochSeconds(ts float64) time.Time {
 	sec := int64(ts)
 	nsec := int64((ts - float64(sec)) * float64(time.Second))
@@ -749,414 +805,102 @@ func epochSeconds(t time.Time) float64 {
 // ─── Handlers ─────────────────────────────────────────────────
 
 func (s *Service) listMetricsJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Namespace string `json:"Namespace"`
-	}
+	var in listMetricsRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	metrics, err := s.store.mergedListMetrics(r.Context(), in.Namespace)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	writeJSONResult(w, r, struct {
-		Metrics []*Metric `json:"Metrics"`
-	}{Metrics: metrics})
-}
-
-func (s *Service) describeAlarmsJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		AlarmNames []string `json:"AlarmNames"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&in)
-
-	alarms, err := s.store.listAlarms(r.Context())
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	filterNames := make(map[string]bool, len(in.AlarmNames))
-	for _, name := range in.AlarmNames {
-		if name != "" {
-			filterNames[name] = true
-		}
-	}
-
-	type metricAlarmJSON struct {
-		AlarmName                          string      `json:"AlarmName"`
-		AlarmArn                           string      `json:"AlarmArn"`
-		MetricName                         string      `json:"MetricName,omitempty"`
-		Namespace                          string      `json:"Namespace,omitempty"`
-		Statistic                          string      `json:"Statistic,omitempty"`
-		Dimensions                         []Dimension `json:"Dimensions,omitempty"`
-		Unit                               string      `json:"Unit,omitempty"`
-		Period                             int         `json:"Period,omitempty"`
-		EvaluationPeriods                  int         `json:"EvaluationPeriods,omitempty"`
-		DatapointsToAlarm                  int         `json:"DatapointsToAlarm,omitempty"`
-		Threshold                          float64     `json:"Threshold,omitempty"`
-		ComparisonOperator                 string      `json:"ComparisonOperator,omitempty"`
-		ActionsEnabled                     bool        `json:"ActionsEnabled"`
-		AlarmActions                       []string    `json:"AlarmActions,omitempty"`
-		OKActions                          []string    `json:"OKActions,omitempty"`
-		InsufficientDataActions            []string    `json:"InsufficientDataActions,omitempty"`
-		StateValue                         string      `json:"StateValue"`
-		StateReason                        string      `json:"StateReason"`
-		StateReasonData                    string      `json:"StateReasonData,omitempty"`
-		AlarmDescription                   string      `json:"AlarmDescription,omitempty"`
-		TreatMissingData                   string      `json:"TreatMissingData,omitempty"`
-		StateUpdatedTimestamp              float64     `json:"StateUpdatedTimestamp,omitempty"`
-		StateTransitionedTimestamp         float64     `json:"StateTransitionedTimestamp,omitempty"`
-		AlarmConfigurationUpdatedTimestamp float64     `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
-	}
-
-	out := make([]metricAlarmJSON, 0, len(alarms))
-	for _, a := range alarms {
-		if len(filterNames) > 0 && !filterNames[a.AlarmName] {
-			continue
-		}
-		alarm := metricAlarmJSON{
-			AlarmName:               a.AlarmName,
-			AlarmArn:                a.AlarmArn,
-			MetricName:              a.MetricName,
-			Namespace:               a.Namespace,
-			Statistic:               a.Statistic,
-			Dimensions:              a.Dimensions,
-			Unit:                    a.Unit,
-			Period:                  a.Period,
-			EvaluationPeriods:       a.EvaluationPeriods,
-			DatapointsToAlarm:       a.DatapointsToAlarm,
-			Threshold:               a.Threshold,
-			ComparisonOperator:      a.ComparisonOperator,
-			ActionsEnabled:          a.ActionsEnabled,
-			AlarmActions:            a.AlarmActions,
-			OKActions:               a.OKActions,
-			InsufficientDataActions: a.InsufficientDataActions,
-			StateValue:              a.StateValue,
-			StateReason:             a.StateReason,
-			StateReasonData:         a.StateReasonData,
-			AlarmDescription:        a.AlarmDescription,
-			TreatMissingData:        a.TreatMissingData,
-		}
-		if t, err := time.Parse(time.RFC3339, a.StateUpdatedTimestamp); err == nil {
-			alarm.StateUpdatedTimestamp = epochSeconds(t)
-		}
-		if t, err := time.Parse(time.RFC3339, a.StateTransitionedTimestamp); err == nil {
-			alarm.StateTransitionedTimestamp = epochSeconds(t)
-		}
-		if t, err := time.Parse(time.RFC3339, a.AlarmConfigurationUpdatedTimestamp); err == nil {
-			alarm.AlarmConfigurationUpdatedTimestamp = epochSeconds(t)
-		}
-		out = append(out, alarm)
-	}
-
-	writeJSONResult(w, r, struct {
-		MetricAlarms []metricAlarmJSON `json:"MetricAlarms"`
-	}{MetricAlarms: out})
-}
-
-func (s *Service) getMetricStatisticsJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Namespace  string      `json:"Namespace"`
-		MetricName string      `json:"MetricName"`
-		StartTime  float64     `json:"StartTime"`
-		EndTime    float64     `json:"EndTime"`
-		Period     int         `json:"Period"`
-		Statistics []string    `json:"Statistics"`
-		Dimensions []Dimension `json:"Dimensions"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
-		return
-	}
-	if in.Namespace == "" || in.MetricName == "" || in.Period <= 0 || in.StartTime == 0 || in.EndTime == 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "MissingParameter", Message: "Namespace, MetricName, StartTime, EndTime, and Period are required", HTTPStatus: http.StatusBadRequest})
-		return
-	}
-
-	startTime := parseEpochSeconds(in.StartTime)
-	endTime := parseEpochSeconds(in.EndTime)
-	if endTime.Before(startTime) {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "EndTime must be after StartTime", HTTPStatus: http.StatusBadRequest})
-		return
-	}
-
-	requestedStats := map[string]bool{}
-	for _, st := range in.Statistics {
-		if st != "" {
-			requestedStats[st] = true
-		}
-	}
-	if len(requestedStats) == 0 {
-		requestedStats["Average"] = true
-	}
-
-	dimensions := canonicalizeDimensions(in.Dimensions)
-	points, err := s.store.mergedMetricDataPoints(r.Context(), in.Namespace, in.MetricName, dimensions, startTime, endTime)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	buckets := aggregateMetricBuckets(points, startTime.UTC(), endTime.UTC(), in.Period)
-
-	type datapointJSON struct {
-		Timestamp   float64 `json:"Timestamp"`
-		Average     float64 `json:"Average,omitempty"`
-		Sum         float64 `json:"Sum,omitempty"`
-		SampleCount float64 `json:"SampleCount,omitempty"`
-		Minimum     float64 `json:"Minimum,omitempty"`
-		Maximum     float64 `json:"Maximum,omitempty"`
-		Unit        string  `json:"Unit,omitempty"`
-	}
-	datapoints := make([]datapointJSON, 0, len(buckets))
-	for _, b := range buckets {
-		dp := datapointJSON{Timestamp: epochSeconds(b.timestamp)}
-		if requestedStats["Average"] && b.sample > 0 {
-			dp.Average = b.sum / b.sample
-		}
-		if requestedStats["Sum"] {
-			dp.Sum = b.sum
-		}
-		if requestedStats["SampleCount"] {
-			dp.SampleCount = b.sample
-		}
-		if requestedStats["Minimum"] {
-			dp.Minimum = b.min
-		}
-		if requestedStats["Maximum"] {
-			dp.Maximum = b.max
-		}
-		if b.unit != "" {
-			dp.Unit = b.unit
-		}
-		datapoints = append(datapoints, dp)
-	}
-
-	writeJSONResult(w, r, struct {
-		Label      string          `json:"Label"`
-		Datapoints []datapointJSON `json:"Datapoints"`
-	}{
-		Label:      in.MetricName,
-		Datapoints: datapoints,
-	})
-}
-
-// getMetricDataJSON is the awsJson1_0 encoding of GetMetricData — the
-// operation's *primary* modeled protocol (issue #886). Real CloudWatch
-// diverges from its own Query encoding here in three ways this handler has
-// to bridge, all on top of the shared computeMetricDataResults core:
-//
-//   - MetricDataQueries arrives as a JSON array of structures instead of
-//     the Query protocol's MetricDataQueries.member.N indexing.
-//   - StartTime/EndTime/Timestamps are epoch-second numbers, not the
-//     Query protocol's ISO-8601 strings.
-//   - MetricDataResults is a JSON array of structures instead of Query's
-//     parallel Timestamps/Values member lists.
-func (s *Service) getMetricDataJSON(w http.ResponseWriter, r *http.Request) {
-	type metricJSON struct {
-		Namespace  string      `json:"Namespace"`
-		MetricName string      `json:"MetricName"`
-		Dimensions []Dimension `json:"Dimensions,omitempty"`
-	}
-	type metricStatJSON struct {
-		Metric metricJSON `json:"Metric"`
-		Period int        `json:"Period"`
-		Stat   string     `json:"Stat"`
-		Unit   string     `json:"Unit,omitempty"`
-	}
-	type metricDataQueryJSON struct {
-		Id         string          `json:"Id"`
-		MetricStat *metricStatJSON `json:"MetricStat,omitempty"`
-		Expression string          `json:"Expression,omitempty"`
-		Label      string          `json:"Label,omitempty"`
-	}
-	var in struct {
-		MetricDataQueries []metricDataQueryJSON `json:"MetricDataQueries"`
-		StartTime         float64               `json:"StartTime"`
-		EndTime           float64               `json:"EndTime"`
-		ScanBy            string                `json:"ScanBy"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
-		return
-	}
-	if in.StartTime == 0 || in.EndTime == 0 {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "MissingParameter", Message: "StartTime and EndTime are required", HTTPStatus: http.StatusBadRequest})
-		return
-	}
-	startTime := parseEpochSeconds(in.StartTime)
-	endTime := parseEpochSeconds(in.EndTime)
-
-	scanBy := in.ScanBy
-	if scanBy == "" {
-		scanBy = "TimestampDescending"
-	}
-
-	queries := make([]metricDataQueryInput, 0, len(in.MetricDataQueries))
-	for _, q := range in.MetricDataQueries {
-		mdq := metricDataQueryInput{id: q.Id, expression: q.Expression}
-		if mdq.expression == "" {
-			if q.MetricStat == nil {
-				protocol.WriteJSONError(w, r, &protocol.AWSError{
-					Code: "InvalidParameterValue", Message: "Each query must include MetricStat with Metric, Period, and Stat",
-					HTTPStatus: http.StatusBadRequest,
-				})
-				return
-			}
-			mdq.namespace = q.MetricStat.Metric.Namespace
-			mdq.metricName = q.MetricStat.Metric.MetricName
-			mdq.period = q.MetricStat.Period
-			mdq.stat = q.MetricStat.Stat
-			if mdq.stat == "" {
-				mdq.stat = "Average"
-			}
-			mdq.dimensions = canonicalizeDimensions(q.MetricStat.Metric.Dimensions)
-			if mdq.namespace == "" || mdq.metricName == "" || mdq.period <= 0 {
-				protocol.WriteJSONError(w, r, &protocol.AWSError{
-					Code: "InvalidParameterValue", Message: "Each query must include MetricStat with Metric, Period, and Stat",
-					HTTPStatus: http.StatusBadRequest,
-				})
-				return
-			}
-		}
-		queries = append(queries, mdq)
-	}
-
-	dataResults, aerr := s.computeMetricDataResults(r.Context(), queries, startTime, endTime, scanBy)
+	out, aerr := s.listMetricsCore(r.Context(), &in)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	writeJSONResult(w, r, out)
+}
 
-	type metricDataResultJSON struct {
-		Id         string    `json:"Id"`
-		Label      string    `json:"Label"`
-		Timestamps []float64 `json:"Timestamps"`
-		Values     []float64 `json:"Values"`
-		StatusCode string    `json:"StatusCode"`
-	}
-	out := make([]metricDataResultJSON, 0, len(dataResults))
-	for _, res := range dataResults {
-		timestamps := make([]float64, len(res.timestamps))
-		for i, t := range res.timestamps {
-			timestamps[i] = epochSeconds(t)
-		}
-		out = append(out, metricDataResultJSON{
-			Id:         res.id,
-			Label:      res.label,
-			Timestamps: timestamps,
-			Values:     res.values,
-			StatusCode: "Complete",
-		})
-	}
+func (s *Service) describeAlarmsJSON(w http.ResponseWriter, r *http.Request) {
+	var in describeAlarmsRequest
+	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	writeJSONResult(w, r, struct {
-		MetricDataResults []metricDataResultJSON `json:"MetricDataResults"`
-	}{MetricDataResults: out})
+	out, aerr := s.describeAlarmsCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, out)
+}
+
+func (s *Service) getMetricStatisticsJSON(w http.ResponseWriter, r *http.Request) {
+	var in getMetricStatisticsRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
+		return
+	}
+	out, aerr := s.getMetricStatisticsCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, out)
+}
+
+// getMetricDataJSON is the awsJson1_0 encoding of GetMetricData — the
+// operation's *primary* modeled protocol (issue #886). The three ways real
+// CloudWatch's structured encoding diverges from its own Query one, and the
+// shared computeMetricDataResults core underneath both, are described on
+// getMetricDataCore in typed_ops.go; rpcv2Cbor reaches that same core.
+func (s *Service) getMetricDataJSON(w http.ResponseWriter, r *http.Request) {
+	var in getMetricDataRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
+		return
+	}
+	out, aerr := s.getMetricDataCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) putMetricDataJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Namespace  string `json:"Namespace"`
-		MetricData []struct {
-			MetricName      string      `json:"MetricName"`
-			Timestamp       *float64    `json:"Timestamp,omitempty"`
-			Value           *float64    `json:"Value,omitempty"`
-			Unit            string      `json:"Unit,omitempty"`
-			Dimensions      []Dimension `json:"Dimensions,omitempty"`
-			StatisticValues *struct {
-				SampleCount float64 `json:"SampleCount"`
-				Sum         float64 `json:"Sum"`
-				Minimum     float64 `json:"Minimum"`
-				Maximum     float64 `json:"Maximum"`
-			} `json:"StatisticValues,omitempty"`
-		} `json:"MetricData"`
-	}
+	var in putMetricDataRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
 		return
 	}
-	if in.Namespace == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "MissingParameter", Message: "Namespace is required", HTTPStatus: http.StatusBadRequest})
+	out, aerr := s.putMetricDataCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	for _, datum := range in.MetricData {
-		if datum.MetricName == "" {
-			continue
-		}
-		dimensions := canonicalizeDimensions(datum.Dimensions)
-		if err := s.store.putMetric(r.Context(), in.Namespace, datum.MetricName, dimensions); err != nil {
-			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-			return
-		}
-
-		ts := s.clk.Now().UTC()
-		if datum.Timestamp != nil {
-			ts = parseEpochSeconds(*datum.Timestamp)
-		}
-
-		dp := &MetricDataPoint{
-			Namespace:  in.Namespace,
-			MetricName: datum.MetricName,
-			Dimensions: dimensions,
-			Timestamp:  ts,
-			Unit:       datum.Unit,
-		}
-
-		if datum.StatisticValues != nil {
-			dp.SampleCount = datum.StatisticValues.SampleCount
-			dp.Sum = datum.StatisticValues.Sum
-			dp.Minimum = datum.StatisticValues.Minimum
-			dp.Maximum = datum.StatisticValues.Maximum
-		} else if datum.Value != nil {
-			dp.SampleCount = 1
-			dp.Sum = *datum.Value
-			dp.Minimum = *datum.Value
-			dp.Maximum = *datum.Value
-		}
-
-		if err := s.store.putMetricDataPoint(r.Context(), dp); err != nil {
-			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-			return
-		}
-	}
-
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) putMetricAlarmJSON(w http.ResponseWriter, r *http.Request) {
 	var body putMetricAlarmJSONBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
 		return
 	}
-	in := body.toInput()
-	if aerr := in.validate(); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	alarm, aerr := s.storeAlarmFromInput(r, in, jsonTagCfg)
+	out, aerr := s.putMetricAlarmCore(r.Context(), &body)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	protocol.MarkLimitation(w, alarm.UnevaluatedReason)
-	writeJSONResult(w, r, struct{}{})
+	for _, reason := range out.EmulationLimitations() {
+		protocol.MarkLimitation(w, reason)
+	}
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) deleteAlarmsJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		AlarmNames []string `json:"AlarmNames"`
-	}
+	var in deleteAlarmsRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	for _, name := range in.AlarmNames {
-		if name == "" {
-			continue
-		}
-		s.removeAlarm(r.Context(), name)
+	out, aerr := s.deleteAlarmsCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 // removeAlarm deletes an alarm along with the history, tags and evaluation
@@ -1175,31 +919,15 @@ func (s *Service) alarmARN(ctx context.Context, name string) string {
 }
 
 func (s *Service) describeAlarmsForMetricJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		MetricName string `json:"MetricName"`
-		Namespace  string `json:"Namespace"`
-	}
+	var in describeAlarmsForMetricRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	alarms, err := s.store.listAlarms(r.Context())
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	out, aerr := s.describeAlarmsForMetricCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	type alarmSummary struct {
-		AlarmName string `json:"AlarmName"`
-		AlarmArn  string `json:"AlarmArn"`
-	}
-	out := make([]alarmSummary, 0, len(alarms))
-	for _, a := range alarms {
-		if (in.MetricName != "" && a.MetricName != in.MetricName) || (in.Namespace != "" && a.Namespace != in.Namespace) {
-			continue
-		}
-		out = append(out, alarmSummary{AlarmName: a.AlarmName, AlarmArn: a.AlarmArn})
-	}
-	writeJSONResult(w, r, struct {
-		MetricAlarms []alarmSummary `json:"MetricAlarms"`
-	}{MetricAlarms: out})
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
@@ -1208,7 +936,7 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	alarm, aerr := s.storeAlarmFromInput(r, in, queryTagCfg)
+	alarm, aerr := s.storeAlarmFromInput(r.Context(), in, queryTagCfg)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1220,11 +948,11 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 // storeAlarmFromInput persists a validated PutMetricAlarm request, recording
 // the ConfigurationUpdate history item AWS records for it. cfg carries the
 // caller's protocol spelling of a tag-validation error.
-func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput, cfg serviceutil.TagValidationConfig) (*MetricAlarm, *protocol.AWSError) {
-	arn := s.alarmARN(r.Context(), in.AlarmName)
+func (s *Service) storeAlarmFromInput(ctx context.Context, in alarmInput, cfg serviceutil.TagValidationConfig) (*MetricAlarm, *protocol.AWSError) {
+	arn := s.alarmARN(ctx, in.AlarmName)
 	now := s.clk.Now().UTC()
 
-	previous, existed := s.store.getAlarm(r.Context(), in.AlarmName)
+	previous, existed := s.store.getAlarm(ctx, in.AlarmName)
 
 	// Tags apply on creation only: AWS ignores the Tags parameter when
 	// PutMetricAlarm updates an existing alarm, and points callers at
@@ -1234,13 +962,13 @@ func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput, cfg servic
 	// before the alarm is written, so a tag set AWS would reject fails the
 	// whole call instead of leaving an alarm behind with no tags.
 	if !existed && len(in.Tags) > 0 {
-		if aerr := s.addResourceTags(r.Context(), arn, in.Tags, cfg); aerr != nil {
+		if aerr := s.addResourceTags(ctx, arn, in.Tags, cfg); aerr != nil {
 			return nil, aerr
 		}
 	}
 
 	alarm := in.toAlarm(arn, now, previous)
-	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
+	if err := s.store.putAlarm(ctx, alarm); err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	s.invalidateAlarmCount()
@@ -1250,7 +978,7 @@ func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput, cfg servic
 	if existed {
 		summary = "Alarm " + in.AlarmName + " updated"
 	}
-	_ = s.store.putAlarmHistory(r.Context(), AlarmHistoryItem{
+	_ = s.store.putAlarmHistory(ctx, AlarmHistoryItem{
 		AlarmName:       alarm.AlarmName,
 		AlarmType:       "MetricAlarm",
 		Timestamp:       now,
@@ -1954,27 +1682,17 @@ func (s *Service) setAlarmState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) setAlarmStateJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		AlarmName       string `json:"AlarmName"`
-		StateValue      string `json:"StateValue"`
-		StateReason     string `json:"StateReason"`
-		StateReasonData string `json:"StateReasonData"`
-	}
+	var in setAlarmStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
 		return
 	}
-	if aerr := validateSetAlarmState(in.AlarmName, in.StateValue); aerr != nil {
+	out, aerr := s.setAlarmStateCore(r.Context(), &in)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	alarm, found := s.store.getAlarm(r.Context(), in.AlarmName)
-	if !found {
-		protocol.WriteJSONError(w, r, errAlarmNotFound(in.AlarmName))
-		return
-	}
-	s.applyAlarmState(r.Context(), alarm, in.StateValue, in.StateReason, in.StateReasonData, true)
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 // validateSetAlarmState mirrors the checks real CloudWatch applies before it
@@ -2028,16 +1746,14 @@ func (s *Service) setAlarmActionsEnabled(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Service) setAlarmActionsEnabledJSON(w http.ResponseWriter, r *http.Request, enabled bool) {
-	var in struct {
-		AlarmNames []string `json:"AlarmNames"`
-	}
+	var in alarmActionsRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	for _, name := range in.AlarmNames {
-		if name != "" {
-			s.applyActionsEnabled(r.Context(), name, enabled)
-		}
+	out, aerr := s.alarmActionsCore(r.Context(), &in, enabled)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 // applyActionsEnabled persists one alarm's ActionsEnabled flag.
@@ -2079,67 +1795,26 @@ func (s *Service) describeAlarmHistory(w http.ResponseWriter, r *http.Request) {
 
 // describeAlarmHistoryJSON answers the JSON-protocol DescribeAlarmHistory.
 func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		AlarmName       string   `json:"AlarmName"`
-		HistoryItemType string   `json:"HistoryItemType"`
-		StartDate       *float64 `json:"StartDate"`
-		EndDate         *float64 `json:"EndDate"`
-		MaxRecords      int      `json:"MaxRecords"`
-		ScanBy          string   `json:"ScanBy"`
-	}
+	var in describeAlarmHistoryRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	q := historyQuery{
-		AlarmName:       in.AlarmName,
-		HistoryItemType: in.HistoryItemType,
-		MaxRecords:      in.MaxRecords,
-		ScanBy:          in.ScanBy,
-	}
-	if in.StartDate != nil {
-		q.StartDate = parseEpochSeconds(*in.StartDate)
-	}
-	if in.EndDate != nil {
-		q.EndDate = parseEpochSeconds(*in.EndDate)
-	}
-
-	items, err := s.store.listAlarmHistory(r.Context(), in.AlarmName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	out, aerr := s.describeAlarmHistoryCore(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	type historyItemJSON struct {
-		AlarmName       string  `json:"AlarmName"`
-		AlarmType       string  `json:"AlarmType"`
-		Timestamp       float64 `json:"Timestamp"`
-		HistoryItemType string  `json:"HistoryItemType"`
-		HistorySummary  string  `json:"HistorySummary"`
-		HistoryData     string  `json:"HistoryData,omitempty"`
-	}
-	filtered := q.filter(items)
-	out := make([]historyItemJSON, 0, len(filtered))
-	for _, item := range filtered {
-		out = append(out, historyItemJSON{
-			AlarmName:       item.AlarmName,
-			AlarmType:       item.AlarmType,
-			Timestamp:       epochSeconds(item.Timestamp),
-			HistoryItemType: item.HistoryItemType,
-			HistorySummary:  item.HistorySummary,
-			HistoryData:     item.HistoryData,
-		})
-	}
-	writeJSONResult(w, r, struct {
-		AlarmHistoryItems []historyItemJSON `json:"AlarmHistoryItems"`
-	}{AlarmHistoryItems: out})
+	writeJSONResult(w, r, out)
 }
 
 // ─── Tagging ──────────────────────────────────────────────────
 //
-// CloudWatch is reachable over both the Query protocol and the JSON
-// protocol the AWS CLI and SDKs use, so each tagging operation has a pair
-// of handlers that differ only in how they read the request and write the
-// response. The behaviour between them lives in the helpers below, never
-// in one protocol's handler (issue #794 shipped because the JSON side was
-// simply absent).
+// CloudWatch is reachable over the Query protocol, the JSON protocol the AWS
+// CLI and SDKs use, and Smithy RPC v2 CBOR, so each tagging operation has one
+// handler per door and they differ only in how they read the request and write
+// the response — the JSON and CBOR ones share a core outright (see
+// typed_ops.go). The behaviour lives in the helpers below, never in one
+// protocol's handler (issue #794 shipped because the JSON side was simply
+// absent).
 
 // alarmARNResourcePrefix is the resource segment a CloudWatch alarm ARN
 // carries: arn:aws:cloudwatch:<region>:<account>:alarm:<name>.
@@ -2149,11 +1824,13 @@ const alarmARNResourcePrefix = "alarm:"
 // TagResource's documentation.
 const tagLimitMessage = "You can associate as many as 50 tags with a CloudWatch resource."
 
-// queryTagCfg and jsonTagCfg are the same tag rules under each protocol's
-// spelling of the error. CloudWatch's InvalidParameterValueException carries
-// an awsQueryError trait whose code is the shorter InvalidParameterValue, so
-// one violation genuinely has two names, and these two vars are the only
-// place either is written.
+// queryTagCfg and jsonTagCfg are the same tag rules under each spelling of the
+// error. CloudWatch's InvalidParameterValueException carries an awsQueryError
+// trait whose code is the shorter InvalidParameterValue, so one violation
+// genuinely has two names, and these two vars are the only place either is
+// written. The split is Query versus everything else, not Query versus JSON:
+// the awsQueryError trait is what shortens the code, so rpcv2Cbor uses the
+// full shape name and therefore jsonTagCfg.
 //
 // serviceutil.MaxTags is 50, which is CloudWatch's own limit, so Limit stays
 // at its default.
@@ -2311,23 +1988,15 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ResourceARN string `json:"ResourceARN"`
-	}
+	var in listTagsForResourceRequest
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
-	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	tags, aerr := s.resourceTags(r.Context(), in.ResourceARN)
+	out, aerr := s.listTagsForResourceCore(r.Context(), &in)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	writeJSONResult(w, r, struct {
-		Tags []Tag `json:"Tags"`
-	}{Tags: sortedTags(tags)})
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
@@ -2344,23 +2013,17 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ResourceARN string `json:"ResourceARN"`
-		Tags        []Tag  `json:"Tags"`
-	}
+	var in tagResourceRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
 		return
 	}
-	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+	out, aerr := s.tagResourceCore(r.Context(), &in)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if aerr := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags, jsonTagCfg); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
@@ -2377,23 +2040,17 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) untagResourceJSON(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ResourceARN string   `json:"ResourceARN"`
-		TagKeys     []string `json:"TagKeys"`
-	}
+	var in untagResourceRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		protocol.WriteJSONError(w, r, errInvalidJSONBody)
 		return
 	}
-	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+	out, aerr := s.untagResourceCore(r.Context(), &in)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if aerr := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	writeJSONResult(w, r, struct{}{})
+	writeJSONResult(w, r, out)
 }
 
 // startMetricDataSweeper starts the background metric-data retention sweep.

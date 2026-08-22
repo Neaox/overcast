@@ -1,6 +1,6 @@
 ---
 title: "Overcast Operation Manifest"
-description: "Typed-dispatch: 809 ops across 37 services; 13 more services are REST-routed or not yet migrated (see below)"
+description: "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)"
 section: "Getting Started"
 tags:
   - docs
@@ -117,6 +117,23 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - StartLogging (loggingRequest → struct{})
   - StopLogging (loggingRequest → struct{})
   - UpdateTrail (updateTrailInput → createTrailOutput)
+
+## cloudwatch — 15 ops, modeled: 50, protocols: JSON10, JSON11, RPCv2CBOR
+  - DeleteAlarms (deleteAlarmsRequest → emptyResponse)
+  - DescribeAlarmHistory (describeAlarmHistoryRequest → describeAlarmHistoryResponse)
+  - DescribeAlarms (describeAlarmsRequest → describeAlarmsResponse)
+  - DescribeAlarmsForMetric (describeAlarmsForMetricRequest → describeAlarmsForMetricResponse)
+  - DisableAlarmActions (alarmActionsRequest → emptyResponse)
+  - EnableAlarmActions (alarmActionsRequest → emptyResponse)
+  - GetMetricData (getMetricDataRequest → getMetricDataResponse)
+  - GetMetricStatistics (getMetricStatisticsRequest → getMetricStatisticsResponse)
+  - ListMetrics (listMetricsRequest → listMetricsResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
+  - PutMetricAlarm (putMetricAlarmJSONBody → putMetricAlarmResponse)
+  - PutMetricData (putMetricDataRequest → emptyResponse)
+  - SetAlarmState (setAlarmStateRequest → emptyResponse)
+  - TagResource (tagResourceRequest → emptyResponse)
+  - UntagResource (untagResourceRequest → emptyResponse)
 
 ## cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateLogGroup (createLogGroupRequest → struct{})
@@ -898,7 +915,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
 
 ## Services outside this manifest
 
-The 13 service(s) below implement operations through the REST router or a not-yet-migrated legacy dispatcher, so they have no `typed_ops.go` and get no section above. Their modeled operation counts (from the pinned AWS model corpus) are shown for reference; see docs/generated/service-support.json for what Overcast actually implements per service.
+The 12 service(s) below implement operations through the REST router or a not-yet-migrated legacy dispatcher, so they have no `typed_ops.go` and get no section above. Their modeled operation counts (from the pinned AWS model corpus) are shown for reference; see docs/generated/service-support.json for what Overcast actually implements per service.
 
 | Service | Modeled ops | Why excluded |
 |---|---|---|
@@ -909,7 +926,6 @@ The 13 service(s) below implement operations through the REST router or a not-ye
 | backup | 109 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | bedrock | 119 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | cloudfront | 167 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
-| cloudwatch | 50 | not yet migrated to the typed op registry |
 | lambda | 85 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | msk | 59 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | opensearch | 96 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
@@ -917,4 +933,4 @@ The 13 service(s) below implement operations through the REST router or a not-ye
 | s3 | 112 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 
 ---
-Model corpus: 18850 operations across 422 services; typed registrations: 809 across 37 services (13 services outside typed dispatch, listed above)
+Model corpus: 18850 operations across 422 services; typed registrations: 824 across 38 services (12 services outside typed dispatch, listed above)

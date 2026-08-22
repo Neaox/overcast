@@ -20,9 +20,13 @@ dispatches over each service's modeled REST bindings instead.
 [#1228](https://github.com/Neaox/overcast/issues/1228) added the third of the
 protocol-symmetry gate's probes, rpcv2Cbor — the narrow limit named below —
 and found `protocolAsymmetries` stays empty: CloudWatch is the only dispatched
-service the models declare it for, and its rpcv2Cbor coverage is uniformly
-absent rather than partial, which is outside this gate's asymmetry definition
-(see the rpcv2Cbor entry below).
+service the models declare it for, and its rpcv2Cbor coverage was uniformly
+absent rather than partial, which is outside this gate's asymmetry definition.
+[#1280](https://github.com/Neaox/overcast/issues/1280) then closed that gap
+rather than the boundary around it — CloudWatch now registers a
+`ProtocolService`, so all fifteen of its declared operations answer over
+rpcv2Cbor and the probe exercises the service for real (see the rpcv2Cbor
+entry below).
 Remainder, all filed and none of it #864's, #1227's, #1226's or #1228's: the
 shape artefact
 [#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884).
@@ -198,20 +202,35 @@ what changed:
   neither JSON nor Query is already reported by the binding gate.
 
   CloudWatch is the only dispatched service the pinned models declare
-  rpcv2Cbor for. Running the probe finds its declared operations answered
-  over awsJson and awsQuery and never over rpcv2Cbor: the `smithyRPCService`
-  wiring for it has no `ProtocolService` (no `Operations()`/
-  `SupportedProtocols()`), so CBOR support is never even claimed for any
-  operation, not merely dropped for a few. That is uniform non-coverage, not
-  the #794 shape this gate's asymmetry definition exists to catch (a protocol
-  a service demonstrably speaks somewhere, withheld from one operation) —
-  `spoken["cloudwatch"][rpcv2Cbor]` never becomes true, so nothing is
-  flagged, and `protocolAsymmetries` opened and stayed empty. It is a real
-  gap (the Java v2 SDK selects rpcv2Cbor for a service that declares it, and
-  a caller who cannot force another protocol gets a wall of 501s where AWS
-  would answer), just not one this gate's narrow contract reports; wiring
-  CloudWatch's own CBOR dispatch is separate, further-out work this closes
-  the boundary around rather than does.
+  rpcv2Cbor for, and when the probe first ran it found every one of its
+  declared operations answered over awsJson and awsQuery and none over
+  rpcv2Cbor: the `smithyRPCService` wiring for it had no `ProtocolService`
+  (no `Operations()`/`SupportedProtocols()`), so CBOR was never claimed for
+  any operation, not merely dropped for a few. That is uniform non-coverage,
+  not the #794 shape this gate's asymmetry definition exists to catch (a
+  protocol a service demonstrably speaks somewhere, withheld from one
+  operation) — `spoken["cloudwatch"][rpcv2Cbor]` never became true, so nothing
+  was flagged and `protocolAsymmetries` opened and stayed empty. It was a real
+  gap all the same (the Java v2 SDK selects rpcv2Cbor for a service that
+  declares it, and a caller who cannot force another protocol got a wall of
+  501s where AWS answers), just not one this gate's narrow contract reports.
+
+  [#1280](https://github.com/Neaox/overcast/issues/1280) closed it. CloudWatch
+  registers a `ProtocolService` whose typed operations bind onto the same
+  protocol-neutral cores its awsJson handlers call — the shape #1169
+  established with `computeMetricDataResults`, so the CBOR door is a third
+  entry point rather than a third implementation. All fifteen operations
+  answer over `/service/GraniteServiceVersion20100801/operation/<Op>`, the
+  probe now exercises the service for real, and the gate gained teeth it did
+  not have: with `spoken["cloudwatch"][rpcv2Cbor]` true, a sixteenth operation
+  served over Query and JSON alone is a reportable asymmetry.
+
+  The fix also had to reach the CBOR codec itself. A request member typed
+  `any` — CloudWatch's `PutMetricAlarm` `Metrics` and `EvaluationCriteria` —
+  decoded as `map[any]any` under the library default, which `json.Marshal`
+  refuses, so persisting the alarm failed with a bare 500 on the CBOR door and
+  nowhere else. `internal/protocol/codec` now decodes CBOR maps into `any` as
+  `map[string]any`, which is what every other protocol's decode produces.
 
 ## Fallout, and why it is a ledger rather than exemptions
 
@@ -233,7 +252,7 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 | --- | --- |
 | `unservedBindings` | Bindings no route serves, each naming the issue that owns the fix. Shrinks as they land. |
 | `weaklyServedBindings` | Not faults — the gate's honest margin, where a wildcard or a fallback handler delivers the request without the route table proving which operation it reaches. |
-| `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. Empty since #886; #1228 added the rpcv2Cbor probe and it stayed empty. |
+| `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. Empty since #886; #1228 added the rpcv2Cbor probe and it stayed empty, and #1280 kept it empty by wiring CloudWatch's CBOR dispatch rather than recording the gap. |
 | `unmodeledTargetPrefixes` | REST-only services that dispatch on an `X-Amz-Target` prefix no model gives them. A fault ledger, ratcheted in both directions — opened with AppRegistry, EFS, EKS and Scheduler, all four retired by #1226, and it stays empty rather than deleted so the next unmodeled prefix has somewhere to be recorded on its way to being fixed. |
 | `docOnlyRowsOutsideTheModel` | Not faults — the honest margin of the DocOnly name check. Rows whose Operation reads like an AWS operation and documents something else, each saying what. |
 | `queryBranchNotProvable` | Services the generated REST indexes deliberately exclude, so their query-discriminated bindings cannot be proven from the model. `s3` is the only one. |
@@ -308,7 +327,10 @@ which the model makes its *primary* protocol. It is deliberate and pre-existing
 same exemption since #794, because the JSON encoding of `MetricDataQueries`,
 epoch timestamps and `MetricDataResults` does not exist yet. Unlike the routing
 faults, nothing recorded who will write that encoding or when. **Filed as
-#886.**
+#886**, and closed by it: `getMetricDataJSON` bridges those three shapes onto
+the `computeMetricDataResults` core the Query handler already used, and #1280
+reused the same core again for the rpcv2Cbor door. This section records what
+the audit found, not the state today.
 
 ## What became derivable
 
