@@ -114,6 +114,10 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		IsDefault:  true,
 		CreateTime: h.clk.Now().UnixMilli(),
 
+		// Every VPC — including the seeded default — gets a DHCP options set;
+		// see CreateVpc (#1277) for why this must never be left empty.
+		DhcpOptionsId: fmt.Sprintf("dopt-%s", shortID()),
+
 		// The default data plane, by name. Every container Overcast starts
 		// without a VPC is already here, which is the point: the default VPC
 		// describes what the emulator was doing anyway.

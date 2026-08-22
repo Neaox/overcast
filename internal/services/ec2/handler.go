@@ -434,10 +434,14 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
+	// Every VPC gets a DHCP options set at creation, real AWS's default-set
+	// behavior absent an explicit association. Minted once and persisted on
+	// the record so DescribeVpcs echoes the same value back (#1277).
+	dhcpOptionsID := fmt.Sprintf("dopt-%s", shortID())
 	// Matches real AWS: every new VPC has DNS resolution on; DNS hostnames
 	// stay off until ModifyVpcAttribute (or a CDK-issued CFN property) turns
 	// them on, except for the seeded default VPC (see seedDefaultVPC).
-	vpc := &VPC{VpcID: vpcID, CidrBlock: cidr, State: "available", CreateTime: h.clk.Now().UnixMilli(), EnableDnsSupport: true, EnableDnsHostnames: false}
+	vpc := &VPC{VpcID: vpcID, CidrBlock: cidr, State: "available", CreateTime: h.clk.Now().UnixMilli(), EnableDnsSupport: true, EnableDnsHostnames: false, DhcpOptionsId: dhcpOptionsID}
 
 	// Strategy decides whether to create a new Docker network or share one
 	// from another VPC with the same CIDR. EnsureNetwork mutates vpc in place.
@@ -458,7 +462,7 @@ func (h *Handler) CreateVpc(w http.ResponseWriter, r *http.Request) {
 			VpcID:           vpcID,
 			State:           "available",
 			CidrBlock:       cidr,
-			DhcpOptionsID:   fmt.Sprintf("dopt-%s", shortID()),
+			DhcpOptionsID:   dhcpOptionsID,
 			InstanceTenancy: "default",
 			IsDefault:       false,
 			CidrBlockAssociationSet: []xmlCidrAssoc{
@@ -532,6 +536,7 @@ func (h *Handler) describeVpcs(ctx context.Context, q describeQuery) (*xmlDescri
 			VpcID:           v.VpcID,
 			State:           v.State,
 			CidrBlock:       v.CidrBlock,
+			DhcpOptionsID:   v.DhcpOptionsId,
 			InstanceTenancy: "default",
 			IsDefault:       v.IsDefault,
 			TagSet:          xmlTagsOf(vpcTags),

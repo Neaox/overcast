@@ -390,7 +390,7 @@ func (h *Handler) describeSecurityGroups(ctx context.Context, q describeQuery) (
 		}
 
 		items = append(items, xmlSecurityGroup{
-			OwnerID:             "000000000000",
+			OwnerID:             h.cfg.AccountID,
 			GroupID:             sg.GroupID,
 			GroupName:           sg.GroupName,
 			GroupDescription:    sg.Description,
