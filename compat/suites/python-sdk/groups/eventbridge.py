@@ -436,6 +436,46 @@ def _await_fanout_message(ctx: TestContext, queue_url: str, want: str) -> str:
     raise AssertionError(f"no message containing {want!r} delivered to the target queue")
 
 
+# ── eventbridge-patterns ──────────────────────────────────────────────────────
+#
+# Stateless: TestEventPattern evaluates a pattern against an event without any
+# bus, rule, or target involved, so this group needs no setup/teardown.
+
+
+def _pattern_test_event(ctx: TestContext) -> str:
+    return json.dumps({
+        "id": ctx.run_id,
+        "detail-type": "order.created",
+        "source": "compat.eventbridge-patterns",
+        "account": "000000000000",
+        "time": "2026-01-01T00:00:00Z",
+        "region": ctx.region,
+        "resources": [],
+        "detail": {"orderId": "1"},
+    })
+
+
+def TestEventPattern(ctx: TestContext) -> None:
+    eb = _eb(ctx)
+    pattern = json.dumps({
+        "source": ["compat.eventbridge-patterns"],
+        "detail-type": ["order.created"],
+    })
+    resp = eb.test_event_pattern(EventPattern=pattern, Event=_pattern_test_event(ctx))
+    if resp.get("Result") is not True:
+        raise AssertionError(f"TestEventPattern: expected Result=True, got {resp.get('Result')!r}")
+
+
+def TestEventPatternNoMatch(ctx: TestContext) -> None:
+    eb = _eb(ctx)
+    pattern = json.dumps({"source": ["compat.eventbridge-patterns.other"]})
+    resp = eb.test_event_pattern(EventPattern=pattern, Event=_pattern_test_event(ctx))
+    if "Result" not in resp:
+        raise AssertionError(f"TestEventPatternNoMatch: missing Result in {resp}")
+    if resp["Result"] is not False:
+        raise AssertionError(f"TestEventPatternNoMatch: expected Result=False, got {resp['Result']!r}")
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -459,6 +499,8 @@ IMPLS = {
     "PutFanoutTargets": PutFanoutTargets,
     "PutEventsToQueueTarget": PutEventsToQueueTarget,
     "PutEventsWithInputTransformer": PutEventsWithInputTransformer,
+    "TestEventPattern": TestEventPattern,
+    "TestEventPatternNoMatch": TestEventPatternNoMatch,
 }
 
 SETUP = {

@@ -371,6 +371,56 @@ def InvokeWithResponseStream(ctx: TestContext) -> None:
         pass
 
 
+# ── lambda-invoke-error ───────────────────────────────────────────────────────
+
+# Handler that throws unconditionally, so Invoke's RequestResponse call
+# succeeds at the HTTP level (200) while FunctionError signals the failure.
+_HANDLER_JS_THROWS = b"""
+exports.handler = async () => { throw new Error("compat: intentional failure"); };
+"""
+
+
+def setup_lambda_invoke_error(ctx: TestContext) -> None:
+    fn_name = f"{ctx.run_id}-fn-invoke-err"
+    _lambda(ctx).create_function(
+        FunctionName=fn_name,
+        Runtime="nodejs20.x",
+        Role=_ROLE_ARN,
+        Handler="index.handler",
+        Code={"ZipFile": _make_zip("index.js", _HANDLER_JS_THROWS)},
+        Timeout=30,
+    )
+    ctx["lambda_invoke_err_fn"] = fn_name
+    _wait_active(ctx, fn_name)
+
+
+def teardown_lambda_invoke_error(ctx: TestContext) -> None:
+    fn_name = ctx.get("lambda_invoke_err_fn")
+    if fn_name:
+        _delete_fn_and_logs(ctx, fn_name)
+
+
+def InvokeWithError(ctx: TestContext) -> None:
+    lmb = _lambda(ctx)
+    name = ctx["lambda_invoke_err_fn"]
+    resp = lmb.invoke(
+        FunctionName=name,
+        InvocationType="RequestResponse",
+        Payload=b"{}",
+    )
+    if resp["ResponseMetadata"]["HTTPStatusCode"] != 200:
+        raise AssertionError(
+            f"InvokeWithError: expected HTTP 200, got {resp['ResponseMetadata']['HTTPStatusCode']}"
+        )
+    if resp.get("FunctionError") != "Unhandled":
+        raise AssertionError(
+            f"InvokeWithError: expected FunctionError='Unhandled' for a throwing handler, got {resp.get('FunctionError')!r}"
+        )
+    body = resp["Payload"].read()
+    if b"errorMessage" not in body:
+        raise AssertionError(f"InvokeWithError: expected errorMessage in payload, got {body!r}")
+
+
 # ── lambda-aliases ────────────────────────────────────────────────────────────
 
 def setup_lambda_aliases(ctx: TestContext) -> None:
@@ -522,6 +572,7 @@ IMPLS = {
     "InvokeSync": InvokeSync,
     "InvokeAsync": InvokeAsync,
     "InvokeWithResponseStream": InvokeWithResponseStream,
+    "InvokeWithError": InvokeWithError,
     "PublishVersion": PublishVersion,
     "ListVersionsByFunction": ListVersionsByFunction,
     "CreateAlias": CreateAlias,
@@ -539,6 +590,7 @@ SETUP = {
     "lambda-policy": setup_lambda_policy,
     "lambda-invoke": setup_lambda_invoke,
     "lambda-invoke-stream": setup_lambda_invoke_stream,
+    "lambda-invoke-error": setup_lambda_invoke_error,
     "lambda-aliases": setup_lambda_aliases,
     "lambda-layers": setup_lambda_layers,
 }
@@ -548,6 +600,7 @@ TEARDOWN = {
     "lambda-policy": teardown_lambda_policy,
     "lambda-invoke": teardown_lambda_invoke,
     "lambda-invoke-stream": teardown_lambda_invoke_stream,
+    "lambda-invoke-error": teardown_lambda_invoke_error,
     "lambda-aliases": teardown_lambda_aliases,
     "lambda-layers": teardown_lambda_layers,
 }

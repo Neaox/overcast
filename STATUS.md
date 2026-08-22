@@ -34,7 +34,7 @@
 | ECR             | 22  | Repository CRUD + registry metadata (DescribeRegistry), image metadata (PutImage/DescribeImages/BatchGetImage/BatchDeleteImage/DescribeImageScanFindings), auth token, repository+lifecycle policies, tags |
 | KMS             | 33  | Keys, aliases, symmetric AES-256-GCM + RSA-2048 signing                                                                                                                                                    |
 | Kinesis         | 23  | Streams, records, shards, tags, retention                                                                                                                                                                  |
-| EventBridge     | 28  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
+| EventBridge     | 29  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
 | CloudFormation  | 52  | Stacks, change sets, async provisioner (132 resource types — see `docs/cdk.md#supported-resource-types`), intrinsic functions, GetAtt                                                                       |
 | RDS             | 34  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
@@ -81,7 +81,7 @@
 | ECR             | 22  |
 | KMS             | 33  |
 | Kinesis         | 23  |
-| EventBridge     | 28  |
+| EventBridge     | 29  |
 | Scheduler       | 12  |
 | CloudFormation  | 52  |
 | RDS             | 34  |

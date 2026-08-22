@@ -39,6 +39,9 @@ func EventBridge() ServiceGroup {
 			"PutFanoutTargets":              g.PutFanoutTargets,
 			"PutEventsToQueueTarget":        g.PutEventsToQueueTarget,
 			"PutEventsWithInputTransformer": g.PutEventsWithInputTransformer,
+			// eventbridge-patterns
+			"TestEventPattern":        g.TestEventPattern,
+			"TestEventPatternNoMatch": g.TestEventPatternNoMatch,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"eventbridge-buses":         g.setupBuses,
@@ -645,4 +648,52 @@ func (g *ebGroup) awaitFanoutMessage(t *harness.TestContext, queueURL, want stri
 		time.Sleep(100 * time.Millisecond)
 	}
 	return "", fmt.Errorf("no message containing %q delivered to the target queue", want)
+}
+
+// ─── eventbridge-patterns ────────────────────────────────────────────────────
+
+// patternsEvent is the envelope both pattern tests evaluate: every field AWS
+// documents as mandatory for TestEventPattern is present.
+func (g *ebGroup) patternsEvent(t *harness.TestContext) string {
+	return fmt.Sprintf(`{"id":%q,"detail-type":"order.created","source":"compat.eventbridge-patterns",`+
+		`"account":"000000000000","time":"2026-01-01T00:00:00Z","region":%q,"resources":[],"detail":{"orderId":"1"}}`,
+		t.RunID, t.Region)
+}
+
+func (g *ebGroup) testEventPattern(t *harness.TestContext, pattern string) (bool, error) {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"events", "test-event-pattern",
+		"--event-pattern", pattern,
+		"--event", g.patternsEvent(t),
+	)
+	if err != nil {
+		return false, err
+	}
+	result, ok := out["Result"].(bool)
+	if !ok {
+		return false, fmt.Errorf("test-event-pattern: Result missing or not a boolean in %v", out)
+	}
+	return result, nil
+}
+
+func (g *ebGroup) TestEventPattern(_ context.Context, t *harness.TestContext) error {
+	matched, err := g.testEventPattern(t, `{"source":["compat.eventbridge-patterns"],"detail-type":["order.created"]}`)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("TestEventPattern: expected Result=true for a matching pattern, got false")
+	}
+	return nil
+}
+
+func (g *ebGroup) TestEventPatternNoMatch(_ context.Context, t *harness.TestContext) error {
+	matched, err := g.testEventPattern(t, `{"source":["compat.eventbridge-patterns.other"]}`)
+	if err != nil {
+		return err
+	}
+	if matched {
+		return fmt.Errorf("TestEventPatternNoMatch: expected Result=false for a non-matching pattern, got true")
+	}
+	return nil
 }

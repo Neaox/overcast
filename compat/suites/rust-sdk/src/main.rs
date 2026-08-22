@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use clients::AwsClients;
 use groups::{
-    dynamodb::DynamoDbGroup, kms::KmsGroup, lambda::LambdaGroup, s3::S3Group,
-    secretsmanager::SecretsManagerGroup, sns::SnsGroup, sqs::SqsGroup, ssm::SsmGroup,
+    dynamodb::DynamoDbGroup, eventbridge::EventBridgeGroup, kms::KmsGroup, lambda::LambdaGroup,
+    s3::S3Group, secretsmanager::SecretsManagerGroup, sns::SnsGroup, sqs::SqsGroup, ssm::SsmGroup,
     sts::StsGroup, ServiceGroup,
 };
 use registry::build_groups;
@@ -32,6 +32,7 @@ async fn main() {
         Box::new(KmsGroup::new(clients.clone())),
         Box::new(SecretsManagerGroup::new(clients.clone())),
         Box::new(SsmGroup::new(clients.clone())),
+        Box::new(EventBridgeGroup::new(clients.clone())),
     ];
 
     let mut setups = HashMap::new();

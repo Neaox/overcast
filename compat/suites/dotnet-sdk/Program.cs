@@ -22,6 +22,7 @@ var serviceGroups = new IServiceGroup[]
     new SecretsManagerGroup(clients),
     new SsmGroup(clients),
     new IamGroup(clients),
+    new EventBridgeGroup(clients),
 };
 
 var setups = new Dictionary<string, SetupFn>(StringComparer.Ordinal);

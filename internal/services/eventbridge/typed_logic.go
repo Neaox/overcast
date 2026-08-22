@@ -452,3 +452,56 @@ func ruleNotFound(message string) *protocol.AWSError {
 		HTTPStatus: http.StatusBadRequest,
 	}
 }
+
+// ── TestEventPattern ─────────────────────────────────────────────────────────
+
+type testEventPatternRequest struct {
+	EventPattern string `json:"EventPattern" cbor:"EventPattern"`
+	Event        string `json:"Event" cbor:"Event"`
+}
+
+type testEventPatternResponse struct {
+	Result bool `json:"Result" cbor:"Result"`
+}
+
+// maxEventPatternLength is the documented EventPattern length constraint.
+const maxEventPatternLength = 4096
+
+// testEventPatternTyped evaluates req.Event against req.EventPattern with the
+// same matcher PutEvents uses to select rules, so a pattern that passes here
+// is one a rule would fire on. An unparseable pattern is the documented
+// InvalidEventPatternException rather than a silent Result=false; the event
+// must be a JSON object. AWS also lists id/account/source/time/region/
+// resources/detail-type as mandatory envelope fields but documents no error
+// for their absence, so they are not enforced here.
+func (s *Service) testEventPatternTyped(_ context.Context, req *testEventPatternRequest) (*testEventPatternResponse, *protocol.AWSError) {
+	if len(req.EventPattern) > maxEventPatternLength {
+		return nil, &protocol.AWSError{
+			Code: "ValidationException",
+			Message: fmt.Sprintf("1 validation error detected: Value at 'eventPattern' failed to satisfy constraint: "+
+				"Member must have length less than or equal to %d", maxEventPatternLength),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	pattern, err := parseEventPattern(req.EventPattern)
+	if err != nil {
+		return nil, invalidEventPatternError(err)
+	}
+	var event map[string]any
+	if err := json.Unmarshal([]byte(req.Event), &event); err != nil || event == nil {
+		return nil, &protocol.AWSError{
+			Code:       "ValidationException",
+			Message:    "Event must be a valid JSON object.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return &testEventPatternResponse{Result: matchPatternMap(pattern, event)}, nil
+}
+
+func invalidEventPatternError(err error) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidEventPatternException",
+		Message:    "Event pattern is not valid. Reason: " + err.Error(),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}

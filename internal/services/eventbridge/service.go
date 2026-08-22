@@ -3,7 +3,7 @@
 // Implemented: CreateEventBus, DescribeEventBus, ListEventBuses, TagResource,
 // ListTagsForResource, DeleteEventBus, PutRule, DescribeRule, ListRules,
 // PutTargets, ListTargetsByRule, RemoveTargets, DisableRule, EnableRule,
-// DeleteRule, PutEvents.
+// DeleteRule, PutEvents, TestEventPattern.
 package eventbridge
 
 import (
@@ -226,6 +226,8 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, op stri
 		s.deleteRule(w, r)
 	case "PutEvents":
 		s.putEvents(w, r)
+	case "TestEventPattern":
+		s.testEventPattern(w, r)
 	default:
 		protocol.NotImplementedJSON(w, r)
 	}
@@ -648,6 +650,21 @@ func (s *Service) deleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publish(r, events.EventBridgeRuleDeleted, events.ResourcePayload{Name: req.Name, ARN: arn})
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) testEventPattern(w http.ResponseWriter, r *http.Request) {
+	// Delegates to testEventPatternTyped (typed_logic.go) so the legacy
+	// JSON1.1 path and the CBOR typed path share one implementation.
+	var req testEventPatternRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	resp, aerr := s.testEventPatternTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (s *Service) putEvents(w http.ResponseWriter, r *http.Request) {

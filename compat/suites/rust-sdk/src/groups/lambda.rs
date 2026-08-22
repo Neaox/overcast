@@ -537,6 +537,56 @@ impl ServiceGroup for LambdaGroup {
             }),
         );
 
+        // ── lambda-invoke-error ────────────────────────────────────────────
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "InvokeWithError".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-invoke-err", ctx.run_id.as_ref());
+                    let response = clients
+                        .lambda()
+                        .invoke()
+                        .function_name(&name)
+                        .invocation_type(InvocationType::RequestResponse)
+                        .payload(Blob::new(b"{}".to_vec()))
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    // A handler that throws is not an SDK error and not a
+                    // non-200: AWS answers 200 and signals the throw in the
+                    // X-Amz-Function-Error header, which the SDK surfaces as
+                    // FunctionError. An emulator that reported the failure as
+                    // a 500 — or as a clean 200 with no FunctionError at all —
+                    // is what this test exists to catch.
+                    if response.status_code() != 200 {
+                        return Err(format!(
+                            "InvokeWithError: expected StatusCode=200, got {}",
+                            response.status_code()
+                        ));
+                    }
+                    let function_error = response.function_error().unwrap_or_default();
+                    if function_error != "Unhandled" {
+                        return Err(format!(
+                            "InvokeWithError: expected FunctionError=Unhandled for a throwing handler, got {function_error:?}"
+                        ));
+                    }
+                    let body = response
+                        .payload()
+                        .map(|payload| String::from_utf8_lossy(payload.as_ref()).to_string())
+                        .unwrap_or_default();
+                    if !body.contains("errorMessage") {
+                        return Err(format!(
+                            "InvokeWithError: expected the payload to carry errorMessage, got {body}"
+                        ));
+                    }
+                    Ok(())
+                })
+            }),
+        );
+
         // ── lambda-aliases ─────────────────────────────────────────────────
 
         let clients = self.clients.clone();
@@ -894,6 +944,36 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         setups.insert(
+            "lambda-invoke-error".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-invoke-err", ctx.run_id.as_ref());
+                    let role = "arn:aws:iam::000000000000:role/lambda-exec";
+                    clients
+                        .lambda()
+                        .create_function()
+                        .function_name(&name)
+                        .runtime(Runtime::Nodejs20x)
+                        .handler("index.handler")
+                        .role(role)
+                        .timeout(30)
+                        .code(
+                            FunctionCode::builder()
+                                .zip_file(Blob::new(throwing_zip()))
+                                .build(),
+                        )
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    wait_function_active(&clients, &name, 30).await?;
+                    Ok(())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        setups.insert(
             "lambda-aliases".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
@@ -995,6 +1075,24 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         teardowns.insert(
+            "lambda-invoke-error".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-invoke-err", ctx.run_id.as_ref());
+                    let _ = clients
+                        .lambda()
+                        .delete_function()
+                        .function_name(&name)
+                        .send()
+                        .await;
+                    Ok(())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        teardowns.insert(
             "lambda-aliases".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
@@ -1041,6 +1139,24 @@ impl ServiceGroup for LambdaGroup {
 fn dummy_zip() -> Vec<u8> {
     use base64::Engine;
     let b64 = "UEsDBBQAAAAAAAAAAAAKhksPNQAAADUAAAAIAAAAaW5kZXguanNleHBvcnRzLmhhbmRsZXI9YXN5bmMoKT0+KHtzdGF0dXNDb2RlOjIwMCxib2R5OiJvayJ9KVBLAQIUABQAAAAAAAAAAAAKhksPNQAAADUAAAAIAAAAAAAAAAAAAAAAAAAAAABpbmRleC5qc1BLBQYAAAAAAQABADYAAABbAAAAAAA=";
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap_or_default()
+}
+
+/// The same one-file `index.js` zip as [`dummy_zip`], but with a handler that
+/// throws unconditionally:
+///
+/// ```js
+/// exports.handler=async()=>{throw new Error("compat: intentional failure")}
+/// ```
+///
+/// `lambda-invoke-error` asserts on `FunctionError`, which only appears when
+/// the handler really runs and really throws — a zip that returns cleanly
+/// would make the test pass or fail for the wrong reason.
+fn throwing_zip() -> Vec<u8> {
+    use base64::Engine;
+    let b64 = "UEsDBBQAAAAAAAAAIQDjPBUwSQAAAEkAAAAIAAAAaW5kZXguanNleHBvcnRzLmhhbmRsZXI9YXN5bmMoKT0+e3Rocm93IG5ldyBFcnJvcigiY29tcGF0OiBpbnRlbnRpb25hbCBmYWlsdXJlIil9UEsBAhQAFAAAAAAAAAAhAOM8FTBJAAAASQAAAAgAAAAAAAAAAAAAAKQBAAAAAGluZGV4LmpzUEsFBgAAAAABAAEANgAAAG8AAAAAAA==";
     base64::engine::general_purpose::STANDARD
         .decode(b64)
         .unwrap_or_default()

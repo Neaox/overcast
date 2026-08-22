@@ -1,4 +1,5 @@
 pub mod dynamodb;
+pub mod eventbridge;
 pub mod kms;
 pub mod lambda;
 pub mod s3;

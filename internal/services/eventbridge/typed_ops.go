@@ -58,6 +58,9 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"PutEvents": op.NewTyped[putEventsRequest, putEventsResponse](
 			"PutEvents", s.putEventsTyped,
 		),
+		"TestEventPattern": op.NewTyped[testEventPatternRequest, testEventPatternResponse](
+			"TestEventPattern", s.testEventPatternTyped,
+		),
 	}
 }
 

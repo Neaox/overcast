@@ -22,6 +22,10 @@ import (
 const _lambdaRoleARN = "arn:aws:iam::000000000000:role/lambda-role"
 const _handlerJS = `exports.handler = async (e) => ({statusCode:200,body:JSON.stringify({ok:true,event:e})});`
 
+// _throwingHandlerJS fails on every invocation; lambda-invoke-error proves the
+// failure surfaces the way AWS reports it rather than as a transport error.
+const _throwingHandlerJS = `exports.handler = async () => { throw new Error("compat: intentional failure"); };`
+
 func Lambda(c *clients.Clients) ServiceGroup {
 	g := &lambdaGroup{c: c}
 	return ServiceGroup{
@@ -46,6 +50,7 @@ func Lambda(c *clients.Clients) ServiceGroup {
 			"UpdateAlias":                    g.UpdateAlias,
 			"DeleteAlias":                    g.DeleteAlias,
 			"InvokeWithResponseStream":       g.InvokeWithResponseStream,
+			"InvokeWithError":                g.InvokeWithError,
 			"PublishLayerVersion":            g.PublishLayerVersion,
 			"ListLayers":                     g.ListLayers,
 			"DeleteLayerVersion":             g.DeleteLayerVersion,
@@ -56,6 +61,7 @@ func Lambda(c *clients.Clients) ServiceGroup {
 			"lambda-invoke":        g.setupInvoke,
 			"lambda-aliases":       g.setupAliases,
 			"lambda-invoke-stream": g.setupInvokeStream,
+			"lambda-invoke-error":  g.setupInvokeError,
 			"lambda-layers":        func(_ context.Context, _ *harness.TestContext) error { return nil },
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
@@ -64,6 +70,7 @@ func Lambda(c *clients.Clients) ServiceGroup {
 			"lambda-invoke":        g.teardownInvoke,
 			"lambda-aliases":       g.teardownAliases,
 			"lambda-invoke-stream": g.teardownInvokeStream,
+			"lambda-invoke-error":  g.teardownInvokeError,
 			"lambda-layers":        g.teardownLayers,
 		},
 	}
@@ -107,7 +114,11 @@ func (g *lambdaGroup) waitActive(ctx context.Context, name string) error {
 }
 
 func (g *lambdaGroup) createFunc(ctx context.Context, name string) error {
-	zipBytes, err := makeZip("index.js", _handlerJS)
+	return g.createFuncWithCode(ctx, name, _handlerJS)
+}
+
+func (g *lambdaGroup) createFuncWithCode(ctx context.Context, name, code string) error {
+	zipBytes, err := makeZip("index.js", code)
 	if err != nil {
 		return err
 	}
@@ -402,6 +413,48 @@ func (g *lambdaGroup) InvokeDryRun(ctx context.Context, t *harness.TestContext) 
 	}
 	if resp.StatusCode != 204 {
 		return fmt.Errorf("InvokeDryRun: expected 204, got %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ── lambda-invoke-error ───────────────────────────────────────────────────────
+
+func (g *lambdaGroup) setupInvokeError(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("%s-fninvokeerr", t.RunID)
+	if err := g.createFuncWithCode(ctx, name, _throwingHandlerJS); err != nil {
+		return err
+	}
+	t.Set("lambda_invoke_err_fn", name)
+	return nil
+}
+
+func (g *lambdaGroup) teardownInvokeError(ctx context.Context, t *harness.TestContext) error {
+	if name := t.GetString("lambda_invoke_err_fn"); name != "" {
+		g.deleteFunc(ctx, name)
+	}
+	return nil
+}
+
+// InvokeWithError proves a handler failure is reported the way AWS reports
+// it: the Invoke call itself succeeds with HTTP 200, FunctionError names the
+// failure class, and the payload carries the error document.
+func (g *lambdaGroup) InvokeWithError(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("lambda_invoke_err_fn")
+	resp, err := g.client().Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(name),
+		Payload:      []byte(`{}`),
+	})
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("InvokeWithError: expected 200, got %d", resp.StatusCode)
+	}
+	if fe := aws.ToString(resp.FunctionError); fe != "Unhandled" {
+		return fmt.Errorf("InvokeWithError: expected FunctionError=Unhandled for a throwing handler, got %q (payload %s)", fe, resp.Payload)
+	}
+	if !strings.Contains(string(resp.Payload), "errorMessage") {
+		return fmt.Errorf("InvokeWithError: expected an error document in the payload, got %s", resp.Payload)
 	}
 	return nil
 }

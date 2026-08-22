@@ -24,6 +24,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         ["InvokeSync"] = InvokeSyncAsync,
         ["InvokeAsync"] = InvokeAsyncAsync,
         ["InvokeWithResponseStream"] = InvokeWithResponseStreamAsync,
+        ["InvokeWithError"] = InvokeWithErrorAsync,
         ["PublishVersion"] = PublishVersionAsync,
         ["ListVersionsByFunction"] = ListVersionsByFunctionAsync,
         ["CreateAlias"] = CreateAliasAsync,
@@ -42,6 +43,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         ["lambda-policy"] = SetupPolicyAsync,
         ["lambda-invoke"] = SetupInvokeAsync,
         ["lambda-invoke-stream"] = SetupInvokeStreamAsync,
+        ["lambda-invoke-error"] = SetupInvokeErrorAsync,
         ["lambda-aliases"] = SetupAliasesAsync,
     };
 
@@ -51,6 +53,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         ["lambda-policy"] = TeardownPolicyAsync,
         ["lambda-invoke"] = TeardownInvokeAsync,
         ["lambda-invoke-stream"] = TeardownInvokeStreamAsync,
+        ["lambda-invoke-error"] = TeardownInvokeErrorAsync,
         ["lambda-aliases"] = TeardownAliasesAsync,
         ["lambda-layers"] = TeardownLayersAsync,
     };
@@ -87,6 +90,13 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
 
     /// <summary>The default code bundle: <see cref="HandlerJs"/> as <c>index.js</c>.</summary>
     private static MemoryStream HandlerZip() => MakeZip("index.js", HandlerJs);
+
+    /// <summary>
+    /// A bundle whose handler throws on every invocation, for lambda-invoke-error:
+    /// that test asserts on the payload the handler's own exception produces.
+    /// </summary>
+    private static MemoryStream ThrowingHandlerZip() => MakeZip("index.js",
+        "exports.handler = async () => { throw new Error(\"compat: intentional failure\"); };\n");
 
     private async Task<CreateFunctionResponse> CreateFunc(string name, MemoryStream? code = null)
     {
@@ -391,6 +401,46 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     private async Task TeardownInvokeStreamAsync(TestContext context)
     {
         var name = context.GetString("LambdaStreamFuncName");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            try { await clients.Lambda().DeleteFunctionAsync(new DeleteFunctionRequest { FunctionName = name }); } catch { }
+        }
+    }
+
+    // ── lambda-invoke-error ──
+    //
+    // A handler that throws unconditionally. AWS still answers the synchronous
+    // Invoke with HTTP 200 — the failure is signalled by the
+    // X-Amz-Function-Error header, surfaced as FunctionError on the response,
+    // not as a thrown SDK exception.
+
+    private async Task SetupInvokeErrorAsync(TestContext context)
+    {
+        var name = $"{context.RunId}-linverr";
+        await CreateFunc(name, ThrowingHandlerZip());
+        await PollActiveAsync(name);
+        context.Set("LambdaInvokeErrFuncName", name);
+    }
+
+    private async Task InvokeWithErrorAsync(TestContext context)
+    {
+        var name = RequireFuncName(context, "LambdaInvokeErrFuncName");
+        var response = await clients.Lambda().InvokeAsync(new InvokeRequest
+        {
+            FunctionName = name,
+            InvocationType = InvocationType.RequestResponse,
+            Payload = "{}",
+        });
+        Assertions.Equal(200, response.StatusCode, "InvokeWithError: StatusCode");
+        Assertions.Equal("Unhandled", response.FunctionError, "InvokeWithError: FunctionError for a throwing handler");
+        var body = response.Payload is null ? "" : Encoding.UTF8.GetString(response.Payload.ToArray());
+        Assertions.True(body.Contains("errorMessage", StringComparison.Ordinal),
+            $"InvokeWithError: expected payload to contain errorMessage, got <{body}> (runId={context.RunId})");
+    }
+
+    private async Task TeardownInvokeErrorAsync(TestContext context)
+    {
+        var name = context.GetString("LambdaInvokeErrFuncName");
         if (!string.IsNullOrWhiteSpace(name))
         {
             try { await clients.Lambda().DeleteFunctionAsync(new DeleteFunctionRequest { FunctionName = name }); } catch { }
