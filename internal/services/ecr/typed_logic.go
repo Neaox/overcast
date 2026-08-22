@@ -105,6 +105,17 @@ type listTagsForResourceRequest struct {
 
 type createRepositoryResponse struct {
 	Repository Repository `json:"repository" cbor:"repository"`
+	// limitations is unexported (and untagged, so no codec writes it) — it is
+	// read back by op.Limitationer, not the wire. See registryLimitation.
+	limitations []string
+}
+
+// EmulationLimitations implements op.Limitationer.
+func (r *createRepositoryResponse) EmulationLimitations() []string {
+	if len(r.limitations) == 0 {
+		return nil
+	}
+	return r.limitations
 }
 
 type putImageTagMutabilityResponse struct {
@@ -299,7 +310,11 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 		_ = s.saveTags(ctx, repo.RepositoryArn, req.Tags)
 	}
 	s.publish(ctx, events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
-	return &createRepositoryResponse{Repository: *repo}, nil
+	resp := &createRepositoryResponse{Repository: *repo}
+	if reason := s.registryLimitation(); reason != "" {
+		resp.limitations = []string{reason}
+	}
+	return resp, nil
 }
 
 // putImageTagMutabilityTyped is the CBOR counterpart of putImageTagMutability;

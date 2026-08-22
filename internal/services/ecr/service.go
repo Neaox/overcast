@@ -196,6 +196,14 @@ type Service struct {
 	// hostless ":4510/…", which is not an address at all.
 	registryHost     string
 	registryHostPort int
+	// registryProven is true only once selectDaemonReachablePort watched the
+	// daemon itself answer at registryHost:registryHostPort with this
+	// instance's credentials. A hostPort can be set (adoptRegistryAddress
+	// always sets one) while this stays false — the container started but
+	// nothing showed it was actually reachable. registryLimitation reads it to
+	// decide whether repositoryUri names a registry that was demonstrated to
+	// work or one merely believed to.
+	registryProven   bool
 	registryPassword string
 	registryInitOnce sync.Once
 	// registrylessOnce keeps the "there is no registry" warning to one line per
@@ -238,6 +246,7 @@ func (s *Service) handleRegistryContainerDied(_ context.Context, e events.Event)
 	s.registryName = ""
 	s.registryHost = ""
 	s.registryHostPort = 0
+	s.registryProven = false
 	s.registryClientBases = nil
 	s.registryClientBase = ""
 	s.registryReady = nil
@@ -583,6 +592,7 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publish(r.Context(), events.ECRRepositoryCreated, events.ResourcePayload{Name: req.RepositoryName, ARN: repo.RepositoryArn})
+	protocol.MarkLimitation(w, s.registryLimitation())
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"repository": repo})
 }
 
@@ -2050,7 +2060,32 @@ func (s *Service) adoptRegistryAddress(hostPort int, proved bool) {
 	s.registryMu.Lock()
 	s.registryHost = host
 	s.registryHostPort = hostPort
+	s.registryProven = proved
 	s.registryMu.Unlock()
+}
+
+// registryLimitation reports why the address just handed to a client —
+// repositoryUri, proxyEndpoint, or the reference an ECR image resolves to —
+// may not actually reach a working registry, or "" when the daemon proved it
+// does (see registryProven). Every path that hands out a Repository calls
+// this, so CreateRepository's own response — not a log line, and not the
+// `docker push` that fails minutes later — is where a developer first hears
+// that this repository's address does not work. The message is worded to end
+// up in CloudFormation's ResourceStatusReason (via
+// protocol.EmulationLimitationHeader), beside the resource it is about.
+func (s *Service) registryLimitation() string {
+	s.registryMu.Lock()
+	hasHostPort := s.registryHostPort > 0
+	proven := s.registryProven
+	s.registryMu.Unlock()
+	switch {
+	case hasHostPort && proven:
+		return ""
+	case hasHostPort:
+		return "the ECR registry container started but the Docker daemon never confirmed it answers; docker push/pull against this repository may fail"
+	default:
+		return "no ECR registry container is running, so repositoryUri names Overcast's own API port; docker push will fail with 405 Method Not Allowed until a Docker daemon is available to back the registry"
+	}
 }
 
 // publishedHostPorts returns the distinct host ports the registry's container
