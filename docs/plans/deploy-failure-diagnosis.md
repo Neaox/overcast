@@ -5,7 +5,8 @@
 > region preflight check, shipped in [#1004](https://github.com/Neaox/overcast/pull/1004)
 > (`internal/router/preflight_region.go`). W4's four remaining named instances
 > (Docker, ports, endpoint, ephemeral state) shipped in
-> [#1193](https://github.com/Neaox/overcast/issues/1193) — see
+> [#1267](https://github.com/Neaox/overcast/pull/1267) (closing
+> [#1193](https://github.com/Neaox/overcast/issues/1193)) — see
 > [W4](#w4--environment-preflight) for what each one covers and doesn't; the
 > disk-full instance remains open (reactive-only via the existing storage
 > health advisories, no proactive free-space probe). W1's eight-service audit
@@ -260,7 +261,8 @@ output nobody reads.
 The region check shipped ✅ ([#1004](https://github.com/Neaox/overcast/pull/1004),
 `internal/router/preflight_region.go` + the console's empty-list advisory).
 
-Four more instances shipped in [#1193](https://github.com/Neaox/overcast/issues/1193) ✅:
+Four more instances shipped in [#1267](https://github.com/Neaox/overcast/pull/1267)
+(closing [#1193](https://github.com/Neaox/overcast/issues/1193)) ✅:
 
 - **Docker not running / socket not permitted.** `internal/router.dockerUnavailableWarning`
   (`internal/router/preflight_docker.go`) diffs the configs the Docker Supervisor was asked
