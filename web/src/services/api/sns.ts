@@ -1,4 +1,7 @@
 import { awsClients } from "../aws-clients"
+import { apiFetch } from "./base"
+import type { MonitorResponse } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 import {
   ListTopicsCommand,
   CreateTopicCommand,
@@ -43,6 +46,12 @@ export const sns = {
     const subs = res.Subscriptions ?? []
     return endpoint ? subs.filter((s) => s.Endpoint === endpoint) : subs
   },
+
+  /** Monitor tab read-through — docs/plans/service-metrics-platform.md phase 4. */
+  getMetrics: (topicName: string, range: ChartRangeToken) =>
+    apiFetch<MonitorResponse>(
+      `/sns/topics/${encodeURIComponent(topicName)}/metrics?range=${range}`,
+    ),
 
   subscribe: async (topicName: string, protocol: string, subscriptionEndpoint: string) => {
     const arn = await resolveTopicArn(topicName)

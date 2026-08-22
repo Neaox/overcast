@@ -90,6 +90,75 @@ func (h *Handler) observeLambdaMetric(ctx context.Context, name string, dims []m
 	}
 }
 
+// ─── Async invocation P1 tier (phase 4) ────────────────────────────────────
+//
+// AsyncEventsReceived, AsyncEventAge, AsyncEventsDropped, DeadLetterErrors,
+// and DestinationDeliveryFailures — the plan's P1 async row
+// (service-metrics-platform.md's Lambda pilot catalogue) — recorded only at
+// boundaries where Overcast already has the underlying fact:
+//
+//   - AsyncEventsReceived: startAsync, once per Event invocation actually
+//     accepted (never for one refused because Lambda is shutting down — that
+//     is this emulator's own process-lifecycle behavior, not a fact AWS's
+//     queue-acceptance metric describes).
+//   - AsyncEventAge: invokeAsync, once per attempt, the elapsed time since
+//     acceptance — a real, already-computed value (eventAgedOut compares the
+//     same duration against MaximumEventAgeInSeconds).
+//   - AsyncEventsDropped: invokeAsync's eventAgedOut branch — the one case
+//     Overcast actually discards an event unrun rather than retrying or
+//     dead-lettering it.
+//   - DeadLetterErrors: deadLetterAsyncFailure's delivery-error branch.
+//   - DestinationDeliveryFailures: deliverAsyncDestination's delivery-error
+//     branch.
+//
+// IteratorAge and the ESM EventCount/ErrorCount metrics (the plan's other P1
+// row) remain undelivered: AWS gates them behind each event source mapping's
+// own opt-in MetricsConfig, which today is stored/echoed only as a raw JSON
+// blob (handler_esm.go) with no parsed representation to gate on, and the
+// plan's own "Implementation phases" Phase 4 calls for reviewing the queue/
+// retry/destination facts *before* wiring the metrics — track separately
+// rather than bolt on an ungated approximation.
+func (h *Handler) recordAsyncEventsReceived(ctx context.Context, functionName string) {
+	if h.metrics == nil {
+		return
+	}
+	h.observeLambdaMetric(ctx, "AsyncEventsReceived",
+		[]metrics.Dimension{{Name: "FunctionName", Value: functionName}}, h.clk.Now(), "Count", 1)
+}
+
+func (h *Handler) recordAsyncEventAge(ctx context.Context, functionName string, age time.Duration) {
+	if h.metrics == nil {
+		return
+	}
+	h.observeLambdaMetric(ctx, "AsyncEventAge",
+		[]metrics.Dimension{{Name: "FunctionName", Value: functionName}}, h.clk.Now(), "Milliseconds",
+		float64(age.Milliseconds()))
+}
+
+func (h *Handler) recordAsyncEventsDropped(ctx context.Context, functionName string) {
+	if h.metrics == nil {
+		return
+	}
+	h.observeLambdaMetric(ctx, "AsyncEventsDropped",
+		[]metrics.Dimension{{Name: "FunctionName", Value: functionName}}, h.clk.Now(), "Count", 1)
+}
+
+func (h *Handler) recordDeadLetterErrors(ctx context.Context, functionName string) {
+	if h.metrics == nil {
+		return
+	}
+	h.observeLambdaMetric(ctx, "DeadLetterErrors",
+		[]metrics.Dimension{{Name: "FunctionName", Value: functionName}}, h.clk.Now(), "Count", 1)
+}
+
+func (h *Handler) recordDestinationDeliveryFailures(ctx context.Context, functionName string) {
+	if h.metrics == nil {
+		return
+	}
+	h.observeLambdaMetric(ctx, "DestinationDeliveryFailures",
+		[]metrics.Dimension{{Name: "FunctionName", Value: functionName}}, h.clk.Now(), "Count", 1)
+}
+
 // recordConcurrency observes a ConcurrentExecutions sample for functionName
 // at the moment InstancePool's real-invocation admission count changed —
 // wired as InstancePool.concurrencyObserver (see runtime_pool.go /

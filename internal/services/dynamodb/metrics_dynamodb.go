@@ -63,11 +63,13 @@ import (
 )
 
 // metricsRecorder is the narrow interface DynamoDB depends on to record
-// outcome facts — never internal/services/cloudwatch (plan acceptance
+// outcome facts and to read them back for the web Monitor tab's BFF endpoint
+// (handler_metrics.go) — never internal/services/cloudwatch (plan acceptance
 // criteria: "no service imports internal/services/cloudwatch"). Satisfied by
 // *metrics.Service.
 type metricsRecorder interface {
 	Observe(ctx context.Context, o metrics.Observation) error
+	ChartQuery(ctx context.Context, namespace, name, statistic string, dims []metrics.Dimension, start, end time.Time, period time.Duration) ([]metrics.ChartPoint, int, error)
 }
 
 const dynamoDBMetricsNamespace = "AWS/DynamoDB"

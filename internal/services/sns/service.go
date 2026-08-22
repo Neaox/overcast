@@ -120,6 +120,7 @@ func (s *Service) Stop(ctx context.Context) {
 func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/_overcast/sns/topics", s.adminListTopics)
 	r.Get("/_overcast/sns/topics/{topicName}/subscriptions", s.adminListSubscriptions)
+	r.Get("/_overcast/sns/topics/{topicName}/metrics", s.handler.GetTopicMetrics)
 }
 
 // snsLegacyOnlyOps lists SNS operations that must stay on the legacy

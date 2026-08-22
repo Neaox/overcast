@@ -1,17 +1,24 @@
 import { useState, useEffect, useMemo } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Trash2, RefreshCw, Link, Send, CheckCircle2, XCircle } from "lucide-react"
+import { Trash2, RefreshCw, Link, Send, CheckCircle2, XCircle, Bell, Activity } from "lucide-react"
 import {
   snsTopicsQueryOptions,
   snsSubscriptionsQueryOptions,
+  snsMetricsQueryOptions,
   snsKeys,
   subscribeMutationOptions,
   unsubscribeMutationOptions,
   deleteTopicMutationOptions,
 } from "@/features/sns/data"
+import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
+import {
+  MonitorPanel,
+  type MonitorCardConfig,
+} from "@/features/monitoring/components/monitor-panel"
+import { DEFAULT_CHART_RANGE, type ChartRangeToken } from "@/features/monitoring/types"
 import { useEventStream } from "@/hooks/use-event-stream"
 import { EventType } from "@/services/event-types"
 import { ArnLink } from "@/components/ui/arn-link"
@@ -51,6 +58,33 @@ import { cn } from "@/lib/utils"
 interface Props {
   topicName: string
 }
+
+// The AWS/SNS phase 2 catalogue (metrics_sns.go), grouped into cards the way
+// Lambda's Monitor tab groups its own catalogue
+// (docs/plans/service-metrics-platform.md phase 4).
+const SNS_MONITOR_CARDS: MonitorCardConfig[] = [
+  {
+    title: "Messages published",
+    unit: "Count",
+    series: [{ metric: "NumberOfMessagesPublished", statistic: "Sum", label: "Published" }],
+  },
+  {
+    title: "Publish size",
+    unit: "Bytes",
+    series: [
+      { metric: "PublishSize", statistic: "Average", label: "Average" },
+      { metric: "PublishSize", statistic: "Maximum", label: "Maximum" },
+    ],
+  },
+  {
+    title: "Deliveries",
+    unit: "Count",
+    series: [
+      { metric: "NumberOfNotificationsDelivered", statistic: "Sum", label: "Delivered" },
+      { metric: "NumberOfNotificationsFailed", statistic: "Sum", label: "Failed" },
+    ],
+  },
+]
 
 /** Live delivery outcome for one subscription, derived from the event stream. */
 interface DeliveryState {
@@ -107,11 +141,14 @@ function deliveryStateBySubscription(events: StreamEvent[]): Record<string, Deli
 
 export function TopicDetail({ topicName }: Props) {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const { toast } = useToast()
 
   const [showSubscribe, setShowSubscribe] = useState(false)
   const [showPublish, setShowPublish] = useState(false)
   const [deleteSubTarget, setDeleteSubTarget] = useState<SNSSubscription>()
+  const [activeTab, setActiveTab] = useState<"subscriptions" | "monitor">("subscriptions")
+  const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
 
   // ─── Data ──────────────────────────────────────────────────────────────────
   const {
@@ -120,6 +157,8 @@ export function TopicDetail({ topicName }: Props) {
     isFetching,
     refetch,
   } = useQuery(snsSubscriptionsQueryOptions(topicName))
+
+  const metricsQuery = useQuery(snsMetricsQueryOptions(topicName, monitorRange))
 
   const { data: allTopics = [] } = useQuery(snsTopicsQueryOptions())
   const topic = allTopics.find((t) => t.TopicArn?.split(":").pop() === topicName)
@@ -234,81 +273,114 @@ export function TopicDetail({ topicName }: Props) {
 
       <ApplicationOwnershipBanner candidates={[topic?.TopicArn, topicName]} />
 
-      {/* Subscriptions */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <span className="text-sm font-medium">
-              Subscriptions
-              {subscriptions.length > 0 && (
-                <Badge variant="default" className="ml-2">
-                  {subscriptions.length}
-                </Badge>
-              )}
-            </span>
-            {connected && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-                live
-              </span>
-            )}
-          </div>
+      <Tabs
+        selectedKey={activeTab}
+        onSelectionChange={(k) => setActiveTab(k as "subscriptions" | "monitor")}
+      >
+        <TabList aria-label="Topic sections">
+          <Tab id="subscriptions">
+            <Bell className="mr-1.5 h-3.5 w-3.5" />
+            Subscriptions
+          </Tab>
+          <Tab id="monitor">
+            <Activity className="mr-1.5 h-3.5 w-3.5" />
+            Monitor
+          </Tab>
+        </TabList>
 
-          {isLoading ? (
-            <div className="flex justify-center py-12">
-              <Spinner className="h-5 w-5" />
-            </div>
-          ) : subscriptions.length === 0 ? (
-            <div className="py-12">
-              <EmptyState
-                icon={<Link className="h-6 w-6 opacity-40" />}
-                title="No subscriptions"
-                description="Click Subscribe to add one."
-              />
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Protocol</TableHead>
-                  <TableHead>Endpoint</TableHead>
-                  <TableHead>Last delivery</TableHead>
-                  <TableHead>ARN</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {subscriptions.map((sub) => (
-                  <TableRow key={sub.SubscriptionArn}>
-                    <TableCell>
-                      <Badge variant="default">{sub.Protocol}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <ArnLink arn={sub.Endpoint ?? ""} />
-                    </TableCell>
-                    <TableCell>
-                      <DeliveryIndicator state={deliveryState[sub.SubscriptionArn ?? ""]} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="danger-ghost"
-                        size="sm"
-                        aria-label="Delete subscription"
-                        onClick={() => setDeleteSubTarget(sub)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+        <TabPanel id="subscriptions" className="pt-4">
+          {/* Subscriptions */}
+          <Card>
+            <CardContent className="p-0">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <span className="text-sm font-medium">
+                  Subscriptions
+                  {subscriptions.length > 0 && (
+                    <Badge variant="default" className="ml-2">
+                      {subscriptions.length}
+                    </Badge>
+                  )}
+                </span>
+                {connected && (
+                  <span className="flex items-center gap-1 text-xs text-green-500">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                    live
+                  </span>
+                )}
+              </div>
+
+              {isLoading ? (
+                <div className="flex justify-center py-12">
+                  <Spinner className="h-5 w-5" />
+                </div>
+              ) : subscriptions.length === 0 ? (
+                <div className="py-12">
+                  <EmptyState
+                    icon={<Link className="h-6 w-6 opacity-40" />}
+                    title="No subscriptions"
+                    description="Click Subscribe to add one."
+                  />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Protocol</TableHead>
+                      <TableHead>Endpoint</TableHead>
+                      <TableHead>Last delivery</TableHead>
+                      <TableHead>ARN</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {subscriptions.map((sub) => (
+                      <TableRow key={sub.SubscriptionArn}>
+                        <TableCell>
+                          <Badge variant="default">{sub.Protocol}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <ArnLink arn={sub.Endpoint ?? ""} />
+                        </TableCell>
+                        <TableCell>
+                          <DeliveryIndicator state={deliveryState[sub.SubscriptionArn ?? ""]} />
+                        </TableCell>
+                        <TableCell className="text-fg-muted">
+                          <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="danger-ghost"
+                            size="sm"
+                            aria-label="Delete subscription"
+                            onClick={() => setDeleteSubTarget(sub)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabPanel>
+
+        <TabPanel id="monitor" className="pt-4">
+          <MonitorPanel
+            range={monitorRange}
+            onRangeChange={setMonitorRange}
+            isLoading={metricsQuery.isLoading}
+            isFetching={metricsQuery.isFetching}
+            error={metricsQuery.error}
+            data={metricsQuery.data}
+            cards={SNS_MONITOR_CARDS}
+            onRefresh={() =>
+              void qc.invalidateQueries({ queryKey: snsKeys.metrics(topicName, monitorRange) })
+            }
+          />
+        </TabPanel>
+      </Tabs>
 
       <div>
         <h2 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Event stream</h2>

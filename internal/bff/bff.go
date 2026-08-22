@@ -183,6 +183,12 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/sqs/queues/{name}/messages", handleSQSPeek)
 	r.Get("/api/sqs/queues/{name}/metrics", handleSQSMetrics)
 
+	// ── SNS routes ────────────────────────────────────────────────────────
+	r.Get("/api/sns/topics/{topicName}/metrics", handleSNSMetrics)
+
+	// ── DynamoDB routes ───────────────────────────────────────────────────
+	r.Get("/api/dynamodb/tables/{name}/metrics", handleDynamoDBMetrics)
+
 	// ── Docs ──────────────────────────────────────────────────────────────
 	r.Get("/api/docs/search", handleDocsSearch)
 	r.Get("/api/docs/page", handleDocsPage(docsFS))
@@ -1138,6 +1144,58 @@ func handleLambdaInstances(w http.ResponseWriter, r *http.Request) {
 func forwardRegion(upstream *http.Request, incoming *http.Request) {
 	if region := incoming.Header.Get(regionHeader); region != "" {
 		upstream.Header.Set("X-Overcast-Region", region)
+	}
+}
+
+// handleSNSMetrics proxies GET /_overcast/sns/topics/{topicName}/metrics —
+// SNS's half of the Monitor tab read-through (phase 4), mirroring
+// handleLambdaMetrics/handleSQSMetrics.
+func handleSNSMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	name := chi.URLParam(r, "topicName")
+	qs := ""
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		qs = "?range=" + url.QueryEscape(rng)
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/sns/topics/%s/metrics%s", ep, url.PathEscape(name), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// handleDynamoDBMetrics proxies GET /_overcast/dynamodb/tables/{name}/metrics
+// — DynamoDB's half of the Monitor tab read-through (phase 4), mirroring
+// handleLambdaMetrics/handleSQSMetrics.
+func handleDynamoDBMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	name := chi.URLParam(r, "name")
+	qs := ""
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		qs = "?range=" + url.QueryEscape(rng)
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/dynamodb/tables/%s/metrics%s", ep, url.PathEscape(name), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
 	}
 }
 

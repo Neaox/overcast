@@ -26,6 +26,19 @@ type MonitorCatalogEntry struct {
 	Metric     string
 	Statistics []string
 	Unit       string
+
+	// ExtraDimensions are appended to the per-request base dimension set
+	// (e.g. TableName) for this entry only, before querying. Most services'
+	// catalogues leave this nil — Lambda/SQS/SNS record every metric with
+	// exactly the same dimension set, so BuildMonitorResponse's single base
+	// dims slice already matches every series. DynamoDB is the first
+	// exception: ConsumedWriteCapacityUnits always adds a "Source=Customer"
+	// dimension on top of TableName (metrics_dynamodb.go's
+	// recordConsumedWriteCapacity), so its own series identity has one more
+	// dimension than ConsumedReadCapacityUnits' — a fixed per-entry addition
+	// here, not a request parameter, keeps that a catalogue fact rather than
+	// something a caller could vary.
+	ExtraDimensions []Dimension
 }
 
 // MonitorSeries is one requested (metric, statistic) series' rendered points.
@@ -93,8 +106,14 @@ func BuildMonitorResponse(ctx context.Context, reader ChartReader, rangeToken st
 
 	resp := MonitorResponse{Enabled: true, Range: rangeToken, PeriodSeconds: int(period.Seconds()), Series: []MonitorSeries{}}
 	for _, entry := range catalog {
+		entryDims := dims
+		if len(entry.ExtraDimensions) > 0 {
+			entryDims = make([]Dimension, 0, len(dims)+len(entry.ExtraDimensions))
+			entryDims = append(entryDims, dims...)
+			entryDims = append(entryDims, entry.ExtraDimensions...)
+		}
 		for _, stat := range entry.Statistics {
-			points, resSec, err := reader.ChartQuery(ctx, namespace, entry.Metric, stat, dims, start, end, period)
+			points, resSec, err := reader.ChartQuery(ctx, namespace, entry.Metric, stat, entryDims, start, end, period)
 			if err != nil {
 				continue
 			}

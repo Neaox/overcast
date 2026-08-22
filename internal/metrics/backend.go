@@ -2,27 +2,36 @@ package metrics
 
 // backend.go selects and defines the metrics repository's persistence layer.
 //
-// Two implementations, mirroring the SQS messages / DynamoDB items / CloudWatch
-// Logs events precedent (internal/services/sqs/message_backend.go,
+// Three implementations, mirroring the SQS messages / DynamoDB items /
+// CloudWatch Logs events precedent (internal/services/sqs/message_backend.go,
 // internal/services/dynamodb/item_store.go,
 // internal/services/cloudwatch/logs/event_backend.go):
 //
-//	memBucketBackend — in-process maps; disappears on restart (MemoryStore,
-//	                   WALStore, and -tags nosqlite builds, none of which
-//	                   satisfy state.SQLiteDBProvider).
+//	memBucketBackend — in-process maps; disappears on restart. Used only for
+//	                   MemoryStore (see newBucketBackendFor) — there is
+//	                   nothing for it to restart into, so the generic K/V
+//	                   backend's JSON round-trip would be pure overhead here.
+//	kvBucketBackend  — generic state.Store Get/Set/Scan records (kv_backend.go).
+//	                   Used for *state.WALStore, whose append-log replay makes
+//	                   these records survive a restart — and hence every
+//	                   -tags nosqlite build, since SQLiteStore/HybridStore
+//	                   don't exist under that tag and WALStore or MemoryStore
+//	                   is all that remains.
 //	sqlBucketBackend  — dedicated SQLite tables (SQLiteStore, HybridStore).
 //
-// Phase 1 deliberately does not add a third, generically-persisted-K/V
-// backend for WALStore the way the plan's "Concrete storage contract across
-// tiers" section sketches (metrics:series:v1 / metrics:buckets:v1 versioned
-// records) — see docs/plans/service-metrics-platform.md's Phase 1 status note
-// for why this is called out as an explicit, disclosed reduction rather than
-// a silent gap: WALStore and nosqlite builds get correct, fully in-memory
-// automatic-metrics behavior (Observe/query/alarm evaluation all work), they
-// just do not survive a process restart. A user-supplied custom PutMetricData
-// point is unaffected either way — that data still goes through
-// internal/services/cloudwatch's own existing storage, untouched by this
-// package.
+// Phase 4 added a third, generically-persisted-K/V backend (kv_backend.go)
+// for *state.WALStore — and hence every -tags nosqlite build, since
+// SQLiteStore/HybridStore don't exist under that tag — matching the plan's
+// "Concrete storage contract across tiers" section (metrics:series:v1 /
+// metrics:buckets:v1 versioned records). Phases 1-3 left WALStore/nosqlite on
+// the plain in-memory backend below; see kv_backend.go's file doc comment for
+// the durability story and its disclosed atomicity trade-off versus
+// sqlBucketBackend's single transaction. MemoryStore itself deliberately
+// keeps using memBucketBackend — there is nothing for it to restart into, so
+// the JSON round-trip would be pure overhead with no benefit. A user-supplied
+// custom PutMetricData point is unaffected by any of this either way — that
+// data still goes through internal/services/cloudwatch's own existing
+// storage, untouched by this package.
 import (
 	"context"
 	"encoding/json"
@@ -79,6 +88,9 @@ type bucketBackend interface {
 func newBucketBackendFor(store state.Store) bucketBackend {
 	if provider, ok := store.(state.SQLiteDBProvider); ok {
 		return newSQLBucketBackend(provider.DB)
+	}
+	if _, ok := store.(*state.WALStore); ok {
+		return newKVBucketBackend(store)
 	}
 	return newMemBucketBackend()
 }

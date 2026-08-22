@@ -14,6 +14,7 @@ import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/r
 import { dynamodb } from "@/services/api"
 import type { DynamoItem } from "@/types"
 import { endpointStore } from "@/services/endpoint-store"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -23,6 +24,8 @@ export const dynamoKeys = {
   table: (name: string) => [...dynamoKeys.all(), "table", name] as const,
   items: () => [...dynamoKeys.all(), "items"] as const,
   itemList: (name: string) => [...dynamoKeys.items(), name] as const,
+  metrics: (name: string, range: ChartRangeToken) =>
+    [...dynamoKeys.all(), "metrics", name, range] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -38,6 +41,20 @@ export function dynamoTableQueryOptions(name: string) {
   return queryOptions({
     queryKey: dynamoKeys.table(name),
     queryFn: () => dynamodb.describeTable(name),
+  })
+}
+
+/**
+ * Monitor tab read-through (docs/plans/service-metrics-platform.md phase 4).
+ * Polls while the tab is visible, matching Lambda/SQS's own Monitor query
+ * options.
+ */
+export function dynamoMetricsQueryOptions(name: string, range: ChartRangeToken) {
+  return queryOptions({
+    queryKey: dynamoKeys.metrics(name, range),
+    queryFn: () => dynamodb.getMetrics(name, range),
+    refetchInterval: 30_000,
+    enabled: Boolean(name),
   })
 }
 

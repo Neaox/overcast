@@ -297,9 +297,13 @@ func (s *Service) DynamoDBInvoker() events.DynamoDBInvoker {
 // TargetPrefix returns the X-Amz-Target prefix for DynamoDB dispatch.
 func (s *Service) TargetPrefix() string { return "DynamoDB_20120810." }
 
-// RegisterRoutes is a no-op — DynamoDB uses POST / which is handled by the
-// router's target dispatcher shared with SQS and SNS.
-func (s *Service) RegisterRoutes(r chi.Router) {}
+// RegisterRoutes mounts DynamoDB's one emulator-only admin endpoint (the web
+// Monitor tab's read-through — handler_metrics.go). Everything else is AWS
+// wire protocol on POST / and handled by the router's target dispatcher
+// shared with SQS and SNS.
+func (s *Service) RegisterRoutes(r chi.Router) {
+	r.Get("/_overcast/dynamodb/tables/{name}/metrics", s.handler.GetTableMetrics)
+}
 
 // Dispatch routes to the correct DynamoDB handler based on X-Amz-Target.
 func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {

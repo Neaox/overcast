@@ -3,8 +3,16 @@
 > **Status:** **Lambda pilot (phase 1) shipped 2026-08-22; SQS/SNS/DynamoDB/
 > API Gateway rollout (phase 2) shipped 2026-08-22; the web Monitor tab/
 > section and the 300s/3600s resolution rollup ladder (phase 3) shipped
-> 2026-08-22**, tracked by
+> 2026-08-22; Lambda's async P1 metric tier, WALStore/`-tags nosqlite`
+> persistence, and the SNS/DynamoDB Monitor tabs (phase 4) shipped
+> 2026-08-23**, tracked by
 > [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100).
+> #1181 was closed by an earlier commit before phase 2/3/4 shipped — see the
+> issue's own comment thread for the correction; it stays closed here because
+> every phase-4 item is now either shipped or tracked as its own issue: the
+> remaining Lambda ESM/P2 tiers and API Gateway's Monitor tab are #1307,
+> DynamoDB throttling modeling is #1305, and SNS's `fanOut` silent-delivery
+> gap is #1306 — not because the whole plan is finished in one shot.
 > `internal/metrics` exists and is wired: Lambda automatically records
 > `Invocations`/`Errors`/`Duration`/`Throttles`/`ConcurrentExecutions`; SQS
 > records its message-operation and queue-depth-gauge catalogue; SNS records
@@ -57,15 +65,28 @@
 > entirely on `internal/metrics`'s own new `QueryAuto`/`ChartQuery` read path —
 > and the 60s/300s/3600s resolution rollup ladder the design always specified,
 > extending the 60s tier's retention from phase 1's 1h to the full 24h the
-> design's table calls for. **What remains deferred to phase 4**: Lambda's
-> P1/P2 tiers, the generic K/V-backed persistence path for `WALStore`/
-> `-tags nosqlite` builds, and migrating `PutMetricData`'s own storage onto
-> `internal/metrics` — see "Phase 3 delivered scope" for the complete list.
+> design's table calls for.
+>
+> **What phase 4 delivered** (see "Phase 4 delivered scope" below for the full
+> list): Lambda's async P1 metric tier (`AsyncEventsReceived`/`AsyncEventAge`/
+> `AsyncEventsDropped`/`DeadLetterErrors`/`DestinationDeliveryFailures`); a
+> generic `state.Store`-backed metrics repository (`internal/metrics/kv_backend.go`)
+> for `*state.WALStore` — and hence every `-tags nosqlite` build — so automatic
+> metrics now survive a restart on those configurations, closing the one gap
+> phases 1-3 all explicitly deferred; and SNS/DynamoDB Monitor tabs reusing
+> phase 3's `MonitorPanel`/`MetricLineChart` unchanged. **What remains**:
+> Lambda's ESM/P2 tiers and `Resource`/`ExecutedVersion` dimensions, and API
+> Gateway's Monitor tab (blocked on a coarse-aggregate-series design decision
+> phase 2 never made) — tracked as #1307, not phase 4 scope. Migrating
+> `PutMetricData`'s own storage onto `internal/metrics` was evaluated and
+> **not done** — see "Phase 4 delivered scope" for why.
 >
 > **Scope:** an AWS-shaped metrics substrate shared by every emulated service,
 > delivered first for Lambda (phase 1), then for SQS, SNS, DynamoDB, and API
 > Gateway (phase 2), then the web Monitor tab/section and resolution rollup
-> ladder (phase 3). This is a plan, not an API commitment.
+> ladder (phase 3), then Lambda's async tier, WALStore/`-tags nosqlite`
+> persistence, and SNS/DynamoDB Monitor tabs (phase 4). This is a plan, not an
+> API commitment.
 
 ## Outcome
 
@@ -932,6 +953,129 @@ Explicitly deferred to phase 4 (not started, not partially built):
 - A `metrics:bucket-updated` SSE event to invalidate/refetch visible charts —
   the Web UI plan's "optionally listen to" alternative to polling; phase 3
   ships the simpler always-poll (30s) behavior only.
+
+## Phase 4 delivered scope (2026-08-23)
+
+Refs #1181. Picks up phase 3's explicit deferral list in value order: Lambda's
+async P1 metric tier, the WALStore/`-tags nosqlite` persistence gap every
+prior phase disclosed, then SNS/DynamoDB Monitor tabs reusing phase 3's own
+components. Does not close #1181 as "fully complete" — see the status header
+for what remains and where it is tracked (#1305, #1306, #1307).
+
+Delivered:
+
+- **Lambda async P1 tier** (`internal/services/lambda/metrics_lambda.go`'s
+  "Async invocation P1 tier" section): `AsyncEventsReceived` (`startAsync`,
+  once per accepted Event invocation — never for one refused during shutdown,
+  since that is this emulator's own process-lifecycle behavior rather than
+  the AWS queue-acceptance fact the metric describes), `AsyncEventAge`
+  (`invokeAsync`, once per attempt, the elapsed time since acceptance —
+  already computed for `eventAgedOut`'s own comparison, not a new
+  measurement), `AsyncEventsDropped` (`invokeAsync`'s `eventAgedOut` branch —
+  the one case this emulator actually discards an event unrun), and
+  `DeadLetterErrors`/`DestinationDeliveryFailures` (the delivery-error
+  branches of `deadLetterAsyncFailure`/`deliverAsyncDestination`, both of
+  which already logged "the event/record is dropped" but never metered it).
+  ESM's own P1 row (`IteratorAge`, `EventCount`, `ErrorCount`) is **not**
+  delivered — it needs each event source mapping's `MetricsConfig` opt-in
+  parsed and gated on, and that field is today only a stored/echoed raw JSON
+  blob (`internal/services/lambda/handler_esm.go`); tracked as #1307 alongside
+  Lambda's P2 tier and `Resource`/`ExecutedVersion` dimensions, all unchanged
+  since phase 1's own deferral.
+- **Generic K/V-backed metrics persistence for WALStore/`-tags nosqlite`**
+  (`internal/metrics/kv_backend.go`): a third `bucketBackend` implementation,
+  selected in `newBucketBackendFor` for `*state.WALStore` — and hence every
+  `-tags nosqlite` build, since `SQLiteStore`/`HybridStore` don't exist under
+  that tag and WALStore or MemoryStore is all that remains — writing through
+  `state.Store`'s own `Get`/`Set`/`Scan` surface using the plan's own
+  versioned namespaces (`metrics:series:v1`, `metrics:buckets:v1`). A
+  WALStore's append-log replay on startup is what makes a bucket flushed
+  through this backend before a restart visible again immediately after one;
+  `TestKVBackend_SurvivesRestart` proves exactly that end to end (Observe →
+  Stop → close the store → reopen the same data dir → a fresh
+  `metrics.Service` sees the prior observation with no new `Observe` call).
+  `MemoryStore` deliberately keeps the existing in-memory `memBucketBackend`
+  — there is nothing for it to restart into, so the JSON round-trip would be
+  pure overhead with no durability benefit; this is the "tier-aware" part of
+  the plan's own phrasing, not an oversight. Bucket writes stay a full-value
+  replace (matching `activeBucket`'s existing contract, and `sqlBucketBackend`'s
+  own upsert shape); the one disclosed compatibility gap is that a crash
+  mid-flush-batch can leave a bucket persisted without its series record (or
+  vice versa) — self-healing on the next successful flush, per the plan's own
+  "K/V fallback must tolerate an interrupted batch" allowance, since
+  `sqlBucketBackend`'s single transaction has no K/V equivalent.
+- **SNS Monitor tab** (`internal/services/sns/handler_metrics.go`,
+  `GET /_overcast/sns/topics/{topicName}/metrics`): the full phase 2 catalogue
+  (`NumberOfMessagesPublished` Sum, `PublishSize` Average+Maximum,
+  `NumberOfNotificationsDelivered`/`NumberOfNotificationsFailed` Sum)
+  dimensioned by `TopicName` — the same single-dimension-set shape Lambda/SQS
+  already used, so no changes to `internal/metrics/monitor.go` were needed.
+  The topic detail page had no tab system before this phase (unlike SQS,
+  which already had one for phase 3 to extend); a `Subscriptions`/`Monitor`
+  pair using the shared `Tabs`/`TabList`/`Tab`/`TabPanel` component
+  (`web/src/components/ui/tabs.tsx`) was introduced fresh, rather than
+  hand-rolling a third one-off tab bar to match SQS's own (pre-existing,
+  now-established) precedent.
+- **DynamoDB Monitor tab** (`internal/services/dynamodb/handler_metrics.go`,
+  `GET /_overcast/dynamodb/tables/{name}/metrics`): table-scoped, capacity
+  metrics only — `ConsumedReadCapacityUnits` (`TableName` only) and
+  `ConsumedWriteCapacityUnits` (`TableName`+`Source=Customer`, matching
+  `recordConsumedWriteCapacity`'s always-added dimension). This is the
+  narrower of the two catalogues this phase built, and deliberately so:
+  DynamoDB's other AWS/DynamoDB metrics (`SuccessfulRequestLatency`,
+  `UserErrors`, `SystemErrors`) are dimensioned by `Operation` or published
+  with *no* dimensions at all (account/region-wide — see
+  `metrics_dynamodb.go`'s file doc comment), neither of which fits a single
+  per-table series the way the two capacity metrics do; charting them would
+  mean either one line per operation or a coarser aggregate that was never
+  recorded. `MonitorCatalogEntry` gained an `ExtraDimensions` field
+  (`internal/metrics/monitor.go`) purely to let `ConsumedWriteCapacityUnits`
+  add its `Source` dimension on top of the per-request base `TableName`
+  dimension `BuildMonitorResponse` otherwise applies uniformly across a
+  catalogue — the first catalogue phase 3's original single-dims-for-the-whole-catalogue
+  shape didn't already fit; Lambda/SNS/SQS all still pass no
+  `ExtraDimensions` and are unaffected.
+- **API Gateway Monitor tab**: **not delivered**. Unlike SNS/DynamoDB,
+  API Gateway phase 2 (#1268) deliberately records only the most granular
+  documented dimension combination per request (REST:
+  `ApiName+Stage+Method+Resource`; HTTP: `ApiId+Stage+HttpMethod+RouteKey`),
+  never AWS's own coarser `ApiName+Stage`-only aggregate — so there is no
+  series a per-API dashboard could query without either charting one line per
+  route (a catalogue that grows with the API's own route count, unlike every
+  other service's small fixed catalogue) or building a genuinely new
+  capability this phase did not scope: either a second, coarser recorded
+  series, or cross-series aggregation in `internal/metrics`'s query layer
+  (`ChartQuery`/`QueryAuto` resolve one exact dimension set per call today).
+  Tracked as #1307 rather than built as an approximation.
+- **`PutMetricData` storage migration onto `internal/metrics`: evaluated,
+  not done.** The plan's own text permits deferring this "once the
+  read-through's operational cost (double query per API call) is measured
+  against real cardinality" — no such measurement exists, and phases 2/3
+  since shipped five namespaces and the full resolution rollup ladder through
+  the existing read-through (`internal/services/cloudwatch/metrics_bridge.go`)
+  with **zero** changes to CloudWatch's own storage engine or its
+  already-extensive test suite. Migrating now would touch that tested engine
+  for a benefit nothing has measured; the read-through remains the safer,
+  equally-correct option until a concrete performance problem is found.
+- **DynamoDB throttling modeling** and **SNS's `fanOut` silent-`continue`
+  delivery-dependency gap** — both disclosed since phase 2, filed as their own
+  issues this phase (#1305, #1306) with RICE scores per
+  `docs/plans/backlog-rice.md` §2, rather than left as an implicit note in
+  this plan doc.
+- Tests: `internal/metrics/kv_backend_test.go` (restart continuity),
+  `backend_test.go`'s parity test gained a `"wal"` entry;
+  `internal/services/lambda/metrics_lambda_async_test.go` (all five async
+  metrics, including the shutdown-refusal exclusion);
+  `internal/services/sns/handler_metrics_test.go` and
+  `internal/services/dynamodb/handler_metrics_test.go` (new, following phase
+  3's per-service Monitor-endpoint test convention exactly — a real
+  `*metrics.Service`, never a stub). Verified under the default build, `-tags
+  slim,dev`, `-tags slim,nosqlite`, and `-race` (via `docker-go.sh` on
+  `golang:1.25-bookworm`, since `go.mod` requires Go >= 1.25 and the
+  devcontainer's pinned `golang:1.24-bookworm` image predates that). Web:
+  `pnpm typecheck`/`lint`/`test` all clean; screenshots of the SNS Monitor tab
+  in light and dark, captured from a Docker image built off this branch with
+  a real seeded topic/publish and table/item (see the PR for the images).
 
 ## Implementation phases
 

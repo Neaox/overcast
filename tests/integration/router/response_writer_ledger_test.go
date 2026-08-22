@@ -55,6 +55,8 @@ var emulatorOnlyWriters = map[string]string{
 	"lambda/handler_functions.go":        "ListRuntimes and the saved test-event routes, all emulator-only",
 	"lambda/handler_metrics.go":          "/_overcast/lambda/functions/{name}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 3)",
 	"sqs/handler_metrics.go":             "/_overcast/sqs/queues/{name}/metrics, the web Monitor section's read-through (service-metrics-platform.md phase 3)",
+	"sns/handler_metrics.go":             "/_overcast/sns/topics/{topicName}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 4)",
+	"dynamodb/handler_metrics.go":        "/_overcast/dynamodb/tables/{name}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 4)",
 	"cognito/handler_managed_login.go":   "the hosted-UI OAuth endpoints, which answer as an OIDC provider rather than as an AWS API",
 	"cognito/jwt.go":                     "the pool's JWKS document, fetched by JWT verifiers at /.well-known/jwks.json",
 

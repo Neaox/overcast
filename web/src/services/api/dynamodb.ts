@@ -12,7 +12,9 @@ import {
   UpdateTableCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb"
-import type { DynamoTable, DynamoItem } from "@/types"
+import { apiFetch } from "./base"
+import type { DynamoTable, DynamoItem, MonitorResponse } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 /** Convert SDK AttributeValue → plain DynamoDB JSON for the UI (DynamoAttrValue). */
 function attrToJson(attr: AttributeValue): Record<string, unknown> {
@@ -117,6 +119,12 @@ function describeTableToUI(
 }
 
 export const dynamodb = {
+  /** Monitor tab read-through — docs/plans/service-metrics-platform.md phase 4. */
+  getMetrics: (tableName: string, range: ChartRangeToken) =>
+    apiFetch<MonitorResponse>(
+      `/dynamodb/tables/${encodeURIComponent(tableName)}/metrics?range=${range}`,
+    ),
+
   listTables: async (): Promise<DynamoTable[]> => {
     const client = awsClients.dynamodb()
     const res = await client.send(new ListTablesCommand({}))

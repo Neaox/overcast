@@ -12,6 +12,7 @@
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { sns } from "@/services/api"
 import { endpointStore } from "@/services/endpoint-store"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -22,6 +23,8 @@ export const snsKeys = {
   subscriptionList: (topicName: string) => [...snsKeys.subscriptions(), topicName] as const,
   queueSubscriptions: (queueArn: string) =>
     [...snsKeys.all(), "queue-subscriptions", queueArn] as const,
+  metrics: (topicName: string, range: ChartRangeToken) =>
+    [...snsKeys.all(), "metrics", topicName, range] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -46,6 +49,20 @@ export function snsQueueSubscriptionsQueryOptions(queueArn: string) {
     queryKey: snsKeys.queueSubscriptions(queueArn),
     queryFn: () => sns.listSubscriptionsByEndpoint(queueArn),
     enabled: !!queueArn,
+  })
+}
+
+/**
+ * Monitor tab read-through (docs/plans/service-metrics-platform.md phase 4).
+ * Polls while the tab is visible, matching Lambda/SQS's own Monitor query
+ * options.
+ */
+export function snsMetricsQueryOptions(topicName: string, range: ChartRangeToken) {
+  return queryOptions({
+    queryKey: snsKeys.metrics(topicName, range),
+    queryFn: () => sns.getMetrics(topicName, range),
+    refetchInterval: 30_000,
+    enabled: Boolean(topicName),
   })
 }
 

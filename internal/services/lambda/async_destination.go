@@ -84,6 +84,7 @@ func (h *Handler) deliverAsyncDestination(
 			zap.String("destination", arn),
 			zap.String("side", side),
 			zap.Error(err))
+		h.recordDestinationDeliveryFailures(ctx, fn.Name)
 		return
 	}
 	h.log.Debug("invokeAsync: invocation record sent to destination",
