@@ -13,6 +13,7 @@ started, and they answer different questions:
 | --- | --- | --- |
 | Where is **Overcast**? | `internal/dns`, via `--dns` | Owns the split-horizon domains and every subdomain; answers with Overcast's own address, chosen per caller |
 | Where is **that other container**? | Docker's embedded resolver, `127.0.0.11` | Network **aliases** on containers attached to the caller's network — consulted *before* anything is forwarded to `internal/dns` |
+| Where does **a customer's own domain** resolve? | `internal/dns` again, but from Route 53's store, not the split-horizon zone | A hosted zone's records answer authoritatively (A/AAAA/CNAME/MX/TXT/NS/SOA, wildcards, ALIAS-to-Overcast's-address); see [route53.md](../services/route53.md#dns-serving) |
 
 ## 0. Two planes, and one package that owns them
 

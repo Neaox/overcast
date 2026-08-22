@@ -5,10 +5,13 @@
 > Verified 2026-08-21: **Waves 1–3 items 1–10 have all shipped** (issues
 > #467–#476 closed; per-item status is already recorded inline below).
 > Item 11 (DynamoDB PartiQL) is unblocked but **not started** — the three
-> PartiQL operations are still unregistered. Wave 4 is unstarted, with one
-> stale row: **Backup is no longer 9/9 `StatusInert`** — #815/#904 rebound it
-> to its modeled REST paths and it now carries Supported/Partial rows, so its
-> Wave-4 entry needs rescoring before anyone picks it up. The deferred compat
+> PartiQL operations are still unregistered. Wave 4 is mostly unstarted, with
+> two stale rows: **Backup is no longer 9/9 `StatusInert`** — #815/#904
+> rebound it to its modeled REST paths and it now carries Supported/Partial
+> rows, so its Wave-4 entry needs rescoring before anyone picks it up. **Route
+> 53 real DNS serving shipped 2026-08-22 (#1189)** — see the Wave 4 table
+> below; it is the item's tracker in the absence of a pre-existing sub-issue,
+> per this doc's own "Why" note at the time it was filed. The deferred compat
 > follow-ups #506 (CloudWatch group) and #517 (Auto Scaling group) remain open.
 > Scope: everything Tier 2-eligible. [services-never-emulated.md](./services-never-emulated.md) (if present)
 > defines what is permanently out of scope; this document's ranking starts from
@@ -539,7 +542,7 @@ together as "next after Wave 1–3," not committed to a specific order within th
 | Backup | Tier 1 (9/9 `StatusInert`) | On-demand backup/restore that actually snapshots and restores DynamoDB tables / RDS instances / EFS file systems via each service's own existing state | 2/2/3/L/3/low | AWS Backup is compliance/DR-oriented; most local dev doesn't reach for scheduled backup plans — fit is mediocre, not zero |
 | SES receipt rules (inbound routing) | Core, stub gap | `CreateReceiptRuleSet`/`CreateReceiptRule` actually route inbound-simulated mail to an S3/SNS/Lambda action | 2/2/3/M/4/low | SES outbound (send + mail capture) already covers the common local-dev case (verify your app sends the right email); inbound SES is a narrower pattern |
 | EventBridge Archive/Replay/Connections | Core, 12 ops 501 | Real event archiving with replay-by-time-range; API destinations with connection-secret injection | 2/2/3/L/4/low | Useful but a level above what most local architectures exercise; do after Wave 1's target fan-out, which is used far more often |
-| Route 53 real DNS serving | Comprehensive, explicitly inert ("no DNS served") | Hosted-zone records actually answer queries from an internal resolver | 2/3/2/L/2/medium | Overcast already runs a DNS server (`internal/dns`) but it's purpose-built for split-horizon container hostnames, not general zone serving (`internal/dns/zone.go` header) — reusable *pattern*, not reusable *code*. Fit is capped: real Route53 value is DNS-based routing policies (weighted/latency/failover) that are inherently about multi-region infra a single local node doesn't have |
+| ~~Route 53 real DNS serving~~ **done 2026-08-22 (#1189)** | ~~Comprehensive, explicitly inert ("no DNS served")~~ → Comprehensive | Hosted-zone records actually answer queries from an internal resolver | 2/3/2/L/2/medium | Landed as a data source consulted by `internal/dns` (checked ahead of the split-horizon zone, never shadowing it) rather than a rewrite of the resolver: A/AAAA/CNAME (cross-zone chase)/MX/TXT/NS/SOA, one-label wildcards, ALIAS-to-emulator-address, NODATA/NXDOMAIN with SOA. Routing policies (weighted/latency/failover/geolocation) remain unevaluated — matching-name/type record sets are merged into one answer instead of one being chosen — since real Route53 routing is inherently about multi-region infra a single local node doesn't have; see [route53.md](../services/route53.md) |
 | WAF request-time rule evaluation | Minimal stub (4 metadata-only Web ACL CRUD ops; rules stored but never evaluated) | Web ACL rules actually block/allow requests at API Gateway/CloudFront/ALB | 1/1/2/L/3/high | Low fit: WAF exists to stop internet abuse at the edge, a threat model that doesn't exist on localhost. CRUD-only is very likely sufficient forever — kept in Wave 4 rather than the non-goals list only because *some* teams test WAF rule logic itself (not the edge-blocking) offline |
 
 ## 4. External evidence gathered

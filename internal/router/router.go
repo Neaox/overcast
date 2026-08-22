@@ -363,6 +363,13 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: scheduler")
 	route53Svc := route53svcpkg.New(cfg, store, logger, clk)
 	prof.mark("  new: route53")
+	// Wires the resolver to Route 53's store the moment the service exists —
+	// no need to wait for Docker like the data-plane guard below, since a
+	// hosted zone's records are ordinary emulator state, not a container
+	// endpoint. See internal/services/route53/dns_resolve.go.
+	if dnsServer != nil {
+		dnsServer.SetRoute53(route53Svc)
+	}
 	elbv2Svc := elbv2svcpkg.New(cfg, store, logger, clk)
 	prof.mark("  new: elbv2")
 	organizationsSvc := organizations.New(cfg, store, logger, clk)

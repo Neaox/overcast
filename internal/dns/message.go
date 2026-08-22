@@ -14,14 +14,20 @@ const (
 	maxNameLen = 255 // RFC 1035 §2.3.4
 	maxLabel   = 63
 
-	typeA    uint16 = 1
-	typeAAAA uint16 = 28
-	typeANY  uint16 = 255
-	classIN  uint16 = 1
+	typeA     uint16 = 1
+	typeNS    uint16 = 2
+	typeCNAME uint16 = 5
+	typeSOA   uint16 = 6
+	typeMX    uint16 = 15
+	typeTXT   uint16 = 16
+	typeAAAA  uint16 = 28
+	typeANY   uint16 = 255
+	classIN   uint16 = 1
 
 	rcodeNoError  byte = 0
 	rcodeFormErr  byte = 1
 	rcodeServFail byte = 2
+	rcodeNXDomain byte = 3
 	rcodeRefused  byte = 5
 
 	// flagResponse etc. are the header bits this package sets. RD is copied

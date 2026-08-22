@@ -37,6 +37,12 @@
 // NXDOMAIN — it produces Overcast's own address, and the client connects to
 // Overcast on the database port and hangs. See
 // docs/dev/container-networking.md.
+//
+// A third question this package answers, since issue #1189: a customer's own
+// domain, provisioned as a Route 53 hosted zone. That is a separate
+// authority from the Zone this file defines — it is not a subdomain
+// relationship, and it is checked first — see route53_source.go and
+// docs/services/route53.md.
 package dns
 
 import (
