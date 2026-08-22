@@ -46,6 +46,18 @@
           "type": "array",
           "items": { "$ref": "#/definitions/TestCase" },
           "minItems": 1
+        },
+        "generated": {
+          "type": "boolean",
+          "description": "Only legal in registry.generated.json, where it is required and always true. It is declared here because registry.generated.schema.json extends this definition by $ref, and a draft-07 `additionalProperties: false` rejects any property the referenced schema does not name. A hand-written group carrying it is rejected by the Go lint in cmd/compat (lintGeneratedRegistry)."
+        },
+        "scenario": {
+          "type": "string",
+          "description": "Only legal in registry.generated.json — see `generated`. Path to the scenario IR file the group was produced from."
+        },
+        "state": {
+          "type": "string",
+          "description": "Only legal in registry.generated.json — see `generated`. candidate | gated."
         }
       },
       "additionalProperties": false

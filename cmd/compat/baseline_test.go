@@ -464,7 +464,7 @@ func TestCompareBaseline_flakyTestIsToleratedInEitherDirection(t *testing.T) {
 		})
 		// Then: neither outcome blocks a PR. An intermittent test that
 		// randomly reds the build teaches people to ignore the gate.
-		if got := compareBaselineWith(baseline, report, flaky); len(got) != 0 {
+		if got := compareBaselineWith(baseline, report, flaky, candidateSet{}); len(got) != 0 {
 			t.Errorf("status %s produced regressions %#v, want none", status, got)
 		}
 	}
@@ -483,7 +483,7 @@ func TestCompareBaseline_flakyListDoesNotExcuseOtherTests(t *testing.T) {
 	)
 
 	// Then: the quarantine is per test, not a blanket amnesty
-	got := compareBaselineWith(baseline, report, flaky)
+	got := compareBaselineWith(baseline, report, flaky, candidateSet{})
 	if len(got) != 1 || !strings.Contains(got[0], "SubscribeSQS") {
 		t.Fatalf("regressions = %#v, want only SubscribeSQS", got)
 	}
@@ -503,7 +503,7 @@ func TestUpdateBaseline_doesNotPromoteFlakyTests(t *testing.T) {
 
 	// When: the baseline is promoted from a run where the flaky test happened
 	// to pass
-	updated := updateBaselineWith(baseline, report, flaky)
+	updated := updateBaselineWith(baseline, report, flaky, candidateSet{})
 	entries := baselineEntryMap(updated.Entries)
 
 	// Then: the flaky test keeps its floor — promoting it would make the very
@@ -567,7 +567,7 @@ func TestFailuresOverLimit_namesEveryFailure(t *testing.T) {
 	)
 
 	// When: the absolute failure gate runs with no failures allowed.
-	failures := failuresOverLimit(report, flakySet{}, 0)
+	failures := failuresOverLimit(report, flakySet{}, candidateSet{}, 0)
 
 	// Then: both are named. This gate consults no baseline, so a failure the
 	// baseline happens to grandfather is reported like any other.
@@ -594,7 +594,7 @@ func TestFailuresOverLimit_onlyFailCounts(t *testing.T) {
 
 	// When/Then: none of them trips the gate. "No failures" means no wrong
 	// answers, not full coverage.
-	if failures := failuresOverLimit(report, flakySet{}, 0); len(failures) != 0 {
+	if failures := failuresOverLimit(report, flakySet{}, candidateSet{}, 0); len(failures) != 0 {
 		t.Fatalf("failures = %#v, want none", failures)
 	}
 }
@@ -610,7 +610,7 @@ func TestFailuresOverLimit_ignoresQuarantinedTests(t *testing.T) {
 	// When/Then: the quarantine holds here too — otherwise this gate would red
 	// the build at random and undo the whole point of the flaky list — but it is
 	// per test, not a blanket amnesty.
-	failures := failuresOverLimit(report, flaky, 0)
+	failures := failuresOverLimit(report, flaky, candidateSet{}, 0)
 	if len(failures) != 1 || !strings.Contains(failures[0], "PurgeQueue") {
 		t.Fatalf("failures = %#v, want only PurgeQueue", failures)
 	}
@@ -624,10 +624,10 @@ func TestFailuresOverLimit_underLimitPasses(t *testing.T) {
 
 	// When/Then: at or under the limit nothing is reported; over it, everything
 	// is — a partial list would understate the damage.
-	if failures := failuresOverLimit(report, flakySet{}, 1); len(failures) != 0 {
+	if failures := failuresOverLimit(report, flakySet{}, candidateSet{}, 1); len(failures) != 0 {
 		t.Fatalf("failures = %#v, want none at limit 1", failures)
 	}
-	if failures := failuresOverLimit(report, flakySet{}, 0); len(failures) != 1 {
+	if failures := failuresOverLimit(report, flakySet{}, candidateSet{}, 0); len(failures) != 1 {
 		t.Fatalf("failures = %#v, want 1 at limit 0", failures)
 	}
 }
