@@ -122,7 +122,7 @@
     "msw": "^2.13.5",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
-    "typescript": "~5.9.3",
+    "typescript": "~7.0.0",
     "typescript-eslint": "^8.59.3",
     "vite": "^8.0.1",
     "vite-plugin-mkcert": "^2.0.0",
