@@ -45,6 +45,15 @@ type Handler struct {
 
 	ops     map[string]http.HandlerFunc
 	typedOp map[string]op.Operation
+
+	// keyMaterialFor mints CreateKeyPair's fingerprint and dummy key
+	// material. Real deployments use the crypto/rand-backed default
+	// (randomFingerprint/dummyKeyMaterial in handler_keypairs.go); the
+	// mutation-parity test (typed_parity_mutations_dev_test.go) overrides it
+	// on both of its independently-seeded handlers so the legacy and typed
+	// dispatch paths mint byte-identical material, leaving nothing that
+	// needs masking.
+	keyMaterialFor func() (fingerprint, material string)
 }
 
 func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
@@ -55,6 +64,7 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
 	}
+	h.keyMaterialFor = func() (string, string) { return randomFingerprint(), dummyKeyMaterial() }
 	// The guard wraps whichever strategy is configured: the default VPC's
 	// network is the shared data plane, not a per-VPC bridge, and no mapping
 	// policy may create, adopt, recreate or remove it.

@@ -1476,8 +1476,7 @@ func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq)
 	if _, aerr := h.store.getKeyPair(ctx, req.KeyName); aerr == nil {
 		return nil, ec2err("InvalidKeyPair.Duplicate", fmt.Sprintf("The keypair '%s' already exists", req.KeyName), http.StatusBadRequest)
 	}
-	fingerprint := randomFingerprint()
-	material := dummyKeyMaterial()
+	fingerprint, material := h.keyMaterialFor()
 	kpID := fmt.Sprintf("key-%s", shortID())
 	kp := &KeyPair{
 		KeyName:        req.KeyName,

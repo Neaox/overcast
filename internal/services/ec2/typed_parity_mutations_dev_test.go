@@ -82,15 +82,21 @@ var mintedMutationIDs = regexp.MustCompile(
 // of crypto/rand, never equal between two independently-seeded handlers.
 var mintedMacAddress = regexp.MustCompile(`\b02(?::[0-9a-f]{2}){5}\b`)
 
-// mintedKeyFingerprint masks CreateKeyPair's fabricated fingerprint — sixteen
-// bytes of crypto/rand.
-var mintedKeyFingerprint = regexp.MustCompile(`\b(?:[0-9a-f]{2}:){15}[0-9a-f]{2}\b`)
-
-// mintedKeyMaterial masks CreateKeyPair's dummy PEM block — sixty-four bytes
-// of crypto/rand, hex-encoded. The XML encoder writes its embedded newlines
-// as the "&#xA;" character reference rather than a literal \n, so the
-// pattern has to accept either.
-var mintedKeyMaterial = regexp.MustCompile(`(?s)-----BEGIN RSA PRIVATE KEY-----(?:\n|&#xA;)[0-9a-f]+(?:\n|&#xA;)-----END RSA PRIVATE KEY-----`)
+// deterministicKeyMaterial replaces Handler.keyMaterialFor on both of a
+// mutation case's independently-seeded handlers (newMutationHandler below),
+// so CreateKeyPair mints byte-identical fingerprint and key material on the
+// legacy and typed dispatch paths instead of two independent crypto/rand
+// draws. That used to be reconciled by mintedKeyFingerprint/mintedKeyMaterial
+// regexes masking the random content out of the compared string — regexes
+// that, on the CI runner, sometimes failed to redact one side fully (#1302),
+// comparing genuinely random bytes as if they were meant to agree. Minting
+// identical material on both sides removes the need to mask it at all.
+func deterministicKeyMaterial() (fingerprint, material string) {
+	return "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99",
+		"-----BEGIN RSA PRIVATE KEY-----\n" +
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" +
+			"\n-----END RSA PRIVATE KEY-----"
+}
 
 // mintedSyntheticIP masks AllocateAddress's public IP and the private-IP
 // fallback allocatePrivateIPForSubnet mints for a subnet the VPC-network
@@ -109,8 +115,6 @@ var mintedSyntheticIP = regexp.MustCompile(`\b(?:203\.0\.113|10\.0\.0)\.\d{1,3}\
 func stableMutation(body string) string {
 	body = mintedMutationIDs.ReplaceAllString(body, "$1-XXXXXXXX")
 	body = mintedMacAddress.ReplaceAllString(body, "02:XX:XX:XX:XX:XX")
-	body = mintedKeyFingerprint.ReplaceAllString(body, "XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX")
-	body = mintedKeyMaterial.ReplaceAllString(body, "-----BEGIN RSA PRIVATE KEY-----\nXXXX\n-----END RSA PRIVATE KEY-----")
 	body = mintedSyntheticIP.ReplaceAllString(body, "X.X.X.X")
 	return body
 }
@@ -135,12 +139,18 @@ func xmlField(body, tag string) string {
 // clock microseconds apart.
 func newMutationHandler(t *testing.T, mock clock.Clock) *Handler {
 	t.Helper()
-	return newHandler(
+	h := newHandler(
 		&config.Config{Region: "us-east-1", AccountID: "000000000000", Network: "overcast"},
 		state.NewMemoryStore(),
 		serviceutil.NewServiceLogger(zap.NewNop(), "ec2"),
 		mock,
 	)
+	// Both of a mutation case's handlers get the same deterministic key
+	// material — see deterministicKeyMaterial's comment — so CreateKeyPair's
+	// legacy and typed responses always agree byte-for-byte, the same way
+	// sharing mock as their clock keeps a stored timestamp agreeing.
+	h.keyMaterialFor = deterministicKeyMaterial
+	return h
 }
 
 // dispatchLegacy drives one request through h's legacy handler map — used

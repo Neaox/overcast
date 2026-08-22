@@ -85,8 +85,7 @@ func (h *Handler) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fingerprint := randomFingerprint()
-	material := dummyKeyMaterial()
+	fingerprint, material := h.keyMaterialFor()
 	kpID := fmt.Sprintf("key-%s", shortID())
 
 	kp := &KeyPair{
