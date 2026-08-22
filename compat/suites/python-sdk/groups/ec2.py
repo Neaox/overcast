@@ -95,6 +95,21 @@ def DeleteVpc(ctx: TestContext) -> None:
     vpc_id = ctx.get("ec2_vpc_id")
     if not vpc_id:
         return
+    # AWS refuses DeleteVpc while an internet gateway is still attached
+    # (DependencyViolation), and this group's own AttachInternetGateway test
+    # leaves one attached with nothing downstream detaching it — detach (and
+    # delete) it here first, the same way DeleteSecurityGroup/DeleteSubnet/
+    # DeleteVpnGateway already run ahead of DeleteVpc in the dependency graph.
+    igw_id = ctx.get("ec2_igw_id")
+    if igw_id:
+        try:
+            ec2.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=vpc_id)
+        except Exception:
+            pass
+        try:
+            ec2.delete_internet_gateway(InternetGatewayId=igw_id)
+        except Exception:
+            pass
     ec2.delete_vpc(VpcId=vpc_id)
 
 

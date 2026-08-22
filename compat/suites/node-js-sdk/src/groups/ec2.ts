@@ -480,6 +480,30 @@ export function makeEC2Groups(suite: string): TestGroup[] {
             const { ec2 } = makeClients(ctx);
             const vpcId = (ctx as Record<string, unknown>)["_vpcId"] as string;
             if (!vpcId) return;
+            // AWS refuses DeleteVpc while an internet gateway is still
+            // attached (DependencyViolation), and this group's own
+            // AttachInternetGateway test leaves one attached with nothing
+            // downstream detaching it — detach (and delete) it here first,
+            // the same way DeleteSecurityGroup/DeleteSubnet/DeleteVpnGateway
+            // already run ahead of DeleteVpc in the dependency graph.
+            const igwId = (ctx as Record<string, unknown>)["_igwId"] as string;
+            if (igwId) {
+              try {
+                await ec2.send(
+                  new DetachInternetGatewayCommand({
+                    InternetGatewayId: igwId,
+                    VpcId: vpcId,
+                  }),
+                );
+              } catch {}
+              try {
+                await ec2.send(
+                  new DeleteInternetGatewayCommand({
+                    InternetGatewayId: igwId,
+                  }),
+                );
+              } catch {}
+            }
             await ec2.send(new DeleteVpcCommand({ VpcId: vpcId }));
             const resp = await ec2.send(new DescribeVpcsCommand({}));
             assert.ok(

@@ -224,6 +224,17 @@ func (g *ec2CliGroup) DeleteVpc(_ context.Context, t *harness.TestContext) error
 	if vpcID == "" {
 		return fmt.Errorf("DeleteVpc: no vpc_id from CreateVpc")
 	}
+	// AWS refuses DeleteVpc while an internet gateway is still attached
+	// (DependencyViolation), and this group's own AttachInternetGateway test
+	// leaves one attached with nothing downstream detaching it — detach (and
+	// delete) it here first, the same way DeleteSecurityGroup/DeleteSubnet/
+	// DeleteVpnGateway already run ahead of DeleteVpc in the dependency graph.
+	if igwID := t.GetString("igw_id"); igwID != "" {
+		awscli.Run(t.Endpoint, t.Region, "ec2", "detach-internet-gateway", //nolint:errcheck
+			"--internet-gateway-id", igwID, "--vpc-id", vpcID)
+		awscli.Run(t.Endpoint, t.Region, "ec2", "delete-internet-gateway", //nolint:errcheck
+			"--internet-gateway-id", igwID)
+	}
 	return awscli.Run(t.Endpoint, t.Region, "ec2", "delete-vpc",
 		"--vpc-id", vpcID,
 	)

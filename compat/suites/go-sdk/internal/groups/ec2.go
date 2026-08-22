@@ -215,6 +215,15 @@ func (g *ec2Group) DeleteVpc(ctx context.Context, t *harness.TestContext) error 
 	if vpcID == "" {
 		return nil
 	}
+	// AWS refuses DeleteVpc while an internet gateway is still attached
+	// (DependencyViolation), and this group's own AttachInternetGateway test
+	// leaves one attached with nothing downstream detaching it — detach (and
+	// delete) it here first, the same way DeleteSecurityGroup/DeleteSubnet/
+	// DeleteVpnGateway already run ahead of DeleteVpc in the dependency graph.
+	if igwID := t.GetString("ec2_igw_id"); igwID != "" {
+		g.cl().DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(igwID), VpcId: aws.String(vpcID)}) //nolint:errcheck
+		g.cl().DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(igwID)})                           //nolint:errcheck
+	}
 	_, err := g.cl().DeleteVpc(ctx, &ec2.DeleteVpcInput{
 		VpcId: aws.String(vpcID),
 	})
