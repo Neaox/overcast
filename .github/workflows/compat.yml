@@ -276,7 +276,7 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: env.RUN_SUITES == 'true'
         with:
           package_json_file: web/package.json
