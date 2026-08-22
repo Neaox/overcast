@@ -53,11 +53,7 @@
   // .devcontainer is a dev environment, not a shipped artifact.
   ignorePaths: ['**/node_modules/**', 'compat/**', 'tests/**', '.devcontainer/**'],
 
-  // Match the repo's conventional-commit style. Dockerfile updates keep the
-  // build(docker) prefix Dependabot used; everything else is build(deps).
   semanticCommits: 'enabled',
-  semanticCommitType: 'build',
-  semanticCommitScope: 'deps',
 
   minimumReleaseAge: '7 days',
   // Left at Renovate's default of timestamp-required on purpose: a release
@@ -86,6 +82,18 @@
 
   packageRules: [
     {
+      // Match the repo's conventional-commit style. This has to be a
+      // packageRule, not a top-level setting: config:recommended carries
+      // :semanticPrefixFixDepsChoreOthers, whose own packageRules set the
+      // type to fix/chore and outrank anything top-level — the first
+      // dashboard (#1180) showed chore(docker)/fix(deps) for exactly that
+      // reason. Rules here come after the preset's, so they win.
+      matchPackageNames: ['*'],
+      semanticCommitType: 'build',
+      semanticCommitScope: 'deps',
+    },
+    {
+      // Dockerfile updates keep the build(docker) prefix Dependabot used.
       matchManagers: ['dockerfile'],
       semanticCommitScope: 'docker',
     },
