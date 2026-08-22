@@ -709,7 +709,7 @@ jobs:
       # shells out to the Go generator. This job is Node-only.
       # pnpm/action-setup must precede setup-node: `cache: pnpm` resolves the
       # store path by running pnpm, so pnpm has to be on PATH by then.
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: env.RUN_BUILD == 'true'
         with:
           package_json_file: web/package.json
