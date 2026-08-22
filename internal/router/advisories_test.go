@@ -439,6 +439,56 @@ func TestCheckMemoryMode_absentForPersistentBackends(t *testing.T) {
 	}
 }
 
+// ---- checkMemoryModeIgnoresExisting ---------------------------------------------
+
+// TestCheckMemoryModeIgnoresExisting_firesOnlyForMemoryWithExistingDatabase
+// covers the sharp exception checkMemoryMode itself does not: memory mode
+// alone is never remarkable, but memory mode while a database already exists
+// in the data directory means real data is being silently left behind.
+func TestCheckMemoryModeIgnoresExisting_firesOnlyForMemoryWithExistingDatabase(t *testing.T) {
+	a := checkMemoryModeIgnoresExisting(config.StateBackendMemory, true)
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityWarning {
+		t.Errorf("severity = %q, want %q", a.Severity, advisorySeverityWarning)
+	}
+	if a.Code != advisoryCodeMemoryModeIgnoresExisting {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeMemoryModeIgnoresExisting)
+	}
+	for _, want := range []string{"existing", "OVERCAST_STATE=auto"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail = %q, expected it to mention %q", a.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryModeIgnoresExisting_absentWithoutExistingDatabase(t *testing.T) {
+	// The default, healthy fresh-install and CI path: memory mode with no
+	// database anywhere yet. Must never fire here — checkMemoryMode alone
+	// already covers this case, and it is deliberately not an error.
+	if a := checkMemoryModeIgnoresExisting(config.StateBackendMemory, false); a != nil {
+		t.Errorf("expected no advisory when there is no existing database, got %+v", a)
+	}
+}
+
+func TestCheckMemoryModeIgnoresExisting_absentForPersistentBackends(t *testing.T) {
+	// An existing database with a persistent backend selected is the normal,
+	// intended case (that database is exactly what will be opened) — no
+	// mismatch to report regardless of which durable backend it is.
+	for _, backend := range []config.StateBackend{
+		config.StateBackendHybrid,
+		config.StateBackendPersistent,
+		config.StateBackendWAL,
+	} {
+		t.Run(string(backend), func(t *testing.T) {
+			if a := checkMemoryModeIgnoresExisting(backend, true); a != nil {
+				t.Errorf("expected no advisory for backend %q with an existing database, got %+v", backend, a)
+			}
+		})
+	}
+}
+
 // ---- computeAdvisories aggregation ---------------------------------------------
 
 func TestComputeAdvisories_emptyWhenNothingWrong(t *testing.T) {

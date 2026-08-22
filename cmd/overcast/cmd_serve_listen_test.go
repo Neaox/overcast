@@ -194,3 +194,19 @@ func TestLogListenResolution_explicitOmitsTheReason(t *testing.T) {
 		t.Errorf("listenAutoSignal field should be absent when explicit, got %v", entry.ContextMap())
 	}
 }
+
+// TestPublishedPortMismatchWarning covers the environment-preflight "ports"
+// instance (deploy-failure-diagnosis.md W4): the message resolvePublishedPort
+// logs when Overcast's container remaps its API port. It must name both
+// ports, say what containerendpoint's rewriting already covers, and name the
+// one thing it cannot (a value compared rather than dialed, e.g. a Cognito
+// token's iss) with a concrete fix.
+func TestPublishedPortMismatchWarning(t *testing.T) {
+	msg := publishedPortMismatchWarning(4566, 4580)
+
+	for _, want := range []string{"4566", "4580", "publish 1:1", "Cognito"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message = %q, expected it to mention %q", msg, want)
+		}
+	}
+}

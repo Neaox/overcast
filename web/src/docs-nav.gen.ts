@@ -117,6 +117,16 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Web management console",
         "id": "web-management-console"
+      },
+      {
+        "depth": 2,
+        "text": "Troubleshooting",
+        "id": "troubleshooting"
+      },
+      {
+        "depth": 3,
+        "text": "Startup preflight",
+        "id": "startup-preflight"
       }
     ]
   },

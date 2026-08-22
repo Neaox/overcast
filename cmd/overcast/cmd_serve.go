@@ -124,6 +124,11 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 			zap.String("stateAutoSignal", cfg.StateAutoSignal),
 		)
 	}
+	// Environment preflight: memory mode is fine on its own (the line above
+	// already says so when auto-detected) — it only becomes a trap when there
+	// is a database already sitting in the data directory that this run is
+	// about to silently ignore. See preflight_ephemeral.go.
+	warnIfExistingDatabaseIgnored(cfg, logger)
 	logListenResolution(logger, cfg)
 
 	// Whether OVERCAST_HOSTNAME's subdomains resolve on this host is a
@@ -824,8 +829,38 @@ func resolvePublishedPort(cfg *config.Config, logger *zap.Logger) {
 		return
 	}
 	cfg.PublishedPort = p
-	logger.Info("API is published on a different host port than it listens on",
+	logger.Warn(publishedPortMismatchWarning(cfg.Port, p),
 		zap.Int("listen_port", cfg.Port), zap.Int("published_port", p))
+}
+
+// publishedPortMismatchWarning is the message resolvePublishedPort logs when
+// Overcast's container remaps its own API port (`-p 4580:4566` — Overcast
+// listens on cfg.Port inside the container, but a host caller reaches it on
+// publishedPort instead).
+//
+// This is docs/plans/deploy-failure-diagnosis.md's W4 "ports" instance, and
+// it is already mostly handled rather than newly broken: containerendpoint's
+// URL-rewriting (see WithPublishedPort) already fixes the common case —
+// queue URLs and split-horizon hostnames a host-side deploy bakes into
+// container environment dial back correctly from both sides. What rewriting
+// cannot fix is a value baked in for comparison rather than for dialing: a
+// Cognito token minted from the host carries the published port in its
+// `iss`, and a validator inside a container comparing that literally against
+// cfg.Port reports a mismatch no URL rewrite can paper over (see
+// docs/networking.md's "no single port can be dialable from both sides of a
+// remap" for the full story). So this is raised as an actionable Warn, not
+// mere Info: most setups need do nothing (the rewrite already covers them),
+// but a setup that hits the one case it cannot has a one-line fix.
+func publishedPortMismatchWarning(listenPort, publishedPort int) string {
+	return fmt.Sprintf(
+		"the API is published on a different host port (%d) than it listens on (%d) — Overcast already "+
+			"rewrites queue URLs and split-horizon hostnames baked into container environment so both "+
+			"sides of the remap can dial back correctly. The one thing that rewrite cannot fix: a value "+
+			"compared rather than dialed, e.g. a Cognito token's `iss` minted on the published port, "+
+			"checked inside a container against the listen port — no single port is dialable from both "+
+			"sides of a remap. If you hit that, publish 1:1 instead (e.g. -p %d:%d) rather than remapping.",
+		publishedPort, listenPort, listenPort, listenPort,
+	)
 }
 
 // browserAPIPort is the port the web UI hands the browser.

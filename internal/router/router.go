@@ -185,6 +185,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// for why a single server-wide hostname cannot serve host CLIs and sibling
 	// containers at once.
 	r.Use(middleware.ClientEndpoint)
+	// Environment preflight (deploy-failure-diagnosis.md W4): "the client's
+	// endpoint is pointed somewhere other than the developer thinks", the
+	// one shape of it Overcast can see for itself — see
+	// endpointpreflight.go's doc comment. Placed right after ClientEndpoint
+	// since both inspect the same Host header.
+	r.Use(middleware.WarnRealAWSHost(cfg, logger))
 	// Protocol-detection middleware (Smithy alignment, see
 	// docs/plans/smithy.md). Always-on as of Phase 6 completion.
 	r.Use(middleware.Protocol(codec.DefaultIdentifiers()))
@@ -852,6 +858,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			}
 
 			results := dockerSup.Probe(context.Background(), configs, dataplane.PlaneSpecs(cfg))
+
+			// Environment preflight (deploy-failure-diagnosis.md W4): one
+			// summary Warn naming every service Docker was unreachable for,
+			// rather than a wall of per-socket lines nobody reads — see
+			// preflight_docker.go's doc comment for why this needs no second
+			// probe of its own.
+			if msg := dockerUnavailableWarning(configs, results); msg != "" {
+				logger.Warn(msg)
+			}
 
 			// The resolver has been answering since before any of this ran, with
 			// no way to tell a reachable endpoint from an unreachable one. Now

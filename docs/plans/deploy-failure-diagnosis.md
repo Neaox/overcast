@@ -3,8 +3,14 @@
 > **Status:** proposed; prior art all merged (as of 2026-08-22). Everything marked ✅
 > is now in `main` — see [Prior art](#prior-art) — and W4's first instance, the
 > region preflight check, shipped in [#1004](https://github.com/Neaox/overcast/pull/1004)
-> (`internal/router/preflight_region.go`). W1's eight-service audit is done ✅
-> ([#1107](https://github.com/Neaox/overcast/issues/1107)) — see
+> (`internal/router/preflight_region.go`). W4's four remaining named instances
+> (Docker, ports, endpoint, ephemeral state) shipped in
+> [#1267](https://github.com/Neaox/overcast/pull/1267) (closing
+> [#1193](https://github.com/Neaox/overcast/issues/1193)) — see
+> [W4](#w4--environment-preflight) for what each one covers and doesn't; the
+> disk-full instance remains open (reactive-only via the existing storage
+> health advisories, no proactive free-space probe). W1's eight-service audit
+> is done ✅ ([#1107](https://github.com/Neaox/overcast/issues/1107)) — see
 > [W1's audit table](#w1-audit-table). Still open: W2's verdict + log line +
 > `overcast explain`, and W3 (the correlation key).
 > **Scope:** `internal/services/*` (the create/update success paths),
@@ -253,8 +259,47 @@ The check should fire **when a symptom matches**, not as a wall of startup
 output nobody reads.
 
 The region check shipped ✅ ([#1004](https://github.com/Neaox/overcast/pull/1004),
-`internal/router/preflight_region.go` + the console's empty-list advisory); the
-other known instances remain open.
+`internal/router/preflight_region.go` + the console's empty-list advisory).
+
+Four more instances shipped in [#1267](https://github.com/Neaox/overcast/pull/1267)
+(closing [#1193](https://github.com/Neaox/overcast/issues/1193)) ✅:
+
+- **Docker not running / socket not permitted.** `internal/router.dockerUnavailableWarning`
+  (`internal/router/preflight_docker.go`) diffs the configs the Docker Supervisor was asked
+  to probe against what actually connected, and logs one aggregated `WARN` naming every
+  affected service and socket — no second probe, no per-service repeat of the same fact
+  (that per-service detail moved to Debug in `internal/docker/supervisor.go`).
+- **A port already bound.** Already fully handled before this issue: `listenAll`
+  (`cmd/overcast/cmd_serve.go`) fails startup immediately with the OS's own `bind: address
+  already in use`, covered by `TestListenAllReleasesOpenedListenersOnFailure`. Verified, not
+  changed.
+- **The endpoint pointed somewhere other than the developer thinks.** Distinct from the
+  region check as the issue asked: `middleware.WarnRealAWSHost`
+  (`internal/middleware/endpointpreflight.go`) fires once per process the first time a
+  request's Host targets real AWS's own domain space — the one shape of "wrong endpoint"
+  Overcast can actually observe, since a request signed for the *right* endpoint just never
+  arrives here at all. States the fact and both fixes; never enforces.
+- **The state tier being in-memory so a restart silently discards everything.** The common
+  case (auto-detected memory, nothing persisted yet) was already fully covered — the
+  "storage mode auto-detected" startup log and `checkMemoryMode`'s three advisory variants
+  predate this issue. The narrow, previously-uncovered gap: memory mode chosen *while an
+  existing database already sits in the data directory* — `warnIfExistingDatabaseIgnored`
+  (`cmd/overcast/preflight_ephemeral.go`) plus `checkMemoryModeIgnoresExisting`
+  (`internal/router/advisories.go`) close it, backed by the newly-exported
+  `config.HasExistingDatabase`.
+- **Ports: published vs. listen mismatch (`-p 4580:4566`).** Already mostly handled before
+  this issue — `containerendpoint`'s URL rewriting fixes the common case, and
+  `resolvePublishedPort` already detects the remap. Upgraded from Info to an actionable
+  Warn naming the one thing rewriting cannot fix (a value compared rather than dialed, e.g.
+  a Cognito token's `iss`) and the fix (publish 1:1).
+
+**Still open: the disk being full.** Not proactively probed — a statfs-based free-space
+check would need its own platform-specific implementation (mirroring
+`internal/config/mountpoint_windows.go` / `mountpoint_unix.go`) and a threshold that risks
+false positives on legitimately small volumes, which is more than this issue's scope
+justified on its own. It is reactively covered today: a disk-full write failure surfaces
+through the SQLite driver's own error text in `checkStoreUnhealthy`/`checkStoreDegraded`
+(`internal/router/advisories.go`) the moment it happens, just not before it happens.
 
 ---
 

@@ -107,7 +107,15 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 		}
 
 		if entry.err != nil {
-			log.Warn("Docker not available — service will be metadata-only",
+			// Per-service detail, at Debug: the caller (see
+			// internal/router.dockerUnavailableWarning) already logs one
+			// aggregated Warn naming every affected service together, so this
+			// would otherwise repeat the same fact once per service on every
+			// startup where Docker is unreachable — exactly the "wall of
+			// startup output nobody reads" deploy-failure-diagnosis.md's W4
+			// warns against. Still available at Debug for anyone who wants
+			// the per-socket detail.
+			log.Debug("Docker not available — service will be metadata-only",
 				zap.String("socket", cfg.Socket), zap.Error(entry.err))
 			continue
 		}
