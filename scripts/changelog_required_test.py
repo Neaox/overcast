@@ -507,7 +507,6 @@ class DependencyBotTest(unittest.TestCase):
 			"web/package.json",
 			"web/pnpm-lock.yaml",
 			"web/pnpm-workspace.yaml",
-			"web/api/package.json",
 			".github/renovate.json5",
 			".github/workflows/test.yml",
 			".github/actions/docker-hub-mirror/action.yml",

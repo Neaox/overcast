@@ -180,7 +180,6 @@ DEPENDENCY_MANIFEST_FILES = frozenset(
         "web/package.json",
         "web/pnpm-lock.yaml",
         "web/pnpm-workspace.yaml",
-        "web/api/package.json",
         ".github/renovate.json5",
     }
 )

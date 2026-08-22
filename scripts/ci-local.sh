@@ -5,7 +5,7 @@
 # Mirrors .github/workflows/test.yml, including the ordering CI encodes with
 # `needs: web` + the web-dist artifact:
 #
-#   docs-index → web lint → typecheck → vitest → SPA build → BFF build
+#   docs-index → web lint → typecheck → vitest → SPA build
 #              → go vet → go build → go test
 #
 # One hard dependency drives that order:
