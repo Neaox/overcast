@@ -40,8 +40,8 @@ uppercase MUST be treated as malformed; HTTP/3 inherits this. HTTP/1.1 (RFC 9110
 makes field names case-**insensitive**, so no wire rule is engaged by the reported repro,
 which is plain `curl` to `http://localhost:4566`.
 
-Overcast does serve h2c (`cmd/overcast/cmd_serve.go:187` wraps the handler with
-`h2c.NewHandler`), so HTTP/2 is genuinely reachable. Go's `x/net/http2` server lowercases
+Overcast does serve h2c (`cmd/overcast/cmd_serve.go` opts the plain-text server into
+unencrypted HTTP/2 via `http.Server.Protocols`), so HTTP/2 is genuinely reachable. Go's `x/net/http2` server lowercases
 field names when encoding HEADERS frames, independently of the canonical casing held in
 the `w.Header()` map.
 
