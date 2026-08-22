@@ -425,39 +425,82 @@ func iamPolicyPrincipalMutations(policyArn string, props, oldProps map[string]an
 	return mutations, nil
 }
 
+// iamEffectiveTags merges a resource's own Tags property with the stack's
+// propagated tags — resource tags winning on key collision, the same
+// convention mergeResourceTags uses for every other propagating resource type
+// (#1310) — while staying in iamTag's map shape so the existing Tag<Principal>
+// param builders don't need to change.
+func iamEffectiveTags(props map[string]any, stackTags []Tag) (map[string]iamTag, error) {
+	resourceTags, err := iamTags(props)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]iamTag, len(resourceTags)+len(stackTags))
+	for _, tag := range stackTags {
+		key := strings.TrimSpace(tag.Key)
+		if key == "" {
+			continue
+		}
+		out[key] = iamTag{key: key, value: tag.Value}
+	}
+	for key, tag := range resourceTags {
+		out[key] = tag
+	}
+	return out, nil
+}
+
 // iamTagMutations reconciles the Tags property via Tag<Principal> /
-// Untag<Principal>, one tag per mutation so each has an exact undo.
-func iamTagMutations(principalType, principalName string, props, oldProps map[string]any) ([]iamMutation, error) {
-	desired, err := iamTags(props)
+// Untag<Principal>, one tag per mutation so each has an exact undo. Both sides
+// are the effective (stack-merged) tag set, so a stack-tag-only change
+// reconciles here too — the same effective-stack-tag mechanism #1143 built for
+// Lambda/LogGroup/SecretsManager/SQS/Kinesis/ECR.
+func iamTagMutations(principalType, principalName string, props, oldProps map[string]any, stackTags, previousStackTags []Tag) ([]iamMutation, error) {
+	return iamTagMutationsKeyed(principalType+"Name", principalName, principalType, props, oldProps, stackTags, previousStackTags)
+}
+
+// iamPolicyTagMutations is iamTagMutations for AWS::IAM::ManagedPolicy:
+// TagPolicy/UntagPolicy key on PolicyArn rather than a "<Principal>Name"
+// parameter, so it cannot share iamTagMutations's nameKey derivation, but the
+// diff logic is identical.
+func iamPolicyTagMutations(policyArn string, props, oldProps map[string]any, stackTags, previousStackTags []Tag) ([]iamMutation, error) {
+	return iamTagMutationsKeyed("PolicyArn", policyArn, "Policy", props, oldProps, stackTags, previousStackTags)
+}
+
+// iamTagMutationsKeyed is the shared diff behind iamTagMutations and
+// iamPolicyTagMutations: nameKey/nameValue address the principal (RoleName,
+// UserName, InstanceProfileName, or PolicyArn), and actionPrincipal names the
+// Tag<X>/Untag<X> operation pair.
+func iamTagMutationsKeyed(nameKey, nameValue, actionPrincipal string, props, oldProps map[string]any, stackTags, previousStackTags []Tag) ([]iamMutation, error) {
+	desired, err := iamEffectiveTags(props, stackTags)
 	if err != nil {
 		return nil, err
 	}
-	previous, err := iamTags(oldProps)
+	previous, err := iamEffectiveTags(oldProps, previousStackTags)
 	if err != nil {
 		return nil, err
 	}
-	nameKey := principalType + "Name"
+	tagAction, untagAction := "Tag"+actionPrincipal, "Untag"+actionPrincipal
 	mutations := make([]iamMutation, 0, len(desired)+len(previous))
 	for key, old := range previous {
 		if _, remains := desired[key]; remains {
 			continue
 		}
-		params := map[string]string{nameKey: principalName, "TagKeys.member.1": old.key}
-		undo := map[string]string{nameKey: principalName, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
-		mutations = append(mutations, iamMutation{action: "Untag" + principalType, params: params, undoAction: "Tag" + principalType, undoParams: undo})
+		params := map[string]string{nameKey: nameValue, "TagKeys.member.1": old.key}
+		undo := map[string]string{nameKey: nameValue, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
+		mutations = append(mutations, iamMutation{action: untagAction, params: params, undoAction: tagAction, undoParams: undo})
 	}
 	for key, tag := range desired {
 		if old, existed := previous[key]; existed && old.value == tag.value {
 			continue
 		}
-		params := map[string]string{nameKey: principalName, "Tags.member.1.Key": tag.key, "Tags.member.1.Value": tag.value}
-		undoAction := "Untag" + principalType
-		undoParams := map[string]string{nameKey: principalName, "TagKeys.member.1": tag.key}
+		params := map[string]string{nameKey: nameValue, "Tags.member.1.Key": tag.key, "Tags.member.1.Value": tag.value}
+		undoAction := untagAction
+		undoParams := map[string]string{nameKey: nameValue, "TagKeys.member.1": tag.key}
 		if old, existed := previous[key]; existed {
-			undoAction = "Tag" + principalType
-			undoParams = map[string]string{nameKey: principalName, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
+			undoAction = tagAction
+			undoParams = map[string]string{nameKey: nameValue, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
 		}
-		mutations = append(mutations, iamMutation{action: "Tag" + principalType, params: params, undoAction: undoAction, undoParams: undoParams})
+		mutations = append(mutations, iamMutation{action: tagAction, params: params, undoAction: undoAction, undoParams: undoParams})
 	}
 	return mutations, nil
 }

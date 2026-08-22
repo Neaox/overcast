@@ -234,6 +234,11 @@ func (h *iamManagedPolicyHandler) Create(ctx context.Context, router http.Handle
 	if description, _ := props["Description"].(string); description != "" {
 		params["Description"] = description
 	}
+	tags, err := iamEffectiveTags(props, rCtx.StackTags)
+	if err != nil {
+		return "", nil, err
+	}
+	iamTagParams(params, tags)
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -319,6 +324,11 @@ func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handle
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}
+	tags, err := iamPolicyTagMutations(physicalID, props, oldProps, rCtx.StackTags, rCtx.PreviousStackTags)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	mutations = append(mutations, tags...)
 	tx := newIAMTransaction(ctx, router, rCtx.Region)
 	if err := tx.apply(mutations); err != nil {
 		return "", nil, classifyIAMTransactionFailure(err)
@@ -378,6 +388,11 @@ func (h *iamInstanceProfileHandler) Create(ctx context.Context, router http.Hand
 		"InstanceProfileName": profileName,
 		"Path":                path,
 	}
+	tags, err := iamEffectiveTags(props, rCtx.StackTags)
+	if err != nil {
+		return "", nil, err
+	}
+	iamTagParams(params, tags)
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateInstanceProfile: %w", err)
@@ -493,6 +508,14 @@ func (h *iamInstanceProfileHandler) Update(ctx context.Context, router http.Hand
 				return "", nil, fmt.Errorf("AddRoleToInstanceProfile: %w", err)
 			}
 		}
+	}
+
+	tags, err := iamTagMutations("InstanceProfile", name, props, oldProps, rCtx.StackTags, rCtx.PreviousStackTags)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if err := newIAMTransaction(ctx, router, rCtx.Region).apply(tags); err != nil {
+		return "", nil, classifyIAMTransactionFailure(err)
 	}
 
 	attrs := map[string]string{"Arn": physicalID}

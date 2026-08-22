@@ -276,7 +276,11 @@ func TestLambdaResourcePropertiesHashIncludesEffectiveStackTags(t *testing.T) {
 			t.Errorf("%s resource hash did not change with propagated stack tags", resourceType)
 		}
 	}
-	if got, want := hashResourceProperties("AWS::DynamoDB::Table", props, []Tag{{Key: "stage", Value: "old"}}), hashResourceProperties("AWS::DynamoDB::Table", props, []Tag{{Key: "stage", Value: "new"}}); got != want {
+	// AWS::S3::Bucket forwards no Tags at all and is not part of the
+	// effective-stack-tag mechanism (stackTagPropagationResourceTypes in
+	// provisioner.go), unlike AWS::DynamoDB::Table, which joined it in #1310
+	// after this test was written against it as the "unrelated" example.
+	if got, want := hashResourceProperties("AWS::S3::Bucket", props, []Tag{{Key: "stage", Value: "old"}}), hashResourceProperties("AWS::S3::Bucket", props, []Tag{{Key: "stage", Value: "new"}}); got != want {
 		t.Fatalf("unrelated resource hash changed with stack tags: %q != %q", got, want)
 	}
 }

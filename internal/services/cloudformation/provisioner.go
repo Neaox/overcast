@@ -1132,20 +1132,74 @@ func hashProps(props map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// stackTagPropagationResourceTypes is the effective-stack-tag mechanism's
+// membership (#1143, extended by #1310): every resource type here merges the
+// stack's tags into its own tags at create (mergeResourceTags), and
+// reconciles a stack-tag-only change on update by treating it as a properties
+// change here — hashResourceProperties/resourcePropertiesMatch don't skip the
+// resource just because its own property map is unchanged.
+//
+// AWS::CloudFormation::Stack participates too but is handled separately
+// below: it merges tags for every logical resource in the nested template,
+// not just itself, so its EffectiveTags shape uses mergeNestedStackTags, not
+// mergeResourceTags.
+//
+// This set must stay in sync with the resource handlers that actually forward
+// Tags; TestStackTagPropagationCoverage (stack_tag_propagation_coverage_dev_test.go,
+// dev-tagged) parses every handler's Create/Update method and fails if one
+// forwards Tags while being a member of neither this set nor
+// stackTagPropagationExclusions below.
+var stackTagPropagationResourceTypes = map[string]bool{
+	"AWS::Lambda::Function":           true,
+	"AWS::Lambda::EventSourceMapping": true,
+	"AWS::Logs::LogGroup":             true,
+	"AWS::SecretsManager::Secret":     true,
+	"AWS::SQS::Queue":                 true,
+	"AWS::Kinesis::Stream":            true,
+	"AWS::ECR::Repository":            true,
+	// Already merged stack tags at create and reconciled them via their
+	// service's own Tag*/Untag* on update, but were missing from this set —
+	// a stack-tag-only change never reached their Update at all, since
+	// resourcePropertiesMatch treated the resource as unchanged (#1310).
+	"AWS::DynamoDB::Table":             true,
+	"AWS::SSM::Parameter":              true,
+	"AWS::StepFunctions::StateMachine": true,
+	// Gained Tags support in #1308/#1310; stack-tag propagation added
+	// alongside so there is no parallel, resource-tags-only mechanism (#1310).
+	"AWS::CloudTrail::Trail":    true,
+	"AWS::Transfer::Server":     true,
+	"AWS::Transfer::User":       true,
+	"AWS::IAM::ManagedPolicy":   true,
+	"AWS::IAM::InstanceProfile": true,
+	// IAM::Role and IAM::User already threaded Tags via the same
+	// iamTags/iamTagMutations helpers ManagedPolicy and InstanceProfile use;
+	// leaving them out while fixing the other two would itself be the
+	// parallel mechanism #1310 asks not to create.
+	"AWS::IAM::Role": true,
+	"AWS::IAM::User": true,
+}
+
+// stackTagPropagationExclusions (stack_tag_propagation_coverage_dev_test.go)
+// lists every resource type whose Create or Update handler forwards Tags but
+// is deliberately not a member of stackTagPropagationResourceTypes, each with
+// the reason found during #1310's audit — kept next to the dev-tagged
+// TestStackTagPropagationCoverage that is its only reader, since nothing in
+// the default build consults it.
+
 // hashResourceProperties includes only tags CloudFormation propagates outside
 // the resource property map. Resource-level tags are already present in props;
 // merging here also avoids updates when they override a changed stack tag.
 func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
-	switch resourceType {
-	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret", "AWS::SQS::Queue", "AWS::Kinesis::Stream", "AWS::ECR::Repository":
-		return hashProps(map[string]any{
-			"Properties":    props,
-			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
-		})
-	case "AWS::CloudFormation::Stack":
+	switch {
+	case resourceType == "AWS::CloudFormation::Stack":
 		return hashProps(map[string]any{
 			"Properties":    props,
 			"EffectiveTags": mergeNestedStackTags(stackTags, props["Tags"]),
+		})
+	case stackTagPropagationResourceTypes[resourceType]:
+		return hashProps(map[string]any{
+			"Properties":    props,
+			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
 		})
 	default:
 		return hashProps(props)
@@ -1159,7 +1213,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	// Hashes written before propagated-tag tracking contained only the property
 	// map. Preserve their no-op behavior when effective tags did not change,
 	// while still reconciling a real stack-only tag delta.
-	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::SQS::Queue" && resourceType != "AWS::Kinesis::Stream" && resourceType != "AWS::ECR::Repository" && resourceType != "AWS::CloudFormation::Stack" {
+	if resourceType != "AWS::CloudFormation::Stack" && !stackTagPropagationResourceTypes[resourceType] {
 		return oldHash == ""
 	}
 	var currentTags, previousTags any
@@ -5382,7 +5436,7 @@ func (h *iamRoleHandler) Create(ctx context.Context, router http.Handler, _ *con
 	if value, ok := props["MaxSessionDuration"]; ok && value != nil {
 		params["MaxSessionDuration"] = cfnScalarString(value)
 	}
-	tags, err := iamTags(props)
+	tags, err := iamEffectiveTags(props, rCtx.StackTags)
 	if err != nil {
 		return "", nil, err
 	}
@@ -5511,7 +5565,7 @@ func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *con
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}
-	tags, err := iamTagMutations("Role", name, props, oldProps)
+	tags, err := iamTagMutations("Role", name, props, oldProps, rCtx.StackTags, rCtx.PreviousStackTags)
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}
