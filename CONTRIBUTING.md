@@ -1518,6 +1518,28 @@ The web UI uses **Tailwind CSS v4**. When writing or editing component styles:
 3. **Use Tailwind v4 syntax** — Tailwind 4 changed some conventions. Prefer `*:` (universal child selector variant) over `[&>…]` when targeting children. Consult the [Tailwind v4 docs](https://tailwindcss.com/docs) when unsure.
 4. **Run the canonical upgrade** if you notice non-canonical classes: `pnpm dlx @tailwindcss/upgrade`.
 
+### Tables — reach for `ResourceTable` before composing `<Table>` yourself
+
+Any list of resources renders through **`ResourceTable`**
+(`web/src/components/ui/resource-table.tsx`) — inside `ResourceListPage` or
+`ResourceListSection` on an index page, or as `variant="embedded"` inside a detail page.
+It owns the things every table in this UI must get right and that hand-rolled tables
+keep getting subtly different: the loading / error / empty / "no matches" states (with
+`isFiltered` + `onClearFilter` so a filter that finds nothing never reads as "this
+doesn't exist"), row click and row actions, the delete flow, the mono-by-default cell
+with `prose` opt-out, and the card/embedded framing. Its API is documented at the top
+of the file; the 14 index pages converted in #1200 are the worked examples.
+
+Composing `<Table>`/`<TableBody>` from `components/ui/table.tsx` directly is the
+exception, not the default. Two kinds of table earn it: one that is not a resource list
+at all (the IAM policy simulator's result grid, the debug page), and one whose shape
+genuinely does not fit (`log-search-results`' virtualized stream). When you do, say why
+in a comment at the call site — "ResourceTable didn't fit because …" — so the next
+reader can tell a decision from an oversight. Fifty-five bespoke tables accumulated
+before this rule existed; their migration, and `ResourceTable`'s move onto TanStack
+Table v9 (sorting, column visibility, pagination on one engine), is tracked in
+[#1327](https://github.com/Neaox/overcast/issues/1327). Do not add to the count.
+
 ### Topology map methodology
 
 The system map is both a **diagnostic surface** and a **graph-based workspace** for

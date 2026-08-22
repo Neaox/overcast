@@ -322,6 +322,7 @@ Agents most often trip on these — check before finishing:
 - **Bypassing `serviceutil` / duplicating helper logic** — DRY across services
 - **Returning bare `404`** — unimplemented operations must return `501`
 - **Using subfolders as sub-packages inside a service** — all service files live in one flat package
+- **Hand-rolling a `<Table>` in the web UI when `ResourceTable` fits** — any list of resources goes through `ResourceTable` (index pages via `ResourceListPage`/`ResourceListSection`, detail pages via `variant="embedded"`); a bespoke table needs a reason in a comment at the call site. See [CONTRIBUTING § Tables](./CONTRIBUTING.md#tables--reach-for-resourcetable-before-composing-table-yourself) and #1327
 - **Testing only with raw HTTP** — prefer AWS SDK clients for management-plane validation where possible
 - **Forgetting `make docs-index`** after editing `docs/` — the committed docs search index goes stale and CI fails
 - **Adding a compat test to one suite only** — every SDK/CLI suite tests the same operations; add to `compat/suites/registry.json` first, then implement everywhere. `go run ./cmd/compat --check-parity` fails the build otherwise. See [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
