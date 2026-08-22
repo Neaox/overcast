@@ -150,7 +150,14 @@ func main() {
 
 	if *checkModel {
 		failures += checkServiceKeysInManifest(services, allCaps)
-		failures += checkCompatRegistryServiceKeys(root, allCaps)
+		// The compat registry names every service at once, so judging it
+		// against one service's capability rows reports the other 49 as
+		// unknown. --service narrows what is being checked, not what the
+		// registry is allowed to contain.
+		if *service == "" {
+			failures += checkCompatRegistryServiceKeys(root, allCaps)
+		}
+		failures += checkWireFactsAgainstTheModel(root, services, allCaps, *service == "")
 	}
 
 	if *generate {
@@ -299,23 +306,26 @@ var capabilityOperationAliases = map[string]string{
 }
 
 // capabilityManifestExemptions is deliberately small and names only
-// emulator-internal operations or legacy operations that AWS no longer models.
-// Keep an explicit reason here rather than silently weakening the model gate.
+// emulator-internal operations that AWS does not model at all. Keep an explicit
+// reason here rather than silently weakening the model gate, and expect
+// checkModelExemptionsAreStillNeeded to delete an entry whose reason has stopped
+// being true.
+//
+// It held nine more entries until #864, every one of them asserting that API
+// Gateway v2 "has no GetIntegration operation" (and DeleteIntegration,
+// GetAuthorizer, GetAuthorizers, DeleteAuthorizer, GetDomainNames,
+// DeleteDomainName, GetVpcLinks, DeleteVpcLink). apigatewayv2 models all nine,
+// and has for as long as the manifest has existed — so nine live capability
+// rows were exempt from the model check on the strength of a false statement
+// about AWS. That is the shape #864 was filed about, and it is why the staleness
+// check now runs alongside the exemption table rather than being trusted to
+// review.
 var capabilityManifestExemptions = map[string]string{
-	"apigateway/ExecuteRestAPI":      "emulator invoke-route helper, not an AWS control-plane operation",
-	"apigateway/ExecuteV2API":        "emulator invoke-route helper, not an AWS control-plane operation",
-	"apigateway/GetV2Integration":    "legacy local operation name; API Gateway v2 has no GetIntegration operation",
-	"apigateway/DeleteV2Integration": "legacy local operation name; API Gateway v2 has no DeleteIntegration operation",
-	"apigateway/GetV2Authorizer":     "legacy local operation name; API Gateway v2 has no GetAuthorizer operation",
-	"apigateway/GetV2Authorizers":    "legacy local operation name; API Gateway v2 has no GetAuthorizers operation",
-	"apigateway/DeleteV2Authorizer":  "legacy local operation name; API Gateway v2 has no DeleteAuthorizer operation",
-	"apigateway/GetV2DomainNames":    "legacy local operation name; API Gateway v2 has no GetDomainNames operation",
-	"apigateway/DeleteV2DomainName":  "legacy local operation name; API Gateway v2 has no DeleteDomainName operation",
-	"apigateway/GetV2VpcLinks":       "legacy local operation name; API Gateway v2 has no GetVpcLinks operation",
-	"apigateway/DeleteV2VpcLink":     "legacy local operation name; API Gateway v2 has no DeleteVpcLink operation",
-	"appsync/ExecuteGraphQL":         "emulator GraphQL execution helper, not an AWS SDK operation",
-	"cloudfront/ProxyRequest":        "emulator proxy helper, not an AWS control-plane operation",
-	"eks/UpdateKubeconfig":           "emulator convenience helper, not an AWS SDK operation",
+	"apigateway/ExecuteRestAPI": "emulator invoke-route helper, not an AWS control-plane operation",
+	"apigateway/ExecuteV2API":   "emulator invoke-route helper, not an AWS control-plane operation",
+	"appsync/ExecuteGraphQL":    "emulator GraphQL execution helper, not an AWS SDK operation",
+	"cloudfront/ProxyRequest":   "emulator proxy helper, not an AWS control-plane operation",
+	"eks/UpdateKubeconfig":      "emulator convenience helper, not an AWS SDK operation",
 }
 
 func capabilityManifestExemption(cap CapabilityDecl) string {

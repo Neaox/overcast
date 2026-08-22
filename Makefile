@@ -238,7 +238,7 @@ generate-aws-operations:
 ## Set AWS_MODELS_DIR to additionally prove the committed manifest matches that pinned checkout byte-for-byte.
 aws-models-check:
 	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
-	$(GO) test -count=1 -tags dev ./internal/router
+	$(GO) test -count=1 -tags dev ./internal/router ./cmd/capgen
 	$(GO) run -tags dev ./cmd/capgen --check-model
 	@if [ -n "$(AWS_MODELS_DIR)" ]; then \
 		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" -check; \
