@@ -21,5 +21,7 @@ export type {
   SuiteInfo,
   RunState,
   QueueEntry,
+  ConnectionInfo,
+  Toast,
 } from "./state";
 export { initial } from "./state";

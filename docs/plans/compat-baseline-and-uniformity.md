@@ -2,9 +2,9 @@
 
 > Status: enforcement, CI surfacing, flake pipeline, and the framework audit landed.
 > The burn-down is finished — **zero grandfathered failures**, and CI now asserts
-> that absolutely. Outstanding as of 2026-08-21: the parity backfill (now across
-> all six SDK suites — the registry has grown since the dotnet/rust-only
-> snapshot) and the dashboard QOL items, which remain not started.
+> that absolutely. The dashboard QOL items closed 2026-08-23 (#1184, #1185).
+> Outstanding as of 2026-08-23: the parity backfill (now across all six SDK
+> suites — the registry has grown since the dotnet/rust-only snapshot).
 >
 > The policy this plan implements is documented for contributors in
 > [compat/AGENTS.md § Baseline & uniformity policy](../../compat/AGENTS.md#baseline--uniformity-policy).
@@ -141,39 +141,46 @@ The incidence pattern generalises: **a test failing identically in many suites
 is an emulator bug (R1); a test failing in exactly one suite is a suite bug
 (R4/R5)** — the report's lone-suite classification should exploit this.
 
-## Dashboard QOL — reviewed 2026-08-01, scoped, not yet started
+## Dashboard QOL — reviewed 2026-08-01, closed 2026-08-23 (#1184, #1185)
 
 The dashboard works and the fundamentals are right (registry-driven matrix,
 distinct fail/unimplemented states, SSE with catch-up buffering, results
-persisted across restarts). The review found stability and usability gaps, in
-priority order:
+persisted across restarts). The 2026-08-01 review found five stability and
+usability gaps; all five are now fixed, filed as issues #1184/#1185 and closed
+by the same PR:
 
-1. **SSE drops are invisible and unrecovered.** `use-event-stream.ts` opens an
-   `EventSource` with no `onerror`/`onopen` handling: the browser auto-
-   reconnects, but events missed during the outage are never back-filled, so
-   the matrix silently drifts stale — and nothing tells the user the
-   connection died. Fix: on reconnect, re-fetch `/results` and re-seed (the
-   catch-up buffer logic already exists for startup); add a connection pill.
-   The main web UI just built exactly this pattern (#369/#382) — mirror it.
-2. **Failed run triggers are silent.** `use-run.ts` returns `{ok:false}` on a
-   409 (run already active) or network error; no component surfaces it. A
-   click that does nothing is indistinguishable from a broken UI. Fix: inline
-   feedback on the run controls.
-3. **compat/ui is invisible to CI.** No typecheck, no tests, no build runs in
-   any workflow (the Web UI job covers `web/` only; CI never embeds the
-   dashboard because compat runs headless there). Type rot lands silently.
-   Fix: add `tsc -b` + `npm run build` for compat/ui to the compat workflow's
-   build job (~40s, cached), and stand up vitest — the SSE reducer and
-   registry-join logic are pure functions begging for tests. `web/` has the
-   harness conventions to copy.
-4. **No preference persistence.** Status filters, suite selection and scroll
-   state reset on every reload; during a burn-down session the fail-filter is
-   re-applied by hand each visit. Fix: localStorage for filter/selection
-   state.
-5. **Registry×suite scoping in the matrix**: with `suites` scoping now in the
-   registry (cdk-lifecycle), the matrix should render out-of-scope cells as
-   structurally absent rather than "not run", so per-suite pass rates exclude
-   cells a suite can never fill.
+1. **SSE drops were invisible and unrecovered.** `use-event-stream.ts` opened
+   an `EventSource` with no `onerror`/`onopen` handling. Fixed: `compat/ui/src/lib/reconnecting-event-source.ts`
+   wraps the connection with exponential backoff (1s/2s/4s/5s-capped) and
+   reports every state transition; `use-event-stream.ts` re-fetches `/results`
+   and re-seeds on every reconnect (not just on mount), and `components/header.tsx`
+   renders a live connection pill (`components/connection-pill.tsx`). Mirrors
+   the main web UI's #369/#382 pattern, scaled down (no shared worker — the
+   compat server already replays its full buffer to a fresh connection).
+2. **Failed run triggers were silent.** `use-run.ts` returned `{ok:false}` on a
+   409 or network error with nothing surfacing it. Fixed: `use-run.ts` now
+   dispatches a `toast_error` action carrying the server's own response body
+   (or a network-error message), rendered by `components/toast-stack.tsx`.
+3. **compat/ui was invisible to CI.** No typecheck, build, or test job existed
+   anywhere. Fixed: the `Compat UI` job in `.github/workflows/test.yml` runs
+   `tsc -b`, `vitest run`, and the production build on every push/PR (gated by
+   `ci-scope.py` the same way as every other job in that workflow — it is a
+   prose-vs-code classifier, not a per-directory filter, so this isn't scoped
+   to `compat/ui/**` specifically). `compat/ui` now has a full vitest + Testing
+   Library setup (`vitest.config.ts`, `src/test/setup.ts`).
+4. **No preference persistence.** Status filter and scroll position now
+   persist via `lib/persisted-storage.ts` (a thin, failure-tolerant
+   localStorage wrapper). "Suite selection" didn't exist as a control before
+   this — added a click-to-hide toggle on each suite's header chip
+   (`hiddenSuites` in `App.tsx`) so there is something concrete to persist.
+5. **Registry×suite scoping in the matrix.** `lib/matrix-scope.ts` tells a real
+   gap apart from a cell that is structurally out of scope for a `suites`-
+   scoped registry group; `components/service-table.tsx` renders the latter
+   with a distinct dimmed-dot treatment instead of the same play-button/`—`
+   gap styling, and never offers to trigger a run for it. No group inside the
+   SDK matrix uses `suites` scoping yet (`cdk-lifecycle` is the only one today,
+   and `cdk` is filtered out of the SDK matrix entirely) — this is the general
+   mechanism for the next one, covered by `lib/matrix-scope.test.ts`.
 
 ## Stabilising flaky tests (pipeline live; list currently empty)
 
