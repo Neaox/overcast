@@ -1,10 +1,12 @@
 # Deploy failure diagnosis — telling the truth, and telling it unprompted
 
-> **Status:** proposed; prior art all merged (as of 2026-08-21). Everything marked ✅
+> **Status:** proposed; prior art all merged (as of 2026-08-22). Everything marked ✅
 > is now in `main` — see [Prior art](#prior-art) — and W4's first instance, the
 > region preflight check, shipped in [#1004](https://github.com/Neaox/overcast/pull/1004)
-> (`internal/router/preflight_region.go`). Still open: the W1 audit beyond ECS, W2's
-> verdict + log line + `overcast explain`, and W3 (the correlation key).
+> (`internal/router/preflight_region.go`). W1's eight-service audit is done ✅
+> ([#1107](https://github.com/Neaox/overcast/issues/1107)) — see
+> [W1's audit table](#w1-audit-table). Still open: W2's verdict + log line +
+> `overcast explain`, and W3 (the correlation key).
 > **Scope:** `internal/services/*` (the create/update success paths),
 > `internal/trace/`, `internal/events/`, `internal/bff/`, `cmd/overcast`,
 > `web/src/features/`.
@@ -137,6 +139,31 @@ elsewhere; check before inventing a rule, and record what you checked.
 
 **Cost.** A window is latency on every deploy of that resource type. ECS's is
 3 s. Measure per service and keep each no larger than its job needs.
+
+#### W1 audit table
+
+Closed by [#1107](https://github.com/Neaox/overcast/issues/1107). One row per
+create path; "settles on" names the mechanism that gates the terminal success
+status, cited to the code; "CFN waits" says whether the CloudFormation resource
+handler stabilizes (polls the service's own status) before `CREATE_COMPLETE`.
+
+| service | create op | settles on | on container death | CFN waits | verdict |
+| --- | --- | --- | --- | --- | --- |
+| rds (instance) | `CreateDBInstance`/`StartDBInstance` | `readiness.Watch`: container inspect → TCP dial → credential-bootstrap exec probe (`internal/services/rds/health.go` `scheduleHealthCheck`, `markAvailable`) | `DBInstanceStatus="failed"` + `StatusReason` (`health.go` `failInstance`) | yes, `rdsDBInstanceHandler.Stabilize` polls to `available`/failed (`provisioner_newservices.go`) | already correct |
+| rds (cluster) | `CreateDBCluster` | fixed 500 ms timer (`typed_logic.go`) | none — a bare cluster owns no `DockerContainerID`; Docker starts on the first member instance, which gets the full instance-row treatment | yes, but the cluster's own status can only reach `available` | correct by design: nothing container-backed to fail on the cluster record itself |
+| elasticache (cache cluster) | `CreateCacheCluster` | `readiness.Watch` probing the real engine protocol (Redis/Memcached PING) (`elasticache/handler.go` `scheduleHealthCheck`) | `incompatible-network` + `StatusReason` (`failCacheCluster`) | yes, `Stabilize` polls `elastiCacheClusterStatuses` | already correct |
+| elasticache (replication group) | `CreateReplicationGroup` | same probe shape via `scheduleReplicationGroupHealthCheck` (`handler_replication.go`) | `create-failed` + reason (`failReplicationGroup`) | yes | already correct |
+| msk (cluster) | `CreateCluster` | `readiness.Watch` probing a real Kafka `ApiVersions` request (`msk/handler_docker.go` `scheduleHealthCheck`) | `State="FAILED"` + `StateInfo{Code:"BROKER_UNREACHABLE"}` | yes, `Stabilize` polls `mskClusterStatuses` | already correct |
+| eks (cluster) | `CreateCluster` | polls the k3s `/readyz` endpoint (`eks/live_runtime.go` `pollK3sReady`); a missing-but-recorded-`ACTIVE` control plane is self-healed by `container_reconcile.go` | `Status="FAILED"` + `health.issues` reason (`failLiveCluster`) | yes, `eksClusterHandler.Stabilize` polls to `ACTIVE`/`FAILED` | already correct |
+| eks (nodegroup) | `CreateNodegroup` | synchronous `ACTIVE` (`eks/handler_nodegroup.go`) | n/a | no `Stabilize` (consistent) | out of scope — no container backs a nodegroup at all (kubelet/worker containers are not emulated) |
+| efs (file system) | `CreateFileSystem` | zero-delay timer (`efs/typed_logic.go`) | n/a | yes | correct by design: backed by a Docker *volume*, not a container |
+| efs (mount target) | `CreateMountTarget` | probes a real NFSv4 NULL RPC against the Ganesha export (`efs/live_nfs.go` `scheduleExportReadiness`), only under `OVERCAST_EFS_NFS=true` | `LifeCycleState="error"` (`markExportFailed`) | yes, `efsMountTargetHandler.Stabilize` | already correct |
+| ec2 (instance) | `RunInstances` | scheduler-clock timer, `pending`→`running` (`ec2/handler_instances.go`) | n/a | no `AWS::EC2::Instance` CFN handler exists | out of scope — instances are not container-backed here at all (Docker in `internal/services/ec2` backs VPC networks, not instances) |
+| ec2 (VPC Docker network) | `CreateVpc` | `EnsureNetwork` (`ec2/vpc_strategy.go`) | swallowed: `NetworkStatus="unbacked"`, `CreateVpc` still returns success (documented trade-off, "strategy is best-effort") | n/a (no async `Vpc` status AWS itself would poll) | flagged, not changed here — pre-existing, documented, and outside a `CreateVpc`/container-race shape since AWS's own `Vpc` has no readiness status to misreport |
+| ecr (repository) | `CreateRepository` | registry container start already blocks `applyCurrentRepoURI` on `waitRegistryReady` (`ecr/service.go`) | **was**: `Warn` log only, response still 200 with a broken/fallback `repositoryUri` | no `Stabilize` (and none is AWS-faithful — real `CreateRepository` is synchronous with no status to poll) | **fixed here**: `CreateRepository` (both wire paths) now marks `x-overcast-emulation-limitation` when the URI it hands out does not name a proven-reachable registry, so the failure reaches `ResourceStatusReason` at create time instead of surfacing later as an opaque `docker push` `405` |
+| lambda (function) | `CreateFunction` | container is lazy-per-invoke by design (matches real Lambda: the execution environment starts at first `Invoke`, not at `CreateFunction`); create itself gates on a background image-pull prewarm (`lambda/handler_functions.go`) | `State="Failed"` + `StateReasonCode="ImagePullError"` (`completeFunctionPrewarm`) | yes, `lambdaFunctionHandler.Stabilize` polls to `Active`/`Failed` (`provisioner_lambda_stabilize_test.go`) | already correct |
+
+**Result:** seven of eight services already implemented the ECS pattern (several — RDS, ElastiCache, MSK, EKS, EFS — going further, with a real protocol-level readiness probe rather than a fixed clock). One real gap found and fixed: ECR's `CreateRepository` returned success while silently naming a registry that might not exist or might not be reachable, with the only trace a server log line. EC2 instances and EKS nodegroups are not container-backed at all, so the failure class does not apply to them; the EC2 VPC-network swallow is a separate, pre-existing, documented trade-off, noted for completeness rather than changed.
 
 ### W2 — A verdict, delivered where the developer already is
 

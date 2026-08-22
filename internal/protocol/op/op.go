@@ -40,6 +40,34 @@ type Operation interface {
 	Invoke(w http.ResponseWriter, r *http.Request, c codec.Codec)
 }
 
+// Limitationer is implemented by an operation's Out type when it wants its
+// success response to carry protocol.EmulationLimitationHeader — the same
+// channel a raw handler sets by calling protocol.MarkLimitation(w, ...)
+// directly. A typed Fn is not handed w (see NewTyped), so this is its only
+// way to say "this succeeded, but here is what does not actually work",
+// without every future typed operation needing its own bespoke plumbing.
+//
+// Optional: an Out that does not implement it is unaffected.
+type Limitationer interface {
+	// EmulationLimitations returns zero or more limitation sentences to mark
+	// on the response. Called only after fn returns a non-nil Out with no
+	// error — a failed call has its own channel (protocol.AWSError) and marks
+	// nothing here.
+	EmulationLimitations() []string
+}
+
+// markLimitations applies out's limitations, if it has any, to w. Shared by
+// Typed and TypedAny so the two Invoke implementations do not drift.
+func markLimitations(w http.ResponseWriter, out any) {
+	lim, ok := out.(Limitationer)
+	if !ok {
+		return
+	}
+	for _, reason := range lim.EmulationLimitations() {
+		protocol.MarkLimitation(w, reason)
+	}
+}
+
 // Typed is the generic implementation of Operation for a function with
 // a typed input and typed output.
 //
@@ -90,6 +118,7 @@ func (t *Typed[In, Out]) Invoke(w http.ResponseWriter, r *http.Request, c codec.
 		c.WriteResponse(w, r, http.StatusOK, nil)
 		return
 	}
+	markLimitations(w, out)
 	c.WriteResponse(w, r, http.StatusOK, out)
 }
 
@@ -127,6 +156,7 @@ func (t *TypedAny[In]) Invoke(w http.ResponseWriter, r *http.Request, c codec.Co
 		c.WriteResponse(w, r, http.StatusOK, nil)
 		return
 	}
+	markLimitations(w, out)
 	c.WriteResponse(w, r, http.StatusOK, out)
 }
 

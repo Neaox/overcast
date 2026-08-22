@@ -163,6 +163,14 @@ and
 
 ## Limitations
 
+- `CreateRepository` marks its response with `x-overcast-emulation-limitation`
+  whenever the `repositoryUri` it just minted does not name a registry proven
+  to be listening — no registry running at all, or one whose container
+  started but the reachability probe above never confirmed it answers. Inside
+  a CloudFormation deploy this becomes the resource's `ResourceStatusReason`,
+  so the same sentence a `cdk deploy` operator sees describes the repository
+  it is about, rather than surfacing later as an unexplained `docker push`
+  `405` or a container image failing to pull.
 - Push/pull via `docker push` / `docker pull` requires Docker daemon support.
   The registry speaks plain HTTP, which the daemon accepts for a loopback
   registry without configuration; only a setup that advertises the registry on
