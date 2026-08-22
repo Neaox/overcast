@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using Amazon.Lambda;
 using Amazon.Lambda.Model;
@@ -54,9 +55,40 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         ["lambda-layers"] = TeardownLayersAsync,
     };
 
-    private static MemoryStream DummyZip() => new(Encoding.UTF8.GetBytes("dummy-zip-content"));
+    /// <summary>
+    /// Source of the default <c>index.handler</c>: a Node handler that answers
+    /// every event with a 200 and echoes it back. Same shape as the go-sdk and
+    /// python-sdk suites use.
+    /// </summary>
+    private const string HandlerJs =
+        "exports.handler = async (e) => ({statusCode:200,body:JSON.stringify({ok:true,event:e})});\n";
 
-    private async Task<CreateFunctionResponse> CreateFunc(string name)
+    /// <summary>
+    /// A real zip archive holding a single file. Every bundle this group
+    /// uploads goes through here so the runtime can actually unpack and load
+    /// it: a stand-in byte string is accepted by CreateFunction, but then the
+    /// Invoke tests exercise "the runtime could not open the bundle" rather
+    /// than a handler round-trip, and pass for the wrong reason (AWS answers
+    /// a synchronous Invoke with HTTP 200 either way).
+    /// </summary>
+    private static MemoryStream MakeZip(string fileName, string source)
+    {
+        var buffer = new MemoryStream();
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using var entry = archive.CreateEntry(fileName).Open();
+            var bytes = Encoding.UTF8.GetBytes(source);
+            entry.Write(bytes, 0, bytes.Length);
+        }
+
+        buffer.Position = 0;
+        return buffer;
+    }
+
+    /// <summary>The default code bundle: <see cref="HandlerJs"/> as <c>index.js</c>.</summary>
+    private static MemoryStream HandlerZip() => MakeZip("index.js", HandlerJs);
+
+    private async Task<CreateFunctionResponse> CreateFunc(string name, MemoryStream? code = null)
     {
         return await clients.Lambda().CreateFunctionAsync(new CreateFunctionRequest
         {
@@ -64,7 +96,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
             Runtime = Runtime.Nodejs20X,
             Handler = "index.handler",
             Role = "arn:aws:iam::000000000000:role/lambda-role",
-            Code = new FunctionCode { ZipFile = DummyZip() },
+            Code = new FunctionCode { ZipFile = code ?? HandlerZip() },
         });
     }
 
@@ -124,11 +156,14 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     private async Task UpdateFunctionCodeAsync(TestContext context)
     {
         var name = RequireFuncName(context, "LambdaFuncName");
-        await clients.Lambda().UpdateFunctionCodeAsync(new UpdateFunctionCodeRequest
+        // A bundle that differs from the one CreateFunction uploaded, so the
+        // update is not a no-op and the returned digest describes new bytes.
+        var response = await clients.Lambda().UpdateFunctionCodeAsync(new UpdateFunctionCodeRequest
         {
             FunctionName = name,
-            ZipFile = DummyZip(),
+            ZipFile = MakeZip("index.js", HandlerJs + "// updated\n"),
         });
+        Assertions.NotBlank(response.CodeSha256, "UpdateFunctionCode: CodeSha256");
     }
 
     private async Task UpdateFunctionConfigurationAsync(TestContext context)
@@ -300,8 +335,17 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         {
             FunctionName = name,
             InvocationType = InvocationType.RequestResponse,
+            Payload = "{\"hello\":\"world\"}",
         });
         Assertions.Equal(200, response.StatusCode, "InvokeSync: StatusCode");
+        // HTTP 200 alone does not prove the handler ran: a bundle the runtime
+        // cannot load also answers 200, with X-Amz-Function-Error set. The
+        // handler's own payload is the evidence of a round-trip.
+        Assertions.True(string.IsNullOrEmpty(response.FunctionError),
+            $"InvokeSync: unexpected FunctionError={response.FunctionError} (runId={context.RunId})");
+        var body = response.Payload is null ? "" : Encoding.UTF8.GetString(response.Payload.ToArray());
+        Assertions.True(body.Contains("\"statusCode\":200", StringComparison.Ordinal),
+            $"InvokeSync: expected handler payload, got <{body}> (runId={context.RunId})");
     }
 
     private async Task InvokeAsyncAsync(TestContext context)
@@ -445,7 +489,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         var response = await clients.Lambda().PublishLayerVersionAsync(new PublishLayerVersionRequest
         {
             LayerName = layerName,
-            Content = new LayerVersionContentInput { ZipFile = DummyZip() },
+            Content = new LayerVersionContentInput { ZipFile = MakeZip("lib/helper.js", "exports.hello = () => 'hello';\n") },
             CompatibleRuntimes = new List<string> { "nodejs20.x" },
         });
         Assertions.NotBlank(response.LayerVersionArn, "PublishLayerVersion: LayerVersionArn");
