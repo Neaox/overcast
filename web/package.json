@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@10.34.4",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "vite",
     "docs:index": "cd .. && go run ./scripts/docs-index.go --write-nav --write-search-index",
