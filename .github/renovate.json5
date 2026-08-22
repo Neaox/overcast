@@ -41,13 +41,18 @@
 // compat review, not a bot.
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: ['config:recommended'],
+  extends: [
+    'config:recommended',
+    // Every action is SHA-pinned today (124 of 124). This is the guard for the
+    // future: an action added by tag gets a PR converting it to a digest pin.
+    'helpers:pinGitHubActionDigests',
+  ],
 
   // An allowlist, because it is the fence that held in the dry run:
   // ignorePaths alone still let the nuget manager pick up a compat suite's
   // .csproj. These four cover every surface that ships or gates a release —
   // the image bases, the Go module, the web workspace, and the workflows.
-  enabledManagers: ['dockerfile', 'gomod', 'npm', 'github-actions', 'nodenv'],
+  enabledManagers: ['dockerfile', 'gomod', 'npm', 'github-actions', 'nodenv', 'custom.regex'],
   // Setting ignorePaths replaces the preset's list, so node_modules comes
   // along. tests/ holds repro fixtures (a pinned package.json is the repro);
   // .devcontainer is a dev environment, not a shipped artifact.
@@ -79,6 +84,21 @@
   schedule: ['* 0-8 * * 1'],
 
   postUpdateOptions: ['gomodTidy'],
+
+  // The Makefile pins the Go-run tools (golangci-lint, actionlint) in
+  // *_VERSION variables, each preceded by a `# renovate:` line naming the
+  // datasource and package. Nothing built-in reads a Makefile, so this is
+  // what keeps those pins from rotting — golangci-lint sat on v2.8.0 for
+  // want of anything watching it.
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^Makefile$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\n[A-Z_]+_VERSION\\s*:=\\s*(?<currentValue>\\S+)',
+      ],
+    },
+  ],
 
   packageRules: [
     {
@@ -172,6 +192,21 @@
       matchManagers: ['github-actions'],
       matchUpdateTypes: ['minor', 'patch', 'digest'],
       groupName: 'github actions (non-major)',
+    },
+    {
+      // The Makefile tool pins, non-major. Reviewed rather than automerged:
+      // a linter bump can surface new findings, and the Lint job is the
+      // place to read them.
+      matchManagers: ['custom.regex'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'makefile tool pins (non-major)',
+    },
+    {
+      // actionlint is pinned twice — the Makefile (go run) and the
+      // rhysd/actionlint action in test.yml — and the two must agree, so
+      // the package name groups them across both managers into one PR.
+      matchPackageNames: ['rhysd/actionlint'],
+      groupName: 'actionlint',
     },
   ],
 }

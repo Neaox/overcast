@@ -11,11 +11,15 @@ AWS_MODELS_REVISION ?= $(shell sed -n 's/^revision=//p' models/aws/VERSION)
 GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
+# renovate: datasource=github-releases depName=rhysd/actionlint
 ACTIONLINT_VERSION := v1.7.7
 # golangci-lint v2.x — v2 config schema (.golangci.yml declares `version: "2"`).
 # v2.8.0 is the newest release that still builds with the Go 1.24 toolchain in
-# go.mod; v2.10.0+ requires Go 1.25. Keep in sync with .devcontainer/Dockerfile
-# and CONTRIBUTING.md.
+# go.mod; v2.10.0+ requires Go 1.25, so a Renovate bump that fails Lint with
+# "requires go >= 1.25" is waiting on go.mod, not wrong. The `# renovate:`
+# lines are read by the custom manager in .github/renovate.json5; CONTRIBUTING
+# points here rather than repeating the numbers.
+# renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION := v2.8.0
 
 # Docker image names. The tag defaults to the sanitised current branch name so

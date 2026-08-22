@@ -177,6 +177,8 @@ DEPENDENCY_MANIFEST_FILES = frozenset(
         "go.sum",
         "Dockerfile",
         ".node-version",
+        # Tool pins (GOLANGCI_LINT_VERSION, ACTIONLINT_VERSION) via the Makefile custom manager.
+        "Makefile",
         "web/package.json",
         "web/pnpm-lock.yaml",
         "web/pnpm-workspace.yaml",
