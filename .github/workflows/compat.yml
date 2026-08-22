@@ -47,12 +47,23 @@ on:
         required: false
         default: ""
 
-# One run per pull request — see the same block in test.yml for why, and why
-# cancellation stops at pull requests. It matters more here: a run is nine
-# suite jobs against live Overcast instances, and the baseline promotion on
-# main reads the result of a completed run.
+# One run per pull request; everything else gets a group of its own — see the
+# same block in test.yml for why, and for why a ref-keyed fallback is not a
+# safe default: GitHub cancels a group's *pending* run when the next arrives
+# whatever cancel-in-progress says, and on 2026-08-22 that cost this workflow
+# 56 of its 103 push runs to main (32599735265, 32600275730, 32602968080 and
+# 32604073853 among them). It matters more here: a run is nine suite jobs
+# against live Overcast instances, and the baseline promotion on main reads
+# the result of a completed run — a cancelled one promotes nothing. Runs on
+# main are not serialized by the group any more, so two can finish out of
+# order; the promotion step already tolerates that — successive promotions
+# force-push over one fixed branch, the baseline-change lint rejects a
+# downgrade, and an improvement a stale promotion overwrote is recomputed by
+# the next main run, because it is still an improvement over the recorded
+# baseline. The ref group never promised ordering anyway: it dropped the
+# pending run rather than queue it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
