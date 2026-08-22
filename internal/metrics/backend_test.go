@@ -12,10 +12,28 @@ import (
 // newTestBucketBackends returns one bucketBackend per implementation
 // available in this build, mirroring
 // internal/services/sqs/message_backend_test.go's newTestMessageBackends. The
-// "sql" entry only appears when SQLite is compiled in.
+// "sql" entry only appears when SQLite is compiled in; "wal" is always
+// available (WALStore has no build tag gate).
 func newTestBucketBackends(t *testing.T) map[string]bucketBackend {
 	t.Helper()
 	backends := map[string]bucketBackend{"memory": newMemBucketBackend()}
+
+	walDir := t.TempDir()
+	wal, err := state.NewWALStore(walDir, state.WALOptions{})
+	if err != nil {
+		t.Fatalf("NewWALStore: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := wal.Close(); err != nil {
+			t.Logf("wal.Close: %v", err)
+		}
+	})
+	walBackend := newBucketBackendFor(state.Unwrap(wal, "metrics"))
+	if _, ok := walBackend.(*kvBucketBackend); !ok {
+		t.Fatalf("expected kvBucketBackend for a WALStore-backed store, got %T", walBackend)
+	}
+	backends["wal"] = walBackend
+
 	if !config.SQLiteSupported() {
 		return backends
 	}

@@ -2687,6 +2687,7 @@ func (h *Handler) startAsync(fn *Function, rt Runtime, payload []byte) bool {
 	}
 	h.asyncWg.Add(1)
 	h.asyncMu.Unlock()
+	h.recordAsyncEventsReceived(context.Background(), fn.Name)
 
 	go func() {
 		defer h.asyncWg.Done()
@@ -2719,6 +2720,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	accepted := h.clk.Now()
 
 	for attempt := 1; ; attempt++ {
+		h.recordAsyncEventAge(ctx, fn.Name, h.clk.Now().Sub(accepted))
 		outcome := h.invokeAsyncOnce(ctx, fn, rt, payload)
 		if outcome.succeeded {
 			h.deliverAsyncDestination(bgCtx, fn, eventInvoke, payload, outcome, attempt, true)
@@ -2747,6 +2749,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		if h.eventAgedOut(eventInvoke, accepted) {
 			h.log.Warn("invokeAsync: event outlived MaximumEventAgeInSeconds, discarding it unrun",
 				zap.String("function", fn.Name), zap.Int("attempts", attempt))
+			h.recordAsyncEventsDropped(bgCtx, fn.Name)
 			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
 			return
 		}
@@ -2973,6 +2976,7 @@ func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payl
 			zap.String("target", fn.DeadLetterTargetArn),
 			zap.String("request_id", requestID),
 			zap.Error(err))
+		h.recordDeadLetterErrors(ctx, fn.Name)
 		return
 	}
 	h.log.Warn("invokeAsync: failed event sent to the dead-letter target",
