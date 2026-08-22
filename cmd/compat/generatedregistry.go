@@ -165,12 +165,35 @@ func (c candidateSet) exempt(group string) bool { return c[group] }
 // loadCandidateGroups reads the candidate set from --generated-registry-file.
 // Mirrors readFlakyFile(*flakyFilePath): the gate entry points each load their
 // own exemptions rather than threading a pre-built set through.
+//
+// It lints before returning, and that is not belt-and-braces. The exemption
+// this set grants is the ability to silence the baseline gate for a group, so
+// the collision check has to hold on the path that grants it: a generated
+// candidate group that reused a hand-written group's name would exempt the
+// hand-written group from --compare-baseline and --max-failures, hiding a real
+// regression. --check-parity runs the same lint, but compat.yml runs it after
+// both baseline gates, so relying on it alone means the build reds for a
+// confusing reason after the wrong verdict has already been reported.
 func loadCandidateGroups() (candidateSet, error) {
-	reg, err := readGeneratedRegistry(*generatedRegistryFile)
+	gen, err := readGeneratedRegistry(*generatedRegistryFile)
 	if err != nil {
 		return nil, err
 	}
-	return reg.candidateGroups(), nil
+	// An empty generated registry needs no hand-written registry to check
+	// against, and must not require one: --compare-baseline is run against
+	// artifacts in contexts where compat/suites/registry.json may not be at
+	// the default path.
+	if len(gen.Groups) == 0 {
+		return candidateSet{}, nil
+	}
+	hand, err := readParityRegistry(*registryFile)
+	if err != nil {
+		return nil, err
+	}
+	if issues := lintGeneratedRegistry(hand, gen); len(issues) > 0 {
+		return nil, generatedRegistryIssueError(*generatedRegistryFile, issues)
+	}
+	return gen.candidateGroups(), nil
 }
 
 // ---------------------------------------------------------------------------

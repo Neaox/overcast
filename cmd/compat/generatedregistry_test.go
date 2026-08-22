@@ -431,6 +431,74 @@ func TestReadParityRegistriesRejectsCollision(t *testing.T) {
 	}
 }
 
+// TestLoadCandidateGroupsRejectsCollision covers the gate path, not the parity
+// path. A colliding candidate group is the one collision that weakens a gate
+// rather than merely confusing a report: reusing a hand-written group's name
+// would exempt that hand-written group from --compare-baseline and
+// --max-failures, so a real regression would be reported as a pass.
+// --check-parity runs the same lint, but compat.yml runs it after both
+// baseline gates, so the exemption has to be refused where it is granted.
+func TestLoadCandidateGroupsRejectsCollision(t *testing.T) {
+	// Given: a candidate group that reuses a hand-written group's name.
+	handPath := writeTempJSON(t, "registry.json", testRegistry())
+	genPath := writeTempJSON(t, "registry.generated.json", &generatedRegistry{
+		Version: generatedRegistryVersion,
+		Groups: []generatedGroup{{
+			Service: "s3", Name: "s3-crud", Generated: true,
+			State: generatedStateCandidate, Suites: []string{"python-sdk"},
+			Tests: []generatedTest{{Name: "CreateBucket"}},
+		}},
+	})
+	defer swapFlag(registryFile, handPath)()
+	defer swapFlag(generatedRegistryFile, genPath)()
+
+	// When: a gate loads its exemptions.
+	_, err := loadCandidateGroups()
+
+	// Then: it refuses rather than handing back an exemption.
+	if err == nil {
+		t.Fatal("loadCandidateGroups error = nil, want a collision error")
+	}
+	if !strings.Contains(err.Error(), "s3-crud") {
+		t.Errorf("error = %v, want it to name s3-crud", err)
+	}
+}
+
+// TestLoadCandidateGroupsToleratesMissingHandWrittenRegistry pins the
+// short-circuit in loadCandidateGroups: with no generated groups there is
+// nothing to collide, and --compare-baseline is run against artifacts in
+// contexts where compat/suites/registry.json is not at the default path.
+// Demanding it there would break the gate on the empty registry that ships
+// today — which is exactly what phase G0 promises cannot happen.
+func TestLoadCandidateGroupsToleratesMissingHandWrittenRegistry(t *testing.T) {
+	// Given: an empty generated registry and no hand-written registry at all.
+	genPath := writeTempJSON(t, "registry.generated.json", &generatedRegistry{
+		Version: generatedRegistryVersion,
+	})
+	defer swapFlag(registryFile, filepath.Join(t.TempDir(), "absent.json"))()
+	defer swapFlag(generatedRegistryFile, genPath)()
+
+	// When: a gate loads its exemptions.
+	candidates, err := loadCandidateGroups()
+
+	// Then: it succeeds with nothing exempt.
+	if err != nil {
+		t.Fatalf("loadCandidateGroups: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("candidates = %v, want empty", candidates)
+	}
+}
+
+// swapFlag points a flag at a test value and returns the restore func, so the
+// package-level flags the gate entry points read can be driven from a test
+// without leaking into the next one.
+func swapFlag(target *string, value string) func() {
+	previous := *target
+	*target = value
+	return func() { *target = previous }
+}
+
 // ---------------------------------------------------------------------------
 // The checked-in files
 // ---------------------------------------------------------------------------
