@@ -1,12 +1,20 @@
 # Resource Tagging Coverage Audit
 
-> Status: audit complete. Every **Axis A** gap is closed (#1195 filled the
-> last two, `logs` and `backup`), together with the Axis B gaps in the
-> services that closed alongside them. The remaining Axis B and Axis C sets
-> are listed under [What remains](#what-remains). A third question — whether
-> a service's tag-accepting write actually reaches the shared validator, not
-> just whether the operation exists — is #1052's, closed for all seventeen
-> services it named; see [Validator reach audit](#validator-reach-audit-1052).
+> Status: audit complete and **every axis is closed**. #1195 closed the last
+> two Axis A gaps (`logs`, `backup`); #1196 closed all 14 Axis B rows; #1197
+> closed all 8 Axis C rows. #1052, the orthogonal question of whether a
+> service's tag-accepting write actually reaches the shared validator, is also
+> closed for all seventeen services it named; see
+> [Validator reach audit](#validator-reach-audit-1052).
+>
+> Re-verified 2026-08-23 (#1197) — Axis C is closed. Three of the eight
+> resource types (`AWS::Kinesis::Stream`, `AWS::IAM::Role`, `AWS::IAM::User`)
+> were already threading `Tags` at create and reconciling it on update; the
+> remaining five (`AWS::CloudTrail::Trail`, `AWS::Transfer::Server`,
+> `AWS::Transfer::User`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`)
+> needed a real fix. See the Axis C entry under
+> [What remains](#what-remains) for the per-type disposition and the scope
+> decision on stack-tag propagation.
 >
 > Re-verified 2026-08-23 (#1196) — Axis B is closed for all 14 services this
 > issue named. Three (`kms`, `appconfig`, `opensearch`) were already fixed
@@ -326,18 +334,42 @@ note at the top of this document.
 [What #1196 filled](#what-1196-filled) above and the updated
 [Axis B table](#axis-b--missing-tag-on-create).
 
-**Axis C — CloudFormation passthrough, eight resource types.** A third gap that
-only becomes reachable now that the services accept the tags. These handlers in
-[provisioner.go](../../internal/services/cloudformation/provisioner.go) build
-their create call from named properties and never read `Tags`, so a template
-carrying `Tags:` on one of them has them silently dropped:
-`AWS::Kinesis::Stream`, `AWS::CloudTrail::Trail`, `AWS::Transfer::Server`,
-`AWS::Transfer::User`, `AWS::IAM::Role`, `AWS::IAM::User`,
-`AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`. Each needs one property
-forwarded to the create call it already dispatches — `AWS::SNS::Topic` is the
-worked example, though it applies tags with a follow-up `TagResource` rather
-than inline. Left out of this branch to keep it reviewable; it is a single
-coherent follow-up rather than eight scattered ones.
+**Axis C — closed** (#1197). All eight resource types
+[provisioner.go](../../internal/services/cloudformation/provisioner.go) and
+its siblings dispatch now thread `Tags` at create and reconcile add/change/
+remove on update:
+
+| Resource type | Status before #1197 | What #1197 did |
+| --- | --- | --- |
+| `AWS::Kinesis::Stream` | Already fixed | No change — re-verified against `provisioner_newservices.go`'s existing stack-tag-aware Create/Update |
+| `AWS::IAM::Role` | Already fixed | No change — re-verified against `provisioner.go`'s existing `iamTags`/`iamTagMutations` threading |
+| `AWS::IAM::User` | Already fixed | No change — re-verified against `provisioner_query_rest_coverage.go`'s existing threading |
+| `AWS::CloudTrail::Trail` | No `Tags` at all | Create forwards `Tags` as CloudTrail's own `TagsList` member; Update reconciles via `AddTags`/`RemoveTags` (Tags has no `UpdateTrail` member) |
+| `AWS::Transfer::Server` | Create already forwarded `Tags`; Update forced replacement unconditionally | Update now reconciles a tags-only change via `TagResource`/`UntagResource` instead of forcing replacement; any other property change still forces it (a pre-existing simplification, not attempted here) |
+| `AWS::Transfer::User` | No `Tags` at all | Create forwards `Tags`; Update reconciles via `TagResource`/`UntagResource` (`UpdateUser` has no tags member) |
+| `AWS::IAM::ManagedPolicy` | No `Tags` at all | Create threads `Tags` inline via `iamTagParams`; Update reconciles via a new `iamPolicyTagMutations` — `TagPolicy`/`UntagPolicy` key on `PolicyArn`, not a `<Principal>Name` parameter, so it cannot share `iamTagMutations`'s convention |
+| `AWS::IAM::InstanceProfile` | No `Tags` at all | Create threads `Tags` inline via `iamTagParams`; Update reconciles via the existing `iamTagMutations("InstanceProfile", …)` |
+
+**Scope decision — no stack-tag propagation for the five newly-fixed types.**
+Kinesis's existing implementation merges the stack's own `Tags` (via
+`rCtx.StackTags`) into every resource's tags and is one of the few resource
+types `hashResourceProperties` treats a stack-tag-only change as an update
+trigger for. IAM::Role and IAM::User's pre-existing threading does neither —
+resource-level `Tags` only, no stack merge, no `hashResourceProperties` entry.
+Since six of the eight resource types in this issue (all but Kinesis) follow
+the narrower IAM precedent, `CloudTrail::Trail`, `Transfer::Server`,
+`Transfer::User`, `IAM::ManagedPolicy` and `IAM::InstanceProfile` all follow it
+too — resource-level `Tags` only. Extending stack-tag propagation to every
+resource type is a separate, broader change (it touches
+`mergeResourceTags`/`hashResourceProperties`, both already used inconsistently
+across the type table) and is left as a follow-up rather than folded into a
+tags-parity fix.
+
+A CloudTrail::Trail property-name bug surfaced while writing this section's
+tests and was **not** fixed here, to keep this branch to Tags: the Create/
+Update handlers read the template's name from `props["Name"]`, but AWS's own
+resource type spells it `TrailName`. Flagged as a follow-up task; the tests
+added here use `Name` to match current behavior.
 
 **Also proposed, not done:** move the typed-operation JSON adapter into
 `serviceutil` (see above), and consider whether `serviceutil` should grow a

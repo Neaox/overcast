@@ -462,6 +462,46 @@ func iamTagMutations(principalType, principalName string, props, oldProps map[st
 	return mutations, nil
 }
 
+// iamPolicyTagMutations is iamTagMutations for AWS::IAM::ManagedPolicy.
+// TagPolicy/UntagPolicy key on PolicyArn rather than a "<Principal>Name"
+// parameter — unlike Role, User and InstanceProfile, which all take a Name —
+// so ManagedPolicy cannot share iamTagMutations's principalType+"Name"
+// convention and gets its own copy of the same diff-and-reconcile shape
+// (#1197).
+func iamPolicyTagMutations(policyArn string, props, oldProps map[string]any) ([]iamMutation, error) {
+	desired, err := iamTags(props)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := iamTags(oldProps)
+	if err != nil {
+		return nil, err
+	}
+	mutations := make([]iamMutation, 0, len(desired)+len(previous))
+	for key, old := range previous {
+		if _, remains := desired[key]; remains {
+			continue
+		}
+		params := map[string]string{"PolicyArn": policyArn, "TagKeys.member.1": old.key}
+		undo := map[string]string{"PolicyArn": policyArn, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
+		mutations = append(mutations, iamMutation{action: "UntagPolicy", params: params, undoAction: "TagPolicy", undoParams: undo})
+	}
+	for key, tag := range desired {
+		if old, existed := previous[key]; existed && old.value == tag.value {
+			continue
+		}
+		params := map[string]string{"PolicyArn": policyArn, "Tags.member.1.Key": tag.key, "Tags.member.1.Value": tag.value}
+		undoAction := "UntagPolicy"
+		undoParams := map[string]string{"PolicyArn": policyArn, "TagKeys.member.1": tag.key}
+		if old, existed := previous[key]; existed {
+			undoAction = "TagPolicy"
+			undoParams = map[string]string{"PolicyArn": policyArn, "Tags.member.1.Key": old.key, "Tags.member.1.Value": old.value}
+		}
+		mutations = append(mutations, iamMutation{action: "TagPolicy", params: params, undoAction: undoAction, undoParams: undoParams})
+	}
+	return mutations, nil
+}
+
 // iamTagParams flattens the Tags property into Query Tags.member.N parameters
 // for a create call that applies tags inline.
 func iamTagParams(params map[string]string, tags map[string]iamTag) {

@@ -5295,6 +5295,25 @@ func mergeResourceTags(stackTags []Tag, rawResourceTags any) map[string]string {
 	return mergeStackTags(stackTags, resourceTags)
 }
 
+// cfnTagList renders a tag map into the [{Key, Value}] wire shape most AWS
+// tag-accepting operations use, ordered by key so two calls carrying the same
+// tags never produce a different body.
+func cfnTagList(tags map[string]string) []map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]string, 0, len(tags))
+	for _, k := range keys {
+		out = append(out, map[string]string{"Key": k, "Value": tags[k]})
+	}
+	return out
+}
+
 func mergeStackTags(stackTags []Tag, resourceTags map[string]string) map[string]string {
 	if len(stackTags) == 0 && len(resourceTags) == 0 {
 		return nil

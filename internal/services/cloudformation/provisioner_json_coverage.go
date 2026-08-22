@@ -412,6 +412,12 @@ func (h *cloudtrailTrailHandler) Create(ctx context.Context, router http.Handler
 		"IncludeGlobalServiceEvents": includeGlobal,
 		"IsMultiRegionTrail":         isMultiRegion,
 	}
+	// CreateTrail's inline member is TagsList, not Tags — the same [{Key,
+	// Value}] shape CloudFormation's own Tags property already is, just
+	// renamed on the wire (#1197).
+	if tags := cfnTagList(mergeResourceTags(nil, props["Tags"])); len(tags) > 0 {
+		body["TagsList"] = tags
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.CreateTrail", body)
 	if err != nil {
@@ -480,6 +486,28 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 
 	if _, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.UpdateTrail", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateTrail: %w", err)
+	}
+	// Tags have no UpdateTrail member; a stack update reconciles them with an
+	// AddTags/RemoveTags follow-up instead, the same pattern the Backup and
+	// Kinesis handlers already use (#1197).
+	want := mergeResourceTags(nil, props["Tags"])
+	have := mergeResourceTags(nil, oldProps["Tags"])
+	upserts, removals := logsLogGroupTagChanges(want, have)
+	if len(upserts) > 0 {
+		body := map[string]any{"ResourceId": physicalID, "TagsList": cfnTagList(upserts)}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.AddTags", body); err != nil {
+			return "", nil, fmt.Errorf("AddTags: %w", err)
+		}
+	}
+	if len(removals) > 0 {
+		removeTags := make([]map[string]string, 0, len(removals))
+		for _, key := range removals {
+			removeTags = append(removeTags, map[string]string{"Key": key})
+		}
+		body := map[string]any{"ResourceId": physicalID, "TagsList": removeTags}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.RemoveTags", body); err != nil {
+			return "", nil, fmt.Errorf("RemoveTags: %w", err)
+		}
 	}
 	return physicalID, map[string]string{"Arn": physicalID}, nil
 }
@@ -819,7 +847,45 @@ func (h *transferServerHandler) Delete(ctx context.Context, router http.Handler,
 }
 
 func (h *transferServerHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	// EndpointType, IdentityProviderType and Protocols still force
+	// replacement — a pre-existing simplification this issue does not
+	// attempt to fix. Only a tag-only change is reconciled in place, since
+	// tags never force replacement on real AWS (#1197).
+	for _, prop := range []string{"EndpointType", "IdentityProviderType", "Protocols"} {
+		if changed, err := cfnPropertyChanged(props, oldProps, prop); err != nil {
+			return "", nil, err
+		} else if changed {
+			return "", nil, errReplacementRequired
+		}
+	}
+	arn := fmt.Sprintf("arn:aws:transfer:%s:%s:server/%s", rCtx.Region, rCtx.AccountID, physicalID)
+	if err := reconcileTransferResourceTags(ctx, router, rCtx.Region, arn, props, oldProps); err != nil {
+		return "", nil, err
+	}
+	return physicalID, nil, nil
+}
+
+// reconcileTransferResourceTags diffs a Transfer resource's old and new
+// template Tags and reconciles the difference via TagResource/UntagResource
+// — Transfer models no in-place tag member on UpdateServer/UpdateUser, the
+// same shape CloudTrail's Trail and Backup's vault/plan already use (#1197).
+func reconcileTransferResourceTags(ctx context.Context, router http.Handler, region, arn string, props, oldProps map[string]any) error {
+	want := mergeResourceTags(nil, props["Tags"])
+	have := mergeResourceTags(nil, oldProps["Tags"])
+	upserts, removals := logsLogGroupTagChanges(want, have)
+	if len(upserts) > 0 {
+		body := map[string]any{"Arn": arn, "Tags": cfnTagList(upserts)}
+		if _, err := internalJSON(ctx, router, region, "TransferService.TagResource", body); err != nil {
+			return fmt.Errorf("TagResource: %w", err)
+		}
+	}
+	if len(removals) > 0 {
+		body := map[string]any{"Arn": arn, "TagKeys": removals}
+		if _, err := internalJSON(ctx, router, region, "TransferService.UntagResource", body); err != nil {
+			return fmt.Errorf("UntagResource: %w", err)
+		}
+	}
+	return nil
 }
 
 // ── AWS::Transfer::User ─────────────────────────────────────────────────────
@@ -835,6 +901,9 @@ func (h *transferUserHandler) Create(ctx context.Context, router http.Handler, c
 		"ServerId": serverID,
 		"UserName": userName,
 		"Role":     role,
+	}
+	if v, ok := props["Tags"]; ok {
+		body["Tags"] = v
 	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TransferService.CreateUser", body)
@@ -910,6 +979,13 @@ func (h *transferUserHandler) Update(ctx context.Context, router http.Handler, _
 	}
 	if _, err := internalJSON(ctx, router, rCtx.Region, "TransferService.UpdateUser", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateUser: %w", err)
+	}
+	// UpdateUser has no Tags member either; reconcile via TagResource/
+	// UntagResource, the same follow-up CreateServer's sibling handler uses
+	// (#1197).
+	arn := fmt.Sprintf("arn:aws:transfer:%s:%s:user/%s/%s", rCtx.Region, rCtx.AccountID, parts[0], parts[1])
+	if err := reconcileTransferResourceTags(ctx, router, rCtx.Region, arn, props, oldProps); err != nil {
+		return "", nil, err
 	}
 	return physicalID, nil, nil
 }
