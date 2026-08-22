@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -65,6 +66,12 @@ type Execution struct {
 type Store struct {
 	s             state.Store
 	defaultRegion string
+
+	// eventBridge is the EventBridge bus publisher wired by
+	// Service.InitEventBridge (eventbridge.go), once the EventBridge service
+	// itself exists. Nil in most unit tests, which makes
+	// notifyExecutionStatusChange a no-op — see its doc comment.
+	eventBridge events.BusPublisher
 }
 
 func newStore(s state.Store, defaultRegion string) *Store {
@@ -124,12 +131,30 @@ func (st *Store) ListStateMachines(ctx context.Context) ([]*StateMachine, error)
 }
 
 // PutExecution saves an execution record.
+//
+// Every execution status write — StartExecution's initial RUNNING record,
+// completeExecution's terminal write (SUCCEEDED/FAILED/TIMED_OUT/ABORTED),
+// the panic-recovery FAILED write, and StopExecution's direct ABORTED write —
+// funnels through here, so it is the single place to diff the prior status
+// against the new one and emit the EventBridge notification. See
+// notifyExecutionStatusChange in eventbridge.go, mirroring
+// ec2Store.putInstance / ecsStore.putTask for the same purpose.
 func (st *Store) PutExecution(ctx context.Context, exec *Execution) error {
+	// Read the prior record before overwriting it so the write below can tell
+	// whether the execution's status actually changed. A lookup failure
+	// (including "not found", the very first write for this execution ARN)
+	// just means prev is nil; it is not fatal to the put itself.
+	prev, _ := st.GetExecution(ctx, exec.ExecutionArn)
+
 	raw, err := json.Marshal(exec)
 	if err != nil {
 		return fmt.Errorf("stepfunctions: marshal exec %q: %w", exec.ExecutionArn, err)
 	}
-	return st.s.Set(ctx, storeNS, serviceutil.RegionKey(st.region(ctx), execPrefix+exec.ExecutionArn), string(raw))
+	if err := st.s.Set(ctx, storeNS, serviceutil.RegionKey(st.region(ctx), execPrefix+exec.ExecutionArn), string(raw)); err != nil {
+		return err
+	}
+	st.notifyExecutionStatusChange(ctx, prev, exec)
+	return nil
 }
 
 // GetExecution retrieves one execution by ARN. Returns nil, nil if not found.
