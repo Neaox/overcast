@@ -552,6 +552,60 @@ binary encoding) before widening scope. Do not widen scope on an unmeasured
 budget. §3 of the coverage plan should gain a one-paragraph amendment pointing
 here.
 
+#### The measurement — I1, landed
+
+The pruner is `cmd/awsmodelgen -shapes-out -shapes-services`; the snapshot is
+`models/aws/shapes/<service>.json`, digested as `shapes-sha256` in
+`models/aws/VERSION` and verified offline — and held to its size budget — by
+`internal/awsapi/shapes_provenance_test.go`. Committed for the I4 pilot trio plus
+I2's smoke-test service, against revision `66e973ca`:
+
+| Service | Protocol | Ops | Shapes | Pruned | Upstream | Bytes/op |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `batch` | REST-JSON | 45 | 404 | 98,273 | 709,779 | 2,184 |
+| `organizations` | JSON 1.1 | 63 | 339 | 95,345 | 594,121 | 1,513 |
+| `servicediscovery` | JSON 1.1 | 30 | 206 | 39,316 | 303,048 | 1,311 |
+| `elastic-load-balancing` | Query | 29 | 212 | 35,614 | 222,952 | 1,228 |
+| **Total** | | **167** | **1,161** | **268,548** | **1,829,900** | **1,608** |
+
+Pruning keeps **14.7%** of the upstream bytes. The allowlisted traits are only
+~6% of the pruned file; the remainder is structure (shape names, member names,
+targets), so pruning *traits* harder buys almost nothing — any further saving has
+to come from the encoding. Namespace-relative shape references already take 37%
+off, and are in.
+
+**Fleet projection**, against [compat-coverage-modelgen.md](./compat-coverage-modelgen.md)
+§3.9's 14,410 unregistered-identity operations — the pre-never-list upper bound:
+
+| Basis | Rate | Projected |
+| --- | --- | ---: |
+| Blended measured | 1,608 B/op | **22.1 MiB** |
+| Worst family measured (`batch`, REST-JSON — also I7, the largest wave) | 2,184 B/op | 30.0 MiB |
+| Per service (255 services × ~67 KB) | — | 16.3 MiB |
+| Realistic, once the never-list removes "the majority" of I7 (~8,500 ops) | 1,608 B/op | 13.0 MiB |
+
+**Fleet budget: 24 MiB.** Set from the blended measurement plus headroom, and
+calibrated against what this repo already commits: `internal/awsapi/manifest.gen.go`
+is 8.5 MiB of generated output today, so the snapshot at full scope is roughly
+2.5× an artifact the tree already carries. A real cost, not a disqualifying one.
+Two consequences, both binding:
+
+- The worst-family rate **exceeds** that budget at full pre-exclusion scope. I7
+  may not widen to its full 8,707 operations before the
+  [services-never-emulated.md](./services-never-emulated.md) exclusions land;
+  this plan already expects them to remove the majority, and the 13.0 MiB row is
+  what the budget is sized for.
+- **Re-measure per wave.** A wave whose measured bytes/op exceeds 1,608 spends
+  budget faster than projected; if the running total projects past 24 MiB, prune
+  harder or move to a compact encoding *before* the wave, per this gate.
+
+CI enforcement is `maxShapeSnapshotBytes` in
+`internal/awsapi/shapes_provenance_test.go`, currently 336 KiB — the committed
+268,548 bytes plus ~25% headroom, enough to absorb an upstream refresh on the
+current service set without a reviewer touching it. Raising it is a reviewer's
+decision about how much fleet budget a wave spends, never an automatic
+consequence of adding a line to `models/aws/shapes-services.txt`.
+
 ## 5. The CloudFormation / CDK path
 
 Tier 1 is not achieved by the API alone. `cdk deploy` → CloudFormation → the
@@ -707,7 +761,7 @@ stale generated output, or a red required check.
 | Phase | Contents | Effort | Acceptance gate |
 | --- | --- | --- | --- |
 | **I0** — contract & truth | Write §3 as executable conformance tests in `internal/inert/conformance` (table-driven: per class, per protocol family). Fix STATUS.md's stale prose (§2.2 corrections). Add the `Tier 0/1/2` vocabulary to CONTRIBUTING. | S | Conformance suite exists and **fails** against a deliberately naive stub; STATUS.md matches the capability registry. |
-| **I1** — shape snapshot | Build the pruner in `cmd/awsmodelgen` (`-shapes-out`); commit `models/aws/shapes/` for the pilot's three services; add `shapes-sha256` to `models/aws/VERSION`; extend `make aws-models-check` and the A5 workflow. Amend [aws-api-operation-coverage.md §3](./aws-api-operation-coverage.md) with the §4.6 reconciliation. | M | Snapshot is byte-deterministic; offline `aws-models-check` validates it; measured size published and a fleet budget set from it. |
+| **I1** — shape snapshot — **landed** | Build the pruner in `cmd/awsmodelgen` (`-shapes-out`); commit `models/aws/shapes/` for the pilot's three services; add `shapes-sha256` to `models/aws/VERSION`; extend `make aws-models-check` and the A5 workflow. Amend [aws-api-operation-coverage.md §3](./aws-api-operation-coverage.md) with the §4.6 reconciliation. Shipped with `organizations` as a fourth service, for I2. | M | **Met.** Snapshot is byte-deterministic (regen-and-diff, plus a repeat-run test); offline `aws-models-check` validates `shapes-sha256` and the size budget with no network and no model checkout; a test proves no runtime package reads the snapshot. Measured 268,548 bytes / 167 ops / 1,608 B per op and fleet budget 24 MiB — see §4.6's measurement. |
 | **I2** — inert runtime | `internal/inert`: `Store[T]`, `Tags`, `Binding`, zero-alloc `Lookup`. Hand-write **one** service against it end to end to prove the API (recommend rewriting `organizations`, 1 op / 226 lines, as the smoke test) — and bring **at least one additional `organizations` operation** to Tier 1 while there, because [compat-coverage-modelgen.md](./compat-coverage-modelgen.md) §4.2.5's decisive pilot criterion is watching exactly such an op flip from `unimplemented` to `pass` via regeneration alone. | M | Conformance suite passes for the hand-wired service; `Lookup` benchmarks at `0 allocs/op`; ≥1 new `organizations` op at `StatusInert`. |
 | **I3** — generator | `cmd/awsmodelgen -inert-*`: types, ops, resources, capabilities, `tier0` list. Error-selection, ID/ARN templates, pagination member detection, verb classification (§3.6). Regen-and-diff CI job. | L | Generated output for the pilot compiles, passes conformance, and regen-diff is green. |
 | **I4** — pilot wave (3 services, 104 ops) | **JSON 1.1:** `servicediscovery` / Cloud Map (30 ops) — CFN `AWS::ServiceDiscovery::{PrivateDnsNamespace,PublicDnsNamespace,HttpNamespace,Service,Instance}`. **Query:** `elastic-load-balancing` / ELB Classic (29 ops) — CFN `AWS::ElasticLoadBalancing::LoadBalancer`; exercises Query `Marker`/`PageSize` pagination and XML list flattening. **REST-JSON:** `batch` (45 ops) — CFN `AWS::Batch::{ComputeEnvironment,JobQueue,JobDefinition,SchedulingPolicy}`; exercises REST bindings and the awsapi REST-trie/S3-safety boundary. Plus cheap backfills: `sts`, `sqs`, `lambda`, `dynamodb`. | L | Per §8.1 below. |

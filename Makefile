@@ -239,21 +239,25 @@ generate-ts:
 check-ts:
 	$(GO) run ./cmd/tsgen --check
 
-## generate-aws-operations: regenerate the AWS operation manifest from a pinned local api-models-aws checkout
+## generate-aws-operations: regenerate the AWS operation manifest and pruned shape snapshot from a pinned local api-models-aws checkout
 ## Set AWS_MODELS_DIR to its models directory. The checked-out commit must match models/aws/VERSION.
 generate-aws-operations:
 	@test -n "$(AWS_MODELS_DIR)" || (echo "ERROR: set AWS_MODELS_DIR to api-models-aws/models" && exit 1)
 	@test -n "$(AWS_MODELS_REVISION)" || (echo "ERROR: set AWS_MODELS_REVISION to the api-models-aws commit" && exit 1)
-	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)"
+	$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" \
+		-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt
 
-## aws-models-check: validate the committed AWS operation corpus and generated runtime ownership indexes
-## Set AWS_MODELS_DIR to additionally prove the committed manifest matches that pinned checkout byte-for-byte.
+## aws-models-check: validate the committed AWS operation corpus, generated runtime ownership indexes and pruned shape snapshot
+## Without AWS_MODELS_DIR this is the offline gate: the Go tests verify the committed manifest and snapshot against the
+## manifest-sha256/shapes-sha256 digests in models/aws/VERSION, and hold the snapshot to its reviewed size budget.
+## Set AWS_MODELS_DIR to additionally prove both artifacts match that pinned checkout byte-for-byte.
 aws-models-check:
 	$(GO) test -count=1 ./cmd/awsmodelgen ./internal/awsapi ./internal/protocol/codec ./tests/integration/router
 	$(GO) test -count=1 -tags dev ./internal/router ./cmd/capgen
 	$(GO) run -tags dev ./cmd/capgen --check-model
 	@if [ -n "$(AWS_MODELS_DIR)" ]; then \
-		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" -check; \
+		$(GO) run ./cmd/awsmodelgen -models "$(AWS_MODELS_DIR)" -output internal/awsapi/manifest.gen.go -source-revision "$(AWS_MODELS_REVISION)" \
+			-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt -check; \
 	fi
 
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)

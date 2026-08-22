@@ -143,16 +143,18 @@ jobs:
             -source-revision "$PINNED_REVISION" \
             -inventory-output "$RUNNER_TEMP/baseline-inventory.json"
 
-          # The committed manifest must already be faithful to the revision it
-          # records, or this refresh would carry that drift silently forward.
-          # This is the only genuine staleness check in the run: the -check that
-          # aws-models-check performs below compares the manifest against the
-          # revision it was just generated from, so it can only prove
-          # determinism.
+          # The committed manifest and pruned shape snapshot must already be
+          # faithful to the revision they record, or this refresh would carry
+          # that drift silently forward. This is the only genuine staleness
+          # check in the run: the -check that aws-models-check performs below
+          # compares both artifacts against the revision they were just
+          # generated from, so it can only prove determinism.
           go run ./cmd/awsmodelgen \
             -models "$MODEL_CHECKOUT/models" \
             -output internal/awsapi/manifest.gen.go \
             -source-revision "$PINNED_REVISION" \
+            -shapes-out models/aws/shapes \
+            -shapes-services models/aws/shapes-services.txt \
             -check
 
           git -C "$MODEL_CHECKOUT" checkout --detach "$LATEST_REVISION"
@@ -164,6 +166,8 @@ jobs:
             -inventory-output "$RUNNER_TEMP/current-inventory.json" \
             -baseline-inventory "$RUNNER_TEMP/baseline-inventory.json" \
             -summary-output "$RUNNER_TEMP/aws-model-summary.md" \
+            -shapes-out models/aws/shapes \
+            -shapes-services models/aws/shapes-services.txt \
             -version-file models/aws/VERSION \
             -model-date "$model_date"
           echo "model_date=$model_date" >> "$GITHUB_OUTPUT"
@@ -200,7 +204,10 @@ jobs:
           fi
           git config user.name "overcast-model-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add internal/awsapi/manifest.gen.go models/aws/VERSION
+          # The shape snapshot is regenerated in the same run and must land in
+          # the same commit as the revision bump, or shapes-sha256 would already
+          # describe a snapshot that is not in the tree.
+          git add internal/awsapi/manifest.gen.go models/aws/VERSION models/aws/shapes
           git commit -m "chore(aws-models): refresh pinned API models"
           if [[ -n "$EXPECTED_REVISION" ]]; then
             git push \

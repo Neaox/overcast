@@ -3,12 +3,13 @@
 `awsmodelgen` converts a pinned checkout of AWS's public
 [`aws/api-models-aws`](https://github.com/aws/api-models-aws) Smithy JSON AST
 models into Overcast's committed operation manifest and immutable routing
-indexes.
+indexes, and into the pruned Smithy shape snapshot under `models/aws/shapes/`.
 
 It is a build and maintenance tool. The Overcast daemon never reads Smithy
 models, contacts GitHub, or constructs model-sized maps at startup. Runtime
 routing uses only the compact generated tables in
-`internal/awsapi/manifest.gen.go`.
+`internal/awsapi/manifest.gen.go`; the shape snapshot is generator input only
+and is never read at runtime.
 
 ## Source and provenance
 
@@ -26,22 +27,151 @@ make generate-aws-operations \
   AWS_MODELS_DIR=/path/to/api-models-aws/models
 ```
 
-Never hand-edit or hand-merge `internal/awsapi/manifest.gen.go`.
+Never hand-edit or hand-merge `internal/awsapi/manifest.gen.go` or anything
+under `models/aws/shapes/`.
+
+## The pruned shape snapshot
+
+The routing manifest deliberately carries no shapes. Inert-tier codegen
+([docs/plans/inert-tier-rollout.md §4.6](../../docs/plans/inert-tier-rollout.md))
+and the compat scenario generator
+([docs/plans/compat-coverage-modelgen.md §3.7](../../docs/plans/compat-coverage-modelgen.md))
+both need them, and neither may vendor the raw Smithy corpus
+([docs/plans/aws-api-operation-coverage.md §3](../../docs/plans/aws-api-operation-coverage.md)).
+The reconciliation is a pruner in this same binary: **one pruner, one
+`shapes-sha256`, two consumers.** Do not build a second distillation.
+
+### Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `-shapes-out <dir>` | Write the snapshot there (`models/aws/shapes`). Empty means do not produce one. |
+| `-shapes-services <file>` | The reviewed in-scope service list (`models/aws/shapes-services.txt`): one canonical service key per line, `#` comments allowed. Required with `-shapes-out`. |
+
+`-check` covers the snapshot too when `-shapes-out` is set: it regenerates in
+memory and compares byte-for-byte, writing nothing. `-version-file` *requires*
+`-shapes-out`, so `shapes-sha256` cannot be refreshed without the snapshot it
+describes.
+
+A listed service the corpus does not define is a hard failure — a silently
+missing file would read to the generators as "this service has no operations".
+A file no listed service produces fails `-check` and is deleted on write, so
+removing a service cannot leave a stale snapshot behind.
+
+### Layout
+
+One file per service, `models/aws/shapes/<service>.json`, holding a fixed-order
+header and then one line per shape in sorted shape-name order:
+
+```json
+{
+"smithy": "2.0",
+"service": "elastic-load-balancing",
+"namespace": "com.amazonaws.elasticloadbalancing",
+"serviceShape": "ElasticLoadBalancing_v7",
+"sdkId": "Elastic Load Balancing",
+"apiVersion": "2012-06-01",
+"protocols": ["AWSQuery"],
+"shapes": {
+"AccessLogInterval": {"type":"integer"},
+"AddAvailabilityZonesInput": {"type":"structure","members":{ … }}
+}
+}
+```
+
+Shapes keep the Smithy AST vocabulary — `type`, `members`, `member`/`key`/`value`,
+`input`/`output`/`errors`, and the full resource lifecycle (`identifiers`,
+`properties`, `create`, `put`, `read`, `update`, `delete`, `list`, `operations`,
+`collectionOperations`, `resources`) — so a consumer decodes it with the same
+structs it would use for the raw AST. Two differences from upstream:
+
+- **Namespace-relative IDs.** A reference into the service's own namespace loses
+  its `com.amazonaws.<svc>#` prefix, which the header records once. References
+  into another namespace stay fully qualified, so a relative name is exactly the
+  one with no `#` in it. Worth 37% of the file size.
+- **References are strings, not `{"target": …}` objects**, and reference lists
+  are sorted, so an upstream reordering cannot churn the committed file.
+
+Only shapes transitively reachable from the service — its operations, its
+resources and their lifecycle bindings, and everything those reference — are
+emitted. Prelude shapes (`smithy.api#String`, `smithy.api#Unit`, …) are implicit
+targets and are never emitted. Documentation, examples, waiters, smoke tests,
+endpoint rule sets, metadata and every out-of-scope service are dropped.
+
+Output is byte-deterministic: sorted map keys throughout, sorted reference
+lists, trait values decoded and re-encoded (with `json.Number`, so no numeric
+literal is reformatted) rather than copied, `\n` line endings, no HTML escaping.
+Regenerating twice produces identical bytes.
+
+The line-per-shape format is a deliberate middle: fully compact would make a
+model refresh an unreviewable one-line diff, and indenting the whole document
+costs about 40% more bytes for a file no human edits.
+
+### Trait allowlist
+
+Only the traits the generators consume survive; the list is
+`shapeTraitAllowlist` in [shapes.go](./shapes.go) and every entry carries the
+reason it is there.
+
+| Group | Traits |
+| --- | --- |
+| Structure and member semantics | `required`, `default`, `clientOptional`, `enum`, `enumValue`, `length`, `range`, `pattern`, `sparse`, `idempotencyToken`, `timestampFormat`, `mediaType`, `references`, `input`, `output` |
+| Errors | `error`, `httpError`, `aws.protocols#awsQueryError` |
+| HTTP bindings | `http`, `httpLabel`, `httpQuery`, `httpQueryParams`, `httpHeader`, `httpPrefixHeaders`, `httpPayload`, `httpResponseCode`, `httpChecksumRequired` |
+| Serialisation names | `jsonName`, `xmlName`, `xmlFlattened`, `xmlAttribute`, `xmlNamespace`, `aws.protocols#ec2QueryName` |
+| Pagination | `paginated` |
+| Service identity and protocol | `aws.api#service`, `aws.auth#sigv4`, and the eight protocol traits (`awsJson1_0`, `awsJson1_1`, `awsQuery`, `ec2Query`, `restJson1`, `restXml`, `rpcv2Cbor`, `rpcv2Json`) |
+| Resource metadata | `aws.api#arn`, `aws.api#taggable` |
+
+Unqualified names above are `smithy.api#`. Adding an entry widens the committed
+snapshot for every in-scope service at once, so it is a reviewed act and belongs
+in the pull request description.
+
+### `shapes-sha256`
+
+`models/aws/VERSION` records a digest over the **whole snapshot directory**, so a
+hand-edit, a deletion or a partial merge all change it. The definition, so it is
+reproducible by hand:
+
+1. for each file, form the line
+   `<sha256 of the file contents, lowercase hex><two spaces><path relative to models/aws/shapes, '/' separators><newline>`;
+2. sort those lines bytewise;
+3. concatenate them and take the SHA-256 of the result, lowercase hex.
+
+That is `sha256sum`'s text-mode output format, so:
+
+```sh
+cd models/aws/shapes && sha256sum -t *.json | LC_ALL=C sort | sha256sum -t
+```
+
+reproduces it. (`-t` forces text mode, which is already the default outside
+Windows.)
+
+### Size budget
+
+`internal/awsapi/shapes_provenance_test.go` holds the committed snapshot to
+`maxShapeSnapshotBytes`. That constant is
+[inert-tier-rollout.md §4.6](../../docs/plans/inert-tier-rollout.md)'s
+acceptance gate made mechanical: raising it is a reviewer's decision about how
+much of the fleet budget to spend, never an automatic consequence of adding a
+service. §4.6 carries the measurement and the fleet projection it rests on.
 
 ## Validation
 
 Normal pull requests run the no-network checks against the committed corpus,
-including a check that the committed manifest still hashes to the
-`manifest-sha256` recorded in `models/aws/VERSION`. That catches a hand-edit or
-a partial merge without needing the models:
+including checks that the committed manifest still hashes to the
+`manifest-sha256` recorded in `models/aws/VERSION`, that the committed shape
+snapshot still hashes to `shapes-sha256`, and that the snapshot is within its
+size budget. That catches a hand-edit or a partial merge without needing the
+models:
 
 ```sh
 make aws-models-check
 ```
 
 When the pinned checkout is available, add `AWS_MODELS_DIR` to regenerate the
-manifest in memory and compare it byte-for-byte without overwriting the
-committed file:
+manifest and the snapshot in memory and compare them byte-for-byte without
+overwriting the committed files:
 
 ```sh
 make aws-models-check \
@@ -55,6 +185,8 @@ go run ./cmd/awsmodelgen \
   -models /path/to/api-models-aws/models \
   -source-revision <revision> \
   -output internal/awsapi/manifest.gen.go \
+  -shapes-out models/aws/shapes \
+  -shapes-services models/aws/shapes-services.txt \
   -check
 ```
 
@@ -79,6 +211,8 @@ go run ./cmd/awsmodelgen \
   -inventory-output <temporary-directory>/current-inventory.json \
   -baseline-inventory <temporary-directory>/baseline-inventory.json \
   -summary-output <temporary-directory>/aws-model-summary.md \
+  -shapes-out models/aws/shapes \
+  -shapes-services models/aws/shapes-services.txt \
   -version-file models/aws/VERSION \
   -model-date YYYY-MM-DD
 ```
@@ -101,9 +235,11 @@ Output is deterministic for a given source revision.
 dispatch. When AWS publishes a new revision, it:
 
 1. restores and verifies a cached upstream Git mirror;
-2. asserts the committed manifest still matches the *pinned* revision, so an
-   already-stale manifest cannot be carried forward silently;
-3. generates old and new inventories and the manifest;
+2. asserts the committed manifest **and shape snapshot** still match the
+   *pinned* revision, so already-stale generated output cannot be carried
+   forward silently;
+3. generates old and new inventories, the manifest, and the shape snapshot —
+   all in the same commit as the revision bump, so the two cannot drift;
 4. runs `make aws-models-check` with full regeneration enabled, which at that
    point asserts determinism rather than staleness;
 5. force-with-lease updates only `automation/aws-api-models`; and

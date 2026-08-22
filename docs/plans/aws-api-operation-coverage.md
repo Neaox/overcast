@@ -56,6 +56,29 @@ regenerates the manifest and compares it byte-for-byte. The A5 refresh workflow
 keeps a GitHub Actions cache of the upstream Git mirror and supplies that
 checkout; the raw Smithy snapshot is still not committed or loaded at runtime.
 
+**Amendment (2026-08-23): the pruned shape snapshot.** One artifact now sits
+beside the manifest that this policy would otherwise appear to forbid:
+`models/aws/shapes/<service>.json`, added by
+[inert-tier-rollout.md §4.6](./inert-tier-rollout.md) Phase I1 and shared with
+[compat-coverage-modelgen.md §3.7](./compat-coverage-modelgen.md) — one pruner in
+`cmd/awsmodelgen`, one `shapes-sha256`, two consumers. It is **not** the raw
+corpus and weakens nothing above. It is a generated, byte-deterministic
+derivative holding, for a reviewed in-scope service list only, the shapes
+reachable from those services' operations and resources, with traits filtered to
+what the generators consume — 14.7% of the upstream bytes for the four services
+committed so far, with documentation, examples, waiters, smoke tests, endpoint
+rule sets and every out-of-scope service dropped. It is **generator input only**,
+the same status as the upstream checkout, enforced by a test that no non-test
+package outside `cmd/` may name it, so "runtime code must never parse model
+files" stands unchanged. And it is **offline-checkable**, which is why it exists
+rather than the external checkout: `shapes-sha256` in `models/aws/VERSION` gives
+per-service codegen the same no-network staleness gate `manifest-sha256` gives
+the manifest, and the A5 refresh workflow regenerates it in the same bot PR that
+bumps the revision, so the two cannot drift. Its growth is capped by a
+CI-enforced size budget (§4.6 there). See
+[cmd/awsmodelgen/README.md](../../cmd/awsmodelgen/README.md) for the layout, the
+trait allowlist and the digest definition.
+
 This covers public AWS management-plane/service API operations used by SDKs, CLI, and CDK. It excludes emulator-only `/_*` endpoints, service data/runtime endpoints with intentionally arbitrary user paths (such as API Gateway execution), and CLI conveniences such as waiters. Waiters are covered indirectly through their API operations.
 
 ## 4. Design
