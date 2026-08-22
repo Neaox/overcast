@@ -948,7 +948,7 @@ func (h *Handler) DeleteTable(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
-func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest) (*describeTableResponse, *protocol.AWSError) {
+func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest) (*createTableResponse, *protocol.AWSError) {
 	log := h.log.WithRecorder(ctx)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
@@ -972,7 +972,14 @@ func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest)
 			Payload: events.ResourcePayload{Name: req.TableName, ARN: table.TableARN},
 		})
 	}
-	return &describeTableResponse{Table: table}, nil
+	// AWS's DeleteTable response echoes the table description with
+	// TableStatus DELETING (the table is already gone from our store by the
+	// time we respond, but the wire shape reflects the transient deleting
+	// state real AWS returns) under the same TableDescription member
+	// CreateTable/DescribeTable/UpdateTable use — see API_DeleteTable's
+	// ResponseSyntax.
+	table.TableStatus = "DELETING"
+	return &createTableResponse{TableDescription: table}, nil
 }
 
 // Query handles the DynamoDB Query operation.
