@@ -1,6 +1,7 @@
 package eks
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -84,18 +85,42 @@ func (s *Service) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	cluster.Tags = s.readTagsForARN(ctx, cluster.Arn)
 	if s.liveModeEnabled() {
-		// Register ownership immediately so delete/stop can clean up even if
-		// the container launch below fails. The container ID is filled in
-		// once Docker create+start succeeds.
-		s.setLiveClusterRuntime(region, req.Name, &liveClusterRuntime{})
-		// s.liveCtx, not the request's: the bootstrap outlives this response,
-		// and Stop needs to be able to end it. Tracked on liveWg so Stop can
-		// wait for it — see Service.Stop.
-		s.liveWg.Add(1)
-		go func() {
-			defer s.liveWg.Done()
-			s.bootstrapLiveCluster(s.liveCtx, region, cluster)
-		}()
+		// liveLifecycleMu closes the liveWg Add/Wait race the same way
+		// recoverLiveCluster does: Stop sets liveStopping and cancels
+		// liveCtx under this same mutex before it ever calls liveWg.Wait, so
+		// once that has happened, every Add still to come either already
+		// finished (and so already ran, strictly before Stop's critical
+		// section) or is blocked on this lock and will observe liveStopping
+		// and refuse instead of racing the Wait (issue #1291 — CreateCluster
+		// was the one liveWg.Add site that skipped this check).
+		s.liveLifecycleMu.Lock()
+		if s.liveStopping {
+			s.liveLifecycleMu.Unlock()
+			// Refuse rather than start a container nothing will be left to
+			// manage: no runtime is registered and no bootstrap goroutine
+			// runs, so this can never leave a k3s container starting past
+			// shutdown. The cluster record already written above stays
+			// terminal — never a half-started container — using the same
+			// failure path and "shut down while starting" wording an
+			// in-flight bootstrap gets when Stop cancels it out from under
+			// it, so callers see one consistent outcome via DescribeCluster
+			// either way.
+			s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure, context.Canceled)
+		} else {
+			// Register ownership immediately so delete/stop can clean up even if
+			// the container launch below fails. The container ID is filled in
+			// once Docker create+start succeeds.
+			s.setLiveClusterRuntime(region, req.Name, &liveClusterRuntime{})
+			// s.liveCtx, not the request's: the bootstrap outlives this response,
+			// and Stop needs to be able to end it. Tracked on liveWg so Stop can
+			// wait for it — see Service.Stop.
+			s.liveWg.Add(1)
+			s.liveLifecycleMu.Unlock()
+			go func() {
+				defer s.liveWg.Done()
+				s.bootstrapLiveCluster(s.liveCtx, region, cluster)
+			}()
+		}
 	}
 
 	protocol.WriteJSON(w, r, http.StatusCreated, map[string]any{"cluster": cluster})
