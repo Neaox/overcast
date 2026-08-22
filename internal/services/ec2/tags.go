@@ -337,8 +337,8 @@ type tagView struct {
 //
 // The read is skipped when the request neither filters on tags nor renders
 // them, so a describe that has no use for tags pays nothing for them.
-func (h *Handler) tagViewFor(ctx context.Context, r *http.Request, renders bool) (tagView, *protocol.AWSError) {
-	filters := parseTagFilters(r)
+func (h *Handler) tagViewFor(ctx context.Context, requested filterSeq, renders bool) (tagView, *protocol.AWSError) {
+	filters := parseTagFilters(requested)
 	if !renders && !filters.active() {
 		return tagView{filters: filters}, nil
 	}
@@ -376,9 +376,9 @@ func (tv tagView) keepWith(resourceID string, extra ...Tag) ([]Tag, bool) {
 
 // parseTagFilters extracts the tag selectors from Filter.N.Name /
 // Filter.N.Value.M. Non-tag filters are left to the caller's own matching.
-func parseTagFilters(r *http.Request) tagFilters {
+func parseTagFilters(requested filterSeq) tagFilters {
 	var tf tagFilters
-	for name, values := range eachFilter(r) {
+	for name, values := range requested {
 		switch {
 		case name == tagKeyFilter:
 			tf.keys = append(tf.keys, parseFilterValues(values)...)

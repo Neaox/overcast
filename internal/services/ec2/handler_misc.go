@@ -5,6 +5,7 @@ package ec2
 // CreateNetworkInterface, DescribeNetworkInterfaces, DeleteNetworkInterface handlers.
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -121,25 +122,26 @@ type xmlAttributeVal struct {
 
 // DescribeVpcAttribute returns the stored value of one VPC DNS attribute.
 func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
-	vpcID := r.FormValue("VpcId")
-	attr := r.FormValue("Attribute")
+	resp, aerr := h.describeVpcAttribute(r.Context(), r.FormValue("VpcId"), r.FormValue("Attribute"))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeVpcAttribute(ctx context.Context, vpcID, attr string) (*xmlDescribeVpcAttributeResponse, *protocol.AWSError) {
 	if vpcID == "" {
-		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
+		return nil, &protocol.AWSError{
 			Code:       "MissingParameter",
 			Message:    "VpcId is required",
 			HTTPStatus: http.StatusBadRequest,
-		})
-		return
+		}
 	}
-	vpc, aerr := h.store.getVPC(r.Context(), vpcID)
+	vpc, aerr := h.store.getVPC(ctx, vpcID)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	resp := &xmlDescribeVpcAttributeResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		VpcID:     vpcID,
 	}
 	switch attr {
@@ -148,7 +150,7 @@ func (h *Handler) DescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	case "enableDnsHostnames":
 		resp.EnableDnsHostnames = &xmlAttributeVal{Value: vpc.EnableDnsHostnames}
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+	return resp, nil
 }
 
 // ── DescribeDhcpOptions ─────────────────────────────────────────────────────
@@ -176,17 +178,21 @@ type xmlDhcpValue struct {
 
 // DescribeDhcpOptions returns a default DHCP options set.
 func (h *Handler) DescribeDhcpOptions(w http.ResponseWriter, r *http.Request) {
+	resp, aerr := h.describeDhcpOptions(r.Context(), unselectedQuery(r))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeDhcpOptions(ctx context.Context, q describeQuery) (*xmlDescribeDhcpOptionsResponse, *protocol.AWSError) {
 	// The option set below is fabricated per call rather than stored, so there
 	// is no record for a filter to select against and dhcpOptionsFilters
 	// implements none. Parsing is still what refuses one, rather than accepting
 	// it and answering as though it had been applied.
-	if _, aerr := dhcpOptionsFilters.parse(r); aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+	if _, aerr := dhcpOptionsFilters.parse(q.filters); aerr != nil {
+		return nil, aerr
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDhcpOptionsResponse{
+	return &xmlDescribeDhcpOptionsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		DhcpOptionsSet: []xmlDhcpOption{{
 			DhcpOptionsID: fmt.Sprintf("dopt-%s", shortID()),
 			DhcpConfigurationSet: []xmlDhcpConfiguration{
@@ -194,7 +200,7 @@ func (h *Handler) DescribeDhcpOptions(w http.ResponseWriter, r *http.Request) {
 				{Key: "domain-name-servers", ValueSet: []xmlDhcpValue{{Value: "AmazonProvidedDNS"}}},
 			},
 		}},
-	})
+	}, nil
 }
 
 // ── DescribeAccountAttributes ───────────────────────────────────────────────
@@ -217,9 +223,14 @@ type xmlAccountAttrValue struct {
 
 // DescribeAccountAttributes returns default account attributes.
 func (h *Handler) DescribeAccountAttributes(w http.ResponseWriter, r *http.Request) {
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeAccountAttributesResponse{
+	resp, aerr := h.describeAccountAttributes(r.Context())
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeAccountAttributes(ctx context.Context) (*xmlDescribeAccountAttributesResponse, *protocol.AWSError) {
+	return &xmlDescribeAccountAttributesResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		AccountAttributeSet: []xmlAccountAttribute{
 			{AttributeName: "supported-platforms", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "VPC"}}},
 			{AttributeName: "default-vpc", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "none"}}},
@@ -228,7 +239,7 @@ func (h *Handler) DescribeAccountAttributes(w http.ResponseWriter, r *http.Reque
 			{AttributeName: "max-elastic-ips", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "5"}}},
 			{AttributeName: "vpc-max-elastic-ips", AttributeValueSet: []xmlAccountAttrValue{{AttributeValue: "5"}}},
 		},
-	})
+	}, nil
 }
 
 // ── CreateNetworkInterface ──────────────────────────────────────────────────
@@ -332,23 +343,25 @@ type xmlDescribeNetworkInterfacesResponse struct {
 
 // DescribeNetworkInterfaces lists network interfaces with optional filtering.
 func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := networkInterfaceFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "NetworkInterfaceId")
+	resp, aerr := h.describeNetworkInterfaces(r.Context(), requestQuery(r, "NetworkInterfaceId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listNetworkInterfaces(r.Context())
+func (h *Handler) describeNetworkInterfaces(ctx context.Context, q describeQuery) (*xmlDescribeNetworkInterfacesResponse, *protocol.AWSError) {
+	filters, aerr := networkInterfaceFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listNetworkInterfaces(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlNetworkInterface, 0, len(all))
@@ -366,18 +379,18 @@ func (h *Handler) DescribeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 			VpcID:              eni.VpcID,
 			AvailabilityZone:   eni.AvailabilityZone,
 			Description:        eni.Description,
-			PrivateIPAddress:   h.privateIPForAPI(r.Context(), eni.VpcID, eni.PrivateIPAddress),
+			PrivateIPAddress:   h.privateIPForAPI(ctx, eni.VpcID, eni.PrivateIPAddress),
 			Status:             eni.Status,
 			MacAddress:         eni.MacAddress,
 			TagSet:             xmlTagsOf(tags),
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeNetworkInterfacesResponse{
+	return &xmlDescribeNetworkInterfacesResponse{
 		Xmlns:               ec2XMLNS,
-		RequestID:           protocol.RequestIDFromContext(r.Context()),
+		RequestID:           protocol.RequestIDFromContext(ctx),
 		NetworkInterfaceSet: items,
-	})
+	}, nil
 }
 
 // ── DeleteNetworkInterface ──────────────────────────────────────────────────

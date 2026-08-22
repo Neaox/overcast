@@ -3,6 +3,7 @@ package ec2
 // handler_natgw.go — CreateNatGateway, DescribeNatGateways, DeleteNatGateway handlers.
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -137,23 +138,25 @@ type xmlDescribeNatGatewaysResponse struct {
 
 // DescribeNatGateways lists NAT gateways with optional filtering.
 func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := natGatewayFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "NatGatewayId")
+	resp, aerr := h.describeNatGateways(r.Context(), requestQuery(r, "NatGatewayId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listNatGateways(r.Context())
+func (h *Handler) describeNatGateways(ctx context.Context, q describeQuery) (*xmlDescribeNatGatewaysResponse, *protocol.AWSError) {
+	filters, aerr := natGatewayFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listNatGateways(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlNatGateway, 0, len(all))
@@ -183,11 +186,11 @@ func (h *Handler) DescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeNatGatewaysResponse{
+	return &xmlDescribeNatGatewaysResponse{
 		Xmlns:       ec2XMLNS,
-		RequestID:   protocol.RequestIDFromContext(r.Context()),
+		RequestID:   protocol.RequestIDFromContext(ctx),
 		NatGateways: items,
-	})
+	}, nil
 }
 
 // ── DeleteNatGateway ────────────────────────────────────────────────────────

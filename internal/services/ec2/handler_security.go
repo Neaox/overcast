@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -329,23 +330,25 @@ func matchIpRanges(a, b []IpRange) bool {
 
 // DescribeSecurityGroups returns security groups, optionally filtered.
 func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := securityGroupFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "GroupId")
+	resp, aerr := h.describeSecurityGroups(r.Context(), requestQuery(r, "GroupId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listSecurityGroups(r.Context())
+func (h *Handler) describeSecurityGroups(ctx context.Context, q describeQuery) (*xmlDescribeSecurityGroupsResponse, *protocol.AWSError) {
+	filters, aerr := securityGroupFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listSecurityGroups(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlSecurityGroup, 0, len(all))
@@ -398,38 +401,40 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeSecurityGroupsResponse{
+	return &xmlDescribeSecurityGroupsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		Groups:    items,
-	})
+	}, nil
 }
 
 // ── DescribeSubnets ──────────────────────────────────────────────────────────
 
 // DescribeSubnets returns subnets, optionally filtered.
 func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := subnetFilters.parse(r)
+	resp, aerr := h.describeSubnets(r.Context(), requestQuery(r, "SubnetId"))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeSubnets(ctx context.Context, q describeQuery) (*xmlDescribeSubnetsResponse, *protocol.AWSError) {
+	filters, aerr := subnetFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
-	requested := requestedIDs(r, "SubnetId")
+	requested := q.ids
 
 	// The default VPC's subnets are part of what a lookup expects to find, and
 	// this is one of the reads that would observe their absence.
-	h.ensureDefaultVPCQuietly(r.Context())
+	h.ensureDefaultVPCQuietly(ctx)
 
-	all, aerr := h.store.listSubnets(r.Context())
+	all, aerr := h.store.listSubnets(ctx)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlSubnet, 0, len(all))
@@ -454,9 +459,9 @@ func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeSubnetsResponse{
+	return &xmlDescribeSubnetsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		Subnets:   items,
-	})
+	}, nil
 }

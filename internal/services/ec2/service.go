@@ -32,6 +32,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -140,27 +141,48 @@ func (s *Service) Stop(ctx context.Context) {
 	s.handler.scheduler.Stop(ctx)
 }
 
+// ec2ErrorCodec renders a typed operation's errors in EC2's own XML error
+// shape.
+//
+// EC2's error envelope is not the generic Query one. AWS documents EC2 as
+// `<Response><Errors><Error><Code/><Message/></Error></Errors><RequestID/>`,
+// a plural `<Errors>` wrapper the other Query services do not have, and the
+// generic codec's WriteError emits SNS's single `<Error><Type/>…` instead. The
+// wrapper existed when the typed branch was first wired, was deleted with it to
+// keep the unused check quiet, and is restored here from that commit rather
+// than rewritten — an error shape is the half of a response nobody notices
+// until a client's error handling stops matching.
+type ec2ErrorCodec struct {
+	codec.Codec
+}
+
+func (c ec2ErrorCodec) WriteError(w http.ResponseWriter, r *http.Request, aerr *protocol.AWSError) {
+	protocol.WriteEC2QueryXMLError(w, r, aerr)
+}
+
 // DispatchQuery satisfies router.QueryDispatcher; routes to the correct handler.
 //
-// EC2's typed operation registry is intentionally NOT dispatched to yet.
-// Resolving the Query-protocol Action for dispatch (docs/plans/level2-codegen.md
-// Track 1.1) made this registry reachable for the first time, and a full
-// integration-suite run against it surfaced behavioral drift broad enough to
-// call structural rather than one-off: filters silently ignored on multiple
-// Describe* operations (DescribeInstances state filter, DescribeSecurityGroups
-// / DescribeSubnets VPC filters, DescribeImages ID filter,
-// DescribeVpcPeeringConnections ID filter) and state mutations not taking
-// effect (TerminateInstances, StopInstances, ModifyInstanceAttribute,
-// DeleteTags, DeleteVpcEndpoints). Per the P1 safety valve, a service-wide
-// spread of unrelated bugs like this is routed to the legacy path rather than
-// patched piecemeal; a dedicated Track 2 pass should audit ec2/typed_logic.go
-// op by op before re-enabling this branch. The ec2ErrorCodec wrapper (renders
-// typed-op errors in EC2's XML error shape) was deleted along with the branch
-// to keep lint clean — recover both from git history when re-enabling.
+// EC2 answers from the typed operation registry for the operations named in
+// ec2TypedOps, and from the legacy handler map for the rest. The allow-list is
+// deliberately the positive one — see its comment for why, and #754 for what
+// dispatching the whole registry at once cost the first time it was tried.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
+	}
+	if c, opName := codec.FromContext(r.Context()); c != nil && ec2TypedOps[opName] {
+		if !serviceutil.AllowProtocolDrift(s.handler.cfg, s.log, opName, c, s.SupportedProtocols()) {
+			protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
+				Code: "UnsupportedProtocol", Message: "EC2 does not support wire protocol " + c.Name() + ".",
+				HTTPStatus: http.StatusUnsupportedMediaType,
+			})
+			return
+		}
+		if typed, ok := s.handler.typedOp[opName]; ok {
+			typed.Invoke(w, r, ec2ErrorCodec{Codec: c})
+			return
+		}
 	}
 	action := r.FormValue("Action")
 	if handler, ok := s.handler.ops[action]; ok {

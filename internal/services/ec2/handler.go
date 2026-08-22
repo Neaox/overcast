@@ -162,10 +162,14 @@ type xmlRegion struct {
 
 // DescribeRegions returns a hardcoded list of AWS regions.
 func (h *Handler) DescribeRegions(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := regionFilters.parse(r)
+	resp, aerr := h.describeRegions(r.Context(), unselectedQuery(r))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeRegions(ctx context.Context, q describeQuery) (*xmlDescribeRegionsResponse, *protocol.AWSError) {
+	filters, aerr := regionFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 	all := []xmlRegion{
 		{RegionName: "us-east-1", RegionEndpoint: "ec2.us-east-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
@@ -183,11 +187,11 @@ func (h *Handler) DescribeRegions(w http.ResponseWriter, r *http.Request) {
 			regions = append(regions, region)
 		}
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeRegionsResponse{
+	return &xmlDescribeRegionsResponse{
 		Xmlns:      ec2XMLNS,
-		RequestID:  protocol.RequestIDFromContext(r.Context()),
+		RequestID:  protocol.RequestIDFromContext(ctx),
 		RegionInfo: regions,
-	})
+	}, nil
 }
 
 // ── DescribeAvailabilityZones ────────────────────────────────────────────────
@@ -207,10 +211,14 @@ type xmlAZ struct {
 
 // DescribeAvailabilityZones returns the AZs for the configured region.
 func (h *Handler) DescribeAvailabilityZones(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := azFilters.parse(r)
+	resp, aerr := h.describeAvailabilityZones(r.Context(), unselectedQuery(r))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeAvailabilityZones(ctx context.Context, q describeQuery) (*xmlDescribeAZsResponse, *protocol.AWSError) {
+	filters, aerr := azFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 	region := h.cfg.Region
 	all := []xmlAZ{
@@ -224,11 +232,11 @@ func (h *Handler) DescribeAvailabilityZones(w http.ResponseWriter, r *http.Reque
 			azs = append(azs, az)
 		}
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeAZsResponse{
+	return &xmlDescribeAZsResponse{
 		Xmlns:                ec2XMLNS,
-		RequestID:            protocol.RequestIDFromContext(r.Context()),
+		RequestID:            protocol.RequestIDFromContext(ctx),
 		AvailabilityZoneInfo: azs,
-	})
+	}, nil
 }
 
 // DescribeInstances is implemented in handler_instances.go.
@@ -263,28 +271,36 @@ func (h *Handler) DescribeInstanceTypes(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteEC2QueryXMLError(w, r, protocol.ErrInvalidArgument("invalid request form encoding"))
 		return
 	}
-	filters, aerr := instanceTypeFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	// Collect requested types from InstanceType.N query parameters.
-	var items []xmlInstanceTypeItem
-	requested := map[string]bool{}
+	// Every InstanceType.* key counts, not just a contiguous InstanceType.N:
+	// this is the one describe that collected its selection by prefix rather
+	// than through parseIndexedParam, and narrowing it here would change what
+	// the legacy path answers.
+	var requested []string
 	for k, vals := range r.Form {
 		if strings.HasPrefix(k, "InstanceType.") {
-			for _, v := range vals {
-				requested[v] = true
-			}
+			requested = append(requested, vals...)
 		}
+	}
+	resp, aerr := h.describeInstanceTypes(r.Context(), unselectedQuery(r), requested)
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeInstanceTypes(ctx context.Context, q describeQuery, instanceTypes []string) (*xmlDescribeInstanceTypesResponse, *protocol.AWSError) {
+	filters, aerr := instanceTypeFilters.parse(q.filters)
+	if aerr != nil {
+		return nil, aerr
+	}
+	var items []xmlInstanceTypeItem
+	requested := map[string]bool{}
+	for _, v := range instanceTypes {
+		requested[v] = true
 	}
 	// If none specified, return empty set.
 	if len(requested) == 0 {
-		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInstanceTypesResponse{
+		return &xmlDescribeInstanceTypesResponse{
 			Xmlns:     ec2XMLNS,
-			RequestID: protocol.RequestIDFromContext(r.Context()),
-		})
-		return
+			RequestID: protocol.RequestIDFromContext(ctx),
+		}, nil
 	}
 	// Return info for each requested type.
 	typeInfo := map[string]xmlInstanceTypeItem{
@@ -309,11 +325,11 @@ func (h *Handler) DescribeInstanceTypes(w http.ResponseWriter, r *http.Request) 
 			items = append(items, info)
 		}
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeInstanceTypesResponse{
+	return &xmlDescribeInstanceTypesResponse{
 		Xmlns:             ec2XMLNS,
-		RequestID:         protocol.RequestIDFromContext(r.Context()),
+		RequestID:         protocol.RequestIDFromContext(ctx),
 		InstanceTypeItems: items,
-	})
+	}, nil
 }
 
 // ── CreateVpc ────────────────────────────────────────────────────────────────
@@ -467,27 +483,29 @@ type xmlDescribeVpcsResponse struct {
 // back — so an unfiltered response breaks `Vpc.fromLookup` the moment a region
 // holds more than one VPC, which seeding a default VPC guarantees.
 func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := vpcFilters.parse(r)
+	resp, aerr := h.describeVpcs(r.Context(), requestQuery(r, "VpcId"))
+	writeDescribe(w, r, resp, aerr)
+}
+
+func (h *Handler) describeVpcs(ctx context.Context, q describeQuery) (*xmlDescribeVpcsResponse, *protocol.AWSError) {
+	filters, aerr := vpcFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
-	requested := requestedIDs(r, "VpcId")
+	requested := q.ids
 
 	// Every AWS region has a default VPC. Seeding on first read rather than at
 	// startup keeps regions nobody touches free of records.
-	h.ensureDefaultVPCQuietly(r.Context())
+	h.ensureDefaultVPCQuietly(ctx)
 
-	vpcs, aerr := h.store.listVPCs(r.Context())
+	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
-	tags, aerr := h.tagViewFor(r.Context(), r, true)
+	tags, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlVpc, 0, len(vpcs))
@@ -514,11 +532,11 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 			TagSet:          xmlTagsOf(vpcTags),
 		})
 	}
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpcsResponse{
+	return &xmlDescribeVpcsResponse{
 		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(r.Context()),
+		RequestID: protocol.RequestIDFromContext(ctx),
 		VpcSet:    items,
-	})
+	}, nil
 }
 
 // ── DeleteVpc ────────────────────────────────────────────────────────────────

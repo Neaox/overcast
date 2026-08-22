@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -118,23 +119,25 @@ func (h *Handler) CreateVpnGateway(w http.ResponseWriter, r *http.Request) {
 
 // DescribeVpnGateways lists virtual private gateways, optionally filtered.
 func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
-	filters, aerr := vpnGatewayFilters.parse(r)
-	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
-	}
-	requested := requestedIDs(r, "VpnGatewayId")
+	resp, aerr := h.describeVpnGateways(r.Context(), requestQuery(r, "VpnGatewayId"))
+	writeDescribe(w, r, resp, aerr)
+}
 
-	all, aerr := h.store.listVpnGateways(r.Context())
+func (h *Handler) describeVpnGateways(ctx context.Context, q describeQuery) (*xmlDescribeVpnGatewaysResponse, *protocol.AWSError) {
+	filters, aerr := vpnGatewayFilters.parse(q.filters)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
+	}
+	requested := q.ids
+
+	all, aerr := h.store.listVpnGateways(ctx)
+	if aerr != nil {
+		return nil, aerr
 	}
 
-	tagsView, aerr := h.tagViewFor(r.Context(), r, true)
+	tagsView, aerr := h.tagViewFor(ctx, q.filters, true)
 	if aerr != nil {
-		protocol.WriteEC2QueryXMLError(w, r, aerr)
-		return
+		return nil, aerr
 	}
 
 	items := make([]xmlVpnGateway, 0, len(all))
@@ -149,11 +152,11 @@ func (h *Handler) DescribeVpnGateways(w http.ResponseWriter, r *http.Request) {
 		items = append(items, vpnGatewayToXML(vgw, tags))
 	}
 
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeVpnGatewaysResponse{
+	return &xmlDescribeVpnGatewaysResponse{
 		Xmlns:         ec2XMLNS,
-		RequestID:     protocol.RequestIDFromContext(r.Context()),
+		RequestID:     protocol.RequestIDFromContext(ctx),
 		VpnGatewaySet: items,
-	})
+	}, nil
 }
 
 // ── AttachVpnGateway ────────────────────────────────────────────────────────

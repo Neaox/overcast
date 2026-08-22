@@ -10,20 +10,39 @@ import (
 )
 
 // ── Request types (json tags for codec.Decode QueryXML form mapping) ───
+//
+// Every Describe* request declares the two things an EC2 describe selects on:
+// its `<Resource>Id.N` list and `Filter.N.Name` / `Filter.N.Value.M`. They used
+// to be empty structs, which is why the typed path answered with every resource
+// in the region however the caller filtered — see describe.go and #754. The
+// bodies below hand both to the same function the legacy handler calls.
 
-type describeRegionsReq struct{}
+type describeRegionsReq struct {
+	Filters []ec2Filter `json:"Filter"`
+}
 
-type describeAzsReq struct{}
+type describeAzsReq struct {
+	Filters []ec2Filter `json:"Filter"`
+}
 
-type describeInstancesReq struct{}
+type describeInstancesReq struct {
+	InstanceIDs []string    `json:"InstanceId"`
+	Filters     []ec2Filter `json:"Filter"`
+}
 
-type describeInstanceTypesReq struct{}
+type describeInstanceTypesReq struct {
+	InstanceTypes []string    `json:"InstanceType"`
+	Filters       []ec2Filter `json:"Filter"`
+}
 
 type createVpcReq struct {
 	CidrBlock string `json:"CidrBlock"`
 }
 
-type describeVpcsReq struct{}
+type describeVpcsReq struct {
+	VpcIDs  []string    `json:"VpcId"`
+	Filters []ec2Filter `json:"Filter"`
+}
 
 type deleteVpcReq struct {
 	VpcID string `json:"VpcId"`
@@ -65,9 +84,15 @@ type revokeSGEgressReq struct {
 	GroupID string `json:"GroupId"`
 }
 
-type describeSecurityGroupsReq struct{}
+type describeSecurityGroupsReq struct {
+	GroupIDs []string    `json:"GroupId"`
+	Filters  []ec2Filter `json:"Filter"`
+}
 
-type describeSubnetsReq struct{}
+type describeSubnetsReq struct {
+	SubnetIDs []string    `json:"SubnetId"`
+	Filters   []ec2Filter `json:"Filter"`
+}
 
 type runInstancesReq struct {
 	ImageID      string `json:"ImageId"`
@@ -83,13 +108,19 @@ type stopInstancesReq struct{}
 
 type startInstancesReq struct{}
 
-type describeImagesReq struct{}
+type describeImagesReq struct {
+	ImageIDs []string    `json:"ImageId"`
+	Filters  []ec2Filter `json:"Filter"`
+}
 
 type createKeyPairReq struct {
 	KeyName string `json:"KeyName"`
 }
 
-type describeKeyPairsReq struct{}
+type describeKeyPairsReq struct {
+	KeyNames []string    `json:"KeyName"`
+	Filters  []ec2Filter `json:"Filter"`
+}
 
 type deleteKeyPairReq struct {
 	KeyName string `json:"KeyName"`
@@ -99,7 +130,10 @@ type createRouteTableReq struct {
 	VpcID string `json:"VpcId"`
 }
 
-type describeRouteTablesReq struct{}
+type describeRouteTablesReq struct {
+	RouteTableIDs []string    `json:"RouteTableId"`
+	Filters       []ec2Filter `json:"Filter"`
+}
 
 type deleteRouteTableReq struct {
 	RouteTableID string `json:"RouteTableId"`
@@ -128,7 +162,10 @@ type disassociateRouteTableReq struct {
 
 type createIGWReq struct{}
 
-type describeIGWsReq struct{}
+type describeIGWsReq struct {
+	InternetGatewayIDs []string    `json:"InternetGatewayId"`
+	Filters            []ec2Filter `json:"Filter"`
+}
 
 type deleteIGWReq struct {
 	InternetGatewayID string `json:"InternetGatewayId"`
@@ -153,7 +190,10 @@ type acceptVPCPeeringReq struct {
 	VpcPeeringConnectionID string `json:"VpcPeeringConnectionId"`
 }
 
-type describeVPCPeeringsReq struct{}
+type describeVPCPeeringsReq struct {
+	VpcPeeringConnectionIDs []string    `json:"VpcPeeringConnectionId"`
+	Filters                 []ec2Filter `json:"Filter"`
+}
 
 type deleteVPCPeeringReq struct {
 	VpcPeeringConnectionID string `json:"VpcPeeringConnectionId"`
@@ -171,7 +211,9 @@ type ec2TagRequest struct {
 
 type deleteTagsReq struct{}
 
-type describeTagsReq struct{}
+type describeTagsReq struct {
+	Filters []ec2Filter `json:"Filter"`
+}
 
 type allocateAddressReq struct{}
 
@@ -179,7 +221,10 @@ type releaseAddressReq struct {
 	AllocationID string `json:"AllocationId"`
 }
 
-type describeAddressesReq struct{}
+type describeAddressesReq struct {
+	AllocationIDs []string    `json:"AllocationId"`
+	Filters       []ec2Filter `json:"Filter"`
+}
 
 type associateAddressReq struct {
 	AllocationID string `json:"AllocationId"`
@@ -195,7 +240,10 @@ type createNatGatewayReq struct {
 	AllocationID string `json:"AllocationId"`
 }
 
-type describeNatGatewaysReq struct{}
+type describeNatGatewaysReq struct {
+	NatGatewayIDs []string    `json:"NatGatewayId"`
+	Filters       []ec2Filter `json:"Filter"`
+}
 
 type deleteNatGatewayReq struct {
 	NatGatewayID string `json:"NatGatewayId"`
@@ -214,7 +262,9 @@ type describeVpcAttributeReq struct {
 	Attribute string `json:"Attribute"`
 }
 
-type describeDhcpOptionsReq struct{}
+type describeDhcpOptionsReq struct {
+	Filters []ec2Filter `json:"Filter"`
+}
 
 type describeAccountAttributesReq struct{}
 
@@ -229,7 +279,10 @@ type attachVpnGatewayReq struct {
 	VpcID        string `json:"VpcId"`
 }
 
-type describeVpnGatewaysReq struct{}
+type describeVpnGatewaysReq struct {
+	VpnGatewayIDs []string    `json:"VpnGatewayId"`
+	Filters       []ec2Filter `json:"Filter"`
+}
 
 type detachVpnGatewayReq struct {
 	VpnGatewayID string `json:"VpnGatewayId"`
@@ -245,7 +298,10 @@ type createNetworkInterfaceReq struct {
 	Description string `json:"Description"`
 }
 
-type describeNetworkInterfacesReq struct{}
+type describeNetworkInterfacesReq struct {
+	NetworkInterfaceIDs []string    `json:"NetworkInterfaceId"`
+	Filters             []ec2Filter `json:"Filter"`
+}
 
 type deleteNetworkInterfaceReq struct {
 	NetworkInterfaceID string `json:"NetworkInterfaceId"`
@@ -260,50 +316,19 @@ type createVpcEndpointReq struct {
 	ServiceName string `json:"ServiceName"`
 }
 
-type describeVpcEndpointsReq struct{}
+type describeVpcEndpointsReq struct {
+	VpcEndpointIDs []string    `json:"VpcEndpointId"`
+	Filters        []ec2Filter `json:"Filter"`
+}
 
 type deleteVpcEndpointsReq struct{}
 
 // ── Response types (xml tags for QueryXML codec WriteResponse) ────
-
-type describeRegionsResp struct {
-	XMLName    struct{}         `xml:"DescribeRegionsResponse"`
-	Xmlns      string           `xml:"xmlns,attr"`
-	RequestID  string           `xml:"requestId"`
-	RegionInfo []typedRegionXML `xml:"regionInfo>item"`
-}
-
-type typedRegionXML struct {
-	RegionName     string `xml:"regionName"`
-	RegionEndpoint string `xml:"regionEndpoint"`
-	OptInStatus    string `xml:"optInStatus"`
-}
-
-type describeAzsResp struct {
-	XMLName              struct{}     `xml:"DescribeAvailabilityZonesResponse"`
-	Xmlns                string       `xml:"xmlns,attr"`
-	RequestID            string       `xml:"requestId"`
-	AvailabilityZoneInfo []typedAzXML `xml:"availabilityZoneInfo>item"`
-}
-
-type typedAzXML struct {
-	ZoneName   string `xml:"zoneName"`
-	ZoneState  string `xml:"zoneState"`
-	RegionName string `xml:"regionName"`
-}
-
-type describeInstancesResp struct {
-	XMLName      struct{}              `xml:"DescribeInstancesResponse"`
-	Xmlns        string                `xml:"xmlns,attr"`
-	RequestID    string                `xml:"requestId"`
-	Reservations []typedReservationXML `xml:"reservationSet>item"`
-}
-
-type typedReservationXML struct {
-	ReservationID string             `xml:"reservationId"`
-	OwnerID       string             `xml:"ownerId"`
-	Instances     []typedInstanceXML `xml:"instancesSet>item"`
-}
+//
+// A Describe* migrated to the shared body in describe.go returns the legacy
+// handler's own xmlDescribe…Response type rather than a second declaration of
+// the same shape, so there is no second XML rendering to fall behind the first.
+// What remains here belongs to the operations still on their own typed body.
 
 type typedInstanceXML struct {
 	InstanceID    string                `xml:"instanceId"`
@@ -344,28 +369,6 @@ type typedInstanceStateChangeXML struct {
 	CurrentState  typedInstanceStateXML `xml:"currentState"`
 }
 
-type describeInstanceTypesResp struct {
-	XMLName           struct{}               `xml:"DescribeInstanceTypesResponse"`
-	Xmlns             string                 `xml:"xmlns,attr"`
-	RequestID         string                 `xml:"requestId"`
-	InstanceTypeItems []typedInstanceTypeXML `xml:"instanceTypeSet>item"`
-}
-
-type typedInstanceTypeXML struct {
-	InstanceType      string             `xml:"instanceType"`
-	CurrentGeneration bool               `xml:"currentGeneration"`
-	VCpuInfo          typedVCpuInfoXML   `xml:"vCpuInfo"`
-	MemoryInfo        typedMemoryInfoXML `xml:"memoryInfo"`
-}
-
-type typedVCpuInfoXML struct {
-	DefaultVCpus int `xml:"defaultVCpus"`
-}
-
-type typedMemoryInfoXML struct {
-	SizeInMiB int `xml:"sizeInMiB"`
-}
-
 type createVpcResp struct {
 	XMLName   struct{}    `xml:"CreateVpcResponse"`
 	Xmlns     string      `xml:"xmlns,attr"`
@@ -392,13 +395,6 @@ type typedCidrAssocXML struct {
 
 type typedCidrStateXML struct {
 	State string `xml:"state"`
-}
-
-type describeVpcsResp struct {
-	XMLName   struct{}      `xml:"DescribeVpcsResponse"`
-	Xmlns     string        `xml:"xmlns,attr"`
-	RequestID string        `xml:"requestId"`
-	VpcSet    []typedVpcXML `xml:"vpcSet>item"`
 }
 
 type deleteVpcResp struct {
@@ -477,42 +473,6 @@ type revokeSGEgressResp struct {
 	Return    bool     `xml:"return"`
 }
 
-type describeSGsResp struct {
-	XMLName   struct{}     `xml:"DescribeSecurityGroupsResponse"`
-	Xmlns     string       `xml:"xmlns,attr"`
-	RequestID string       `xml:"requestId"`
-	Groups    []typedSGXML `xml:"securityGroupInfo>item"`
-}
-
-type typedSGXML struct {
-	OwnerID             string           `xml:"ownerId"`
-	GroupID             string           `xml:"groupId"`
-	GroupName           string           `xml:"groupName"`
-	GroupDescription    string           `xml:"groupDescription"`
-	VpcID               string           `xml:"vpcId"`
-	IpPermissions       []typedIpPermXML `xml:"ipPermissions>item,omitempty"`
-	IpPermissionsEgress []typedIpPermXML `xml:"ipPermissionsEgress>item,omitempty"`
-}
-
-type typedIpPermXML struct {
-	IpProtocol string            `xml:"ipProtocol"`
-	FromPort   int               `xml:"fromPort"`
-	ToPort     int               `xml:"toPort"`
-	IpRanges   []typedIpRangeXML `xml:"ipRanges>item,omitempty"`
-}
-
-type typedIpRangeXML struct {
-	CidrIp      string `xml:"cidrIp"`
-	Description string `xml:"description,omitempty"`
-}
-
-type describeSubnetsResp struct {
-	XMLName   struct{}         `xml:"DescribeSubnetsResponse"`
-	Xmlns     string           `xml:"xmlns,attr"`
-	RequestID string           `xml:"requestId"`
-	Subnets   []typedSubnetXML `xml:"subnetSet>item"`
-}
-
 type runInstancesResp struct {
 	XMLName       struct{}           `xml:"RunInstancesResponse"`
 	Xmlns         string             `xml:"xmlns,attr"`
@@ -543,26 +503,6 @@ type stopInstancesResp struct {
 	Instances []typedInstanceStateChangeXML `xml:"instancesSet>item"`
 }
 
-type describeImagesResp struct {
-	XMLName   struct{}        `xml:"DescribeImagesResponse"`
-	Xmlns     string          `xml:"xmlns,attr"`
-	RequestID string          `xml:"requestId"`
-	ImagesSet []typedImageXML `xml:"imagesSet>item"`
-}
-
-type typedImageXML struct {
-	ImageID            string `xml:"imageId"`
-	Name               string `xml:"name"`
-	Description        string `xml:"description"`
-	ImageState         string `xml:"imageState"`
-	ImageType          string `xml:"imageType"`
-	Architecture       string `xml:"architecture"`
-	RootDeviceType     string `xml:"rootDeviceType"`
-	VirtualizationType string `xml:"virtualizationType"`
-	IsPublic           bool   `xml:"isPublic"`
-	OwnerID            string `xml:"ownerId"`
-}
-
 type createKeyPairResp struct {
 	XMLName        struct{} `xml:"CreateKeyPairResponse"`
 	Xmlns          string   `xml:"xmlns,attr"`
@@ -571,19 +511,6 @@ type createKeyPairResp struct {
 	KeyFingerprint string   `xml:"keyFingerprint"`
 	KeyMaterial    string   `xml:"keyMaterial"`
 	KeyPairID      string   `xml:"keyPairId"`
-}
-
-type describeKeyPairsResp struct {
-	XMLName   struct{}          `xml:"DescribeKeyPairsResponse"`
-	Xmlns     string            `xml:"xmlns,attr"`
-	RequestID string            `xml:"requestId"`
-	KeySet    []typedKeyPairXML `xml:"keySet>item"`
-}
-
-type typedKeyPairXML struct {
-	KeyName        string `xml:"keyName"`
-	KeyFingerprint string `xml:"keyFingerprint"`
-	KeyPairID      string `xml:"keyPairId"`
 }
 
 type deleteKeyPairResp struct {
@@ -598,13 +525,6 @@ type createRouteTableResp struct {
 	Xmlns      string             `xml:"xmlns,attr"`
 	RequestID  string             `xml:"requestId"`
 	RouteTable typedRouteTableXML `xml:"routeTable"`
-}
-
-type describeRouteTablesResp struct {
-	XMLName       struct{}             `xml:"DescribeRouteTablesResponse"`
-	Xmlns         string               `xml:"xmlns,attr"`
-	RequestID     string               `xml:"requestId"`
-	RouteTableSet []typedRouteTableXML `xml:"routeTableSet>item"`
 }
 
 type typedRouteTableXML struct {
@@ -671,13 +591,6 @@ type createIGWResp struct {
 	InternetGateway typedIGWXML `xml:"internetGateway"`
 }
 
-type describeIGWsResp struct {
-	XMLName            struct{}      `xml:"DescribeInternetGatewaysResponse"`
-	Xmlns              string        `xml:"xmlns,attr"`
-	RequestID          string        `xml:"requestId"`
-	InternetGatewaySet []typedIGWXML `xml:"internetGatewaySet>item"`
-}
-
 type typedIGWXML struct {
 	InternetGatewayID string                  `xml:"internetGatewayId"`
 	AttachmentSet     []typedIGWAttachmentXML `xml:"attachmentSet>item,omitempty"`
@@ -723,13 +636,6 @@ type acceptVPCPeeringResp struct {
 	VpcPeeringConnection typedVPCPeeringXML `xml:"vpcPeeringConnection"`
 }
 
-type describeVPCPeeringsResp struct {
-	XMLName                 struct{}             `xml:"DescribeVpcPeeringConnectionsResponse"`
-	Xmlns                   string               `xml:"xmlns,attr"`
-	RequestID               string               `xml:"requestId"`
-	VpcPeeringConnectionSet []typedVPCPeeringXML `xml:"vpcPeeringConnectionSet>item"`
-}
-
 type typedVPCPeeringXML struct {
 	VpcPeeringConnectionID string                    `xml:"vpcPeeringConnectionId"`
 	RequesterVpcInfo       typedVPCPeeringVpcInfoXML `xml:"requesterVpcInfo"`
@@ -770,20 +676,6 @@ type deleteTagsResp struct {
 	Return    bool     `xml:"return"`
 }
 
-type describeTagsResp struct {
-	XMLName   struct{}          `xml:"DescribeTagsResponse"`
-	Xmlns     string            `xml:"xmlns,attr"`
-	RequestID string            `xml:"requestId"`
-	TagSet    []typedTagItemXML `xml:"tagSet>item"`
-}
-
-type typedTagItemXML struct {
-	ResourceID   string `xml:"resourceId"`
-	ResourceType string `xml:"resourceType"`
-	Key          string `xml:"key"`
-	Value        string `xml:"value"`
-}
-
 type allocateAddressResp struct {
 	XMLName      struct{} `xml:"AllocateAddressResponse"`
 	Xmlns        string   `xml:"xmlns,attr"`
@@ -798,23 +690,6 @@ type releaseAddressResp struct {
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
-}
-
-type describeAddressesResp struct {
-	XMLName    struct{}          `xml:"DescribeAddressesResponse"`
-	Xmlns      string            `xml:"xmlns,attr"`
-	RequestID  string            `xml:"requestId"`
-	AddressSet []typedAddressXML `xml:"addressesSet>item"`
-}
-
-type typedAddressXML struct {
-	PublicIP       string `xml:"publicIp"`
-	AllocationID   string `xml:"allocationId"`
-	Domain         string `xml:"domain"`
-	AssociationID  string `xml:"associationId,omitempty"`
-	InstanceID     string `xml:"instanceId,omitempty"`
-	NetworkIfaceID string `xml:"networkInterfaceId,omitempty"`
-	PrivateIP      string `xml:"privateIpAddress,omitempty"`
 }
 
 type associateAddressResp struct {
@@ -837,13 +712,6 @@ type createNatGatewayResp struct {
 	Xmlns      string             `xml:"xmlns,attr"`
 	RequestID  string             `xml:"requestId"`
 	NatGateway typedNatGatewayXML `xml:"natGateway"`
-}
-
-type describeNatGatewaysResp struct {
-	XMLName     struct{}             `xml:"DescribeNatGatewaysResponse"`
-	Xmlns       string               `xml:"xmlns,attr"`
-	RequestID   string               `xml:"requestId"`
-	NatGateways []typedNatGatewayXML `xml:"natGatewaySet>item"`
 }
 
 type typedNatGatewayXML struct {
@@ -889,56 +757,6 @@ type modifyVpcAttributeResp struct {
 	Return    bool     `xml:"return"`
 }
 
-type describeVpcAttributeResp struct {
-	XMLName            struct{}         `xml:"DescribeVpcAttributeResponse"`
-	Xmlns              string           `xml:"xmlns,attr"`
-	RequestID          string           `xml:"requestId"`
-	VpcID              string           `xml:"vpcId"`
-	EnableDnsSupport   *typedAttrValXML `xml:"enableDnsSupport,omitempty"`
-	EnableDnsHostnames *typedAttrValXML `xml:"enableDnsHostnames,omitempty"`
-}
-
-type typedAttrValXML struct {
-	Value bool `xml:"value"`
-}
-
-type describeDhcpOptionsResp struct {
-	XMLName        struct{}             `xml:"DescribeDhcpOptionsResponse"`
-	Xmlns          string               `xml:"xmlns,attr"`
-	RequestID      string               `xml:"requestId"`
-	DhcpOptionsSet []typedDhcpOptionXML `xml:"dhcpOptionsSet>item"`
-}
-
-type typedDhcpOptionXML struct {
-	DhcpOptionsID        string                      `xml:"dhcpOptionsId"`
-	DhcpConfigurationSet []typedDhcpConfigurationXML `xml:"dhcpConfigurationSet>item"`
-}
-
-type typedDhcpConfigurationXML struct {
-	Key      string              `xml:"key"`
-	ValueSet []typedDhcpValueXML `xml:"valueSet>item"`
-}
-
-type typedDhcpValueXML struct {
-	Value string `xml:"value"`
-}
-
-type describeAccountAttributesResp struct {
-	XMLName             struct{}              `xml:"DescribeAccountAttributesResponse"`
-	Xmlns               string                `xml:"xmlns,attr"`
-	RequestID           string                `xml:"requestId"`
-	AccountAttributeSet []typedAccountAttrXML `xml:"accountAttributeSet>item"`
-}
-
-type typedAccountAttrXML struct {
-	AttributeName     string                     `xml:"attributeName"`
-	AttributeValueSet []typedAccountAttrValueXML `xml:"attributeValueSet>item"`
-}
-
-type typedAccountAttrValueXML struct {
-	AttributeValue string `xml:"attributeValue"`
-}
-
 type createVpnGatewayResp struct {
 	XMLName    struct{}           `xml:"CreateVpnGatewayResponse"`
 	Xmlns      string             `xml:"xmlns,attr"`
@@ -951,13 +769,6 @@ type attachVpnGatewayResp struct {
 	Xmlns      string                       `xml:"xmlns,attr"`
 	RequestID  string                       `xml:"requestId"`
 	Attachment typedVpnGatewayAttachmentXML `xml:"attachment"`
-}
-
-type describeVpnGatewaysResp struct {
-	XMLName       struct{}             `xml:"DescribeVpnGatewaysResponse"`
-	Xmlns         string               `xml:"xmlns,attr"`
-	RequestID     string               `xml:"requestId"`
-	VpnGatewaySet []typedVpnGatewayXML `xml:"vpnGatewaySet>item"`
 }
 
 type detachVpnGatewayResp struct {
@@ -1007,13 +818,6 @@ type typedNetworkInterfaceXML struct {
 	MacAddress         string `xml:"macAddress"`
 }
 
-type describeNetworkInterfacesResp struct {
-	XMLName             struct{}                   `xml:"DescribeNetworkInterfacesResponse"`
-	Xmlns               string                     `xml:"xmlns,attr"`
-	RequestID           string                     `xml:"requestId"`
-	NetworkInterfaceSet []typedNetworkInterfaceXML `xml:"networkInterfaceSet>item"`
-}
-
 type deleteNetworkInterfaceResp struct {
 	XMLName   struct{} `xml:"DeleteNetworkInterfaceResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
@@ -1043,13 +847,6 @@ type typedVpcEndpointXML struct {
 	VpcEndpointType string `xml:"vpcEndpointType"`
 }
 
-type describeVpcEndpointsResp struct {
-	XMLName      struct{}              `xml:"DescribeVpcEndpointsResponse"`
-	Xmlns        string                `xml:"xmlns,attr"`
-	RequestID    string                `xml:"requestId"`
-	VpcEndpoints []typedVpcEndpointXML `xml:"vpcEndpointSet>item"`
-}
-
 type deleteVpcEndpointsResp struct {
 	XMLName   struct{} `xml:"DeleteVpcEndpointsResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
@@ -1059,88 +856,20 @@ type deleteVpcEndpointsResp struct {
 
 // ── Typed handler functions ────────────────────────────────────────
 
-func (h *Handler) describeRegionsTyped(ctx context.Context, _ *describeRegionsReq) (*describeRegionsResp, *protocol.AWSError) {
-	regions := []typedRegionXML{
-		{RegionName: "us-east-1", RegionEndpoint: "ec2.us-east-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "us-east-2", RegionEndpoint: "ec2.us-east-2.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "us-west-1", RegionEndpoint: "ec2.us-west-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "us-west-2", RegionEndpoint: "ec2.us-west-2.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "eu-west-1", RegionEndpoint: "ec2.eu-west-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "eu-central-1", RegionEndpoint: "ec2.eu-central-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "ap-southeast-1", RegionEndpoint: "ec2.ap-southeast-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-		{RegionName: "ap-northeast-1", RegionEndpoint: "ec2.ap-northeast-1.amazonaws.com", OptInStatus: "opt-in-not-required"},
-	}
-	return &describeRegionsResp{
-		Xmlns:      ec2XMLNS,
-		RequestID:  protocol.RequestIDFromContext(ctx),
-		RegionInfo: regions,
-	}, nil
+func (h *Handler) describeRegionsTyped(ctx context.Context, req *describeRegionsReq) (*xmlDescribeRegionsResponse, *protocol.AWSError) {
+	return h.describeRegions(ctx, typedQuery(nil, req.Filters))
 }
 
-func (h *Handler) describeAzsTyped(ctx context.Context, _ *describeAzsReq) (*describeAzsResp, *protocol.AWSError) {
-	region := h.cfg.Region
-	azs := []typedAzXML{
-		{ZoneName: region + "a", ZoneState: "available", RegionName: region},
-		{ZoneName: region + "b", ZoneState: "available", RegionName: region},
-		{ZoneName: region + "c", ZoneState: "available", RegionName: region},
-	}
-	return &describeAzsResp{
-		Xmlns:                ec2XMLNS,
-		RequestID:            protocol.RequestIDFromContext(ctx),
-		AvailabilityZoneInfo: azs,
-	}, nil
+func (h *Handler) describeAzsTyped(ctx context.Context, req *describeAzsReq) (*xmlDescribeAZsResponse, *protocol.AWSError) {
+	return h.describeAvailabilityZones(ctx, typedQuery(nil, req.Filters))
 }
 
-func (h *Handler) describeInstancesTyped(ctx context.Context, _ *describeInstancesReq) (*describeInstancesResp, *protocol.AWSError) {
-	all, aerr := h.store.listInstances(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	tags, aerr := h.loadTags(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedInstanceXML, 0, len(all))
-	for _, inst := range all {
-		xmlTags := typedTagsOf(tags.tags(inst.InstanceID))
-		xmlSGs := make([]typedSGRefXML, 0, len(inst.SecurityGroups))
-		for _, sg := range inst.SecurityGroups {
-			xmlSGs = append(xmlSGs, typedSGRefXML(sg))
-		}
-		items = append(items, typedInstanceXML{
-			InstanceID:    inst.InstanceID,
-			ImageID:       inst.ImageID,
-			InstanceState: typedInstanceStateXML{Code: inst.State.Code, Name: inst.State.Name},
-			InstanceType:  inst.InstanceType,
-			LaunchTime:    inst.LaunchTime,
-			SubnetID:      inst.SubnetID,
-			VpcID:         inst.VpcID,
-			PrivateIP:     h.privateIPForAPI(ctx, inst.VpcID, inst.PrivateIPAddress),
-			Placement:     typedPlacementXML{AvailabilityZone: inst.Placement.AvailabilityZone},
-			GroupSet:      xmlSGs,
-			TagSet:        xmlTags,
-		})
-	}
-	var reservations []typedReservationXML
-	if len(items) > 0 {
-		reservations = []typedReservationXML{{
-			ReservationID: fmt.Sprintf("r-%s", shortID()),
-			OwnerID:       "123456789012",
-			Instances:     items,
-		}}
-	}
-	return &describeInstancesResp{
-		Xmlns:        ec2XMLNS,
-		RequestID:    protocol.RequestIDFromContext(ctx),
-		Reservations: reservations,
-	}, nil
+func (h *Handler) describeInstancesTyped(ctx context.Context, req *describeInstancesReq) (*xmlDescribeInstancesResponse, *protocol.AWSError) {
+	return h.describeInstances(ctx, typedQuery(req.InstanceIDs, req.Filters))
 }
 
-func (h *Handler) describeInstanceTypesTyped(ctx context.Context, _ *describeInstanceTypesReq) (*describeInstanceTypesResp, *protocol.AWSError) {
-	return &describeInstanceTypesResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-	}, nil
+func (h *Handler) describeInstanceTypesTyped(ctx context.Context, req *describeInstanceTypesReq) (*xmlDescribeInstanceTypesResponse, *protocol.AWSError) {
+	return h.describeInstanceTypes(ctx, typedQuery(nil, req.Filters), req.InstanceTypes)
 }
 
 func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*createVpcResp, *protocol.AWSError) {
@@ -1176,40 +905,8 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	}, nil
 }
 
-// describeVpcsTyped is not dispatched to — EC2 runs the legacy handlers (see
-// Service.DispatchQuery). It seeds the default VPC so the two paths agree on
-// what exists, but does not filter: describeVpcsReq carries no filter fields,
-// and the missing filters are part of the wider typed-path audit in #754. The
-// legacy DescribeVpcs does filter, and is the one that answers requests.
-func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*describeVpcsResp, *protocol.AWSError) {
-	h.ensureDefaultVPCQuietly(ctx)
-
-	vpcs, aerr := h.store.listVPCs(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedVpcXML, 0, len(vpcs))
-	for _, v := range vpcs {
-		ns := v.NetworkStatus
-		if ns == "" {
-			ns = vpcNetworkStatusOK
-		}
-		items = append(items, typedVpcXML{
-			VpcID:           v.VpcID,
-			State:           v.State,
-			CidrBlock:       v.CidrBlock,
-			InstanceTenancy: "default",
-			IsDefault:       v.IsDefault,
-			TagSet: []typedTagXML{
-				{Key: "overcast:network-status", Value: ns},
-			},
-		})
-	}
-	return &describeVpcsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		VpcSet:    items,
-	}, nil
+func (h *Handler) describeVpcsTyped(ctx context.Context, req *describeVpcsReq) (*xmlDescribeVpcsResponse, *protocol.AWSError) {
+	return h.describeVpcs(ctx, typedQuery(req.VpcIDs, req.Filters))
 }
 
 func (h *Handler) deleteVpcTyped(ctx context.Context, req *deleteVpcReq) (*deleteVpcResp, *protocol.AWSError) {
@@ -1363,87 +1060,12 @@ func (h *Handler) revokeSGEgressTyped(ctx context.Context, req *revokeSGEgressRe
 	}, nil
 }
 
-func (h *Handler) describeSecurityGroupsTyped(ctx context.Context, _ *describeSecurityGroupsReq) (*describeSGsResp, *protocol.AWSError) {
-	all, aerr := h.store.listSecurityGroups(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedSGXML, 0, len(all))
-	for _, sg := range all {
-		ingress := make([]typedIpPermXML, 0, len(sg.IpPermissions))
-		for _, p := range sg.IpPermissions {
-			ranges := make([]typedIpRangeXML, 0, len(p.IpRanges))
-			for _, r := range p.IpRanges {
-				ranges = append(ranges, typedIpRangeXML(r))
-			}
-			ingress = append(ingress, typedIpPermXML{
-				IpProtocol: p.IpProtocol,
-				FromPort:   p.FromPort,
-				ToPort:     p.ToPort,
-				IpRanges:   ranges,
-			})
-		}
-		egress := make([]typedIpPermXML, 0, len(sg.IpPermissionsEgress))
-		for _, p := range sg.IpPermissionsEgress {
-			ranges := make([]typedIpRangeXML, 0, len(p.IpRanges))
-			for _, r := range p.IpRanges {
-				ranges = append(ranges, typedIpRangeXML(r))
-			}
-			egress = append(egress, typedIpPermXML{
-				IpProtocol: p.IpProtocol,
-				FromPort:   p.FromPort,
-				ToPort:     p.ToPort,
-				IpRanges:   ranges,
-			})
-		}
-		items = append(items, typedSGXML{
-			OwnerID:             "000000000000",
-			GroupID:             sg.GroupID,
-			GroupName:           sg.GroupName,
-			GroupDescription:    sg.Description,
-			VpcID:               sg.VpcID,
-			IpPermissions:       ingress,
-			IpPermissionsEgress: egress,
-		})
-	}
-	return &describeSGsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		Groups:    items,
-	}, nil
+func (h *Handler) describeSecurityGroupsTyped(ctx context.Context, req *describeSecurityGroupsReq) (*xmlDescribeSecurityGroupsResponse, *protocol.AWSError) {
+	return h.describeSecurityGroups(ctx, typedQuery(req.GroupIDs, req.Filters))
 }
 
-func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsReq) (*describeSubnetsResp, *protocol.AWSError) {
-	h.ensureDefaultVPCQuietly(ctx)
-
-	all, aerr := h.store.listSubnets(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	tagsIndex, aerr := h.loadTags(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedSubnetXML, 0, len(all))
-	for _, sub := range all {
-		tags := tagsIndex.tags(sub.SubnetID)
-		items = append(items, typedSubnetXML{
-			SubnetID:                sub.SubnetID,
-			State:                   sub.State,
-			VpcID:                   sub.VpcID,
-			CidrBlock:               sub.CidrBlock,
-			AvailabilityZone:        sub.AvailabilityZone,
-			AvailableIPAddressCount: 251,
-			DefaultForAz:            false,
-			MapPublicIPOnLaunch:     false,
-			TagSet:                  typedTagsOf(tags),
-		})
-	}
-	return &describeSubnetsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		Subnets:   items,
-	}, nil
+func (h *Handler) describeSubnetsTyped(ctx context.Context, req *describeSubnetsReq) (*xmlDescribeSubnetsResponse, *protocol.AWSError) {
+	return h.describeSubnets(ctx, typedQuery(req.SubnetIDs, req.Filters))
 }
 
 func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (*runInstancesResp, *protocol.AWSError) {
@@ -1556,16 +1178,8 @@ func (h *Handler) startInstancesTyped(ctx context.Context, _ *startInstancesReq)
 	}, nil
 }
 
-func (h *Handler) describeImagesTyped(ctx context.Context, _ *describeImagesReq) (*describeImagesResp, *protocol.AWSError) {
-	typedImages := make([]typedImageXML, 0, len(syntheticAMIs))
-	for _, ami := range syntheticAMIs {
-		typedImages = append(typedImages, typedImageXML(ami))
-	}
-	return &describeImagesResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		ImagesSet: typedImages,
-	}, nil
+func (h *Handler) describeImagesTyped(ctx context.Context, req *describeImagesReq) (*xmlDescribeImagesResponse, *protocol.AWSError) {
+	return h.describeImages(ctx, typedQuery(req.ImageIDs, req.Filters))
 }
 
 func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq) (*createKeyPairResp, *protocol.AWSError) {
@@ -1597,24 +1211,8 @@ func (h *Handler) createKeyPairTyped(ctx context.Context, req *createKeyPairReq)
 	}, nil
 }
 
-func (h *Handler) describeKeyPairsTyped(ctx context.Context, _ *describeKeyPairsReq) (*describeKeyPairsResp, *protocol.AWSError) {
-	all, aerr := h.store.listKeyPairs(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedKeyPairXML, 0, len(all))
-	for _, kp := range all {
-		items = append(items, typedKeyPairXML{
-			KeyName:        kp.KeyName,
-			KeyFingerprint: kp.KeyFingerprint,
-			KeyPairID:      kp.KeyPairID,
-		})
-	}
-	return &describeKeyPairsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		KeySet:    items,
-	}, nil
+func (h *Handler) describeKeyPairsTyped(ctx context.Context, req *describeKeyPairsReq) (*xmlDescribeKeyPairsResponse, *protocol.AWSError) {
+	return h.describeKeyPairs(ctx, typedQuery(req.KeyNames, req.Filters))
 }
 
 func (h *Handler) deleteKeyPairTyped(ctx context.Context, req *deleteKeyPairReq) (*deleteKeyPairResp, *protocol.AWSError) {
@@ -1657,20 +1255,8 @@ func (h *Handler) createRouteTableTyped(ctx context.Context, req *createRouteTab
 	}, nil
 }
 
-func (h *Handler) describeRouteTablesTyped(ctx context.Context, _ *describeRouteTablesReq) (*describeRouteTablesResp, *protocol.AWSError) {
-	all, aerr := h.store.listRouteTables(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedRouteTableXML, 0, len(all))
-	for _, rt := range all {
-		items = append(items, routeTableToTypedXML(rt))
-	}
-	return &describeRouteTablesResp{
-		Xmlns:         ec2XMLNS,
-		RequestID:     protocol.RequestIDFromContext(ctx),
-		RouteTableSet: items,
-	}, nil
+func (h *Handler) describeRouteTablesTyped(ctx context.Context, req *describeRouteTablesReq) (*xmlDescribeRouteTablesResponse, *protocol.AWSError) {
+	return h.describeRouteTables(ctx, typedQuery(req.RouteTableIDs, req.Filters))
 }
 
 func (h *Handler) deleteRouteTableTyped(ctx context.Context, req *deleteRouteTableReq) (*deleteRouteTableResp, *protocol.AWSError) {
@@ -1820,20 +1406,8 @@ func (h *Handler) createIGWTyped(ctx context.Context, _ *createIGWReq) (*createI
 	}, nil
 }
 
-func (h *Handler) describeIGWsTyped(ctx context.Context, _ *describeIGWsReq) (*describeIGWsResp, *protocol.AWSError) {
-	all, aerr := h.store.listInternetGateways(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedIGWXML, 0, len(all))
-	for _, igw := range all {
-		items = append(items, igwToTypedXML(igw))
-	}
-	return &describeIGWsResp{
-		Xmlns:              ec2XMLNS,
-		RequestID:          protocol.RequestIDFromContext(ctx),
-		InternetGatewaySet: items,
-	}, nil
+func (h *Handler) describeIGWsTyped(ctx context.Context, req *describeIGWsReq) (*xmlDescribeInternetGatewaysResponse, *protocol.AWSError) {
+	return h.describeInternetGateways(ctx, typedQuery(req.InternetGatewayIDs, req.Filters))
 }
 
 func (h *Handler) deleteIGWTyped(ctx context.Context, req *deleteIGWReq) (*deleteIGWResp, *protocol.AWSError) {
@@ -1976,20 +1550,8 @@ func (h *Handler) acceptVPCPeeringTyped(ctx context.Context, req *acceptVPCPeeri
 	}, nil
 }
 
-func (h *Handler) describeVPCPeeringsTyped(ctx context.Context, _ *describeVPCPeeringsReq) (*describeVPCPeeringsResp, *protocol.AWSError) {
-	all, aerr := h.store.listVpcPeeringConnections(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedVPCPeeringXML, 0, len(all))
-	for _, pcx := range all {
-		items = append(items, pcxToTypedXML(pcx))
-	}
-	return &describeVPCPeeringsResp{
-		Xmlns:                   ec2XMLNS,
-		RequestID:               protocol.RequestIDFromContext(ctx),
-		VpcPeeringConnectionSet: items,
-	}, nil
+func (h *Handler) describeVPCPeeringsTyped(ctx context.Context, req *describeVPCPeeringsReq) (*xmlDescribeVpcPeeringConnectionsResponse, *protocol.AWSError) {
+	return h.describeVpcPeeringConnections(ctx, typedQuery(req.VpcPeeringConnectionIDs, req.Filters))
 }
 
 func (h *Handler) deleteVPCPeeringTyped(ctx context.Context, req *deleteVPCPeeringReq) (*deleteVPCPeeringResp, *protocol.AWSError) {
@@ -2048,21 +1610,8 @@ func (h *Handler) deleteTagsTyped(ctx context.Context, _ *deleteTagsReq) (*delet
 	}, nil
 }
 
-func (h *Handler) describeTagsTyped(ctx context.Context, _ *describeTagsReq) (*describeTagsResp, *protocol.AWSError) {
-	allTags, _ := h.store.listAllTags(ctx)
-	items := tagItems(tagIndex(allTags), func(rid string, tag Tag) typedTagItemXML {
-		return typedTagItemXML{
-			ResourceID:   rid,
-			ResourceType: inferResourceType(rid),
-			Key:          tag.Key,
-			Value:        tag.Value,
-		}
-	}, nil)
-	return &describeTagsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		TagSet:    items,
-	}, nil
+func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (*xmlDescribeTagsResponse, *protocol.AWSError) {
+	return h.describeTags(ctx, typedQuery(nil, req.Filters))
 }
 
 func (h *Handler) allocateAddressTyped(ctx context.Context, _ *allocateAddressReq) (*allocateAddressResp, *protocol.AWSError) {
@@ -2099,28 +1648,8 @@ func (h *Handler) releaseAddressTyped(ctx context.Context, req *releaseAddressRe
 	}, nil
 }
 
-func (h *Handler) describeAddressesTyped(ctx context.Context, _ *describeAddressesReq) (*describeAddressesResp, *protocol.AWSError) {
-	all, aerr := h.store.listElasticIPs(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedAddressXML, 0, len(all))
-	for _, a := range all {
-		items = append(items, typedAddressXML{
-			PublicIP:       a.PublicIP,
-			AllocationID:   a.AllocationID,
-			Domain:         a.Domain,
-			AssociationID:  a.AssociationID,
-			InstanceID:     a.InstanceID,
-			NetworkIfaceID: a.NetworkInterfaceID,
-			PrivateIP:      a.PrivateIP,
-		})
-	}
-	return &describeAddressesResp{
-		Xmlns:      ec2XMLNS,
-		RequestID:  protocol.RequestIDFromContext(ctx),
-		AddressSet: items,
-	}, nil
+func (h *Handler) describeAddressesTyped(ctx context.Context, req *describeAddressesReq) (*xmlDescribeAddressesResponse, *protocol.AWSError) {
+	return h.describeAddresses(ctx, typedQuery(req.AllocationIDs, req.Filters))
 }
 
 func (h *Handler) associateAddressTyped(ctx context.Context, req *associateAddressReq) (*associateAddressResp, *protocol.AWSError) {
@@ -2218,28 +1747,8 @@ func (h *Handler) createNatGatewayTyped(ctx context.Context, req *createNatGatew
 	}, nil
 }
 
-func (h *Handler) describeNatGatewaysTyped(ctx context.Context, _ *describeNatGatewaysReq) (*describeNatGatewaysResp, *protocol.AWSError) {
-	all, aerr := h.store.listNatGateways(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedNatGatewayXML, 0, len(all))
-	for _, ngw := range all {
-		addrs := []typedNatGWAddrXML{{AllocationID: ngw.AllocationID, PublicIP: ngw.PublicIP, PrivateIP: ngw.PrivateIP}}
-		items = append(items, typedNatGatewayXML{
-			NatGatewayID: ngw.NatGatewayID,
-			SubnetID:     ngw.SubnetID,
-			VpcID:        ngw.VpcID,
-			State:        ngw.State,
-			CreateTime:   ngw.CreateTime,
-			Addresses:    addrs,
-		})
-	}
-	return &describeNatGatewaysResp{
-		Xmlns:       ec2XMLNS,
-		RequestID:   protocol.RequestIDFromContext(ctx),
-		NatGateways: items,
-	}, nil
+func (h *Handler) describeNatGatewaysTyped(ctx context.Context, req *describeNatGatewaysReq) (*xmlDescribeNatGatewaysResponse, *protocol.AWSError) {
+	return h.describeNatGateways(ctx, typedQuery(req.NatGatewayIDs, req.Filters))
 }
 
 func (h *Handler) deleteNatGatewayTyped(ctx context.Context, req *deleteNatGatewayReq) (*deleteNatGatewayResp, *protocol.AWSError) {
@@ -2288,54 +1797,20 @@ func (h *Handler) modifyVpcAttributeTyped(ctx context.Context, req *modifyVpcAtt
 	}, nil
 }
 
-func (h *Handler) describeVpcAttributeTyped(ctx context.Context, req *describeVpcAttributeReq) (*describeVpcAttributeResp, *protocol.AWSError) {
-	if req.VpcID == "" {
-		return nil, ec2err("MissingParameter", "VpcId is required", http.StatusBadRequest)
-	}
-	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
-		return nil, aerr
-	}
-	resp := &describeVpcAttributeResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		VpcID:     req.VpcID,
-	}
-	switch req.Attribute {
-	case "enableDnsSupport":
-		resp.EnableDnsSupport = &typedAttrValXML{Value: true}
-	case "enableDnsHostnames":
-		resp.EnableDnsHostnames = &typedAttrValXML{Value: true}
-	}
-	return resp, nil
+// describeVpcAttributeTyped had answered `true` for both DNS attributes
+// whatever the VPC held, which is the shape #1144 fixed on the legacy path
+// alone: the CloudFormation provisioner's ModifyVpcAttribute write was
+// readable only through the legacy handler. Both paths now read the store.
+func (h *Handler) describeVpcAttributeTyped(ctx context.Context, req *describeVpcAttributeReq) (*xmlDescribeVpcAttributeResponse, *protocol.AWSError) {
+	return h.describeVpcAttribute(ctx, req.VpcID, req.Attribute)
 }
 
-func (h *Handler) describeDhcpOptionsTyped(ctx context.Context, _ *describeDhcpOptionsReq) (*describeDhcpOptionsResp, *protocol.AWSError) {
-	return &describeDhcpOptionsResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		DhcpOptionsSet: []typedDhcpOptionXML{{
-			DhcpOptionsID: fmt.Sprintf("dopt-%s", shortID()),
-			DhcpConfigurationSet: []typedDhcpConfigurationXML{
-				{Key: "domain-name", ValueSet: []typedDhcpValueXML{{Value: "ec2.internal"}}},
-				{Key: "domain-name-servers", ValueSet: []typedDhcpValueXML{{Value: "AmazonProvidedDNS"}}},
-			},
-		}},
-	}, nil
+func (h *Handler) describeDhcpOptionsTyped(ctx context.Context, req *describeDhcpOptionsReq) (*xmlDescribeDhcpOptionsResponse, *protocol.AWSError) {
+	return h.describeDhcpOptions(ctx, typedQuery(nil, req.Filters))
 }
 
-func (h *Handler) describeAccountAttributesTyped(ctx context.Context, _ *describeAccountAttributesReq) (*describeAccountAttributesResp, *protocol.AWSError) {
-	return &describeAccountAttributesResp{
-		Xmlns:     ec2XMLNS,
-		RequestID: protocol.RequestIDFromContext(ctx),
-		AccountAttributeSet: []typedAccountAttrXML{
-			{AttributeName: "supported-platforms", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "VPC"}}},
-			{AttributeName: "default-vpc", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "none"}}},
-			{AttributeName: "max-instances", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "20"}}},
-			{AttributeName: "vpc-max-security-groups-per-interface", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "5"}}},
-			{AttributeName: "max-elastic-ips", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "5"}}},
-			{AttributeName: "vpc-max-elastic-ips", AttributeValueSet: []typedAccountAttrValueXML{{AttributeValue: "5"}}},
-		},
-	}, nil
+func (h *Handler) describeAccountAttributesTyped(ctx context.Context, _ *describeAccountAttributesReq) (*xmlDescribeAccountAttributesResponse, *protocol.AWSError) {
+	return h.describeAccountAttributes(ctx)
 }
 
 func (h *Handler) createVpnGatewayTyped(ctx context.Context, req *createVpnGatewayReq) (*createVpnGatewayResp, *protocol.AWSError) {
@@ -2399,24 +1874,8 @@ func (h *Handler) attachVpnGatewayTyped(ctx context.Context, req *attachVpnGatew
 	}, nil
 }
 
-func (h *Handler) describeVpnGatewaysTyped(ctx context.Context, _ *describeVpnGatewaysReq) (*describeVpnGatewaysResp, *protocol.AWSError) {
-	all, aerr := h.store.listVpnGateways(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	tags, aerr := h.loadTags(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedVpnGatewayXML, 0, len(all))
-	for _, vgw := range all {
-		items = append(items, vpnGatewayToTypedXML(vgw, tags.tags(vgw.VpnGatewayID)))
-	}
-	return &describeVpnGatewaysResp{
-		Xmlns:         ec2XMLNS,
-		RequestID:     protocol.RequestIDFromContext(ctx),
-		VpnGatewaySet: items,
-	}, nil
+func (h *Handler) describeVpnGatewaysTyped(ctx context.Context, req *describeVpnGatewaysReq) (*xmlDescribeVpnGatewaysResponse, *protocol.AWSError) {
+	return h.describeVpnGateways(ctx, typedQuery(req.VpnGatewayIDs, req.Filters))
 }
 
 func (h *Handler) detachVpnGatewayTyped(ctx context.Context, req *detachVpnGatewayReq) (*detachVpnGatewayResp, *protocol.AWSError) {
@@ -2520,29 +1979,8 @@ func (h *Handler) createNetworkInterfaceTyped(ctx context.Context, req *createNe
 	}, nil
 }
 
-func (h *Handler) describeNetworkInterfacesTyped(ctx context.Context, _ *describeNetworkInterfacesReq) (*describeNetworkInterfacesResp, *protocol.AWSError) {
-	all, aerr := h.store.listNetworkInterfaces(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	items := make([]typedNetworkInterfaceXML, 0, len(all))
-	for _, eni := range all {
-		items = append(items, typedNetworkInterfaceXML{
-			NetworkInterfaceID: eni.NetworkInterfaceID,
-			SubnetID:           eni.SubnetID,
-			VpcID:              eni.VpcID,
-			AvailabilityZone:   eni.AvailabilityZone,
-			Description:        eni.Description,
-			PrivateIPAddress:   h.privateIPForAPI(ctx, eni.VpcID, eni.PrivateIPAddress),
-			Status:             eni.Status,
-			MacAddress:         eni.MacAddress,
-		})
-	}
-	return &describeNetworkInterfacesResp{
-		Xmlns:               ec2XMLNS,
-		RequestID:           protocol.RequestIDFromContext(ctx),
-		NetworkInterfaceSet: items,
-	}, nil
+func (h *Handler) describeNetworkInterfacesTyped(ctx context.Context, req *describeNetworkInterfacesReq) (*xmlDescribeNetworkInterfacesResponse, *protocol.AWSError) {
+	return h.describeNetworkInterfaces(ctx, typedQuery(req.NetworkInterfaceIDs, req.Filters))
 }
 
 func (h *Handler) deleteNetworkInterfaceTyped(ctx context.Context, req *deleteNetworkInterfaceReq) (*deleteNetworkInterfaceResp, *protocol.AWSError) {
@@ -2606,26 +2044,8 @@ func (h *Handler) createVpcEndpointTyped(ctx context.Context, req *createVpcEndp
 	}, nil
 }
 
-func (h *Handler) describeVpcEndpointsTyped(ctx context.Context, _ *describeVpcEndpointsReq) (*describeVpcEndpointsResp, *protocol.AWSError) {
-	all, aerr := h.store.listVpcEndpoints(ctx)
-	if aerr != nil {
-		return nil, aerr
-	}
-	var items []typedVpcEndpointXML
-	for _, ep := range all {
-		items = append(items, typedVpcEndpointXML{
-			VpcEndpointID:   ep.VpcEndpointID,
-			VpcID:           ep.VpcID,
-			ServiceName:     ep.ServiceName,
-			State:           ep.State,
-			VpcEndpointType: ep.VpcEndpointType,
-		})
-	}
-	return &describeVpcEndpointsResp{
-		Xmlns:        ec2XMLNS,
-		RequestID:    protocol.RequestIDFromContext(ctx),
-		VpcEndpoints: items,
-	}, nil
+func (h *Handler) describeVpcEndpointsTyped(ctx context.Context, req *describeVpcEndpointsReq) (*xmlDescribeVpcEndpointsResponse, *protocol.AWSError) {
+	return h.describeVpcEndpoints(ctx, typedQuery(req.VpcEndpointIDs, req.Filters))
 }
 
 func (h *Handler) deleteVpcEndpointsTyped(ctx context.Context, _ *deleteVpcEndpointsReq) (*deleteVpcEndpointsResp, *protocol.AWSError) {
@@ -2662,17 +2082,6 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 		VpcID:          rt.VpcID,
 		RouteSet:       routes,
 		AssociationSet: assocs,
-	}
-}
-
-func igwToTypedXML(igw *InternetGateway) typedIGWXML {
-	atts := make([]typedIGWAttachmentXML, 0, len(igw.Attachments))
-	for _, a := range igw.Attachments {
-		atts = append(atts, typedIGWAttachmentXML(a))
-	}
-	return typedIGWXML{
-		InternetGatewayID: igw.InternetGatewayID,
-		AttachmentSet:     atts,
 	}
 }
 
