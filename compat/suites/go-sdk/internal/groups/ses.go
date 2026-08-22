@@ -278,7 +278,7 @@ func (g *sesGroup) SendRawEmail(ctx context.Context, t *harness.TestContext) err
 // ── ses-templates ─────────────────────────────────────────────────────────────
 
 func (g *sesGroup) setupTemplates(ctx context.Context, t *harness.TestContext) error {
-	tmplName := fmt.Sprintf("%s", t.RunID)
+	tmplName := fmt.Sprintf("%s-ses-tmpl", t.RunID)
 	if _, err := g.client().CreateTemplate(ctx, &ses.CreateTemplateInput{
 		Template: &types.Template{
 			TemplateName: aws.String(tmplName),
@@ -340,12 +340,17 @@ func (g *sesGroup) GetTemplate(ctx context.Context, t *harness.TestContext) erro
 }
 
 func (g *sesGroup) ListTemplates(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("ses_tmpl")
 	resp, err := g.client().ListTemplates(ctx, &ses.ListTemplatesInput{})
 	if err != nil {
 		return err
 	}
-	_ = resp
-	return nil
+	for _, m := range resp.TemplatesMetadata {
+		if aws.ToString(m.Name) == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("ListTemplates: %q not found in templates", name)
 }
 
 func (g *sesGroup) UpdateTemplate(ctx context.Context, t *harness.TestContext) error {

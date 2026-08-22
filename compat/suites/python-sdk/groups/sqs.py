@@ -163,7 +163,8 @@ def DeleteMessage(ctx: TestContext) -> None:
     ctx["sqs_receipt"] = None
     # Verify message is gone
     recv = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=1, WaitTimeSeconds=0)
-    assert len(recv.get("Messages", [])) == 0, "DeleteMessage: message still visible after delete"
+    if not (len(recv.get("Messages", [])) == 0):
+        raise AssertionError("DeleteMessage: message still visible after delete")
 
 
 def ChangeMessageVisibility(ctx: TestContext) -> None:
@@ -179,7 +180,8 @@ def ChangeMessageVisibility(ctx: TestContext) -> None:
     sqs.change_message_visibility(QueueUrl=url, ReceiptHandle=receipt, VisibilityTimeout=0)
     # With timeout=0, message should be immediately re-visible
     recv2 = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=1, WaitTimeSeconds=1)
-    assert len(recv2.get("Messages", [])) > 0, "ChangeMessageVisibility: message not re-visible after timeout=0"
+    if not (len(recv2.get("Messages", [])) > 0):
+        raise AssertionError("ChangeMessageVisibility: message not re-visible after timeout=0")
     # Clean up
     try:
         sqs.delete_message(QueueUrl=url, ReceiptHandle=receipt)

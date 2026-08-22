@@ -340,9 +340,10 @@ compat-docker:
 compat-report:
 	$(GO) run ./cmd/compat --report
 
-## compat-registry-check: validate compat/suites/registry.json against registry.schema.json
+## compat-registry-check: validate compat/suites/registry.json against registry.schema.json, and lint suite name hygiene
 compat-registry-check:
 	python3 scripts/validate-compat-registry.py
+	python3 scripts/compat-name-hygiene.py
 
 # ---- Container-based development (cross-platform) --------------------------
 # These targets work identically on Mac, Linux, and Windows.

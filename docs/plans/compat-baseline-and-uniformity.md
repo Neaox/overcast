@@ -2,7 +2,11 @@
 
 > Status: enforcement, CI surfacing, flake pipeline, and the framework audit landed.
 > The burn-down is finished — **zero grandfathered failures**, and CI now asserts
-> that absolutely. The dashboard QOL items closed 2026-08-23 (#1184, #1185).
+> that absolutely. The dashboard QOL items closed 2026-08-23 (#1184, #1185), and
+> so did the framework audit's three deferred hygiene gaps (name hygiene lint,
+> cross-suite assertion parity report, non-TS assert-idiom sweep) via
+> [#1186](https://github.com/Neaox/overcast/issues/1186) — Java's deeper
+> per-method assert audit is the one piece still open, tracked as a follow-up.
 > Outstanding as of 2026-08-23: the parity backfill (now across all six SDK
 > suites — the registry has grown since the dotnet/rust-only snapshot).
 >
@@ -318,21 +322,61 @@ emulator or suite bug.
 
 **Remaining tidy-up so new tests are easy to add** (mechanical, per-suite PRs):
 
-1. **Name hygiene rule, enforced by review not tooling:** every resource name
-   embeds its group token (`{runId}-<group-token>-…`). The audit's scanner
-   (banner-section + name-tail analysis) found the violations above; making it
-   a CI lint needs per-language parsing and is not worth the fragility yet —
-   re-run the scan when a suite gains groups.
-2. **Assertion-parity is unenforced.** The registry syncs *names*; nothing
-   keeps eight implementations asserting the same thing (dotnet's IAM
-   `Get*Policy` URL-decode failures are suites disagreeing about assertions).
-   Cheap first step: the report already knows a test's cross-suite incidence —
-   surface "fails in exactly one suite" as a suite-bug-candidate list in the
-   job summary. A shared behaviour spec is not worth it at this scale.
-3. **Go/py/java assert idiom sweep:** the TS `.some(thisArg)` class does not
-   exist in Go (explicit ifs), but python `assert x, msg`-style truthiness and
-   java assertion helpers deserve the same 30-minute audit next time either
-   suite is touched.
+1. ~~**Name hygiene rule, enforced by review not tooling.**~~ **Closed by
+   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23.** A
+   full per-language re-scan (every literal that constructs a name including
+   the run id) turned out to be unusable on its own — dozens of unrelated
+   services share a bare `compat-{runId}` scaffold harmlessly, and a naive
+   "same literal in two files" check flagged 60+ false positives of exactly
+   that shape. `scripts/compat-name-hygiene.py` narrows the comparison to
+   literals tagged with a resource-kind keyword (`role`, `bucket`, `queue`,
+   `topic`, `table`, `function`, `secret`, `alias`) next to the run id, so
+   only a genuinely shared AWS namespace collision — the actual sts-assume-role
+   bug shape — gets flagged; untagged scaffolding is never compared. Wired
+   into the `Compat registry schema` CI job (`.github/workflows/test.yml`)
+   and `make compat-registry-check`, with reviewed exceptions in
+   `compat/suites/name-hygiene-allowlist.json` (empty today — nothing needed
+   one). The sweep itself found one live instance of the un-narrowed bug: `go-sdk`'s
+   `ses-templates` group named its SES template literally `{runId}` with no
+   group token at all (`ses.go`); fixed to `{runId}-ses-tmpl` to match the
+   sibling suites' `-tmpl` convention.
+2. ~~**Assertion-parity is unenforced.**~~ **Closed by
+   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23,** via
+   the cheap first step named above: `scripts/compat-report.py`'s
+   `suite_bug_candidates()` now surfaces, in the job summary, every registry
+   test that fails in exactly one suite while at least two other suites
+   implementing the same test pass it — informational only, does not gate
+   the run. A shared behaviour spec remains not worth it at this scale.
+3. ~~**Go/py/java assert idiom sweep.**~~ **Done for Go and Python in
+   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23; Java
+   only partially.** Python: 36 bare `assert cond, msg` statements across 12
+   files in `compat/suites/python-sdk/groups/` converted to
+   `if not (cond): raise AssertionError(msg)` — a bare `assert` is stripped
+   entirely under `python -O`/`PYTHONOPTIMIZE`, the same silently-vanishing-
+   assertion risk as TS's `.some(thisArg)`, and the suite's own AGENTS.md
+   already documented "raise AssertionError to fail" as the sanctioned idiom.
+   Go: the `.some(thisArg)` idiom itself still doesn't exist, but a
+   `_ = resp` sweep (the anti-pattern this file's own Assertion-contract
+   section already named) found 5 live, registered tests in
+   `compat/suites/go-sdk/internal/groups/` (`eventbridge.go` ×3, `iam.go`,
+   `secretsmanager.go`, `ses.go`) that checked only `err` and threw the
+   response away with zero assertion on state — fixed to assert real fields,
+   matching the sibling suites' equivalent checks. Two more `_ = resp` hits
+   (`eventbridge.go`'s `TestEventPattern`, `lambda.go`'s `InvokeWithError`)
+   turned out to be dead code — never registered in an ImplMap, not in
+   `registry.json`, never executed — left alone pending a follow-up
+   decision (delete vs. wire up as real coverage). `cli` (the other Go
+   suite) audited clean. Java: confirmed the specific idiom (the bare `assert`
+   keyword, disabled unless run with `-ea`) is not used anywhere — it
+   consistently uses the `Assertions` helper — so that bug class doesn't
+   apply, but a deeper "is every response actually asserted" pass wasn't
+   completed reliably in the time available (a quick regex heuristic across
+   Java's nested braces/lambdas was too noisy to trust) and needs a manual
+   per-service follow-up. `dotnet-sdk`/`rust-sdk` (outside the issue's
+   original scope) got the same shallow keyword check and came back clean
+   (no `Debug.Assert`/`Trace.Assert` misuse in dotnet, no bare `assert!`/
+   `debug_assert!` misuse in rust — both already use explicit Result/exception
+   idioms) but not the deeper per-service pass either.
 4. **cli suite runtime** (4m16s in CI, the slowest matrix job): one process
    spawn per aws-cli call. Acceptable; revisit only if the matrix wall-time
    starts to bind.

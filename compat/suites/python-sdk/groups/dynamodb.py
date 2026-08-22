@@ -130,7 +130,8 @@ def PutItem(ctx: TestContext) -> None:
         TableName=table,
         Key={"pk": {"S": "user#1"}, "sk": {"S": "profile"}},
     )
-    assert resp.get("Item", {}).get("name", {}).get("S") == "Alice", "PutItem: name!=Alice"
+    if not (resp.get("Item", {}).get("name", {}).get("S") == "Alice"):
+        raise AssertionError("PutItem: name!=Alice")
 
 
 def GetItem(ctx: TestContext) -> None:
@@ -379,7 +380,8 @@ def TransactWriteItems(ctx: TestContext) -> None:
         ]
     )
     resp = ddb.get_item(TableName=table, Key={"pk": {"S": "txn#1"}, "sk": {"S": "a"}})
-    assert resp.get("Item", {}).get("v", {}).get("S") == "one", "TransactWriteItems: txn#1 not found"
+    if not (resp.get("Item", {}).get("v", {}).get("S") == "one"):
+        raise AssertionError("TransactWriteItems: txn#1 not found")
 
 
 def TransactGetItems(ctx: TestContext) -> None:
@@ -444,7 +446,8 @@ def UpdateTimeToLive(ctx: TestContext) -> None:
     )
     resp = ddb.describe_time_to_live(TableName=table)
     status = resp.get("TimeToLiveDescription", {}).get("TimeToLiveStatus")
-    assert status in ("ENABLED", "ENABLING"), f"UpdateTimeToLive: expected ENABLED, got {status}"
+    if not (status in ("ENABLED", "ENABLING")):
+        raise AssertionError(f"UpdateTimeToLive: expected ENABLED, got {status}")
 
 
 def DescribeTimeToLive(ctx: TestContext) -> None:

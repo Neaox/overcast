@@ -58,7 +58,8 @@ def PutRetentionPolicy(ctx: TestContext) -> None:
     logs.put_retention_policy(logGroupName=name, retentionInDays=7)
     resp = logs.describe_log_groups(logGroupNamePrefix=name)
     groups = [g for g in resp.get("logGroups", []) if g["logGroupName"] == name]
-    assert groups and groups[0].get("retentionInDays") == 7, "PutRetentionPolicy: retention!=7"
+    if not (groups and groups[0].get("retentionInDays") == 7):
+        raise AssertionError("PutRetentionPolicy: retention!=7")
 
 
 def VerifyRetentionPolicy(ctx: TestContext) -> None:
@@ -79,7 +80,8 @@ def DeleteRetentionPolicy(ctx: TestContext) -> None:
     logs.delete_retention_policy(logGroupName=name)
     resp = logs.describe_log_groups(logGroupNamePrefix=name)
     groups = [g for g in resp.get("logGroups", []) if g["logGroupName"] == name]
-    assert groups and "retentionInDays" not in groups[0], "DeleteRetentionPolicy: retention still set"
+    if not (groups and "retentionInDays" not in groups[0]):
+        raise AssertionError("DeleteRetentionPolicy: retention still set")
 
 
 def DeleteLogGroup(ctx: TestContext) -> None:

@@ -671,6 +671,8 @@ jobs:
         run: pip install --quiet jsonschema
       - name: Validate compat registry against its schema
         run: python3 scripts/validate-compat-registry.py
+      - name: Compat suite name hygiene
+        run: python3 scripts/compat-name-hygiene.py
 
   aws-operation-coverage:
     name: AWS operation coverage

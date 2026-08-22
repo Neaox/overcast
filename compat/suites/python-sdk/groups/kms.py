@@ -78,7 +78,8 @@ def CreateAlias(ctx: TestContext) -> None:
     ctx["kms_alias"] = alias
     resp = kms.list_aliases()
     names = [a["AliasName"] for a in resp.get("Aliases", [])]
-    assert alias in names, f"CreateAlias: alias {alias} not found in list"
+    if not (alias in names):
+        raise AssertionError(f"CreateAlias: alias {alias} not found in list")
 
 
 def ListAliases(ctx: TestContext) -> None:
@@ -137,7 +138,8 @@ def CancelKeyDeletion(ctx: TestContext) -> None:
     kms.cancel_key_deletion(KeyId=key_id)
     desc = kms.describe_key(KeyId=key_id)
     state = desc["KeyMetadata"]["KeyState"]
-    assert state == "Disabled", f"CancelKeyDeletion: expected Disabled, got {state}"
+    if not (state == "Disabled"):
+        raise AssertionError(f"CancelKeyDeletion: expected Disabled, got {state}")
     try:
         kms.schedule_key_deletion(KeyId=key_id, PendingWindowInDays=7)
     except Exception:

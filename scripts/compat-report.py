@@ -4,7 +4,10 @@
 One pass over the merged results produces three artefacts:
 
 * the **job summary** (`$GITHUB_STEP_SUMMARY`) — regressions first, then the
-  suite matrix, failure detail, and parity debt;
+  suite matrix, failure detail, parity debt, and cross-suite assertion parity
+  (tests that fail in exactly one suite while every other implementing suite
+  passes — a suite-bug candidate list, informational and non-gating; see
+  `suite_bug_candidates` and docs/plans/compat-baseline-and-uniformity.md);
 * **compat-comment.md** — a digest for the sticky PR comment;
 * **compat-junit.xml** — a JUnit report so `action-junit-report` can publish a
   check run with per-test history.
@@ -102,6 +105,53 @@ def regression_keys(lines: list[str]) -> set[str]:
         if m:
             keys.add(m.group(1))
     return keys
+
+
+# A test only counts as "implemented" by a suite if that suite actually
+# asserted something and got a verdict — "unimplemented" (501), "skip", and
+# "na" are the suite honestly saying it doesn't cover this yet, not a
+# disagreement about what the right assertion is.
+IMPLEMENTED_STATUSES = {"pass", "fail"}
+MIN_IMPLEMENTING_SUITES = 3
+
+
+def suite_bug_candidates(tests: list[dict]) -> list[dict]:
+    """Registry tests that fail in exactly one suite while every other suite
+    implementing that same test passes it.
+
+    docs/plans/compat-baseline-and-uniformity.md § "Framework audit" names
+    this as the cheap first step for cross-suite assertion parity: the
+    registry only syncs *names* across suites, nothing checks that seven
+    implementations of the same test assert the same thing, and a suite
+    silently asserting something weaker (or wrong) only surfaces today by
+    accident. This does not gate the run — it is a report, so a suite that is
+    the one genuinely correct implementation among several with a shared bug
+    is not blocked, but it never goes unnoticed either.
+    """
+    by_key: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for t in tests:
+        by_key[(t["group"], t["test"])].append(t)
+
+    candidates = []
+    for (group, test), entries in sorted(by_key.items()):
+        implementing = [e for e in entries if e["status"] in IMPLEMENTED_STATUSES]
+        if len(implementing) < MIN_IMPLEMENTING_SUITES:
+            continue
+        failing = [e for e in implementing if e["status"] == "fail"]
+        passing = [e for e in implementing if e["status"] == "pass"]
+        if len(failing) != 1 or not passing:
+            continue
+        bad = failing[0]
+        candidates.append(
+            {
+                "group": group,
+                "test": test,
+                "suite": bad["suite"],
+                "error": bad["error"],
+                "passing_suites": sorted(e["suite"] for e in passing),
+            }
+        )
+    return candidates
 
 
 def md_table(rows: list[list[str]], header: list[str], aligns: list[str]) -> str:
@@ -206,6 +256,31 @@ def build(results, baseline, debt, regressions, parity_issues) -> tuple[str, str
                 )
             )
             S.append("\nRegistry tests a suite has not implemented yet. This only shrinks — see `compat/parity-debt.json`.\n")
+
+    bug_candidates = suite_bug_candidates(tests)
+    if bug_candidates:
+        S.append(f"\n### Cross-suite assertion parity — {len(bug_candidates)} suite-bug candidate(s)\n")
+        S.append(
+            md_table(
+                [
+                    [
+                        f"`{c['group']}/{c['test']}`",
+                        f"`{c['suite']}`",
+                        ", ".join(f"`{s}`" for s in c["passing_suites"]),
+                        " ".join(c["error"].split())[:150],
+                    ]
+                    for c in bug_candidates
+                ],
+                ["Test", "Fails in", "Passes in", "Error"],
+                ["----", "-------", "---------", "-----"],
+            )
+        )
+        S.append(
+            "\nSame registry test, same expected behaviour, but exactly one suite disagrees "
+            "with every other suite that implements it — a candidate for a suite-specific "
+            "assertion bug rather than a real emulator gap. Informational only; does not "
+            "gate the run.\n"
+        )
 
     # Quarantine is a stop-gap, so it is reported on every run with its age.
     # An entry nobody can see is an entry nobody fixes.

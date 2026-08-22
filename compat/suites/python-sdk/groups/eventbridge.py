@@ -75,7 +75,8 @@ def TagEventBus(ctx: TestContext) -> None:
     eb.tag_resource(ResourceARN=arn, Tags=[{"Key": "env", "Value": "compat"}])
     resp = eb.list_tags_for_resource(ResourceARN=arn)
     tags = {t["Key"]: t["Value"] for t in resp.get("Tags", [])}
-    assert tags.get("env") == "compat", f"TagEventBus: env tag not found, got {tags}"
+    if not (tags.get("env") == "compat"):
+        raise AssertionError(f"TagEventBus: env tag not found, got {tags}")
 
 
 def ListTagsForResource(ctx: TestContext) -> None:
@@ -94,7 +95,8 @@ def DeleteEventBus(ctx: TestContext) -> None:
     eb.delete_event_bus(Name=name)
     resp = eb.list_event_buses(NamePrefix=name)
     names = [b["Name"] for b in resp.get("EventBuses", [])]
-    assert name not in names, f"DeleteEventBus: bus {name} still present"
+    if not (name not in names):
+        raise AssertionError(f"DeleteEventBus: bus {name} still present")
 
 
 # ── eventbridge-rules ─────────────────────────────────────────────────────────
@@ -225,7 +227,8 @@ def RemoveTargets(ctx: TestContext) -> None:
         raise AssertionError(f"RemoveTargets: {resp['FailedEntryCount']} failed entries")
     ctx["eb_target_ids"] = []
     remaining = eb.list_targets_by_rule(Rule=rule_name, EventBusName=bus_name)
-    assert len(remaining.get("Targets", [])) == 0, "RemoveTargets: targets still present"
+    if not (len(remaining.get("Targets", [])) == 0):
+        raise AssertionError("RemoveTargets: targets still present")
 
 
 def DeleteRule(ctx: TestContext) -> None:
@@ -241,7 +244,8 @@ def DeleteRule(ctx: TestContext) -> None:
     eb.delete_rule(Name=rule_name, EventBusName=bus_name, Force=True)
     resp = eb.list_rules(EventBusName=bus_name, NamePrefix=rule_name)
     names = [r["Name"] for r in resp.get("Rules", [])]
-    assert rule_name not in names, f"DeleteRule: rule {rule_name} still present"
+    if not (rule_name not in names):
+        raise AssertionError(f"DeleteRule: rule {rule_name} still present")
 
 
 # ── eventbridge-events ────────────────────────────────────────────────────────

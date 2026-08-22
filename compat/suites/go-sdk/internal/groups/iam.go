@@ -435,11 +435,14 @@ func (g *iamGroup) CreatePolicy(ctx context.Context, t *harness.TestContext) err
 }
 
 func (g *iamGroup) GetPolicy(ctx context.Context, t *harness.TestContext) error {
-	resp, err := g.cl().GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(t.GetString("iam_policy_arn"))})
+	arn := t.GetString("iam_policy_arn")
+	resp, err := g.cl().GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(arn)})
 	if err != nil {
 		return err
 	}
-	_ = resp
+	if resp.Policy == nil || aws.ToString(resp.Policy.Arn) != arn {
+		return fmt.Errorf("GetPolicy: wrong ARN %v", resp.Policy)
+	}
 	return nil
 }
 
