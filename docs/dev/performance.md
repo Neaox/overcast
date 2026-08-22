@@ -493,7 +493,7 @@ The binary is fully static and can run in a scratch container.
 
 The Dockerfile uses a multi-stage, multi-target build:
 
-- `go-builder-slim` / `go-builder-console`: `golang:1.24-alpine` — cross-compile the Go binary (not shipped)
+- `go-builder-slim` / `go-builder-console`: `golang:1.26-alpine` — cross-compile the Go binary (not shipped)
 - `web-builder`: `node:22-alpine` — builds the SPA that the console binary embeds (not shipped)
 - `slim` target: `alpine:3.20` + Go binary only (~36 MB)
 - default (console) target: the same base with a Go binary that has the web UI SPA embedded (`//go:embed all:web/dist`, served by `internal/bff`)

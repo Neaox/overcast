@@ -272,7 +272,7 @@ not silently narrow platform support or document a single-machine workaround as 
 | ------------- | ------- | --------------------------------------------------------- |
 | Git           | Current | https://git-scm.com/downloads — use Git for Windows on Windows (includes Git Bash used by hooks) |
 | jq            | 1.6+    | JSON processing for agent hooks and PR helper scripts — https://jqlang.org/download/ |
-| Go            | 1.24+   | https://go.dev/dl/                                        |
+| Go            | 1.25+ (the `go` line in `go.mod`) | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
 | golangci-lint | `GOLANGCI_LINT_VERSION` in the Makefile | `make lint-go` uses pinned `go run` automatically; Renovate keeps the pin current |
 | actionlint    | `ACTIONLINT_VERSION` in the Makefile | `make lint-actions` uses pinned `go run` automatically; Renovate keeps the pin current |
@@ -418,11 +418,14 @@ mounts only the main checkout). See the header comment in
 **2269% CPU** — 22.7 of 24 cores — and held it there for the compile phase. The
 wrappers now bound three separate things, because one is not enough:
 `docker run --cpus` (what the container may consume), `GOMAXPROCS` (parallelism
-*inside* one process — the image is `golang:1.24-bookworm`, and container-aware
-`GOMAXPROCS` only arrived in Go 1.25, so the 1.24 runtime would otherwise still
-see all 24 cores), and `go test -p` (concurrent test *binaries*, which defaults
-to `GOMAXPROCS` and so squares the parallelism if left alone). Same run with the
-cap: **1049% peak**, under the 1200% ceiling, for roughly 15% more wall clock.
+*inside* one process — container-aware `GOMAXPROCS` only arrived in Go 1.25, and
+the image was `golang:1.24-bookworm` when this was measured, so its runtime would
+otherwise still see all 24 cores; the wrappers now take the devcontainer's image
+from `.devcontainer/Dockerfile` and keep setting it so the cap holds whatever
+`OVERCAST_GO_IMAGE` names), and `go test -p` (concurrent test *binaries*, which
+defaults to `GOMAXPROCS` and so squares the parallelism if left alone). Same run
+with the cap: **1049% peak**, under the 1200% ceiling, for roughly 15% more wall
+clock.
 
 > Measured 2026-08-08 (UTC) on Windows 11, 24 logical cores, Docker Desktop reporting
 > 24 CPUs, `golang:1.24-bookworm`. Both runs were
