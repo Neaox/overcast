@@ -9,7 +9,7 @@
 #   - git, curl, wget, make (standard dev tools)
 #   - A non-root `vscode` user matching VS Code's conventions
 
-FROM golang:1.24-bookworm
+FROM golang:1.26-bookworm
 
 # Avoid interactive prompts during package installation.
 ENV DEBIAN_FRONTEND=noninteractive

@@ -90,7 +90,7 @@ RUN VITE_BUNDLED=true pnpm run build
 # Everything up to (but not including) the SPA overlay and the compile itself.
 # Both builders start here, so the module download and source COPYs are one
 # cached layer set rather than two.
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS go-src
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS go-src
 
 WORKDIR /src
 

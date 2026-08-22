@@ -18,8 +18,6 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -229,18 +227,8 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), hookRunner)
 	prof.mark("router.New (full)")
 
-	// When TLS is enabled the standard library automatically negotiates HTTP/2
-	// via ALPN. For plain-text connections we wrap the handler with h2c so that
-	// clients can use HTTP/2 via the Upgrade mechanism or HTTP/2 prior-knowledge.
-	var srvHandler http.Handler
-	if cfg.TLSEnabled() {
-		srvHandler = handler
-	} else {
-		srvHandler = h2c.NewHandler(handler, &http2.Server{})
-	}
-
 	srv := &http.Server{
-		Handler:   srvHandler,
+		Handler:   handler,
 		TLSConfig: tlsServerConf,
 		// IdleTimeout governs how long a keep-alive connection may sit idle
 		// between requests. Without this, every AWS SDK connection (which uses
@@ -249,6 +237,19 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		// goroutines. 60 s matches the AWS service default and is safe for all
 		// SDK clients, which retry on connection reset.
 		IdleTimeout: 60 * time.Second,
+	}
+	// When TLS is enabled the standard library negotiates HTTP/2 via ALPN and
+	// the default protocol set is the right one. A plain-text listener has to
+	// opt in to cleartext HTTP/2 (h2c), which clients use with prior
+	// knowledge — the AWS SDKs and curl --http2-prior-knowledge. This is the
+	// standard library's replacement for the x/net/http2/h2c wrapper that used
+	// to sit here; that package is deprecated in favour of this field. The one
+	// thing it does not carry over is the `Upgrade: h2c` handshake, which a
+	// client that tries it simply does not get — it continues on HTTP/1.1.
+	if !cfg.TLSEnabled() {
+		srv.Protocols = new(http.Protocols)
+		srv.Protocols.SetHTTP1(true)
+		srv.Protocols.SetUnencryptedHTTP2(true)
 	}
 
 	// Bind the listeners explicitly so we know the ports are ready before
