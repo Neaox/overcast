@@ -223,8 +223,7 @@ disagree, set via the `OVERCAST_EC2_VPC_STRATEGY` environment variable.
 | `netns`              | ⏳ Not yet — falls back to `shared` | Per-VPC Linux network namespace. Real overlap with real isolation. Requires root / `CAP_NET_ADMIN`.                                 |
 
 Values other than `shared` are accepted today but log a warning at
-startup and fall back to `shared`. The design for each is captured in
-[docs/plans/ec2-vpc-network-strategies.md](../plans/ec2-vpc-network-strategies.md).
+startup and fall back to `shared`. The design for each is captured below.
 
 ### `shared` — the default
 
@@ -340,7 +339,7 @@ active strategy decided:
 `NetworkStatus` is persisted on each VPC record and written into the
 startup reconcile logs (`reconcile networks: …`). Debug-endpoint and
 web UI surfacing is planned alongside the future strategies — see
-[the plan](../plans/ec2-vpc-network-strategies.md).
+the `strict`, `remapped`, and `netns` sections above.
 
 <!-- BEGIN overcast:capabilities -->
 

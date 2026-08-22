@@ -246,6 +246,78 @@ func TestAttach_wrapsTheDaemonError(t *testing.T) {
 	}
 }
 
+// TestControlPlaneInternal covers the three-row table of
+// docs/plans/container-network-topology.md § 5: containerised is always
+// on-link and safe, a native Linux host's gateway stays on-link on an
+// `--internal` bridge, and Docker Desktop's host address does not — plus the
+// case the table does not name, where the daemon probe cannot tell.
+func TestControlPlaneInternal(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+
+	cases := map[string]struct {
+		containerised bool
+		native        bool
+		want          bool
+	}{
+		"containerised is always internal, even if the daemon probe would say no": {
+			containerised: true, native: false, want: true,
+		},
+		"native Linux host: the gateway stays on-link": {
+			containerised: false, native: true, want: true,
+		},
+		"Docker Desktop host: the daemon probe declines": {
+			containerised: false, native: false, want: false,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			runningInContainer = func() bool { return tc.containerised }
+			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
+
+			if got := ControlPlaneInternal(context.Background(), nil); got != tc.want {
+				t.Errorf("ControlPlaneInternal() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// PlaneSpecs wires ControlPlaneInternal in as InternalMode rather than
+// resolving it eagerly — the point being that Probe, not this function, is
+// what has a live Docker client to hand it.
+func TestPlaneSpecs_defersTheControlPlaneDecisionToInternalMode(t *testing.T) {
+	cfg := testConfig()
+	specs := PlaneSpecs(cfg)
+
+	if len(specs) != 2 {
+		t.Fatalf("PlaneSpecs() returned %d specs, want 2", len(specs))
+	}
+	data, control := specs[0], specs[1]
+
+	if data.Name != cfg.Network || data.InternalMode != nil {
+		t.Errorf("data plane spec = %+v, want Name=%q and no InternalMode", data, cfg.Network)
+	}
+	if control.Name != Primary(cfg) {
+		t.Errorf("control plane spec Name = %q, want %q", control.Name, Primary(cfg))
+	}
+	if control.InternalMode == nil {
+		t.Fatal("control plane spec InternalMode is nil, want ControlPlaneInternal")
+	}
+
+	restoreContainer := runningInContainer
+	t.Cleanup(func() { runningInContainer = restoreContainer })
+	runningInContainer = func() bool { return true }
+
+	if !control.InternalMode(context.Background(), nil) {
+		t.Error("control plane InternalMode(containerised) = false, want true")
+	}
+}
+
 func TestLaunchable(t *testing.T) {
 	// An empty status predates the field and is an ordinary working VPC; an
 	// unrecognised one is refused rather than guessed at.

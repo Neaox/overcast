@@ -15,14 +15,9 @@
 > task, each reaching placement through `Placement.Public`. There is deliberately
 > no isolation toggle (§10, phase 6).
 >
-> Two deviations from the plan as written, both recorded in place:
+> One deviation from the plan as written, recorded in place:
 >
-> 1. The control plane is created as an ordinary bridge rather than `--internal`
->    (§5). The plumbing exists — `dataplane.ControlPlaneInternal()` and
->    `docker.NetworkSpec.Internal` — but it returns false: a container in a
->    gateway-less VPC would go from "no route out but the control plane" to none
->    at all, which is a different blast radius and ships separately.
-> 2. **Enforcement follows the resolver, not the calendar.** `DataNetworks`
+> 1. **Enforcement follows the resolver, not the calendar.** `DataNetworks`
 >    withholds the restriction unless `cfg.DNSListening`. Overcast's DNS server
 >    needs `/etc/resolv.conf` to find upstreams and so does not start on a native
 >    Windows or macOS host; restricting there would produce exactly the hang
@@ -36,6 +31,18 @@
 > typed request alike and CloudFormation never forwarded it. All four layers
 > carry it now, and a replication group is placed exactly as a cache cluster is.
 >
+> Also closed: the control plane is now created `--internal` whenever that is
+> knowable to be safe — decided by `dataplane.ControlPlaneInternal` via the
+> same three-row table as `containerendpoint.ResolveListen` (§5), and wired in
+> through `docker.NetworkSpec.InternalMode` so the decision is made from inside
+> `docker.Probe`, once a live client exists, rather than guessed beforehand.
+> Containerised Overcast and a native Linux daemon both resolve to `true`;
+> Docker Desktop and anything undetermined stay `false`, matching the table.
+> And the five citations to the deleted `docs/plans/ec2-vpc-network-strategies.md`
+> now point at `docs/services/ec2.md` § Advanced: VPC networking strategies,
+> which already carries the shipped design in more detail than the deleted
+> proposal did.
+>
 > Scope: `internal/config/config.go`, `internal/router/router.go`,
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,
 > `internal/services/{lambda,ecs,rds,elasticache,msk,efs,eks,ec2}/`,
@@ -44,14 +51,6 @@
 > unreachable from ECS — the instance of this that prompted the question),
 > [container-networking.md](../dev/container-networking.md) (the mechanism),
 > [ec2.md § VPC networking strategies](../services/ec2.md) (per-VPC networks).
->
-> Note: `internal/services/ec2/vpc_strategy.go` (×2), `docs/services/ec2.md`
-> (×2) and `tests/helpers/server.go` cite
-> `docs/plans/ec2-vpc-network-strategies.md`. That file exists at no branch tip,
-> local or remote — the link is dangling, not unmerged. It did exist once: it
-> was deleted by commit `69db0889` ("wip", on
-> `backup/wip-before-squash-20260519-091947`), so the content is recoverable
-> from `69db0889^` if the citations ever need a real target.
 
 ## 1. The question
 
@@ -187,26 +186,32 @@ Note what each column buys:
   `dns.Locator`'s multi-address case shrinks to the host-vs-container split it
   should have been.
 
-**The control plane ships as an ordinary bridge, not `--internal`.** The flag
-changes nothing observable until VPC-placed containers stop joining the default
-plane — until then every container has egress through that plane regardless —
-so it lands with enforcement in phase 6 rather than costing phase 1 a
-create-inspect-recreate dance against the Runtime API's bind path. When it does
-land, **whether it can be `--internal` is decided by the same probe that already
-picks the Runtime API bind address**
+**Whether the control plane is `--internal` is decided by the same probe that
+already picks the Runtime API bind address**
 (`containerendpoint.ResolveListen`, the three-row table in
-[container-networking.md](../dev/container-networking.md) § 1a):
+[container-networking.md](../dev/container-networking.md) § 1a),
+via `dataplane.ControlPlaneInternal`:
 
 | Overcast is | Containers dial | Control plane `--internal`? |
 | --- | --- | --- |
 | in a container | Overcast's address on the control plane — on-link | **yes** |
 | on a native Linux host | the control network's gateway — on-link | **yes** (an internal bridge still has its gateway; only routing *beyond* it is cut) |
 | on a Docker Desktop host | the host's routable address — **not** on-link | **no** — `--internal` severs exactly that path, and every invocation would hang at INIT |
+| undetermined (no Docker client yet to ask, or nothing to inspect) | — | **no** — getting this wrong strands every invocation at INIT, so an inconclusive probe keeps the safe answer |
 
-So `--internal` is a consequence of the existing bind-mode probe, not a new
-decision. On the Desktop-host row the isolation story for IGW-less VPCs is
-weaker (the control plane is a route out); that is a property of Desktop's
-proxied networking, and the doc row above is where it gets said.
+So `--internal` is a consequence of the existing bind-mode probe, not a
+separate decision. `docker.NetworkSpec.InternalMode` is the seam that makes it
+possible without a create-inspect-recreate dance: it runs once, from inside
+`docker.Probe`, right after the client is dialled and confirmed available and
+before any network is created, so the control plane — which may not exist yet
+on a first run — never needs to be inspected to decide its own isolation.
+Because the control plane isn't there yet to ask, the probe instead asks
+Docker's always-present default `bridge` network's gateway whether *this*
+kernel can bind it (`containerendpoint.NativeLinuxDaemon`) — the same
+gateway-bindability test `ResolveListen` uses, generalised to a network that
+is guaranteed to exist. On the Desktop-host row the isolation story for
+IGW-less VPCs is weaker (the control plane is a route out); that is a property
+of Desktop's proxied networking, and the doc row above is where it gets said.
 
 ### 5a. The one deliberate divergence
 

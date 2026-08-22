@@ -162,6 +162,36 @@ func networkGateway(ctx context.Context, dc listenClient, network string) string
 	return ""
 }
 
+// dockerDefaultBridge is Docker's own built-in network, present on every
+// installation before Overcast creates anything of its own — including on
+// Overcast's very first run, when a plane it is still deciding how to create
+// does not exist yet to be inspected.
+const dockerDefaultBridge = "bridge"
+
+// NativeLinuxDaemon reports whether the Docker daemon appears to run on this
+// same kernel — true on a native Linux daemon, false when it does not
+// (including Docker Desktop, whose daemon lives inside a VM this process
+// cannot bind a gateway address on) or when the fact cannot be established at
+// all (no client, no "bridge" network to inspect).
+//
+// It answers the same question gateway mode vs. host mode answers in
+// resolveListen — is a bridge network's gateway an address this kernel can
+// bind — but against Docker's own default network rather than one Overcast
+// manages: the fact under test (whose kernel is this) does not depend on
+// which network is asked about, and "bridge" is guaranteed to exist already,
+// unlike a plane a caller is still deciding whether to create `--internal`.
+func NativeLinuxDaemon(ctx context.Context, dc *docker.Client) bool {
+	return nativeLinuxDaemon(ctx, dc, bindableHost)
+}
+
+// nativeLinuxDaemon is NativeLinuxDaemon with its bindability probe injected,
+// so it is testable without a Docker daemon or a particular host network
+// layout.
+func nativeLinuxDaemon(ctx context.Context, dc listenClient, bindable func(string) bool) bool {
+	gateway := networkGateway(ctx, dc, dockerDefaultBridge)
+	return gateway != "" && bindable(gateway)
+}
+
 // bindableHost reports whether this kernel can listen on host. It is the
 // evidence the gateway mode turns on, rather than a guess from runtime.GOOS:
 // "is this Docker Desktop" and "is this a native Linux daemon" are the same
