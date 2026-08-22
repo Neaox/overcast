@@ -2543,18 +2543,6 @@ func (p *RepoProvider) findRelativePathsContaining(root, needle string) ([]strin
 	return out, nil
 }
 
-func splitMarkdownRow(line string) []string {
-	parts := strings.Split(line, "|")
-	clean := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			clean = append(clean, part)
-		}
-	}
-	return clean
-}
-
 func normalizeRelPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
