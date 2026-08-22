@@ -33,7 +33,9 @@ func TestSearch_ignoresStopwords(t *testing.T) {
 // consequence of weighting by field. docs/operation-manifest.md is a generated
 // listing of every modelled AWS operation, so it mentions every service name;
 // summed occurrence counts let that listing beat the page that actually
-// documents the service. Its mirror is in web/api/src/routes/docs.test.ts.
+// documents the service. (This used to have a TypeScript mirror in the vite
+// dev server's Hono BFF; that port was retired in #1104, so this is the only
+// copy of the guard.)
 func TestSearch_servicePageOutranksTheOperationManifest(t *testing.T) {
 	// Given: queries naming a service that the manifest also lists.
 	for query, want := range map[string]string{
