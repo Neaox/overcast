@@ -41,6 +41,14 @@ type VPC struct {
 	IsDefault       bool   `json:"IsDefault,omitempty"`
 	DockerNetworkID string `json:"DockerNetworkId,omitempty"`
 
+	// DhcpOptionsId is the DHCP options set associated with this VPC. Real AWS
+	// assigns every VPC the account's default set (a `dopt-` ID) at creation and
+	// reports it stably thereafter; AssociateDhcpOptions is the only way it
+	// changes. Minted once at create time and persisted here so DescribeVpcs
+	// echoes the same value CreateVpc returned, rather than losing it on the
+	// next read (#1277).
+	DhcpOptionsId string `json:"DhcpOptionsId,omitempty"`
+
 	// NetworkStatus describes the relationship between the stored VPC and
 	// its backing Docker network. Populated by the active vpcNetworkStrategy.
 	// Empty is treated as vpcNetworkOK for backwards compatibility with VPCs

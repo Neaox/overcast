@@ -945,13 +945,18 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 		return nil, ec2err("MissingParameter", "CidrBlock is required", http.StatusBadRequest)
 	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
+	// Every VPC gets a DHCP options set at creation, real AWS's default-set
+	// behavior absent an explicit association. Minted once and persisted on
+	// the record so DescribeVpcs echoes the same value back (#1277). See
+	// legacy's CreateVpc for the same treatment.
+	dhcpOptionsID := fmt.Sprintf("dopt-%s", shortID())
 	// Matches real AWS: every new VPC has DNS resolution on; DNS hostnames
 	// stay off until ModifyVpcAttribute turns them on. See legacy's CreateVpc
 	// and #1144 — EnableDnsSupport is a stored field, not a wire default this
 	// body gets to skip.
 	vpc := &VPC{
 		VpcID: vpcID, CidrBlock: req.CidrBlock, State: "available", CreateTime: h.clk.Now().UnixMilli(),
-		EnableDnsSupport: true, EnableDnsHostnames: false,
+		EnableDnsSupport: true, EnableDnsHostnames: false, DhcpOptionsId: dhcpOptionsID,
 	}
 	if h.vpcStrategy != nil {
 		if aerr := h.vpcStrategy.EnsureNetwork(ctx, vpc); aerr != nil {
@@ -969,7 +974,7 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 			VpcID:           vpcID,
 			State:           "available",
 			CidrBlock:       req.CidrBlock,
-			DhcpOptionsID:   fmt.Sprintf("dopt-%s", shortID()),
+			DhcpOptionsID:   dhcpOptionsID,
 			InstanceTenancy: "default",
 			IsDefault:       false,
 			CidrBlockAssociationSet: []typedCidrAssocXML{{
