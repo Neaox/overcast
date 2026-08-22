@@ -168,6 +168,19 @@ type InstancePool struct {
 	// invocation — the proactive initializer's evidence that a function is
 	// actually in use. Set once during wiring, before the pool is used.
 	onInvoked func(functionName string)
+	// concurrencyObserver, when set, is told a function's current real
+	// in-flight admission count immediately after admit's success path or
+	// decCheckedOutLocked change it — the ConcurrentExecutions gauge sample
+	// (service-metrics-platform.md: "Instance acquire/release already
+	// provides a natural concurrency transition"). Deliberately NOT invoked
+	// for provisioned-concurrency prewarm or ProactiveInit's own checkedOut
+	// bookkeeping (see their call sites below): those reserve capacity ahead
+	// of traffic rather than represent a real concurrent invocation, and
+	// counting them would overstate what AWS's ConcurrentExecutions actually
+	// measures. Called while p.mu is held: must stay fast (a single
+	// sharded-lock metrics update) and must never call back into the pool.
+	// Set once during wiring, before the pool is used.
+	concurrencyObserver func(functionName string, current int)
 	// warmWG tracks background provisioning goroutines so Stop can wait.
 	warmWG sync.WaitGroup
 }
@@ -441,8 +454,13 @@ func (p *InstancePool) decCheckedOutLocked(name string) {
 		return
 	}
 	p.checkedOut[name]--
-	if p.checkedOut[name] <= 0 {
+	current := p.checkedOut[name]
+	if current <= 0 {
 		delete(p.checkedOut, name)
+		current = 0
+	}
+	if p.concurrencyObserver != nil {
+		p.concurrencyObserver(name, current)
 	}
 }
 

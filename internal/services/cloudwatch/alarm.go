@@ -331,7 +331,7 @@ func (s *Service) evaluateAlarm(ctx context.Context, alarm *MetricAlarm, now tim
 	}
 	points, cached := cache[key]
 	if !cached {
-		loaded, err := s.store.listMetricDataPoints(ctx, alarm.Namespace, alarm.MetricName, alarm.Dimensions, windowStart, windowEnd)
+		loaded, err := s.store.mergedMetricDataPoints(ctx, alarm.Namespace, alarm.MetricName, alarm.Dimensions, windowStart, windowEnd)
 		if err != nil {
 			return
 		}

@@ -2403,17 +2403,21 @@ func writeInvokeError(w http.ResponseWriter, layerARN, errorType string) {
 func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, opts InvokeOptions) *InvokeResult {
 	log := h.log.WithRecorder(ctx)
 	inv := h.tracker.Begin(name, payload)
+	startedAt := h.clk.Now()
 	releaseSuccess := false
 	releaseReason := ""
 	throttled := false
+	var lastDuration time.Duration
 	defer func() {
 		if throttled {
 			// The invocation never got an execution environment, so there is no
 			// instance to report as idle — drop the record instead.
 			inv.Abandon(releaseReason)
+			h.recordInvocationOutcome(ctx, name, startedAt, 0, true, false)
 			return
 		}
 		inv.Finish(releaseSuccess, releaseReason)
+		h.recordInvocationOutcome(ctx, name, startedAt, lastDuration, false, !releaseSuccess)
 	}()
 
 	// Cold starts can fail transiently due to Docker infrastructure issues
@@ -2430,6 +2434,7 @@ func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payl
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result := h.invokeSyncOnce(ctx, fn, rt, payload, name, inv, opts)
+		lastDuration = result.Duration
 		if result.throttle != nil {
 			// A concurrency limit refused the invocation. Never retry — the
 			// caller decides whether to back off, exactly as against AWS.
@@ -2602,7 +2607,9 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	defer cancel()
 
 	log.Debug("invoke function: dispatching", zap.String("function", name), zap.Int("payload_bytes", len(payload)))
+	invokeStart := h.clk.Now()
 	result, invokeErr := inst.Invoke(invokeCtx, payload, opts)
+	invokeDuration := h.clk.Now().Sub(invokeStart)
 	healthy := invokeErr == nil
 	rt.Release(invokeCtx, inst, healthy)
 
@@ -2614,10 +2621,12 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 			FunctionError: "Unhandled",
 			LogGroupName:  fn.logGroupName(),
 			LogStreamName: logStreamName,
+			Duration:      invokeDuration,
 		}
 	}
 	result.LogGroupName = fn.logGroupName()
 	result.LogStreamName = logStreamName
+	result.Duration = invokeDuration
 	return result
 }
 
@@ -2859,14 +2868,18 @@ type asyncInvokeOutcome struct {
 // own request ID, not a resumption of the last one.
 func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte) asyncInvokeOutcome {
 	inv := h.tracker.Begin(fn.Name, payload)
+	startedAt := h.clk.Now()
 	inst, err := h.acquireForAsync(ctx, fn, rt)
 	if err != nil {
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: acquire instance", zap.String("function", fn.Name), zap.Error(err))
 		// A throttle that survived acquireForAsync's retries is the
 		// reserved-concurrency case and is not retried again; anything else is
-		// a Docker hiccup, which the synchronous path also retries.
+		// a Docker hiccup, which the synchronous path also retries. Each
+		// attempt is its own invocation (see this function's doc comment), so
+		// each records its own outcome.
 		_, throttled := asThrottle(err)
+		h.recordInvocationOutcome(ctx, fn.Name, startedAt, 0, throttled, !throttled)
 		return asyncInvokeOutcome{retryable: !throttled, errorMessage: err.Error()}
 	}
 	inv.Bind(inst)
@@ -2875,6 +2888,7 @@ func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime,
 		rt.Release(ctx, inst, false)
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: runtime init", zap.String("function", fn.Name), zap.Error(err))
+		h.recordInvocationOutcome(ctx, fn.Name, startedAt, 0, false, true)
 		return asyncInvokeOutcome{retryable: true, errorMessage: err.Error()}
 	}
 	inv.Running()
@@ -2891,11 +2905,14 @@ func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime,
 	defer cancel()
 	// No tail: an Event invocation answered 202 long ago and has no caller left
 	// to hand a LogResult to.
+	invokeStart := h.clk.Now()
 	result, invokeErr := inst.Invoke(invokeCtx, payload, InvokeOptions{})
+	invokeDuration := h.clk.Now().Sub(invokeStart)
 	rt.Release(invokeCtx, inst, invokeErr == nil)
 	inv.Finish(invocationOutcome(invokeErr, result))
 	if invokeErr != nil {
 		h.log.Error("invokeAsync: execution error", zap.String("function", fn.Name), zap.Error(invokeErr))
+		h.recordInvocationOutcome(ctx, fn.Name, startedAt, invokeDuration, false, true)
 		// A timeout is the one failure here that already knows its request ID:
 		// the invocation reached the runtime and was abandoned mid-flight.
 		var timeout *invokeTimeoutError
@@ -2907,6 +2924,7 @@ func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime,
 	}
 	if result != nil && result.FunctionError != "" {
 		h.log.Debug("invokeAsync: function error", zap.String("function", fn.Name), zap.String("function_error", result.FunctionError))
+		h.recordInvocationOutcome(ctx, fn.Name, startedAt, invokeDuration, false, true)
 		return asyncInvokeOutcome{
 			retryable:       true,
 			requestID:       result.RequestID,
@@ -2914,6 +2932,7 @@ func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime,
 			responsePayload: result.Payload,
 		}
 	}
+	h.recordInvocationOutcome(ctx, fn.Name, startedAt, invokeDuration, false, false)
 	out := asyncInvokeOutcome{succeeded: true}
 	if result != nil {
 		out.requestID = result.RequestID

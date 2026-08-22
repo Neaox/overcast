@@ -1,11 +1,32 @@
 # Service metrics platform plan (Lambda pilot)
 
-> **Status:** proposed — adopted as backlog work 2026-08-22, tracked by
-> [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100;
-> phase 1 = the Lambda pilot below). Cost/benefit recorded there: Overcast already
-> evaluates CloudWatch alarms but no service emits the metrics they watch, so
-> configured alarms silently never fire — the §2.1 "shape 2" divergence. Not yet
-> started; nothing in `internal/metrics` exists.
+> **Status:** **Lambda pilot (phase 1) shipped 2026-08-22**, tracked by
+> [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100).
+> `internal/metrics` exists and is wired: Lambda automatically records
+> `Invocations`/`Errors`/`Duration`/`Throttles`/`ConcurrentExecutions`, and
+> CloudWatch's `PutMetricData`/`ListMetrics`/`GetMetricStatistics`/
+> `GetMetricData` — and its alarm evaluator — see that data merged alongside
+> user-supplied custom metrics. An `AWS/Lambda Errors` alarm evaluates and
+> fires end-to-end from automatic observations alone (see
+> `internal/services/cloudwatch/metrics_bridge_test.go`'s
+> `TestLambdaErrorsAlarm_FiresFromAutomaticMetrics`). Cost/benefit recorded in
+> the issue: Overcast already evaluates CloudWatch alarms but no service
+> emitted the metrics they watch, so configured alarms silently never fired —
+> the §2.1 "shape 2" divergence.
+>
+> **What phase 1 deliberately narrowed from this document, and why** (see the
+> "Phase 1 delivered scope" section below for the full list): CloudWatch's own
+> `PutMetricData`-backed storage was **not** migrated onto `internal/metrics`
+> — the design below sketches that as one option ("same store"), and phase 1
+> took the explicitly-permitted alternative instead: a read-through merge in
+> `internal/services/cloudwatch/metrics_bridge.go`, chosen to avoid touching
+> the CloudWatch storage engine's own already-extensive test suite for a pilot.
+> The generic K/V-backed persistence path for `WALStore`/`-tags nosqlite`
+> builds (`metrics:series:v1`/`metrics:buckets:v1`) was not built; those
+> configurations get correct in-memory-only automatic metrics (no restart
+> continuity). The fuller 300s/3600s resolution rollup ladder for 7d/30d
+> graphs, the web Monitor tab, and non-Lambda services are phase 2+ — see that
+> section for the complete remainder.
 >
 > **Scope:** an AWS-shaped metrics substrate shared by every emulated service,
 > delivered first for Lambda and designed for subsequent SQS, SNS, and service
@@ -535,6 +556,88 @@ without impersonating the AWS console.
 
 Do not edit `web/src/routeTree.gen.ts`; let the running dev server regenerate
 it, or regenerate through the established route workflow.
+
+## Phase 1 delivered scope (2026-08-22)
+
+This section records what actually shipped against the design above, so the
+plan stays accurate as of this commit (AGENTS.md: plan docs are updated
+per-commit, not trued up later).
+
+Delivered:
+
+- `internal/metrics`: `Observation`/`Recorder`/`Metric`/`Bucket` types;
+  canonical series identity (`sha256(v1 + namespace + name + canonical
+  dimensions)`); a sharded in-memory active-bucket layer that is the only
+  thing `Observe` touches; a bounded, coalescing background flusher (5s) and
+  retention sweeper (5m, 1h retention — the "initially matching the existing
+  CloudWatch one-hour retention" option the design calls out); dedicated
+  SQLite tables (`metric_series`, `metric_series_dimensions`,
+  `metric_buckets`, migration version 40) for `SQLiteStore`/`HybridStore`,
+  selected via `state.SQLiteDBProvider` exactly like
+  `internal/services/sqs/message_backend.go`'s precedent; an in-memory-only
+  backend for `MemoryStore`/`WALStore`/`-tags nosqlite` builds.
+- Lambda: `recordInvocationOutcome` (`internal/services/lambda/metrics_lambda.go`)
+  is the one shared outcome helper, called from `invokeSync` (sync HTTP,
+  function URLs, `InvokeWithResponseStream`, the SSE invoke path all share
+  it), `invokeAsyncOnce` (Event/async, including in-process
+  `ServiceInvoker.InvokeEvent`), and `ServiceInvoker.Invoke` (the
+  event-source-mapping path). Records `AWS/Lambda`
+  `Invocations`/`Errors`/`Duration`/`Throttles` with only the `FunctionName`
+  dimension (no `Resource`/`ExecutedVersion` yet — the design's own hedge:
+  "only after documentation/tests establish the exact combinations").
+  `ConcurrentExecutions` is sampled at `InstancePool`'s real admission
+  boundary (`admit`'s success path and `decCheckedOutLocked`) via a
+  `concurrencyObserver` callback, deliberately excluding provisioned-concurrency
+  prewarm and `ProactiveInit`'s own bookkeeping, which reserve capacity rather
+  than represent a real concurrent invocation.
+- CloudWatch: `metrics_bridge.go` merges `internal/metrics` into
+  `ListMetrics`, `GetMetricStatistics` (both protocols), `GetMetricData` (both
+  protocols), and the alarm evaluator's own metric-window read — a
+  read-through over the **existing, unmodified** `cloudwatchStore`, not a
+  storage migration. A metrics-subsystem read failure degrades to "no
+  automatic series this call" rather than failing the AWS request.
+- Config: `OVERCAST_SERVICE_METRICS=auto|enabled|disabled` (default `auto`).
+  `auto` and `enabled` are currently identical because `OVERCAST_SERVICES` no
+  longer gates which services are wired, so CloudWatch (and hence collection)
+  is always available; see `config.ServiceMetricsAuto`'s doc comment. Wired
+  once in `router.New`, with no runtime toggle, matching the design.
+- Benchmarks: `internal/metrics/recorder_bench_test.go` (`Observe` hot path,
+  disabled-vs-enabled delta, `QueryRange` read cost) and
+  `internal/services/lambda/invoke_metrics_bench_test.go` (`invokeSync`
+  end-to-end overhead with metrics on vs off). See the PR for recorded
+  numbers and machine/mode.
+
+Explicitly deferred to phase 2+ (not started, not partially built):
+
+- SQS/SNS/DynamoDB/API Gateway metric catalogues (design Phase 5).
+- Lambda's P1/P2 tiers: `AsyncEventsReceived`/`AsyncEventAge`/
+  `AsyncEventsDropped`/`DeadLetterErrors`/`DestinationDeliveryFailures`,
+  `IteratorAge` and ESM `EventCount`/`ErrorCount`, provisioned-concurrency
+  metrics, and function URL request metrics (design Phase 4 and the pilot
+  catalogue's P1/P2 rows).
+  `Resource`/`ExecutedVersion` dimensions on the P0 series.
+- The web Lambda Monitor tab and its BFF `/_metrics` allowlist endpoint
+  (design "Web UI plan" / Phase 3) — deferred because a web UI agent was
+  already active on #1104 in the same working tree; no `web/` changes are in
+  this phase.
+- The 300s/3600s resolution rollup ladder and its 7d/30d retention tiers
+  (design "Access patterns, retention, and graph time spans") — phase 1 keeps
+  only the 60s/1h tier, which is sufficient for `GetMetricStatistics`/
+  `GetMetricData`/alarm evaluation over the ranges those APIs are exercised
+  with today; the ladder is UI-chart-scale work with no phase-1 consumer.
+- The generic versioned-K/V persistence path for `WALStore`/`-tags nosqlite`
+  (`metrics:series:v1`/`metrics:buckets:v1`) — those configurations currently
+  get correct, fully in-memory automatic metrics with no restart continuity.
+- Migrating `PutMetricData`'s existing storage onto `internal/metrics` (the
+  design's "same store" option) — phase 1 took "read-through" instead; a
+  future phase could still converge them once the read-through's operational
+  cost (double query per API call) is measured against real cardinality.
+- The additive-delta, generation-counted active/persisted merge the design's
+  "Write, read, failure, and shutdown semantics" section sketches — phase 1
+  instead makes each flush a full-value replace (see `internal/metrics/active.go`'s
+  `activeBucket` doc comment), which is simpler to prove race-free at the cost
+  of the persisted backend never seeing a smaller total than the largest flush
+  so far for a bucket (irrelevant in practice since a bucket only grows).
 
 ## Implementation phases
 

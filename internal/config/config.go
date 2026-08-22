@@ -81,6 +81,31 @@ const (
 	RDSModeLive RDSMode = "live"
 )
 
+// ServiceMetricsMode controls whether emulated services automatically record
+// AWS-native CloudWatch service metrics (docs/plans/service-metrics-platform.md).
+type ServiceMetricsMode string
+
+const (
+	// ServiceMetricsAuto follows whether the CloudWatch service is enabled.
+	// OVERCAST_SERVICES no longer gates which services are wired (every
+	// service is always wired — see TestLoad_ignoresRemovedServicesVar), so
+	// CloudWatch is always available and auto is currently equivalent to
+	// enabled. The knob is kept distinct from enabled/disabled so a future
+	// per-service gate can change auto's meaning without a new env var.
+	ServiceMetricsAuto ServiceMetricsMode = "auto"
+
+	// ServiceMetricsEnabled explicitly turns on automatic collection even in
+	// a configuration where auto would not (an internal monitor/debug use
+	// case; the plan's `disabled AWS service / enabled collection` cell).
+	ServiceMetricsEnabled ServiceMetricsMode = "enabled"
+
+	// ServiceMetricsDisabled explicitly turns off automatic collection. AWS
+	// CloudWatch's own PutMetricData/query/alarm behavior is unaffected —
+	// only the recorder that automatically observes Lambda/SQS/etc.
+	// invocation outcomes is skipped.
+	ServiceMetricsDisabled ServiceMetricsMode = "disabled"
+)
+
 // DefaultEFSNFSImage is the digest-pinned NFS-Ganesha image used for
 // mount-target exports when OVERCAST_EFS_NFS is on. Pinned rather than
 // floating so an upstream retag cannot change what a mount target runs.
@@ -316,6 +341,15 @@ type Config struct {
 	// the tens of seconds a real engine takes, at the cost of nothing listening
 	// on the endpoint it reports.
 	RDSMode RDSMode
+
+	// ServiceMetrics controls whether emulated services automatically record
+	// the AWS-native CloudWatch metrics they publish (Lambda Invocations,
+	// Errors, Duration, ... — docs/plans/service-metrics-platform.md).
+	// Defaults to `auto`, which today means enabled (see ServiceMetricsAuto).
+	// This is Overcast's own internal-subsystem knob, not an AWS service
+	// name, so it is not, and must not become, a value accepted by the
+	// retired OVERCAST_SERVICES variable.
+	ServiceMetrics ServiceMetricsMode
 
 	// SigV4Validate enables SigV4 signature verification.
 	SigV4Validate bool
@@ -996,6 +1030,15 @@ func (c *Config) TLSEnabled() bool {
 	return c.TLSAuto() || (c.TLSCertFile != "" && c.TLSKeyFile != "")
 }
 
+// MetricsCollectionEnabled reports whether automatic service-metric recording
+// (docs/plans/service-metrics-platform.md) should run. `disabled` is the only
+// value that turns it off; `auto` and `enabled` both turn it on today because
+// CloudWatch is always wired (OVERCAST_SERVICES no longer gates services) —
+// see ServiceMetricsAuto's doc comment.
+func (c *Config) MetricsCollectionEnabled() bool {
+	return c.ServiceMetrics != ServiceMetricsDisabled
+}
+
 // TLSAuto returns true when OVERCAST_TLS=auto: the server certificate is
 // minted from Overcast's local CA at startup.
 func (c *Config) TLSAuto() bool {
@@ -1195,6 +1238,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
 //	OVERCAST_EFS_MODE                  live    (mock | live; live is inert without Docker)
 //	OVERCAST_RDS_MODE                  live    (mock | live; mock starts no engine container)
+//	OVERCAST_SERVICE_METRICS           auto    (auto | enabled | disabled; internal subsystem, not
+//	                                           an AWS service name — see docs/plans/service-metrics-platform.md)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
@@ -1505,6 +1550,15 @@ func Load() (*Config, error) {
 	cfg.RDSMode = RDSMode(rawRDSMode)
 	if cfg.RDSMode != RDSModeMock && cfg.RDSMode != RDSModeLive {
 		return nil, fmt.Errorf("config: OVERCAST_RDS_MODE %q is invalid (expected mock or live)", rawRDSMode)
+	}
+
+	// Service metrics collection (docs/plans/service-metrics-platform.md).
+	// auto by default; auto and enabled currently behave identically because
+	// CloudWatch is always wired (OVERCAST_SERVICES is inert).
+	rawServiceMetrics := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_SERVICE_METRICS", string(ServiceMetricsAuto))))
+	cfg.ServiceMetrics = ServiceMetricsMode(rawServiceMetrics)
+	if cfg.ServiceMetrics != ServiceMetricsAuto && cfg.ServiceMetrics != ServiceMetricsEnabled && cfg.ServiceMetrics != ServiceMetricsDisabled {
+		return nil, fmt.Errorf("config: OVERCAST_SERVICE_METRICS %q is invalid (expected auto, enabled, or disabled)", rawServiceMetrics)
 	}
 
 	// SigV4 validation

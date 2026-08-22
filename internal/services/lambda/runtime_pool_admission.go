@@ -173,6 +173,9 @@ func (p *InstancePool) admit(ctx context.Context, fn *Function) error {
 		// about the host, not the application.
 		if inFlight < perFunction {
 			p.checkedOut[fn.Name] = inFlight + 1
+			if p.concurrencyObserver != nil {
+				p.concurrencyObserver(fn.Name, inFlight+1)
+			}
 			p.mu.Unlock()
 			return nil
 		}

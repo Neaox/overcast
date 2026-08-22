@@ -28,6 +28,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/hostbridge/trust"
 	"github.com/Neaox/overcast/internal/inithooks"
+	"github.com/Neaox/overcast/internal/metrics"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -512,6 +513,21 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 
 	prof.mark("RegisterRoutes for enabled services")
+
+	// ---- Service metrics substrate (docs/plans/service-metrics-platform.md) ----
+	// Lambda pilot: emulated services automatically publish the AWS-native
+	// CloudWatch metrics real AWS publishes, so alarms configured against
+	// them can actually fire. No I/O in construction (mirrors cloudwatch.New's
+	// own contract) — collection only touches the store from its background
+	// flush/sweep loops. auto and enabled currently behave identically because
+	// CloudWatch is always wired; see config.ServiceMetricsAuto.
+	var svcMetrics *metrics.Service
+	if cfg.MetricsCollectionEnabled() {
+		svcMetrics = metrics.NewRecorder(store, clk, logger)
+		cloudwatchSvc.InitMetrics(svcMetrics)
+		lambdaSvc.InitMetrics(svcMetrics)
+		prof.mark("  new: metrics")
+	}
 
 	// ---- Event notification wiring ----------------------------------------
 	// S3 notifications → SQS + SNS + Lambda + EventBridge: connect after all
@@ -1068,6 +1084,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			t0 := time.Now()
 			bus.Stop()
 			logger.Info("event bus stopped", zap.Duration("elapsed", time.Since(t0)))
+			// Stop the service-metrics recorder after every service that might
+			// still call Observe (Lambda in particular) has stopped, so its
+			// final bounded Flush sees no more concurrent writers.
+			if svcMetrics != nil {
+				t0 := time.Now()
+				svcMetrics.Stop(ctx)
+				logger.Info("service metrics recorder stopped", zap.Duration("elapsed", time.Since(t0)))
+			}
 			// Close other handles (e.g. SMTP listener).
 			for _, fn := range cleanups {
 				fn()
