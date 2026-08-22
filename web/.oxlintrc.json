@@ -1,0 +1,243 @@
+// SPIKE ONLY — see https://github.com/Neaox/overcast/issues/1330.
+//
+// This config is a rule-for-rule mirror of `eslint.config.js` so that
+// `pnpm run lint:oxlint` can be diffed against `pnpm run lint`. ESLint remains
+// the CI gate; nothing here is wired into `pnpm run lint`, `pnpm run build`, or
+// any workflow.
+//
+// Mapping conventions used throughout:
+//   `@typescript-eslint/x`  -> `typescript/x`
+//   `react-hooks/x`         -> `react/x`      (oxlint ships the React Compiler
+//                                              rules under the react plugin)
+//   `react-refresh/only-export-components` -> `react/only-export-components`
+//   `classnames/x`, `@tanstack/query/x` -> JS plugins, same rule names
+//
+// Rules enabled in eslint.config.js with NO oxlint equivalent (deliberately
+// dropped here; called out in the #1330 report):
+//   no-octal                            — octal literals are a syntax error in
+//                                         ESM/strict mode, so unreachable here
+//   react-hooks/component-hook-factories
+//   react-hooks/config                  — validates the plugin's own config
+//   react-hooks/gating                  — memoization feature-gating, unused here
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+
+  // `plugins` REPLACES the default set (typescript + unicorn + oxc). We list
+  // only the two whose rules eslint.config.js actually enables, so oxlint does
+  // not report findings ESLint never would.
+  "plugins": ["typescript", "react"],
+
+  // Nothing on by category — every rule below is enabled explicitly, mirroring
+  // the resolved `eslint --print-config` output (125 rules under ESLint 10).
+  "categories": {
+    "correctness": "off"
+  },
+
+  // ESLint v9 config API-compatible plugins. Aliased so the rule names stay
+  // byte-identical to the ESLint ones (suppression comments and docs keep
+  // reading the same).
+  "jsPlugins": [
+    {
+      "name": "classnames",
+      "specifier": "./eslint-plugin-classnames/index.js"
+    },
+    {
+      "name": "@tanstack/query",
+      "specifier": "@tanstack/eslint-plugin-query"
+    }
+  ],
+
+  // `globalIgnores(["dist"])`, plus: eslint.config.js scopes its only config
+  // object to `**/*.{ts,tsx}`, so plain JS files match no config and are linted
+  // with zero rules. oxlint lints them by default, so exclude them for parity.
+  "ignorePatterns": ["dist", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
+
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+
+  "rules": {
+    // ---- eslint core (js.configs.recommended) ----------------------------
+    "for-direction": "error",
+    "no-array-constructor": "error",
+    "no-async-promise-executor": "error",
+    "no-case-declarations": "error",
+    "no-compare-neg-zero": "error",
+    "no-cond-assign": "error",
+    "no-constant-binary-expression": "error",
+    "no-constant-condition": "error",
+    "no-control-regex": "error",
+    "no-debugger": "error",
+    "no-delete-var": "error",
+    "no-dupe-else-if": "error",
+    "no-duplicate-case": "error",
+    "no-empty": "error",
+    "no-empty-character-class": "error",
+    "no-empty-pattern": "error",
+    "no-empty-static-block": "error",
+    "no-ex-assign": "error",
+    "no-extra-boolean-cast": "error",
+    "no-fallthrough": "error",
+    "no-global-assign": "error",
+    "no-invalid-regexp": "error",
+    "no-irregular-whitespace": "error",
+    "no-loss-of-precision": "error",
+    "no-misleading-character-class": "error",
+    "no-nonoctal-decimal-escape": "error",
+    "no-prototype-builtins": "error",
+    "no-regex-spaces": "error",
+    "no-self-assign": "error",
+    "no-shadow-restricted-names": "error",
+    "no-sparse-arrays": "error",
+    "no-unassigned-vars": "error",
+    "no-unexpected-multiline": "error",
+    "no-unsafe-finally": "error",
+    "no-unsafe-optional-chaining": "error",
+    "no-unused-expressions": "error",
+    "no-unused-labels": "error",
+    "no-unused-private-class-members": "error",
+    "no-useless-backreference": "error",
+    "no-useless-catch": "error",
+    "no-useless-assignment": "error",
+    "no-useless-escape": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "preserve-caught-error": "error",
+    "prefer-rest-params": "error",
+    "prefer-spread": "error",
+    "require-yield": "error",
+    "use-isnan": "error",
+    "valid-typeof": "error",
+
+    // oxlint's `no-unused-vars` is TypeScript-aware, so it stands in for
+    // `@typescript-eslint/no-unused-vars` (same for no-array-constructor and
+    // no-unused-expressions above). Options carried over verbatim.
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
+
+    // ---- typescript-eslint recommendedTypeChecked ------------------------
+    // Rules marked (TA) need `--type-aware` (oxlint-tsgolint + TypeScript 7).
+    "typescript/await-thenable": "error",
+    "typescript/ban-ts-comment": "error",
+    "typescript/no-array-delete": "error",
+    "typescript/no-duplicate-enum-values": "error",
+    "typescript/no-duplicate-type-constituents": "error",
+    "typescript/no-empty-object-type": "error",
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-extra-non-null-assertion": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-implied-eval": "error",
+    "typescript/no-misused-new": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-non-null-asserted-optional-chain": "error",
+    "typescript/no-redundant-type-constituents": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-this-alias": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-declaration-merging": "error",
+    "typescript/no-unsafe-enum-comparison": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "typescript/no-unsafe-unary-minus": "error",
+    "typescript/no-wrapper-object-types": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/prefer-namespace-keyword": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/require-await": "error",
+    "typescript/restrict-plus-operands": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/triple-slash-reference": "error",
+    "typescript/unbound-method": "error",
+
+    // Explicit overrides from eslint.config.js — options carried verbatim.
+    "typescript/no-misused-promises": [
+      "error",
+      { "checksVoidReturn": { "arguments": false, "attributes": false, "properties": false } }
+    ],
+    "typescript/no-unnecessary-condition": ["warn", { "allowConstantLoopConditions": true }],
+    "typescript/consistent-type-imports": [
+      "warn",
+      { "prefer": "type-imports", "fixStyle": "inline-type-imports" }
+    ],
+
+    // Explicitly off in eslint.config.js — repeated here so the intent survives
+    // a future `categories` change.
+    "typescript/no-unsafe-assignment": "off",
+    "typescript/no-unsafe-argument": "off",
+    "typescript/no-unsafe-member-access": "off",
+    "typescript/no-unsafe-call": "off",
+    "typescript/no-unsafe-return": "off",
+    "typescript/no-base-to-string": "off",
+
+    // ---- React Compiler rules (eslint-plugin-react-hooks v7 recommended) --
+    "react/error-boundaries": "error",
+    "react/exhaustive-deps": "warn",
+    "react/globals": "error",
+    "react/immutability": "error",
+    "react/preserve-manual-memoization": "error",
+    "react/purity": "error",
+    "react/refs": "error",
+    "react/rules-of-hooks": "error",
+    "react/set-state-in-effect": "error",
+    "react/set-state-in-render": "error",
+    "react/static-components": "error",
+    "react/unsupported-syntax": "warn",
+    "react/use-memo": "error",
+    // `react-hooks/incompatible-library` is off in eslint.config.js
+    // (TanStack Virtual); same here.
+    "react/incompatible-library": "off",
+
+    // ---- react-refresh ----------------------------------------------------
+    // `allowConstantExport` comes from reactRefresh.configs.vite; oxlint
+    // defaults it to false, so it has to be spelled out here.
+    "react/only-export-components": ["error", { "allowConstantExport": true }],
+
+    // ---- local plugin: web/eslint-plugin-classnames (JS plugin) -----------
+    "classnames/no-template-literal": "warn",
+    "classnames/no-concatenation": "warn",
+    "classnames/no-bare-ternary": "warn",
+    "classnames/no-redundant-cn": "warn",
+    "classnames/no-dup-ternary": "warn",
+    "classnames/prefer-cva": "warn",
+    "classnames/no-local-detail-row": "warn",
+    "classnames/prefer-button-busy": "warn",
+    "classnames/no-raw-spinner-in-content": "warn",
+    "classnames/prefer-shared-formatter": "warn",
+    "classnames/prefer-use-resource-mutation": "warn",
+    "classnames/no-duplicate-class-cluster": "warn",
+
+    // ---- @tanstack/eslint-plugin-query (JS plugin) ------------------------
+    "@tanstack/query/exhaustive-deps": "error",
+    "@tanstack/query/infinite-query-property-order": "error",
+    "@tanstack/query/mutation-property-order": "error",
+    "@tanstack/query/no-rest-destructuring": "warn",
+    "@tanstack/query/no-unstable-deps": "error",
+    "@tanstack/query/no-void-query-fn": "error",
+    "@tanstack/query/prefer-query-options": "warn",
+    "@tanstack/query/stable-query-client": "error"
+  },
+
+  "overrides": [
+    {
+      // TanStack Router route files export `Route` alongside components.
+      "files": ["src/routes/**/*.tsx"],
+      "rules": { "react/only-export-components": "off" }
+    },
+    {
+      // Test helpers export render utilities from one module on purpose.
+      "files": ["src/test/**/*.tsx"],
+      "rules": { "react/only-export-components": "off" }
+    }
+  ]
+}
