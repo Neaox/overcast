@@ -130,6 +130,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// about to silently ignore. See preflight_ephemeral.go.
 	warnIfExistingDatabaseIgnored(cfg, logger)
 	logListenResolution(logger, cfg)
+	logHostnameAlias(logger, cfg)
 
 	// Whether OVERCAST_HOSTNAME's subdomains resolve on this host is a
 	// property of the host's resolver, not of Overcast, and it breaks
@@ -726,6 +727,28 @@ func logListenResolution(logger *zap.Logger, cfg *config.Config) {
 	logger.Info(
 		fmt.Sprintf("listening on %s — set OVERCAST_LISTEN to change this", addrs),
 		zap.Strings("addrs", cfg.Hosts),
+	)
+}
+
+// logHostnameAlias names, once at startup, which LocalStack-compatibility
+// environment variable (currently only LOCALSTACK_HOST, #1190) supplied or
+// confirmed OVERCAST_HOSTNAME, so an operator migrating a LocalStack compose
+// file line-by-line can see their setting was recognised rather than
+// silently ignored. Logs nothing when cfg.HostnameAliasSource is empty —
+// which covers both "no alias variable was set" and "OVERCAST_HOSTNAME alone
+// was set" — mirroring logListenResolution's "only say something when there
+// is something to say" shape for the auto-detected case.
+func logHostnameAlias(logger *zap.Logger, cfg *config.Config) {
+	if cfg.HostnameAliasSource == "" {
+		return
+	}
+	logger.Info(
+		fmt.Sprintf(
+			"%s recognised as a LocalStack-compatibility alias for OVERCAST_HOSTNAME=%s",
+			cfg.HostnameAliasSource, cfg.Hostname,
+		),
+		zap.String("hostname", cfg.Hostname),
+		zap.String("hostnameAliasSource", cfg.HostnameAliasSource),
 	)
 }
 

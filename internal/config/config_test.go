@@ -1410,6 +1410,130 @@ func TestLoad_hostnameWithTLS(t *testing.T) {
 	}
 }
 
+// TestLoad_localstackHostAlias_aloneIsUsed verifies #1190's core case:
+// LOCALSTACK_HOST alone (OVERCAST_HOSTNAME unset) supplies Hostname, and the
+// alias source is recorded so the startup log line can name it.
+func TestLoad_localstackHostAlias_aloneIsUsed(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LOCALSTACK_HOST", "localhost.localstack.cloud")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "localhost.localstack.cloud" {
+		t.Errorf("Hostname: expected localhost.localstack.cloud, got %q", cfg.Hostname)
+	}
+	if cfg.HostnameAliasSource != "LOCALSTACK_HOST" {
+		t.Errorf("HostnameAliasSource: expected LOCALSTACK_HOST, got %q", cfg.HostnameAliasSource)
+	}
+}
+
+// TestLoad_localstackHostAlias_portSuffix verifies LOCALSTACK_HOST's
+// documented "hostname[:port]" format (LocalStack's own example is
+// "localhost.localstack.cloud:4566"): the hostname part maps to
+// OVERCAST_HOSTNAME and a port part matching the configured OVERCAST_PORT is
+// accepted (not an error), rather than being rejected merely for being
+// present.
+func TestLoad_localstackHostAlias_portSuffix(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LOCALSTACK_HOST", "localhost.localstack.cloud:4566")
+	t.Setenv("OVERCAST_PORT", "4566")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "localhost.localstack.cloud" {
+		t.Errorf("Hostname: expected localhost.localstack.cloud (port suffix stripped), got %q", cfg.Hostname)
+	}
+	if cfg.HostnameAliasSource != "LOCALSTACK_HOST" {
+		t.Errorf("HostnameAliasSource: expected LOCALSTACK_HOST, got %q", cfg.HostnameAliasSource)
+	}
+}
+
+// TestLoad_localstackHostAlias_portConflictFails verifies a LOCALSTACK_HOST
+// port suffix that disagrees with OVERCAST_PORT fails startup rather than
+// silently overriding OVERCAST_PORT or being silently discarded.
+func TestLoad_localstackHostAlias_portConflictFails(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("LOCALSTACK_HOST", "localhost.localstack.cloud:4566")
+	t.Setenv("OVERCAST_PORT", "9000")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when LOCALSTACK_HOST's port disagrees with OVERCAST_PORT, got none")
+	}
+	for _, want := range []string{"LOCALSTACK_HOST", "OVERCAST_PORT", "4566", "9000"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_localstackHostAlias_bothSameValueIsFine verifies OVERCAST_HOSTNAME
+// and LOCALSTACK_HOST both set to the same hostname is accepted (the shape a
+// compose file migrated line-by-line from LocalStack, rather than cleaned
+// up, naturally produces) — the alias source is still recorded, since
+// LOCALSTACK_HOST was recognised and confirmed, not merely ignored.
+func TestLoad_localstackHostAlias_bothSameValueIsFine(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "overcast.internal")
+	t.Setenv("LOCALSTACK_HOST", "overcast.internal")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "overcast.internal" {
+		t.Errorf("Hostname: expected overcast.internal, got %q", cfg.Hostname)
+	}
+	if cfg.HostnameAliasSource != "LOCALSTACK_HOST" {
+		t.Errorf("HostnameAliasSource: expected LOCALSTACK_HOST, got %q", cfg.HostnameAliasSource)
+	}
+}
+
+// TestLoad_localstackHostAlias_conflictFails verifies OVERCAST_HOSTNAME and
+// LOCALSTACK_HOST set to different hostnames fails startup naming both,
+// rather than silently preferring one — the same uniform conflict rule
+// resolveListen applies to a leftover OVERCAST_HOST.
+func TestLoad_localstackHostAlias_conflictFails(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "overcast.internal")
+	t.Setenv("LOCALSTACK_HOST", "localhost.localstack.cloud")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error when OVERCAST_HOSTNAME and LOCALSTACK_HOST disagree, got none")
+	}
+	for _, want := range []string{"OVERCAST_HOSTNAME", "overcast.internal", "LOCALSTACK_HOST", "localhost.localstack.cloud"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestLoad_localstackHostAlias_unsetLeavesHostnameAsBefore verifies that
+// when LOCALSTACK_HOST is not set at all, behaviour is unchanged: Hostname
+// comes from OVERCAST_HOSTNAME alone (or defaults empty), and
+// HostnameAliasSource stays empty — no alias was recognised because none was
+// present.
+func TestLoad_localstackHostAlias_unsetLeavesHostnameAsBefore(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOSTNAME", "overcast.internal")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hostname != "overcast.internal" {
+		t.Errorf("Hostname: expected overcast.internal, got %q", cfg.Hostname)
+	}
+	if cfg.HostnameAliasSource != "" {
+		t.Errorf("HostnameAliasSource: expected empty when LOCALSTACK_HOST is unset, got %q", cfg.HostnameAliasSource)
+	}
+}
+
 func TestLoad_eksModeDefault(t *testing.T) {
 	clearEnv(t)
 
@@ -1814,7 +1938,7 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_PROTOCOL_STRICT", "OVERCAST_LOG_LEVEL", "OVERCAST_SHUTDOWN_TIMEOUT",
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_DEBUG", "OVERCAST_TLS", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
-		"OVERCAST_HOSTNAME", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		"OVERCAST_HOSTNAME", "LOCALSTACK_HOST", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
 		// The mode defaults these assert are only defaults if the developer
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",

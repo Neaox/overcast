@@ -182,7 +182,28 @@ type Config struct {
 	// RDS Endpoint.Address). When empty, defaults to "localhost".
 	// Set OVERCAST_HOSTNAME when Overcast runs in Docker Compose alongside
 	// app containers that need to reach it by its service name.
+	//
+	// LocalStack's LOCALSTACK_HOST is accepted as a compatibility alias
+	// (#1190): it is the true analogue of this field (unlike OVERCAST_HOST,
+	// the pre-#870 name for the *bind* address, which LOCALSTACK_HOST was
+	// never equivalent to). This is a deliberate exception to Overcast's alpha
+	// "no aliases" policy — that policy governs Overcast's own past names
+	// (like the removed OVERCAST_HOST), not another project's documented
+	// variables; aliasing LocalStack's is product value, since Overcast is
+	// meant to be a drop-in replacement for it. See resolveHostnameAlias for
+	// the parsing and conflict rules, and HostnameAliasSource for how a
+	// startup log line reports which alias (if any) supplied the value.
 	Hostname string
+
+	// HostnameAliasSource names the LocalStack-compatibility environment
+	// variable that supplied or confirmed Hostname (currently only
+	// "LOCALSTACK_HOST"), or is empty when Hostname came from OVERCAST_HOSTNAME
+	// alone, or from neither being set. Set whenever the alias variable was
+	// present and accepted — including when both it and OVERCAST_HOSTNAME
+	// were set to the same value — so the startup log line
+	// (logHostnameAlias in cmd/overcast/cmd_serve.go) can tell the operator
+	// their LocalStack-style setting was recognised.
+	HostnameAliasSource string
 
 	// SplitHorizonHosts are extra hostnames that resolve to 127.0.0.1 in public
 	// DNS and are remapped to Overcast's address inside containers Overcast
@@ -961,6 +982,95 @@ func resolveListen(defaultListen string) (raw string, explicit bool, err error) 
 	return defaultListen, false, nil
 }
 
+// resolveHostnameAlias determines Config.Hostname from OVERCAST_HOSTNAME and
+// LocalStack's LOCALSTACK_HOST (#1190). LocalStack's docs describe
+// LOCALSTACK_HOST as "the hostname (and optional port) under which the
+// LocalStack gateway is available" and say it is used to construct
+// resource URLs returned to clients — exactly the role Hostname plays here,
+// and the reason #870 called it the true analogue of OVERCAST_HOSTNAME
+// (unlike the similarly-named but semantically opposite OVERCAST_HOST,
+// which controlled the bind address and has since been removed — see
+// resolveListen). See
+// https://docs.localstack.cloud/aws/capabilities/networking/accessing-endpoint-url/
+// and https://docs.localstack.cloud/aws/capabilities/config/configuration/.
+//
+// Aliasing it is a deliberate LocalStack-compatibility shim, distinct from
+// Overcast's own alpha "no aliases for removed settings" policy: that policy
+// governs Overcast's own past names (OVERCAST_HOST's removal), not another
+// project's documented variables. Overcast is meant to be a drop-in
+// replacement for LocalStack, so honouring its documented configuration is
+// product value, not scope creep.
+//
+// LOCALSTACK_HOST's value format is "hostname[:port]" — LocalStack's own
+// example is "localhost.localstack.cloud:4566", bundling the port into the
+// same variable Overcast splits into OVERCAST_HOSTNAME and OVERCAST_PORT.
+// Only the hostname part maps to Hostname; the port part, when present,
+// must agree with resolvedPort (the already-resolved OVERCAST_PORT) or
+// startup fails — the port is never silently discarded, and never silently
+// overrides the configured port.
+//
+// Conflict rule, uniform with resolveListen/OVERCAST_HOST and the rest of
+// the LocalStack alias table: both variables present and disagreeing fails
+// startup naming both. Never silently prefer one. The same value in both is
+// fine — that is the expected shape of a compose file migrated line by line
+// from LocalStack rather than cleaned up.
+func resolveHostnameAlias(resolvedPort int) (hostname string, aliasSource string, err error) {
+	overcastHostname := os.Getenv("OVERCAST_HOSTNAME")
+	localstackHost, lsSet := os.LookupEnv("LOCALSTACK_HOST")
+	if !lsSet || localstackHost == "" {
+		return overcastHostname, "", nil
+	}
+
+	lsHostname, lsPort, err := splitHostnameAliasPort(localstackHost)
+	if err != nil {
+		return "", "", fmt.Errorf("config: LOCALSTACK_HOST %q is not a valid hostname[:port]: %w", localstackHost, err)
+	}
+
+	if overcastHostname != "" && overcastHostname != lsHostname {
+		return "", "", fmt.Errorf(
+			"config: OVERCAST_HOSTNAME=%q and LOCALSTACK_HOST=%q disagree (LOCALSTACK_HOST's hostname "+
+				"part is %q) — LOCALSTACK_HOST is accepted as a compatibility alias for OVERCAST_HOSTNAME, "+
+				"but they must name the same hostname when both are set; set only one, or set both to the "+
+				"same value",
+			overcastHostname, localstackHost, lsHostname)
+	}
+
+	if lsPort != "" {
+		port, convErr := strconv.Atoi(lsPort)
+		if convErr != nil || port < 1 || port > 65535 {
+			return "", "", fmt.Errorf("config: LOCALSTACK_HOST %q names an invalid port %q", localstackHost, lsPort)
+		}
+		if port != resolvedPort {
+			return "", "", fmt.Errorf(
+				"config: LOCALSTACK_HOST=%q names port %d, which conflicts with OVERCAST_PORT=%d — "+
+					"LOCALSTACK_HOST's port must match OVERCAST_PORT when both are set, or be omitted from "+
+					"LOCALSTACK_HOST entirely",
+				localstackHost, port, resolvedPort)
+		}
+	}
+
+	return lsHostname, "LOCALSTACK_HOST", nil
+}
+
+// splitHostnameAliasPort splits a LocalStack-style "hostname[:port]" value
+// into its hostname and (possibly empty) port parts. A bare IP literal —
+// IPv4, or unbracketed IPv6 such as "::1" — is returned whole as the
+// hostname with no port, since net.SplitHostPort cannot parse either without
+// bracket notation and neither is ambiguous with a port suffix here.
+func splitHostnameAliasPort(value string) (hostname, port string, err error) {
+	if net.ParseIP(value) != nil {
+		return value, "", nil
+	}
+	if !strings.Contains(value, ":") {
+		return value, "", nil
+	}
+	h, p, splitErr := net.SplitHostPort(value)
+	if splitErr != nil {
+		return "", "", fmt.Errorf("expected hostname[:port], e.g. localhost.localstack.cloud:4566: %w", splitErr)
+	}
+	return h, p, nil
+}
+
 // WildcardDNSDomains are the public domains whose every subdomain resolves to
 // 127.0.0.1, so an SDK-generated hostname reaches Overcast with no hosts-file
 // edit. They are "split horizon": inside containers Overcast starts, the same
@@ -1206,7 +1316,11 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_LISTEN                    0.0.0.0 (comma-separated for several; bind address —
 //	                                           OVERCAST_HOST was renamed to this and removed, see #870)
 //	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs; the actual
-//	                                           analogue of LocalStack's LOCALSTACK_HOST)
+//	                                           analogue of LocalStack's LOCALSTACK_HOST, which is
+//	                                           accepted as a compatibility alias — see
+//	                                           resolveHostnameAlias (#1190); a leftover value that
+//	                                           disagrees with OVERCAST_HOSTNAME or OVERCAST_PORT
+//	                                           fails startup naming both)
 //	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
 //	                                           inside containers, comma-separated)
 //	OVERCAST_PORT                      4566
@@ -1365,8 +1479,24 @@ func Load() (*Config, error) {
 		cfg.ListenAutoReason = listenAutoReason
 	}
 
-	// Hostname (external — for client-facing URLs)
-	cfg.Hostname = os.Getenv("OVERCAST_HOSTNAME")
+	// Port — resolved ahead of Hostname below, since LOCALSTACK_HOST's
+	// optional ":port" suffix (#1190) is checked against it.
+	portStr := envOr("OVERCAST_PORT", "4566")
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("config: OVERCAST_PORT %q is not a valid port number", portStr)
+	}
+	cfg.Port = port
+
+	// Hostname (external — for client-facing URLs) — OVERCAST_HOSTNAME, with
+	// LocalStack's LOCALSTACK_HOST accepted as a compatibility alias; see
+	// resolveHostnameAlias for the parsing and conflict rules (#1190).
+	hostname, hostnameAliasSource, err := resolveHostnameAlias(cfg.Port)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Hostname = hostname
+	cfg.HostnameAliasSource = hostnameAliasSource
 
 	// Split-horizon hostnames (extra names remapped to Overcast inside containers)
 	for _, host := range strings.Split(os.Getenv("OVERCAST_SPLIT_HORIZON_HOSTS"), ",") {
@@ -1374,14 +1504,6 @@ func Load() (*Config, error) {
 			cfg.SplitHorizonHosts = append(cfg.SplitHorizonHosts, host)
 		}
 	}
-
-	// Port
-	portStr := envOr("OVERCAST_PORT", "4566")
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
-		return nil, fmt.Errorf("config: OVERCAST_PORT %q is not a valid port number", portStr)
-	}
-	cfg.Port = port
 
 	// Data directory — resolved before the state backend below, since
 	// OVERCAST_STATE=auto inspects it (mountpoint check, existing-database
