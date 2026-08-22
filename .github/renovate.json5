@@ -189,6 +189,32 @@
       groupName: 'web dependencies (non-major)',
     },
     {
+      // TypeScript 7 is the native compiler rewrite, and typescript-eslint
+      // cannot run under it: TS 7's package entry point exports only
+      // `version`/`versionMajorMinor` (the legacy compiler API moved behind
+      // `typescript/unstable/*`), so @typescript-eslint/typescript-estree
+      // throws `Cannot read properties of undefined (reading 'Cjs')` on
+      // `ts.Extension.Cjs` at module load and `pnpm run lint` dies before it
+      // lints a file. Upstream closed typescript-eslint#12518 as not planned —
+      // there is no TS 7 API to build against yet — and tracks the work in
+      // typescript-eslint#10940, targeted at TypeScript 7.1.
+      //
+      // This is a one-package hold, not a verdict on TS 7: on the #1259 branch
+      // with typescript 7.0.2 installed, `typecheck`, the 1,395-test vitest
+      // suite and the production vite build all passed. Only the linter fell
+      // over. The alternative — a second aliased TypeScript just for tsc —
+      // would put two compilers in the lockfile and have the linter type-check
+      // against a different compiler than the build, which is worse than
+      // waiting.
+      //
+      // Lift this the moment typescript-eslint publishes a release whose
+      // `typescript` peer range admits 7.x.
+      matchManagers: ['npm'],
+      matchPackageNames: ['typescript'],
+      allowedVersions: '<7',
+      description: 'Hold TypeScript below 7 until typescript-eslint supports it (#1259)',
+    },
+    {
       matchManagers: ['github-actions'],
       matchUpdateTypes: ['minor', 'patch', 'digest'],
       groupName: 'github actions (non-major)',
