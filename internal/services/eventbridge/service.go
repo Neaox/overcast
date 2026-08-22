@@ -289,21 +289,20 @@ func (t ebTarget) displayType() string {
 }
 
 func (s *Service) createEventBus(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name string `json:"Name"`
-	}
+	// Delegates to createEventBusTyped (typed_logic.go) so the legacy
+	// JSON1.0/1.1 path and the CBOR typed path share one implementation —
+	// the legacy copy previously re-implemented this inline and silently
+	// ignored Tags (#1196).
+	var req createEventBusRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	arn := s.busARN(r.Context(), req.Name)
-	bus := eventBus{Name: req.Name, ARN: arn}
-	b, _ := json.Marshal(bus)
-	if err := s.store.Set(r.Context(), nsBuses, serviceutil.RegionKey(s.region(r.Context()), req.Name), string(b)); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	resp, aerr := s.createEventBusTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	s.publish(r, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"EventBusArn": arn})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (s *Service) describeEventBus(w http.ResponseWriter, r *http.Request) {
@@ -421,54 +420,20 @@ func (s *Service) deleteEventBus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) putRule(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name         string `json:"Name"`
-		EventBusName string `json:"EventBusName"`
-		State        string `json:"State"`
-		Description  string `json:"Description"`
-		RoleARN      string `json:"RoleArn"`
-		EventPattern string `json:"EventPattern"`
-		ScheduleExpr string `json:"ScheduleExpression"`
-	}
+	// Delegates to putRuleTyped (typed_logic.go) so the legacy JSON1.0/1.1
+	// path and the CBOR typed path share one implementation — the legacy
+	// copy previously re-implemented this inline and silently ignored Tags
+	// (#1196).
+	var req putRuleRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.EventBusName == "" {
-		req.EventBusName = "default"
-	}
-	if req.State == "" {
-		req.State = "ENABLED"
-	}
-	if req.ScheduleExpr != "" {
-		if _, err := nextRuleFire(req.ScheduleExpr, s.clk.Now(), s.clk.Now()); err != nil {
-			protocol.WriteJSONError(w, r, scheduleValidationError(err))
-			return
-		}
-	}
-	arn := s.ruleARN(r.Context(), req.EventBusName, req.Name)
-	rule := ebRule{
-		Name:         req.Name,
-		ARN:          arn,
-		EventBusName: req.EventBusName,
-		State:        req.State,
-		Description:  req.Description,
-		RoleARN:      req.RoleARN,
-		EventPattern: req.EventPattern,
-		ScheduleExpr: req.ScheduleExpr,
-	}
-	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Name)
-	b, _ := json.Marshal(rule)
-	if err := s.store.Set(r.Context(), nsRules, key, string(b)); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	resp, aerr := s.putRuleTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if req.ScheduleExpr != "" {
-		now := s.clk.Now()
-		s.setLastFire(r.Context(), key, now)
-		s.setNextFire(r.Context(), key, req.ScheduleExpr, now, now)
-	}
-	s.publish(r, events.EventBridgeRuleCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"RuleArn": arn})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }
 
 func (s *Service) describeRule(w http.ResponseWriter, r *http.Request) {

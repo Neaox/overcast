@@ -14,7 +14,8 @@ import (
 )
 
 type createEventBusRequest struct {
-	Name string `json:"Name" cbor:"Name"`
+	Name string     `json:"Name" cbor:"Name"`
+	Tags []tagEntry `json:"Tags" cbor:"Tags"`
 }
 
 type createEventBusResponse struct {
@@ -64,13 +65,14 @@ type deleteEventBusRequest struct {
 }
 
 type putRuleRequest struct {
-	Name         string `json:"Name" cbor:"Name"`
-	EventBusName string `json:"EventBusName" cbor:"EventBusName"`
-	State        string `json:"State" cbor:"State"`
-	Description  string `json:"Description" cbor:"Description"`
-	RoleARN      string `json:"RoleArn" cbor:"RoleArn"`
-	EventPattern string `json:"EventPattern" cbor:"EventPattern"`
-	ScheduleExpr string `json:"ScheduleExpression" cbor:"ScheduleExpression"`
+	Name         string     `json:"Name" cbor:"Name"`
+	EventBusName string     `json:"EventBusName" cbor:"EventBusName"`
+	State        string     `json:"State" cbor:"State"`
+	Description  string     `json:"Description" cbor:"Description"`
+	RoleARN      string     `json:"RoleArn" cbor:"RoleArn"`
+	EventPattern string     `json:"EventPattern" cbor:"EventPattern"`
+	ScheduleExpr string     `json:"ScheduleExpression" cbor:"ScheduleExpression"`
+	Tags         []tagEntry `json:"Tags" cbor:"Tags"`
 }
 
 type putRuleResponse struct {
@@ -146,11 +148,26 @@ type putEventsResponse struct {
 }
 
 func (s *Service) createEventBusTyped(ctx context.Context, req *createEventBusRequest) (*createEventBusResponse, *protocol.AWSError) {
+	incoming := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		incoming[t.Key] = t.Value
+	}
+	// Validated before the bus is written (#1196) — the same ordering
+	// createStreamTyped uses (internal/services/kinesis/typed_logic.go), so a
+	// rejected create leaves no bus behind.
+	if aerr := serviceutil.ValidateTags(ebTagCfg, incoming); aerr != nil {
+		return nil, aerr
+	}
 	arn := s.busARN(ctx, req.Name)
 	bus := eventBus{Name: req.Name, ARN: arn}
 	b, _ := json.Marshal(bus)
 	if err := s.store.Set(ctx, nsBuses, serviceutil.RegionKey(s.region(ctx), req.Name), string(b)); err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	if len(incoming) > 0 {
+		if aerr := s.tagStore().Save(ctx, arn, incoming); aerr != nil {
+			return nil, aerr
+		}
 	}
 	s.publishCtx(ctx, events.EventBridgeBusCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
 	return &createEventBusResponse{EventBusArn: arn}, nil
@@ -239,6 +256,25 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 		}
 	}
 	arn := s.ruleARN(ctx, req.EventBusName, req.Name)
+	// PutRule's tags merge with whatever the rule already carries (AWS: "the
+	// tags you specify ... are merged with any existing tags"), the same
+	// semantic serviceutil.ApplyStoreTags already implements. Validated
+	// against the merged set before the rule record is written (#1196), so a
+	// rejected tag set leaves the existing rule untouched.
+	existingTags, aerr := s.tagStore().Load(ctx, arn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	merged := make(map[string]string, len(existingTags)+len(req.Tags))
+	for k, v := range existingTags {
+		merged[k] = v
+	}
+	for _, t := range req.Tags {
+		merged[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(ebTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
 	rule := ebRule{
 		Name:         req.Name,
 		ARN:          arn,
@@ -253,6 +289,11 @@ func (s *Service) putRuleTyped(ctx context.Context, req *putRuleRequest) (*putRu
 	b, _ := json.Marshal(rule)
 	if err := s.store.Set(ctx, nsRules, key, string(b)); err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	if len(merged) > 0 {
+		if aerr := s.tagStore().Save(ctx, arn, merged); aerr != nil {
+			return nil, aerr
+		}
 	}
 	if req.ScheduleExpr != "" {
 		now := s.clk.Now()

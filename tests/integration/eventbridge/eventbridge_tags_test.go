@@ -27,6 +27,117 @@ func ebPutTagRule(t *testing.T, srv *helpers.TestServer, name string) string {
 	return out.RuleArn
 }
 
+// TestEventBridgePutRule_tagsAppliedAtCreate: Tags passed to PutRule (issue
+// #1196, Axis B) must be stored and readable immediately, without a
+// follow-up TagResource call.
+func TestEventBridgePutRule_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ebCall(t, srv, "PutRule", map[string]any{
+		"Name":         "tagged-at-create",
+		"EventPattern": `{"source":["test"]}`,
+		"Tags":         []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		RuleArn string `json:"RuleArn"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+
+	list := ebCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": out.RuleArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var tagsOut struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &tagsOut)
+	if len(tagsOut.Tags) != 1 || tagsOut.Tags[0].Key != "env" || tagsOut.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", tagsOut.Tags)
+	}
+}
+
+// TestEventBridgePutRule_invalidTagRejected: an invalid tag passed to PutRule
+// must be rejected, not silently dropped.
+func TestEventBridgePutRule_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ebCall(t, srv, "PutRule", map[string]any{
+		"Name":         "rejected-at-create",
+		"EventPattern": `{"source":["test"]}`,
+		"Tags":         []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ValidationException")
+}
+
+// TestEventBridgeCreateEventBus_tagsAppliedAtCreate: Tags passed to
+// CreateEventBus (issue #1196, Axis B) must be stored and readable
+// immediately.
+func TestEventBridgeCreateEventBus_tagsAppliedAtCreate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ebCall(t, srv, "CreateEventBus", map[string]any{
+		"Name": "tagged-bus",
+		"Tags": []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		EventBusArn string `json:"EventBusArn"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+
+	list := ebCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": out.EventBusArn})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var tagsOut struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &tagsOut)
+	if len(tagsOut.Tags) != 1 || tagsOut.Tags[0].Key != "env" || tagsOut.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", tagsOut.Tags)
+	}
+}
+
+// TestEventBridgeCreateEventBus_invalidTagRejected: an invalid tag passed to
+// CreateEventBus must be rejected before the bus is created.
+func TestEventBridgeCreateEventBus_invalidTagRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ebCall(t, srv, "CreateEventBus", map[string]any{
+		"Name": "rejected-bus",
+		"Tags": []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ValidationException")
+
+	// DescribeEventBus never 404s in this emulator (it mints an ARN for any
+	// name), so absence is checked via ListEventBuses instead.
+	list := ebCall(t, srv, "ListEventBuses", map[string]any{})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		EventBuses []struct {
+			Name string `json:"Name"`
+		} `json:"EventBuses"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	for _, b := range out.EventBuses {
+		if b.Name == "rejected-bus" {
+			t.Errorf("rejected-bus should not have been created")
+		}
+	}
+}
+
 // TestEventBridgeTagResource_roundTrip tags an existing rule with the SDK
 // list shape and reads it back.
 func TestEventBridgeTagResource_roundTrip(t *testing.T) {
