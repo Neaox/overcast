@@ -62,6 +62,10 @@ var runningInContainer = func() bool {
 	return err == nil
 }
 
+// nativeLinuxDaemon is containerendpoint.NativeLinuxDaemon, indirected so
+// ControlPlaneInternal is testable without a Docker daemon.
+var nativeLinuxDaemon = containerendpoint.NativeLinuxDaemon
+
 // Placement describes where one managed container belongs.
 //
 // The zero value places a container on the default data plane, which is what
@@ -117,27 +121,36 @@ func Primary(cfg *config.Config) string {
 // egress then the VPC's isolation is decoration. Making it internal is what
 // makes a private subnet actually private.
 //
-// **It returns false today, deliberately.** The plumbing is here and the seam is
-// ready, but turning it on is a bigger and differently-shaped change than
-// restricting placement, and the two do not belong in one commit.
+// Decided by the same three-row table containerendpoint.ResolveListen uses to
+// pick the Runtime API's bind address (docs/plans/container-network-topology.md
+// § 5), because it is the same fact asked from the other side — whether the
+// address a container uses to reach Overcast is on-link on an `--internal`
+// bridge, or reachable only through the route `--internal` would cut:
 //
-// Two reasons to keep them apart. A container in a VPC with no internet gateway
-// would go from "no route out except through the control plane" to no route out
-// at all — correct for a private subnet, and a hard break for any function that
-// reaches a real endpoint during INIT. And the safe cases are narrower than they
-// look: it is sound when Overcast is containerised, because Overcast is *on* the
-// plane, but on a host, containers reach it at a host address — the bridge
-// gateway on a native Linux daemon, a routable address under Docker Desktop —
-// and whether an internal bridge still carries that is a platform question I
-// have not been able to test on both. Getting it wrong does not degrade
-// gracefully: the Runtime API rides this plane, so every invocation strands at
-// INIT.
+//   - Overcast containerised: always yes. Overcast is *on* the plane, so its
+//     own address there is on-link regardless of platform.
+//   - Overcast on a native Linux host: yes. Containers dial the control
+//     network's own gateway, and an `--internal` bridge still has one — only
+//     routing *beyond* the bridge is cut, and the gateway is on it.
+//   - Overcast on a Docker Desktop host: no. Containers dial the host's own
+//     routable address, which sits beyond the bridge — `--internal` would
+//     sever exactly that path, and every invocation would strand at INIT.
+//   - Anything undetermined (no Docker client yet, no default network to
+//     probe): no. Getting this wrong does not degrade gracefully — the Runtime
+//     API rides this plane — so an inconclusive probe keeps today's safe
+//     answer rather than guessing.
 //
-// Until then a VPC's own `--internal` flag remains partly decorative, since
-// every container also sits on the non-internal control plane. That is the
-// honest state and the docs say so.
-func ControlPlaneInternal() bool {
-	return false
+// The Docker call this makes happens once, from inside Probe, after the
+// client is dialled and confirmed available but before any network is
+// created — see docker.NetworkSpec.InternalMode. It cannot inspect the
+// control plane itself, which may not exist yet on a first run, so it asks
+// the same question of Docker's own always-present default network instead
+// (containerendpoint.NativeLinuxDaemon).
+func ControlPlaneInternal(ctx context.Context, dc *docker.Client) bool {
+	if runningInContainer() {
+		return true
+	}
+	return nativeLinuxDaemon(ctx, dc)
 }
 
 // PlaneSpecs is the set of networks the Docker supervisor ensures at startup:
@@ -153,7 +166,7 @@ func ControlPlaneInternal() bool {
 func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 	return []docker.NetworkSpec{
 		{Name: cfg.Network},
-		{Name: Primary(cfg), Internal: ControlPlaneInternal()},
+		{Name: Primary(cfg), InternalMode: ControlPlaneInternal},
 	}
 }
 

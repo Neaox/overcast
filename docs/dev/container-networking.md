@@ -45,6 +45,7 @@ The API is small on purpose:
 | `dataplane.AttachAdopted(...)` | The same for a container reused after a restart — joins the control plane too, since one adopted from an earlier version was never created there |
 | `dataplane.Hostnames(cfg, name, advertised...)` | The alias set: `name` applied to every base an endpoint could be minted under, plus what the record already advertises |
 | `dataplane.ContainerAddr(ctx, dc, cfg, id)` | The address *Overcast itself* dials a managed container on, or `""` meaning "use the published port on loopback" |
+| `dataplane.ControlPlaneInternal(ctx, dc)` | Whether the control plane can be created `--internal` — see § 1a; wired in as `docker.NetworkSpec.InternalMode` so it runs once `docker.Probe` has a live client, before either plane is created |
 
 **Historical note, because the shape of the old bug is instructive.** There used
 to be one network per emulator service — `overcast_lambda`, `overcast_rds`,
@@ -99,6 +100,17 @@ directly, and `uname -s` says `Linux` under WSL2 either way. When nothing
 resolves, it binds the wildcard and logs that it did — a Runtime API nobody can
 reach fails worse than one bound too widely, and every invocation would hang at
 INIT.
+
+This exact table also decides whether the control plane can be created
+`--internal` (docs/plans/container-network-topology.md § 5):
+`dataplane.ControlPlaneInternal` answers **yes** for the first two rows —
+Overcast's own address, and a native daemon's gateway, both stay on-link on an
+`--internal` bridge, since only routing *beyond* it is cut — and **no** for
+Desktop, where the host's routable address sits beyond the bridge. It cannot
+inspect the control plane itself to decide this, since a first run has not
+created it yet, so it asks the same bindability question of Docker's
+always-present default `bridge` network instead
+(`containerendpoint.NativeLinuxDaemon`).
 
 ### 1b. …and a container's source address is not its identity
 

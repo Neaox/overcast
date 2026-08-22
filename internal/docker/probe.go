@@ -41,7 +41,21 @@ type NetworkSpec struct {
 	// gateway is created `--internal` to model a private subnet, but a
 	// container on it is also on the control plane, so if *that* has egress the
 	// VPC's isolation is defeated and the flag is decoration.
+	//
+	// Ignored when InternalMode is set.
 	Internal bool
+
+	// InternalMode decides Internal dynamically, using the Docker client Probe
+	// has just dialled and verified — the seam a caller needs when the right
+	// answer depends on facts about the daemon (a native Linux kernel vs. Docker
+	// Desktop's VM) that are not knowable until a client exists to ask, and
+	// which may not be knowable at all from a static config value computed
+	// before Probe runs. Takes precedence over Internal when set.
+	//
+	// Called once per spec, after the client is confirmed available and before
+	// the network is created — the one point in this function where the
+	// client exists but no ordering has yet committed to an answer.
+	InternalMode func(ctx context.Context, dc *Client) bool
 }
 
 // Probe creates a Docker client, verifies connectivity with retries, and
@@ -88,12 +102,16 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		internal := spec.Internal
+		if spec.InternalMode != nil {
+			internal = spec.InternalMode(ctx, dc)
+		}
 		_, err := dc.CreateNetworkWithOptions(ctx, CreateNetworkOptions{
 			Name:     spec.Name,
-			Internal: spec.Internal,
+			Internal: internal,
 		})
 		if err == nil {
-			warnOnInternalDrift(ctx, dc, spec, logger)
+			warnOnInternalDrift(ctx, dc, spec.Name, internal, logger)
 		}
 		cancel()
 		if err != nil {
@@ -107,16 +125,20 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 // warnOnInternalDrift reports a pre-existing network whose Internal flag does
 // not match what this run asked for, which CreateNetworkWithOptions silently
 // tolerates because it treats "already exists" as success.
-func warnOnInternalDrift(ctx context.Context, dc *Client, spec NetworkSpec, logger *zap.Logger) {
-	info, err := dc.InspectNetwork(ctx, spec.Name)
-	if err != nil || info == nil || info.Internal == spec.Internal {
+//
+// wantInternal is the resolved value — spec.Internal after InternalMode has
+// had its say, not the static field — so a network whose isolation now
+// depends on the daemon probe is compared against what was actually decided.
+func warnOnInternalDrift(ctx context.Context, dc *Client, name string, wantInternal bool, logger *zap.Logger) {
+	info, err := dc.InspectNetwork(ctx, name)
+	if err != nil || info == nil || info.Internal == wantInternal {
 		return
 	}
 	logger.Warn("Docker network predates this configuration and its isolation differs — "+
 		"remove it while nothing is attached to have it recreated",
-		zap.String("network", spec.Name),
+		zap.String("network", name),
 		zap.Bool("internal_now", info.Internal),
-		zap.Bool("internal_wanted", spec.Internal))
+		zap.Bool("internal_wanted", wantInternal))
 }
 
 // RemoveLegacyNetworks drops the pre-two-plane per-service networks. Networks

@@ -273,6 +273,46 @@ func TestNetworkGateway_withoutADaemonOrANetwork(t *testing.T) {
 	}
 }
 
+func TestNativeLinuxDaemon_trueWhenTheDefaultBridgeGatewayIsOurs(t *testing.T) {
+	// Given: a native Linux daemon — its "bridge" network's gateway is an
+	// address this kernel can bind.
+	dc := &fakeListenClient{network: networkWithGateway("bridge", "172.17.0.1")}
+
+	// When/Then: the daemon is reported native.
+	if !nativeLinuxDaemon(context.Background(), dc, bindableExcept()) {
+		t.Error("nativeLinuxDaemon() = false, want true")
+	}
+	if dc.inspectedNetwork != "bridge" {
+		t.Errorf("inspected network %q, want %q", dc.inspectedNetwork, "bridge")
+	}
+}
+
+func TestNativeLinuxDaemon_falseOnDockerDesktop(t *testing.T) {
+	// Given: Docker Desktop — "bridge" reports a gateway, but it belongs to the
+	// daemon's VM and cannot be bound here.
+	dc := &fakeListenClient{network: networkWithGateway("bridge", "172.17.0.1")}
+
+	// When/Then: the daemon is not reported native.
+	if nativeLinuxDaemon(context.Background(), dc, bindableExcept("172.17.0.1")) {
+		t.Error("nativeLinuxDaemon() = true, want false")
+	}
+}
+
+func TestNativeLinuxDaemon_falseWhenTheDefaultBridgeCannotBeInspected(t *testing.T) {
+	// Given: no default network to ask — a minimal or rootless daemon, or no
+	// client at all. The fact cannot be established, so the safe answer is no
+	// rather than a guess: getting this wrong strands every Lambda invocation.
+	dc := &fakeListenClient{networkErr: errors.New("no such network")}
+
+	// When/Then: undetermined reads as false.
+	if nativeLinuxDaemon(context.Background(), dc, bindableExcept()) {
+		t.Error("nativeLinuxDaemon() = true, want false")
+	}
+	if nativeLinuxDaemon(context.Background(), nil, bindableExcept()) {
+		t.Error("nativeLinuxDaemon(nil client) = true, want false")
+	}
+}
+
 func TestBindableHost_answersFromAnActualBind(t *testing.T) {
 	// Given: loopback, which every platform this runs on can bind.
 	// When/Then: the probe says so.

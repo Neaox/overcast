@@ -483,7 +483,7 @@ func WithEnforceAPIGatewayThrottle(enabled bool) Option {
 
 // WithEC2VPCStrategy sets the VPC network strategy used by the EC2 service.
 // Valid values: "shared" (default), "strict", "remapped". See
-// docs/plans/ec2-vpc-network-strategies.md for details.
+// docs/services/ec2.md § Advanced: VPC networking strategies for details.
 func WithEC2VPCStrategy(strategy string) Option {
 	return func(so *serverOptions) {
 		so.cfg.EC2VPCNetworkStrategy = strategy

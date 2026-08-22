@@ -22,7 +22,8 @@ import (
 //
 // Implemented strategies: "shared", "strict", and "remapped".
 // "netns" is reserved for future work and is rejected at config load time.
-// See docs/plans/ec2-vpc-network-strategies.md for the full design.
+// See docs/services/ec2.md § Advanced: VPC networking strategies for the full
+// design of each.
 type vpcNetworkStrategy interface {
 	// Name returns the strategy's configuration identifier.
 	Name() string
@@ -85,7 +86,7 @@ func resolveVPCNetworkStrategy(name string, h *Handler) vpcNetworkStrategy {
 		h.log.Warn("netns strategy requested but not implemented — falling back to shared",
 			zap.String("requested", requested),
 			zap.String("using", shared.Name()),
-			zap.String("see", "docs/plans/ec2-vpc-network-strategies.md"))
+			zap.String("see", "docs/services/ec2.md"))
 		return shared
 	default:
 		h.log.Warn("unknown VPC network strategy — falling back to shared",
