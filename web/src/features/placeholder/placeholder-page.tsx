@@ -39,7 +39,7 @@ const TIER_DESCRIPTIONS: Record<string, string> = {
   partial: "Core operations work. Some endpoints return 501 or have limited behaviour.",
   inert:
     "Service accepts requests but operations have no side effects — always returns success without storing state.",
-  stub: "Service is registered but all operations return 501 Not Implemented.",
+  stub: "Registered so discovery works: at most a hardcoded, stateless answer to the service's describe call; every other operation returns 501 Not Implemented.",
   unsupported: "Not registered in Overcast. Requests will fall through to the 501 handler.",
 }
 
