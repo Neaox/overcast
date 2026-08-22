@@ -181,6 +181,21 @@ same commit that graduates a service. The per-operation inventory lives in each
 service's `capabilities_dev.go`. Report operations honestly: `StatusSupported` means
 "behaves like AWS at inert level or above", never "returns a plausible-looking 200".
 
+### Operation-level tiers (Tier 0 / Tier 1 / Tier 2)
+
+The tiers above describe a whole *service*. [docs/plans/inert-tier-rollout.md](./docs/plans/inert-tier-rollout.md)
+defines a parallel, finer-grained vocabulary for a single *operation*, used when
+generating or reasoning about Tier 1 coverage at scale:
+
+| Tier | Name | Meaning |
+| --- | --- | --- |
+| **Tier 0** | protocol-correct 501 | Routed, and answers with the right `NotImplemented` envelope for its protocol family. No state, no shape. |
+| **Tier 1** | inert | Accepted, stores and echoes back everything the caller told it — CRUD, tagging, pagination, ARNs, timestamps, not-found/conflict errors — with no side effects. This is the per-operation form of the **inert** service tier above; see the plan's §3 for the normative contract and `internal/inert/conformance` for it as executable tests. |
+| **Tier 2** | full emulation | The operation actually does the thing (an invoke runs, a message is delivered). |
+
+A whole service's tier (stub/inert/partial/full) is a rollup of its operations' tiers — a
+service is "inert" once every in-scope operation it owns is at least Tier 1.
+
 ---
 
 ## Core principles
