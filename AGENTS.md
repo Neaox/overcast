@@ -461,8 +461,8 @@ scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
 ```
 
 It wraps `gh pr checks --watch --fail-fast` and exits 0/1/2/8 — passed / failed
-/ not worth acting on / still pending. Run it in the background so you get
-exactly one notification. Four things it does for you:
+/ not worth acting on / still pending. In a top-level session, run it in the
+background so you get exactly one notification. Four things it does for you:
 
 - **Returns at the first failure**, rather than waiting out the rest of a
   doomed run.
@@ -478,6 +478,18 @@ exactly one notification. Four things it does for you:
   moved underneath, which changes no check and no head SHA — is caught at the
   end and also exits 2, rather than reporting a green run on a PR that will now
   never merge.
+
+**Subagents: do not background it and stop.** A stopped subagent is re-invoked
+only when a live tracked background child completes, and `pr-wait` routinely
+exits in seconds — a bad argument, a `gh` auth hiccup, a PR whose checks had
+already settled, its own exit 2. The child is dead before the turn ends, the
+wake never comes, and the subagent is stranded mid-task owing a report it will
+never send (eight of them, in one session, on 2026-08-22). Run it in the
+**foreground** instead — `--watch` has its own timeout, so it is bounded — or,
+once `gh pr merge <n> --squash --auto` is armed, skip the wait entirely: there
+is nothing to wait for, because auto-merge completes the PR unattended. A
+subagent's terminal state is *auto-merge armed, one foreground
+`gh pr checks <n>` shows no FAILED required check → report and exit*.
 
 Do **not** write a `while` loop over `gh pr checks --json` on a `sleep`
 interval. It costs a request per tick, fires whether or not anything changed,

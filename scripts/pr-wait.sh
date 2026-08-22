@@ -19,8 +19,28 @@
 # iteration whether or not anything changed, turning "tell me when CI is done"
 # into a running commentary nobody asked for. There is one right way to wait.
 #
-# Run it in the BACKGROUND (Claude Code: Bash with run_in_background: true) so
-# its single completion notification is the only thing the conversation gets.
+# In a top-level session, run it in the BACKGROUND (Claude Code: Bash with
+# run_in_background: true) so its single completion notification is the only
+# thing the conversation gets.
+#
+# If you are a SUBAGENT, do NOT do that. A stopped subagent is re-invoked only
+# when a live tracked child completes, and this script routinely exits in
+# seconds — a bad argument, a `gh` auth hiccup, a PR that had already settled,
+# its own exit 2 for "not worth acting on". The child is then already dead when
+# you end your turn, the wake never comes, and you are stranded mid-task owing a
+# final report you will never send. Eight parallel subagents hung exactly that
+# way on 2026-08-22 and had to be resumed by hand. Two options, both fine:
+#
+#   Foreground it.   Just run it and block. `gh pr checks --watch` has its own
+#                    timeout, so the wait is bounded, and the exit code is in
+#                    your hands rather than in a notification that may never
+#                    arrive.
+#   Skip the wait.   Once `gh pr merge <n> --squash --auto` is armed there is
+#                    nothing left to wait FOR: auto-merge completes the PR
+#                    unattended, long after your turn ends. A subagent's correct
+#                    terminal state is "auto-merge armed, and one FOREGROUND
+#                    `gh pr checks <n>` shows no FAILED required check → report
+#                    and exit".
 #
 # Three properties worth knowing:
 #

@@ -550,6 +550,13 @@ updates a PR owns it until it is green and ready to merge.
   result to imply.
 - Do not merge or enable auto-merge unless the user explicitly authorized merging. The default
   handoff is a green, merge-ready PR for the user or reviewer to merge.
+- **Subagents discharge this contract differently**, because they cannot own a PR past the end of
+  their turn. Where merging was authorized and auto-merge is armed, "green and ready to merge" is
+  something auto-merge reaches unattended; a subagent finishes at *auto-merge armed with no FAILED
+  required check*, verified by a foreground call, and reports that. Where it was not authorized, a
+  subagent waits in the FOREGROUND — never by backgrounding the waiter and ending its turn, which
+  strands it (see [After Opening](#after-opening--waiting-on-ci)). Either way it hands the outcome
+  back to its caller rather than stopping to be woken.
 
 While waiting, report only a failure that requires action or the final green, merge-ready result.
 
@@ -569,10 +576,32 @@ gh pr merge <n> --squash --auto
 ```
 
 `scripts/pr-wait.sh` wraps `gh pr checks --watch --fail-fast` and exits
-0 / 1 / 2 / 8 (passed / failed / no checks will run / still pending). Run it in
-the **background** — in Claude Code, the `Bash` tool with
-`run_in_background: true` — so its single completion notification is the only
-thing the conversation gets.
+0 / 1 / 2 / 8 (passed / failed / no checks will run / still pending). In a
+top-level session, run it in the **background** — in Claude Code, the `Bash`
+tool with `run_in_background: true` — so its single completion notification is
+the only thing the conversation gets.
+
+**If you are a subagent, do not background it and stop.** A stopped subagent is
+re-invoked only when a live tracked background child completes, and `pr-wait`
+routinely exits within seconds: a bad argument, a `gh` auth hiccup, a PR whose
+checks had already settled, its own exit 2 for "not worth acting on". The child
+is then dead before your turn ends, the wake never comes, and you are stranded
+mid-task owing a final report you will never send — eight parallel subagents
+hung exactly that way on 2026-08-22 and had to be resumed by hand. Instead:
+
+- **Run it in the foreground** and block. `gh pr checks --watch` has its own
+  timeout, so the wait is bounded, and you read the exit code yourself rather
+  than depending on a notification that may never arrive.
+- **Or skip waiting entirely.** Once merging was authorized and
+  `gh pr merge <n> --squash --auto` is armed, there is nothing to wait *for*:
+  auto-merge completes the PR unattended, long after your turn ends. A
+  subagent's correct terminal state is **auto-merge armed, and one foreground
+  `gh pr checks <n>` shows no FAILED required check → report and exit.** Pending
+  checks at that point are not a reason to keep the turn open.
+
+This carve-out is about *how a subagent ends its turn*, not a licence to
+hand-roll a poll loop — **Do not hand-roll a poll loop** below still applies to
+everyone.
 
 It does three things a bare `--watch` does not:
 
