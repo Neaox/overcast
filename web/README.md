@@ -4,17 +4,18 @@ The management console for [Overcast](../README.md) — a local AWS emulator. Pr
 
 ## Tech stack
 
-| Layer         | Library                      |
-| ------------- | ---------------------------- |
-| Framework     | React 19 + TypeScript        |
-| Bundler       | Vite                         |
-| Routing       | TanStack Router (file-based) |
-| Data fetching | TanStack Query v5            |
-| Styles        | Tailwind CSS v4              |
-| Components    | Radix UI primitives          |
-| BFF server    | Hono (Node.js)               |
-| Flow diagrams | React Flow / XYFlow          |
-| Code editor   | Monaco Editor                |
+| Layer            | Library                                                |
+| ---------------- | ------------------------------------------------------ |
+| Framework        | React 19 + TypeScript                                  |
+| Bundler          | Vite                                                   |
+| Routing          | TanStack Router (file-based)                           |
+| Data fetching    | TanStack Query v5                                      |
+| Styles           | Tailwind CSS v4                                        |
+| Components       | Radix UI primitives                                    |
+| Dev `/api` proxy | Hono, mounted as a Vite plugin (`api/src`) — dev-only  |
+| BFF              | Go (`internal/bff`, embedded in the `overcast` binary) |
+| Flow diagrams    | React Flow / XYFlow                                    |
+| Code editor      | Monaco Editor                                          |
 
 ## Getting started
 

@@ -357,7 +357,7 @@ current branch's pair.
 same pipeline as `.github/workflows/test.yml`, in the same dependency order:
 
 ```
-docs index → web lint → typecheck → vitest → SPA build → BFF build
+docs index → web lint → typecheck → vitest → SPA build
            → go vet → go build → go test
 ```
 

@@ -1,7 +1,7 @@
 /**
  * Default MSW request handlers for the BFF `/api/*` routes.
  *
- * Each handler mirrors a real BFF endpoint (web/api/src/routes/).
+ * Each handler mirrors a real BFF endpoint (internal/bff/bff.go).
  * Tests override specific handlers with `server.use(...)` inside
  * a `describe` block or individual test — see render.tsx for the
  * `server` import.

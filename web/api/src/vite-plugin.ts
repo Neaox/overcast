@@ -8,10 +8,12 @@
  * Request and response bodies are streamed — not buffered — so large S3
  * object downloads and uploads don't accumulate in memory.
  *
- * In production the standalone `node.ts` entry is used instead.
+ * This is the only place the Hono app runs. There is no standalone Node
+ * entry point and nothing here ships: in production `/api/*` is served by
+ * the Go BFF (`internal/bff`) embedded in the `overcast` binary, which is
+ * also what `app.ts` proxies to during development.
  */
 import { Readable } from "node:stream"
-import type { ReadableStream } from "node:stream/web"
 import type { Plugin } from "vite"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Hono } from "hono"
@@ -61,7 +63,7 @@ export function honoDevPlugin(): Plugin {
 
           // Stream the request body through as a ReadableStream — no buffering.
           const hasBody = req.method !== "GET" && req.method !== "HEAD"
-          const body = hasBody ? (Readable.toWeb(req)) : undefined
+          const body = hasBody ? Readable.toWeb(req) : undefined
 
           const webReq = new Request(url, {
             method: req.method ?? "GET",
@@ -69,7 +71,7 @@ export function honoDevPlugin(): Plugin {
             body,
             // Required when body is a stream
             ...(body ? { duplex: "half" } : {}),
-          } as RequestInit)
+          })
 
           const webRes = await app.fetch(webReq)
 
@@ -90,7 +92,7 @@ export function honoDevPlugin(): Plugin {
             res.flushHeaders()
           }
 
-          const readable = Readable.fromWeb(webRes.body as ReadableStream)
+          const readable = Readable.fromWeb(webRes.body)
 
           readable.pipe(res, { end: true })
 
