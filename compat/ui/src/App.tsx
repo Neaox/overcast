@@ -24,8 +24,10 @@ import { useEventStream } from "./hooks/use-event-stream";
 import { useRegistrySeed } from "./hooks/use-registry-seed";
 import { useResizeHeight } from "./hooks/use-resize-height";
 import { useRun } from "./hooks/use-run";
+import { useScrollPersistence } from "./hooks/use-scroll-persistence";
 import { formatETA } from "./lib/format";
 import { PLANNED_SUITES } from "./lib/constants";
+import { readPersisted, writePersisted } from "./lib/persisted-storage";
 import { AppHeader } from "./components/header";
 import { EmptyState } from "./components/empty-state";
 import { SuiteProgressPanel } from "./components/suite-progress";
@@ -34,6 +36,7 @@ import { CdkFlow } from "./components/cdk-flow";
 import { ServerLogPanel } from "./components/server-log-panel";
 import { QueuePanel } from "./components/queue-panel";
 import { AppFooter } from "./components/footer";
+import { ToastStack } from "./components/toast-stack";
 import type { Status, ServiceSection } from "./types/index";
 
 // ─── App ─────────────────────────────────────────────────────────────────────
@@ -66,13 +69,32 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
   const headerRef = useRef<HTMLElement>(null!);
   const headerH = useResizeHeight(headerRef, 60);
 
+  // Status filter and suite-column selection persist across reloads — during
+  // a burn-down session these used to reset on every visit and get
+  // re-applied by hand each time (issue #1184).
   const [hiddenStatuses, setHiddenStatuses] = useState<ReadonlySet<Status>>(
-    new Set(["na", "unimplemented"] as Status[]),
+    () =>
+      new Set(
+        readPersisted<Status[]>("hiddenStatuses", ["na", "unimplemented"]),
+      ),
   );
   function toggleHidden(s: Status) {
     setHiddenStatuses((prev) => {
       const next = new Set(prev);
       next.has(s) ? next.delete(s) : next.add(s);
+      writePersisted("hiddenStatuses", [...next]);
+      return next;
+    });
+  }
+
+  const [hiddenSuites, setHiddenSuites] = useState<ReadonlySet<string>>(
+    () => new Set(readPersisted<string[]>("hiddenSuites", [])),
+  );
+  function toggleHiddenSuite(suite: string) {
+    setHiddenSuites((prev) => {
+      const next = new Set(prev);
+      next.has(suite) ? next.delete(suite) : next.add(suite);
+      writePersisted("hiddenSuites", [...next]);
       return next;
     });
   }
@@ -113,6 +135,13 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
   // CDK has its own flow-based view in the IaC section; keep it out of the
   // SDK service tables (both as a column and as a service row).
   const sdkSuites = useMemo(() => suites.filter((s) => s !== "cdk"), [suites]);
+  // Suite columns the user has hidden via the header chips — persisted
+  // (issue #1184) so a burn-down session focused on one suite doesn't
+  // re-show every column on the next reload.
+  const visibleSdkSuites = useMemo(
+    () => sdkSuites.filter((s) => !hiddenSuites.has(s)),
+    [sdkSuites, hiddenSuites],
+  );
   // All SDK suite IDs from the canonical planned list. Every suite gets a
   // progress card (even before it has emitted any events) so users can see
   // which suites exist and trigger them with the play button.
@@ -141,6 +170,8 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
   const cdkActive =
     suites.includes("cdk") || queue.some((q) => q.suite === "cdk");
   const hasData = serviceList.length > 0 || cdkActive;
+
+  useScrollPersistence(hasData);
 
   // ── Progress / ETA strings (computed inline — no effect needed) ───────────
   const allSuitesCheckedIn =
@@ -198,6 +229,9 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
         allSuiteIds={allSdkIds}
         suiteErrors={state.suiteErrors}
         queuedSuites={state.queuedSuites}
+        connection={state.connection}
+        hiddenSuites={hiddenSuites}
+        toggleHiddenSuite={toggleHiddenSuite}
       />
 
       {interactive && (
@@ -277,7 +311,7 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
           <ServiceTable
             key={svc.service}
             section={svc}
-            suites={sdkSuites}
+            suites={visibleSdkSuites}
             suiteInfos={suiteInfos}
             plannedSuites={plannedSdk}
             headerH={headerH}
@@ -306,6 +340,7 @@ function AppInner({ state }: { state: ReturnType<typeof reducer> }) {
       )}
 
       <ServerLogPanel endpoint={state.endpoint} />
+      <ToastStack toasts={state.toasts} />
     </div>
   );
 }

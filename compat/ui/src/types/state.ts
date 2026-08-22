@@ -25,6 +25,10 @@ export interface GroupRow {
   name: string;
   service: string;
   tests: Map<string, TestCell>; // testName → cells per suite
+  /** Registry `"suites"` scope, when the group is restricted to specific
+   * suites (e.g. cdk-lifecycle → ["cdk"]). `undefined` = every suite is
+   * expected to implement it. See `lib/matrix-scope.ts`. */
+  suites?: string[];
 }
 
 export interface ServiceSection {
@@ -110,6 +114,25 @@ export interface RunState {
    * cards — a 1/444 sliver is meaningful only when we know the total.
    */
   suiteHasFullRun: Record<string, boolean>;
+  /** Live status of the /events SSE connection — see use-event-stream.ts and
+   * lib/reconnecting-event-source.ts. Rendered as a pill in the header so a
+   * dropped connection is visible rather than silently going stale. */
+  connection: ConnectionInfo;
+  /** Ephemeral error toasts (e.g. a failed run trigger). Each auto-dismisses
+   * itself a few seconds after creation — see components/toast-stack.tsx. */
+  toasts: Toast[];
+}
+
+export interface ConnectionInfo {
+  status: "connecting" | "open" | "reconnecting";
+  /** Reconnect attempts since the last successful open; 0 while open. */
+  attempt: number;
+}
+
+export interface Toast {
+  id: string;
+  message: string;
+  createdAt: number;
 }
 
 export const initial: RunState = {
@@ -133,6 +156,8 @@ export const initial: RunState = {
   interactive: false,
   completedBatches: {},
   suiteHasFullRun: {},
+  connection: { status: "connecting", attempt: 0 },
+  toasts: [],
 };
 
 /** Compose the key under which a cell's prior status is stored. */

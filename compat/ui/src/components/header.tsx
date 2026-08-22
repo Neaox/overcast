@@ -4,6 +4,7 @@ import { formatDuration } from "../lib/format";
 import { STATUS_CONFIG } from "./status";
 import { StatusIcon, CountChip } from "./status";
 import { PassRateBar } from "./pass-rate-bar";
+import { ConnectionPill } from "./connection-pill";
 import {
   RunButton,
   RetryButton,
@@ -11,7 +12,13 @@ import {
   ResetAllButton,
 } from "./run-controls";
 import { QueueButton, isQueueEntryActive } from "./queue-panel";
-import type { RunState, SuiteTotals, Status, QueueEntry } from "../types/index";
+import type {
+  RunState,
+  SuiteTotals,
+  Status,
+  QueueEntry,
+  ConnectionInfo,
+} from "../types/index";
 
 interface AppHeaderProps {
   state: RunState;
@@ -33,6 +40,11 @@ interface AppHeaderProps {
   allSuiteIds: string[];
   suiteErrors: Record<string, string>;
   queuedSuites: string[];
+  /** Live /events connection status — rendered as a pill next to the endpoint chip. */
+  connection: ConnectionInfo;
+  /** Suite columns the user has hidden from the SDK matrix. */
+  hiddenSuites: ReadonlySet<string>;
+  toggleHiddenSuite: (suite: string) => void;
 }
 
 export function AppHeader({
@@ -54,6 +66,9 @@ export function AppHeader({
   allSuiteIds,
   suiteErrors,
   queuedSuites,
+  connection,
+  hiddenSuites,
+  toggleHiddenSuite,
 }: AppHeaderProps) {
   const activeQueueCount = queue.filter((q) =>
     isQueueEntryActive(q.state),
@@ -79,6 +94,9 @@ export function AppHeader({
               {state.endpoint}
             </span>
           )}
+
+          {/* Live /events connection status — see issue #1184 */}
+          <ConnectionPill connection={connection} />
 
           {/* Run state indicator */}
           {state.status === "running" && (
@@ -137,20 +155,37 @@ export function AppHeader({
               const isStale = staleSet.has(suite);
               const error = suiteErrors[suite];
               const isQueued = queuedSuites.includes(suite);
+              const isHidden = hiddenSuites.has(suite);
               const hasData = t && (t.pass > 0 || t.fail > 0 || t.skip > 0 || t.unimplemented > 0 || t.na > 0);
               return (
+                // A plain div, not a <button>: it already contains a real
+                // <button> (RunButton) and nested interactive controls are
+                // invalid HTML. role/tabIndex/onKeyDown make the outer
+                // toggle keyboard-accessible without that nesting.
                 <div
                   key={suite}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleHiddenSuite(suite)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleHiddenSuite(suite);
+                    }
+                  }}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-full px-2 py-0.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs transition-opacity",
+                    "flex items-center gap-1.5 rounded-full px-2 py-0.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs transition-opacity cursor-pointer",
                     isStale && "opacity-50",
+                    isHidden && "opacity-40",
                   )}
                   title={
                     error
                       ? `${suite}: ${error}`
                       : isStale
                         ? `${suite} — showing results from previous run`
-                        : undefined
+                        : isHidden
+                          ? `${suite} is hidden from the matrix — click to show`
+                          : `Click to hide ${suite}'s column from the matrix`
                   }
                 >
                   <RunButton
@@ -164,6 +199,11 @@ export function AppHeader({
                     {isStale && (
                       <span className="ml-0.5 text-[9px] uppercase tracking-widest text-gray-300 dark:text-gray-600">
                         prev
+                      </span>
+                    )}
+                    {isHidden && (
+                      <span className="ml-0.5 text-[9px] uppercase tracking-widest text-gray-300 dark:text-gray-600">
+                        hidden
                       </span>
                     )}
                   </span>

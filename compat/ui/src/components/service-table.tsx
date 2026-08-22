@@ -15,6 +15,7 @@ import {
   openHandler,
 } from "../lib/format";
 import { prevStatusKey } from "../types/state";
+import { isOutOfScope } from "../lib/matrix-scope";
 import {
   RunButton,
   RetryButton,
@@ -360,6 +361,13 @@ export function ServiceTable({
                         const cell = cells[suite];
                         const cellKey = `${rowKey}/${suite}`;
                         const isCellOpen = expandedCell === cellKey;
+                        // A group scoped to specific suites (registry
+                        // "suites", e.g. cdk-lifecycle → ["cdk"]) has cells
+                        // that are structurally absent for every other
+                        // suite — never a gap, so never a play button or a
+                        // plain "—" that would read as one. See
+                        // lib/matrix-scope.ts.
+                        const outOfScope = !cell && isOutOfScope(grp.suites, suite);
                         const prevStatus =
                           prevStatuses[
                             prevStatusKey(
@@ -387,14 +395,17 @@ export function ServiceTable({
                               cell?.error && "cursor-pointer",
                               interactive &&
                                 !cell &&
+                                !outOfScope &&
                                 "cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-900/20",
                             )}
                             title={
-                              interactive && !cell
-                                ? `Run ${testName} in ${suite}`
-                                : cell?.error
-                                  ? "Click to view error details"
-                                  : undefined
+                              outOfScope
+                                ? `${grp.name} does not apply to ${suite} (scoped to ${grp.suites!.join(", ")})`
+                                : interactive && !cell
+                                  ? `Run ${testName} in ${suite}`
+                                  : cell?.error
+                                    ? "Click to view error details"
+                                    : undefined
                             }
                             onClick={
                               cell?.error
@@ -402,7 +413,7 @@ export function ServiceTable({
                                     e.stopPropagation();
                                     toggleCell(cellKey);
                                   }
-                                : interactive && !cell && onCellRun
+                                : interactive && !cell && !outOfScope && onCellRun
                                   ? (e) => {
                                       e.stopPropagation();
                                       onCellRun({
@@ -414,7 +425,11 @@ export function ServiceTable({
                                   : undefined
                             }
                           >
-                            {cell ? (
+                            {outOfScope ? (
+                              <span className="text-gray-200/60 dark:text-gray-700/60 select-none">
+                                ·
+                              </span>
+                            ) : cell ? (
                               <div className="inline-flex items-center gap-1">
                                 <StatusBadge
                                   status={cell.status}

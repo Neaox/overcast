@@ -5,6 +5,7 @@ import type {
   WireEvent,
   Status,
   QueueEntry,
+  ConnectionInfo,
 } from "../types/index";
 import { initial } from "../types/index";
 import { prevStatusKey } from "../types/state";
@@ -22,15 +23,49 @@ export type Action =
       groups: Array<{
         service: string;
         name: string;
+        suites?: string[];
         tests: Array<{ name: string }>;
       }>;
-    };
+    }
+  | { type: "connection_status"; status: ConnectionInfo["status"]; attempt: number }
+  | { type: "toast_error"; message: string }
+  | { type: "dismiss_toast"; id: string };
 
 /** Remove queue entries that completed more than 60 seconds ago. */
 const DONE_LINGER_MS = 60_000;
 
 export function reducer(state: RunState, action: Action): RunState {
-  if (action.type === "reset") return { ...initial, services: new Map() };
+  // Live connection status and error toasts are UI concerns orthogonal to run
+  // data — handled first so every data-reset branch below can leave them alone.
+  if (action.type === "connection_status") {
+    if (
+      state.connection.status === action.status &&
+      state.connection.attempt === action.attempt
+    )
+      return state;
+    return {
+      ...state,
+      connection: { status: action.status, attempt: action.attempt },
+    };
+  }
+  if (action.type === "toast_error") {
+    const toast = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      message: action.message,
+      createdAt: Date.now(),
+    };
+    return { ...state, toasts: [...state.toasts, toast] };
+  }
+  if (action.type === "dismiss_toast") {
+    return { ...state, toasts: state.toasts.filter((t) => t.id !== action.id) };
+  }
+  if (action.type === "reset")
+    return {
+      ...initial,
+      services: new Map(),
+      connection: state.connection,
+      toasts: state.toasts,
+    };
   if (action.type === "clear_results") {
     // Wipe per-suite cell statuses but keep the services/groups/tests structure
     // so the grid stays visible as empty placeholders.
@@ -89,9 +124,13 @@ export function reducer(state: RunState, action: Action): RunState {
             name: g.name,
             service: g.service,
             tests: new Map(),
+            suites: g.suites,
           });
         }
         const grp = svc.groups.get(g.name)!;
+        // The registry is authoritative for scope even if the group already
+        // existed from a live event that arrived before the registry seed did.
+        grp.suites = g.suites;
         for (const t of g.tests) {
           if (!grp.tests.has(t.name)) {
             grp.tests.set(t.name, {});
@@ -266,6 +305,8 @@ function applyEvent(state: RunState, ev: WireEvent): RunState {
       suiteDurationMs: state.suiteDurationMs,
       suitePrevPassCount: state.suitePrevPassCount,
       prevStatuses,
+      connection: state.connection,
+      toasts: state.toasts,
     };
   }
   if (
@@ -287,6 +328,8 @@ function applyEvent(state: RunState, ev: WireEvent): RunState {
       suiteDurationMs: state.suiteDurationMs,
       suitePrevPassCount: state.suitePrevPassCount,
       prevStatuses: state.prevStatuses,
+      connection: state.connection,
+      toasts: state.toasts,
     };
   }
 
