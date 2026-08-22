@@ -1,0 +1,4 @@
+{
+  "$comment": "Reviewed, deliberate exceptions for scripts/compat-name-hygiene.py's cross-file same-resource-kind name collision check. Mirrors compat/parity-debt.json: an entry here means a human looked at the collision and confirmed it is not the sts-assume-role bug class (two different registry groups fighting over one AWS resource of the same kind) — usually because the two call sites are for genuinely different AWS APIs that happen to use the same English word. Add an entry only after checking; do not use this to silence a real collision.",
+  "allow": []
+}

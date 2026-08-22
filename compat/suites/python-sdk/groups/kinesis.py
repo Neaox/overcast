@@ -236,7 +236,8 @@ def SplitShard(ctx: TestContext) -> None:
     _wait_stream_active(kin, name)
     resp2 = kin.list_shards(StreamName=name)
     open_shards = [s for s in resp2.get("Shards", []) if "EndingSequenceNumber" not in s.get("SequenceNumberRange", {})]
-    assert len(open_shards) >= 2, f"SplitShard: expected >=2 open shards, got {len(open_shards)}"
+    if not (len(open_shards) >= 2):
+        raise AssertionError(f"SplitShard: expected >=2 open shards, got {len(open_shards)}")
 
 
 def MergeShards(ctx: TestContext) -> None:
@@ -260,9 +261,8 @@ def MergeShards(ctx: TestContext) -> None:
         s for s in resp2.get("Shards", [])
         if "EndingSequenceNumber" not in s.get("SequenceNumberRange", {})
     ]
-    assert len(after_open) < len(open_shards), (
-        f"MergeShards: expected fewer open shards, got {len(after_open)}"
-    )
+    if not (len(after_open) < len(open_shards)):
+        raise AssertionError(f"MergeShards: expected fewer open shards, got {len(after_open)}")
 
 
 # ── ImplMap ───────────────────────────────────────────────────────────────────

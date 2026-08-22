@@ -36,7 +36,8 @@ def PutParameter(ctx: TestContext) -> None:
     name = f"{ctx['ssm_prefix']}/key1"
     ssm.put_parameter(Name=name, Value="value1", Type="String")
     resp = ssm.get_parameter(Name=name)
-    assert resp["Parameter"]["Value"] == "value1", "PutParameter: value mismatch"
+    if not (resp["Parameter"]["Value"] == "value1"):
+        raise AssertionError("PutParameter: value mismatch")
 
 
 def GetParameter(ctx: TestContext) -> None:
@@ -71,7 +72,8 @@ def PutMultipleParameters(ctx: TestContext) -> None:
     for i in range(3):
         ssm.put_parameter(Name=f"{prefix}/multi/{i}", Value=f"val{i}", Type="String")
     resp = ssm.get_parameters(Names=[f"{prefix}/multi/{i}" for i in range(3)])
-    assert len(resp.get("Parameters", [])) == 3, f"PutMultipleParameters: expected 3, got {len(resp.get('Parameters', []))}"
+    if not (len(resp.get("Parameters", [])) == 3):
+        raise AssertionError(f"PutMultipleParameters: expected 3, got {len(resp.get('Parameters', []))}")
 
 
 def GetParameters(ctx: TestContext) -> None:
@@ -104,7 +106,8 @@ def TagParameter(ctx: TestContext) -> None:
     )
     resp = ssm.list_tags_for_resource(ResourceType="Parameter", ResourceId=name)
     tags = {t["Key"]: t["Value"] for t in resp.get("TagList", [])}
-    assert tags.get("env") == "compat", f"TagParameter: env tag not found, got {tags}"
+    if not (tags.get("env") == "compat"):
+        raise AssertionError(f"TagParameter: env tag not found, got {tags}")
 
 
 def ListTagsForResource(ctx: TestContext) -> None:

@@ -374,7 +374,8 @@ def PutBucketVersioning(ctx: TestContext) -> None:
         VersioningConfiguration={"Status": "Enabled"},
     )
     resp = s3.get_bucket_versioning(Bucket=bucket)
-    assert resp["Status"] == "Enabled", f"PutBucketVersioning: expected Enabled, got {resp.get('Status')}"
+    if not (resp["Status"] == "Enabled"):
+        raise AssertionError(f"PutBucketVersioning: expected Enabled, got {resp.get('Status')}")
 
 
 def GetBucketVersioning(ctx: TestContext) -> None:
@@ -416,7 +417,8 @@ def PutObjectTagging(ctx: TestContext) -> None:
     )
     resp = s3.get_object_tagging(Bucket=bucket, Key="tagged.txt")
     tags = {t["Key"]: t["Value"] for t in resp.get("TagSet", [])}
-    assert tags.get("env") == "compat", f"PutObjectTagging: env tag not found, got {tags}"
+    if not (tags.get("env") == "compat"):
+        raise AssertionError(f"PutObjectTagging: env tag not found, got {tags}")
 
 
 def GetObjectTagging(ctx: TestContext) -> None:
@@ -437,7 +439,8 @@ def PutBucketTagging(ctx: TestContext) -> None:
     )
     resp = s3.get_bucket_tagging(Bucket=bucket)
     tags = {t["Key"]: t["Value"] for t in resp.get("TagSet", [])}
-    assert tags.get("project") == "overcast", f"PutBucketTagging: project tag not found, got {tags}"
+    if not (tags.get("project") == "overcast"):
+        raise AssertionError(f"PutBucketTagging: project tag not found, got {tags}")
 
 
 def GetBucketTagging(ctx: TestContext) -> None:
@@ -478,7 +481,8 @@ def PutBucketWebsite(ctx: TestContext) -> None:
         },
     )
     resp = s3.get_bucket_website(Bucket=bucket)
-    assert resp["IndexDocument"]["Suffix"] == "index.html", "PutBucketWebsite: IndexDocument.Suffix mismatch"
+    if not (resp["IndexDocument"]["Suffix"] == "index.html"):
+        raise AssertionError("PutBucketWebsite: IndexDocument.Suffix mismatch")
 
 
 def GetBucketWebsite(ctx: TestContext) -> None:
@@ -523,7 +527,8 @@ def PutBucketCors(ctx: TestContext) -> None:
         },
     )
     resp = s3.get_bucket_cors(Bucket=bucket)
-    assert len(resp.get("CORSRules", [])) >= 1, "PutBucketCors: expected >=1 CORS rule"
+    if not (len(resp.get("CORSRules", [])) >= 1):
+        raise AssertionError("PutBucketCors: expected >=1 CORS rule")
 
 
 def GetBucketCors(ctx: TestContext) -> None:

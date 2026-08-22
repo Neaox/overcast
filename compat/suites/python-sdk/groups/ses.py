@@ -23,7 +23,8 @@ def SendEmail(ctx: TestContext) -> None:
             "Body": {"Text": {"Data": "Hello from Python compat test"}},
         },
     )
-    assert resp.get("MessageId"), "SendEmail: missing MessageId"
+    if not (resp.get("MessageId")):
+        raise AssertionError("SendEmail: missing MessageId")
 
 
 def SendRawEmail(ctx: TestContext) -> None:
@@ -36,7 +37,8 @@ def SendRawEmail(ctx: TestContext) -> None:
         "Raw body from Python compat test\r\n"
     )
     resp = ses.send_raw_email(RawMessage={"Data": raw.encode()})
-    assert resp.get("MessageId"), "SendRawEmail: missing MessageId"
+    if not (resp.get("MessageId")):
+        raise AssertionError("SendRawEmail: missing MessageId")
 
 
 def SendEmailWithReplyTo(ctx: TestContext) -> None:
@@ -50,7 +52,8 @@ def SendEmailWithReplyTo(ctx: TestContext) -> None:
         },
         ReplyToAddresses=["noreply@example.com"],
     )
-    assert resp.get("MessageId"), "SendEmailWithReplyTo: missing MessageId"
+    if not (resp.get("MessageId")):
+        raise AssertionError("SendEmailWithReplyTo: missing MessageId")
 
 
 # ── ses-identities ────────────────────────────────────────────────────────────
@@ -120,7 +123,8 @@ def DeleteIdentity(ctx: TestContext) -> None:
     ses.verify_email_identity(EmailAddress="del@example.com")
     ses.delete_identity(Identity="del@example.com")
     resp = ses.list_identities(IdentityType="EmailAddress")
-    assert "del@example.com" not in resp.get("Identities", []), "DeleteIdentity: identity still present"
+    if not ("del@example.com" not in resp.get("Identities", [])):
+        raise AssertionError("DeleteIdentity: identity still present")
 
 
 def GetSendQuota(ctx: TestContext) -> None:
@@ -167,7 +171,8 @@ def CreateTemplate(ctx: TestContext) -> None:
         }
     )
     resp = ses.get_template(TemplateName=name)
-    assert resp["Template"]["SubjectPart"] == "Hello {{name}}", "CreateTemplate: SubjectPart mismatch"
+    if not (resp["Template"]["SubjectPart"] == "Hello {{name}}"):
+        raise AssertionError("CreateTemplate: SubjectPart mismatch")
 
 
 def GetTemplate(ctx: TestContext) -> None:
@@ -189,7 +194,8 @@ def UpdateTemplate(ctx: TestContext) -> None:
         }
     )
     resp = ses.get_template(TemplateName=name)
-    assert resp["Template"]["SubjectPart"] == "Updated {{name}}", "UpdateTemplate: SubjectPart not updated"
+    if not (resp["Template"]["SubjectPart"] == "Updated {{name}}"):
+        raise AssertionError("UpdateTemplate: SubjectPart not updated")
 
 
 def ListTemplates(ctx: TestContext) -> None:
@@ -211,7 +217,8 @@ def SendTemplatedEmail(ctx: TestContext) -> None:
         Template=name,
         TemplateData=json.dumps({"name": "World"}),
     )
-    assert resp.get("MessageId"), "SendTemplatedEmail: missing MessageId"
+    if not (resp.get("MessageId")):
+        raise AssertionError("SendTemplatedEmail: missing MessageId")
 
 
 def DeleteTemplate(ctx: TestContext) -> None:
@@ -221,7 +228,8 @@ def DeleteTemplate(ctx: TestContext) -> None:
     ctx["ses_template_name"] = None  # prevent teardown double-delete
     resp = ses.list_templates()
     names = [t["Name"] for t in resp.get("TemplatesMetadata", [])]
-    assert name not in names, f"DeleteTemplate: template {name} still present"
+    if not (name not in names):
+        raise AssertionError(f"DeleteTemplate: template {name} still present")
 
 
 # ── ImplMap ───────────────────────────────────────────────────────────────────

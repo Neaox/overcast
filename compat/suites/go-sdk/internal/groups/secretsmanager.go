@@ -232,7 +232,9 @@ func (g *smGroup) ListSecretVersionIds(ctx context.Context, t *harness.TestConte
 	if err != nil {
 		return err
 	}
-	_ = resp
+	if len(resp.Versions) == 0 {
+		return fmt.Errorf("ListSecretVersionIds: no versions returned")
+	}
 	return nil
 }
 

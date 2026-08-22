@@ -163,7 +163,8 @@ exports.handler = async (event) => ({ statusCode: 200, body: 'updated' });
         ZipFile=_make_zip("index.js", updated_js),
     )
     cfg = lmb.get_function_configuration(FunctionName=name)
-    assert cfg.get("CodeSha256"), "UpdateFunctionCode: missing CodeSha256 after update"
+    if not (cfg.get("CodeSha256")):
+        raise AssertionError("UpdateFunctionCode: missing CodeSha256 after update")
 
 
 def UpdateFunctionConfiguration(ctx: TestContext) -> None:
@@ -501,7 +502,8 @@ def DeleteLayerVersion(ctx: TestContext) -> None:
     lmb.delete_layer_version(LayerName=name, VersionNumber=version)
     resp = lmb.list_layer_versions(LayerName=name)
     versions = [v["Version"] for v in resp.get("LayerVersions", [])]
-    assert version not in versions, f"DeleteLayerVersion: version {version} still present"
+    if not (version not in versions):
+        raise AssertionError(f"DeleteLayerVersion: version {version} still present")
 
 
 # ── ImplMap ───────────────────────────────────────────────────────────────────

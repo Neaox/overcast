@@ -236,7 +236,8 @@ def SetSubscriptionAttributes(ctx: TestContext) -> None:
         AttributeValue="false",
     )
     attrs = sns.get_subscription_attributes(SubscriptionArn=sub_arn)
-    assert attrs["Attributes"].get("RawMessageDelivery") == "false", "SetSubscriptionAttributes: value not set"
+    if not (attrs["Attributes"].get("RawMessageDelivery") == "false"):
+        raise AssertionError("SetSubscriptionAttributes: value not set")
 
 
 def Unsubscribe(ctx: TestContext) -> None:
@@ -250,7 +251,8 @@ def Unsubscribe(ctx: TestContext) -> None:
     if topic_arn:
         subs = sns.list_subscriptions_by_topic(TopicArn=topic_arn)
         arns = [s["SubscriptionArn"] for s in subs.get("Subscriptions", [])]
-        assert sub_arn not in arns, f"Unsubscribe: subscription {sub_arn} still present"
+        if not (sub_arn not in arns):
+            raise AssertionError(f"Unsubscribe: subscription {sub_arn} still present")
 
 
 # ── ImplMap ───────────────────────────────────────────────────────────────────

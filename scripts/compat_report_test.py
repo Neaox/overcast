@@ -152,5 +152,51 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("11", summary)
 
 
+class SuiteBugCandidatesTest(unittest.TestCase):
+    def make(self, *statuses: tuple[str, str]) -> list[dict]:
+        return [
+            {"suite": suite, "group": "sts-assume", "test": "AssumeRole", "status": status, "error": "boom" if status == "fail" else ""}
+            for suite, status in statuses
+        ]
+
+    def test_flags_a_test_failing_in_exactly_one_of_three_or_more_suites(self):
+        tests = self.make(("go-sdk", "pass"), ("python-sdk", "pass"), ("node-js-sdk", "fail"))
+        candidates = report.suite_bug_candidates(tests)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["suite"], "node-js-sdk")
+        self.assertEqual(candidates[0]["passing_suites"], ["go-sdk", "python-sdk"])
+
+    def test_does_not_flag_below_the_minimum_implementing_suites(self):
+        # Only two suites implement it — one disagreeing pair isn't enough
+        # signal to call out as an outlier.
+        tests = self.make(("go-sdk", "pass"), ("node-js-sdk", "fail"))
+        self.assertEqual(report.suite_bug_candidates(tests), [])
+
+    def test_does_not_flag_when_more_than_one_suite_fails(self):
+        # Two suites failing the same test looks like a real emulator gap,
+        # not one suite's assertion bug.
+        tests = self.make(("go-sdk", "pass"), ("python-sdk", "fail"), ("node-js-sdk", "fail"))
+        self.assertEqual(report.suite_bug_candidates(tests), [])
+
+    def test_ignores_suites_that_have_not_implemented_the_test(self):
+        tests = self.make(
+            ("go-sdk", "pass"), ("python-sdk", "pass"), ("node-js-sdk", "fail"), ("rust-sdk", "skip")
+        )
+        candidates = report.suite_bug_candidates(tests)
+        self.assertEqual(len(candidates), 1)
+        self.assertNotIn("rust-sdk", candidates[0]["passing_suites"])
+
+    def test_summary_renders_the_candidate_table(self):
+        data = results(
+            {"suite": "go-sdk", "group": "sts-assume", "test": "AssumeRole", "status": "pass"},
+            {"suite": "python-sdk", "group": "sts-assume", "test": "AssumeRole", "status": "pass"},
+            {"suite": "node-js-sdk", "group": "sts-assume", "test": "AssumeRole", "status": "fail", "error": "wrong role"},
+        )
+        summary, _, _ = report.build(data, {"entries": []}, None, [], [])
+        self.assertIn("suite-bug candidate", summary)
+        self.assertIn("sts-assume/AssumeRole", summary)
+        self.assertIn("node-js-sdk", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

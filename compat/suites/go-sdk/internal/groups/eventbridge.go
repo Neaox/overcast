@@ -104,12 +104,17 @@ func (g *ebGroup) DescribeEventBus(ctx context.Context, t *harness.TestContext) 
 }
 
 func (g *ebGroup) ListEventBuses(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("eb_bus_name")
 	resp, err := g.cl().ListEventBuses(ctx, &eventbridge.ListEventBusesInput{})
 	if err != nil {
 		return err
 	}
-	_ = resp
-	return nil
+	for _, b := range resp.EventBuses {
+		if aws.ToString(b.Name) == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("ListEventBuses: %q not found in results", name)
 }
 
 func (g *ebGroup) TagEBResource(ctx context.Context, t *harness.TestContext) error {
@@ -225,14 +230,20 @@ func (g *ebGroup) PutRule(ctx context.Context, t *harness.TestContext) error {
 }
 
 func (g *ebGroup) DescribeRule(ctx context.Context, t *harness.TestContext) error {
+	ruleName := t.GetString("eb_rule_name")
 	resp, err := g.cl().DescribeRule(ctx, &eventbridge.DescribeRuleInput{
-		Name:         aws.String(t.GetString("eb_rule_name")),
+		Name:         aws.String(ruleName),
 		EventBusName: aws.String(t.GetString("eb_rules_bus")),
 	})
 	if err != nil {
 		return err
 	}
-	_ = resp
+	if aws.ToString(resp.Name) != ruleName {
+		return fmt.Errorf("DescribeRule: name mismatch %v", aws.ToString(resp.Name))
+	}
+	if resp.State != types.RuleStateEnabled {
+		return fmt.Errorf("DescribeRule: expected ENABLED, got %v", resp.State)
+	}
 	return nil
 }
 
@@ -291,7 +302,9 @@ func (g *ebGroup) ListTargetsByRule(ctx context.Context, t *harness.TestContext)
 	if err != nil {
 		return err
 	}
-	_ = resp
+	if len(resp.Targets) == 0 {
+		return fmt.Errorf("ListTargetsByRule: no targets returned")
+	}
 	return nil
 }
 

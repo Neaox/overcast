@@ -156,7 +156,8 @@ def ListAccessKeys(ctx: TestContext) -> None:
     iam = _iam(ctx)
     name = ctx["iam_user"]
     resp = iam.list_access_keys(UserName=name)
-    assert "AccessKeyMetadata" in resp, "ListAccessKeys: missing AccessKeyMetadata"
+    if not ("AccessKeyMetadata" in resp):
+        raise AssertionError("ListAccessKeys: missing AccessKeyMetadata")
 
 
 # ── iam-roles ─────────────────────────────────────────────────────────────────
