@@ -73,7 +73,7 @@ endpoint (`/_overcast/health`) and the web dashboard:
 | **Full**    | P1+P2 operations implemented. Real SDK clients can use it end-to-end.                                                                                                             |
 | **Partial** | P1 operations implemented. Basic workflows work.                                                                                                                                  |
 | **Inert**   | Full CRUD works — resources are created and stored — but no side-effects or enforcement occur. For example, IAM stores users, roles, and policies but never enforces permissions. |
-| **Stub**    | Service is registered but all operations return `501 Not Implemented`.                                                                                                            |
+| **Stub**    | Registered so discovery works: at most a hardcoded, stateless answer to the service's describe call; every other operation returns `501 Not Implemented`.                        |
 
 Endpoints marked **Unsupported** return a well-formed AWS error response so
 that SDKs surface a clear error rather than a connection failure:

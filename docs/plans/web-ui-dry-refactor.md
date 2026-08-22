@@ -36,7 +36,9 @@
 > (`no-local-detail-row`, `prefer-button-busy`, `no-raw-spinner-in-content`, `prefer-shared-formatter`,
 > `prefer-use-resource-mutation`, `no-duplicate-class-cluster`) and all five `global.test.ts` count
 > ratchets (`<Spinner>`, `disabled={…isPending}`, local `DetailRow`, raw `useMutation(`, `<Loader2`)
-> are landed — see §7 for baselines. Companion to
+> are landed — see §7 for baselines. **2026-08-23 (#1202):** §4 items 1, 2, 4, 5, 6 (EC2 colours,
+> `RawStateLink`, detail-field typography, `SectionLabel`, copy confirmation) are decided — see each
+> item's **Decided** paragraph. Companion to
 > [web-ui-polish-wave-2.md](./web-ui-polish-wave-2.md), which owns the *visual* backlog; this file
 > owns the *structural* one. Where the two overlap (the detail-field component, the generic table
 > wrapper, the spinner rollout, busy buttons) this document supersedes the wave-2 wording with a
@@ -619,10 +621,28 @@ Wave 4
    call, decide now: `stopped → default` (a stopped instance is fine, just idle),
    `terminated → danger`.** Fold into P6's default table.
 
+   **Decided 2026-08-23:** already in code — `features/ec2/components/instance-state-badge.tsx`:
+   `running → success`, `pending` / `stopping` / `shutting-down` → `warning`,
+   `stopped → default` (neutral), `terminated → danger`. Colour answers "does this need me?", not
+   lifecycle position: a stopped instance is a state the developer chose, reversible, costs nothing —
+   neutral. Terminated is irreversible and final, the one row a developer scanning a list must not
+   miss — danger. Transitional states are bounded waits — warning. P6's shared status→tone table
+   generalises this rule (reversible rest = neutral; irreversible end = danger; bounded transition =
+   warning; serving = success) rather than re-deciding per service.
+
 2. **`RawStateLink` on 4 of 24 list pages.** Either every list page gets it or none does. **Product
    call.** Recommendation: make it a prop of `ResourceListPage` defaulted **on**, since the Raw State
    Debugger is a first-class emulator feature and its absence on 20 pages looks like an oversight
    rather than a decision. Tradeoff: five extra pixels of chrome on every page.
+
+   **Decided 2026-08-23:** on every list *and* detail page, built into the scaffolds, debug-gated.
+   `ResourceListPage` and `ResourceDetailPage` both render it by default; opting out is an explicit
+   `rawState={false}` (no known case). It already returns `null` unless the Raw State Debugger is
+   enabled, so it costs ordinary users zero chrome. The link is the escape hatch from "what the
+   console shows" to "what the emulator holds" — a developer wants it exactly where the resource they
+   are staring at is, and a debug affordance is only trustworthy when it is in the same place, with
+   the same icon, on every page. Today it is on 4 of 24 list pages and 4 of ~25 detail pages, which
+   reads as forgetfulness, not choice.
 
 3. **Busy control: spinner or blinking cursor?** Wave 2's design says cursor, `Button.busy`
    implements cursor, and 192 call sites still render a spinner. **Already decided by the design —
@@ -636,14 +656,40 @@ Wave 4
    description fields will flip and need auditing. **Product-adjacent** — it is the same call
    wave-2 flagged for `TableCell`, and the two should be answered identically.
 
+   **Decided 2026-08-23:** mono by default, `variant="prose"` escape hatch — identical to
+   `TableCell`/`TableCellProse`. Already `DefinitionCard`'s contract
+   (`components/ui/definition-card.tsx`); P1's `DetailField` adopts the same spec (or `DefinitionCard`
+   *is* P1 — the implementer decides, one primitive survives). A detail page's values are machine
+   output — ARNs, ids, timestamps, counts, sizes — which mono aligns and makes diffable, and the same
+   value must read the same in the list cell and on the detail page. Prose (a description someone
+   typed) is the marked exception; the ~30 description fields that flip take `variant="prose"` in the
+   adoption sweep.
+
 5. **`SectionLabel` (10px/.16em uppercase) vs the de-facto `font-mono text-sm font-medium` heading
    used 56 times.** Two specs for "names a group of things", and the declared one has zero users.
    **Product call.** Recommendation: ship P11 as `SectionHeading` matching today's rendering, then
    let design decide in one flip rather than letting the drift continue.
 
+   **Decided 2026-08-23:** `SectionLabel` is retired; `SectionHeading` = the de-facto
+   `font-mono text-sm font-medium`, colour `text-fg`. The typographic argument decides it, not the
+   usage count: the 10px-uppercase spec is the *field-label / column-header* spec. A section heading
+   rendered in that spec sits at the same visual weight as the field labels directly beneath it,
+   flattening the hierarchy — the reader cannot tell which label owns which. The heading has to sit
+   one step above the field label; 14px/medium does, and it is also what 65 call sites already
+   render. Hierarchy after this: page title → `SectionHeading` (14px mono medium, fg) → field
+   label / column header (10px uppercase tracked, fg-subtle) → value. P11 ships `SectionHeading`; the
+   9 `SectionLabel` uses (secretsmanager ×2, stepfunctions ×7) migrate; `SectionLabel` is deleted from
+   `primitives.tsx`. The 10px uppercase token stays reserved for labels and headers.
+
 6. **Copy-confirmation copy.** Three strings today: "Copied!", "Copied to clipboard", "API key value
    copied". **Recommendation: `Copied <noun>` with the noun supplied by the caller**, since
    `useCopyToClipboard` will know it anyway.
+
+   **Decided 2026-08-23:** already in code — `Copied <noun>`, bare `Copied` when no noun
+   (`hooks/use-clipboard.ts:59`): success-toned toast, sentence case, no exclamation mark (the
+   console's voice is calm). The noun matters because a detail page has several copyables — ARN, id,
+   URL — and "Copied!" does not tell the developer *which* one they just got. Remaining "Copied to
+   clipboard"/"Copied!" stragglers fall to the P7 adoption sweep.
 
 7. **`Tab` needs `asChild`, or route-linked tabs need their own component.** `s3/bucket-tabs.tsx`
    navigates between sibling routes; `Tabs` is state-driven. **Technical call: add `asChild` to
