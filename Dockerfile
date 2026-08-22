@@ -65,7 +65,7 @@
 # Builds the SPA (Vite). The compiled assets are embedded into the Go binary
 # by the console builder — Node.js is NOT present in any runtime image, and
 # the slim build never reaches this stage at all.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web-builder
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS web-builder
 
 WORKDIR /web
 
