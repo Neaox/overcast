@@ -356,6 +356,74 @@ func TestListStacksTyped_withoutFilterReturnsEveryStack(t *testing.T) {
 	}
 }
 
+// A StackStatusFilter value outside AWS's StackStatus enum must be refused,
+// matching real CloudFormation's ValidationError, rather than silently
+// matching nothing. See docs/plans/ec2-filter-rule-cross-service.md, finding
+// 6, and #1188.
+func TestListStacks_unrecognisedStackStatusFilterIsRefused(t *testing.T) {
+	// Given: a handler with stacks in it
+	h, st := newRollbackTestHandler(t)
+	seedFilterStacks(t, st)
+
+	// When: the filter names a status outside the StackStatus enum
+	rec := httptest.NewRecorder()
+	h.dispatch(rec, cfnPost("ListStacks", map[string]string{
+		"StackStatusFilter.member.1": "BOGUS_STATUS",
+	}))
+
+	// Then: 400 ValidationError, not an empty (or full) page
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	var errResp queryErrorResponse
+	if err := xml.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal error response: %v; body: %s", err, rec.Body.String())
+	}
+	if errResp.Code != "ValidationError" {
+		t.Errorf("error code = %q, want ValidationError", errResp.Code)
+	}
+	if !strings.Contains(errResp.Message, "BOGUS_STATUS") {
+		t.Errorf("error message = %q, want it to name the rejected value", errResp.Message)
+	}
+}
+
+// A status genuinely in AWS's enum but that Overcast itself never produces —
+// the IMPORT_* family — must still be accepted: rejecting it would be wrong
+// in the opposite direction, refusing a value AWS's own API allows.
+func TestListStacks_importFamilyStatusIsAcceptedAndMatchesNothing(t *testing.T) {
+	h, st := newRollbackTestHandler(t)
+	seedFilterStacks(t, st)
+
+	rec := httptest.NewRecorder()
+	h.dispatch(rec, cfnPost("ListStacks", map[string]string{
+		"StackStatusFilter.member.1": StatusImportRollbackInProgress,
+	}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if got := listedStackNames(t, rec.Body.Bytes()); len(got) != 0 {
+		t.Errorf("filtered stacks = %v, want none — no seeded stack is IMPORT_ROLLBACK_IN_PROGRESS", got)
+	}
+}
+
+// The typed path decodes the same query form independently — a status the
+// legacy path refuses must be refused here too.
+func TestListStacksTyped_unrecognisedStackStatusFilterIsRefused(t *testing.T) {
+	h, st := newRollbackTestHandler(t)
+	seedFilterStacks(t, st)
+
+	_, aerr := h.listStacksTyped(context.Background(), &listStacksReq{
+		StackStatusFilter: []string{"BOGUS_STATUS"},
+	})
+	if aerr == nil {
+		t.Fatal("listStacksTyped with a bogus status: got no error, want ValidationError")
+	}
+	if aerr.Code != "ValidationError" {
+		t.Errorf("Code = %q, want ValidationError", aerr.Code)
+	}
+}
+
 // The typed path is reached over the wire through the Query codec, which is
 // what turns StackStatusFilter.member.N into the request struct's slice. A
 // field the codec cannot populate looks identical to an ignored parameter.

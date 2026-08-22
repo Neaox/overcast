@@ -450,6 +450,9 @@ func (h *Handler) describeStacksTyped(ctx context.Context, req *describeStacksRe
 }
 
 func (h *Handler) listStacksTyped(ctx context.Context, req *listStacksReq) (*listStacksResp, *protocol.AWSError) {
+	if aerr := validateStackStatusFilter(req.StackStatusFilter); aerr != nil {
+		return nil, aerr
+	}
 	stacks, aerr := h.store.listStacks(ctx)
 	if aerr != nil {
 		return nil, cfnerr("InternalFailure", "failed to list stacks", http.StatusInternalServerError)

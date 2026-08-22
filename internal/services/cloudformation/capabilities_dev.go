@@ -13,7 +13,7 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "ContinueUpdateRollback", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Retries a failed update rollback from UPDATE_ROLLBACK_FAILED; ResourcesToSkip, including nested-stack paths"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DeleteStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async resource cleanup in reverse dependency order; DELETE_FAILED when a resource refuses deletion"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Status, parameters, outputs, tags"},
-		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "StackStatusFilter; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason"},
+		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "StackStatusFilter, validated against the full StackStatus enum; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason"},
 		capabilities.Capability{Service: "cloudformation", Operation: "CancelUpdateStack", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudformation", Operation: "SignalResource", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudformation", Operation: "GetStackPolicy", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},

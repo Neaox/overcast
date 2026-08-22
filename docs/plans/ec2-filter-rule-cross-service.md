@@ -1,9 +1,10 @@
 # The unrecognised-filter rule, beyond EC2
 
-> Status: survey complete and **corrected** — its first pass searched too
-> narrowly and missed three filter APIs; see [Method](#method). Every finding
-> that could produce a wrong answer is **fixed**: `ssm:DescribeParameters` and
-> `autoscaling:DescribeTags`. The rest either fail safe or already refuse; see
+> Status: **closed** — every finding is fixed. The wrong-answer direction
+> (`ssm:DescribeParameters`, `autoscaling:DescribeTags`) was fixed first, as
+> this survey was corrected; the three fail-safe findings this doc had
+> deliberately deferred (`secretsmanager`, `stepfunctions:ListExecutions`,
+> `cloudformation:ListStacks`) were fixed under #1188. See
 > [What to do](#what-to-do).
 >
 > #1032 settled what an unrecognised filter means and applied it to EC2. This is
@@ -51,10 +52,11 @@ Seven services expose a filter, in three shapes:
 | --- | --- | --- |
 | Named selector (`Name`/`Key` → attribute) | ec2, ssm, autoscaling, secretsmanager | findings 1–3, all settled |
 | Query-language string | cognito | finding 4 — already refuses |
-| Enumerated value | stepfunctions, cloudformation | findings 5–6 — match nothing |
+| Enumerated value | stepfunctions, cloudformation | findings 5–6 — fixed under #1188 |
 
 Only the first shape produced the wrong-answer failure this document was opened
-about, and all of it is now closed.
+about, and all of it is now closed. The fail-safe findings (3, 5, 6) are closed
+too, under #1188.
 
 ## Findings
 
@@ -118,10 +120,10 @@ Same shape, plus two narrower bugs of its own that the same fix settled:
 
 **Blast radius:** very small. Nothing in the compat suites filters ASG tags.
 
-### 3. `secretsmanager:ListSecrets` / `BatchGetSecretValue` — matches nothing — left as is
+### 3. `secretsmanager:ListSecrets` / `BatchGetSecretValue` — matched nothing — **fixed**
 
-`internal/services/secretsmanager/handler.go`, `secretMatchesFilter`, already
-ends:
+`internal/services/secretsmanager/handler.go`'s `secretMatchesFilter` used to
+end:
 
 ```go
 default:
@@ -130,11 +132,20 @@ default:
     return false
 ```
 
-This is EC2's `matchFilters` direction — but unlike EC2's, it is deliberate,
-commented, and reasoned from the same principle #1032 landed on. It is still a
-divergence (AWS answers `ValidationException` for an invalid filter key) and it
-still costs a caller time, because an empty list looks like an empty account.
-It is the least urgent of the three: it fails safe.
+This was EC2's `matchFilters` direction — but unlike EC2's, it was deliberate,
+commented, and reasoned from the same principle #1032 landed on. It was still a
+divergence (AWS answers `InvalidParameterException` for an invalid filter
+key — that operation's own declared error, not the generic
+`ValidationException`) and it cost a caller time, because an empty list looked
+like an empty account.
+
+Fixed under #1188: `validateSecretFilters` refuses a `Filter.Key` outside
+AWS's `FilterNameStringType` enum — `description`, `name`, `tag-key`,
+`tag-value`, `primary-region`, `owning-service`, `all` — before either
+operation scans the store. `primary-region` and `owning-service` are accepted
+but still match nothing, because Overcast does not model secret replication
+or AWS-managed secrets; that is a coverage gap, not a validation one, and
+still out of scope.
 
 ### 4. `cognito:ListUsers` — refuses already, and did before any of this
 
@@ -158,18 +169,32 @@ turned out to be catching up with. Two open issues, **#100** and **#131**, track
 whether the *message* matches real AWS exactly; that is a parity question about
 wording, not about what an unrecognised filter means.
 
-### 5. `stepfunctions:ListExecutions` — an unknown `statusFilter` matches nothing
+### 5. `stepfunctions:ListExecutions` — an unknown `statusFilter` matched nothing — **fixed**
 
-`execution_ops.go` compares `req.StatusFilter` to each execution's status
-directly, so a value outside the enum returns an empty list where AWS returns
-`ValidationException` — the enum is a model constraint there. Fail-safe
-direction, no wrong answer.
+`execution_ops.go` compared `req.StatusFilter` to each execution's status
+directly, so a value outside the enum returned an empty list where AWS returns
+`ValidationException` — the enum is a model constraint there, and
+`ValidationException` is one of `ListExecutions`' own declared errors. Fixed
+under #1188: `req.StatusFilter` is validated against the six-value
+`ExecutionStatus` enum (`RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`,
+`ABORTED`, `PENDING_REDRIVE`) before the store is scanned.
 
-### 6. `cloudformation:ListStacks` — an unknown `StackStatusFilter` matches nothing
+### 6. `cloudformation:ListStacks` — an unknown `StackStatusFilter` matched nothing — **fixed**
 
 `filterStacksByStatus` is `slices.Contains` over the supplied statuses, so the
-same applies: an invalid status narrows to nothing rather than being refused.
-Fail-safe, and the same class as finding 5.
+same applied: an invalid status narrowed to nothing rather than being refused.
+Fixed under #1188, and it needed the same judgement call EC2's original fix
+did: Overcast's own `StackStatus` constants only cover the statuses its
+provisioner produces, missing three of the `IMPORT_*` family
+(`IMPORT_IN_PROGRESS`, `IMPORT_ROLLBACK_IN_PROGRESS`,
+`IMPORT_ROLLBACK_FAILED`) that real CloudFormation accepts but Overcast never
+emits. Validating against only the produced subset would have rejected a
+value AWS itself allows — the wrong-answer direction, in miniature. The fix
+adds the three missing constants and validates
+`StackStatusFilter` against the complete 23-value enum, so a caller filtering
+on an import state Overcast doesn't emit is still accepted (and, correctly,
+matches no stacks), while a genuinely bogus value gets AWS's
+`ValidationError`.
 
 ### 7. Everything else — no filter parameter
 
@@ -199,18 +224,23 @@ and both are now done.
    `ValidationError`, and every value of `auto-scaling-group` is honoured rather
    than only the first. The single-group case still answers from the tag key's
    prefix scan; several groups fall back to a full scan.
-3. **The three that match nothing** — `secretsmanager`, plus
-   `stepfunctions:ListExecutions` and `cloudformation:ListStacks` from the
-   corrected sweep — **not done, deliberately.** Moving each from "matches
-   nothing" to `ValidationException` is a fidelity improvement with no wrong
-   answers to prevent: none of them widens a result, and an empty page is a
-   defensible reading of "nothing matched that". Each is worth doing the next
-   time someone is in that file; none is worth a change of its own, and doing
-   all three together would be a sweep for its own sake.
+3. ~~**The three that matched nothing**~~ **Done, under #1188.**
+   `secretsmanager:ListSecrets`/`BatchGetSecretValue` now refuse an
+   unrecognised `Filter.Key` with `InvalidParameterException`;
+   `stepfunctions:ListExecutions` now refuses an unrecognised `statusFilter`
+   with `ValidationException`; `cloudformation:ListStacks` now refuses an
+   unrecognised `StackStatusFilter` value with `ValidationError`, validated
+   against the complete AWS `StackStatus` enum rather than the subset Overcast
+   produces. None of the three had a wrong answer to prevent — an empty page
+   was always a defensible reading of "nothing matched that" — so this was a
+   fidelity improvement, not a bug fix in the #1032 sense.
 
-   Note the asymmetry the corrected sweep makes visible: **every** remaining
-   divergence is in the fail-safe direction. The wrong-answer direction — ignore
-   the filter, return everything — now exists nowhere in Overcast.
+   Note the asymmetry the corrected sweep made visible, and that #1188 then
+   closed: **every** divergence this survey found was in the fail-safe
+   direction, and now every one of them refuses instead. The wrong-answer
+   direction — ignore the filter, return everything — has never existed
+   anywhere in Overcast since #1032/#1041, and the fail-safe direction — match
+   nothing rather than refuse — no longer exists in Overcast either.
 
 ### Should `filterSpec` be shared?
 

@@ -147,17 +147,17 @@ in AWS's shape but are not a stable identifier to branch on — read the
 
 ### Secret CRUD
 
-| Operation              | Status       | Notes                                             | AWS Docs                                                                                             |
-| ---------------------- | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `CreateSecret`         | ✅ Supported | String + binary, KMS key, tags, description       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html)         |
-| `GetSecretValue`       | ✅ Supported | By name, ARN, version ID, or stage                | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html)       |
-| `DescribeSecret`       | ✅ Supported | Metadata, KMS key, tags, versions, rotation dates | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html)       |
-| `PutSecretValue`       | ✅ Supported | Staging labels + ClientRequestToken               | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html)       |
-| `UpdateSecret`         | ✅ Supported | Description, KMS key + optional new value         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html)         |
-| `ListSecrets`          | ✅ Supported | Sorted by name, KMS metadata, optional filters    | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html)          |
-| `ListSecretVersionIds` | ✅ Supported | All versions with staging labels                  | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecretVersionIds.html) |
-| `DeleteSecret`         | ✅ Supported | Immediate (ForceDelete) only                      | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html)         |
-| `BatchGetSecretValue`  | ✅ Supported | Partial results on missing secrets                | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_BatchGetSecretValue.html)  |
+| Operation              | Status       | Notes                                                                                    | AWS Docs                                                                                             |
+| ---------------------- | ------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `CreateSecret`         | ✅ Supported | String + binary, KMS key, tags, description                                              | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html)         |
+| `GetSecretValue`       | ✅ Supported | By name, ARN, version ID, or stage                                                       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html)       |
+| `DescribeSecret`       | ✅ Supported | Metadata, KMS key, tags, versions, rotation dates                                        | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html)       |
+| `PutSecretValue`       | ✅ Supported | Staging labels + ClientRequestToken                                                      | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html)       |
+| `UpdateSecret`         | ✅ Supported | Description, KMS key + optional new value                                                | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html)         |
+| `ListSecrets`          | ✅ Supported | Sorted by name, KMS metadata, optional filters — Filter.Key validated against AWS's enum | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html)          |
+| `ListSecretVersionIds` | ✅ Supported | All versions with staging labels                                                         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecretVersionIds.html) |
+| `DeleteSecret`         | ✅ Supported | Immediate (ForceDelete) only                                                             | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html)         |
+| `BatchGetSecretValue`  | ✅ Supported | Partial results on missing secrets; Filter.Key validated against AWS's enum              | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_BatchGetSecretValue.html)  |
 
 ### Rotation
 

@@ -537,6 +537,9 @@ func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretReques
 }
 
 func (h *Handler) listSecretsTyped(ctx context.Context, req *listSecretsRequest) (*listSecretsResponse, *protocol.AWSError) {
+	if aerr := validateSecretFilters(req.Filters); aerr != nil {
+		return nil, aerr
+	}
 	secrets, aerr := h.store.listSecrets(ctx)
 	if aerr != nil {
 		return nil, aerr
@@ -780,6 +783,9 @@ func (h *Handler) batchGetSecretValueTyped(ctx context.Context, req *batchGetSec
 
 	ids := req.SecretIdList
 	if len(req.Filters) > 0 {
+		if aerr := validateSecretFilters(req.Filters); aerr != nil {
+			return nil, aerr
+		}
 		// The filter form selects the secrets to fetch, exactly as ListSecrets
 		// does. Ignoring it would return an empty result for a request AWS
 		// answers — a successful lookup that found nothing, which is worse than

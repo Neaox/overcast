@@ -496,3 +496,53 @@ func TestListExecutions_returnsFinishedExecutions(t *testing.T) {
 		t.Fatalf("executions = %+v, want both %q and %q SUCCEEDED", out.Executions, first, second)
 	}
 }
+
+// An unrecognised statusFilter must be refused, matching real Step Functions'
+// ValidationException — one of ListExecutions' own declared errors — rather
+// than silently matching nothing. See
+// docs/plans/ec2-filter-rule-cross-service.md, finding 5, and #1188.
+func TestListExecutions_unrecognisedStatusFilterIsRefused(t *testing.T) {
+	// Given: a state machine with one finished execution
+	srv := helpers.NewTestServer(t)
+	smARN := createSM(t, srv, "bogus-status-sm", `{"StartAt":"P","States":{"P":{"Type":"Pass","End":true}}}`)
+	startExec(t, srv, smARN, `{}`)
+
+	// When: ListExecutions is called with a statusFilter outside the enum
+	resp := sfnCall(t, srv, "ListExecutions", map[string]any{
+		"stateMachineArn": smARN,
+		"statusFilter":    "BOGUS_STATUS",
+	})
+	defer resp.Body.Close()
+
+	// Then: ValidationException, not an empty (or full) page
+	helpers.AssertJSONError(t, resp, "ValidationException")
+}
+
+// A recognised statusFilter value that no execution currently holds matches
+// nothing — that direction is unchanged by this fix.
+func TestListExecutions_recognisedStatusFilterThatMatchesNothingStaysEmpty(t *testing.T) {
+	// Given: a state machine with one finished (SUCCEEDED) execution
+	srv := helpers.NewTestServer(t)
+	smARN := createSM(t, srv, "empty-status-sm", `{"StartAt":"P","States":{"P":{"Type":"Pass","End":true}}}`)
+	exec := startExec(t, srv, smARN, `{}`)
+	waitForTerminal(t, srv, exec)
+
+	// When: ListExecutions filters for a real status nothing is in
+	resp := sfnCall(t, srv, "ListExecutions", map[string]any{
+		"stateMachineArn": smARN,
+		"statusFilter":    "FAILED",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Executions []struct {
+			ExecutionArn string `json:"executionArn"`
+		} `json:"executions"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+
+	// Then: an empty page, not an error
+	if len(out.Executions) != 0 {
+		t.Fatalf("executions = %+v, want empty — a recognised status with no matches is not an error", out.Executions)
+	}
+}
