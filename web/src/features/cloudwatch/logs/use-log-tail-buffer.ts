@@ -96,7 +96,15 @@ export function useLogTailBuffer({
   cap = 10_000,
 }: LogTailBufferOptions): LogTailBuffer {
   const [buffer, setBuffer] = useState<BufferState>(EMPTY)
-  const [died, setDied] = useState(false)
+
+  // A death belongs to the session it happened in, so that is what gets stored.
+  // A bare boolean would need resetting as each new session opens, and that
+  // reset can only be written from the effect body — a setState that cascades an
+  // extra render every time the tail opens. Keyed on the session, the next
+  // session starts healthy for nothing.
+  const session = JSON.stringify([enabled, groupIdentifier, streamName, filterPattern, cap])
+  const [diedIn, setDiedIn] = useState<string | null>(null)
+  const died = diedIn === session
 
   // A buffer belongs to one stream identity. When the identity changes the
   // old events are another stream's, so they go — but `enabled` is not part
@@ -108,10 +116,9 @@ export function useLogTailBuffer({
   useEffect(() => {
     if (!enabled || !groupIdentifier) return
 
-    // Each session opening starts healthy — a fresh session is how the user
-    // recovers from a dead one (toggle the tail off and on).
-    setDied(false)
-
+    // Nothing resets the health here: `died` is keyed on the session, so this
+    // one opens healthy simply by not being the session that died. A fresh
+    // session remains how the user recovers (toggle the tail off and on).
     const controller = new AbortController()
     // Arrivals stage here between frames; only `flush` touches React state.
     let pending: TailedLogEvent[] = []
@@ -141,7 +148,7 @@ export function useLogTailBuffer({
       // Deliberately "went quiet", not "errored": nothing failed, the frames
       // simply stopped. Toggling the tail off and on opens a fresh session.
       console.warn("live tail session went quiet — no frame for 10s; treating it as dead")
-      setDied(true)
+      setDiedIn(session)
       window.clearInterval(watchdog)
     }, TAIL_WATCHDOG_TICK_MS)
 
@@ -165,7 +172,7 @@ export function useLogTailBuffer({
         // on a quiet stream, so the death is state the viewers can show.
         if (!controller.signal.aborted) {
           console.warn("live tail session ended unexpectedly", err)
-          setDied(true)
+          setDiedIn(session)
         }
       }
     })()
@@ -175,7 +182,8 @@ export function useLogTailBuffer({
       window.clearInterval(watchdog)
       if (frame != null) cancelAnimationFrame(frame)
     }
-  }, [enabled, groupIdentifier, streamName, filterPattern, cap])
+    // `session` is a pure function of the other five, so it adds no re-runs.
+  }, [enabled, groupIdentifier, streamName, filterPattern, cap, session])
 
   // An event staged but not yet flushed when Clear fires will still appear on
   // the next frame. That is at most one frame's worth of events, all within

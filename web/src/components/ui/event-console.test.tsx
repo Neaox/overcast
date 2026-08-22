@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it, vi } from "vitest"
-import { createTestQueryClient, render, renderWithRouter, screen, within } from "@/test/render"
-import { serverInfoQueryOptions } from "@/hooks/use-server-info"
+import {
+  createTestQueryClient,
+  render,
+  renderWithRouter,
+  screen,
+  seedServerInfo,
+  within,
+} from "@/test/render"
 import { EventConsole } from "./event-console"
 import { defaultEventSummary } from "./event-summary"
 import type { StreamEvent } from "@/types"
@@ -130,7 +136,7 @@ describe("EventConsole", () => {
      */
     function renderConsole(events: StreamEvent[], debug: boolean) {
       const queryClient = createTestQueryClient()
-      queryClient.setQueryData(serverInfoQueryOptions().queryKey, { debug })
+      seedServerInfo(queryClient, { debug })
       return renderWithRouter(() => <EventConsole connected onClear={() => {}} events={events} />, {
         queryClient,
         path: "/debug/traces/$requestId",

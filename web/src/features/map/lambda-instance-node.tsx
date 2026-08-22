@@ -229,6 +229,16 @@ function areLambdaInstanceCardPropsEqual(
   )
 }
 
+/** Invocation timing folded out of the lambda event stream. */
+interface InvokeTiming {
+  /** When the invocation now running started, or null between invocations. */
+  startMs: number | null
+  /** How long the last completed invocation took, or null before the first. */
+  lastDurationMs: number | null
+}
+
+const NO_INVOKE: InvokeTiming = { startMs: null, lastDurationMs: null }
+
 export const LambdaInstanceCard = memo(function LambdaInstanceCard({
   instance,
   onPeek,
@@ -237,8 +247,10 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
 }: LambdaInstanceCardProps) {
   const { events: lambdaEvents } = useEventStream({ source: "lambda" })
   const eventCursorRef = useRef(0)
-  const invokeStartMsRef = useRef<number | null>(null)
-  const [lastDurationMs, setLastDurationMs] = useState<number | null>(null)
+  // Both halves are rendered, so both are state. `startMs` used to be a ref read
+  // during render: nothing re-rendered when it moved, and the running counter
+  // only looked live because the 200 ms tick below happened to re-render anyway.
+  const [invoke, setInvoke] = useState<InvokeTiming>(NO_INVOKE)
 
   // Re-render at 200 ms so the pill bar drains smoothly without a CSS transition.
   const [, setTick] = useState(0)
@@ -280,25 +292,24 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
         case EventType.lambda.InstanceReady:
         case EventType.lambda.InstanceInitializing:
           if (payload.status === "running") {
-            invokeStartMsRef.current = t
+            setInvoke((prev) => ({ ...prev, startMs: t }))
           }
           break
-        case EventType.lambda.InstanceReleased: {
-          const start = invokeStartMsRef.current
-          if (start != null && t >= start) {
-            setLastDurationMs(t - start)
-          }
-          invokeStartMsRef.current = null
+        case EventType.lambda.InstanceReleased:
+          setInvoke((prev) =>
+            prev.startMs != null && t >= prev.startMs
+              ? { startMs: null, lastDurationMs: t - prev.startMs }
+              : { ...prev, startMs: null },
+          )
           break
-        }
       }
     }
     eventCursorRef.current = lambdaEvents.length
   }, [lambdaEvents, instance.instanceId])
 
   const runningDurationMs =
-    instance.status === "running" && invokeStartMsRef.current != null
-      ? Math.max(0, now - invokeStartMsRef.current)
+    instance.status === "running" && invoke.startMs != null
+      ? Math.max(0, now - invoke.startMs)
       : null
 
   const startupDurationMs =
@@ -311,8 +322,8 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
       ? `${fmtDuration(runningDurationMs)} run`
       : startupDurationMs != null
         ? `${fmtDuration(startupDurationMs)} ${instance.status === "initializing" ? "initializing" : "starting"}`
-        : lastDurationMs != null
-          ? fmtDuration(lastDurationMs)
+        : invoke.lastDurationMs != null
+          ? fmtDuration(invoke.lastDurationMs)
           : "--"
 
   const hasLogs = Boolean(instance.logGroup && instance.logStream)

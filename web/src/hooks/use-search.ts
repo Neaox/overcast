@@ -9,6 +9,9 @@ import "@/lib/search-contributors/index"
 
 const DEBOUNCE_MS = 180
 
+/** Shared empty map, so a blank query keeps handing back the same reference. */
+const NO_RESULTS: Map<string, SearchResult[]> = new Map()
+
 export interface SearchState {
   query: string
   setQuery: (q: string) => void
@@ -20,51 +23,80 @@ export interface SearchState {
   clear: () => void
 }
 
+/**
+ * The last search that finished, together with the query it answered.
+ *
+ * `grouped` and `isLoading` are both read off this single value instead of
+ * living in state of their own: "the results on hand do not answer what is
+ * typed" *is* the loading condition, and a blank box has nothing to show. Both
+ * therefore derive during render, which is what keeps the debounce effect from
+ * having to call setState synchronously to hold the two in step.
+ */
+interface Settled {
+  query: string
+  grouped: Map<string, SearchResult[]>
+}
+
+const NOTHING_SETTLED: Settled = { query: "", grouped: NO_RESULTS }
+
 export function useSearch(): SearchState {
   const queryClient = useQueryClient()
   const endpoint = useEndpoint()
   const [query, setQuery] = useState("")
-  const [grouped, setGrouped] = useState<Map<string, SearchResult[]>>(new Map())
-  const [isLoading, setIsLoading] = useState(false)
+  const [settled, setSettled] = useState<Settled>(NOTHING_SETTLED)
   const abortRef = useRef<AbortController | null>(null)
 
+  const trimmed = query.trim()
+
   useEffect(() => {
-    const trimmed = query.trim()
     if (!trimmed) {
-      setGrouped(new Map())
-      setIsLoading(false)
+      // Nothing to search. Drop any in-flight search on the floor rather than
+      // letting it land in a box the user has already emptied.
+      abortRef.current?.abort()
+      abortRef.current = null
       return
     }
 
-    setIsLoading(true)
-
-    const timer = setTimeout(async () => {
-      // Cancel any in-flight search from a previous keystroke
+    const timer = setTimeout(() => {
+      // Cancel any in-flight search from a previous keystroke.
       abortRef.current?.abort()
-      abortRef.current = new AbortController()
+      const controller = new AbortController()
+      abortRef.current = controller
 
-      const controller = abortRef.current
-      try {
-        const results = await runSearch(trimmed, {
-          queryClient,
-          endpoint,
-          signal: controller.signal,
-        })
-        // Guard against a slower earlier search resolving after a newer one.
-        if (abortRef.current === controller) {
-          setGrouped(results)
+      void (async () => {
+        let results: Map<string, SearchResult[]> | undefined
+        try {
+          results = await runSearch(trimmed, {
+            queryClient,
+            endpoint,
+            signal: controller.signal,
+          })
+        } finally {
+          // Recording the query as settled is what clears the spinner, so it has
+          // to happen when the search fails too — otherwise a throwing
+          // contributor leaves the palette spinning for ever. Holding on to the
+          // previous results in that case is what a failed search always did.
+          //
+          // The identity check guards against a slower earlier search resolving
+          // after a newer one.
+          if (abortRef.current === controller) {
+            const found = results
+            setSettled((prev) => ({ query: trimmed, grouped: found ?? prev.grouped }))
+          }
         }
-      } finally {
-        if (abortRef.current === controller) {
-          setIsLoading(false)
-        }
-      }
+      })()
     }, DEBOUNCE_MS)
 
     return () => {
       clearTimeout(timer)
     }
-  }, [query, queryClient, endpoint])
+  }, [trimmed, queryClient, endpoint])
+
+  // Derived, never written back from the effect: a blank box shows nothing, and
+  // anything typed counts as loading until a search for exactly that text has
+  // settled. Results from the previous query stay on screen meanwhile.
+  const grouped = trimmed ? settled.grouped : NO_RESULTS
+  const isLoading = trimmed !== "" && settled.query !== trimmed
 
   const flat: SearchResult[] = []
   for (const items of grouped.values()) flat.push(...items)
@@ -77,7 +109,7 @@ export function useSearch(): SearchState {
     isLoading,
     clear: () => {
       setQuery("")
-      setGrouped(new Map())
+      setSettled(NOTHING_SETTLED)
     },
   }
 }

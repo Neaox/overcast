@@ -8,7 +8,7 @@
  * instances) and SqsMessageList (SQS messages) with a single reusable hook.
  */
 
-import { useRef, useMemo } from "react"
+import { useState } from "react"
 
 export interface Ghost<T> {
   item: T
@@ -25,62 +25,89 @@ interface UseGhostTrackerOptions<T> {
 }
 
 /**
- * Derives the ghost map synchronously during render — no useEffect, no
- * setState.  Returns a stable Map reference (via useMemo) that only changes
- * when the live item list or the sweep tick changes.
+ * What the tracker remembers between renders: the live items it last saw (so it
+ * can tell what has since vanished) and the ghosts standing right now.
+ */
+interface Tracked<T> {
+  live: Map<string, T>
+  ghosts: Map<string, Ghost<T>>
+}
+
+function sameEntries<V>(a: Map<string, V>, b: Map<string, V>): boolean {
+  if (a.size !== b.size) return false
+  for (const [key, value] of a) {
+    if (!b.has(key) || b.get(key) !== value) return false
+  }
+  return true
+}
+
+/**
+ * Fold one observation of the live list into the tracker's memory.
+ *
+ * Pure, and returns `prev` unchanged when nothing moved — which is what stops a
+ * caller that rebuilds its `items` array every render (SqsMessageList spreads
+ * one) from re-rendering for ever.
+ */
+function track<T>(
+  prev: Tracked<T>,
+  items: T[],
+  getKey: (item: T) => string,
+  ttl: number,
+  now: number,
+): Tracked<T> {
+  const live = new Map<string, T>()
+  for (const item of items) live.set(getKey(item), item)
+
+  const ghosts = new Map<string, Ghost<T>>()
+  // Keep the ghosts that are still owed a fade-out: dropping the ones that came
+  // back, and the ones whose ttl has run out.
+  for (const [key, ghost] of prev.ghosts) {
+    if (live.has(key) || now - ghost.deletedAt > ttl) continue
+    ghosts.set(key, ghost)
+  }
+  // Promote whatever was live last time and is not any more.
+  for (const [key, item] of prev.live) {
+    if (live.has(key) || ghosts.has(key)) continue
+    ghosts.set(key, { item, deletedAt: now })
+  }
+
+  return sameEntries(prev.live, live) && sameEntries(prev.ghosts, ghosts) ? prev : { live, ghosts }
+}
+
+/**
+ * Derives the ghost map from the live list — no useEffect, no polling.
+ *
+ * The diff needs the *previous* live list, which is state, not a scratch ref:
+ * this hook used to keep both the previous list and the ghost map in refs and
+ * mutate them inside a `useMemo`, which is exactly the render-phase side effect
+ * React forbids. A render that gets thrown away (Strict Mode, a concurrent
+ * re-render, a suspended sibling) still ran the mutation, so a vanished item
+ * could be recorded as a ghost against a render nobody ever saw and then never
+ * promoted again — the fade-out simply not happening. Held in state and updated
+ * with React's "adjust state when a prop changes" rule, the fold is pure and
+ * runs exactly once per observation.
  *
  * The sweep is driven by the live-item changes themselves: every time the
- * parent re-renders with new data the ghosts are re-evaluated.  For a
- * time-based expiry independent of data changes, the caller can pass a tick
- * counter in the dependency that triggers re-render (e.g. the existing 1 s
- * tick in SqsMessageList, or a dedicated setInterval).
+ * parent re-renders with new data the ghosts are re-evaluated. For a time-based
+ * expiry independent of data changes, the caller can pass a tick counter in the
+ * dependency that triggers re-render (e.g. the existing 1 s tick in
+ * SqsMessageList, or a dedicated setInterval).
  */
 export function useGhostTracker<T>({
   items,
   getKey,
   ttl,
 }: UseGhostTrackerOptions<T>): Map<string, Ghost<T>> {
-  // Mutable ref survives across renders; mutated during render (safe for
-  // component-local refs per React docs).
-  const prevLive = useRef<Map<string, T>>(new Map())
-  const ghostsRef = useRef<Map<string, Ghost<T>>>(new Map())
-  const getKeyRef = useRef(getKey)
-  getKeyRef.current = getKey
+  // Seeded from the first observation: nothing can have vanished yet, and
+  // starting empty would only buy a discarded render on mount.
+  const [tracked, setTracked] = useState<Tracked<T>>(() => ({
+    live: new Map(items.map((item) => [getKey(item), item])),
+    ghosts: new Map(),
+  }))
 
-  // Derive ghost state synchronously during render.
-  return useMemo(() => {
-    // eslint-disable-next-line react-hooks/purity
-    const now = Date.now()
-    const currentKeys = new Set(items.map((item) => getKeyRef.current(item)))
-    const ghosts = ghostsRef.current
+  // eslint-disable-next-line react-hooks/purity -- ghost expiry is wall-clock by nature; the fold below is otherwise pure
+  const next = track(tracked, items, getKey, ttl, Date.now())
+  if (next !== tracked) setTracked(next)
 
-    // Promote items that just disappeared to ghosts.
-    for (const [key, item] of prevLive.current) {
-      if (!currentKeys.has(key) && !ghosts.has(key)) {
-        ghosts.set(key, { item, deletedAt: now })
-      }
-    }
-
-    // Re-appear: if an item comes back, remove its ghost.
-    for (const key of currentKeys) {
-      ghosts.delete(key)
-    }
-
-    // Expire old ghosts.
-    for (const [key, ghost] of ghosts) {
-      if (now - ghost.deletedAt > ttl) {
-        ghosts.delete(key)
-      }
-    }
-
-    // Snapshot current live items for next diff.
-    const nextLive = new Map<string, T>()
-    for (const item of items) {
-      nextLive.set(getKeyRef.current(item), item)
-    }
-    prevLive.current = nextLive
-
-    // Return a shallow copy so React sees a new reference when ghosts change.
-    return new Map(ghosts)
-  }, [items, ttl])
+  return next.ghosts
 }

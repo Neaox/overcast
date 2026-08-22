@@ -14,7 +14,7 @@
  *     height="60vh"
  *   />
  */
-import { useState, useCallback, useMemo, useRef, useEffect } from "react"
+import { useState, useCallback, useMemo, useRef } from "react"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 import { ChevronRight, ChevronDown, FileCode, FolderOpen, Folder, X } from "lucide-react"
@@ -293,17 +293,22 @@ export function CodeBrowser({
   }, [])
 
   // ── Sync initial file into cache ───────────────────────────────────────
-  useEffect(() => {
-    if (initialFile && initialValue != null && !fileCache[initialFile]) {
-      setFileCache((prev) => ({
-        ...prev,
-        [initialFile]: {
-          content: initialValue,
-          language: language ?? languageForPath(initialFile),
-        },
-      }))
-    }
-  }, [initialFile, initialValue, language, fileCache])
+  //
+  // The lazy initialiser above covers the usual case; this catches the one it
+  // cannot — `initialFile` arriving (or changing) after mount, which is what
+  // happens when the source query resolves. Adjusting during render rather than
+  // from an effect keeps it to a single paint: React discards this render and
+  // re-runs with the seeded cache instead of painting the empty one first. The
+  // "already cached" guard is what makes it converge.
+  if (initialFile && initialValue != null && !fileCache[initialFile]) {
+    setFileCache((prev) => ({
+      ...prev,
+      [initialFile]: {
+        content: initialValue,
+        language: language ?? languageForPath(initialFile),
+      },
+    }))
+  }
 
   // ─── Render tree node ─────────────────────────────────────────────────
   function renderNode(node: TreeNode, depth: number = 0) {
