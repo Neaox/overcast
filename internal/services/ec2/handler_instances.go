@@ -240,7 +240,7 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 		Xmlns:         ec2XMLNS,
 		RequestID:     protocol.RequestIDFromContext(r.Context()),
 		ReservationID: fmt.Sprintf("r-%s", shortID()),
-		OwnerID:       "123456789012",
+		OwnerID:       h.cfg.AccountID,
 		Instances:     instances,
 	})
 }
@@ -304,7 +304,7 @@ func (h *Handler) describeInstances(ctx context.Context, q describeQuery) (*xmlD
 		reservations = []xmlReservation{
 			{
 				ReservationID: fmt.Sprintf("r-%s", shortID()),
-				OwnerID:       "123456789012",
+				OwnerID:       h.cfg.AccountID,
 				Instances:     items,
 			},
 		}

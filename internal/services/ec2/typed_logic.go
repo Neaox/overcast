@@ -1334,7 +1334,7 @@ func (h *Handler) runInstancesTyped(ctx context.Context, req *runInstancesReq) (
 		Xmlns:         ec2XMLNS,
 		RequestID:     protocol.RequestIDFromContext(ctx),
 		ReservationID: fmt.Sprintf("r-%s", shortID()),
-		OwnerID:       "123456789012",
+		OwnerID:       h.cfg.AccountID,
 		Instances:     instances,
 	}, nil
 }
