@@ -19,6 +19,9 @@ const HEALTH: HealthResponse = {
     sns: "stub",
     lambda: "unsupported",
   },
+  // The server always sends goal tiers alongside current ones; the dashboard
+  // reads only the current tier, so the values here do not matter.
+  serviceGoalTiers: {},
   storage: { default: "memory" },
 }
 

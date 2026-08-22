@@ -32,19 +32,39 @@ package cloudformation
 //
 // See docs/plans/cfn-deploy-diagnostics.md for the reasoning in full.
 
-// Section provenance. These are contract values — the console renders one
-// label per tier — so they are not free text.
+// DiagnosticProvenance is where a piece of emulator diagnostic evidence came
+// from: one of the constants below. These are contract values — the console
+// renders one label per tier — so they are not free text, and cmd/tsgen
+// renders the typed constants as the TypeScript union the console's
+// provenance tag is keyed on.
+//
+// Overcast is allowed to say things AWS never would, but only where it is
+// unmistakably Overcast talking — see docs/dev/architecture.md § "Two things
+// called a bus". The risk that creates is a developer reading a captured
+// container log or an inferred summary, believing real AWS would have handed
+// them the same thing, and writing a fix that depends on a signal production
+// will never produce. Tagging every piece of evidence with its origin is what
+// makes that mistake hard, so the tier is carried on the payload rather than
+// being a blanket "emulator-only" badge on the panel.
+//
+// The vocabulary is deliberately service-neutral. CloudFormation deploy
+// diagnostics is the first consumer; RDS's retained-logs panel — which already
+// draws the same distinction with a bespoke `logSource: "container" |
+// "retained"` field — is the obvious second, and a second vocabulary would put
+// the two panels back to explaining the same idea in different words.
+type DiagnosticProvenance = string
+
 const (
 	// provenanceAWSAPI marks evidence real AWS would have returned too:
 	// `aws ecs describe-services` would have shown it.
-	provenanceAWSAPI = "aws-api"
+	provenanceAWSAPI DiagnosticProvenance = "aws-api"
 	// provenanceCapture marks evidence Overcast saved before rollback deleted
 	// it. Real AWS discards it too — recovering it there would need `awslogs`
 	// configured on the task definition beforehand.
-	provenanceCapture = "overcast-capture"
+	provenanceCapture DiagnosticProvenance = "overcast-capture"
 	// provenanceInference marks Overcast's own reading of the evidence. Not an
 	// AWS concept, and labelled so nobody mistakes it for one.
-	provenanceInference = "overcast-inference"
+	provenanceInference DiagnosticProvenance = "overcast-inference"
 )
 
 // Section kinds. Three, deliberately: facts, events and a log tail cover ECS
@@ -140,9 +160,9 @@ type DiagnosticResource struct {
 type DiagnosticSection struct {
 	// ID is stable and unique within the resource, so the console can key its
 	// panes on something other than position.
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Provenance string `json:"provenance"`
+	ID         string               `json:"id"`
+	Title      string               `json:"title"`
+	Provenance DiagnosticProvenance `json:"provenance"`
 	// Note is an optional one-line gloss in Overcast's voice — what this pane
 	// is, or why it is empty.
 	Note string `json:"note,omitempty"`

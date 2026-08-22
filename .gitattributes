@@ -13,7 +13,8 @@ scripts/*.ps1 text eol=crlf
 # fully textual — deliberately not `-diff`, which would hide the content from
 # review and reduce a staleness failure to "binary files differ". Never
 # hand-merge these: resolve any conflict by re-running `make docs-index` /
-# `make generate-caps`.
+# `make generate-caps` / `make generate-ts`.
 internal/docssearch/index.gen.jsonl linguist-generated=true
 web/src/docs-nav.gen.ts linguist-generated=true
+web/src/types/api.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true

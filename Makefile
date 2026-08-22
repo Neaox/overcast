@@ -45,7 +45,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
-        generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
+        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -227,6 +227,14 @@ generate-caps:
 check-caps:
 	$(GO) run -tags dev ./cmd/capgen --check
 
+## generate-ts: regenerate web/src/types/api.gen.ts from the Go response structs the web UI consumes
+generate-ts:
+	$(GO) run ./cmd/tsgen --write
+
+## check-ts: verify web/src/types/api.gen.ts matches the Go response structs (CI gate; fails with "run make generate-ts")
+check-ts:
+	$(GO) run ./cmd/tsgen --check
+
 ## generate-aws-operations: regenerate the AWS operation manifest from a pinned local api-models-aws checkout
 ## Set AWS_MODELS_DIR to its models directory. The checked-out commit must match models/aws/VERSION.
 generate-aws-operations:
@@ -253,8 +261,8 @@ docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
 	$(GO) run ./scripts/docs-index.go --write-nav --write-search-index
 
-## docs-check: verify docs capability tables, all.gen.go, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
-docs-check: check-caps
+## docs-check: verify docs capability tables, all.gen.go, api.gen.ts, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
+docs-check: check-caps check-ts
 	$(GO) run -tags dev ./cmd/capgen --generate
 	@git diff --exit-code internal/capabilities/all.gen.go \
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)

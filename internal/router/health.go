@@ -12,14 +12,17 @@ import (
 
 // healthResponse is the JSON body returned by GET /_overcast/health.
 type healthResponse struct {
-	Status           string            `json:"status"`
-	Timestamp        string            `json:"timestamp"`
-	Version          string            `json:"version"`
-	Services         []string          `json:"services"`
-	ServiceTiers     map[string]string `json:"serviceTiers"`
-	ServiceGoalTiers map[string]string `json:"serviceGoalTiers"`
-	Storage          healthStorage     `json:"storage"`
-	Docker           *docker.Status    `json:"docker,omitempty"`
+	Status    string   `json:"status"`
+	Timestamp string   `json:"timestamp"`
+	Version   string   `json:"version"`
+	Services  []string `json:"services"`
+	// ServiceTiers and ServiceGoalTiers are keyed by service name. The value
+	// type is the EmulationTier alias rather than bare string so cmd/tsgen
+	// renders the web UI's type as the tier union, not `string`.
+	ServiceTiers     map[string]EmulationTier `json:"serviceTiers"`
+	ServiceGoalTiers map[string]EmulationTier `json:"serviceGoalTiers"`
+	Storage          healthStorage            `json:"storage"`
+	Docker           *docker.Status           `json:"docker,omitempty"`
 }
 
 // healthStorage describes the active storage configuration.
@@ -40,6 +43,10 @@ type healthStorage struct {
 	Persistent       *persistentHealth `json:"persistent,omitempty"`
 }
 
+// persistentHealth is the health endpoint's view of state.PersistentHealth:
+// the same fields, with the timestamps already formatted as RFC 3339 strings
+// and omitted when zero (a zero time.Time would otherwise marshal as
+// "0001-01-01T00:00:00Z" — omitempty does not apply to structs).
 type persistentHealth struct {
 	Mode          string `json:"mode"`
 	Healthy       bool   `json:"healthy"`
