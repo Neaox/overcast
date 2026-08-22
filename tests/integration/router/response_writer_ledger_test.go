@@ -53,6 +53,8 @@ var emulatorOnlyWriters = map[string]string{
 	"lambda/handler_source.go":           "the console's source editor, on the Lambda path prefix but not an AWS operation",
 	"lambda/handler_layers.go":           "GetLayerVersionMetadata, a /_lambda extension-discovery route",
 	"lambda/handler_functions.go":        "ListRuntimes and the saved test-event routes, all emulator-only",
+	"lambda/handler_metrics.go":          "/_overcast/lambda/functions/{name}/metrics, the web Monitor tab's read-through (service-metrics-platform.md phase 3)",
+	"sqs/handler_metrics.go":             "/_overcast/sqs/queues/{name}/metrics, the web Monitor section's read-through (service-metrics-platform.md phase 3)",
 	"cognito/handler_managed_login.go":   "the hosted-UI OAuth endpoints, which answer as an OIDC provider rather than as an AWS API",
 	"cognito/jwt.go":                     "the pool's JWKS document, fetched by JWT verifiers at /.well-known/jwks.json",
 

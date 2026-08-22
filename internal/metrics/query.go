@@ -51,14 +51,29 @@ func (s *Service) ListMetrics(ctx context.Context, namespace string) ([]Metric, 
 // Returned buckets are sorted ascending by Start; a minute with no
 // observation is simply absent — callers must not treat that as a zero
 // (plan: "A missing metric means no observation was emitted, not a
-// synthetic zero").
+// synthetic zero"). This always reads the fine (60s) tier — the one tier the
+// active overlay can ever hold — which is what internal/services/cloudwatch's
+// read-through (the only caller) needs: its own GetMetricStatistics/
+// GetMetricData/alarm-window callers already pass a period compatible with
+// 60s buckets. A caller that wants the phase 3 rollup ladder's coarser tiers
+// (a chart spanning more than the 60s tier's retention) wants QueryAuto
+// instead.
 func (s *Service) QueryRange(ctx context.Context, namespace, name string, dims []Dimension, start, end time.Time) ([]Bucket, error) {
+	return s.queryRangeAt(ctx, namespace, name, dims, resolutionSeconds, start, end)
+}
+
+// queryRangeAt is QueryRange generalized to an explicit stored resolution.
+// Only resolutionSeconds (the fine tier) has an in-memory active overlay to
+// merge — the coarser rollup tiers (rollup.go) are backend-persisted only,
+// lagging by up to their rollupSpec's catchUpWindows*window, which is
+// disclosed/acceptable for a 7d/30d trend chart.
+func (s *Service) queryRangeAt(ctx context.Context, namespace, name string, dims []Dimension, resolutionSec int, start, end time.Time) ([]Bucket, error) {
 	canon := canonicalizeDimensions(dims)
 	id := seriesID(namespace, name, canon)
-	startMs := floorToMinute(start).UnixMilli()
+	startMs := start.UTC().Truncate(time.Duration(resolutionSec) * time.Second).UnixMilli()
 	endMs := end.UTC().UnixMilli()
 
-	persisted, err := s.backend.rangeQuery(ctx, id, resolutionSeconds, startMs, endMs)
+	persisted, err := s.backend.rangeQuery(ctx, id, resolutionSec, startMs, endMs)
 	if err != nil {
 		return nil, err
 	}
@@ -66,12 +81,14 @@ func (s *Service) QueryRange(ctx context.Context, namespace, name string, dims [
 	for _, b := range persisted {
 		merged[b.Start.UnixMilli()] = b
 	}
-	for minuteUnix, b := range s.active.forSeries(id) {
-		ms := minuteUnix * 1000
-		if ms < startMs || ms > endMs {
-			continue
+	if resolutionSec == resolutionSeconds {
+		for minuteUnix, b := range s.active.forSeries(id) {
+			ms := minuteUnix * 1000
+			if ms < startMs || ms > endMs {
+				continue
+			}
+			merged[ms] = b
 		}
-		merged[ms] = b
 	}
 
 	out := make([]Bucket, 0, len(merged))

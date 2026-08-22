@@ -42,7 +42,9 @@ import type {
   SavedTestEvent,
   LambdaInstance,
   LambdaLayerVersionMetadata,
+  MonitorResponse,
 } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 export type InvokeEvent =
   | { type: "progress"; step: string }
@@ -61,6 +63,12 @@ export const lambda = {
   getLayerVersionMetadata: (layerName: string, version: number) =>
     apiFetch<LambdaLayerVersionMetadata>(
       `/lambda/layers/${encodeURIComponent(layerName)}/versions/${version}/metadata`,
+    ),
+
+  /** Monitor tab read-through — docs/plans/service-metrics-platform.md phase 3. */
+  getMetrics: (name: string, range: ChartRangeToken) =>
+    apiFetch<MonitorResponse>(
+      `/lambda/functions/${encodeURIComponent(name)}/metrics?range=${range}`,
     ),
 
   getSource: (name: string, file?: string) => {

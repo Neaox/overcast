@@ -30,6 +30,14 @@ func (f *fakeMetricsRecorder) Observe(_ context.Context, o metrics.Observation) 
 	return nil
 }
 
+// ChartQuery satisfies the metricsRecorder interface's read half (needed for
+// handler_metrics.go's GetFunctionMetrics) but is never exercised by this
+// file's Observe-focused tests — see handler_metrics_test.go for coverage of
+// the read path itself, against a real *metrics.Service.
+func (f *fakeMetricsRecorder) ChartQuery(_ context.Context, _, _, _ string, _ []metrics.Dimension, _, _ time.Time, _ time.Duration) ([]metrics.ChartPoint, int, error) {
+	return nil, 0, nil
+}
+
 func (f *fakeMetricsRecorder) byName(name string) []metrics.Observation {
 	f.mu.Lock()
 	defer f.mu.Unlock()

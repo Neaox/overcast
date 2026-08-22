@@ -1,7 +1,9 @@
 # Service metrics platform plan (Lambda pilot + service rollout)
 
 > **Status:** **Lambda pilot (phase 1) shipped 2026-08-22; SQS/SNS/DynamoDB/
-> API Gateway rollout (phase 2) shipped 2026-08-22**, tracked by
+> API Gateway rollout (phase 2) shipped 2026-08-22; the web Monitor tab/
+> section and the 300s/3600s resolution rollup ladder (phase 3) shipped
+> 2026-08-22**, tracked by
 > [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100).
 > `internal/metrics` exists and is wired: Lambda automatically records
 > `Invocations`/`Errors`/`Duration`/`Throttles`/`ConcurrentExecutions`; SQS
@@ -48,9 +50,22 @@
 > (never the coarser `ApiName+Stage`-only aggregate AWS also publishes),
 > mirroring Lambda phase 1's own `FunctionName`-only narrowing.
 >
+> **What phase 3 delivered** (see "Phase 3 delivered scope" below for the full
+> list): a Lambda **Monitor tab** and an SQS **Monitor section**, each reading
+> through its own new `GET /_overcast/<service>/.../metrics` allowlist
+> endpoint — never CloudWatch protocol, never a second query engine, built
+> entirely on `internal/metrics`'s own new `QueryAuto`/`ChartQuery` read path —
+> and the 60s/300s/3600s resolution rollup ladder the design always specified,
+> extending the 60s tier's retention from phase 1's 1h to the full 24h the
+> design's table calls for. **What remains deferred to phase 4**: Lambda's
+> P1/P2 tiers, the generic K/V-backed persistence path for `WALStore`/
+> `-tags nosqlite` builds, and migrating `PutMetricData`'s own storage onto
+> `internal/metrics` — see "Phase 3 delivered scope" for the complete list.
+>
 > **Scope:** an AWS-shaped metrics substrate shared by every emulated service,
-> delivered first for Lambda (phase 1) and now for SQS, SNS, DynamoDB, and
-> API Gateway (phase 2). This is a plan, not an API commitment.
+> delivered first for Lambda (phase 1), then for SQS, SNS, DynamoDB, and API
+> Gateway (phase 2), then the web Monitor tab/section and resolution rollup
+> ladder (phase 3). This is a plan, not an API commitment.
 
 ## Outcome
 
@@ -790,6 +805,134 @@ Explicitly deferred to phase 3+ (not started, not partially built):
 - Migrating `PutMetricData`'s own storage onto `internal/metrics` — unchanged
   from phase 1's own deferral.
 
+## Phase 3 delivered scope (2026-08-22)
+
+Design "Web UI plan" and the resolution-ladder half of "Access patterns,
+retention, and graph time spans", covering the remainder PR #1268 (phase 2)
+listed.
+
+Delivered:
+
+- **Resolution rollup ladder** (`internal/metrics/rollup.go`): the design's
+  full 60s/24h, 300s/7d, 3600s/30d table (`resolutionTiers`), replacing phase
+  1's single 60s/1h tier — extending the fine tier's own retention was needed
+  because the design keeps the 6h and 24h chart controls at 1-minute
+  resolution (`resolutionTiers`'s comment explains why). A background job
+  (`rollupOnce`, run from the existing sweep tick) derives each coarser tier
+  from the next-finer persisted tier (never from the active overlay, which
+  only ever holds 60s buckets) using the same `bucketBackend.rangeQuery`/
+  `upsertBuckets` calls the fine tier already uses — no second storage engine.
+  Each rollup window is a full-value replace, not an additive delta (mirroring
+  `activeBucket`'s own doc comment), which is what makes recomputing a
+  trailing handful of windows every tick (`rollupSpec.catchUpWindows`)
+  self-healing against a missed tick or late flush without double-counting.
+  An empty window (no fine buckets in it) writes nothing — the plan's "a
+  missing metric means no observation was emitted, not a synthetic zero" rule
+  applied to the rollup ladder itself, not only to the fine tier.
+- **Query planner** (`internal/metrics/planner.go`): `SelectResolution`
+  implements "the finest resolution whose retention fully covers the
+  requested interval"; `ParseChartRange` implements the design's exact five
+  coherent controls (`1h/1m, 6h/1m, 24h/5m, 7d/5m, 30d/1h`), rejecting any
+  other range token rather than silently substituting a default;
+  `(*Service).QueryAuto` combines both, and — when the caller's requested
+  display period is coarser than the resolution actually available for that
+  age — regroups the returned buckets at read time
+  (`aggregateIntoPeriods`, sharing `rollup.go`'s own `sumBuckets` composition
+  logic) rather than requiring the persisted rollup ladder to have already
+  caught up to exactly that period. The existing `QueryRange`
+  (`internal/services/cloudwatch`'s only read call) is unchanged in signature
+  and behavior — it is now a thin wrapper calling the new
+  resolution-parameterized `queryRangeAt` at the fixed 60s tier, so
+  CloudWatch's `GetMetricStatistics`/`GetMetricData`/alarm evaluator needed
+  **zero changes** for phase 3, exactly as phase 2 needed none for its four
+  new namespaces.
+- **Chart read API** (`internal/metrics/chart.go`): `Bucket.Value(statistic)`
+  derives `Sum`/`Average`/`Minimum`/`Maximum`/`SampleCount` from a stored
+  aggregate; `(*Service).ChartQuery` combines this with `QueryAuto` to answer
+  one (metric, statistic) series directly as chart-ready `ChartPoint`s — the
+  narrow read surface every service's Monitor endpoint calls.
+- **Monitor endpoint assembly** (`internal/metrics/monitor.go`):
+  `MonitorCatalogEntry`/`MonitorResponse`/`MonitorSeries` and
+  `BuildMonitorResponse` are the shared allowlist-response shape and assembly
+  logic every service's `GET /_overcast/<service>/.../metrics` handler calls
+  with its own fixed catalogue — the backend analog of the Web UI plan's
+  "Build one reusable MetricChart/MetricCard component" instruction. A nil
+  reader (collection disabled) answers `{"enabled": false}`, never an error;
+  an unrecognized `range` token answers 400, never a silently-substituted
+  default.
+- **Lambda**: `GET /_overcast/lambda/functions/{name}/metrics`
+  (`internal/services/lambda/handler_metrics.go`), serving the P0 pilot
+  catalogue (`Invocations`/`Errors`/`Duration` average+maximum/`Throttles`/
+  `ConcurrentExecutions` maximum) dimensioned by `FunctionName`. The Lambda
+  function detail page's existing "Monitor" tab — previously a log viewer
+  only (a naming collision from #1104, unrelated to this plan) — now shows
+  four metric cards above the log viewer it already had; the log viewer
+  itself is unchanged.
+- **SQS**: `GET /_overcast/sqs/queues/{name}/metrics`
+  (`internal/services/sqs/handler_metrics.go`), serving 7 series (send/
+  receive/delete/empty-receive counts, visible/not-visible queue-depth
+  gauges as `Average`, oldest-message age as `Maximum`) dimensioned by
+  `QueueName`. SQS's queue detail page had no tab system before this phase;
+  a third tab ("Monitor", alongside the existing hand-rolled Messages/SNS
+  Subscriptions tabs) was added rather than introducing the shared `Tabs`
+  component there for the first time, to keep the change's blast radius
+  contained to this feature.
+- **Web** (`web/src/features/monitoring/`): `MetricLineChart` (a reusable
+  inline-SVG multi-series line chart — fixed categorical color order from the
+  repo's own `--cat-1`…`--cat-5` ramp, thin 2px lines, gap-aware segment
+  splitting so a missing period is never bridged by a straight line, a hover
+  crosshair+tooltip, a legend for 2+ series) and `MonitorPanel` (the range
+  selector, per-card grid, loading/error states via the shared
+  `QueryListState`, the disabled-collection state, and the visible
+  local-retention disclaimer the design calls for) are shared by both
+  Lambda's tab and SQS's section. `cmd/tsgen`'s manifest gained
+  `MonitorResponse`/`MonitorSeries`/`ChartPoint`.
+- **BFF** (`internal/bff/bff.go`): `GET /api/lambda/functions/{name}/metrics`
+  and `GET /api/sqs/queues/{name}/metrics` are thin proxies to the emulator
+  endpoints above, forwarding only `range` and the region header — the SPA
+  never constructs or parses CloudWatch protocol, matching the design's "This
+  avoids exposing CloudWatch protocol parsing to the SPA" rationale.
+- Tests: `internal/metrics/rollup_test.go` (rollup composition, the
+  synthetic-zero rule, hourly-from-five-minute composition across simulated
+  sweep ticks, idempotent recomputation, `SelectResolution`/`ParseChartRange`/
+  `QueryAuto`/`ChartQuery`, plus a dedicated SQLite-backend rollup test — see
+  `tests/AGENTS.md` § Build-tag-sensitive tests for why it's skipped rather
+  than tagged out under `-tags nosqlite`); `handler_metrics_test.go` per
+  service against a real `*metrics.Service` (never a stub, matching phase 2's
+  own convention); `internal/bff/metrics_test.go` for the proxy layer; web
+  component tests for `MetricLineChart`'s empty/gap/legend behavior and
+  `MonitorPanel`'s loading/error/disabled/populated states. No benchmarks were
+  added: the rollup ladder runs entirely off the existing background sweep
+  tick, not the `Observe`/`Flush` recording hot path phase 1/2's benchmarks
+  already cover.
+
+Explicitly deferred to phase 4 (not started, not partially built):
+
+- Lambda's P1/P2 tiers (`AsyncEventsReceived`/`AsyncEventAge`/
+  `AsyncEventsDropped`/`DeadLetterErrors`/`DestinationDeliveryFailures`, ESM
+  `IteratorAge`/`EventCount`/`ErrorCount`, provisioned-concurrency metrics,
+  function URL request metrics) and `Resource`/`ExecutedVersion` dimensions —
+  unchanged from phase 1/2's own deferral.
+- The generic versioned-K/V persistence path for `WALStore`/`-tags nosqlite`
+  builds — unchanged from phase 1/2's own deferral; those configurations get
+  correct in-memory-only automatic metrics (including the phase 3 rollup
+  ladder, which runs the same in-memory backend fine) with no restart
+  continuity.
+- Migrating `PutMetricData`'s own storage onto `internal/metrics` — unchanged
+  from phase 1/2's own deferral.
+- DynamoDB throttling modeling, SNS's silent-`continue` delivery-dependency
+  gap, and API Gateway's coarser documented dimension combinations —
+  unchanged from phase 2's own deferral; none are web-UI or storage-tier
+  concerns this phase touches.
+- SNS/DynamoDB/API Gateway Monitor tabs/sections — phase 3 built Lambda and
+  SQS only, per this phase's scope; the same `MonitorPanel`/`MetricLineChart`
+  components and `internal/metrics/monitor.go` assembly are designed to be
+  reused by a future phase's SNS/DynamoDB/API Gateway catalogue and handler,
+  not rebuilt.
+- A `metrics:bucket-updated` SSE event to invalidate/refetch visible charts —
+  the Web UI plan's "optionally listen to" alternative to polling; phase 3
+  ships the simpler always-poll (30s) behavior only.
+
 ## Implementation phases
 
 ### Phase 0 — evidence and contracts
@@ -835,13 +978,19 @@ Explicitly deferred to phase 3+ (not started, not partially built):
   Ensure cancellation, container failure, and shutdown cannot leak an active
   concurrency gauge or double-release.
 
-### Phase 3 — Lambda monitor experience
+### Phase 3 — Lambda monitor experience (shipped 2026-08-22)
 
 - Implement the BFF query allowlist and typed web client.
 - Add reusable chart components, the function Monitor tab, tests for query
   construction/loading/no-data/error states, and an accessibility review.
 - Compare the layout and terminology with the relevant AWS Lambda monitoring
   pages while retaining Overcast styling and explicit local limits.
+
+Shipped for Lambda and SQS (the SQS Monitor section was not originally
+specified by this phase's own heading, but the reusable component split
+["Build one reusable `MetricChart`/`MetricCard` component..."] made adding it
+alongside Lambda's tab low-marginal-cost) — see "Phase 3 delivered scope"
+above for the exact endpoint shapes, catalogue, and disclosed remainder.
 
 ### Phase 4 — async and ESM metrics
 

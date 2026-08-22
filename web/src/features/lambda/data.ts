@@ -21,6 +21,7 @@ import type {
 } from "@aws-sdk/client-lambda"
 import type { InvokeResult, SavedTestEvent } from "@/types"
 import { endpointStore } from "@/services/endpoint-store"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ export const lambdaKeys = {
     [...lambdaKeys.layerVersions(layerName), version, "metadata"] as const,
   esms: (functionName: string) => [...lambdaKeys.all(), "esms", functionName] as const,
   tags: (resourceArn: string) => [...lambdaKeys.all(), "tags", resourceArn] as const,
+  metrics: (name: string, range: ChartRangeToken) =>
+    [...lambdaKeys.all(), "metrics", name, range] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -56,6 +59,20 @@ export function lambdaFunctionsQueryOptions() {
   return queryOptions({
     queryKey: lambdaKeys.functions(),
     queryFn: () => lambda.listFunctions(),
+  })
+}
+
+/**
+ * Monitor tab read-through (docs/plans/service-metrics-platform.md phase 3).
+ * Polls while the tab is visible — the plan's "Use polling initially" —
+ * rather than a manual-refresh-only chart.
+ */
+export function lambdaMetricsQueryOptions(name: string, range: ChartRangeToken) {
+  return queryOptions({
+    queryKey: lambdaKeys.metrics(name, range),
+    queryFn: () => lambda.getMetrics(name, range),
+    refetchInterval: 30_000,
+    enabled: Boolean(name),
   })
 }
 

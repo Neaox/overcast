@@ -18,10 +18,12 @@ import {
   Inbox,
   Settings,
   Undo2,
+  Activity,
 } from "lucide-react"
 import {
   sqsQueueQueryOptions,
   sqsMessagesQueryOptions,
+  sqsMetricsQueryOptions,
   sqsKeys,
   deleteQueueMutationOptions,
   purgeQueueMutationOptions,
@@ -32,6 +34,11 @@ import {
   redriveMutationOptions,
   redriveMessageMutationOptions,
 } from "@/features/sqs/data"
+import {
+  MonitorPanel,
+  type MonitorCardConfig,
+} from "@/features/monitoring/components/monitor-panel"
+import { DEFAULT_CHART_RANGE, type ChartRangeToken } from "@/features/monitoring/types"
 import {
   snsQueueSubscriptionsQueryOptions,
   snsTopicsQueryOptions,
@@ -85,6 +92,47 @@ interface Props {
   queueName: string
 }
 
+// The AWS/SQS metrics catalogue, grouped into cards (docs/plans/service-metrics-platform.md
+// phase 2's per-metric disposition table). Visible/NotVisible share a card
+// (both queue-depth gauges, same unit); sent/received/deleted/empty-receive
+// counts share a card; the oldest-message age gets its own since it is only
+// ever recorded for a non-empty queue.
+const SQS_MONITOR_CARDS: MonitorCardConfig[] = [
+  {
+    title: "Messages Sent, Received & Deleted",
+    unit: "Count",
+    series: [
+      { metric: "NumberOfMessagesSent", statistic: "Sum", label: "Sent" },
+      { metric: "NumberOfMessagesReceived", statistic: "Sum", label: "Received" },
+      { metric: "NumberOfMessagesDeleted", statistic: "Sum", label: "Deleted" },
+      { metric: "NumberOfEmptyReceives", statistic: "Sum", label: "Empty receives" },
+    ],
+  },
+  {
+    title: "Queue Depth",
+    unit: "Count",
+    series: [
+      {
+        metric: "ApproximateNumberOfMessagesVisible",
+        statistic: "Average",
+        label: "Visible",
+      },
+      {
+        metric: "ApproximateNumberOfMessagesNotVisible",
+        statistic: "Average",
+        label: "In flight",
+      },
+    ],
+  },
+  {
+    title: "Age of Oldest Message",
+    unit: "Seconds",
+    series: [
+      { metric: "ApproximateAgeOfOldestMessage", statistic: "Maximum", label: "Oldest message" },
+    ],
+  },
+]
+
 /** Why a message left the queue, for the 30s ghost row it leaves behind. */
 type TombstoneReason = "deleted" | "redriven"
 
@@ -101,7 +149,8 @@ export function QueueDetail({ queueName }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<SQSMessage>()
   const [showSubscribe, setShowSubscribe] = useState(false)
   const [unsubscribeTarget, setUnsubscribeTarget] = useState<SNSSubscription>()
-  const [activeTab, setActiveTab] = useState<"messages" | "subscriptions">("messages")
+  const [activeTab, setActiveTab] = useState<"messages" | "subscriptions" | "monitor">("messages")
+  const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
 
   // Track recently-removed messages: show them crossed-out for 30s before hiding.
   // A redrive leaves the DLQ via DeleteMessage too, so the reason is recorded
@@ -209,6 +258,8 @@ export function QueueDetail({ queueName }: Props) {
     isFetching: mFetching,
     refetch: refetchMessages,
   } = useQuery(sqsMessagesQueryOptions(queueName))
+
+  const metricsQuery = useQuery(sqsMetricsQueryOptions(queueName, monitorRange))
 
   // Whether redrive is offered at all follows AWS's own rule: StartMessageMoveTask
   // "is currently limited to supporting message redrive from queues that are
@@ -553,6 +604,18 @@ export function QueueDetail({ queueName }: Props) {
               </Badge>
             )}
           </button>
+          <button
+            onClick={() => setActiveTab("monitor")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium transition-colors",
+              activeTab === "monitor"
+                ? "border-b-2 border-accent text-fg"
+                : "text-fg-muted hover:text-fg",
+            )}
+          >
+            <Activity className="h-3.5 w-3.5" />
+            Monitor
+          </button>
         </div>
 
         {/* Messages tab */}
@@ -730,6 +793,22 @@ export function QueueDetail({ queueName }: Props) {
                 </TableBody>
               </Table>
             )}
+          </CardContent>
+        )}
+
+        {/* Monitor tab */}
+        {activeTab === "monitor" && (
+          <CardContent className="p-4">
+            <MonitorPanel
+              range={monitorRange}
+              onRangeChange={setMonitorRange}
+              isLoading={metricsQuery.isLoading}
+              isFetching={metricsQuery.isFetching}
+              error={metricsQuery.error}
+              data={metricsQuery.data}
+              cards={SQS_MONITOR_CARDS}
+              onRefresh={() => void metricsQuery.refetch()}
+            />
           </CardContent>
         )}
       </Card>

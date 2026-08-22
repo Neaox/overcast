@@ -160,21 +160,22 @@ func TestRecorder_FlushThenQueryStillVisible(t *testing.T) {
 }
 
 // TestRecorder_RetentionSweepExpiresOldBuckets pins the retention policy: a
-// bucket older than the retention window is physically removed by the sweep
-// and no longer answered by a query, even though the query window still
-// covers it.
+// bucket older than the 60s tier's retention window (24h — extended from
+// phase 1's 1h so the plan's 6h/24h chart controls, which stay at 1-minute
+// resolution, have real data) is physically removed by the sweep and no
+// longer answered by a query, even though the query window still covers it.
 func TestRecorder_RetentionSweepExpiresOldBuckets(t *testing.T) {
 	svc, mock := newTestRecorder(t)
 	ctx := context.Background()
 	dims := []Dimension{{Name: "FunctionName", Value: "fn-a"}}
-	// The observation is timestamped 2 hours before "now" directly, rather
-	// than advancing the mock clock 2 hours forward: this Service's
+	// The observation is timestamped 25 hours before "now" directly, rather
+	// than advancing the mock clock 25 hours forward: this Service's
 	// background flush/sweep tickers are real (5s / 5m) intervals, and
 	// mock.Add processes every intervening tick one at a time — advancing it
 	// by a large multiple of a short ticker period is a real (if harmless)
 	// multi-second stall in the test, not a hang, but there is no need to pay
 	// it: sweepOnce is called directly below rather than through the ticker.
-	start := mock.Now().Add(-2 * time.Hour)
+	start := mock.Now().Add(-25 * time.Hour)
 
 	if err := svc.Observe(ctx, Observation{Namespace: "AWS/Lambda", Name: "Invocations", Dimensions: dims, Unit: "Count", Value: 1, Timestamp: start}); err != nil {
 		t.Fatalf("Observe: %v", err)
@@ -183,7 +184,7 @@ func TestRecorder_RetentionSweepExpiresOldBuckets(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	svc.sweepOnce(ctx) // clock is still at mock.Now(), 2h after start — past the 1h retention window
+	svc.sweepOnce(ctx) // clock is still at mock.Now(), 25h after start — past the 24h retention window
 
 	buckets, err := svc.QueryRange(ctx, "AWS/Lambda", "Invocations", dims, start.Add(-time.Minute), start.Add(time.Minute))
 	if err != nil {

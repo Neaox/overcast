@@ -13,23 +13,26 @@ import (
 )
 
 const (
-	// resolutionSeconds is the only stored resolution phase 1 keeps — AWS's
-	// one-minute service-metric model. The plan's fuller resolution ladder
-	// (300s/3600s rollups for 7d/30d graphs) is UI-scale work the Lambda
-	// pilot's alarm-firing and GetMetricStatistics/GetMetricData acceptance
-	// criteria do not need; see docs/plans/service-metrics-platform.md's
-	// Phase 1 status note.
+	// resolutionSeconds is the fine (base) resolution Observe/Flush/the active
+	// overlay always write at — AWS's one-minute service-metric model. Phase 3
+	// adds the plan's coarser 300s/3600s rollup tiers (rollup.go) computed
+	// from this one by a background maintenance job; Observe itself is
+	// unchanged and never touches them.
 	resolutionSeconds = 60
 
-	// retention matches "initially matching the existing CloudWatch one-hour
-	// local-development retention" (plan, Storage and performance model).
-	retention = 1 * time.Hour
+	// retention is the 60s tier's retention. Phase 1 kept this at 1h
+	// ("initially matching the existing CloudWatch one-hour local-development
+	// retention"); phase 3 extends it to the plan's full "Persist the
+	// following resolution ladder" table so the 6h/24h chart controls (which
+	// the plan intentionally keeps at 1-minute resolution) have real data to
+	// read, not just GetMetricStatistics/alarm evaluation's shorter windows.
+	retention = 24 * time.Hour
 
 	// flushInterval is how often dirty active buckets are batched to the
 	// backend. Bounded and coalescing, never inline with Observe.
 	flushInterval = 5 * time.Second
 
-	// sweepInterval is how often the retention/eviction pass runs. Well
+	// sweepInterval is how often the retention/eviction/rollup pass runs. Well
 	// under retention so a backend never accumulates much more than one
 	// interval's worth of overdue rows between sweeps.
 	sweepInterval = 5 * time.Minute
@@ -167,16 +170,20 @@ func (s *Service) runSweepLoop() {
 	}
 }
 
-// sweepOnce evicts aged-out active buckets and deletes expired persisted
-// buckets. Extracted from the ticker loop so tests can trigger one sweep
-// deterministically.
+// sweepOnce evicts aged-out active buckets, deletes expired persisted buckets
+// at every stored resolution tier, and rolls the fine tier up into the
+// coarser 300s/3600s tiers (rollup.go). Extracted from the ticker loop so
+// tests can trigger one sweep deterministically.
 func (s *Service) sweepOnce(ctx context.Context) {
 	now := s.clk.Now().UTC()
 	s.active.evictOlderThan(now.Add(-activeEvictionGrace))
-	cutoffMs := now.Add(-retention).UnixMilli()
-	if _, err := s.backend.deleteOlderThan(ctx, resolutionSeconds, cutoffMs); err != nil && s.log != nil {
-		s.log.Warn("metrics: retention sweep failed", zap.Error(err))
+	for _, tier := range resolutionTiers {
+		cutoffMs := now.Add(-tier.retention).UnixMilli()
+		if _, err := s.backend.deleteOlderThan(ctx, tier.seconds, cutoffMs); err != nil && s.log != nil {
+			s.log.Warn("metrics: retention sweep failed", zap.Int("resolutionSeconds", tier.seconds), zap.Error(err))
+		}
 	}
+	s.rollupOnce(ctx, now)
 }
 
 // Stop stops accepting new background ticks, flushes every dirty bucket
