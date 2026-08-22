@@ -1,0 +1,176 @@
+name: Lockfile freshness
+
+# A pull request that changes web/pnpm-lock.yaml must have generated it against
+# the lockfile `main` has *now* — not the one it had when the branch was cut.
+#
+# The lockfile's peer-resolution keys refer to each other (an entry is named
+# `vitest@4.1.5(jsdom@27.4.0)(vite@8.0.16(…))(…)`), so two copies regenerated
+# independently cannot be combined by merging their text: git reports no
+# conflict, and the result fails `pnpm install --frozen-lockfile`. On
+# 2026-08-22 five npm majors merged back to back, each green against the
+# `main` of its moment and each carrying its own regenerated lock, and every
+# pull request was red for 28 minutes (#1340).
+#
+# Two jobs, one check name:
+#
+#   check  — on every pull request. Judges the head against live origin/main:
+#            not-applicable (does not touch the lock), fresh, or stale. This
+#            is the required status check; it always reports.
+#
+#   sweep  — on every push to main that changes the lock (and on demand).
+#            Re-judges every open pull request and posts the verdict as a
+#            check run *under the same name* on the pull request's head.
+#            GitHub does not re-run a pull request's checks when its base
+#            moves, so without this a pull request that was fresh an hour ago
+#            keeps its green tick after the very push that made it stale —
+#            which is precisely how the 22nd happened. A stale verdict
+#            posted here blocks the merge until a push (Renovate rebases
+#            itself) produces a new head that `check` judges afresh.
+#
+# What this is and is not. It is "require branches to be up to date before
+# merging", confined to one file: a pull request is only ever told to rebase
+# when main's lockfile actually moved under it. It is not a merge queue: two
+# lockfile pull requests that are both green and both auto-merge-armed in the
+# same instant can still land back to back, because nothing re-evaluates at
+# the moment of merge. Renovate's npm pull requests are never automerged here
+# (.github/renovate.json5), which is why the narrower mechanism is enough.
+#
+# The base is always the live `origin/main`, never the event payload's
+# `base.sha`: that is a snapshot from when the pull request was opened and is
+# replayed on every re-run (#813), and this check is only worth having if a
+# re-run after main moves gives the new answer. scripts/lockfile-freshness.py
+# carries the decision and its tests.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - web/pnpm-lock.yaml
+  # For re-judging every open pull request by hand — after the check is first
+  # made required, or to see the sweep work without waiting for a lockfile
+  # push.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pull request runs supersede each other per pull request; a sweep per push
+  # must not be cancelled by the next push, since each one posts verdicts.
+  group: lockfile-freshness-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    # This name is the required status check on main. Renaming it silently
+    # stops enforcing the gate, because branch protection matches by name —
+    # and the sweep below posts under the same name on purpose.
+    name: Lockfile freshness
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge base and origin/main both have to be in the clone.
+          fetch-depth: 0
+
+      - name: Judge the head against live main
+        id: decide
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # fetch-depth 0 brings every branch, but be explicit about the one
+          # ref this check is defined against.
+          git fetch -q origin main
+          verdict="$(python3 scripts/lockfile-freshness.py check \
+            --head "$HEAD_SHA" --base origin/main --details-file details.md)"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          cat details.md >> "$GITHUB_STEP_SUMMARY"
+          echo "Verdict: $verdict"
+
+      - name: Stale
+        if: steps.decide.outputs.verdict == 'stale'
+        run: |
+          echo "::error::main changed web/pnpm-lock.yaml after this branch last saw it, and this pull request's copy was generated against the old one. Rebase (or merge main in), run 'pnpm install' in web/ to regenerate, and push. Renovate's pull requests rebase themselves. Details in the job summary."
+          exit 1
+
+  sweep:
+    name: Lockfile freshness sweep
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      # Posting check runs on other commits. github.token creates them under
+      # the GitHub Actions app, the same app `check` reports under, so
+      # branch protection sees one check with the latest verdict.
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Re-judge every open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git fetch -q origin main
+
+          # Open pull requests into main. Draft ones too: a draft that goes
+          # stale should say so before it is marked ready.
+          gh pr list --state open --base main --limit 200 \
+            --json number --jq '.[].number' > prs.txt
+          echo "Open pull requests into main: $(wc -l < prs.txt | tr -d ' ')"
+
+          judged=0 stale=0
+          while read -r number; do
+            [ -n "$number" ] || continue
+            # The head as of now, not as of the listing: a push between the
+            # two would otherwise post a verdict on a commit that is no
+            # longer the head.
+            if ! git fetch -q origin "refs/pull/$number/head"; then
+              echo "::warning::#$number: could not fetch its head; skipped."
+              continue
+            fi
+            head="$(git rev-parse FETCH_HEAD)"
+
+            verdict="$(python3 scripts/lockfile-freshness.py check \
+              --head "$head" --base origin/main --details-file "details-$number.md" 2>/dev/null)"
+            echo "#$number @ ${head:0:10}: $verdict"
+            [ "$verdict" != "not-applicable" ] || continue
+
+            judged=$((judged + 1))
+            conclusion=success
+            title="Lockfile generated against the current main"
+            if [ "$verdict" = "stale" ]; then
+              stale=$((stale + 1))
+              conclusion=failure
+              title="Lockfile is stale: main's web/pnpm-lock.yaml moved since this branch last saw it"
+            fi
+
+            # Same name as the `check` job's, deliberately: the newest check
+            # run under a name is the one the merge box and branch
+            # protection read, so this supersedes the verdict `check` gave
+            # when the head was pushed.
+            gh api "repos/$REPO/check-runs" \
+              -f name='Lockfile freshness' \
+              -f head_sha="$head" \
+              -f status=completed \
+              -f conclusion="$conclusion" \
+              -f details_url="$RUN_URL" \
+              -f "output[title]=$title" \
+              -f "output[summary]=$(cat "details-$number.md")" \
+              --jq '.html_url' || echo "::warning::#$number: posting the check run failed."
+          done < prs.txt
+
+          echo "Judged $judged lockfile pull request(s); $stale stale." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT" = "push" ]; then
+            echo "Triggered by a push that changed web/pnpm-lock.yaml." >> "$GITHUB_STEP_SUMMARY"
+          fi
