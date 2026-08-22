@@ -183,7 +183,7 @@ func (h *Handler) assumeRoleTyped(ctx context.Context, req *assumeRoleReq) (*ass
 		Result: assumeRoleResult{
 			Credentials: creds,
 			AssumedRoleUser: assumedRoleUserXML{
-				Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, req.RoleSessionName, req.RoleSessionName),
+				Arn:           assumedRoleArn(account, req.RoleArn, req.RoleSessionName),
 				AssumedRoleId: fmt.Sprintf("%s:%s", roleID, req.RoleSessionName),
 			},
 		},
@@ -213,7 +213,7 @@ func (h *Handler) assumeRoleWithWebIdentityTyped(ctx context.Context, req *assum
 		Xmlns: stsXMLNS,
 		Result: assumeRoleWithWebIdentityResult{
 			Credentials:                 creds,
-			AssumedRoleUser:             assumedRoleUserXML{Arn: fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, req.RoleSessionName, req.RoleSessionName), AssumedRoleId: fmt.Sprintf("%s:%s", roleID, req.RoleSessionName)},
+			AssumedRoleUser:             assumedRoleUserXML{Arn: assumedRoleArn(account, req.RoleArn, req.RoleSessionName), AssumedRoleId: fmt.Sprintf("%s:%s", roleID, req.RoleSessionName)},
 			SubjectFromWebIdentityToken: "test-user",
 		},
 		Meta: metaFromCtx(ctx),

@@ -200,8 +200,43 @@ func TestAssumeRole_success(t *testing.T) {
 	if !strings.HasPrefix(result.Result.Credentials.AccessKeyId, "ASIA") {
 		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
 	}
-	if result.Result.AssumedRoleUser.Arn == "" {
-		t.Error("expected AssumedRoleUser.Arn to be set")
+	const want = "arn:aws:sts::000000000000:assumed-role/MyRole/test-session"
+	if result.Result.AssumedRoleUser.Arn != want {
+		t.Errorf("AssumedRoleUser.Arn = %q, want %q", result.Result.AssumedRoleUser.Arn, want)
+	}
+}
+
+// TestAssumeRole_arnWithPath verifies the role name is parsed correctly out
+// of a RoleArn that carries a path component (e.g. arn:aws:iam::acct:role/path/Name),
+// per AWS's documented AssumedRoleUser.Arn shape.
+func TestAssumeRole_arnWithPath(t *testing.T) {
+	// Given: an STS service
+	srv := helpers.NewTestServer(t)
+	params := url.Values{
+		"RoleArn":         {"arn:aws:iam::000000000000:role/some/nested/path/MyRole"},
+		"RoleSessionName": {"test-session"},
+	}
+
+	// When: calling AssumeRole with a path-qualified RoleArn
+	resp := stsCall(t, srv, "AssumeRole", params)
+	defer resp.Body.Close()
+
+	// Then: AssumedRoleUser.Arn uses only the role name (the final path
+	// segment), not the full path, and not the session name repeated.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		XMLName xml.Name `xml:"AssumeRoleResponse"`
+		Result  struct {
+			AssumedRoleUser struct {
+				Arn string `xml:"Arn"`
+			} `xml:"AssumedRoleUser"`
+		} `xml:"AssumeRoleResult"`
+	}
+	decodeXML(t, resp, &result)
+	const want = "arn:aws:sts::000000000000:assumed-role/MyRole/test-session"
+	if result.Result.AssumedRoleUser.Arn != want {
+		t.Errorf("AssumedRoleUser.Arn = %q, want %q", result.Result.AssumedRoleUser.Arn, want)
 	}
 }
 
@@ -229,11 +264,18 @@ func TestAssumeRoleWithWebIdentity_success(t *testing.T) {
 			Credentials struct {
 				AccessKeyId string `xml:"AccessKeyId"`
 			} `xml:"Credentials"`
+			AssumedRoleUser struct {
+				Arn string `xml:"Arn"`
+			} `xml:"AssumedRoleUser"`
 		} `xml:"AssumeRoleWithWebIdentityResult"`
 	}
 	decodeXML(t, resp, &result)
 	if !strings.HasPrefix(result.Result.Credentials.AccessKeyId, "ASIA") {
 		t.Errorf("expected ASIA prefix, got %q", result.Result.Credentials.AccessKeyId)
+	}
+	const want = "arn:aws:sts::000000000000:assumed-role/WebRole/web-session"
+	if result.Result.AssumedRoleUser.Arn != want {
+		t.Errorf("AssumedRoleUser.Arn = %q, want %q", result.Result.AssumedRoleUser.Arn, want)
 	}
 }
 
