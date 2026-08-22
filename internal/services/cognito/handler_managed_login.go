@@ -322,8 +322,8 @@ func (s *Service) completeAuthorize(w http.ResponseWriter, r *http.Request, pool
 	if params.ResponseType == "token" {
 		// Implicit flow — return tokens in fragment.
 		issuer := s.issuerURL(r, pool.ID)
-		result, err := s.issueTokens(ctx, user, client, issuer, "", params.Nonce)
-		if err != nil {
+		result, aerr := s.issueTokens(ctx, user, client, issuer, "", params.Nonce, triggerSourceTokenGenHostedAuth)
+		if aerr != nil {
 			http.Error(w, "server_error", http.StatusInternalServerError)
 			return
 		}
@@ -477,8 +477,8 @@ func (s *Service) handleTokenAuthCode(w http.ResponseWriter, r *http.Request, po
 	}
 
 	issuer := s.issuerURL(r, pool.ID)
-	result, err := s.issueTokens(ctx, user, client, issuer, "", ac.Nonce)
-	if err != nil {
+	result, aerr := s.issueTokens(ctx, user, client, issuer, "", ac.Nonce, triggerSourceTokenGenHostedAuth)
+	if aerr != nil {
 		writeOAuthError(w, "server_error", "Failed to issue tokens", http.StatusInternalServerError)
 		return
 	}
@@ -511,8 +511,8 @@ func (s *Service) handleTokenRefresh(w http.ResponseWriter, r *http.Request, poo
 	}
 
 	issuer := s.issuerURL(r, pool.ID)
-	result, err := s.issueTokens(ctx, user, client, issuer, tok.OriginJTI, "")
-	if err != nil {
+	result, aerr := s.issueTokens(ctx, user, client, issuer, tok.OriginJTI, "", triggerSourceTokenGenRefreshTokens)
+	if aerr != nil {
 		writeOAuthError(w, "server_error", "Failed to issue tokens", http.StatusInternalServerError)
 		return
 	}
@@ -1441,9 +1441,9 @@ func (s *Service) HandleDebugToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issuer := s.issuerURL(r, pool.ID)
-	result, err := s.issueTokens(ctx, user, client, issuer, "", ac.Nonce)
-	if err != nil {
-		renderErr("Failed to issue tokens: " + err.Error())
+	result, aerr := s.issueTokens(ctx, user, client, issuer, "", ac.Nonce, triggerSourceTokenGenHostedAuth)
+	if aerr != nil {
+		renderErr("Failed to issue tokens: " + aerr.Message)
 		return
 	}
 
@@ -1625,11 +1625,14 @@ func (s *Service) HandleForgotPasswordSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// CustomMessage_ForgotPassword is not wired for the managed-login flow in
+	// this pass — see triggers.go's deferred-scope note; ForgotPassword (the
+	// classic API) is.
 	if emailAddr := user.email(); emailAddr != "" {
-		s.sendPasswordResetEmail(pool, emailAddr, user.Username, code)
+		s.sendPasswordResetEmail(pool, emailAddr, user.Username, code, nil)
 	}
 	if phone := user.phoneNumber(); phone != "" {
-		s.sendPasswordResetSMS(pool, phone, user.Username, code)
+		s.sendPasswordResetSMS(pool, phone, user.Username, code, nil)
 	}
 
 	log.Info("password reset code issued via managed login",

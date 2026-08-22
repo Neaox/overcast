@@ -829,9 +829,9 @@ func (s *Service) handlePasswordAuthTyped(ctx context.Context, client *UserPoolC
 		}, nil
 	}
 	issuer := s.issuerURLTyped(ctx, poolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	s.attachNewDeviceMetadata(ctx, pool, result, params)
 	log.Info("user authenticated",
@@ -874,9 +874,9 @@ func (s *Service) handleRefreshTokenAuthTyped(ctx context.Context, c *UserPoolCl
 		return nil, aerr
 	}
 	issuer := s.issuerURLTyped(ctx, poolID)
-	result, err := s.issueTokens(ctx, u, c, issuer, t.OriginJTI, "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, c, issuer, t.OriginJTI, "", triggerSourceTokenGenRefreshTokens)
+	if aerr != nil {
+		return nil, aerr
 	}
 	result.RefreshToken = ""
 	return &InitiateAuthResp{AuthenticationResult: result}, nil
@@ -973,9 +973,9 @@ func (s *Service) handleUserAuthWithConfirmSessionTyped(ctx context.Context, cli
 		}
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	log.Info("user authenticated from confirm signup session",
@@ -1181,9 +1181,9 @@ func (s *Service) completeChoicePasswordChallengeTyped(ctx context.Context, clie
 		return nil, errNotAuthorized("Incorrect username or password.")
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: responses["USERNAME"]})
@@ -1227,9 +1227,9 @@ func (s *Service) completeOTPChallengeTyped(ctx context.Context, client *UserPoo
 		return nil, errExpiredCode()
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	removeAuthChallengeCode(u, challengeName)
 	_ = s.removeToken(ctx, session)
@@ -1267,9 +1267,9 @@ func (s *Service) completeSRPVerifierChallengeTyped(ctx context.Context, client 
 		return &RespondToAuthChallengeResp{ChallengeName: "CUSTOM_CHALLENGE", ChallengeParameters: map[string]string{"USERNAME": u.Username}, Session: customSession}, nil
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: responses["USERNAME"]})
@@ -1302,9 +1302,9 @@ func (s *Service) completeCustomAuthChallengeTyped(ctx context.Context, client *
 		return nil, errNotAuthorized("Invalid session.")
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: responses["USERNAME"]})
@@ -1324,9 +1324,9 @@ func (s *Service) completeWebAuthnChallengeTyped(ctx context.Context, client *Us
 		return nil, errNotAuthorized("Invalid WebAuthn credential.")
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: responses["USERNAME"]})
@@ -1419,9 +1419,9 @@ func (s *Service) handleNewPasswordChallengeTyped(ctx context.Context, client *U
 	}
 	_ = s.removeToken(ctx, session)
 	issuer := s.issuerURLTyped(ctx, poolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenNewPassword)
+	if aerr != nil {
+		return nil, aerr
 	}
 	log.Info("user completed new-password challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
@@ -1467,9 +1467,9 @@ func (s *Service) handleMFAChallengeTyped(ctx context.Context, client *UserPoolC
 	}
 	_ = s.removeToken(ctx, session)
 	issuer := s.issuerURLTyped(ctx, poolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenAuthentication)
+	if aerr != nil {
+		return nil, aerr
 	}
 	log.Info("user completed MFA challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
@@ -2056,12 +2056,15 @@ func (s *Service) AdminCreateUserTyped(ctx context.Context, req *AdminCreateUser
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// PreSignUp_AdminCreateUser / CustomMessage_AdminCreateUser are not wired
+	// on this Smithy RPC v2 duplicate path — see triggers.go's deferred-scope
+	// note; AdminCreateUser (the classic API, handler_users.go) has both.
 	if req.MessageAction != "SUPPRESS" {
 		if emailAddr := u.email(); emailAddr != "" {
-			s.sendTempPasswordEmail(pool, emailAddr, u.Username, tempPw)
+			s.sendTempPasswordEmail(pool, emailAddr, u.Username, tempPw, nil)
 		}
 		if phone := u.phoneNumber(); phone != "" {
-			s.sendTempPasswordSMS(pool, phone, u.Username, tempPw)
+			s.sendTempPasswordSMS(pool, phone, u.Username, tempPw, nil)
 		}
 	}
 	log.Info("admin created user",
@@ -2421,11 +2424,14 @@ func (s *Service) SignUpTyped(ctx context.Context, req *SignUpReq) (*SignUpResp,
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// PreSignUp_SignUp / CustomMessage_SignUp are not wired on this Smithy
+	// RPC v2 duplicate path — see triggers.go's deferred-scope note; SignUp
+	// (the classic API, handler_auth.go) has both.
 	if emailAddr := u.email(); emailAddr != "" {
-		s.sendVerificationEmail(pool, emailAddr, u.Username, code)
+		s.sendVerificationEmail(pool, emailAddr, u.Username, code, nil)
 	}
 	if phone := u.phoneNumber(); phone != "" {
-		s.sendVerificationSMS(pool, phone, u.Username, code)
+		s.sendVerificationSMS(pool, phone, u.Username, code, nil)
 	}
 	log.Info("user signed up",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
@@ -2503,16 +2509,19 @@ func (s *Service) ResendConfirmationCodeTyped(ctx context.Context, req *ClientUs
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// CustomMessage_ResendCode is not wired on this Smithy RPC v2 duplicate
+	// path — see triggers.go's deferred-scope note; ResendConfirmationCode
+	// (the classic API, handler_auth.go) has it.
 	if emailAddr := u.email(); emailAddr != "" {
 		pool, _ := s.loadPool(ctx, c.UserPoolID)
 		if pool != nil {
-			s.sendVerificationEmail(pool, emailAddr, u.Username, code)
+			s.sendVerificationEmail(pool, emailAddr, u.Username, code, nil)
 		}
 	}
 	if phone := u.phoneNumber(); phone != "" {
 		pool, _ := s.loadPool(ctx, c.UserPoolID)
 		if pool != nil {
-			s.sendVerificationSMS(pool, phone, u.Username, code)
+			s.sendVerificationSMS(pool, phone, u.Username, code, nil)
 		}
 	}
 	return &struct{}{}, nil
@@ -2806,16 +2815,19 @@ func (s *Service) ForgotPasswordTyped(ctx context.Context, req *ClientUserSecret
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// CustomMessage_ForgotPassword is not wired on this Smithy RPC v2
+	// duplicate path — see triggers.go's deferred-scope note; ForgotPassword
+	// (the classic API, handler_auth.go) has it.
 	if emailAddr := u.email(); emailAddr != "" {
 		pool, _ := s.loadPool(ctx, c.UserPoolID)
 		if pool != nil {
-			s.sendPasswordResetEmail(pool, emailAddr, u.Username, code)
+			s.sendPasswordResetEmail(pool, emailAddr, u.Username, code, nil)
 		}
 	}
 	if phone := u.phoneNumber(); phone != "" {
 		pool, _ := s.loadPool(ctx, c.UserPoolID)
 		if pool != nil {
-			s.sendPasswordResetSMS(pool, phone, u.Username, code)
+			s.sendPasswordResetSMS(pool, phone, u.Username, code, nil)
 		}
 	}
 	emailAddr := u.email()

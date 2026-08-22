@@ -660,6 +660,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// async path would not do.
 	smSvc.InitBus(bus)
 	smSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
+	// Cognito: wire the synchronous Lambda invoker LambdaConfig triggers
+	// (PreSignUp, PostConfirmation, PreTokenGeneration, PostAuthentication,
+	// CustomMessage) run through (issue #1171) — same seam as the two above.
+	cognitoSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
 	// SES: wire bus for email/identity/template events.
 	sesSvc.InitBus(bus)
 	// Kinesis: wire bus for stream lifecycle events.

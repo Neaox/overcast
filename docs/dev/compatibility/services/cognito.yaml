@@ -140,7 +140,7 @@ operations:
     evidence:
       - AWS AdminConfirmSignUp docs state Username can be an alias attribute, or the sub of a local user when username is not an alias attribute.
     gaps:
-      - ClientMetadata/Lambda trigger behavior is intentionally not emulated.
+      - ClientMetadata is not threaded through to the PostConfirmation trigger; the trigger itself (PostConfirmation_ConfirmSignUp, fire-and-forget) is now invoked — see issue #1171.
     next_action: Include in broader admin-user operation sweep.
   AdminUpdateUserAttributes:
     status: fixed
@@ -1013,7 +1013,7 @@ operations:
         status: fixed
         tests:
           - tests/integration/cloudformation/cognito_properties_test.go
-        notes: Stores and returns AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig (issue #536). LambdaConfig is stored/echoed only — no trigger is invoked, see intentionally_partial and issue #1171.
+        notes: Stores and returns AliasAttributes, DeviceConfiguration, AccountRecoverySetting, SmsConfiguration, SmsAuthenticationMessage, SmsVerificationMessage, EmailVerificationMessage, EmailVerificationSubject, and LambdaConfig (issue #536). LambdaConfig's PreSignUp, PostConfirmation, PreTokenGeneration, PostAuthentication, and CustomMessage are now invoked on the classic API (issue #1171); PreAuthentication, UserMigration, and the CUSTOM_AUTH challenge triggers remain partial — see intentionally_partial.
     evidence:
       - AWS UserPoolPolicyType docs include SignInPolicy and AWS SignInPolicyType docs define AllowedFirstAuthFactors.
       - AWS UserAttributeUpdateSettingsType docs define AttributesRequireVerificationBeforeUpdate as a CreateUserPool request/response setting.
@@ -1241,7 +1241,7 @@ findings:
     - Device SRP proof validation is not cryptographically verified; DEVICE_PASSWORD_VERIFIER responses are shape-checked and complete authentication for SDK-compatible local testing.
     - CUSTOM_AUTH Lambda Define/Create/Verify triggers, challenge answer verification, and repeated custom-challenge loops are not executed; Overcast emits AWS-shaped challenge/session responses and accepts ANSWER for SDK-compatible local testing.
     - WebAuthn attestation/assertion signatures, origin validation, and relying-party mismatch validation are not cryptographically verified; credential metadata and challenge shapes are emulated for SDK-compatible local testing.
-    - LambdaConfig (PreSignUp, PostConfirmation, CustomMessage, PreAuthentication, PostAuthentication, PreTokenGeneration, UserMigration, and the rest) is stored by CreateUserPool/UpdateUserPool and returned by DescribeUserPool so a CDK pool's triggers round-trip visibly, but none of them are invoked by SignUp, AdminCreateUser, ConfirmSignUp, AdminConfirmSignUp, InitiateAuth, or AdminInitiateAuth — see issue #1171.
+    - LambdaConfig is stored by CreateUserPool/UpdateUserPool and returned by DescribeUserPool so a CDK pool's triggers round-trip visibly. As of issue #1171, PreSignUp, PostConfirmation, PreTokenGeneration, PostAuthentication, and CustomMessage are invoked by SignUp/AdminCreateUser/ConfirmSignUp/AdminConfirmSignUp/ConfirmForgotPassword/ResendConfirmationCode/ForgotPassword/InitiateAuth/AdminInitiateAuth/RespondToAuthChallenge/AdminRespondToAuthChallenge on the classic X-Amz-Target API. Still not invoked: PreAuthentication and UserMigration (not yet wired), the CUSTOM_AUTH challenge triggers DefineAuthChallenge/CreateAuthChallenge/VerifyAuthChallengeResponse (tracked separately by #88/#94/#101), PreTokenGeneration's V2_0/V3_0 access-token-customization event versions, CustomMessage for UpdateUserAttribute/VerifyUserAttribute/Authentication (MFA), and every trigger on the Smithy RPC v2 duplicate dispatch path (typed_logic.go) other than PreTokenGeneration, which that path gets for free because token issuance funnels through one shared function.
 verification:
   commands:
     - go test -count=1 ./internal/services/cognito/... ./tests/integration/cognito/... ./internal/services/cloudformation/... ./tests/integration/cloudformation/...

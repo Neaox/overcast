@@ -118,9 +118,9 @@ func (s *Service) completeDevicePasswordVerifierTyped(ctx context.Context, clien
 		return nil, errNotAuthorized("Invalid device.")
 	}
 	issuer := s.issuerURLTyped(ctx, client.UserPoolID)
-	result, err := s.issueTokens(ctx, u, client, issuer, "", "")
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	result, aerr := s.issueTokens(ctx, u, client, issuer, "", "", triggerSourceTokenGenDevice)
+	if aerr != nil {
+		return nil, aerr
 	}
 	_ = s.removeToken(ctx, session)
 	updateUserDeviceAuthTime(u, st.DeviceKey, s.clk.Now())

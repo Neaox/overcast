@@ -69,8 +69,12 @@ func (s *Service) sendAsync(from string, to []string, subject, body, html, label
 
 // sendVerificationEmail sends a sign-up verification code to the user.
 // If no mailer is configured, the event is logged at DEBUG and silently skipped.
-// The pool's VerificationMessageTemplate is used when present; otherwise defaults apply.
-func (s *Service) sendVerificationEmail(pool *UserPool, to, username, code string) {
+// The pool's VerificationMessageTemplate is used when present; otherwise
+// defaults apply. ov, when non-nil, is a CustomMessage trigger's response —
+// see messageOverride in triggers.go — and takes precedence over both the
+// pool template and the built-in default, exactly like the pool template
+// takes precedence over the default.
+func (s *Service) sendVerificationEmail(pool *UserPool, to, username, code string, ov *messageOverride) {
 	if s.mailer == nil {
 		s.log.Debug("email delivery not configured; skipping verification email",
 			zap.String("username", username))
@@ -89,6 +93,14 @@ func (s *Service) sendVerificationEmail(pool *UserPool, to, username, code strin
 			body = t.EmailMessage
 		}
 	}
+	if ov != nil {
+		if ov.Subject != nil {
+			subject = *ov.Subject
+		}
+		if ov.Email != nil {
+			body = *ov.Email
+		}
+	}
 
 	subject = expandTemplate(subject, username, code)
 	body = expandTemplate(body, username, code)
@@ -98,7 +110,8 @@ func (s *Service) sendVerificationEmail(pool *UserPool, to, username, code strin
 
 // sendTempPasswordEmail sends a temporary password to a newly admin-created user.
 // The pool's AdminCreateUserConfig.InviteMessageTemplate is used when present.
-func (s *Service) sendTempPasswordEmail(pool *UserPool, to, username, tempPassword string) {
+// See sendVerificationEmail for ov.
+func (s *Service) sendTempPasswordEmail(pool *UserPool, to, username, tempPassword string, ov *messageOverride) {
 	if s.mailer == nil {
 		s.log.Debug("email delivery not configured; skipping temp-password email",
 			zap.String("username", username))
@@ -119,6 +132,14 @@ func (s *Service) sendTempPasswordEmail(pool *UserPool, to, username, tempPasswo
 			}
 		}
 	}
+	if ov != nil {
+		if ov.Subject != nil {
+			subject = *ov.Subject
+		}
+		if ov.Email != nil {
+			body = *ov.Email
+		}
+	}
 
 	subject = expandTemplate(subject, username, tempPassword)
 	body = expandTemplate(body, username, tempPassword)
@@ -127,8 +148,9 @@ func (s *Service) sendTempPasswordEmail(pool *UserPool, to, username, tempPasswo
 }
 
 // sendPasswordResetEmail sends a password-reset confirmation code.
-// The pool's VerificationMessageTemplate is used for subject/body when present.
-func (s *Service) sendPasswordResetEmail(pool *UserPool, to, username, code string) {
+// The pool's VerificationMessageTemplate is used for subject/body when
+// present. See sendVerificationEmail for ov.
+func (s *Service) sendPasswordResetEmail(pool *UserPool, to, username, code string, ov *messageOverride) {
 	if s.mailer == nil {
 		s.log.Debug("email delivery not configured; skipping password-reset email",
 			zap.String("username", username))
@@ -148,6 +170,14 @@ func (s *Service) sendPasswordResetEmail(pool *UserPool, to, username, code stri
 			body = t.EmailMessage
 		}
 	}
+	if ov != nil {
+		if ov.Subject != nil {
+			subject = *ov.Subject
+		}
+		if ov.Email != nil {
+			body = *ov.Email
+		}
+	}
 
 	subject = expandTemplate(subject, username, code)
 	body = expandTemplate(body, username, code)
@@ -164,14 +194,18 @@ const (
 )
 
 // sendVerificationSMS sends a sign-up verification code to the user's phone.
-// Uses the pool's VerificationMessageTemplate.SmsMessage when set.
-func (s *Service) sendVerificationSMS(pool *UserPool, to, username, code string) {
+// Uses the pool's VerificationMessageTemplate.SmsMessage when set. See
+// sendVerificationEmail for ov.
+func (s *Service) sendVerificationSMS(pool *UserPool, to, username, code string, ov *messageOverride) {
 	if s.smsSender == nil {
 		return
 	}
 	body := defaultSMSVerificationBody
 	if t := pool.VerificationMessageTemplate; t != nil && t.SmsMessage != "" {
 		body = t.SmsMessage
+	}
+	if ov != nil && ov.SMS != nil {
+		body = *ov.SMS
 	}
 	body = expandTemplate(body, username, code)
 	if err := s.smsSender.SendSMS("cognito", "", to, body, "", ""); err != nil {
@@ -180,8 +214,9 @@ func (s *Service) sendVerificationSMS(pool *UserPool, to, username, code string)
 }
 
 // sendTempPasswordSMS sends a temporary-password invitation to the user's phone.
-// Uses InviteMessageTemplate.SMSMessage when set.
-func (s *Service) sendTempPasswordSMS(pool *UserPool, to, username, tempPassword string) {
+// Uses InviteMessageTemplate.SMSMessage when set. See sendVerificationEmail
+// for ov.
+func (s *Service) sendTempPasswordSMS(pool *UserPool, to, username, tempPassword string, ov *messageOverride) {
 	if s.smsSender == nil {
 		return
 	}
@@ -191,6 +226,9 @@ func (s *Service) sendTempPasswordSMS(pool *UserPool, to, username, tempPassword
 			body = t.SMSMessage
 		}
 	}
+	if ov != nil && ov.SMS != nil {
+		body = *ov.SMS
+	}
 	body = expandTemplate(body, username, tempPassword)
 	if err := s.smsSender.SendSMS("cognito", "", to, body, "", ""); err != nil {
 		s.log.Warn("failed to capture invite SMS", zap.String("to", to), zap.Error(err))
@@ -198,14 +236,18 @@ func (s *Service) sendTempPasswordSMS(pool *UserPool, to, username, tempPassword
 }
 
 // sendPasswordResetSMS sends a password-reset confirmation code to the user's phone.
-// Uses the pool's VerificationMessageTemplate.SmsMessage when set.
-func (s *Service) sendPasswordResetSMS(pool *UserPool, to, username, code string) {
+// Uses the pool's VerificationMessageTemplate.SmsMessage when set. See
+// sendVerificationEmail for ov.
+func (s *Service) sendPasswordResetSMS(pool *UserPool, to, username, code string, ov *messageOverride) {
 	if s.smsSender == nil {
 		return
 	}
 	body := defaultSMSResetBody
 	if t := pool.VerificationMessageTemplate; t != nil && t.SmsMessage != "" {
 		body = t.SmsMessage
+	}
+	if ov != nil && ov.SMS != nil {
+		body = *ov.SMS
 	}
 	body = expandTemplate(body, username, code)
 	if err := s.smsSender.SendSMS("cognito", "", to, body, "", ""); err != nil {
