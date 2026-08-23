@@ -645,11 +645,12 @@ func (s *Server) serveReset(w http.ResponseWriter, r *http.Request) {
 // having the UI fetch two files keeps every existing consumer — the matrix, the
 // registry seed, the scope filter — on one request and one shape.
 //
-// TODO(#1113, phase G0 follow-up): the UI still shows every group in one
-// matrix. Per docs/plans/compat-coverage-modelgen.md § 3.6 the dashboard needs
-// a `generated` facet that defaults the matrix to hand-written groups, with
-// model coverage as the headline metric — a matrix of 5,000 rows is not a UI.
-// The field is served here so that work is a UI-only change.
+// Still outstanding, tracked by #1113's phase G0 follow-up: the UI shows
+// every group in one matrix. Per docs/plans/compat-coverage-modelgen.md § 3.6
+// the dashboard needs a `generated` facet that defaults the matrix to
+// hand-written groups, with model coverage as the headline metric — a matrix
+// of 5,000 rows is not a UI. The field is served here so that work is a
+// UI-only change.
 func (s *Server) serveRegistry(w http.ResponseWriter, r *http.Request) {
 	dir := filepath.Join(s.workspaceRoot, "compat", "suites")
 	data, err := os.ReadFile(filepath.Join(dir, "registry.json"))
