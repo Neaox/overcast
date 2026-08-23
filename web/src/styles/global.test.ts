@@ -303,15 +303,13 @@ describe("DRY-refactor ratchets (docs/plans/web-ui-dry-refactor.md §7)", () => 
     )
   })
 
-  it("does not grow the number of local DetailRow/InfoRow/MetaRow definitions", () => {
-    // Directly mirrors the classnames/no-local-detail-row eslint rule; kept
-    // here too because a ratchet names the exact remaining file, not just "a
-    // file somewhere".
+  it("has no local DetailRow/InfoRow/MetaRow definitions left", () => {
+    // Directly mirrors the classnames/no-local-detail-row rule; kept here too
+    // because a ratchet names the exact remaining file, not just "a file
+    // somewhere". P1 (#1101) took the last one — Cognito's — to zero, so this
+    // is a hard zero now rather than a ceiling.
     const hits = patternHits(/\bfunction\s+(?:DetailRow|InfoRow|MetaRow)\b/g, "src/features")
-    expect(
-      hits.length,
-      `local DetailRow/InfoRow/MetaRow definitions:\n${hits.join("\n")}`,
-    ).toBeLessThanOrEqual(1)
+    expect(hits.length, `local DetailRow/InfoRow/MetaRow definitions:\n${hits.join("\n")}`).toBe(0)
   })
 
   it("does not grow the number of hand-rolled definition lists in features/**", () => {

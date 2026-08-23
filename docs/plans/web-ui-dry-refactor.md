@@ -63,9 +63,11 @@
 > the #1327 waves had left bespoke (`applications/application-detail`,
 > `cloudfront/distribution-detail`'s Configuration tab, `cloudfront/monitoring-subscription-panel`,
 > `ecs/cluster-detail`'s primary-deployment `<dl>`, `waf/web-acl-detail`'s local `Info`) now render
-> through it. Three grids remain, all fenced behind open wave PR #1377. See P1 for the decision, the
-> conversion list, the second pass and the three grids deliberately left alone. CONTRIBUTING §
-> "Attribute grids" now states the rule alongside § Tables. **2026-08-23 (#1201):** the §6 dead-code
+> through it, as does Cognito's — whose `DetailRow` was the last local detail-row definition in the
+> tree, and whose deletion takes that ratchet to a hard zero. See P1 for the decision, the
+> conversion list, and the grids deliberately left alone (API Gateway's stat tiles, Cognito's
+> editable attribute form, `stack-diagnostics`' facts dump, `https-section`'s `StatusRow`).
+> CONTRIBUTING § "Attribute grids" now states the rule alongside § Tables. Nothing on P1 is owed. **2026-08-23 (#1201):** the §6 dead-code
 > follow-ups from the #1200 waves are resolved — `Separator` (0 users) is deleted; `TableEmpty` and
 > the `Card` subcomponents turned out to have gained real callers since the original audit (see §6)
 > and are kept; `RowAction`'s `tone="neutral"` is confirmed to be the default rather than an explicit
@@ -184,7 +186,7 @@ All 25 `features/**/*-detail.tsx`. The shape is remarkably uniform:
 | `flex w-full flex-col gap-4` root | 22 |
 | Hand-rolled `if (isLoading) return <div …><Spinner/></div>` | 15 |
 | Hand-rolled "not found" empty state | 7 |
-| A key/value grid (`grid-cols-2 gap-x-8 …` + local `DetailRow`) | 13 at audit; **0 hand-rolled after P1** except the two API Gateway summary grids and Cognito's `DetailRow`, all three fenced behind #1377 |
+| A key/value grid (`grid-cols-2 gap-x-8 …` + local `DetailRow`) | 13 at audit; **0 hand-rolled after P1** — every one renders through `Definition`, and no local `DetailRow`/`InfoRow`/`MetaRow` definition survives anywhere in `features/**` |
 | A tab strip | 13 |
 | One or more sub-tables | 20 |
 | `<ConfirmDialog>` for a destructive action | 12 |
@@ -401,17 +403,28 @@ stack-detail`, `dynamodb/table-detail`, `ec2/instance-detail`, `ec2/vpc-detail`,
 `sts/sts-page`. Every `<div className="flex flex-col gap-0.5">` block this section named is gone;
 `grep '<dt' src` outside `definition-card.tsx` now returns one file (see below).
 
-**Second pass — owed, blocked only by open `ResourceTable` wave PRs** (editing these files would
-conflict with an armed auto-merge):
+**Second pass — done in the same change, once #1377 merged mid-flight:**
+`cognito/cognito-pool-detail`'s local `DetailRow` was `Definition` plus a hand-rolled copy button,
+so `copyable` made it redundant: 17 call sites became `Definition` and the wrapper is deleted. That
+is the **last** `no-local-detail-row` hit, and `global.test.ts`'s ratchet on those three names is now
+a hard `expect(0)` rather than a ceiling. API Gateway's two summary grids
+(`http-api-detail`, `rest-api-detail`) keep their tile layout — see below — but their eight labels
+now take the shared `fieldLabel` token instead of restating `font-mono text-xs text-fg-muted`.
 
-| Grid | Waits on |
-| --- | --- |
-| `cognito/cognito-pool-detail`'s local `DetailRow` — the last one, and the only `no-local-detail-row` hit | #1377 |
-| `apigateway/http-api-detail:241` and `rest-api-detail:467` summary-card grids (`font-mono text-xs` labels, not the field-label spec) | #1377 |
+Nothing is owed on P1 after this. The remaining bespoke `<Table>`s in the wave PRs still open
+(#1380, #1381, #1388) are resource lists, which is #1327's scope, not this one's — no attribute grid
+is fenced behind them.
 
 **Deliberately not converted**, with reasons, so the next reader can tell a decision from an
 oversight:
 
+- API Gateway's four-up summary tiles on `http-api-detail` and `rest-api-detail`. They are **stat
+  tiles**, not an attribute grid: the resource and stage counts are drawn at `text-2xl`, which is the
+  point of the tile, and `Definition` would flatten them to a 12px mono value. Only the label token
+  moved. A shared stat tile is a separate extraction (`metrics/stat-pill` is the nearest existing
+  one) and belongs to whoever takes it, not to P1.
+- `cognito`'s user *attribute* grid — editable name/value rows, so it is a form, not a definition
+  list; #1327's wave notes reached the same conclusion for the same reason.
 - `cloudformation/stack-diagnostics`'s `FactsBody` — a `grid-cols-[max-content_1fr]` dump whose
   labels legitimately repeat within one section. It is dense diagnostic output, not a detail page's
   attribute grid, and its `max-content` label column is the point.
@@ -919,11 +932,13 @@ original six, which don't have one either:
 
 - **`no-local-detail-row`** — flags a local `function DetailRow|InfoRow|MetaRow` (function
   declaration or `const` arrow) in `src/features/**`. **1 real hit**: `cognito-pool-detail.tsx`'s
-  `DetailRow`. **P1 found its blind spot (2026-08-23):** it matches three component *names*, so
+  `DetailRow`. **Zero after P1 (#1101)** — Cognito's was `Definition` plus a hand-rolled copy
+  button, which `copyable` made redundant, so it is deleted and the matching ratchet is a hard
+  `expect(0)`. **P1 also found the rule's blind spot:** it matches three component *names*, so
   `waf/web-acl-detail`'s `Info` — the same pattern, a 14th local definition — never tripped it, and
   neither does an inline `<dl>`. P1 covers the shape instead with a new `global.test.ts` ratchet on
-  hand-written `<dt>` elements (see below); widening the rule's name list is the cheaper half of a
-  follow-up and should happen once #1377 removes the last `DetailRow`.
+  hand-written `<dt>` elements (see below). Widening the rule's name list, or flipping it to
+  `error` now that it has no hits, is a cheap follow-up.
 - **`prefer-button-busy`** — flags a JSX `<Button>` whose `disabled` expression mentions `isPending`
   or whose children contain `<Spinner>`. **132 real hits.**
 - **`no-raw-spinner-in-content`** — flags `<Spinner>` not inside a `<Button>`, `<Badge>`, or a

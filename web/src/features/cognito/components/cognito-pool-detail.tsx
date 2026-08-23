@@ -224,18 +224,12 @@ function OverviewTab({ pool, poolId }: { pool: PoolSummary; poolId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <DefinitionCard contentClassName="p-6">
-        <DetailRow label="Pool ID" value={pool.id} copyable />
-        <DetailRow label="Pool name" value={pool.name} />
-        <DetailRow label="Created" value={formatDate(pool.creationDate)} />
-        <DetailRow label="Last modified" value={formatDate(pool.lastModifiedDate)} />
-        <DetailRow label="Estimated users" value={String(pool.estimatedNumberOfUsers)} />
-        <DetailRow
-          label="ARN"
-          value={<ArnText arn={pool.arn} />}
-          copyable
-          copyText={pool.arn}
-          full
-        />
+        <Definition label="Pool ID" value={pool.id} copyable />
+        <Definition label="Pool name" value={pool.name} />
+        <Definition label="Created" value={formatDate(pool.creationDate)} />
+        <Definition label="Last modified" value={formatDate(pool.lastModifiedDate)} />
+        <Definition label="Estimated users" value={pool.estimatedNumberOfUsers} />
+        <Definition label="ARN" value={<ArnText arn={pool.arn} />} copyable={pool.arn} full />
       </DefinitionCard>
 
       {/* ─── Managed Login / Domain ─────────────────────────────────── */}
@@ -1748,8 +1742,8 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
     <div className="border-t bg-bg-muted/30">
       {/* Client info */}
       <DefinitionList className="px-6 pt-4 pb-4">
-        <DetailRow label="Client ID" value={detail.clientId} copyable />
-        <DetailRow label="Client name" value={detail.clientName} />
+        <Definition label="Client ID" value={detail.clientId} copyable />
+        <Definition label="Client name" value={detail.clientName} />
         {detail.clientSecret ? (
           <Definition
             label="Client secret"
@@ -1773,9 +1767,9 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
             }
           />
         ) : (
-          <DetailRow label="Client secret" value="None" />
+          <Definition label="Client secret" value="None" />
         )}
-        <DetailRow label="Created" value={formatDate(detail.creationDate)} />
+        <Definition label="Created" value={formatDate(detail.creationDate)} />
       </DefinitionList>
 
       {/* Token validity section */}
@@ -1828,21 +1822,21 @@ function ClientDetailPanel({ poolId, clientId }: { poolId: string; clientId: str
           </div>
         ) : (
           <DefinitionList>
-            <DetailRow
+            <Definition
               label="Access token"
               value={formatTokenValidity(
                 detail.accessTokenValidity ?? 1,
                 detail.tokenValidityUnits?.accessToken ?? "hours",
               )}
             />
-            <DetailRow
+            <Definition
               label="ID token"
               value={formatTokenValidity(
                 detail.idTokenValidity ?? 1,
                 detail.tokenValidityUnits?.idToken ?? "hours",
               )}
             />
-            <DetailRow
+            <Definition
               label="Refresh token"
               value={formatTokenValidity(
                 detail.refreshTokenValidity ?? 30,
@@ -2132,45 +2126,6 @@ function formatTokenValidity(value: number, unit: string): string {
 
 // ─── Shared helpers ────────────────────────────────────────────────────────
 
-/**
- * A `Definition` with Cognito's copy affordance. Typography — the mono value,
- * the uppercase label — comes from `Definition`; this only adds the button.
- */
-function DetailRow({
-  label,
-  value,
-  copyable,
-  copyText,
-  full,
-}: {
-  label: string
-  value: React.ReactNode
-  copyable?: boolean
-  copyText?: string
-  full?: boolean
-}) {
-  return (
-    <Definition
-      label={label}
-      full={full}
-      value={
-        copyable ? (
-          <span className="flex items-center gap-1.5">
-            {value}
-            <CopyButton
-              value={copyText ?? (typeof value === "string" ? value : "")}
-              noun={label}
-              tone="inline"
-            />
-          </span>
-        ) : (
-          value
-        )
-      }
-    />
-  )
-}
-
 /** The bare icon button the pool detail uses for its reveal affordances. */
 function IconButton({
   label,
@@ -2329,12 +2284,14 @@ function UserDetailDialog({
           <div className="flex flex-col gap-5">
             {/* ── Identity & metadata ──────────────────────────── */}
             <DefinitionList>
-              <DetailRow label="Username" value={user.username} copyable />
-              <DetailRow label="Subject (sub)" value={user.attributes["sub"] ?? "—"} copyable />
-              <DetailRow label="Status" value={user.userStatus} />
-              <DetailRow label="Enabled" value={user.enabled ? "Yes" : "No"} />
-              <DetailRow label="Created" value={formatDate(user.userCreateDate)} />
-              <DetailRow label="Last modified" value={formatDate(user.userLastModifiedDate)} />
+              <Definition label="Username" value={user.username} copyable />
+              {/* An unset `sub` is an absence, so `Definition` draws the em dash
+                  and withholds a copy control, rather than offering to copy one. */}
+              <Definition label="Subject (sub)" value={user.attributes["sub"]} copyable />
+              <Definition label="Status" value={user.userStatus} />
+              <Definition label="Enabled" value={user.enabled ? "Yes" : "No"} />
+              <Definition label="Created" value={formatDate(user.userCreateDate)} />
+              <Definition label="Last modified" value={formatDate(user.userLastModifiedDate)} />
 
               {/* Password reveal */}
               <Definition
