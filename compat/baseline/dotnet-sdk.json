@@ -3049,6 +3049,20 @@
     {
       "suite": "dotnet-sdk",
       "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPattern",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPatternNoMatch",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eventbridge",
       "group": "eventbridge-rules",
       "test": "DeleteRule",
       "status": "skip"
@@ -3730,6 +3744,13 @@
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke-error",
+      "test": "InvokeWithError",
       "status": "pass"
     },
     {

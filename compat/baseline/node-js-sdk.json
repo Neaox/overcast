@@ -2867,6 +2867,21 @@
     {
       "suite": "node-js-sdk",
       "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPattern",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPatternNoMatch",
+      "op": "TestEventPattern",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eventbridge",
       "group": "eventbridge-rules",
       "test": "DeleteRule",
       "status": "pass"
@@ -3559,6 +3574,14 @@
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "lambda",
+      "group": "lambda-invoke-error",
+      "test": "InvokeWithError",
+      "op": "Invoke",
       "status": "pass"
     },
     {
