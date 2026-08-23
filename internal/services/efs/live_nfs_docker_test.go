@@ -62,7 +62,35 @@ func newDockerNFSService(t *testing.T, dc *docker.Client, portBase int, network 
 	// The Docker supervisor creates both planes before it hands a service its
 	// client, so services no longer ensure networks themselves. This test has
 	// no supervisor, so it stands in for one.
-	for _, plane := range dataplane.Networks(cfg, dataplane.Placement{}) {
+	//
+	// Whatever creates the planes removes them, and registers that before
+	// creating anything. The removal used to live in cleanupFileSystem, which
+	// the caller invokes several statements later — so a t.Fatalf in the loop
+	// below, or in the CreateFileSystem between the two calls, left both planes
+	// behind for the life of the daemon; helpers.WithECSDocker explains why
+	// that compounds into "Docker not available" for every later container
+	// test. Registering first also means the planes go last, after the exports
+	// and the service have released the containers holding them.
+	planes := dataplane.Networks(cfg, dataplane.Placement{})
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		// When the test itself runs in a container, exportProbeAddr attached us
+		// to the control plane — Docker refuses to remove a network with
+		// endpoints, so detach first.
+		hostname, hostErr := os.Hostname()
+		for i := len(planes) - 1; i >= 0; i-- {
+			if hostErr == nil && hostname != "" {
+				_ = dc.DisconnectNetwork(cctx, planes[i], hostname) //nolint:errcheck
+			}
+			// Not-found is the expected answer for a plane the loop below never
+			// got to, so it is not worth a line in the log.
+			if err := dc.RemoveNetwork(cctx, planes[i]); err != nil && !docker.IsNotFound(err) {
+				t.Logf("cleanup: remove network %s: %v", planes[i], err)
+			}
+		}
+	})
+	for _, plane := range planes {
 		if _, err := dc.CreateNetwork(context.Background(), plane); err != nil {
 			t.Fatalf("create plane %s: %v", plane, err)
 		}
@@ -93,9 +121,15 @@ func newDockerNFSService(t *testing.T, dc *docker.Client, portBase int, network 
 	return svc, warnings
 }
 
-// cleanupFileSystem reclaims a file system's export containers, its backing
-// volume and the test's own export network, even when an assertion failed.
-func cleanupFileSystem(t *testing.T, svc *Service, dc *docker.Client, fsID, network string) {
+// cleanupFileSystem reclaims a file system's export containers and its backing
+// volume, even when an assertion failed.
+//
+// The export networks are not its business: newDockerNFSService creates them
+// and removes them, registering that before it creates anything so a failure
+// in between cannot strand them. Removing them here as well would be a second
+// owner for one resource, and — because this runs before the service stops —
+// the earlier of the two.
+func cleanupFileSystem(t *testing.T, svc *Service, dc *docker.Client, fsID string) {
 	t.Helper()
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -107,19 +141,6 @@ func cleanupFileSystem(t *testing.T, svc *Service, dc *docker.Client, fsID, netw
 		}
 		if err := dc.RemoveVolume(cctx, volumeName(fsID), true); err != nil {
 			t.Logf("cleanup: remove volume: %v", err)
-		}
-		// The planes are this test's own; production reuses long-lived ones, so
-		// only the test removes them. When the test itself runs in a container,
-		// exportProbeAddr attached us to the control plane — Docker refuses to
-		// remove a network with endpoints, so detach first.
-		hostname, hostErr := os.Hostname()
-		for _, plane := range dataplane.Networks(&config.Config{Network: network}, dataplane.Placement{}) {
-			if hostErr == nil && hostname != "" {
-				_ = dc.DisconnectNetwork(cctx, plane, hostname) //nolint:errcheck
-			}
-			if err := dc.RemoveNetwork(cctx, plane); err != nil {
-				t.Logf("cleanup: remove network %s: %v", plane, err)
-			}
 		}
 	})
 }
@@ -147,7 +168,7 @@ func TestNFSExport_realGaneshaServesNFSv4(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("CreateFileSystem: %v", aerr)
 	}
-	cleanupFileSystem(t, svc, dc, fs.FileSystemId, "overcast_efs_test")
+	cleanupFileSystem(t, svc, dc, fs.FileSystemId)
 
 	mt, aerr := svc.createMountTargetTyped(ctx, &createMountTargetRequest{
 		FileSystemId: fs.FileSystemId, SubnetId: "subnet-nfs-e2e",
@@ -215,7 +236,7 @@ func TestNFSExport_realGaneshaWithAccessPoint(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("CreateFileSystem: %v", aerr)
 	}
-	cleanupFileSystem(t, svc, dc, fs.FileSystemId, "overcast_efs_ap_test")
+	cleanupFileSystem(t, svc, dc, fs.FileSystemId)
 
 	uid, gid := int64(1000), int64(1000)
 	ap, aerr := svc.createAccessPointTyped(ctx, &createAccessPointRequest{
