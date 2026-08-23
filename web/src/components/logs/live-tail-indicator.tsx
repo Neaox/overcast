@@ -25,12 +25,12 @@ export function LiveTailIndicator({
       aria-hidden="true"
     >
       {status === "live" && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-60" />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
       )}
       <span
         className={cn(
           "relative inline-flex h-2 w-2 rounded-full",
-          status === "live" ? "bg-green-500" : "bg-red-500",
+          status === "live" ? "bg-success" : "bg-danger",
         )}
       />
     </span>

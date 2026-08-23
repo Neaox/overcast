@@ -10,7 +10,7 @@ interface InertBannerProps {
  */
 export function InertBanner({ serviceName }: InertBannerProps) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-sky-400/30 bg-sky-400/5 px-4 py-3 text-sm text-sky-300">
+    <div className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-accent">
       <Info className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
         <span className="font-medium">{serviceName} is an inert service.</span> You can create,

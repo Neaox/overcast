@@ -68,7 +68,7 @@ export function BucketVersioningPanel({ bucket }: { bucket: string }) {
 
   return (
     <>
-      <ConfigSection title="Versioning" icon={<History className="h-4 w-4 text-indigo-400" />}>
+      <ConfigSection title="Versioning" icon={<History className="h-4 w-4 text-cat-8" />}>
         <div className="flex flex-col gap-3 px-4 py-3">
           <ConfigRow label="Status">
             <span className="flex flex-wrap items-center gap-2">

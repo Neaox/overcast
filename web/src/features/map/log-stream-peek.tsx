@@ -273,9 +273,7 @@ function TabButton({
       className={cn(
         "flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors",
         "-mb-px border-b-2",
-        active
-          ? "border-purple-400 text-purple-400"
-          : "border-transparent text-fg-muted hover:text-fg",
+        active ? "border-cat-9 text-cat-9" : "border-transparent text-fg-muted hover:text-fg",
         disabled && "cursor-not-allowed opacity-40",
       )}
     >
@@ -502,7 +500,7 @@ function LogsPane({
           <div className="py-2 text-center text-[11px] text-fg-muted">No earlier logs</div>
         )}
         {tailOverflowed > 0 && (
-          <div className="py-1 text-center text-[11px] text-yellow-600 dark:text-yellow-400">
+          <div className="py-1 text-center text-[11px] text-warning">
             {tailOverflowed.toLocaleString()} older live events dropped — the stream is faster than
             the buffer
           </div>
@@ -538,7 +536,7 @@ function LogsPane({
         <button
           type="button"
           onClick={() => scrollToBottom("smooth")}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-purple-500 px-3 py-1 font-mono text-[11px] font-medium text-white shadow-lg hover:bg-purple-400"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 font-mono text-[11px] font-medium text-fg-on-accent shadow-lg hover:bg-accent-hover"
         >
           ↓ New logs
         </button>

@@ -277,7 +277,7 @@ function TracesPage() {
       {isLoading ? (
         <Spinner />
       ) : error ? (
-        <div className="text-red-400 text-sm">Failed to load traces.</div>
+        <div className="text-danger text-sm">Failed to load traces.</div>
       ) : (
         <>
           {/*
@@ -339,7 +339,7 @@ function TracesPage() {
                         {t.pinned && (
                           <Badge
                             variant="outline"
-                            className="ml-2 border-amber-500/40 text-amber-400"
+                            className="ml-2 border-warning/40 text-warning"
                             title="Kept because this request failed; retention keeps failures past the window"
                           >
                             kept: error

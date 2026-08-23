@@ -22,11 +22,11 @@ export const VpcGroupNode = memo(function VpcGroupNode({ data, width, height }: 
 
   return (
     <div
-      className="pointer-events-none relative rounded-lg border border-dashed border-teal-400/30 bg-teal-400/5"
+      className="pointer-events-none relative rounded-lg border border-dashed border-cat-5/30 bg-cat-5/5"
       style={{ width: w, height: h }}
     >
       {/* VPC ID badge — top-left inside the box */}
-      <div className="pointer-events-auto absolute -top-3 left-3 z-10 flex items-center gap-1 rounded-full border border-dashed border-teal-400/30 bg-bg-elevated px-2 py-0.5 font-mono text-[10px] tracking-[0.12em] text-teal-400 shadow-sm">
+      <div className="pointer-events-auto absolute -top-3 left-3 z-10 flex items-center gap-1 rounded-full border border-dashed border-cat-5/30 bg-bg-elevated px-2 py-0.5 font-mono text-[10px] tracking-[0.12em] text-cat-5 shadow-sm">
         <Globe className="h-3 w-3" />
         {vpcId}
       </div>

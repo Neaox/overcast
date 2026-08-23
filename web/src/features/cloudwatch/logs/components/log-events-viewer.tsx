@@ -991,7 +991,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             // same honesty here — a capped buffer must say it dropped, not
             // quietly show a window and let it read as everything.
             <span
-              className="font-mono text-[10px] text-yellow-600 tabular-nums dark:text-yellow-400"
+              className="font-mono text-[10px] text-warning tabular-nums"
               title="The live tail buffer is full, so the oldest events were dropped from view. Narrow the filter to keep up with the stream."
             >
               {tail.overflowed.toLocaleString()} dropped

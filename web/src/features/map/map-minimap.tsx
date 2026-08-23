@@ -31,7 +31,7 @@ import { useEventAnimations } from "./use-event-animations"
 import { buildCompactLayoutNodes } from "./map-layout"
 import { MiniNode } from "./mini-node"
 import { TopologyEdge as TopologyEdgeComponent } from "./topology-edges"
-import { SERVICE_THEME, EDGE_THEME, DEFAULT_EDGE_COLOR } from "./map-theme"
+import { SERVICE_THEME, EDGE_THEME, FALLBACK_COLOR } from "./map-theme"
 import type { TopologyNode, TopologyEdge } from "@/types"
 
 const NODE_TYPES = { miniNode: MiniNode }
@@ -113,7 +113,7 @@ function MinimapCanvas({
     return topologyEdges
       .filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
       .map((e) => {
-        const edgeColor = EDGE_THEME[e.type]?.color ?? DEFAULT_EDGE_COLOR
+        const edgeColor = EDGE_THEME[e.type]?.color ?? FALLBACK_COLOR
         return {
           id: e.id,
           source: e.source,
@@ -252,7 +252,7 @@ export function MapMinimap() {
             <span key={service} className="flex items-center gap-1">
               <span
                 className="inline-block h-2 w-2 rounded-full"
-                style={{ backgroundColor: theme?.hex ?? "#6b7280" }}
+                style={{ backgroundColor: theme?.css ?? FALLBACK_COLOR }}
               />
               <span>
                 {count} {theme?.letter ?? service}

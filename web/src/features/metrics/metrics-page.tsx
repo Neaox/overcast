@@ -116,12 +116,12 @@ export function MetricsPage() {
         description="Storage health, advisories, and live Go runtime statistics — sampled every 3 seconds."
         actions={
           latest ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 font-mono text-xs font-medium text-green-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+            <div className="flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 font-mono text-xs font-medium text-success">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
               Live
             </div>
           ) : error ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 font-mono text-xs font-medium text-red-400">
+            <div className="flex items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1 font-mono text-xs font-medium text-danger">
               <AlertCircle className="h-3 w-3" />
               Disconnected
             </div>
@@ -135,7 +135,7 @@ export function MetricsPage() {
       />
 
       {error && (
-        <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+        <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </div>
@@ -183,7 +183,7 @@ export function MetricsPage() {
               sub={`of ${formatBytes(latest.heap_sys_bytes)} heap sys`}
               info="The heap is a region of memory used for data that needs to live beyond a single function call — like request objects, cached items, and queued messages. This shows how much heap memory is currently in use by live data. 'Heap sys' is the total amount the runtime has reserved from the operating system for heap use (some of it may be free, waiting to be reused)."
               sparkData={extract((s) => s.heap_alloc_bytes)}
-              color="text-sky-400"
+              color="text-cat-6"
             />
             <MetricCard
               title="System Memory"
@@ -191,7 +191,7 @@ export function MetricsPage() {
               sub={`${formatBytes(latest.heap_inuse_bytes)} heap in-use`}
               info="Total memory the emulator process has obtained from the operating system. This includes everything: the heap (long-lived data), the stack (short-lived function call data), and internal bookkeeping. 'Heap in-use' is the portion of the heap that currently holds live data, as opposed to free space waiting to be reused."
               sparkData={extract((s) => s.sys_bytes)}
-              color="text-violet-400"
+              color="text-cat-8"
             />
             <MetricCard
               title="Goroutines"
@@ -199,7 +199,7 @@ export function MetricsPage() {
               sub="concurrent goroutines"
               info="Goroutines are lightweight threads managed by the Go runtime. Each handles a concurrent task like serving a request or running a background job."
               sparkData={extract((s) => s.goroutines)}
-              color="text-emerald-400"
+              color="text-cat-5"
             />
             <MetricCard
               title="Last GC Pause"
@@ -207,7 +207,7 @@ export function MetricsPage() {
               sub={`${formatMs(latest.gc_pause_total_ms)} total`}
               info="Garbage collection (GC) is the process that automatically finds and frees memory that is no longer being used. During a GC pause, the program is briefly stopped while the runtime cleans up. This shows how long the most recent pause lasted. Lower is better — pauses above 1 ms may cause noticeable latency spikes in request handling."
               sparkData={extract((s) => s.gc_pause_last_ms)}
-              color="text-amber-400"
+              color="text-cat-3"
             />
             <MetricCard
               title="Stack In-use"
@@ -215,7 +215,7 @@ export function MetricsPage() {
               sub="goroutine stacks"
               info="The stack is a region of memory where each goroutine stores its local variables and tracks which functions it is currently executing. Every goroutine gets its own small stack that grows automatically as needed. This shows the total memory used by all goroutine stacks combined. High values usually mean there are many active goroutines or deeply nested function calls."
               sparkData={extract((s) => s.stack_inuse_bytes)}
-              color="text-pink-400"
+              color="text-cat-10"
             />
             <MetricCard
               title="Next GC Target"
@@ -223,7 +223,7 @@ export function MetricsPage() {
               sub="heap threshold for next GC"
               info="Garbage collection (GC) runs automatically when the heap grows large enough. This value is the heap size threshold that will trigger the next GC cycle. The Go runtime adjusts this target dynamically — by default, it allows the heap to roughly double in size before collecting again. A rising target means the program is holding more live data over time."
               sparkData={extract((s) => s.next_gc_bytes)}
-              color="text-orange-400"
+              color="text-cat-2"
             />
           </div>
           {/* The sampling footnote belongs to the cards it describes, not to

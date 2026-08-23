@@ -100,13 +100,13 @@ function StoreActivityCard({ store, index }: { store: DebugMetrics; index: numbe
             label="Memory reads"
             value={counters.readsMemory ?? 0}
             total={counters.reads}
-            colorClass="bg-sky-400"
+            colorClass="bg-cat-6"
           />
           <TierBar
             label="SQLite reads"
             value={counters.readsSQLite ?? 0}
             total={counters.reads}
-            colorClass="bg-violet-400"
+            colorClass="bg-cat-8"
           />
           {counters.writesFlushedRows !== undefined && (
             <p className="text-xs text-fg-muted">

@@ -105,21 +105,21 @@ export const DASHBOARD_ITEM = {
 
 /** Tool items — always pinned at the bottom of the sidebar. */
 export const BOTTOM_ITEMS: BottomNavItem[] = [
-  { key: "/map", to: "/map", label: "Map", icon: Network, color: "text-emerald-400" },
-  { key: "/events", to: "/events", label: "Events", icon: Activity, color: "text-teal-400" },
+  { key: "/map", to: "/map", label: "Map", icon: Network, color: "text-cat-4" },
+  { key: "/events", to: "/events", label: "Events", icon: Activity, color: "text-cat-5" },
   {
     key: "/metrics",
     to: "/metrics",
     label: "Metrics & Health",
     icon: BarChart2,
-    color: "text-sky-400",
+    color: "text-cat-6",
   },
   {
     key: "/debug",
     to: "/debug",
     label: "Debug",
     icon: Bug,
-    color: "text-rose-400",
+    color: "text-cat-1",
     debugOnly: true,
     exact: true,
   },
@@ -128,9 +128,9 @@ export const BOTTOM_ITEMS: BottomNavItem[] = [
     to: "/debug/traces",
     label: "Traces",
     icon: Workflow,
-    color: "text-purple-400",
+    color: "text-cat-9",
     debugOnly: true,
   },
-  { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },
-  { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-violet-400" },
+  { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-cat-3" },
+  { key: "/docs", to: "/docs", label: "Docs", icon: BookOpen, color: "text-cat-8" },
 ]

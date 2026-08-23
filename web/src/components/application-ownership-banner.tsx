@@ -21,14 +21,14 @@ export function ApplicationOwnershipBanner({ candidates }: Props) {
   if (!app) return null
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 py-2.5 text-sm">
-      <Boxes className="h-4 w-4 shrink-0 text-cyan-300" />
+    <div className="flex items-center gap-3 rounded-md border border-cat-6/30 bg-cat-6/10 px-4 py-2.5 text-sm">
+      <Boxes className="h-4 w-4 shrink-0 text-cat-6" />
       <span className="text-fg">
         This resource belongs to application{" "}
         <Link
           to="/applications/$applicationId"
           params={{ applicationId: app.id }}
-          className="font-medium text-cyan-300 hover:underline"
+          className="font-medium text-cat-6 hover:underline"
         >
           {app.name}
         </Link>

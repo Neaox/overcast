@@ -42,7 +42,7 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { endpointStore } from "@/services/endpoint-store"
-import { SERVICE_THEME, hexToSweep } from "./map-theme"
+import { SERVICE_THEME, FALLBACK_COLOR, toSweep } from "./map-theme"
 import "./map-animations.css"
 import type { FileRoutesByTo } from "@/routeTree.gen"
 import { Tooltip } from "@/components/ui/tooltip"
@@ -338,7 +338,7 @@ const SqsStatsBar = memo(function SqsStatsBar({
       <span
         className={cn(
           "flex items-center gap-0.5 rounded px-1.5 py-0.5",
-          visible > 0 ? "bg-emerald-600 text-white" : "bg-fg-muted/15 text-fg-muted",
+          visible > 0 ? "bg-success/15 text-success" : "bg-fg-muted/15 text-fg-muted",
         )}
         title="Visible messages"
       >
@@ -355,7 +355,7 @@ const SqsStatsBar = memo(function SqsStatsBar({
       <span
         className={cn(
           "flex items-center gap-0.5 rounded px-1.5 py-0.5",
-          inFlight > 0 ? "bg-orange-600 text-white" : "bg-fg-muted/15 text-fg-muted",
+          inFlight > 0 ? "bg-warning/15 text-warning" : "bg-fg-muted/15 text-fg-muted",
         )}
         title="In-flight messages (received, not yet deleted)"
       >
@@ -513,12 +513,12 @@ const SqsMessageList = memo(function SqsMessageList({
                 className={cn(
                   "inline-flex shrink-0 items-center rounded px-1 py-px font-mono text-[9px] leading-none font-bold uppercase",
                   visualPhase === "done"
-                    ? "bg-red-700/70 text-white"
+                    ? "bg-danger/15 text-danger"
                     : visualPhase === "delayed"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-accent/15 text-accent"
                       : visualPhase === "inflight"
-                        ? "bg-orange-600 text-white"
-                        : "bg-emerald-600 text-white",
+                        ? "bg-warning/15 text-warning"
+                        : "bg-success/15 text-success",
                 )}
               >
                 {visualPhase === "done"
@@ -532,7 +532,7 @@ const SqsMessageList = memo(function SqsMessageList({
               <span className={cn("truncate font-mono text-fg-subtle", isDone && "line-through")}>
                 {msg.messageId}
               </span>
-              {/* Countdown bar — orange for in-flight, blue for delayed (live messages only) */}
+              {/* Countdown bar — warning for in-flight, accent for delayed (live messages only) */}
               {visualPhase !== "done" &&
                 visualPhase !== "visible" &&
                 msg.visibleAfter > 0 &&
@@ -549,7 +549,7 @@ const SqsMessageList = memo(function SqsMessageList({
                     <div
                       className={cn(
                         "pointer-events-none absolute inset-x-0 bottom-0 h-px origin-left",
-                        visualPhase === "delayed" ? "bg-blue-500" : "bg-orange-500",
+                        visualPhase === "delayed" ? "bg-accent" : "bg-warning",
                       )}
                       style={{
                         transform: `scaleX(${pct})`,
@@ -640,7 +640,7 @@ const LogStreamList = memo(function LogStreamList({
               <span
                 className={cn(
                   "h-1.5 w-1.5 shrink-0 rounded-full transition-colors",
-                  isActive ? "bg-emerald-400" : "bg-fg-muted/30",
+                  isActive ? "bg-success" : "bg-fg-muted/30",
                 )}
                 title={isActive ? "Recently active" : "No recent activity"}
               />
@@ -661,14 +661,14 @@ const LogStreamList = memo(function LogStreamList({
 const RdsStatusBadge = memo(function RdsStatusBadge({ status }: { status: string }) {
   const colourClass =
     status === "available"
-      ? "bg-emerald-600 text-white"
+      ? "bg-success/15 text-success"
       : status === "stopped"
         ? "bg-fg-muted/20 text-fg-muted"
         : status === "stopping" || status === "starting"
-          ? "bg-orange-600 text-white"
+          ? "bg-warning/15 text-warning"
           : status === "deleting" || status === "failed"
-            ? "bg-red-600 text-white"
-            : "bg-blue-600 text-white"
+            ? "bg-danger/15 text-danger"
+            : "bg-accent/15 text-accent"
   return (
     <span
       className={cn(
@@ -733,8 +733,10 @@ function SqsMessageModal({
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <span
                 className={cn(
-                  "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold text-white uppercase",
-                  isInflight(displayMsg) ? "bg-orange-600" : "bg-emerald-600",
+                  "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase",
+                  isInflight(displayMsg)
+                    ? "bg-warning/15 text-warning"
+                    : "bg-success/15 text-success",
                 )}
               >
                 {isInflight(displayMsg) ? "In-flight" : "Visible"}
@@ -889,7 +891,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   while (match >= 0) {
     if (match > idx) parts.push(text.slice(idx, match))
     parts.push(
-      <mark key={`${match}:${needle}`} className="rounded bg-amber-300/30 px-0.5 text-amber-100">
+      <mark key={`${match}:${needle}`} className="rounded bg-warning/25 px-0.5 text-fg">
         {text.slice(match, match + q.length)}
       </mark>,
     )
@@ -1023,12 +1025,12 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
           e.stopPropagation()
           setOpen(true)
         }}
-        className="group flex h-full w-full items-center justify-center rounded-full border border-amber-300/35 bg-amber-400/15 text-amber-200 shadow-lg shadow-amber-950/20 transition-all hover:scale-105 hover:border-amber-200/70 hover:bg-amber-300/25 hover:text-amber-100"
+        className="group flex h-full w-full items-center justify-center rounded-full border border-cat-3/35 bg-cat-3/15 text-cat-3 shadow-lg shadow-cat-3/20 transition-all hover:scale-105 hover:border-cat-3/70 hover:bg-cat-3/25"
         title="Peek DynamoDB stream filter decisions"
       >
         <Filter className="h-7 w-7 transition-transform group-hover:rotate-12" />
         {total > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-300 px-1 font-mono text-[10px] font-black text-black tabular-nums shadow">
+          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full border border-cat-3/40 bg-bg-elevated px-1 font-mono text-[10px] font-black text-cat-3 tabular-nums shadow">
             {total > 99 ? "99+" : total}
           </span>
         )}
@@ -1045,10 +1047,10 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
               "transition-transform duration-300 data-[state=closed]:translate-x-full data-[state=open]:translate-x-0",
             )}
           >
-            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-gradient-to-br from-amber-400/12 via-bg-elevated to-bg-elevated px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-gradient-to-br from-cat-3/12 via-bg-elevated to-bg-elevated px-5 py-4">
               <div className="min-w-0">
                 <RadixDialog.Title className="flex items-center gap-2 text-base font-semibold text-fg">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400/15 text-amber-200">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cat-3/15 text-cat-3">
                     <Filter className="h-4 w-4" />
                   </span>
                   Event Source Mapping Filter
@@ -1073,15 +1075,15 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                 <div className={cn(fieldLabel, "text-fg-subtle")}>Received</div>
                 <div className="font-mono text-xl font-semibold text-fg tabular-nums">{total}</div>
               </div>
-              <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2">
-                <div className={cn(fieldLabel, "text-emerald-300")}>Filtered in</div>
-                <div className="font-mono text-xl font-semibold text-emerald-200 tabular-nums">
+              <div className="rounded-lg border border-success/20 bg-success/8 px-3 py-2">
+                <div className={cn(fieldLabel, "text-success")}>Filtered in</div>
+                <div className="font-mono text-xl font-semibold text-success tabular-nums">
                   {matched}
                 </div>
               </div>
-              <div className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2">
-                <div className={cn(fieldLabel, "text-red-300")}>Filtered out</div>
-                <div className="font-mono text-xl font-semibold text-red-200 tabular-nums">
+              <div className="rounded-lg border border-danger/20 bg-danger/8 px-3 py-2">
+                <div className={cn(fieldLabel, "text-danger")}>Filtered out</div>
+                <div className="font-mono text-xl font-semibold text-danger tabular-nums">
                   {filtered}
                 </div>
               </div>
@@ -1094,7 +1096,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                   <span className="text-xs text-fg-muted">{patterns.length} patterns</span>
                 )}
               </div>
-              <pre className="max-h-32 overflow-auto rounded-lg border border-amber-400/15 bg-amber-400/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+              <pre className="max-h-32 overflow-auto rounded-lg border border-cat-3/15 bg-cat-3/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
                 {filterPatternText}
               </pre>
             </div>
@@ -1116,7 +1118,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                       className={cn(
                         "rounded-md px-3 py-1.5 font-medium transition-colors",
                         mode === value
-                          ? "bg-amber-400/20 text-amber-100 shadow-sm"
+                          ? "bg-cat-3/20 text-cat-3 shadow-sm"
                           : "text-fg-muted hover:bg-bg-elevated hover:text-fg",
                       )}
                     >
@@ -1160,7 +1162,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                         key={`${event.time}:${receipt}`}
                         className={cn(
                           "overflow-hidden rounded-xl border bg-bg-muted shadow-sm",
-                          didMatch ? "border-emerald-400/20" : "border-red-400/20",
+                          didMatch ? "border-success/20" : "border-danger/20",
                         )}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg/60 px-4 py-3">
@@ -1172,8 +1174,8 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                               className={cn(
                                 "rounded-md px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase",
                                 didMatch
-                                  ? "bg-emerald-400/15 text-emerald-300"
-                                  : "bg-red-400/15 text-red-300",
+                                  ? "bg-success/15 text-success"
+                                  : "bg-danger/15 text-danger",
                               )}
                             >
                               {didMatch ? "Filtered in" : "Filtered out"}
@@ -1286,17 +1288,17 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
   const meta =
     service === "esm-filter"
       ? {
-          color: "text-amber-300",
-          bg: "bg-amber-400/10",
-          border: "border-amber-400/30",
-          hex: "#facc15",
+          color: "text-cat-3",
+          bg: "bg-cat-3/10",
+          border: "border-cat-3/30",
+          css: "var(--cat-3)",
           letter: "F",
         }
       : (SERVICE_THEME[service] ?? {
           color: "text-fg-muted",
           bg: "bg-fg-muted/10",
           border: "border-fg-muted/30",
-          hex: "#6b7280",
+          css: FALLBACK_COLOR,
           letter: "?",
         })
   const Icon =
@@ -1305,9 +1307,9 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       : ((SERVICES as Record<string, (typeof SERVICES)[keyof typeof SERVICES] | undefined>)[service]
           ?.icon ?? Box)
   const actionButtonClass = {
-    sqs: "hover:bg-emerald-400/15 hover:text-emerald-400",
-    sns: "hover:bg-orange-400/15 hover:text-orange-400",
-    lambda: "hover:bg-purple-400/15 hover:text-purple-400",
+    sqs: "hover:bg-cat-3/15 hover:text-cat-3",
+    sns: "hover:bg-cat-10/15 hover:text-cat-10",
+    lambda: "hover:bg-cat-9/15 hover:text-cat-9",
   }[service]
 
   const {
@@ -1328,7 +1330,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
           <span
             key={eventCount}
             aria-hidden
-            className="pointer-events-none absolute -inset-1 rounded-full ring-2 ring-amber-300"
+            className="pointer-events-none absolute -inset-1 rounded-full ring-2 ring-cat-3"
             style={{ animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards` }}
           />
         )}
@@ -1336,7 +1338,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
           <Handle
             type="target"
             position={Position.Left}
-            className="size-2! rounded-full! border-0! bg-amber-300/70!"
+            className="size-2! rounded-full! border-0! bg-cat-3/70!"
           />
         )}
         <ESMFilterPanel esmId={esmId} patterns={filterPatterns} />
@@ -1344,7 +1346,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
           <Handle
             type="source"
             position={Position.Right}
-            className="size-2! rounded-full! border-0! bg-amber-300/70!"
+            className="size-2! rounded-full! border-0! bg-cat-3/70!"
           />
         )}
       </div>
@@ -1383,11 +1385,11 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         <span
           key={eventCount}
           aria-hidden
-          className={cn(
-            "pointer-events-none absolute -inset-0.5 rounded-lg ring-2",
-            meta.color.replace("text-", "ring-"),
-          )}
-          style={{ animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards` }}
+          className="pointer-events-none absolute -inset-0.5 rounded-lg"
+          style={{
+            boxShadow: `0 0 0 2px ${meta.css}`,
+            animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards`,
+          }}
         />
       )}
       {/* Inbound-write sweep flash — keyed by writeCount to re-trigger animation */}
@@ -1397,7 +1399,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
           aria-hidden
           className="pointer-events-none absolute inset-0 rounded-lg"
           style={{
-            background: `linear-gradient(90deg, transparent 0%, ${hexToSweep(meta.hex)} 50%, transparent 100%)`,
+            background: `linear-gradient(90deg, transparent 0%, ${toSweep(meta.css)} 50%, transparent 100%)`,
             animation: `overcastSweep ${FLASH_TTL}ms ease-out forwards`,
           }}
         />
@@ -1489,7 +1491,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
               )}
             </div>
           ) : service === "esm-filter" ? (
-            <p className="font-mono text-sm leading-tight text-amber-300">DynamoDB stream filter</p>
+            <p className="font-mono text-sm leading-tight text-cat-3">DynamoDB stream filter</p>
           ) : (
             <p className="text-sm leading-tight text-fg-subtle capitalize">{service}</p>
           )}
@@ -1498,7 +1500,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         {/* Right side: stream indicator + action button */}
         <div className="flex shrink-0 flex-col items-center gap-1">
           {streamEnabled && (
-            <div className="h-1.5 w-1.5 rounded-full bg-blue-400" title="Streams enabled" />
+            <div className="h-1.5 w-1.5 rounded-full bg-cat-7" title="Streams enabled" />
           )}
           {(service === "sqs" || service === "sns" || service === "lambda") && (
             <button
@@ -1530,7 +1532,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
               value={(data as ServiceNodeData).repositoryUri!}
               noun="repository URI"
               onKeyDown={(e) => e.stopPropagation()}
-              className="h-5 w-5 rounded text-fg-muted hover:bg-cyan-400/15 hover:text-cyan-400"
+              className="h-5 w-5 rounded text-fg-muted hover:bg-cat-1/15 hover:text-cat-1"
             />
           )}
         </div>
@@ -1573,8 +1575,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         <span
           className={cn(
             "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
-            meta.color.replace("text-", "bg-").replace("-400", "-600"),
-            "text-white",
+            "border border-current bg-bg-elevated",
+            meta.color,
           )}
           title={`${writeBurstCount} recent writes`}
         >
@@ -1702,8 +1704,8 @@ function LambdaConcurrencySummary({ summary }: { summary: LambdaInstanceSummary 
         {summary.total}&times;
       </span>
       {summary.active > 0 && (
-        <span className="flex items-center gap-1 text-emerald-400" title="running or starting">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        <span className="flex items-center gap-1 text-success" title="running or starting">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" />
           {summary.active}
         </span>
       )}
@@ -1714,8 +1716,8 @@ function LambdaConcurrencySummary({ summary }: { summary: LambdaInstanceSummary 
         </span>
       )}
       {summary.provisioned > 0 && (
-        <span className="flex items-center gap-1 text-purple-300" title="provisioned concurrency">
-          <span className="h-1.5 w-1.5 rounded-full bg-purple-400" />
+        <span className="flex items-center gap-1 text-cat-9" title="provisioned concurrency">
+          <span className="h-1.5 w-1.5 rounded-full bg-cat-9" />
           {summary.provisioned}
         </span>
       )}
@@ -1769,8 +1771,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
     // work, then ones warming up, then idle capacity, then fading ghosts.
     const live = [...liveInstances].sort(
       (a, b) =>
-        instanceSortRank(a) - instanceSortRank(b) ||
-        a.instanceId.localeCompare(b.instanceId),
+        instanceSortRank(a) - instanceSortRank(b) || a.instanceId.localeCompare(b.instanceId),
     )
     return [
       ...live.map((i) => ({ instance: i, isGhost: false, deletedAt: 0 })),
@@ -1862,7 +1863,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
     <div
       className={cn(
         "relative flex flex-col rounded-lg border shadow-sm",
-        "border-purple-400/30 bg-bg-elevated",
+        "border-cat-9/30 bg-bg-elevated",
       )}
       style={{ width: "100%", height: "100%" }}
     >
@@ -1878,8 +1879,8 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
         className="flex items-center gap-2 rounded-t-lg px-3 py-2"
         style={{ height: LAMBDA_GROUP_HEADER_H }}
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-purple-400/10">
-          <Zap className="h-5 w-5 text-purple-400" />
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-cat-9/10">
+          <Zap className="h-5 w-5 text-cat-9" />
         </div>
         <div className="min-w-0 flex-1">
           <Tooltip content={<span className="break-all">{label}</span>}>
@@ -1887,7 +1888,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               type="button"
               onClick={handleOpenFunction}
               onMouseDown={handleFunctionMouseDown}
-              className="block max-w-full truncate text-left text-base leading-tight font-semibold hover:text-purple-300 hover:underline"
+              className="block max-w-full truncate text-left text-base leading-tight font-semibold hover:text-cat-9 hover:underline"
               title={`Open ${label}`}
             >
               {label}
@@ -1903,7 +1904,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               e.stopPropagation()
               setTestOpen(true)
             }}
-            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-purple-400/15 hover:text-purple-400"
+            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-cat-9/15 hover:text-cat-9"
             title="Test function"
           >
             <Play className="h-3 w-3" />
@@ -1915,7 +1916,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               e.stopPropagation()
               setShowInvocations(true)
             }}
-            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-blue-400/15 hover:text-blue-400"
+            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-accent/15 hover:text-accent"
             title={`${invocations.length} invocations`}
           >
             <Clock className="h-3 w-3" />
@@ -1924,7 +1925,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
       </div>
 
       {/* Divider */}
-      <div className="mx-2 border-t border-purple-400/20" />
+      <div className="mx-2 border-t border-cat-9/20" />
 
       {/* Instance list — fixed row height, scrolls internally once more than
           LAMBDA_GROUP_MAX_VISIBLE instances are running/fading out. The

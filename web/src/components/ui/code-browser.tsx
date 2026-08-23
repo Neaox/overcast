@@ -66,15 +66,18 @@ function basename(path: string): string {
 }
 
 function fileIconColor(name: string): string {
-  if (/\.[jt]sx?$/.test(name)) return "text-yellow-500"
-  if (/\.py$/.test(name)) return "text-blue-400"
-  if (/\.json$/.test(name)) return "text-yellow-600"
-  if (/\.ya?ml$/.test(name)) return "text-rose-400"
-  if (/\.md$/.test(name)) return "text-sky-400"
-  if (/\.css$/.test(name)) return "text-purple-400"
-  if (/\.html$/.test(name)) return "text-orange-400"
-  if (/\.java$/.test(name)) return "text-red-500"
-  if (/\.cs$/.test(name)) return "text-green-500"
+  if (/\.[jt]sx?$/.test(name)) return "text-cat-3"
+  if (/\.py$/.test(name)) return "text-cat-7"
+  // JSON keeps a slot of its own rather than sharing amber with .js/.ts:
+  // a bundle lists both side by side, which is exactly where two file
+  // types reading as one colour costs the reader something.
+  if (/\.json$/.test(name)) return "text-cat-5"
+  if (/\.ya?ml$/.test(name)) return "text-cat-10"
+  if (/\.md$/.test(name)) return "text-cat-6"
+  if (/\.css$/.test(name)) return "text-cat-9"
+  if (/\.html$/.test(name)) return "text-cat-2"
+  if (/\.java$/.test(name)) return "text-cat-1"
+  if (/\.cs$/.test(name)) return "text-cat-4"
   return "text-fg-muted"
 }
 

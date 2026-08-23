@@ -29,7 +29,7 @@ export function BodyOmissionChip({ reason, hasBody }: Props) {
   const notice = describeOmission(reason, hasBody)
   if (!notice?.partial) return null
   return (
-    <span className="ml-2 text-amber-400" title={notice.detail}>
+    <span className="ml-2 text-warning" title={notice.detail}>
       ({notice.label})
     </span>
   )
@@ -39,7 +39,7 @@ export function BodyOmissionNotice({ reason, hasBody, ownRequestId }: Props) {
   const notice = describeOmission(reason, hasBody, !!ownRequestId)
   if (!notice || notice.partial) return null
   return (
-    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-400">
+    <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
       <span className="font-medium">{notice.label}</span> — {notice.detail}
       {notice.seeOwnTrace && ownRequestId && (
         <>
