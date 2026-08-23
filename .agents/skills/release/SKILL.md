@@ -202,7 +202,22 @@ answered before deciding it is one of the audit's already-verified shared bindin
 
 ### 2. Regression — the compatibility suite
 
-Point the runner at the candidate image rather than letting it build. **This is two commands, and
+**Do not re-run what the release PR's workflows already ran.** Every push to the
+release branch runs the full CI matrix and the compatibility suites, and the
+required **Aggregate Compatibility Results** check on the release PR is the
+regression evidence — cite that run (link the workflow run and its summary) in
+the evidence comment instead of reproducing it locally. The same principle
+covers the unit/integration matrix and route reachability's in-process variant:
+green required checks on the release PR are evidence to cite, not work to
+repeat. What CI does **not** do is the manual half — the smoke pass on the RC
+images with a real SDK on a remapped port, the claim-by-claim walk of the
+release section, and the console screenshots — and that is where the agent's
+time goes.
+
+Run the suites locally against the RC image only when CI has NOT produced an
+equivalent run — a targeted re-check after a late fix, a suite the release
+branch's filters skipped, or a machine-local condition CI cannot reproduce. In
+that case, point the runner at the candidate image rather than letting it build. **This is two commands, and
 combining them runs nothing** — `--max-failures`, like `--compare-baseline`, `--report` and
 `--check-parity`, is a *gate mode*: it reads an existing `--results-file` and exits without
 executing a single test (`cmd/compat/main.go`, and `compat/AGENTS.md` § "Flags that read a results
