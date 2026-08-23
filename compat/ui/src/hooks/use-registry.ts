@@ -10,7 +10,7 @@ export interface RegistryGroup {
    * concatenates onto the hand-written registry. Absent on hand-written
    * groups.
    *
-   * TODO(#1113): faceting on this is the remaining half of the plan's
+   * Tracked in #1113: faceting on this is the remaining half of the plan's
    * dashboard item — the matrix should default to hand-written groups and
    * lead with model coverage rather than rendering thousands of generated
    * rows. See docs/plans/compat-coverage-modelgen.md § 3.6. */
