@@ -79,10 +79,20 @@ func checkUpdateMerge(f Fixture) []Violation {
 		return one(clause, "Read before Update returned %s", describe(werr))
 	}
 
-	// A wall-clock-timestamped implementation needs a detectable gap
-	// between Create and Update — some platforms' clock resolution is
-	// coarse enough that two calls back-to-back land on the same
-	// timestamp even when the handler is genuinely reading real time.
+	// LastModifiedTime has to visibly move between Create and Update, so put
+	// a detectable gap in both time sources this clause can encounter.
+	//
+	// Advancing the injected clock is the one that matters: a §3.5-conforming
+	// implementation reads clock.Clock, which no amount of real-time sleeping
+	// moves, so sleeping alone would report a false violation against exactly
+	// the implementations this contract mandates. The sleep stays for a
+	// Fixture that declares no clock, and for a wall-clock implementation on a
+	// platform whose clock resolution is coarse enough that two back-to-back
+	// calls land on the same timestamp. Detecting *that* an implementation
+	// reads wall-clock time is 3.5/timestamps' job, not this clause's.
+	if f.Clock != nil {
+		f.Clock.Add(time.Second)
+	}
 	time.Sleep(2 * time.Millisecond)
 
 	patch := f.Input(InputUpdate, 2)
@@ -403,12 +413,32 @@ func checkTimestamps(f Fixture) []Violation {
 		return one(clause, "second Create returned %s", describe(werr))
 	}
 
+	// A third Create at a *different* injected instant. Both directions are
+	// needed. Same-time-equality alone passes a time.Now() handler whenever the
+	// resource's timestamp is second-granular — time.RFC3339 without fractional
+	// seconds, or epoch seconds, which is the common case across AWS shapes —
+	// because two wall-clock reads a few hundred microseconds apart format
+	// identically. Only moving the injected clock and requiring the output to
+	// move with it proves the handler reads clock.Clock at all. It also catches
+	// the neighbouring fabrication: a hardcoded constant timestamp, which
+	// satisfies the equality check trivially.
+	f.Reset()
+	f.Clock.Set(fixed.Add(72 * time.Hour))
+	c, werr := f.call(f.Resource.Create, f.Input(InputFull, 10))
+	if werr != nil {
+		return one(clause, "third Create returned %s", describe(werr))
+	}
+
 	tsA, tsB := a[f.Resource.CreationTimeField], b[f.Resource.CreationTimeField]
+	tsC := c[f.Resource.CreationTimeField]
 	if fieldEqual(tsA, "") || tsA == nil {
 		return one(clause, "%s was empty", f.Resource.CreationTimeField)
 	}
 	if !fieldEqual(tsA, tsB) {
 		return one(clause, "%s differed across two Creates at the same injected clock time (%v then %v) — this only happens when the handler reads time.Now() instead of the injected clock.Clock", f.Resource.CreationTimeField, tsA, tsB)
+	}
+	if fieldEqual(tsA, tsC) {
+		return one(clause, "%s did not move when the injected clock moved 72h (%v then %v) — the handler is ignoring the injected clock.Clock, either by reading time.Now() at a granularity coarse enough to hide it or by emitting a constant", f.Resource.CreationTimeField, tsA, tsC)
 	}
 	return nil
 }
