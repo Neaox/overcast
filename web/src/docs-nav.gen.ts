@@ -3725,6 +3725,11 @@ export const DOCS_NAV = [
         "id": "environment-lifecycle"
       },
       {
+        "depth": 3,
+        "text": "CPU is shared with the init, and small functions feel it in bursts",
+        "id": "cpu-is-shared-with-the-init-and-small-functions-feel-it-in-bursts"
+      },
+      {
         "depth": 2,
         "text": "Partial batch responses",
         "id": "partial-batch-responses"
