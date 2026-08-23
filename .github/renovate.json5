@@ -280,6 +280,19 @@
       description: 'Hold TypeScript below 7 until typescript-eslint supports it (#1259)',
     },
     {
+      // The three oxlint packages are peer-locked to each other:
+      // eslint-plugin-oxlint pins `oxlint: ~1.79.0` and oxlint pins
+      // `oxlint-tsgolint: >=…`. They are also exact-pinned in web/package.json
+      // for the same reason. Splitting a bump across PRs would land a broken
+      // peer set, so group them across every update type — majors included,
+      // which the 'web dependencies (non-major)' group above does not cover.
+      // Reviewed, not automerged: an oxlint bump is a lint-rule bump, and
+      // web/.oxlintrc.json is the whole gate now (#1330).
+      matchManagers: ['npm'],
+      matchPackageNames: ['oxlint', 'oxlint-tsgolint', 'eslint-plugin-oxlint'],
+      groupName: 'oxlint',
+    },
+    {
       matchManagers: ['github-actions'],
       matchUpdateTypes: ['minor', 'patch', 'digest'],
       groupName: 'github actions (non-major)',

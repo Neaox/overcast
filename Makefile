@@ -183,7 +183,7 @@ lint-go:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 	@bash scripts/verify-changed.sh --record go
 
-## lint-web: run web UI linting
+## lint-web: run web UI linting (oxlint, then ESLint for the rules oxlint lacks)
 lint-web:
 	cd web && pnpm run lint
 
