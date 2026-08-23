@@ -34,7 +34,14 @@
 > set or its documented exclusions.
 >
 > Re-verified 2026-08-23 (#1196) — Axis B is closed for all 14 services this
-> issue named. Three (`kms`, `appconfig`, `opensearch`) were already fixed
+> issue named. **Relapse and re-closure 2026-08-24 (#1417):** EC2's typed
+> operation registry flip landed with six create request shapes that never
+> declared `TagSpecifications`, making the legacy handlers' #1196 fix dead
+> code behind the dispatch — caught by the 0.0.1-alpha.37 RC claim
+> verification before it ever reached a tagged release. The re-closure added
+> the gate this file's guarantee was missing on that axis: an AST check that
+> every typed create AWS models with `TagSpecifications` declares and consumes
+> it, and parity rows that probe the tag *store*, not just the response echo. Three (`kms`, `appconfig`, `opensearch`) were already fixed
 > before this issue was picked up; the rest needed a real fix, several of
 > which were double-fixes because the legacy JSON/Query handler and the CBOR
 > typed path were two independent implementations, only one of which had ever
