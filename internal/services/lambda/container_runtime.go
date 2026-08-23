@@ -1283,13 +1283,17 @@ type containerInstance struct {
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 
-	// logStreamEverOpened is true once this container's Docker log connection
-	// has succeeded at least once in its life. It is what lets dockerSilentSince
-	// tell a container's very first connect — which races container start, so a
-	// cold-started invocation's wait can begin before it clears — apart from a
-	// later reconnect backoff, where "no stream open" really does mean the
-	// pipeline has nothing outstanding. See dockerSilentSince.
-	logStreamEverOpened atomic.Bool
+	// logStreamEverAnswered is true once Docker has answered this container's
+	// first ContainerLogsStream call — with a stream, or with an error. It is
+	// what lets dockerSilentSince tell a very first connect that is still in
+	// flight — a daemon round trip that races container start, so a
+	// cold-started invocation's wait can begin before it clears — apart from
+	// a reader that has no stream open because Docker already said so: a
+	// reconnect backoff after a stream that opened and broke, or the backoff
+	// after a connect Docker refused. In the first state nothing has been asked
+	// and nothing is known; in the other two "no stream open" really does mean
+	// the pipeline has nothing outstanding. See dockerSilentSince.
+	logStreamEverAnswered atomic.Bool
 
 	// tailUnclaimed records that a tail wait gave up before its invocation's
 	// output arrived, so whatever lands next belongs to an invocation that has
@@ -1843,19 +1847,20 @@ func durationMillis(d time.Duration) float64 {
 //
 // logReadAt still earns its place, for the question it does answer — whether
 // this invocation produced *anything* — which is what separates the two ways of
-// having an empty tail. Five bounds shape the wait:
+// having an empty tail. Six bounds shape the wait:
 //
 //   - firstReadMax caps how long we wait when not a byte has arrived and the
 //     reader has no live connection open to Docker at all — a reconnect
-//     backoff, or (per dockerSilentSince) a stream that has never connected. A
-//     handler that prints nothing is indistinguishable from one whose output
-//     has not left Docker's pipe, so silence costs this much — paid only by
-//     tail-requesting invokes. It is measured from the moment the reader is
-//     actually blocked in a Read (dockerSilentSince), never from a moment it
-//     was away from the stream: a reader that has asked Docker nothing cannot
-//     have been told the container had nothing to say, and timing its backlog
-//     as though it had is what left warm invocations with a tail holding only
-//     START / END / REPORT (#873).
+//     backoff, or the backoff after a connect Docker refused (per
+//     dockerSilentSince; a first connect that is still *in flight* is neither,
+//     and is not timed by this at all). A handler that prints nothing is
+//     indistinguishable from one whose output has not left Docker's pipe, so
+//     silence costs this much — paid only by tail-requesting invokes. It is
+//     measured from the moment the reader is actually blocked in a Read
+//     (dockerSilentSince), never from a moment it was away from the stream: a
+//     reader that has asked Docker nothing cannot have been told the container
+//     had nothing to say, and timing its backlog as though it had is what left
+//     warm invocations with a tail holding only START / END / REPORT (#873).
 //   - parkedReadMax replaces firstReadMax when the reader IS blocked inside an
 //     already-open Read() call — the ordinary state a warm container spends
 //     its idle time in, since the reader re-enters Read() the instant it hands
@@ -1865,27 +1870,55 @@ func durationMillis(d time.Duration) float64 {
 //     so is what let a genuinely-arriving warm-invoke line lose the race
 //     against firstReadMax under CI contention, the same shape of bug #1166
 //     fixed for a stream that had never connected at all, one stage further
-//     down the pipeline. It is still bounded well short of deadlineMax so a
-//     handler that really does print nothing does not pay the full deadline.
+//     down the pipeline. It is still bounded short of progressMax so a handler
+//     that really does print nothing is charged for its silence, not for a
+//     stalled pipeline.
 //   - Once bytes have arrived, output exists and is on its way, so there is
 //     nothing to guess at: the wait holds for the line itself, bounded only by
-//     deadlineMax. A handler that writes without a trailing newline pays that
-//     full bound, because the line reader has nothing to hand over until a
-//     newline turns up and the tail could not have shown the write either way.
+//     progressMax from the last byte and by deadlineMax overall. A handler
+//     that writes without a trailing newline pays those bounds, because the
+//     line reader has nothing to hand over until a newline turns up and the
+//     tail could not have shown the write either way.
 //   - idleThreshold is how long the appends must stop after one lands before
 //     the output is treated as complete; a handler's lines can span reads.
+//   - progressMax is how long the wait holds on while the pipeline shows no
+//     sign of moving at all — no connect answered, no park, no byte, no line,
+//     no in-flight count changing. It is measured from the last such event the
+//     wait observed, never from the moment the wait began: a bound that starts
+//     at wait start is a guess about how long Overcast's own pipeline takes to
+//     get going on a loaded machine, and that guess has been wrong on CI three
+//     times over (#873, #1160, #1325, each one stage further down the
+//     pipeline), whereas "nothing has happened for 100 ms" is a fact about the
+//     pipeline wherever in it the stall is. It is also what lets parkedReadMax
+//     mean what it says: a reader that parks late in the wait gets its full
+//     80 ms from the park, instead of whatever an absolute deadline had left.
+//     It does not run while Docker has yet to answer the container's first
+//     connect (dockerSilentSince's asked=false, logStreamEverAnswered false):
+//     that connect is Overcast's own daemon round trip, issued before the
+//     handler ran and racing container start, and its completion is an
+//     observable event — so until it lands there is nothing to measure
+//     progress against, and the one bound on it is deadlineMax.
 //   - deadlineMax bounds the whole thing, so a wedged log pipeline can never
-//     hold up the invoke response.
+//     hold up the invoke response: a first connect the daemon never answers, a
+//     handler that writes without a newline forever, a stream that flaps.
+//     It is an order of magnitude over progressMax because it is a last
+//     resort, not a budget — the cases it catches are broken, not slow — and
+//     the only ordinary path that runs into it is a cold start whose daemon is
+//     too busy to answer a log-stream request within a second.
 func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	const (
 		idleThreshold = 5 * time.Millisecond
-		deadlineMax   = 100 * time.Millisecond
+		progressMax   = 100 * time.Millisecond
+		deadlineMax   = 1 * time.Second
 		firstReadMax  = 25 * time.Millisecond
-		// parkedReadMax is deliberately expressed relative to deadlineMax
-		// rather than as its own free-floating constant (issue #1325): it
-		// leaves just enough headroom past it for idleThreshold and one more
-		// tick's worth of processing once a line does land.
-		parkedReadMax = deadlineMax - 20*time.Millisecond // 80ms
+		// parkedReadMax is deliberately expressed relative to progressMax
+		// rather than as its own free-floating constant (issue #1325): it is
+		// the silence bound that must fire first for a parked reader that is
+		// told nothing, so that progressMax stays the backstop for a pipeline
+		// that has stalled rather than the price of a handler that printed
+		// nothing. The 20 ms between them is headroom for idleThreshold and
+		// one more tick's worth of processing once a line does land.
+		parkedReadMax = progressMax - 20*time.Millisecond // 80ms
 		tickInterval  = 1 * time.Millisecond
 	)
 	start := ci.clk.Now()
@@ -1905,26 +1938,43 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 		ci.tailUnclaimed, ci.tailUnclaimedMark = true, mark
 		ci.tailMu.Unlock()
 	}()
+	// Where the pipeline stood when the wait began, and when it last moved.
+	// A reader already parked before the wait is not progress — it is the
+	// state the wait found — so nothing is owed to it beyond what
+	// dockerSilentSince measures from waitStart.
+	seen := ci.logPipelineState()
+	progressAt := start
 	for {
 		select {
 		case <-deadline.C:
 			return
 		case <-tick.C:
+			now := ci.clk.Now()
+			if state := ci.logPipelineState(); state != seen {
+				seen, progressAt = state, now
+			}
+			// Nothing has moved for progressMax. This is checked before the
+			// in-flight test below on purpose: lines parsed but stuck behind a
+			// slow CloudWatch flush are in flight too, and that stall must be
+			// bounded by this and not by the deadline.
+			if seen.answered && now.Sub(progressAt) >= progressMax {
+				return
+			}
 			// Lines parsed but not yet flushed mean output exists and is still
 			// moving, whatever the watermarks currently say.
-			if ci.logInFlight.Load() > 0 {
+			if seen.inFlight > 0 {
 				continue
 			}
-			if last := ci.tailAppendAt.Load(); last > mark.appended {
+			if last := seen.appended; last > mark.appended {
 				// This invocation's output has reached the buffer. One append
 				// is not the end of it, so wait out a quiet spell before
 				// calling the tail complete.
-				if ci.clk.Since(time.Unix(0, last)) >= idleThreshold {
+				if now.Sub(time.Unix(0, last)) >= idleThreshold {
 					return
 				}
 				continue
 			}
-			if ci.logReadAt.Load() > mark.read {
+			if seen.read > mark.read {
 				// Docker has handed over bytes for this invocation but no
 				// complete line has come of them yet. Output exists; wait for
 				// it rather than for the clock.
@@ -1948,10 +1998,34 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 			if liveParked {
 				bound = parkedReadMax
 			}
-			if ci.clk.Since(silentSince) >= bound {
+			if now.Sub(silentSince) >= bound {
 				return
 			}
 		}
+	}
+}
+
+// logPipelineState is everything waitForScannerIdle can observe about where
+// the container's log pipeline stands, read in one go per tick. Two of them
+// differing means the pipeline moved in between — the connect was answered,
+// the reader parked or came back, Docker handed over bytes, a line reached the
+// tail, a line was parsed or flushed — and that, not the wall clock, is what
+// the wait's progress bound is measured from.
+type logPipelineState struct {
+	answered bool
+	parked   int64
+	read     int64
+	appended int64
+	inFlight int64
+}
+
+func (ci *containerInstance) logPipelineState() logPipelineState {
+	return logPipelineState{
+		answered: ci.logStreamEverAnswered.Load(),
+		parked:   ci.logParkedAt.Load(),
+		read:     ci.logReadAt.Load(),
+		appended: ci.tailAppendAt.Load(),
+		inFlight: ci.logInFlight.Load(),
 	}
 }
 
@@ -1963,7 +2037,7 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 // answer and must not be timed as one.
 //
 // The three states of logParkedAt map onto it directly, except that "not
-// reading" splits in two depending on logStreamEverOpened (issue #1160), and
+// reading" splits in two depending on logStreamEverAnswered (issue #1160), and
 // "parked in a Read" carries a liveParked flag callers may use to bound it
 // more generously than a reader with no live connection at all (issue #1325):
 //
@@ -1980,32 +2054,39 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 //   - Between Reads. The reader is somewhere in the loop that takes it back to
 //     the stream and cannot be told anything until it arrives; there is no
 //     question outstanding and no silence to measure.
-//   - Not reading, no stream ever opened. The very first ContainerLogsStream
-//     call for this container is still outstanding — a Docker daemon round
-//     trip that races container start rather than following it, and can lose
-//     that race under daemon contention. No question has reached Docker yet,
-//     so there is nothing to time against the wait's own clock: report false,
-//     the same as "between Reads", and let the wait's own deadline (100 ms on
-//     the tail path, 2 s on the drain path) be the only bound. Before this
-//     distinction existed, this state was folded into the one below, and a
-//     slow first connect was timed as "asked and told nothing" from the wait's
-//     first tick — which is what let a genuinely-arriving cold-start line lose
-//     the race against a 25 ms bound sized for an already-open reader.
-//   - Not reading, but the stream has opened before. This is an ordinary
-//     reconnect backoff, which opens again in 50 ms, or a stream that is never
-//     coming back at all. Either way a connection that has already proven it
-//     can open once is not worth extending a bound for: holding on could not
-//     usefully outlast the backoff, and this container has already shown
-//     Docker will talk to it, so there is less reason to assume it just hasn't
-//     had the chance yet. Time it from the start of the wait, exactly as
-//     before this distinction existed. liveParked is false here — there is no
-//     live connection at all right now, which is exactly what tells this state
-//     apart from the one above.
+//   - Not reading, and Docker has never answered a connect. The very first
+//     ContainerLogsStream call for this container is still outstanding — a
+//     Docker daemon round trip that races container start rather than
+//     following it, and can lose that race under daemon contention. No
+//     question has reached Docker yet, so there is nothing to time against
+//     the wait's own clock: report false, the same as "between Reads", and
+//     let the wait's own deadline (1 s on the tail path, 2 s on the drain
+//     path) be the only bound. Before this distinction existed, this state was
+//     folded into the one below, and a slow first connect was timed as "asked
+//     and told nothing" from the wait's first tick — which is what let a
+//     genuinely-arriving cold-start line lose the race against a 25 ms bound
+//     sized for an already-open reader (#1160). After it, the state was still
+//     under the tail wait's then-absolute 100 ms deadline, which a connect
+//     answered late enough ran straight through; the tail wait's deadline now
+//     runs from the last observed progress, and this state is the one place
+//     it does not run at all — see waitForScannerIdle.
+//   - Not reading, but Docker has answered before. Either the stream opened
+//     and broke — an ordinary reconnect backoff, which opens again in 50 ms,
+//     or a stream that is never coming back at all — or Docker refused the
+//     connect outright, in which case the retry 50 ms away will most likely
+//     meet the same answer. Either way a reader with no live connection and
+//     nothing in flight is not worth extending a bound for: holding on could
+//     not usefully outlast the backoff, and Docker has already said its piece,
+//     so there is no reason left to assume it just hasn't had the chance yet.
+//     Time it from the start of the wait, exactly as before this distinction
+//     existed. liveParked is false here — there is no live connection at all
+//     right now, which is exactly what tells this state apart from the one
+//     above.
 func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (since time.Time, asked bool, liveParked bool) {
 	switch parked := ci.logParkedAt.Load(); {
 	case parked == logReaderBetweenReads:
 		return time.Time{}, false, false
-	case parked == logReaderNotReading && !ci.logStreamEverOpened.Load():
+	case parked == logReaderNotReading && !ci.logStreamEverAnswered.Load():
 		return time.Time{}, false, false
 	case parked > waitStart.UnixNano():
 		return time.Unix(0, parked), true, true
@@ -2356,7 +2437,7 @@ const (
 	// way through one. This is the zero value, which is what an instance whose
 	// streamLogs has not started — or has ended — should read as. It covers two
 	// different situations that dockerSilentSince tells apart via
-	// logStreamEverOpened: a container's very first connect, still racing
+	// logStreamEverAnswered: a container's very first connect, still racing
 	// container start, and an already-proven stream between reconnects.
 	logReaderNotReading = 0
 	// logReaderBetweenReads: a stream is open and the reader is not blocked in
@@ -2567,6 +2648,11 @@ func (ci *containerInstance) streamLogs() {
 func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	stream, err := ci.docker.ContainerLogsStream(ctx, ci.id, since)
 	if err != nil {
+		// Docker has answered, if only to refuse. That is as much as a tail
+		// wait needs to know: a reader with no stream and nothing in flight is
+		// timed as a backoff from here on, not held for a connect that is
+		// still coming — see dockerSilentSince.
+		ci.logStreamEverAnswered.Store(true)
 		if ctx.Err() == nil {
 			ci.logger.Warn("container logs: open stream failed",
 				zap.String("container", ci.id[:12]),
@@ -2603,10 +2689,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	// hold every tail wait open for its full deadline across a reconnect
 	// backoff.
 	//
-	// logStreamEverOpened flips once and stays flipped: it is what tells
+	// logStreamEverAnswered flips once and stays flipped: it is what tells
 	// dockerSilentSince a later logReaderNotReading is an ordinary reconnect
 	// backoff, not this connection racing container start. See its docstring.
-	ci.logStreamEverOpened.Store(true)
+	ci.logStreamEverAnswered.Store(true)
 	ci.logParkedAt.Store(logReaderBetweenReads)
 	defer ci.logParkedAt.Store(logReaderNotReading)
 	reader := bufio.NewReaderSize(tracked, 64*1024)
