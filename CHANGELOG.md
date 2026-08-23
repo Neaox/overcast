@@ -276,6 +276,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [ec2] `CreateSecurityGroup` returns the `tagSet` its result shape has always carried. Every other EC2 create nests its tag set inside the resource element it answers with; this one puts it at the top level next to `groupId`, and Overcast omitted it, so a caller that tagged a group at create had to issue a `DescribeSecurityGroups` to read back what it had just set.
 
+- [ec2] `AllocateAddress` honours create-time `TagSpecification.N` on both dispatch paths. Neither ever parsed it — the call succeeded and the Elastic IP came back untagged, invisible to `DescribeTags` and to the `tagSet` `DescribeAddresses` renders — and a tag the model refuses, such as a reserved `aws:` key, now fails the allocation instead of allocating and dropping the tag. Per the AWS model, `AllocateAddressResult` itself carries no tag set; the tags surface through the describes.
+
 - [ecr] `CreateRepository` now marks its response with `x-overcast-emulation-limitation` whenever the `repositoryUri` it just minted does not name a registry proven to be listening. No ECR registry container running at all, and one whose container started but the daemon-reachability probe never confirmed it answers, both used to be a `Warn` log line only — `CreateRepository` still returned 200 with a `repositoryUri` that a later `docker push` answers with `405 Method Not Allowed`, or that an ECS or Lambda image pull fails against, with nothing tying that failure back to the repository that caused it. Both wire paths (the AWS JSON 1.1 handler and the RPC v2 CBOR typed operation) mark the same sentence; inside a CloudFormation deploy it becomes the resource's `ResourceStatusReason`, next to the `AWS::ECR::Repository` it is about. Any typed operation's response type can now opt into this channel without new plumbing per service
 
 - [ecs] containers in an `awsvpc` task now share one network namespace, so `127.0.0.1` reaches every container in the task as it does on Fargate — the ECS sidecar pattern (nginx to php-fpm, an application to its X-Ray daemon) works against the AWS-correct task definition, and the address `DescribeTasks` reports is the one every container answers on
@@ -339,7 +341,6 @@ can be applied mechanically rather than reconstructed from memory.
 - [web] global search now hits the query cache instead of refetching on every keystroke — the S3, SQS, SNS, Kinesis, Lambda, Secrets Manager and Logs contributors built their cache-lookup key as `[service, resource, baseUrl]` (Logs omitted the endpoint entirely), which never matched the `[baseUrl, region, service, resource]` shape the real feature queries use, so the lookup always missed and every search ignored the selected region
 
 - [web] a log group with no streams, or one whose streams failed to load, says so instead of rendering an empty table; the same page's stream list gains the standard skeleton while it loads. A secret whose rotation returned no versions no longer renders a headers-only table
-
 
 ### Removed
 
