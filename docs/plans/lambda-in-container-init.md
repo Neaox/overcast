@@ -1,7 +1,6 @@
 # Lambda in-container init: own the runtime's stdout — plan
 
 > Status: **in progress** 2026-08-23 — Phase 0 (shared `internal/containerlogs`
-> Status: **in progress** 2026-08-23 — Phase 0 (shared `internal/containerlogs`
 > follower; ECS adopts it) **merged** in #1404; Phase 1 (the init binary,
 > `initproto`, `initbin` embed and build plumbing; no host wiring) on PR #1405;
 > Phases 2–3 not started. Measured init size: 6.4 MiB (amd64) / 5.9 MiB
@@ -9,10 +8,10 @@
 > total" is ~13 MB embedded and ~6.7 MB copied per cold start; Phase 2
 > measures the copy cost and decides on gzip-on-embed or the seeded volume.
 > This document is the design, the cost/benefit case, the phased delivery and
-> — deliberately — the deletion ledger.
-> fixes to the `X-Amz-Log-Result` tail wait (#873, #1160, #1325, run
-> 32622332545), when the question "is this a flaw in the architecture we
-> chose?" was answered *yes*.
+> — deliberately — the deletion ledger. It was written straight after #1402,
+> the fourth round of fixes to the `X-Amz-Log-Result` tail wait (#873, #1160,
+> #1325, run 32622332545), when the question "is this a flaw in the
+> architecture we chose?" was answered *yes*.
 >
 > Goal: make per-invocation log attribution — and therefore the
 > `LogType: Tail` result, CloudWatch ordering and the Telemetry API's view of

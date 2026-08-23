@@ -42,11 +42,26 @@ const (
 	childArgEnv      = "OVERCAST_LAMBDAINIT_TEST_ARG"
 )
 
+// childCoverDir is where a coverage-instrumented child writes its counters.
+// Under `go test -cover` this binary is instrumented, and a re-exec'd copy that
+// finds no GOCOVERDIR prints "warning: GOCOVERDIR not set, no coverage data
+// emitted" to stderr on exit — one extra stderr line that every tee and frame
+// assertion below would then count. Pointing it at a scratch directory keeps
+// the child's stderr exactly what the scenario wrote, instrumented or not.
+var childCoverDir string
+
 func TestMain(m *testing.M) {
 	if scenario := os.Getenv(childScenarioEnv); scenario != "" {
 		os.Exit(runChildScenario(scenario, os.Getenv(childArgEnv)))
 	}
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "lambdainit-cover-")
+	if err != nil {
+		panic(err)
+	}
+	childCoverDir = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // childCmd builds the command the init is asked to run: this binary, plus
@@ -64,6 +79,7 @@ func childEnviron(scenario, arg string) []string {
 		childScenarioEnv + "=" + scenario,
 		childArgEnv + "=" + arg,
 		"PATH=" + os.Getenv("PATH"),
+		"GOCOVERDIR=" + childCoverDir,
 	}
 }
 
