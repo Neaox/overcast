@@ -202,8 +202,36 @@ type Config struct {
 	// present and accepted — including when both it and OVERCAST_HOSTNAME
 	// were set to the same value — so the startup log line
 	// (logHostnameAlias in cmd/overcast/cmd_serve.go) can tell the operator
-	// their LocalStack-style setting was recognised.
+	// their LocalStack-style setting was recognised. Also set when
+	// HOSTNAME_EXTERNAL (the legacy name LOCALSTACK_HOST replaced) supplied
+	// or confirmed the value — see resolveStringAlias/hostnameExternalAlias
+	// in localstack_aliases.go.
 	HostnameAliasSource string
+
+	// LocalStackAliasesUsed records every other LocalStack-compatibility
+	// alias (#1190, see internal/config/localstack_aliases.go) that supplied
+	// or confirmed an Overcast setting, keyed by the Overcast variable name
+	// it aliased ("OVERCAST_PORT", "OVERCAST_LISTEN",
+	// "OVERCAST_DEFAULT_REGION", "OVERCAST_DATA_DIR", "OVERCAST_LOG_LEVEL",
+	// "OVERCAST_STATE", "LAMBDA_INIT_TIMEOUT_SECONDS"), with the LocalStack
+	// variable name(s) that contributed as the value (comma-joined when more
+	// than one did, e.g. a port confirmed by both EDGE_PORT and
+	// GATEWAY_LISTEN agreeing). Hostname has its own dedicated
+	// HostnameAliasSource field above rather than an entry here, since it
+	// predates this map (#1190's first PR) and already has its own tested
+	// startup log line. Empty/absent when no alias fired for that variable.
+	// Drives one startup Info line per entry — see logLocalStackAliases in
+	// cmd/overcast/cmd_serve.go.
+	LocalStackAliasesUsed map[string]string
+
+	// IgnoredLocalStackVars lists the LocalStack-documented variables (see
+	// ignoredLocalStackVars in internal/config/localstack_aliases.go)
+	// present in the environment that Overcast recognises but which have no
+	// effect (SERVICES, LOCALSTACK_API_KEY, LOCALSTACK_AUTH_TOKEN) — see
+	// IgnoredLocalStackReason for why each one is inert. Logged once per
+	// entry at startup so an operator sees their setting was seen rather
+	// than wonder why nothing changed.
+	IgnoredLocalStackVars []string
 
 	// SplitHorizonHosts are extra hostnames that resolve to 127.0.0.1 in public
 	// DNS and are remapped to Overcast's address inside containers Overcast
@@ -1314,22 +1342,29 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 // Environment variables (all optional, defaults shown):
 //
 //	OVERCAST_LISTEN                    0.0.0.0 (comma-separated for several; bind address —
-//	                                           OVERCAST_HOST was renamed to this and removed, see #870)
+//	                                           OVERCAST_HOST was renamed to this and removed, see #870;
+//	                                           LocalStack's GATEWAY_LISTEN is accepted as a compatibility
+//	                                           alias for it and OVERCAST_PORT together — see
+//	                                           resolveGatewayListenAlias (#1190))
 //	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs; the actual
-//	                                           analogue of LocalStack's LOCALSTACK_HOST, which is
-//	                                           accepted as a compatibility alias — see
-//	                                           resolveHostnameAlias (#1190); a leftover value that
+//	                                           analogue of LocalStack's LOCALSTACK_HOST and its legacy
+//	                                           predecessor HOSTNAME_EXTERNAL, both accepted as
+//	                                           compatibility aliases — see resolveHostnameAlias and
+//	                                           hostnameExternalAlias (#1190); a leftover value that
 //	                                           disagrees with OVERCAST_HOSTNAME or OVERCAST_PORT
 //	                                           fails startup naming both)
 //	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
 //	                                           inside containers, comma-separated)
-//	OVERCAST_PORT                      4566
+//	OVERCAST_PORT                      4566    (LocalStack's EDGE_PORT is accepted as a direct
+//	                                           compatibility alias — see edgePortAlias (#1190))
 //	OVERCAST_STATE                     auto    (auto | memory | persistent | hybrid | wal)
 //	                                           auto resolves to hybrid when the data directory
 //	                                           is a mounted volume/bind mount, OVERCAST_DATA_DIR
 //	                                           was explicitly set, or an existing database is
 //	                                           found there — otherwise memory. See
-//	                                           resolveAutoState (state_auto.go).
+//	                                           resolveAutoState (state_auto.go). LocalStack's
+//	                                           PERSISTENCE=1 is accepted as a compatibility alias for
+//	                                           the "persistent" backend — see persistenceStateAlias (#1190)
 //	OVERCAST_STATE_<SERVICE>           <mode>  (per-service override, e.g. OVERCAST_STATE_S3=memory;
 //	                                           does not accept "auto")
 //	OVERCAST_DATA_DIR_SOURCE           (empty) internal provenance marker — the Docker image sets this
@@ -1345,9 +1380,11 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_WAL_FSYNC                 interval (always | interval | never)
 //	OVERCAST_WAL_FSYNC_INTERVAL        100ms
 //	OVERCAST_WAL_MAX_LOG_BYTES         67108864
-//	OVERCAST_DATA_DIR                  ~/.overcast/data
+//	OVERCAST_DATA_DIR                  ~/.overcast/data (LocalStack's DATA_DIR is accepted as a direct
+//	                                           compatibility alias — see dataDirAlias (#1190))
 //	OVERCAST_CA_DIR                    {DataDir}/ca  (may be a read-only mount)
-//	OVERCAST_DEFAULT_REGION             us-east-1
+//	OVERCAST_DEFAULT_REGION             us-east-1 (LocalStack's DEFAULT_REGION is accepted as a direct
+//	                                           compatibility alias — see defaultRegionAlias (#1190))
 //	OVERCAST_ACCOUNT_ID                000000000000
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
 //	OVERCAST_EFS_MODE                  live    (mock | live; live is inert without Docker)
@@ -1362,7 +1399,9 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
 //	OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT 15m (runaway guard on one execution, not a request
 //	                                           timeout; values below 1s are raised to 1s)
-//	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error)
+//	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error; LocalStack's DEBUG=1
+//	                                           is accepted as a compatibility alias for "debug" — see
+//	                                           debugLogLevelAlias (#1190))
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
 //	OVERCAST_HOT_RELOAD                false   (umbrella for every compute service)
 //	OVERCAST_LAMBDA_HOT_RELOAD         <OVERCAST_HOT_RELOAD>
@@ -1401,7 +1440,9 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	LAMBDA_MAX_WARM_INSTANCES          10
 //	LAMBDA_SEED_RUNTIME_IMAGES         false (true = pre-pull every managed runtime image at
 //	                                           startup, instead of lazily on first use)
-//	LAMBDA_INIT_TIMEOUT_SECONDS       10
+//	LAMBDA_INIT_TIMEOUT_SECONDS       10      (LocalStack's LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT is
+//	                                           accepted as a direct compatibility alias — see
+//	                                           lambdaInitTimeoutAlias (#1190))
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
 //	LAMBDA_TAR_CACHE_MB                256   (in-memory cache of pre-built cold-start code and
 //	                                           layer tars; 0 disables it)
@@ -1452,6 +1493,14 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_INIT_TIMEOUT              30s   (per-script timeout)
 //	OVERCAST_MCP_REMOTE_EXPOSURE       false
 //	OVERCAST_MCP_AUTH_TOKEN            "" (required when OVERCAST_MCP_REMOTE_EXPOSURE=true)
+//
+// LocalStack-documented variables recognised but with no effect (#1190) —
+// present but ignored rather than rejected, and logged once at startup (see
+// ignoredLocalStackVars, IgnoredLocalStackReason):
+//
+//	SERVICES                           Overcast runs every service, always
+//	LOCALSTACK_API_KEY                 no LocalStack Pro/auth-gated feature set to unlock
+//	LOCALSTACK_AUTH_TOKEN              (same as LOCALSTACK_API_KEY)
 func Load() (*Config, error) {
 	cfg := &Config{}
 
@@ -1459,12 +1508,44 @@ func Load() (*Config, error) {
 	// depends on whether Overcast is containerised (#761), so the
 	// OVERCAST_DATA_DIR_SOURCE marker is read here, ahead of the data
 	// directory section below, which reuses this same variable.
+	cfg.LocalStackAliasesUsed = map[string]string{}
 	dataDirSource := os.Getenv("OVERCAST_DATA_DIR_SOURCE")
 	defaultListen, listenAutoSignal, listenAutoReason := resolveListenDefault(dataDirSource)
 	rawListen, listenExplicit, err := resolveListen(defaultListen)
 	if err != nil {
 		return nil, err
 	}
+
+	// Port — resolved ahead of both the rest of Listen and Hostname below:
+	// LOCALSTACK_HOST's optional ":port" suffix (#1190) and GATEWAY_LISTEN's
+	// per-entry port are both checked against it, and OVERCAST_PORT itself
+	// first passes through LocalStack's EDGE_PORT alias (the plain-port
+	// analogue of GATEWAY_LISTEN).
+	portRaw, edgePortAliasSource, err := resolveStringAlias(edgePortAlias, os.Getenv("OVERCAST_PORT"), "OVERCAST_PORT")
+	if err != nil {
+		return nil, err
+	}
+
+	// GATEWAY_LISTEN (#1190) may contribute to both Listen and Port at once.
+	// Its comparison baseline for Listen is the raw OVERCAST_LISTEN value
+	// only when it was set explicitly — the environment-dependent *default*
+	// (e.g. native loopback) must never look like an explicit conflict, or
+	// GATEWAY_LISTEN could never override it the way an explicit
+	// OVERCAST_LISTEN would.
+	listenRawForAlias := ""
+	if listenExplicit {
+		listenRawForAlias = rawListen
+	}
+	gwListen, gwPort, gatewayListenAliasSource, err := resolveGatewayListenAlias(listenRawForAlias, portRaw)
+	if err != nil {
+		return nil, err
+	}
+	portRaw = gwPort
+	if gatewayListenAliasSource != "" {
+		rawListen = gwListen
+		listenExplicit = true
+	}
+
 	hosts, err := parseHosts(rawListen)
 	if err != nil {
 		return nil, err
@@ -1478,25 +1559,38 @@ func Load() (*Config, error) {
 		cfg.ListenAutoSignal = listenAutoSignal
 		cfg.ListenAutoReason = listenAutoReason
 	}
+	if gatewayListenAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_LISTEN"] = gatewayListenAliasSource
+	}
 
-	// Port — resolved ahead of Hostname below, since LOCALSTACK_HOST's
-	// optional ":port" suffix (#1190) is checked against it.
-	portStr := envOr("OVERCAST_PORT", "4566")
+	portStr := orDefault(portRaw, "4566")
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
 		return nil, fmt.Errorf("config: OVERCAST_PORT %q is not a valid port number", portStr)
 	}
 	cfg.Port = port
+	if src := joinNonEmpty(edgePortAliasSource, gatewayListenAliasSource); src != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_PORT"] = src
+	}
 
 	// Hostname (external — for client-facing URLs) — OVERCAST_HOSTNAME, with
-	// LocalStack's LOCALSTACK_HOST accepted as a compatibility alias; see
-	// resolveHostnameAlias for the parsing and conflict rules (#1190).
+	// LocalStack's LOCALSTACK_HOST and legacy HOSTNAME_EXTERNAL (the name
+	// LOCALSTACK_HOST replaced) accepted as compatibility aliases; see
+	// resolveHostnameAlias for LOCALSTACK_HOST's hostname[:port] parsing and
+	// conflict rules (#1190). Chaining HOSTNAME_EXTERNAL after
+	// resolveHostnameAlias means all three spellings must agree when more
+	// than one is set.
 	hostname, hostnameAliasSource, err := resolveHostnameAlias(cfg.Port)
 	if err != nil {
 		return nil, err
 	}
+	hostnameCurrentLabel := orDefault(hostnameAliasSource, "OVERCAST_HOSTNAME")
+	hostname, hostnameExternalAliasSource, err := resolveStringAlias(hostnameExternalAlias, hostname, hostnameCurrentLabel)
+	if err != nil {
+		return nil, err
+	}
 	cfg.Hostname = hostname
-	cfg.HostnameAliasSource = hostnameAliasSource
+	cfg.HostnameAliasSource = joinNonEmpty(hostnameAliasSource, hostnameExternalAliasSource)
 
 	// Split-horizon hostnames (extra names remapped to Overcast inside containers)
 	for _, host := range strings.Split(os.Getenv("OVERCAST_SPLIT_HORIZON_HOSTS"), ",") {
@@ -1511,9 +1605,17 @@ func Load() (*Config, error) {
 	// this actually configured" requires knowing whether the env var was
 	// empty before envOr fills in the default. dataDirSource was already read
 	// above, for the OVERCAST_LISTEN default (#761) — reused here rather than
-	// read twice.
-	dataDirEnvRaw := os.Getenv("OVERCAST_DATA_DIR")
-	cfg.DataDir = envOr("OVERCAST_DATA_DIR", defaultDataDir())
+	// read twice. LocalStack's DATA_DIR (#1190) is accepted as an alias —
+	// setting it counts as "explicitly configured" for the auto-state
+	// detection below exactly as OVERCAST_DATA_DIR would.
+	dataDirEnvRaw, dataDirAliasSource, err := resolveStringAlias(dataDirAlias, os.Getenv("OVERCAST_DATA_DIR"), "OVERCAST_DATA_DIR")
+	if err != nil {
+		return nil, err
+	}
+	cfg.DataDir = orDefault(dataDirEnvRaw, defaultDataDir())
+	if dataDirAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_DATA_DIR"] = dataDirAliasSource
+	}
 	// Defaults under the data dir, so an unset OVERCAST_CA_DIR keeps the
 	// historical <data dir>/ca layout byte for byte.
 	cfg.CADirConfigured = strings.TrimSpace(os.Getenv("OVERCAST_CA_DIR")) != ""
@@ -1522,7 +1624,16 @@ func Load() (*Config, error) {
 	// State backend — accept "sqlite" as a deprecated alias for "persistent",
 	// and "auto" (also the default when unset) as a request to resolve the
 	// backend from evidence of persistence intent — see resolveAutoState.
-	cfg.StateConfigured = strings.ToLower(strings.TrimSpace(os.Getenv("OVERCAST_STATE")))
+	// LocalStack's PERSISTENCE=1 (#1190) maps to "persistent" — see
+	// persistenceStateAlias.
+	stateRaw, persistenceAliasSource, err := resolveStringAlias(persistenceStateAlias, os.Getenv("OVERCAST_STATE"), "OVERCAST_STATE")
+	if err != nil {
+		return nil, err
+	}
+	if persistenceAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_STATE"] = persistenceAliasSource
+	}
+	cfg.StateConfigured = strings.ToLower(strings.TrimSpace(stateRaw))
 	if cfg.StateConfigured == "" {
 		cfg.StateConfigured = "auto"
 	}
@@ -1645,7 +1756,15 @@ func Load() (*Config, error) {
 	}
 
 	// AWS identity defaults
-	cfg.Region = envOr("OVERCAST_DEFAULT_REGION", "us-east-1")
+	// LocalStack's DEFAULT_REGION (#1190) is accepted as a direct alias.
+	regionRaw, regionAliasSource, err := resolveStringAlias(defaultRegionAlias, os.Getenv("OVERCAST_DEFAULT_REGION"), "OVERCAST_DEFAULT_REGION")
+	if err != nil {
+		return nil, err
+	}
+	cfg.Region = orDefault(regionRaw, "us-east-1")
+	if regionAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_DEFAULT_REGION"] = regionAliasSource
+	}
 	cfg.AccountID = envOr("OVERCAST_ACCOUNT_ID", "000000000000")
 
 	// EKS mode
@@ -1713,8 +1832,15 @@ func Load() (*Config, error) {
 		cfg.StepFunctionsExecutionTimeout = time.Second
 	}
 
-	// Logging
-	cfg.LogLevel = strings.ToLower(envOr("OVERCAST_LOG_LEVEL", "info"))
+	// Logging — LocalStack's DEBUG=1 (#1190) maps to OVERCAST_LOG_LEVEL=debug.
+	logLevelRaw, debugAliasSource, err := resolveStringAlias(debugLogLevelAlias, os.Getenv("OVERCAST_LOG_LEVEL"), "OVERCAST_LOG_LEVEL")
+	if err != nil {
+		return nil, err
+	}
+	cfg.LogLevel = strings.ToLower(orDefault(logLevelRaw, "info"))
+	if debugAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_LOG_LEVEL"] = debugAliasSource
+	}
 
 	// Shutdown timeout
 	timeoutStr := envOr("OVERCAST_SHUTDOWN_TIMEOUT", "5s")
@@ -1757,9 +1883,19 @@ func Load() (*Config, error) {
 		cfg.LambdaMaxWarmInstances = 1
 	}
 	cfg.LambdaSeedRuntimeImages = envBool("LAMBDA_SEED_RUNTIME_IMAGES", false)
-	cfg.LambdaInitTimeout = time.Duration(envInt("LAMBDA_INIT_TIMEOUT_SECONDS", 10)) * time.Second
+	// LocalStack's LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT (#1190) is accepted as
+	// an alias for LAMBDA_INIT_TIMEOUT_SECONDS — the same concept, different
+	// name, both plain integer seconds.
+	lambdaInitRaw, lambdaInitAliasSource, err := resolveStringAlias(lambdaInitTimeoutAlias, os.Getenv("LAMBDA_INIT_TIMEOUT_SECONDS"), "LAMBDA_INIT_TIMEOUT_SECONDS")
+	if err != nil {
+		return nil, err
+	}
+	cfg.LambdaInitTimeout = time.Duration(parseIntOr(lambdaInitRaw, 10)) * time.Second
 	if cfg.LambdaInitTimeout <= 0 {
 		cfg.LambdaInitTimeout = 10 * time.Second
+	}
+	if lambdaInitAliasSource != "" {
+		cfg.LocalStackAliasesUsed["LAMBDA_INIT_TIMEOUT_SECONDS"] = lambdaInitAliasSource
 	}
 	cfg.LambdaKeepContainers = envBool("LAMBDA_KEEP_CONTAINERS", false)
 	cfg.LambdaTarCacheMB = envInt("LAMBDA_TAR_CACHE_MB", 256)
@@ -1907,6 +2043,10 @@ func Load() (*Config, error) {
 	if cfg.MCPRemoteExposure && cfg.MCPAuthToken == "" {
 		return nil, fmt.Errorf("config: OVERCAST_MCP_AUTH_TOKEN is required when OVERCAST_MCP_REMOTE_EXPOSURE=true")
 	}
+
+	// LocalStack-documented variables Overcast recognises but that have no
+	// effect (#1190) — see ignoredLocalStackVars and IgnoredLocalStackReason.
+	cfg.IgnoredLocalStackVars = detectIgnoredLocalStackVars()
 
 	return cfg, nil
 }
