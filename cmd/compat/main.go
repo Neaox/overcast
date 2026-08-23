@@ -68,10 +68,14 @@ var (
 	updateBaselineFlag  = flag.Bool("update-baseline", false, "Update --baseline-file from --results-file with improvements only, then exit")
 	maxFailures         = flag.Int("max-failures", -1, "Fail if --results-file holds more than N failing tests, whatever the baseline records (-1 disables). Quarantined flaky tests are excluded")
 
-	registryFile       = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")
-	parityDebtFilePath = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
-	checkParity        = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
-	updateParityDebt   = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
+	registryFile = flag.String("registry-file", "compat/suites/registry.json", "Shared compat test registry")
+	// The generated sibling is concatenated onto --registry-file everywhere the
+	// registry is read. A missing file is an empty registry, so a checkout or
+	// suite image that predates it behaves exactly as before.
+	generatedRegistryFile = flag.String("generated-registry-file", "compat/suites/registry.generated.json", "Generated compat test registry, concatenated with --registry-file (missing = empty). Groups in state \"candidate\" are excluded from --compare-baseline and --max-failures")
+	parityDebtFilePath    = flag.String("parity-debt-file", "compat/parity-debt.json", "Cross-suite parity debt file")
+	checkParity           = flag.Bool("check-parity", false, "Check cross-suite registry parity against --parity-debt-file, then exit")
+	updateParityDebt      = flag.Bool("update-parity-debt", false, "Regenerate --parity-debt-file from --results-file, then exit")
 
 	lintBaselineFrom = flag.String("lint-baseline-from", "", "Old compatibility baseline file for downgrade linting")
 	lintBaselineTo   = flag.String("lint-baseline-to", "", "New compatibility baseline file for downgrade linting")
@@ -258,7 +262,7 @@ func main() {
 	}
 
 	if *checkParity {
-		if err := checkParityFiles(*registryFile, *parityDebtFilePath, *resultsFile, *annotate); err != nil {
+		if err := checkParityFiles(*registryFile, *generatedRegistryFile, *parityDebtFilePath, *resultsFile, *annotate); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: parity check failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -266,7 +270,7 @@ func main() {
 	}
 
 	if *updateParityDebt {
-		if err := updateParityDebtFile(*registryFile, *parityDebtFilePath, *resultsFile); err != nil {
+		if err := updateParityDebtFile(*registryFile, *generatedRegistryFile, *parityDebtFilePath, *resultsFile); err != nil {
 			fmt.Fprintf(os.Stderr, "compat: update parity debt: %v\n", err)
 			os.Exit(2)
 		}

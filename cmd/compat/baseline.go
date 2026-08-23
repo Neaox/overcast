@@ -41,7 +41,11 @@ func compareBaselineFile(baselinePath, resultsPath string) error {
 	if err != nil {
 		return err
 	}
-	regressions := compareBaselineWith(baseline, report, flaky)
+	candidates, err := loadCandidateGroups()
+	if err != nil {
+		return err
+	}
+	regressions := compareBaselineWith(baseline, report, flaky, candidates)
 	if len(regressions) > 0 {
 		for _, regression := range regressions {
 			fmt.Fprintln(os.Stderr, regression)
@@ -68,7 +72,11 @@ func enforceMaxFailuresFile(resultsPath string, limit int) error {
 	if err != nil {
 		return err
 	}
-	failures := failuresOverLimit(report, flaky, limit)
+	candidates, err := loadCandidateGroups()
+	if err != nil {
+		return err
+	}
+	failures := failuresOverLimit(report, flaky, candidates, limit)
 	if len(failures) > 0 {
 		for _, failure := range failures {
 			fmt.Fprintln(os.Stderr, failure)
@@ -98,14 +106,18 @@ func enforceMaxFailuresFile(resultsPath string, limit int) error {
 // Quarantined tests are exempt here as everywhere else: a gate that reds the
 // build at random is one people learn to re-run rather than read. That
 // exemption is reviewer-approved per test, and the flaky list is itself linted.
-func failuresOverLimit(report *compat.RunReport, flaky flakySet, limit int) []string {
+//
+// Candidate generated groups are exempt for the opposite reason — see
+// candidateSet in generatedregistry.go. A quarantined test escaped a gate it
+// was already under; a candidate has not entered it yet.
+func failuresOverLimit(report *compat.RunReport, flaky flakySet, candidates candidateSet, limit int) []string {
 	var failures []string
 	for _, entry := range baselineEntriesFromReport(report).Entries {
 		if entry.Status != compat.StatusFail {
 			continue
 		}
 		key := baselineKey(entry)
-		if flaky[key] {
+		if flaky[key] || candidates.exempt(entry.Group) {
 			continue
 		}
 		failures = append(failures, "compat failure: "+key)
@@ -130,7 +142,11 @@ func updateBaselineFile(baselinePath, resultsPath string) error {
 	if err != nil {
 		return err
 	}
-	updated := updateBaselineWith(baseline, report, flaky)
+	candidates, err := loadCandidateGroups()
+	if err != nil {
+		return err
+	}
+	updated := updateBaselineWith(baseline, report, flaky, candidates)
 	return writeBaselineFile(baselinePath, updated)
 }
 
@@ -399,23 +415,31 @@ func readFlakyFile(path string) (flakySet, error) {
 }
 
 func compareBaseline(baseline *compatBaseline, report *compat.RunReport) []string {
-	return compareBaselineWith(baseline, report, flakySet{})
+	return compareBaselineWith(baseline, report, flakySet{}, candidateSet{})
 }
 
-// compareBaselineWith reports regressions, ignoring tests quarantined as flaky.
+// compareBaselineWith reports regressions, ignoring tests quarantined as flaky
+// and tests belonging to a candidate generated group.
 //
 // A quarantined test is exempt in both directions: it may fail where the
 // baseline says pass, and it is not promoted when it passes. Anything else
 // makes the gate intermittent, and a gate that reds the build at random is one
 // people learn to re-run rather than read.
-func compareBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet) []string {
+//
+// A candidate is exempt in both directions too, but the two are distinct
+// concepts and are kept apart deliberately: a flaky test escaped this gate with
+// a reviewer's approval and a tracking issue, while a candidate generated group
+// has not entered it yet and gates nothing until a soak promotes it. Both arms
+// below have to honour the exemption — the new-failure arm especially, since a
+// freshly generated candidate is by definition absent from the baseline.
+func compareBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet, candidates candidateSet) []string {
 	current := baselineEntriesFromReport(report)
 	currentByKey := baselineEntryMap(current.Entries)
 	baselineByKey := baselineEntryMap(baseline.Entries)
 	var regressions []string
 	for _, expected := range baseline.Entries {
 		key := baselineKey(expected)
-		if flaky[key] {
+		if flaky[key] || candidates.exempt(expected.Group) {
 			continue
 		}
 		actual, ok := currentByKey[key]
@@ -437,7 +461,7 @@ func compareBaselineWith(baseline *compatBaseline, report *compat.RunReport, fla
 			continue
 		}
 		key := baselineKey(actual)
-		if flaky[key] {
+		if flaky[key] || candidates.exempt(actual.Group) {
 			continue
 		}
 		if _, grandfathered := baselineByKey[key]; grandfathered {
@@ -450,18 +474,27 @@ func compareBaselineWith(baseline *compatBaseline, report *compat.RunReport, fla
 }
 
 func updateBaseline(baseline *compatBaseline, report *compat.RunReport) *compatBaseline {
-	return updateBaselineWith(baseline, report, flakySet{})
+	return updateBaselineWith(baseline, report, flakySet{}, candidateSet{})
 }
 
 // updateBaselineWith ratchets the baseline forward, holding quarantined tests
 // at their recorded floor. Promoting a flaky test on the run where it happened
 // to pass would make its next intermittent failure a red build; a real fix is
 // promoted by deleting its entry from compat/flaky.json.
-func updateBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet) *compatBaseline {
+//
+// Candidate generated groups are not recorded at all. Writing one into the
+// baseline would put it under the gate on the strength of a single run, which
+// is precisely the soak that promoting it to "gated" is supposed to require —
+// and it would smuggle the candidate past the exemption in
+// compareBaselineWith, since that gate reads the group state, not the file.
+func updateBaselineWith(baseline *compatBaseline, report *compat.RunReport, flaky flakySet, candidates candidateSet) *compatBaseline {
 	current := baselineEntriesFromReport(report)
 	merged := baselineEntryMap(baseline.Entries)
 	for _, entry := range current.Entries {
 		key := baselineKey(entry)
+		if candidates.exempt(entry.Group) {
+			continue
+		}
 		old, ok := merged[key]
 		if ok && flaky[key] {
 			continue

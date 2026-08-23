@@ -637,16 +637,74 @@ func (s *Server) serveReset(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-// serveRegistry handles GET /registry — serves the canonical test registry.
+// serveRegistry handles GET /registry — serves the canonical test registry,
+// with the generated sibling concatenated onto it.
+//
+// Generated groups arrive carrying "generated": true, "state" and "scenario",
+// which is the facet the dashboard filters on. Merging server-side rather than
+// having the UI fetch two files keeps every existing consumer — the matrix, the
+// registry seed, the scope filter — on one request and one shape.
+//
+// TODO(#1113, phase G0 follow-up): the UI still shows every group in one
+// matrix. Per docs/plans/compat-coverage-modelgen.md § 3.6 the dashboard needs
+// a `generated` facet that defaults the matrix to hand-written groups, with
+// model coverage as the headline metric — a matrix of 5,000 rows is not a UI.
+// The field is served here so that work is a UI-only change.
 func (s *Server) serveRegistry(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join(s.workspaceRoot, "compat", "suites", "registry.json")
-	data, err := os.ReadFile(path)
+	dir := filepath.Join(s.workspaceRoot, "compat", "suites")
+	data, err := os.ReadFile(filepath.Join(dir, "registry.json"))
 	if err != nil {
 		http.Error(w, `{"error":"registry not found"}`, http.StatusNotFound)
 		return
 	}
+	generated, err := os.ReadFile(filepath.Join(dir, "registry.generated.json"))
+	if err == nil {
+		if merged, mergeErr := mergeRegistryDocs(data, generated); mergeErr == nil {
+			data = merged
+		}
+		// A malformed generated sibling serves the hand-written registry alone
+		// rather than a 500: the dashboard is a read-only view, and losing the
+		// matrix entirely is a worse failure than losing the generated half of
+		// it. The lint in cmd/compat is what refuses to let a broken file land.
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// mergeRegistryDocs appends the generated registry's groups to the hand-written
+// registry's, preserving each group's JSON verbatim so fields this package does
+// not model still reach the UI.
+//
+// An absent or empty generated registry returns the hand-written bytes
+// unchanged — not a re-marshalled equivalent. That is phase G0's acceptance
+// gate taken literally: while the generated registry is empty, the dashboard
+// receives byte-for-byte what it received before the file existed.
+func mergeRegistryDocs(hand, generated []byte) ([]byte, error) {
+	var generatedDoc struct {
+		Groups []json.RawMessage `json:"groups"`
+	}
+	if err := json.Unmarshal(generated, &generatedDoc); err != nil {
+		return nil, err
+	}
+	if len(generatedDoc.Groups) == 0 {
+		return hand, nil
+	}
+	var handDoc map[string]json.RawMessage
+	if err := json.Unmarshal(hand, &handDoc); err != nil {
+		return nil, err
+	}
+	var handGroups []json.RawMessage
+	if raw, ok := handDoc["groups"]; ok {
+		if err := json.Unmarshal(raw, &handGroups); err != nil {
+			return nil, err
+		}
+	}
+	groups, err := json.Marshal(append(handGroups, generatedDoc.Groups...))
+	if err != nil {
+		return nil, err
+	}
+	handDoc["groups"] = groups
+	return json.Marshal(handDoc)
 }
 
 // serveQueue handles GET /queue — returns current queue state.

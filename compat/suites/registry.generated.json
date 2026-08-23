@@ -1,0 +1,6 @@
+{
+  "$schema": "./registry.generated.schema.json",
+  "version": 1,
+  "comment": "Generated output — do not hand-edit. cmd/compatgen rewrites this file wholly from the scenario IR; every loader concatenates it with registry.json, which stays the reviewable hand-written half. Empty until the generator lands (phase G1); an empty file must leave every gate, report and dashboard behaving exactly as it did before the file existed. See docs/plans/compat-coverage-modelgen.md § 3.6.",
+  "groups": []
+}

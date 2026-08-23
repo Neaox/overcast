@@ -37,8 +37,16 @@ type parityGroup struct {
 	Service string `json:"service"`
 	Name    string `json:"name"`
 	// Suites restricts the group to specific suites. Empty = every suite.
-	Suites []string     `json:"suites"`
-	Tests  []parityTest `json:"tests"`
+	Suites []string `json:"suites"`
+	// Generated, State and Scenario are set only on groups from
+	// registry.generated.json. They are parsed from the hand-written registry
+	// too so lintGeneratedRegistry can reject a hand-written group that carries
+	// them — the shared schema has to permit the properties for the generated
+	// schema to extend its TestGroup by $ref. See generatedregistry.go.
+	Generated bool         `json:"generated"`
+	State     string       `json:"state"`
+	Scenario  string       `json:"scenario"`
+	Tests     []parityTest `json:"tests"`
 }
 
 type parityTest struct {
@@ -312,6 +320,31 @@ func readParityRegistry(path string) (*parityRegistry, error) {
 	return &reg, nil
 }
 
+// readParityRegistries loads the hand-written registry and concatenates the
+// generated sibling onto it, refusing the load if the two collide.
+//
+// Concatenation is all the parity checker needs: generated groups carry an
+// explicit `suites` list, so parityGroup.expects already scopes them correctly
+// and a suite without a backend for a generated group neither implements it nor
+// carries debt for it. That is deliberate — a model refresh that adds a
+// thousand tests must not add a thousand entries of debt to six suites that
+// were never asked to run them.
+func readParityRegistries(registryPath, generatedPath string) (*parityRegistry, error) {
+	reg, err := readParityRegistry(registryPath)
+	if err != nil {
+		return nil, err
+	}
+	gen, err := readGeneratedRegistry(generatedPath)
+	if err != nil {
+		return nil, err
+	}
+	if issues := lintGeneratedRegistry(reg, gen); len(issues) > 0 {
+		return nil, generatedRegistryIssueError(generatedPath, issues)
+	}
+	reg.Groups = append(reg.Groups, gen.parityGroups()...)
+	return reg, nil
+}
+
 func readParityDebtFile(path string) (*parityDebtFile, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -371,8 +404,8 @@ func paritySuites(report *compat.RunReport) []string {
 }
 
 // checkParityFiles is the --check-parity entry point.
-func checkParityFiles(registryPath, debtPath, resultsPath string, annotateOut bool) error {
-	reg, err := readParityRegistry(registryPath)
+func checkParityFiles(registryPath, generatedPath, debtPath, resultsPath string, annotateOut bool) error {
+	reg, err := readParityRegistries(registryPath, generatedPath)
 	if err != nil {
 		return err
 	}
@@ -412,8 +445,8 @@ func checkParityFiles(registryPath, debtPath, resultsPath string, annotateOut bo
 }
 
 // updateParityDebtFile is the --update-parity-debt entry point.
-func updateParityDebtFile(registryPath, debtPath, resultsPath string) error {
-	reg, err := readParityRegistry(registryPath)
+func updateParityDebtFile(registryPath, generatedPath, debtPath, resultsPath string) error {
+	reg, err := readParityRegistries(registryPath, generatedPath)
 	if err != nil {
 		return err
 	}
