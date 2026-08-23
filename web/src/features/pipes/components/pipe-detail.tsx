@@ -9,16 +9,8 @@ import type { PipeWiring } from "@/services/api/pipes"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionCard } from "@/components/ui/definition-card"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -194,47 +186,49 @@ export function PipeDetail({ pipeName }: Props) {
 
           <section className="flex flex-col gap-3">
             <h2 className="font-mono text-sm font-medium text-fg">Recent executions</h2>
-            {deliveries.length === 0 ? (
-              <EmptyState
-                icon={<GitBranch className="h-6 w-6 opacity-40" />}
-                title="No executions yet"
-                description="Executions are kept in memory only, so this is empty after a restart."
-              />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Records</TableHead>
-                    <TableHead>Target</TableHead>
-                    <TableHead>Outcome</TableHead>
-                    <TableHead>Detail</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {deliveries.map((d, i) => {
+            <ResourceTable
+              variant="embedded"
+              query={{ data: deliveries, isLoading: false }}
+              noun="executions"
+              emptyIcon={GitBranch}
+              emptyTitle="No executions yet"
+              emptyDescription="Executions are kept in memory only, so this is empty after a restart."
+              columnToggle={false}
+              // The feed arrives newest-first; the default sort says so
+              // explicitly rather than relying on the server's order.
+              defaultSort={{ id: "time", desc: true }}
+              // `ResourceTable`'s `rowKey` sees the item only, never its index,
+              // so the key is composed from the fields that vary. `Time` is
+              // RFC3339 with nanoseconds, which makes it unique on its own.
+              rowKey={(d) => `${d.Time}-${d.TargetArn}-${d.Outcome}-${d.Attempts}`}
+              columns={[
+                {
+                  id: "time",
+                  header: "Time",
+                  cellClassName: "text-fg-muted",
+                  sortValue: (d) => new Date(d.Time),
+                  cell: (d) => new Date(d.Time).toLocaleTimeString(),
+                },
+                { header: "Records", sortValue: (d) => d.Records, cell: (d) => d.Records },
+                {
+                  header: "Target",
+                  cell: (d) => <Badge variant="accent">{d.TargetType}</Badge>,
+                },
+                {
+                  header: "Outcome",
+                  sortValue: (d) => d.Outcome,
+                  cell: (d) => {
                     const outcome = OUTCOME_LABELS[d.Outcome]
                     return (
-                      <TableRow key={`${d.Time}-${i}`}>
-                        <TableCell className="text-fg-muted">
-                          {new Date(d.Time).toLocaleTimeString()}
-                        </TableCell>
-                        <TableCell>{d.Records}</TableCell>
-                        <TableCell>
-                          <Badge variant="accent">{d.TargetType}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={outcome?.variant ?? "default"}>
-                            {outcome?.label ?? d.Outcome}
-                          </Badge>
-                        </TableCell>
-                        <TableCellProse>{d.Error || "—"}</TableCellProse>
-                      </TableRow>
+                      <Badge variant={outcome?.variant ?? "default"}>
+                        {outcome?.label ?? d.Outcome}
+                      </Badge>
                     )
-                  })}
-                </TableBody>
-              </Table>
-            )}
+                  },
+                },
+                { header: "Detail", prose: true, cell: (d) => d.Error || "—" },
+              ]}
+            />
           </section>
         </>
       )}

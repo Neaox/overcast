@@ -59,7 +59,15 @@
 > (`ecr/repository-detail`'s Images, `dynamodb/table-detail`'s GSI and LSI listings, `variant="embedded"`)
 > are converted; `dynamodb/table-detail`'s Items table (row selection + row expansion + `LastEvaluatedKey`
 > paging), its Key Schema grid, and `rds/instance-detail`'s Events feed (needs a per-row tone
-> `ResourceTable` does not have) stay bespoke with the reason at the call site. None of the other scaffold
+> `ResourceTable` does not have) stay bespoke with the reason at the call site.
+>
+> **2026-08-23 (#1327 waves B/C, messaging
+> family):** `sqs/queue-list`, `sns/topic-list`, `kinesis/stream-list`, `msk/cluster-list` and
+> `pipes/pipe-list` converted to `ResourceTable`, and the detail sub-tables on `sqs/queue-detail`
+> (SNS subscriptions), `sns/topic-detail`, `kinesis/stream-detail` (shards + tags),
+> `pipes/pipe-detail` and `eventbridge/event-bus-detail` to `variant="embedded"`; the SQS messages
+> table stays bespoke (expansion rows, per-row tombstone styling and Archetype-E ghost rows, all
+> recorded at the call site). None of the other scaffold
 > components exist yet —
 > no `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or

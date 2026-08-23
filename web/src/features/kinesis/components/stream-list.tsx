@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Eye, Radio, Trash2 } from "lucide-react"
+import { Eye, Radio } from "lucide-react"
 import {
   kinesisStreamsQueryOptions,
   kinesisKeys,
@@ -9,24 +9,13 @@ import {
 } from "@/features/kinesis/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, EmptyState } from "@/components/ui/primitives"
-import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateStreamDialog } from "./create-stream-dialog"
@@ -49,7 +38,6 @@ export function StreamList() {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -59,6 +47,8 @@ export function StreamList() {
     refetch,
     error,
   } = useQuery(kinesisStreamsQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof streams)[number]>()
 
   const deleteMut = useResourceMutation({
     options: deleteStreamMutationOptions(),
@@ -91,96 +81,74 @@ export function StreamList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || streams.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={streams.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Radio className="h-10 w-10" />}
-                title="No streams yet"
-                description="Create a Kinesis data stream to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create stream</CreateAction>
-                }
-              />
+      <ResourceTable
+        query={{ data: streams, isLoading, error }}
+        noun="streams"
+        emptyIcon={Radio}
+        emptyTitle="No streams yet"
+        emptyDescription="Create a Kinesis data stream to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create stream</CreateAction>}
+        errorTitle="Failed to load streams"
+        // ListStreams returns the emulator's storage order; A→Z is what a name
+        // column implies, and `stream-2` sorts before `stream-10`.
+        defaultSort={{ id: "name", desc: false }}
+        // Four columns, all primary — a Columns menu here is clutter, not an offer.
+        columnToggle={false}
+        rowKey={(stream) => stream.name}
+        onRowClick={(stream) =>
+          navigate({ to: "/kinesis/$streamName", params: { streamName: stream.name } })
+        }
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (stream) => stream.name,
+            cell: (stream) => <ResourceName icon={Radio} name={stream.name} />,
+          },
+          {
+            header: "Status",
+            cell: (stream) => <Badge variant={statusVariant(stream.status)}>{stream.status}</Badge>,
+          },
+          {
+            header: "Shards",
+            sortValue: (stream) => stream.shardCount,
+            cell: (stream) => stream.shardCount,
+          },
+          {
+            header: "Retention",
+            sortValue: (stream) => stream.retentionHours,
+            cell: (stream) => `${stream.retentionHours}h`,
+          },
+        ]}
+        rowActions={(stream) => (
+          <RowAction
+            label={`View ${stream.name}`}
+            onClick={() =>
+              navigate({ to: "/kinesis/$streamName", params: { streamName: stream.name } })
             }
-            errorTitle="Failed to load streams"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Shards</TableHead>
-                <TableHead>Retention</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {streams.map((stream) => (
-                <TableRow
-                  key={stream.name}
-                  onClick={() =>
-                    navigate({ to: "/kinesis/$streamName", params: { streamName: stream.name } })
-                  }
-                >
-                  <TableCell>
-                    <ResourceName icon={Radio} name={stream.name} />
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(stream.status)}>{stream.status}</Badge>
-                  </TableCell>
-                  <TableCell>{stream.shardCount}</TableCell>
-                  <TableCell>{stream.retentionHours}h</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${stream.name}`}
-                        onClick={() =>
-                          navigate({
-                            to: "/kinesis/$streamName",
-                            params: { streamName: stream.name },
-                          })
-                        }
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${stream.name}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(stream.name)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (stream) => stream.name,
+          label: (stream) => stream.name,
+          noun: "stream",
+          title: "Delete Stream",
+          description: (stream) => (
+            <>
+              Delete <span className="font-mono font-semibold">{stream.name}</span>? This action
+              cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateStreamDialog open={showCreate} onOpenChange={setShowCreate} />
-
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Stream"
-        description={
-          <>
-            Delete <span className="font-mono font-semibold">{deleteTarget}</span>? This action
-            cannot be undone.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
     </ResourceListPage>
   )
 }

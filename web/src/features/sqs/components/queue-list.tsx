@@ -17,14 +17,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -32,19 +24,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, QueryListState, Spinner } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
   SelectCheckbox,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -56,7 +46,6 @@ export function QueueList() {
   const { toast } = useToast()
 
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
   const [showBulkDelete, setShowBulkDelete] = useState(false)
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
@@ -68,6 +57,8 @@ export function QueueList() {
     refetch,
     error,
   } = useQuery(sqsQueuesQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof queues)[number]>()
 
   const createMut = useResourceMutation({
     options: createQueueMutationOptions(),
@@ -148,107 +139,134 @@ export function QueueList() {
         </div>
       )}
 
-      <ResourceListCard>
-        {isLoading || queues.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={queues.length === 0}
-            error={error}
-            empty={
-              <>
-                <EmptyState
-                  icon={<MessagesSquare className="h-10 w-10" />}
-                  title="No queues yet"
-                  description="Create a queue to start sending and receiving messages."
-                  action={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
+      <ResourceTable
+        query={{ data: queues, isLoading, error }}
+        noun="queues"
+        emptyTitle="No queues yet"
+        errorTitle="Failed to load queues"
+        emptyAction={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
+        emptyIcon={MessagesSquare}
+        emptyDescription="Create a queue to start sending and receiving messages."
+        // ListQueues returns the emulator's storage order; A→Z is what a name
+        // column implies, and it keeps a queue in place across a refetch.
+        defaultSort={{ id: "queue-name", desc: false }}
+        rowKey={(q) => q.name}
+        onRowClick={(q) => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
+        columns={[
+          {
+            id: "select",
+            // Selection is chrome, like the row actions: never sorted, and
+            // `ResourceTable` keeps column 0 out of the columns menu.
+            header: (
+              <SelectCheckbox
+                label="Select all queues"
+                checked={queues.length > 0 && selectedQueues.size === queues.length}
+                indeterminate={selectedQueues.size > 0 && selectedQueues.size < queues.length}
+                onCheckedChange={(checked) =>
+                  setSelectedQueues(checked ? new Set(queues.map((q) => q.name)) : new Set())
+                }
+              />
+            ),
+            headerClassName: "w-10 pr-0",
+            cellClassName: "w-10 pr-0",
+            cell: (q) => (
+              // `ResourceTable` stops propagation on the row-actions cell only,
+              // so a control in a data cell isolates its own click.
+              <span onClick={(e) => e.stopPropagation()}>
+                <SelectCheckbox
+                  label={`Select ${q.name}`}
+                  checked={selectedQueues.has(q.name)}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(selectedQueues)
+                    if (checked) next.add(q.name)
+                    else next.delete(q.name)
+                    setSelectedQueues(next)
+                  }}
                 />
-                <RegionElsewhereNotice kind="sqs-queues" noun="queues" />
-              </>
-            }
-            errorTitle="Failed to load queues"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10 pr-0">
-                  <SelectCheckbox
-                    label="Select all queues"
-                    checked={selectedQueues.size === queues.length}
-                    indeterminate={selectedQueues.size > 0 && selectedQueues.size < queues.length}
-                    onCheckedChange={(checked) =>
-                      setSelectedQueues(checked ? new Set(queues.map((q) => q.name)) : new Set())
-                    }
-                  />
-                </TableHead>
-                <TableHead>Queue name</TableHead>
-                <TableHead>Visible</TableHead>
-                <TableHead>In-flight</TableHead>
-                <TableHead>Visibility timeout</TableHead>
-                <TableHead>ARN</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {queues.map((q) => (
-                <TableRow
-                  key={q.name}
-                  onClick={() => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
-                >
-                  <TableCell className="pr-0" onClick={(e) => e.stopPropagation()}>
-                    <SelectCheckbox
-                      label={`Select ${q.name}`}
-                      checked={selectedQueues.has(q.name)}
-                      onCheckedChange={(checked) => {
-                        const next = new Set(selectedQueues)
-                        if (checked) next.add(q.name)
-                        else next.delete(q.name)
-                        setSelectedQueues(next)
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <ResourceName icon={MessagesSquare} name={q.name}>
-                      {q.name.endsWith(".fifo") && <Badge variant="info">FIFO</Badge>}
-                    </ResourceName>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={q.approximateNumberOfMessages > 0 ? "accent" : "default"}>
-                      {q.approximateNumberOfMessages}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={q.approximateNumberOfMessagesNotVisible > 0 ? "warning" : "default"}
-                    >
-                      {q.approximateNumberOfMessagesNotVisible}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{q.visibilityTimeout}s</TableCell>
-                  <TableCell className="max-w-xs truncate text-fg-muted">{q.arn}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${q.name}`}
-                        onClick={() => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${q.name}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(q.name)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </span>
+            ),
+          },
+          {
+            id: "queue-name",
+            header: "Queue name",
+            hideable: false,
+            sortValue: (q) => q.name,
+            cell: (q) => (
+              <ResourceName icon={MessagesSquare} name={q.name}>
+                {q.name.endsWith(".fifo") && <Badge variant="info">FIFO</Badge>}
+              </ResourceName>
+            ),
+          },
+          {
+            header: "Visible",
+            sortValue: (q) => q.approximateNumberOfMessages,
+            cell: (q) => (
+              <Badge variant={q.approximateNumberOfMessages > 0 ? "accent" : "default"}>
+                {q.approximateNumberOfMessages}
+              </Badge>
+            ),
+          },
+          {
+            header: "In-flight",
+            sortValue: (q) => q.approximateNumberOfMessagesNotVisible,
+            cell: (q) => (
+              <Badge variant={q.approximateNumberOfMessagesNotVisible > 0 ? "warning" : "default"}>
+                {q.approximateNumberOfMessagesNotVisible}
+              </Badge>
+            ),
+          },
+          {
+            header: "Visibility timeout",
+            cellClassName: "text-fg-muted",
+            sortValue: (q) => q.visibilityTimeout,
+            cell: (q) => `${q.visibilityTimeout}s`,
+          },
+          {
+            header: "ARN",
+            cellClassName: "max-w-xs truncate text-fg-muted",
+            cell: (q) => q.arn,
+          },
+        ]}
+        rowActions={(q) => (
+          <RowAction
+            label={`View ${q.name}`}
+            onClick={() => navigate({ to: "/sqs/$queue", params: { queue: q.name } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (q) => q.name,
+          label: (q) => q.name,
+          noun: "queue",
+          title: "Delete Queue",
+          description: (q) => (
+            <>
+              Permanently delete <strong>{q.name}</strong> and all its messages?
+            </>
+          ),
+        }}
+      />
+
+      {/*
+        The region notice belongs to the empty state — it explains an empty
+        list and nothing else — but `ResourceTable` composes its own
+        `EmptyState` and exposes only `emptyAction`, which renders *inside*
+        that block where this banner's own `-mt-8` would overlap the create
+        button. So it is rendered under the card on the same condition, with
+        `mt-8` cancelling the pull-up the banner applies for its in-card
+        placement. Filed against #1327: `ResourceTable` has no slot for
+        "extra content below the empty state".
+      */}
+      {!isLoading && !error && queues.length === 0 && (
+        <div className="mt-8">
+          <RegionElsewhereNotice kind="sqs-queues" noun="queues" />
+        </div>
+      )}
 
       {/* ── Create queue dialog ── */}
       <CreateQueueDialog
@@ -256,20 +274,6 @@ export function QueueList() {
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(values) => createMut.mutate(values)}
-      />
-
-      {/* ── Delete confirm dialog ── */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Queue"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget}</strong> and all its messages?
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
 
       {/* ── Bulk delete confirm dialog ── */}

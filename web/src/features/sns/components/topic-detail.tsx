@@ -28,23 +28,17 @@ import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import { ResourceArnCombobox } from "@/components/ui/resource-arn-combobox"
 import type { ArnResourceType } from "@/components/ui/resource-arn-combobox"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { RowAction } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { EventConsole } from "@/components/ui/event-console"
 import { RawStateLink } from "@/features/debug/raw-state-link"
@@ -156,6 +150,7 @@ export function TopicDetail({ topicName }: Props) {
     isLoading,
     isFetching,
     refetch,
+    error: subscriptionsError,
   } = useQuery(snsSubscriptionsQueryOptions(topicName))
 
   const metricsQuery = useQuery(snsMetricsQueryOptions(topicName, monitorRange))
@@ -309,59 +304,60 @@ export function TopicDetail({ topicName }: Props) {
                 )}
               </div>
 
-              {isLoading ? (
-                <div className="flex justify-center py-12">
-                  <Spinner className="h-5 w-5" />
-                </div>
-              ) : subscriptions.length === 0 ? (
-                <div className="py-12">
-                  <EmptyState
-                    icon={<Link className="h-6 w-6 opacity-40" />}
-                    title="No subscriptions"
-                    description="Click Subscribe to add one."
-                  />
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Protocol</TableHead>
-                      <TableHead>Endpoint</TableHead>
-                      <TableHead>Last delivery</TableHead>
-                      <TableHead>ARN</TableHead>
-                      <TableHead className="w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {subscriptions.map((sub) => (
-                      <TableRow key={sub.SubscriptionArn}>
-                        <TableCell>
-                          <Badge variant="default">{sub.Protocol}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <ArnLink arn={sub.Endpoint ?? ""} />
-                        </TableCell>
-                        <TableCell>
-                          <DeliveryIndicator state={deliveryState[sub.SubscriptionArn ?? ""]} />
-                        </TableCell>
-                        <TableCell className="text-fg-muted">
-                          <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="danger-ghost"
-                            size="sm"
-                            aria-label="Delete subscription"
-                            onClick={() => setDeleteSubTarget(sub)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+              <ResourceTable
+                variant="embedded"
+                query={{ data: subscriptions, isLoading, error: subscriptionsError }}
+                noun="subscriptions"
+                emptyIcon={Link}
+                emptyTitle="No subscriptions"
+                emptyDescription="Click Subscribe to add one."
+                errorTitle="Failed to load subscriptions"
+                // ListSubscriptionsByTopic returns storage order; grouping by
+                // protocol is what makes a fan-out legible at a glance.
+                defaultSort={{ id: "protocol", desc: false }}
+                columnToggle={false}
+                rowKey={(sub) => sub.SubscriptionArn ?? ""}
+                columns={[
+                  {
+                    id: "protocol",
+                    header: "Protocol",
+                    sortValue: (sub) => sub.Protocol,
+                    cell: (sub) => <Badge variant="default">{sub.Protocol}</Badge>,
+                  },
+                  {
+                    header: "Endpoint",
+                    sortValue: (sub) => sub.Endpoint,
+                    cell: (sub) => <ArnLink arn={sub.Endpoint ?? ""} />,
+                  },
+                  {
+                    id: "last-delivery",
+                    header: "Last delivery",
+                    // Sorted by *when*, so the freshest delivery is one click
+                    // away; a subscription with no delivery has no time and
+                    // sorts last either way.
+                    sortValue: (sub) => deliveryState[sub.SubscriptionArn ?? ""]?.at,
+                    cell: (sub) => (
+                      <DeliveryIndicator state={deliveryState[sub.SubscriptionArn ?? ""]} />
+                    ),
+                  },
+                  {
+                    header: "ARN",
+                    cellClassName: "text-fg-muted",
+                    cell: (sub) => (
+                      <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
+                    ),
+                  },
+                ]}
+                rowActions={(sub) => (
+                  <RowAction
+                    label="Delete subscription"
+                    tone="danger"
+                    onClick={() => setDeleteSubTarget(sub)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </RowAction>
+                )}
+              />
             </CardContent>
           </Card>
         </TabPanel>

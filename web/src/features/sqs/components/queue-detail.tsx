@@ -68,6 +68,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { RowAction } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { ResourceArnCombobox } from "@/components/ui/resource-arn-combobox"
@@ -386,6 +388,7 @@ export function QueueDetail({ queueName }: Props) {
   const {
     data: subscriptions = [],
     isLoading: sLoading,
+    error: sError,
     refetch: refetchSubscriptions,
   } = useQuery(snsQueueSubscriptionsQueryOptions(queueArn))
 
@@ -674,6 +677,27 @@ export function QueueDetail({ queueName }: Props) {
                 />
               </div>
             ) : (
+              // ResourceTable didn't fit because this is a live message stream,
+              // not a resource list, and it needs three things the row model
+              // cannot express (#1327 wave C):
+              //
+              //  1. **Two `<TableRow>`s per row.** Expanding a message renders a
+              //     second, full-width `colSpan` row underneath it.
+              //     `ResourceTable` renders exactly one row per item and
+              //     registers no `rowExpandingFeature`.
+              //  2. **Per-row styling.** In-flight messages dim and tombstoned
+              //     ones strike through; that lives on `TableRow`'s className,
+              //     and `ResourceTable` exposes no `rowClassName`.
+              //  3. **Ghost rows.** The 30s tombstones are synthetic rows that
+              //     are deliberately *not* in `query.data` — they are what the
+              //     Archetype-E ghost-tracker kernel exists to show, and folding
+              //     them into the data array would make them sortable and
+              //     countable as if they were still in the queue.
+              //
+              // `virtualize` would carry the volume, but none of the three above
+              // follow from row count, so it does not unblock the conversion.
+              // The subscriptions sub-table on this same page *is* a resource
+              // list and is converted.
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -738,61 +762,54 @@ export function QueueDetail({ queueName }: Props) {
               </Button>
             </div>
 
-            {sLoading ? (
-              <div className="flex justify-center py-4">
-                <Spinner />
-              </div>
-            ) : subscriptions.length === 0 ? (
-              <div className="py-4">
-                <EmptyState
-                  icon={<Bell className="h-8 w-8" />}
-                  title="No subscriptions"
-                  description="This queue is not subscribed to any SNS topic."
-                  action={
-                    <Button size="sm" onClick={() => setShowSubscribe(true)}>
-                      <Plus className="mr-1.5 h-3.5 w-3.5" />
-                      Subscribe to Topic
-                    </Button>
-                  }
-                />
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Topic ARN</TableHead>
-                    <TableHead>Protocol</TableHead>
-                    <TableHead>Subscription ARN</TableHead>
-                    <TableHead className="w-12" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {subscriptions.map((sub) => (
-                    <TableRow key={sub.SubscriptionArn}>
-                      <TableCell>
-                        <ArnLink arn={sub.TopicArn ?? ""} />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="default">{sub.Protocol}</Badge>
-                      </TableCell>
-                      <TableCell className="max-w-xs truncate text-fg-muted">
-                        <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="text-fg-muted hover:text-danger"
-                          onClick={() => setUnsubscribeTarget(sub)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+            <ResourceTable
+              variant="embedded"
+              query={{ data: subscriptions, isLoading: sLoading, error: sError }}
+              noun="subscriptions"
+              emptyIcon={Bell}
+              emptyTitle="No subscriptions"
+              emptyDescription="This queue is not subscribed to any SNS topic."
+              emptyAction={
+                <Button size="sm" onClick={() => setShowSubscribe(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Subscribe to Topic
+                </Button>
+              }
+              errorTitle="Failed to load subscriptions"
+              columnToggle={false}
+              // The topic is what identifies a row here — the queue is fixed.
+              defaultSort={{ id: "topic-arn", desc: false }}
+              rowKey={(sub) => sub.SubscriptionArn ?? ""}
+              columns={[
+                {
+                  id: "topic-arn",
+                  header: "Topic ARN",
+                  sortValue: (sub) => sub.TopicArn,
+                  cell: (sub) => <ArnLink arn={sub.TopicArn ?? ""} />,
+                },
+                {
+                  header: "Protocol",
+                  sortValue: (sub) => sub.Protocol,
+                  cell: (sub) => <Badge variant="default">{sub.Protocol}</Badge>,
+                },
+                {
+                  header: "Subscription ARN",
+                  cellClassName: "max-w-xs truncate text-fg-muted",
+                  cell: (sub) => (
+                    <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
+                  ),
+                },
+              ]}
+              rowActions={(sub) => (
+                <RowAction
+                  label={`Unsubscribe from ${sub.TopicArn?.split(":").pop() ?? "topic"}`}
+                  tone="danger"
+                  onClick={() => setUnsubscribeTarget(sub)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </RowAction>
+              )}
+            />
           </CardContent>
         )}
 

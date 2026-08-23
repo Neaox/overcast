@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Trash2, RefreshCw, Plus, X } from "lucide-react"
+import { Trash2, RefreshCw, Plus, X, Tag, Boxes } from "lucide-react"
 import {
   kinesisStreamQueryOptions,
   kinesisKeys,
@@ -13,14 +13,8 @@ import { kinesis } from "@/services/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { RowAction } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogContent,
@@ -193,26 +187,37 @@ export function StreamDetail({ streamName }: Props) {
       </div>
 
       {tab === "shards" && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Shard ID</TableHead>
-              <TableHead>Starting Hash Key</TableHead>
-              <TableHead>Ending Hash Key</TableHead>
-              <TableHead>Starting Seq No</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {stream.shards.map((shard) => (
-              <TableRow key={shard.shardId}>
-                <TableCell>{shard.shardId}</TableCell>
-                <TableCell className="max-w-30 truncate">{shard.startingHashKey}</TableCell>
-                <TableCell className="max-w-30 truncate">{shard.endingHashKey}</TableCell>
-                <TableCell>{shard.startingSeqNo}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ResourceTable
+          variant="embedded"
+          query={{ data: stream.shards, isLoading: false }}
+          noun="shards"
+          emptyIcon={Boxes}
+          emptyTitle="No shards"
+          columnToggle={false}
+          // Shards come back in hash-key order; `shardId-000…1` before
+          // `shardId-000…10` is what the alphanumeric comparison gives.
+          defaultSort={{ id: "shard-id", desc: false }}
+          rowKey={(shard) => shard.shardId}
+          columns={[
+            {
+              id: "shard-id",
+              header: "Shard ID",
+              sortValue: (shard) => shard.shardId,
+              cell: (shard) => shard.shardId,
+            },
+            {
+              header: "Starting Hash Key",
+              cellClassName: "max-w-30 truncate",
+              cell: (shard) => shard.startingHashKey,
+            },
+            {
+              header: "Ending Hash Key",
+              cellClassName: "max-w-30 truncate",
+              cell: (shard) => shard.endingHashKey,
+            },
+            { header: "Starting Seq No", cell: (shard) => shard.startingSeqNo },
+          ]}
+        />
       )}
 
       {tab === "tags" && (
@@ -223,38 +228,32 @@ export function StreamDetail({ streamName }: Props) {
               Add Tag
             </Button>
           </div>
-          {tags.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No tags</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tags.map(([key, value]) => (
-                  <TableRow key={key}>
-                    <TableCell>{key}</TableCell>
-                    <TableCell>{value}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={() => removeTagMut.mutate(key)}
-                        disabled={removeTagMut.isPending}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            query={{ data: tags, isLoading: false }}
+            noun="tags"
+            emptyIcon={Tag}
+            emptyTitle="No tags"
+            columnToggle={false}
+            // `Object.entries` follows insertion order, which is whatever the
+            // emulator happened to store; a key column reads A→Z.
+            defaultSort={{ id: "key", desc: false }}
+            rowKey={([key]) => key}
+            columns={[
+              { id: "key", header: "Key", sortValue: ([key]) => key, cell: ([key]) => key },
+              { header: "Value", cell: ([, value]) => value },
+            ]}
+            rowActions={([key]) => (
+              <RowAction
+                label={`Remove tag ${key}`}
+                tone="danger"
+                onClick={() => removeTagMut.mutate(key)}
+                disabled={removeTagMut.isPending}
+              >
+                <X className="h-3.5 w-3.5" />
+              </RowAction>
+            )}
+          />
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Radio, Trash2 } from "lucide-react"
+import { Radio } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { DockerBanner } from "@/components/docker-banner"
 import {
@@ -14,14 +14,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -29,17 +21,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
-  RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
@@ -96,85 +85,69 @@ export function ClusterList() {
       }
     >
       <DockerBanner forService="msk" />
-      <ResourceListCard>
-        {isLoading || clusters.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={clusters.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Radio className="h-10 w-10" />}
-                title="No Kafka clusters"
-                description="Create a cluster to get started. Redpanda will be launched automatically."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load clusters"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cluster name</TableHead>
-                <TableHead>Kafka version</TableHead>
-                <TableHead>Brokers</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {clusters.map((c) => (
-                <TableRow key={c.ClusterArn}>
-                  <TableCell>
-                    <ResourceName icon={Radio} name={c.ClusterName} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {c.CurrentBrokerSoftwareInfo?.KafkaVersion ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{c.NumberOfBrokerNodes}</TableCell>
-                  <TableCell>
-                    <ClusterStatusBadge status={c.State ?? ""} />
-                  </TableCell>
-                  <TableCell>
-                    <RowActions>
-                      <RowAction
-                        label={`Delete ${c.ClusterName ?? "cluster"}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(c)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+
+      <ResourceTable
+        query={{ data: clusters, isLoading, error }}
+        noun="clusters"
+        emptyIcon={Radio}
+        emptyTitle="No Kafka clusters"
+        emptyDescription="Create a cluster to get started. Redpanda will be launched automatically."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        }
+        errorTitle="Failed to load clusters"
+        // ListClusters returns the emulator's storage order; A→Z is what a name
+        // column implies.
+        defaultSort={{ id: "cluster-name", desc: false }}
+        // Four columns, all primary — a Columns menu here is clutter, not an offer.
+        columnToggle={false}
+        rowKey={(c) => c.ClusterArn ?? ""}
+        columns={[
+          {
+            id: "cluster-name",
+            header: "Cluster name",
+            sortValue: (c) => c.ClusterName,
+            cell: (c) => <ResourceName icon={Radio} name={c.ClusterName} />,
+          },
+          {
+            header: "Kafka version",
+            cellClassName: "text-fg-muted",
+            cell: (c) => c.CurrentBrokerSoftwareInfo?.KafkaVersion ?? "—",
+          },
+          {
+            header: "Brokers",
+            cellClassName: "text-fg-muted",
+            sortValue: (c) => c.NumberOfBrokerNodes,
+            cell: (c) => c.NumberOfBrokerNodes,
+          },
+          {
+            header: "Status",
+            cell: (c) => <ClusterStatusBadge status={c.State ?? ""} />,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (c) => c.ClusterArn ?? "",
+          label: (c) => c.ClusterName ?? "cluster",
+          noun: "cluster",
+          title: "Delete Kafka Cluster",
+          description: (c) => (
+            <>
+              Permanently delete <strong>{c.ClusterName}</strong>? The Redpanda container will be
+              stopped. This action cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateClusterDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(opts) => createMut.mutate(opts)}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Kafka Cluster"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget?.ClusterName}</strong>? The Redpanda container
-            will be stopped. This action cannot be undone.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget?.ClusterArn && deleteMut.mutate(deleteTarget.ClusterArn)}
       />
     </ResourceListPage>
   )

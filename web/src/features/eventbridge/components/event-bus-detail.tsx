@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { CalendarClock, Trash2, RefreshCw, Search } from "lucide-react"
+import { CalendarClock, RefreshCw } from "lucide-react"
 import {
   ebRulesQueryOptions,
   ebRuleTargetsQueryOptions,
@@ -11,20 +11,11 @@ import {
 import type { EventDelivery, EventRuleTarget } from "@/services/api/eventbridge"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceListFilter } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Definition, DefinitionCard } from "@/components/ui/definition-card"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { cn } from "@/lib/utils"
 
@@ -81,7 +72,6 @@ function TargetRow({ target, delivery }: { target: EventRuleTarget; delivery?: E
 }
 
 export function EventBusDetail({ busName }: Props) {
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [filter, setFilter] = useState("")
 
   const {
@@ -89,7 +79,10 @@ export function EventBusDetail({ busName }: Props) {
     isLoading,
     isFetching,
     refetch,
+    error,
   } = useQuery(ebRulesQueryOptions(busName))
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof allRules)[number]>()
 
   const { data: ruleTargets = [] } = useQuery(ebRuleTargetsQueryOptions(busName))
   const { data: deliveries = [] } = useQuery(ebDeliveriesQueryOptions(busName))
@@ -168,100 +161,85 @@ export function EventBusDetail({ busName }: Props) {
       {/* Rules section */}
       <section className="flex flex-col gap-3">
         <h2 className="font-mono text-sm font-medium text-fg">Rules</h2>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
-            <Input
-              placeholder="Filter rules…"
-              className="pl-8"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </div>
-        </div>
+        <ResourceListFilter value={filter} onChange={setFilter} placeholder="Filter rules…" />
 
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Spinner className="h-5 w-5" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<CalendarClock className="h-6 w-6 opacity-40" />}
-            title="No rules"
-            description={filter ? "No rules match the filter." : "No rules configured on this bus."}
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Targets &amp; last delivery</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((rule) => {
+        <ResourceTable
+          variant="embedded"
+          query={{ data: filtered, isLoading, error }}
+          noun="rules"
+          emptyIcon={CalendarClock}
+          emptyTitle="No rules"
+          emptyDescription="No rules configured on this bus."
+          errorTitle="Failed to load rules"
+          filteredEmptyTitle="No rules"
+          filteredEmptyDescription="No rules match the filter."
+          isFiltered={!!filter}
+          onClearFilter={() => setFilter("")}
+          columnToggle={false}
+          // ListRules returns the emulator's storage order; A→Z is what a name
+          // column implies.
+          defaultSort={{ id: "name", desc: false }}
+          rowKey={(rule) => rule.Name ?? ""}
+          columns={[
+            {
+              id: "name",
+              header: "Name",
+              sortValue: (rule) => rule.Name,
+              cell: (rule) => rule.Name,
+            },
+            {
+              header: "State",
+              sortValue: (rule) => rule.State,
+              cell: (rule) => (
+                <Badge variant={rule.State === "ENABLED" ? "default" : "outline"}>
+                  {rule.State}
+                </Badge>
+              ),
+            },
+            {
+              id: "targets",
+              header: "Targets & last delivery",
+              cell: (rule) => {
                 const targets = targetsByRule.get(rule.Name ?? "") ?? []
-                return (
-                  <TableRow key={rule.Name}>
-                    <TableCell>{rule.Name}</TableCell>
-                    <TableCell>
-                      <Badge variant={rule.State === "ENABLED" ? "default" : "outline"}>
-                        {rule.State}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {targets.length === 0 ? (
-                        <span className="text-xs text-fg-subtle">No targets</span>
-                      ) : (
-                        <div className="flex flex-col gap-1">
-                          {targets.map((target) => (
-                            <TargetRow
-                              key={target.Id}
-                              target={target}
-                              delivery={latestDelivery.get(`${rule.Name}::${target.Id}`)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCellProse>{rule.Description || "—"}</TableCellProse>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-danger hover:text-danger"
-                        title="Delete"
-                        onClick={() => setDeleteTarget(rule.Name)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                return targets.length === 0 ? (
+                  <span className="text-xs text-fg-subtle">No targets</span>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {targets.map((target) => (
+                      <TargetRow
+                        key={target.Id}
+                        target={target}
+                        delivery={latestDelivery.get(`${rule.Name}::${target.Id}`)}
+                      />
+                    ))}
+                  </div>
                 )
-              })}
-            </TableBody>
-          </Table>
-        )}
+              },
+            },
+            {
+              header: "Description",
+              prose: true,
+              cell: (rule) => rule.Description || "—",
+            },
+          ]}
+          onDelete={{
+            target: deleteTarget,
+            onRequest: setDeleteTarget,
+            onOpenChange: (open) => !open && setDeleteTarget(undefined),
+            mutation: deleteMut,
+            getId: (rule) => rule.Name ?? "",
+            label: (rule) => rule.Name ?? "rule",
+            noun: "rule",
+            title: "Delete Rule",
+            description: (rule) => (
+              <>
+                Delete rule <span className="font-mono font-semibold">{rule.Name}</span>? This
+                cannot be undone.
+              </>
+            ),
+          }}
+        />
       </section>
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Rule"
-        description={
-          <>
-            Delete rule <span className="font-mono font-semibold">{deleteTarget}</span>? This cannot
-            be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
     </div>
   )
 }
