@@ -19,6 +19,8 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 )
 
 // dist holds the built init binaries. `all:` so the committed .gitkeep is
@@ -31,6 +33,24 @@ var dist embed.FS
 // distDirRel is where the artefacts live in the repository. It is in the error
 // message, so it must stay in step with the Makefile's lambda-init target.
 const distDirRel = "internal/services/lambda/initbin/dist"
+
+// EnvDistDir names a directory to read the artefacts from INSTEAD of the
+// embedded copies. Two audiences, neither of them production:
+//
+//   - The repository's own test binaries. An embed is baked at compile time,
+//     so a test binary compiled from a bare checkout — before `make
+//     lambda-init` has ever run — carries no init, and nothing it builds
+//     mid-run can change that. The test bootstraps (this package's users have
+//     one each: internal/services/lambda's TestMain and
+//     tests/integration/lambda's requireLambdaInit) build the artefacts and
+//     point this variable at dist/, so the FIRST `go test` on a fresh clone
+//     passes rather than the second.
+//   - A developer iterating on the init itself, who wants a container to run a
+//     freshly built copy without relinking Overcast.
+//
+// When unset — every production deployment — the embedded copies are the only
+// source, and a build without them fails loudly as documented on For.
+const EnvDistDir = "OVERCAST_LAMBDA_INIT_DIST"
 
 // goarchFor maps a Lambda Architectures value to the GOARCH the init was built
 // for. It mirrors dockerPlatformForLambdaArchitectures in the lambda package —
@@ -72,6 +92,16 @@ func load(fsys fs.FS, arch string) ([]byte, error) {
 		return nil, fmt.Errorf("no Lambda init for architecture %q: Lambda functions are %q or %q", arch, "x86_64", "arm64")
 	}
 	name := artefactName(goarch)
+	if dir := os.Getenv(EnvDistDir); dir != "" {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return nil, fmt.Errorf("%s points at %s, but %s is not readable there: %w", EnvDistDir, dir, name, err)
+		}
+		if len(b) == 0 {
+			return nil, fmt.Errorf("%s points at %s, but %s is empty there", EnvDistDir, dir, name)
+		}
+		return b, nil
+	}
 	b, err := fs.ReadFile(fsys, "dist/"+name)
 	if err != nil {
 		return nil, fmt.Errorf("this overcast build has no Lambda init for linux/%s: %s/%s is missing — run `make lambda-init` (or `task lambda-init`) and rebuild", goarch, distDirRel, name)

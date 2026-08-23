@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/services/lambda/initbin"
 	"github.com/Neaox/overcast/tests/helpers"
 	"go.uber.org/zap"
 )
@@ -55,20 +56,30 @@ var lambdaInitOnce struct {
 // working without a separate build step, including inside scripts/docker-go.sh.
 func requireLambdaInit(t *testing.T) {
 	t.Helper()
-	lambdaInitOnce.Do(func() { lambdaInitOnce.err = buildLambdaInit() })
+	lambdaInitOnce.Do(func() {
+		dist, err := buildLambdaInit()
+		if err == nil {
+			// The embed in THIS test binary was baked at compile time, which
+			// on a fresh checkout was before the artefacts existed; the env
+			// override is what lets this very run use what was just built.
+			// See initbin.EnvDistDir.
+			os.Setenv(initbin.EnvDistDir, dist)
+		}
+		lambdaInitOnce.err = err
+	})
 	if lambdaInitOnce.err != nil {
 		t.Fatalf("the in-container Lambda init could not be built: %v", lambdaInitOnce.err)
 	}
 }
 
-func buildLambdaInit() error {
+func buildLambdaInit() (string, error) {
 	root, err := repoRoot()
 	if err != nil {
-		return err
+		return "", err
 	}
 	dist := filepath.Join(root, "internal", "services", "lambda", "initbin", "dist")
 	if err := os.MkdirAll(dist, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	for _, goarch := range []string{"amd64", "arm64"} {
 		out := filepath.Join(dist, "lambda-init-linux-"+goarch)
@@ -79,10 +90,10 @@ func buildLambdaInit() error {
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+goarch)
 		if combined, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("go build ./cmd/lambda-init for linux/%s: %v: %s", goarch, err, combined)
+			return "", fmt.Errorf("go build ./cmd/lambda-init for linux/%s: %v: %s", goarch, err, combined)
 		}
 	}
-	return nil
+	return dist, nil
 }
 
 // repoRoot walks up from this file to the module root.

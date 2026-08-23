@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func advanceUntil(t *testing.T, mock *clock.Mock, step time.Duration, what strin
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-func newFollower(t *testing.T, streamer *fakeStreamer, sink LineSink, clk clock.Clock, obs Observer) *Follower {
+func newFollower(t *testing.T, streamer *fakeStreamer, sink LineSink, clk clock.Clock) *Follower {
 	t.Helper()
 	return New(Config{
 		Client:      streamer,
@@ -65,7 +64,6 @@ func newFollower(t *testing.T, streamer *fakeStreamer, sink LineSink, clk clock.
 		Sink:        sink,
 		Clock:       clk,
 		Logger:      zap.NewNop(),
-		Observer:    obs,
 	})
 }
 
@@ -89,7 +87,7 @@ func TestFollower_reconnectsAndDeliversTheRestOfTheOutput(t *testing.T) {
 	}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower runs across the break.
 	run := start(follower)
@@ -135,7 +133,7 @@ func TestFollower_reconnectKeepsNewLinesSharingAReplayedTimestamp(t *testing.T) 
 	}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower runs across the break.
 	run := start(follower)
@@ -162,7 +160,7 @@ func TestFollower_deliversStdoutAndStderr(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower reads the connection.
 	run := start(follower)
@@ -188,7 +186,7 @@ func TestFollower_truncatesAnOversizedLine(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower reads them.
 	run := start(follower)
@@ -216,7 +214,7 @@ func TestFollower_flushesAFullBatchWithoutWaiting(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower reads them without any time passing.
 	run := start(follower)
@@ -257,7 +255,7 @@ func TestFollower_flushesAPartialBatchAfterTheInterval(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower has read them but no time has passed.
 	run := start(follower)
@@ -290,15 +288,14 @@ func TestFollower_deliversBufferedLinesWhenCancelled(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	gate := make(chan struct{})
 	sink := &recordSink{gate: gate}
-	obs := &countingObserver{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, obs)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the context is cancelled while the queue is still full, and the
 	// sink is then released.
 	run := start(follower)
 	waitFor(t, "all five lines to be assembled behind the held sink", func() bool {
-		return obs.scanned.Load() == 5
+		return streamer.consumed(0)
 	})
 	run.cancel()
 	close(gate)
@@ -339,7 +336,7 @@ func TestFollower_reconcileBackfillsWhatTheFollowMissed(t *testing.T) {
 	}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	run := start(follower)
 	waitFor(t, "the live lines", func() bool { return len(sink.messages()) == 2 })
@@ -367,21 +364,17 @@ func TestFollower_retriesAfterTheDaemonRefusesTheConnect(t *testing.T) {
 	// Given: a daemon that refuses every follow.
 	streamer := &fakeStreamer{openErr: errors.New("daemon busy")}
 	sink := &recordSink{}
-	obs := &countingObserver{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, obs)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower runs.
 	run := start(follower)
 	advanceUntil(t, mock, time.Second, "a second attempt", func() bool { return streamer.opens() == 0 && len(streamer.sinceValues()) >= 2 })
 	run.stop(t)
 
-	// Then: it kept asking, and each refusal counts as the daemon answering.
-	if got := obs.answered.Load(); got < 2 {
-		t.Fatalf("StreamAnswered fired %d times, want at least 2", got)
-	}
-	if got := obs.opened.Load(); got != 0 {
-		t.Fatalf("StreamOpened fired %d times, want 0", got)
+	// Then: it kept asking — at least two attempts reached the daemon.
+	if got := len(streamer.sinceValues()); got < 2 {
+		t.Fatalf("the daemon was asked %d times, want at least 2", got)
 	}
 }
 
@@ -397,7 +390,7 @@ func TestFollower_dropsAnEmptyMessage(t *testing.T) {
 	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
 	sink := &recordSink{}
 	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, nil)
+	follower := newFollower(t, streamer, sink, mock)
 
 	// When: the follower reads them.
 	run := start(follower)
@@ -409,98 +402,3 @@ func TestFollower_dropsAnEmptyMessage(t *testing.T) {
 		t.Fatalf("messages = %q, want before,after", got)
 	}
 }
-
-// The Observer's line accounting is what Lambda's teardown drain waits on, so
-// a line that never reaches CloudWatch — a duplicate, an empty message, one a
-// sink refused — must still be accounted for. A count that only ever goes up
-// wedges that wait for its full deadline.
-func TestFollower_everyScannedLineIsRetired(t *testing.T) {
-	// Given: a connection carrying a line the sink will refuse, an empty
-	// message, and two ordinary lines.
-	var payload bytes.Buffer
-	payload.Write(stdoutLine(base, "keep"))
-	payload.Write(stdoutLine(base.Add(time.Millisecond), "drop-me"))
-	payload.Write(dockerFrame(1, base.Add(2*time.Millisecond).Format(time.RFC3339Nano)+" \n"))
-	payload.Write(stdoutLine(base.Add(3*time.Millisecond), "keep too"))
-
-	streamer := &fakeStreamer{scripts: []streamScript{{payload: payload.Bytes(), hold: true}}}
-	sink := &recordSink{reject: func(l Line) bool { return l.Message == "drop-me" }}
-	obs := &countingObserver{}
-	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, obs)
-
-	// When: the follower reads them and the batch is flushed.
-	run := start(follower)
-	waitFor(t, "the lines to be scanned", func() bool { return obs.scanned.Load() == 4 })
-	mock.Add(flushInterval)
-	waitFor(t, "the batch to be flushed", func() bool {
-		_, flushes := sink.snapshot()
-		return len(flushes) == 1
-	})
-	run.stop(t)
-
-	// Then: as many lines were retired as were scanned.
-	if scanned, retired := obs.scanned.Load(), obs.retired.Load(); scanned != retired {
-		t.Fatalf("scanned %d lines and retired %d — the in-flight count would never reach zero", scanned, retired)
-	}
-}
-
-// The Observer's stream and read events are what tell a wait whether the
-// daemon has been asked anything at all. They have to bracket the connection
-// they belong to: a read left looking outstanding after the stream is gone is
-// an answer that can never come.
-func TestFollower_observerBracketsTheConnection(t *testing.T) {
-	streamer := &fakeStreamer{scripts: []streamScript{{payload: stdoutLine(base, "hello"), hold: true}}}
-	sink := &recordSink{}
-	obs := &countingObserver{}
-	mock := clock.NewMock()
-	follower := newFollower(t, streamer, sink, mock, obs)
-
-	run := start(follower)
-	waitFor(t, "the line", func() bool { return len(sink.messages()) == 1 })
-	if obs.opened.Load() != 1 || obs.closed.Load() != 0 {
-		t.Fatalf("opened = %d, closed = %d while the stream is live, want 1 and 0",
-			obs.opened.Load(), obs.closed.Load())
-	}
-	if obs.readStarted.Load() == 0 {
-		t.Fatal("no read was reported as started")
-	}
-	run.stop(t)
-
-	if obs.closed.Load() != 1 {
-		t.Fatalf("closed = %d after the follower stopped, want 1", obs.closed.Load())
-	}
-	if started, returned := obs.readStarted.Load(), obs.readReturned.Load(); started != returned {
-		t.Fatalf("%d reads started and %d returned — a read is still shown as outstanding", started, returned)
-	}
-	if obs.bytesRead.Load() == 0 {
-		t.Fatal("no read was reported as having delivered bytes")
-	}
-}
-
-// countingObserver counts what a Follower reports.
-type countingObserver struct {
-	answered     atomic.Int64
-	opened       atomic.Int64
-	closed       atomic.Int64
-	readStarted  atomic.Int64
-	readReturned atomic.Int64
-	bytesRead    atomic.Int64
-	scanned      atomic.Int64
-	retired      atomic.Int64
-}
-
-func (o *countingObserver) StreamAnswered() { o.answered.Add(1) }
-func (o *countingObserver) StreamOpened()   { o.opened.Add(1) }
-func (o *countingObserver) StreamClosed()   { o.closed.Add(1) }
-func (o *countingObserver) ReadStarted()    { o.readStarted.Add(1) }
-func (o *countingObserver) ReadReturned(n int) {
-	o.readReturned.Add(1)
-	if n > 0 {
-		o.bytesRead.Add(1)
-	}
-}
-func (o *countingObserver) LineScanned()       { o.scanned.Add(1) }
-func (o *countingObserver) LinesRetired(n int) { o.retired.Add(int64(n)) }
-
-var _ Observer = (*countingObserver)(nil)
