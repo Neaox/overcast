@@ -297,7 +297,7 @@ clear. The script says so and exits 0 rather than failing a push.
 4. Run **`make aws-models-check`** if you changed capabilities, protocol dispatch, generated AWS ownership, or operation routing
 5. Verify **no custom endpoints** were introduced — everything must match real AWS wire format. This is mechanically checked, not only self-reported: `go test -tags slim,dev ./tests/integration/router/...` runs `TestAllDeclaredCapabilitiesAreReachable`, which probes every Supported/Partial/Inert/WIP capability at its AWS-modeled wire binding and fails, naming the operation, if none of them reach a handler — the exact fault every finding in [docs/plans/route-reachability-audit.md](./docs/plans/route-reachability-audit.md) was: an implementation mounted on an Overcast-invented path or `X-Amz-Target` prefix, unreachable from any SDK, that this checklist step alone did not catch even once. It runs as part of the normal `-tags slim,dev` test job, so a service addition that repeats that mistake fails CI rather than passing review unnoticed.
 6. Verify **CloudFormation handlers** are registered for any new resource types (or stubbed)
-7. Widen to `go build ./...` and `go vet ./...` — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
+7. Widen to `go build ./...` and `go vet ./...` — these work on a bare checkout; see [Generated files](#generated-files) for the two things they don't cover (a real `web/dist` and a real Lambda init)
 8. Run **`make lint-go`** (golangci-lint). Build, vet and tests do **not** cover it: CI runs `Lint` as its own required job, and staticcheck findings it reports (unused variables, redundant declarations, merged decl/assign) pass all three of the above. If you touched `web/`, run **`make lint-web`** and **`pnpm run typecheck`** there too. `make lint-web` is `pnpm run lint`, which is **`oxlint .`** — the only linter here. `web/.oxlintrc.json` owns the entire rule set, and new lint rules belong in it. There is no ESLint in this repository (retired in #1330 step 3; the config file's header says why).
 9. **Re-check the ground you started from**, immediately before `gh pr create`: `git fetch origin main` and `bash scripts/issue-claim.sh --check`. A fetch at the start of a session proves nothing about `main` at the end of one — see [Claiming an issue](#claiming-an-issue). A `mergeStateStatus` of `DIRTY` on a freshly-opened PR is the same news arriving late; diagnose it with `git merge-tree --write-tree origin/main HEAD` before assuming a lockfile.
 
@@ -410,7 +410,11 @@ These generated sources are **committed** and must be regenerated through their 
 - `.gitattributes` marks generated sources `linguist-generated`, so GitHub review collapses them.
 - A bare `git clone` builds: `go build ./...` and `go vet ./...` need no generation step.
 
-### `web/dist` — the one thing you may still have to build
+### The two things you may still have to build
+
+Two artefacts are embedded in the binary but deliberately not committed, because both are build output: the SPA and the in-container Lambda init. Each keeps a committed `.gitkeep` placeholder so its `//go:embed` pattern always resolves, which is what makes "a bare `git clone` builds" true of both.
+
+#### `web/dist` — the SPA
 
 `embed.go` has `//go:embed all:web/dist`, and the SPA is build output, so it is *not* committed — only a `web/dist/.gitkeep` placeholder is, which keeps the embed pattern resolving. Consequences:
 
@@ -419,6 +423,16 @@ These generated sources are **committed** and must be regenerated through their 
 - Backend-only work never needs it: `go vet -tags slim ./...` skips the UI entirely.
 - `-tags slim` also removes real routes, not just the UI — `/_overcast/mcp` is registered only in `!slim` builds. A test that exercises one of those surfaces must carry the same build constraint, or it fails under `-tags slim` and looks like a routing bug when it isn't. See [tests/AGENTS.md § Build-tag-sensitive tests](./tests/AGENTS.md#build-tag-sensitive-tests--guard-the-test-like-its-subject).
 - **A bare check cannot see tag-gated code at all, and that cuts the other way.** `golangci-lint run ./...`, `go vet ./...` and `go test ./...` all use the default build context, so nothing you run without a tag ever compiles a file behind `//go:build dev` or `nosqlite` — every `*_dev.go`, `internal/capabilities`, `internal/mcp`, and each service's `capabilities_dev.go`. A syntax error in one passes every local check and fails only in CI's `Test suite (-tags slim,dev)`. `make verify` now vets all three of CI's tag sets for you; if you are checking by hand, `go vet -tags slim,dev ./...` is the one most often needed, because capability declarations live behind `dev`. Setting `build-tags` in `.golangci.yml` is not a shortcut — those files come in `//go:build !dev` pairs, so naming the tag drops the other half and moves the blind spot instead of closing it.
+
+#### `internal/services/lambda/initbin/dist` — the Lambda init
+
+`internal/services/lambda/initbin` has `//go:embed all:dist`, and the in-container Lambda init ([cmd/lambda-init](./cmd/lambda-init)) is build output, so the two binaries are *not* committed — only `internal/services/lambda/initbin/dist/.gitkeep` is. Build them with **`make lambda-init`** (`task lambda-init` on Windows), which cross-compiles `linux/amd64` and `linux/arm64` with `CGO_ENABLED=0 -trimpath -ldflags "-s -w"`. Consequences:
+
+- A bare checkout still builds, vets and tests. `go build ./...`, `go vet ./...` and `go test ./...` need nothing from you; only the tests that assert on a real artefact skip, naming the target.
+- **`-tags slim` does not drop it.** Slim images run Lambda, so the init is embedded in every flavour. Do not reach for a build tag to shrink it.
+- Both architectures are always embedded (~13 MB). A function's `Architectures` picks which one is copied into its container, and an `arm64` function runs under emulation on an amd64 host, so neither can be assumed away at build time.
+- `make build`, `make build-slim` and every cross-build target depend on `lambda-init`, and the Dockerfile builds it in the shared Go stage before either binary — so the released artefacts always carry a real init. `//go:embed` reads the tree at compile time: a build that skips the step compiles perfectly well and then fails at the first Lambda invoke that needs it.
+- That failure is loud and actionable by design, never a silent fallback: `initbin.For` names the missing file and the command that produces it.
 
 ---
 

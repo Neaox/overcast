@@ -118,6 +118,7 @@ jobs:
       - name: Build binaries
         run: |
           mkdir -p bin
+          make lambda-init
           go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 

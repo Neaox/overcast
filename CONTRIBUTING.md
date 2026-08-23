@@ -259,6 +259,14 @@ GOOS=windows GOARCH=amd64 go build ./...
 # or: make build-cross
 ```
 
+`make build`, `make build-slim` and every cross-build target run
+**`make lambda-init`** first (`task lambda-init` on Windows): the in-container
+Lambda init is embedded in the binary and, like the SPA, is build output rather
+than a committed file. A plain `go build ./...` skips it and still compiles —
+the committed placeholder keeps the embed resolving — so run it whenever the
+binary has to actually invoke a Lambda function. See
+[AGENTS.md § Generated files](./AGENTS.md#generated-files).
+
 `go build ./...` on the current platform only catches compile errors for that
 platform. If you use `syscall`, `os/exec` with Unix-specific flags, or anything
 from `golang.org/x/sys/unix`, add a build tag and a corresponding stub for other

@@ -168,6 +168,12 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: go mod download
 
+      # The Docker-gated Lambda tests need the in-container init embedded in the
+      # binary under test; it is build output, not a committed file.
+      - name: Build the Lambda init
+        if: needs.changes.outputs.code == 'true'
+        run: make lambda-init
+
       # The suite pulls images (registry:2, alpine, postgres, redis, …) for the
       # Docker-backed services. Mirror them so the pulls do not compete for the
       # shared anonymous Docker Hub limit on GitHub's egress IPs.
@@ -218,6 +224,11 @@ jobs:
       - name: Vet
         if: needs.changes.outputs.code == 'true'
         run: go vet -tags ${{ matrix.tags }} ./...
+
+      # -tags slim does not drop the Lambda init: slim images run Lambda.
+      - name: Build the Lambda init
+        if: needs.changes.outputs.code == 'true'
+        run: make lambda-init
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'
@@ -307,7 +318,9 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         env:
           CGO_ENABLED: "0"
-        run: go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
+        run: |
+          make lambda-init
+          go build -tags slim,nosqlite -o bin/overcast ./cmd/overcast
 
       - uses: ./.github/actions/docker-hub-mirror
         if: needs.changes.outputs.code == 'true'

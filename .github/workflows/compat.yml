@@ -310,6 +310,7 @@ jobs:
         if: env.RUN_SUITES == 'true'
         run: |
           mkdir -p bin
+          make lambda-init
           go build -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 

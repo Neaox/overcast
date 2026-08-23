@@ -102,6 +102,21 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY docs/ ./docs/
 
+# The in-container Lambda init, which internal/services/lambda/initbin embeds
+# (`make lambda-init` runs the same two commands). It is built here, in the
+# shared stage, so it exists before either binary is compiled: //go:embed reads
+# the tree as it is at compile time, and a missing artefact compiles perfectly
+# well and then fails at the first invoke that needs it.
+#
+# Both Linux architectures, whatever this image's own platform is: the init has
+# to match the *function's* image, and an `Architectures: [arm64]` function runs
+# under emulation on an amd64 host. Nothing at build time can say which half
+# will be wanted, so both ship — see internal/services/lambda/initbin.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+        -o internal/services/lambda/initbin/dist/lambda-init-linux-amd64 ./cmd/lambda-init \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" \
+        -o internal/services/lambda/initbin/dist/lambda-init-linux-arm64 ./cmd/lambda-init
+
 # ---- Stage 3: Go build, slim flavour ---------------------------------------
 # No SPA overlay and no dependency on web-builder at all: `-tags slim` compiles
 # embed_slim.go, whose WebDistFS is an empty embed.FS. BuildKit therefore skips

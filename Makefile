@@ -7,6 +7,11 @@
 BINARY    := overcast
 BUILD_DIR := ./bin
 GO        := go
+# Where the lambda-init target writes the in-container Lambda init, and where
+# internal/services/lambda/initbin embeds it from. The two binaries are build
+# output and gitignored; the committed dist/.gitkeep beside them is what keeps
+# the embed pattern resolving in a bare checkout. See AGENTS.md.
+LAMBDA_INIT_DIR := internal/services/lambda/initbin/dist
 AWS_MODELS_REVISION ?= $(shell sed -n 's/^revision=//p' models/aws/VERSION)
 GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
@@ -38,7 +43,7 @@ IMAGE_TAG     ?= $(shell sh scripts/image-tag.sh)
 CONSOLE_IMAGE ?= overcast:$(IMAGE_TAG)
 SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
 
-.PHONY: help setup build build-web build-slim build-cross \
+.PHONY: help setup build build-web build-slim build-cross lambda-init \
         build-linux-amd64 build-linux-arm64 \
         build-darwin-amd64 build-darwin-arm64 \
         build-windows-amd64 \
@@ -64,8 +69,18 @@ help:
 setup:
 	$(GO) run ./scripts/check-tools.go
 
+## lambda-init: build the in-container Lambda init for both Linux architectures
+# Every overcast binary embeds both: a function's Architectures picks the one
+# copied into its container, and an arm64 function runs under emulation on an
+# amd64 host, so neither can be assumed away. The build targets depend on this
+# rather than leaving it as a step to remember; it is a few seconds of pure Go.
+lambda-init:
+	@mkdir -p $(LAMBDA_INIT_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "-s -w" -o $(LAMBDA_INIT_DIR)/lambda-init-linux-amd64 ./cmd/lambda-init
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "-s -w" -o $(LAMBDA_INIT_DIR)/lambda-init-linux-arm64 ./cmd/lambda-init
+
 ## build: compile the overcast binary for the current platform (includes embedded web UI)
-build:
+build: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/overcast
 
@@ -79,61 +94,62 @@ build-web:
 	cd web && VITE_BUNDLED=true pnpm run build
 
 ## build-slim: compile the slim binary (no web UI, no SQLite) for the current platform
-build-slim:
+# -tags slim does NOT drop the Lambda init: slim images run Lambda.
+build-slim: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd ./cmd/overcast
 
 ## build-cross: compile release binaries for all supported platforms
-build-cross: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
+build-cross: lambda-init build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 \
              build-slim-linux-amd64 build-slim-linux-arm64 build-slim-darwin-amd64 build-slim-darwin-arm64 build-slim-windows-amd64
 
 ## build-linux-amd64: compile overcast for Linux x86-64
-build-linux-amd64:
+build-linux-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux  GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64        ./cmd/overcast
 
 ## build-linux-arm64: compile overcast for Linux ARM64 (Raspberry Pi, AWS Graviton, etc.)
-build-linux-arm64:
+build-linux-arm64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux  GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-arm64        ./cmd/overcast
 
 ## build-darwin-amd64: compile overcast for macOS Intel
-build-darwin-amd64:
+build-darwin-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-amd64       ./cmd/overcast
 
 ## build-darwin-arm64: compile overcast for macOS Apple Silicon
-build-darwin-arm64:
+build-darwin-arm64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-arm64       ./cmd/overcast
 
 ## build-windows-amd64: compile overcast for Windows x86-64 (console .exe)
-build-windows-amd64:
+build-windows-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe ./cmd/overcast
 
 ## build-slim-linux-amd64: compile slim overcastd for Linux x86-64
-build-slim-linux-amd64:
+build-slim-linux-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux  GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-linux-amd64        ./cmd/overcast
 
 ## build-slim-linux-arm64: compile slim overcastd for Linux ARM64
-build-slim-linux-arm64:
+build-slim-linux-arm64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux  GOARCH=arm64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-linux-arm64        ./cmd/overcast
 
 ## build-slim-darwin-amd64: compile slim overcastd for macOS Intel
-build-slim-darwin-amd64:
+build-slim-darwin-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-darwin-amd64       ./cmd/overcast
 
 ## build-slim-darwin-arm64: compile slim overcastd for macOS Apple Silicon
-build-slim-darwin-arm64:
+build-slim-darwin-arm64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-darwin-arm64       ./cmd/overcast
 
 ## build-slim-windows-amd64: compile slim overcastd for Windows x86-64
-build-slim-windows-amd64:
+build-slim-windows-amd64: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -tags slim,nosqlite -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcastd-windows-amd64.exe ./cmd/overcast
 
@@ -315,6 +331,7 @@ docker-clean:
 clean:
 	$(GO) clean ./...
 	@rm -rf $(BUILD_DIR) coverage.out coverage.html
+	@rm -f $(LAMBDA_INIT_DIR)/lambda-init-linux-amd64 $(LAMBDA_INIT_DIR)/lambda-init-linux-arm64
 
 # ---- Compat dashboard -------------------------------------------------------
 # Every target manages its own throwaway Overcast instance on free ports —
