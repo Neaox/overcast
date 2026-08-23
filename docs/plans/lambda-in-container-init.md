@@ -138,6 +138,37 @@ containerInstance                                  • log shipper: one connecti
    children, exit with the runtime child's exit code so the existing
    `exitNotifier` path sees exactly what it sees today. On child exit: drain,
    flush the log stream, close it, exit.
+6. **Tee to the container's own stdout/stderr.** Owning the pipes means the
+   runtime's bytes no longer reach the container's stdout on their own, so
+   `docker logs` would go dark. Every line the init reads is therefore also
+   written to its own fd 1/2 — which *are* the container's stdout/stderr —
+   byte-for-byte, so the daemon's copy looks exactly as it does today. The
+   cost is one write per line to the log driver, which is what the runtime
+   pays today anyway; the tee is a side channel and does not touch the
+   ordering guarantee in §3.3. It is the debugging backup: `docker logs -f`
+   keeps working for humans, the startup-exit capture in `awaitContainerIP`
+   and the INIT-timeout diagnostic keep their evidence (which matters more,
+   not less, with an init in the loop — an init that fails before it can
+   spawn the runtime can only explain itself there), and if the log channel
+   to the host ever drops and overflows its backlog, the complete record is
+   still on the daemon. It is **not** a second transport: the host never
+   reconciles CloudWatch or a tail from `docker logs` (that would reintroduce
+   the follower this plan deletes); a gap is logged loudly, naming the
+   container, and is a human's to consult.
+7. **Overcast-only diagnostics, labelled as such.** The init writes what it
+   knows about itself to the container's **stderr only**, prefixed
+   `[overcast-init]` — `runtime started pid=… cmd=…`, `extension <name>
+   started`, `request <id> begin / end (drained N lines)`, `log channel
+   reconnected / gap N frames`, `child exited code=…` — and those lines are
+   never forwarded to CloudWatch, the tail or the Telemetry API, which stay
+   AWS-shaped. This is the kind of extra, clearly-labelled information
+   Overcast can surface and AWS cannot; it lives in the daemon copy and
+   nowhere else. Annotating the teed lines themselves (a `req=<id>` prefix)
+   is opt-in via an init env var and **off** by default, so the daemon copy
+   stays byte-identical to today for anyone scripting against it. An
+   emulator-only "container logs" view for Lambda in the web UI, the way ECS
+   already has `GetTaskContainerLogs`, falls out of the same feed and is a
+   natural follow-up (not this plan).
 
 Reasons for stdlib-only and `CGO_ENABLED=0 -ldflags "-s -w" -trimpath`:
 ~2–3 MB static binary per arch; no dependency on the image's libc
@@ -236,7 +267,9 @@ finalises the invoke.
   exit; the host's "drain before END/REPORT" becomes "wait for the stream to
   close or the deadline", event-driven — `waitForLogDrain` goes.
 - INIT-timeout diagnostics (`logInitTimeout`) quote the INIT-phase buffer the
-  host already holds instead of fetching `docker logs`.
+  host already holds instead of fetching `docker logs`; the daemon copy
+  (teed, §3.1 item 6) stays the fallback when the buffer is empty because the
+  init itself never got going.
 - Extensions: frames with `src: ext:<name>` publish to the Telemetry/Logs API
   as `extension` records directly; `classifyRuntimeLogLine` and the prefix
   convention go.
@@ -288,8 +321,8 @@ Nothing else changes for the other services; `containerendpoint` and
 | Daemon slow to open/serve the log follow | tail truncated; reconnect/backoff; the whole #873→#1402 history | no daemon log connection for Lambda at all |
 | Handler line arrives after the response | bounded wait, heuristic | exact: drained before the response is forwarded |
 | Handler prints nothing | 80 ms silence bound on tail invokes | zero wait (nothing to drain) |
-| Init crashes / cannot start | n/a | container exits → `exitNotifier` → the same "container exited" error path; `ContainerLogs` one-shot for the diagnostic (the init writes its own errors to the container's stderr before exiting, so they are in `docker logs`) |
-| Log stream connection drops mid-life | n/a (reconnect logic on the daemon side) | init reconnects with backoff and replays from a bounded backlog (ring of N frames / M bytes); the host dedups by `seq`; if the backlog overflowed, a `gap` frame is sent and the host logs it; `awaitLogSeq` is bounded by a short deadline (100 ms — now a fact about a *broken* channel, not a guess about a slow one) and the tail is marked truncated rather than blocking the invoke |
+| Init crashes / cannot start | n/a | container exits → `exitNotifier` → the same "container exited" error path; `ContainerLogs` one-shot for the diagnostic (the init writes `[overcast-init]` errors to the container's stderr before exiting, so they are in `docker logs`, and anything the runtime managed to print is there too, teed) |
+| Log stream connection drops mid-life | n/a (reconnect logic on the daemon side) | init reconnects with backoff and replays from a bounded backlog (ring of N frames / M bytes); the host dedups by `seq`; if the backlog overflowed, a `gap` frame is sent and the host logs it naming the container — the complete record is still in `docker logs` via the tee (§3.1 item 6); `awaitLogSeq` is bounded by a short deadline (100 ms — now a fact about a *broken* channel, not a guess about a slow one) and the tail is marked truncated rather than blocking the invoke |
 | Host restart | containers are torn down with `logCtx` | unchanged |
 | Runtime writes > pipe capacity | daemon buffers | reader goroutines always drain; the runtime never blocks on a full pipe longer than today |
 | Image whose ENTRYPOINT is not a Runtime API client (e.g. RIE hard-coded as entrypoint) | broken today too (RIE would serve its own 9001) | same — unsupported, as on AWS; documented |
@@ -313,6 +346,9 @@ Expected deltas (to be measured, gates in Phase 2):
 - **Cold start**: + ~3 MB in the provisioning tar (copy), + one `exec` and
   the proxy listener, + INIT-phase frames (streamed, off the critical path).
   Budget: ≤ +10 ms p50; the volume alternative (§3.2) if exceeded.
+- **Tee**: one write per line to the container's stdout (the log driver)
+  — the same write the runtime makes today, moved into the init; not a new
+  cost.
 - **Warm, non-tail**: + two local proxy hops per invoke (`/next`,
   `/response`; ~50–150 µs each on a loopback inside the netns) + a normally-zero
   `awaitLogSeq`. Budget: ≤ +0.5 ms p50 on the ~6 ms baseline; if the seq wait
@@ -440,7 +476,7 @@ a specific passage, not a directory:
 | [CONTRIBUTING.md](../../CONTRIBUTING.md) § build instructions (`make build`, `make build-cross`) and [docs/dev/development-setup.md](../dev/development-setup.md) § build table, [docs/dev/performance.md](../dev/performance.md) § build step | Mention `make lambda-init` where the SPA build is mentioned; `make build` depends on it. |
 | [docs/plans/lambda-cold-start.md](./lambda-cold-start.md) § cold-start anatomy table and § invoke-path | Add the init's measured cost to the copy phase and the proxy hop to the warm path, with the Phase 2 numbers; cross-reference this plan. |
 | `Makefile`, `Dockerfile`, `.github/workflows/test.yml` (build step before `go test`; the "Lambda invoke (native host binary)" job's `X-Amz-Log-Result` check stays and becomes a stronger assertion), the release workflow | Build plumbing, not prose — listed so it is not forgotten. |
-| [docs/dev/manual-testing.md](../dev/manual-testing.md) | Only if it tells a reader to look at `docker logs` for function output; the init does not change where `docker logs` shows it (the init writes nothing of its own there except its startup errors), so likely no change — verify. |
+| [docs/dev/manual-testing.md](../dev/manual-testing.md) | `docker logs` still shows function output byte-for-byte (the tee, §3.1 item 6); add a line that `[overcast-init]` stderr lines are Overcast's own diagnostics and never reach CloudWatch or the tail. |
 | `.changelog/` | Phase 0: `~ [ecs]`; Phase 2: `~ [lambda]` exact tails and ordering, `+ [lambda]` extensions for image functions, `* [lambda]` for the tail-fidelity bug class; Phase 3: nothing user-visible. |
 
 Not affected, checked: docs/performance.md (its `docker logs --timestamps`
