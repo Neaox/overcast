@@ -16,7 +16,7 @@ import (
 // The X-Amz-Log-Result tail is assembled from two sources that arrive by
 // different routes. START / END / REPORT are written straight into tailBuf by
 // writeLogLine, so they are always there. The handler's own stdout travels
-// container → Docker → the streamLogs reader, and lands whenever Docker gets
+// container → Docker → the log follower's reader, and lands whenever Docker gets
 // round to flushing the pipe — which can be after the RIC has already POSTed
 // the handler's response back over the Runtime API.
 //
@@ -36,7 +36,7 @@ func (noopLogWriter) WriteLogEvents(context.Context, string, string, []events.Lo
 
 // newTailWaitInstance returns the minimum containerInstance the log waits touch
 // — waitForScannerIdle here, waitForLogDrain in log_drain_wait_test.go: a clock,
-// and the atomics streamLogs would be updating. Its reader
+// and the atomics the follower's observer would be updating. Its reader
 // starts parked in a Read on the Docker stream, which is where a reader that
 // has caught up spends all of its time.
 func newTailWaitInstance(clk clock.Clock) *containerInstance {
@@ -50,14 +50,16 @@ func newTailWaitInstance(clk clock.Clock) *containerInstance {
 	return ci
 }
 
-// readerParks and readerWorks move the instance between the two states
-// logReadTracker.Read moves it between: blocked in a Read on the Docker log
-// stream, and away from it, doing something with what a Read returned.
-func readerParks(ci *containerInstance) { ci.logParkedAt.Store(ci.clk.Now().UnixNano()) }
-func readerWorks(ci *containerInstance) { ci.logParkedAt.Store(logReaderBetweenReads) }
+// readerParks and readerWorks move the instance between the two states the
+// follower's tracked reader moves it between: blocked in a Read on the Docker
+// log stream, and away from it, doing something with what a Read returned.
+// Both go through logObserver, so they cannot drift from what the follower
+// really does.
+func readerParks(ci *containerInstance) { logObserver{ci: ci}.ReadStarted() }
+func readerWorks(ci *containerInstance) { logObserver{ci: ci}.ReadReturned(0) }
 
 // newNeverConnectedInstance returns a containerInstance in the state a
-// container is actually in from the moment its streamLogs goroutine is
+// container is actually in from the moment its log follower is
 // scheduled until the moment ContainerLogsStream first returns:
 // logParkedAt at its zero value (logReaderNotReading) and
 // logStreamEverAnswered still false. newTailWaitInstance does not model this —
@@ -79,38 +81,43 @@ func newNeverConnectedInstance(clk clock.Clock) *containerInstance {
 	}
 }
 
-// streamOpens does to the instance what streamOnce does the instant
+// streamOpens does to the instance what the follower does the instant
 // ContainerLogsStream returns: the connection now exists (logStreamEverAnswered
 // becomes permanently true) and the reader is between Reads on it, having not
 // reached its first one yet.
 func streamOpens(ci *containerInstance) {
-	ci.logStreamEverAnswered.Store(true)
-	readerWorks(ci)
+	obs := logObserver{ci: ci}
+	obs.StreamAnswered()
+	obs.StreamOpened()
 }
 
-// streamOpenFails does to the instance what streamOnce does when
+// streamOpenFails does to the instance what the follower does when
 // ContainerLogsStream returns an error instead of a stream: Docker has answered
 // the first connect — with a refusal — and the reader is not reading, waiting
 // out the reconnect backoff. Nothing has opened, but nothing is in flight
 // either, which is what tells this apart from newNeverConnectedInstance's
 // still-unanswered connect.
 func streamOpenFails(ci *containerInstance) {
-	ci.logStreamEverAnswered.Store(true)
-	ci.logParkedAt.Store(logReaderNotReading)
+	obs := logObserver{ci: ci}
+	obs.StreamAnswered()
+	obs.StreamClosed()
 }
 
-// deliverBytes does to the instance what logReadTracker does the instant Docker
-// hands over bytes, and nothing more. That is the whole point of having it: a
-// Read seldom lands a whole line, so this is a state the pipeline really passes
-// through — the read watermark has moved and the tail buffer is still empty.
+// deliverBytes moves the read watermark and nothing else, which is what a Read
+// that landed bytes leaves behind once the reader is back in the next one. That
+// is the whole point of having it: a Read seldom lands a whole line, so this is
+// a state the pipeline really passes through — the read watermark has moved and
+// the tail buffer is still empty. It writes the atomic directly rather than
+// going through logObserver, because the observer's ReadReturned also takes the
+// reader out of its Read and these tests need it left where it is.
 func deliverBytes(ci *containerInstance) {
 	ci.logReadAt.Store(ci.clk.Now().UnixNano())
 }
 
-// deliverLine does to the instance exactly what streamOnce does when Docker
-// finally hands over a whole line: logReadTracker stamps logReadAt on the read,
-// and the parsed line is appended to the rolling tail buffer under the append
-// watermark.
+// deliverLine does to the instance what the follower does when Docker finally
+// hands over a whole line: the read watermark moves with the Read that carried
+// it, and the parsed line is appended to the rolling tail buffer under the
+// append watermark.
 func deliverLine(ci *containerInstance, line string) {
 	deliverBytes(ci)
 	ci.tailMu.Lock()
@@ -315,7 +322,7 @@ func TestWaitForScannerIdle_parkedReaderSurvivesContention(t *testing.T) {
 // TestWaitForScannerIdle_partialLineIsNotIdle is the regression test for a tail
 // that goes missing even though Docker delivered the output in good time.
 //
-// logReadAt is stamped by logReadTracker the instant Docker hands over bytes,
+// logReadAt is stamped the instant Docker hands over bytes,
 // which is several steps before those bytes are anything the snapshot can read.
 // A Read seldom lands a whole line — the line reader keeps reading until it
 // finds a newline, and logInFlight does not count the line until it has one — so
@@ -398,7 +405,7 @@ func TestWaitForScannerIdle_readerThatHasNotAskedDockerIsNotSilence(t *testing.T
 
 // TestWaitForScannerIdle_neverConnectedStreamIsNotSilence is the regression
 // test for issue #1160: a cold-started invocation's tail wait can begin before
-// streamLogs has completed its very first ContainerLogsStream call, because
+// the follower has completed its very first ContainerLogsStream call, because
 // that call is a Docker daemon round trip racing container start rather than
 // following it. dockerSilentSince used to read logParkedAt's zero value the
 // same way whether or not the stream had ever opened, so a slow first connect
