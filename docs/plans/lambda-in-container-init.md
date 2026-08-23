@@ -538,7 +538,11 @@ flips — unless the extension limitation is tracked there; check on the day).
 
 - Faithful `platform.*` Telemetry API events (initStart/initRuntimeDone/
   runtimeDone with metrics): the init makes them straightforward — it knows
-  every phase boundary — and they are the natural Phase 4, but not this plan.
+  every phase boundary — and they were the natural Phase 4, but not this plan.
+  (Since shipped: #1410 → #1419 delivered `platform.initStart` /
+  `initRuntimeDone` / `initReport` with init-measured timings; `runtimeDone`
+  stays host-owned, deliberately — the host is the only side that can emit it
+  on the crash and timeout paths.)
 - Running ECS tasks under an init (no Runtime API; the awslogs-driver model
   is the correct one there).
 - Changing how the Runtime API is addressed from the container
