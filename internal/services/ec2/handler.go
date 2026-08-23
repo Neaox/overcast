@@ -746,12 +746,20 @@ func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 
 // ── CreateSecurityGroup ──────────────────────────────────────────────────────
 
+// xmlCreateSGResponse is the one create response whose tagSet is not nested
+// inside the resource it made: the model gives CreateSecurityGroupResult a
+// top-level `tagSet` alongside `groupId`, where every other EC2 create puts
+// one inside its `<vpc>`/`<subnet>`/`<internetGateway>` element. Overcast
+// omitted it on both dispatch paths until create-time tagging was wired
+// through the typed one, so a caller that tagged a group at create had to
+// issue a DescribeSecurityGroups to see what it had just set.
 type xmlCreateSGResponse struct {
-	XMLName   xml.Name `xml:"CreateSecurityGroupResponse"`
-	Xmlns     string   `xml:"xmlns,attr"`
-	RequestID string   `xml:"requestId"`
-	Return    bool     `xml:"return"`
-	GroupID   string   `xml:"groupId"`
+	XMLName   xml.Name      `xml:"CreateSecurityGroupResponse"`
+	Xmlns     string        `xml:"xmlns,attr"`
+	RequestID string        `xml:"requestId"`
+	Return    bool          `xml:"return"`
+	GroupID   string        `xml:"groupId"`
+	TagSet    []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 // CreateSecurityGroup creates a new VPC security group.
@@ -802,6 +810,7 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		RequestID: protocol.RequestIDFromContext(r.Context()),
 		Return:    true,
 		GroupID:   groupID,
+		TagSet:    typedTagsOf(tags),
 	})
 }
 

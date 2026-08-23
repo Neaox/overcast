@@ -75,7 +75,8 @@ type describeInstanceTypesReq struct {
 }
 
 type createVpcReq struct {
-	CidrBlock string `json:"CidrBlock"`
+	CidrBlock         string                `json:"CidrBlock"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeVpcsReq struct {
@@ -88,9 +89,10 @@ type deleteVpcReq struct {
 }
 
 type createSubnetReq struct {
-	VpcID            string `json:"VpcId"`
-	CidrBlock        string `json:"CidrBlock"`
-	AvailabilityZone string `json:"AvailabilityZone"`
+	VpcID             string                `json:"VpcId"`
+	CidrBlock         string                `json:"CidrBlock"`
+	AvailabilityZone  string                `json:"AvailabilityZone"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type deleteSubnetReq struct {
@@ -98,9 +100,10 @@ type deleteSubnetReq struct {
 }
 
 type createSecurityGroupReq struct {
-	GroupName        string `json:"GroupName"`
-	GroupDescription string `json:"GroupDescription"`
-	VpcID            string `json:"VpcId"`
+	GroupName         string                `json:"GroupName"`
+	GroupDescription  string                `json:"GroupDescription"`
+	VpcID             string                `json:"VpcId"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type deleteSecurityGroupReq struct {
@@ -179,7 +182,8 @@ type deleteKeyPairReq struct {
 }
 
 type createRouteTableReq struct {
-	VpcID string `json:"VpcId"`
+	VpcID             string                `json:"VpcId"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeRouteTablesReq struct {
@@ -212,7 +216,9 @@ type disassociateRouteTableReq struct {
 	AssociationID string `json:"AssociationId"`
 }
 
-type createIGWReq struct{}
+type createIGWReq struct {
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
+}
 
 type describeIGWsReq struct {
 	InternetGatewayIDs []string    `json:"InternetGatewayId"`
@@ -357,8 +363,9 @@ type deleteVpnGatewayReq struct {
 }
 
 type createNetworkInterfaceReq struct {
-	SubnetID    string `json:"SubnetId"`
-	Description string `json:"Description"`
+	SubnetID          string                `json:"SubnetId"`
+	Description       string                `json:"Description"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type describeNetworkInterfacesReq struct {
@@ -499,11 +506,12 @@ type typedSubnetXML struct {
 }
 
 type createSGResp struct {
-	XMLName   struct{} `xml:"CreateSecurityGroupResponse"`
-	Xmlns     string   `xml:"xmlns,attr"`
-	RequestID string   `xml:"requestId"`
-	Return    bool     `xml:"return"`
-	GroupID   string   `xml:"groupId"`
+	XMLName   struct{}      `xml:"CreateSecurityGroupResponse"`
+	Xmlns     string        `xml:"xmlns,attr"`
+	RequestID string        `xml:"requestId"`
+	Return    bool          `xml:"return"`
+	GroupID   string        `xml:"groupId"`
+	TagSet    []typedTagXML `xml:"tagSet>item,omitempty"`
 }
 
 type deleteSGResp struct {
@@ -950,6 +958,12 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	if req.CidrBlock == "" {
 		return nil, ec2err("MissingParameter", "CidrBlock is required", http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "vpc")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a VPC behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	vpcID := fmt.Sprintf("vpc-%s", shortID())
 	// Every VPC gets a DHCP options set at creation, real AWS's default-set
 	// behavior absent an explicit association. Minted once and persisted on
@@ -972,6 +986,11 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	if aerr := h.putVPCWithMainRouteTable(ctx, vpc); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, vpcID, tags); aerr != nil {
+		return nil, aerr
+	}
 	h.publish(ctx, events.EC2VpcCreated, events.ResourcePayload{Name: vpcID})
 	return &createVpcResp{
 		Xmlns:     ec2XMLNS,
@@ -988,6 +1007,7 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 				CidrBlock:      req.CidrBlock,
 				CidrBlockState: typedCidrStateXML{State: "associated"},
 			}},
+			TagSet: typedTagsOf(tags),
 		},
 	}, nil
 }
@@ -1030,6 +1050,12 @@ func (h *Handler) createSubnetTyped(ctx context.Context, req *createSubnetReq) (
 	if _, aerr := h.store.getVPC(ctx, req.VpcID); aerr != nil {
 		return nil, ec2err("InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", req.VpcID), http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "subnet")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a subnet behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	subnetID := fmt.Sprintf("subnet-%s", shortID())
 	az := req.AvailabilityZone
 	if az == "" {
@@ -1037,6 +1063,11 @@ func (h *Handler) createSubnetTyped(ctx context.Context, req *createSubnetReq) (
 	}
 	subnet := &Subnet{SubnetID: subnetID, VpcID: req.VpcID, CidrBlock: req.CidrBlock, AvailabilityZone: az, State: "available"}
 	if aerr := h.store.putSubnet(ctx, subnet); aerr != nil {
+		return nil, aerr
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, subnetID, tags); aerr != nil {
 		return nil, aerr
 	}
 	h.publish(ctx, events.EC2SubnetCreated, events.ResourcePayload{Name: subnetID})
@@ -1052,6 +1083,7 @@ func (h *Handler) createSubnetTyped(ctx context.Context, req *createSubnetReq) (
 			AvailableIPAddressCount: 251,
 			DefaultForAz:            false,
 			MapPublicIPOnLaunch:     false,
+			TagSet:                  typedTagsOf(tags),
 		},
 	}, nil
 }
@@ -1078,6 +1110,13 @@ func (h *Handler) createSecurityGroupTyped(ctx context.Context, req *createSecur
 	if req.GroupName == "" {
 		return nil, ec2err("MissingParameter", "GroupName is required", http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "security-group")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a security group
+	// behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	groupID := fmt.Sprintf("sg-%s", shortID())
 	sg := &SecurityGroup{
 		GroupID:     groupID,
@@ -1092,12 +1131,18 @@ func (h *Handler) createSecurityGroupTyped(ctx context.Context, req *createSecur
 	if aerr := h.store.putSecurityGroup(ctx, sg); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, groupID, tags); aerr != nil {
+		return nil, aerr
+	}
 	h.publish(ctx, events.EC2SecurityGroupCreated, events.ResourcePayload{Name: req.GroupName})
 	return &createSGResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
 		Return:    true,
 		GroupID:   groupID,
+		TagSet:    typedTagsOf(tags),
 	}, nil
 }
 
@@ -1539,6 +1584,13 @@ func (h *Handler) createRouteTableTyped(ctx context.Context, req *createRouteTab
 	if aerr != nil {
 		return nil, ec2err("InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", req.VpcID), http.StatusBadRequest)
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "route-table")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a route table behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	rtID := fmt.Sprintf("rtb-%s", shortID())
 	rt := &RouteTable{
 		RouteTableID: rtID,
@@ -1552,10 +1604,15 @@ func (h *Handler) createRouteTableTyped(ctx context.Context, req *createRouteTab
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, rtID, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createRouteTableResp{
 		Xmlns:      ec2XMLNS,
 		RequestID:  protocol.RequestIDFromContext(ctx),
-		RouteTable: routeTableToTypedXML(rt),
+		RouteTable: routeTableToTypedXML(rt, tags),
 	}, nil
 }
 
@@ -1695,10 +1752,22 @@ func (h *Handler) disassociateRouteTableTyped(ctx context.Context, req *disassoc
 	return nil, ec2err("InvalidAssociationID.NotFound", fmt.Sprintf("The association ID '%s' does not exist", req.AssociationID), http.StatusBadRequest)
 }
 
-func (h *Handler) createIGWTyped(ctx context.Context, _ *createIGWReq) (*createIGWResp, *protocol.AWSError) {
+func (h *Handler) createIGWTyped(ctx context.Context, req *createIGWReq) (*createIGWResp, *protocol.AWSError) {
+	tags := typedTagSpecifications(req.TagSpecifications, "internet-gateway")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave a gateway behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	igwID := fmt.Sprintf("igw-%s", shortID())
 	igw := &InternetGateway{InternetGatewayID: igwID}
 	if aerr := h.store.putInternetGateway(ctx, igw); aerr != nil {
+		return nil, aerr
+	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, igwID, tags); aerr != nil {
 		return nil, aerr
 	}
 	return &createIGWResp{
@@ -1706,6 +1775,7 @@ func (h *Handler) createIGWTyped(ctx context.Context, _ *createIGWReq) (*createI
 		RequestID: protocol.RequestIDFromContext(ctx),
 		InternetGateway: typedIGWXML{
 			InternetGatewayID: igwID,
+			Tags:              typedTagsOf(tags),
 		},
 	}, nil
 }
@@ -2332,6 +2402,13 @@ func (h *Handler) createNetworkInterfaceTyped(ctx context.Context, req *createNe
 				http.StatusBadRequest)
 		}
 	}
+	tags := typedTagSpecifications(req.TagSpecifications, "network-interface")
+	// Create-time tags are checked before anything is created, as on AWS: a
+	// rejected tag must fail the call rather than leave an interface behind
+	// (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	eniID := fmt.Sprintf("eni-%s", shortID())
 	apiPrivateIP, realPrivateIP, _ := h.allocatePrivateIPForSubnet(ctx, req.SubnetID)
 	mac := fmt.Sprintf("02:%s:%s:%s:%s:%s", shortID()[:2], shortID()[:2], shortID()[:2], shortID()[:2], shortID()[:2])
@@ -2348,6 +2425,11 @@ func (h *Handler) createNetworkInterfaceTyped(ctx context.Context, req *createNe
 	if aerr := h.store.putNetworkInterface(ctx, eni); aerr != nil {
 		return nil, aerr
 	}
+	// Create-time tags go to the tag store, the same place CreateTags writes,
+	// so a later describe sees both without reading two sources.
+	if aerr := h.putResourceTags(ctx, eniID, tags); aerr != nil {
+		return nil, aerr
+	}
 	return &createNetworkInterfaceResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -2360,6 +2442,7 @@ func (h *Handler) createNetworkInterfaceTyped(ctx context.Context, req *createNe
 			PrivateIPAddress:   apiPrivateIP,
 			Status:             "available",
 			MacAddress:         mac,
+			TagSet:             typedTagsOf(tags),
 		},
 	}, nil
 }
@@ -2470,7 +2553,7 @@ func ec2err(code, message string, httpStatus int) *protocol.AWSError {
 	return &protocol.AWSError{Code: code, Message: message, HTTPStatus: httpStatus}
 }
 
-func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
+func routeTableToTypedXML(rt *RouteTable, tags []Tag) typedRouteTableXML {
 	routes := make([]typedRouteXML, 0, len(rt.Routes))
 	for _, r := range rt.Routes {
 		routes = append(routes, typedRouteXML{
@@ -2490,6 +2573,7 @@ func routeTableToTypedXML(rt *RouteTable) typedRouteTableXML {
 		VpcID:          rt.VpcID,
 		RouteSet:       routes,
 		AssociationSet: assocs,
+		Tags:           typedTagsOf(tags),
 	}
 }
 
