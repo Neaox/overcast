@@ -1,1 +1,0 @@
-* [docs] docs/operation-manifest.md no longer silently drops S3, Lambda, API Gateway, CloudFront, Pipes, CloudWatch, and 7 other REST/legacy-dispatch services; it now lists every excluded service by name with a derived reason, and explains how its typed-dispatch counts differ from the service index's capability-registry counts

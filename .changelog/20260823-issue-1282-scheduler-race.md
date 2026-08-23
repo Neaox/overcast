@@ -1,1 +1,0 @@
-* [lifecycle] fixes a data race between Scheduler.Stop and Scheduler.After (readiness health-check retries, e.g. MSK/RDS/ElastiCache/EFS) that could surface under `-race` on unrelated PRs; After is now a defined no-op once Stop has run, so a still-running health check stops rescheduling instead of racing shutdown (#1282)
