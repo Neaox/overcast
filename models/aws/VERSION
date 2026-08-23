@@ -2,9 +2,18 @@ source=https://github.com/aws/api-models-aws
 revision=66e973cadf6b6e909b200217d0d6065e49445a9a
 model-date=2026-07-27
 manifest-sha256=51a2b851fea4743bb9c21023ca9be46212c3851f4361077e56d4bce9415376f4
+shapes-sha256=fbe72a62d38ed7459629ca497c15e6d92040596fe26896a4a3a66e5904feade0
 license=Apache-2.0
 format=Smithy JSON AST
 
 # The A5 refresh workflow caches a verified upstream Git mirror and enforces
 # regeneration from this revision. Raw Smithy models are not vendored; only the
-# compact generated manifest is committed.
+# compact generated manifest and the pruned shape snapshot are committed.
+#
+# shapes-sha256 covers the whole models/aws/shapes/ directory: sha256 over the
+# bytewise-sorted `<sha256-of-file>  <relative-path>` lines. Reproduce it with
+# `cd models/aws/shapes && sha256sum -t *.json | LC_ALL=C sort | sha256sum -t`
+# (-t forces text mode, which is already the default outside Windows).
+# The snapshot is a generated derivative of the pinned models, generator input
+# only, never read at runtime — see cmd/awsmodelgen/README.md and
+# docs/plans/inert-tier-rollout.md §4.6.

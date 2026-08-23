@@ -27,6 +27,8 @@ func main() {
 	summaryOutput := flag.String("summary-output", "", "optional Markdown change summary output")
 	versionFile := flag.String("version-file", "", "optional provenance VERSION file to update")
 	modelDate := flag.String("model-date", "", "upstream commit date used with -version-file")
+	shapesOut := flag.String("shapes-out", "", "optional directory for the pruned Smithy shape snapshot")
+	shapesServices := flag.String("shapes-services", "", "reviewed in-scope service list required with -shapes-out")
 	flag.Parse()
 	if *modelsDir == "" || *revision == "" {
 		fmt.Fprintln(os.Stderr, "awsmodelgen: -models and -source-revision are required")
@@ -38,6 +40,18 @@ func main() {
 	}
 	if (*versionFile == "") != (*modelDate == "") {
 		fmt.Fprintln(os.Stderr, "awsmodelgen: -version-file and -model-date must be used together")
+		os.Exit(2)
+	}
+	if (*shapesOut == "") != (*shapesServices == "") {
+		fmt.Fprintln(os.Stderr, "awsmodelgen: -shapes-out and -shapes-services must be used together")
+		os.Exit(2)
+	}
+	// The provenance file records one digest per committed artifact. Writing it
+	// without regenerating the snapshot would leave shapes-sha256 describing a
+	// revision the snapshot no longer came from, which is exactly the drift the
+	// digest exists to make impossible.
+	if *versionFile != "" && *shapesOut == "" {
+		fmt.Fprintf(os.Stderr, "awsmodelgen: -version-file requires -shapes-out so %s cannot go stale\n", ShapesDigestField)
 		os.Exit(2)
 	}
 	if err := verifyModelRevision(*modelsDir, *revision); err != nil {
@@ -57,6 +71,29 @@ func main() {
 	if err := writeOrCheckManifest(*output, contents, *check); err != nil {
 		fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
 		os.Exit(1)
+	}
+	shapesDigest := ""
+	if *shapesOut != "" {
+		services, err := readShapeServices(*shapesServices)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
+			os.Exit(1)
+		}
+		rendered, err := buildShapeSnapshots(*modelsDir, services)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
+			os.Exit(1)
+		}
+		files, err := shapeSnapshotFiles(rendered)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
+			os.Exit(1)
+		}
+		shapesDigest = ShapesDigest(files)
+		if err := writeOrCheckShapes(*shapesOut, files, *check); err != nil {
+			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	if *inventoryOutput != "" || *baselineInventory != "" {
 		inventory := buildModelInventory(*revision, operations)
@@ -79,7 +116,7 @@ func main() {
 		}
 	}
 	if *versionFile != "" {
-		if err := updateModelVersion(*versionFile, *revision, *modelDate, ManifestDigest(contents)); err != nil {
+		if err := updateModelVersion(*versionFile, *revision, *modelDate, ManifestDigest(contents), shapesDigest); err != nil {
 			fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
 			os.Exit(1)
 		}

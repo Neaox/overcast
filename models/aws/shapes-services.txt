@@ -1,0 +1,23 @@
+# Services whose pruned Smithy shapes are committed under models/aws/shapes/.
+#
+# Reviewed data, not a heuristic: a service is here because someone decided the
+# generators need its shapes, and every addition widens the committed snapshot
+# and is measured against the size budget in
+# internal/awsapi/shapes_provenance_test.go.
+#
+# One canonical service key per line — the same key the routing manifest uses
+# (the SDK ID lowercased with spaces replaced by hyphens), '#' starts a comment.
+# Regenerate after editing:
+#
+#   make generate-aws-operations AWS_MODELS_DIR=... AWS_MODELS_REVISION=...
+#
+# See docs/plans/inert-tier-rollout.md §4.6 and
+# docs/plans/compat-coverage-modelgen.md §3.7.
+
+# Phase I4's pilot trio, one per protocol family.
+batch                  # REST-JSON
+elastic-load-balancing # AWS Query (ELB Classic)
+servicediscovery       # AWS JSON 1.1 (Cloud Map)
+
+# Phase I2's hand-wired smoke-test service.
+organizations
