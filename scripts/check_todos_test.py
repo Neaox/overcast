@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from check_todos import (  # noqa: E402
+    MAX_TITLE_LENGTH,
     load_ignores,
     load_languages,
     scan_text,
@@ -20,6 +21,9 @@ from check_todos import (  # noqa: E402
 # what the gate is looking for.
 MARKER = "TODO"
 HASH = "#"
+
+# The reason scan_text gives for a marker that is not canonical.
+UNANCHORED = "would file an issue titled"
 
 GO = [
     {"type": "line", "pattern": "//"},
@@ -45,11 +49,39 @@ class CanonicalTest(unittest.TestCase):
 
     def test_marker_without_a_priority_is_flagged(self):
         findings = scan_text(f"// {MARKER}(perf): share a Docker client\n", GO)
-        self.assertEqual(findings, [(1, "share a Docker client")])
+        self.assertEqual(findings, [(1, UNANCHORED, "share a Docker client")])
 
     def test_bare_marker_is_flagged(self):
         findings = scan_text(f"// {MARKER}: set to true once implemented\n", GO)
-        self.assertEqual(findings, [(1, "set to true once implemented")])
+        self.assertEqual(findings, [(1, UNANCHORED, "set to true once implemented")])
+
+
+class TitleLengthTest(unittest.TestCase):
+    def test_a_canonical_marker_at_the_limit_passes(self):
+        description = "x" * MAX_TITLE_LENGTH
+        text = f"// {MARKER}(priority:P2): {description}\n"
+        self.assertEqual(scan_text(text, GO), [])
+
+    def test_one_character_over_is_flagged(self):
+        description = "x" * (MAX_TITLE_LENGTH + 1)
+        findings = scan_text(f"// {MARKER}(priority:P2): {description}\n", GO)
+        self.assertEqual(len(findings), 1)
+        line, reason, title = findings[0]
+        self.assertEqual((line, title), (1, description))
+        self.assertIn(str(MAX_TITLE_LENGTH + 1), reason)
+
+    def test_the_cap_keeps_the_action_below_its_own_broken_guard(self):
+        # Upstream appends '...' instead of truncating past 256 characters, so
+        # the cap has to sit under that for the branch to stay unreachable.
+        self.assertLess(MAX_TITLE_LENGTH, 256)
+
+    def test_length_is_measured_on_the_title_not_the_whole_comment(self):
+        # Detail below the first line becomes the issue body, not the title.
+        text = (
+            f"// {MARKER}(priority:P3): short enough\n"
+            f"// {'y' * (MAX_TITLE_LENGTH * 2)}\n"
+        )
+        self.assertEqual(scan_text(text, GO), [])
 
 
 class ProseTest(unittest.TestCase):
@@ -62,12 +94,12 @@ class ProseTest(unittest.TestCase):
             "// forwarded rather than silently claimed as honoured.\n"
         )
         self.assertEqual(
-            scan_text(text, GO), [(2, "on apigateway.Method) — intentionally not")]
+            scan_text(text, GO), [(2, UNANCHORED, "on apigateway.Method) — intentionally not")]
         )
 
     def test_lowercase_marker_in_prose_is_flagged(self):
         findings = scan_text("// the todo list here is long\n", GO)
-        self.assertEqual(findings, [(1, "list here is long")])
+        self.assertEqual(findings, [(1, UNANCHORED, "list here is long")])
 
     def test_context_todo_is_not_a_marker(self):
         # context.TODO() cannot match: the action needs a colon or a space
@@ -83,11 +115,12 @@ class ProseTest(unittest.TestCase):
 class BlockCommentTest(unittest.TestCase):
     def test_block_comment_interior_is_flagged(self):
         text = f"/*\n * {MARKER}: wire this up\n */\n"
-        self.assertEqual(scan_text(text, GO), [(2, "wire this up")])
+        self.assertEqual(scan_text(text, GO), [(2, UNANCHORED, "wire this up")])
 
     def test_inline_block_comment_is_flagged(self):
         self.assertEqual(
-            scan_text(f"/* {MARKER}: wire this up */\n", GO), [(1, "wire this up")]
+            scan_text(f"/* {MARKER}: wire this up */\n", GO),
+            [(1, UNANCHORED, "wire this up")],
         )
 
     def test_star_in_a_string_does_not_open_a_block(self):

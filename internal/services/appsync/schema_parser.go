@@ -34,7 +34,9 @@ directive @aws_auth(cognito_groups: [String]) on FIELD_DEFINITION
 directive @aws_subscribe(mutations: [String]) on FIELD_DEFINITION
 `
 
-// TODO(priority:P2): confirm real AWS StartSchemaCreation behavior for AppSync directive semantics, especially config-aware @aws_auth compatibility with additional authorization modes.
+// TODO(priority:P2): confirm real AWS StartSchemaCreation directive semantics
+// for AppSync — especially config-aware @aws_auth compatibility with
+// additional authorization modes. Tracked by #260.
 
 var appSyncSchemaPrelude = appSyncSchemaPreludeSource()
 

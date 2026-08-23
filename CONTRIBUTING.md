@@ -215,7 +215,9 @@ These guide every decision — from architecture to variable naming. Read them b
 10. **Honest TODOs.** Every `// TODO:` includes a description and priority:
     `// TODO(priority:P1): implement SigV4 validation` — picked up by the TODO-to-issue Action.
     The marker only ever *opens* a comment, in exactly that form, and its description is
-    one line — the Action takes the rest of that line as the issue title. Naming a marker
+    one line of at most 120 characters — the Action takes the rest of that line as the
+    issue title, and everything below it as the issue body, so detail goes on the next
+    line rather than running the title on. Naming a marker
     mid-sentence files an issue out of the middle of your prose ([#1138](https://github.com/Neaox/overcast/issues/1138)),
     so refer to deferred work in prose without writing the word: "the P3 note on
     `apigateway.Method`". `make lint-todos` enforces this.

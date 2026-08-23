@@ -183,7 +183,9 @@ type IntegrationV2 struct {
 	ConnectionType       string `json:"connectionType,omitempty"`
 	TimeoutInMillis      int    `json:"timeoutInMillis,omitempty"`
 	Description          string `json:"description,omitempty"`
-	// TODO(priority:P3): add credentialsArn, requestParameters, requestTemplates, responseParameters, templateSelectionExpression, connectionId (VPC Link)
+	// TODO(priority:P3): add the remaining IntegrationV2 fields
+	// credentialsArn, requestParameters, requestTemplates, responseParameters,
+	// templateSelectionExpression and connectionId (VPC Link).
 }
 
 // StageV2 represents a stage in an HTTP API.

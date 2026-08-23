@@ -17,6 +17,10 @@ only ever open a comment, in the canonical form CONTRIBUTING.md documents:
 
     <comment marker> TODO(priority:P2): what needs doing
 
+and that description has to read as a title, because that is what it becomes.
+Everything after the first line reaches the issue as its body, so detail goes
+there; see MAX_TITLE_LENGTH below for what a run-on first line costs.
+
 There is deliberately no allow-pragma. Suppressing a finding here would not
 stop the action -- it would only hide the issue it is about to file.
 
@@ -57,6 +61,17 @@ TITLE_PATTERN = re.compile(
 # accepted so an unmapped priority reads as an unlabelled issue rather than as
 # a gate failure; the workflow maps P0 to P3 onto their labels.
 CANONICAL_PATTERN = re.compile(r"TODO\(priority:P[0-9]\): *\S")
+
+# How long that description may be. The action takes the marker's first line
+# and nothing else as the issue title, so a description that runs on becomes a
+# title that runs on: #1087 got 350 characters, #1126 got 285. Past 256 the
+# action's own guard misfires — `title + '...' if len(title) > 256 else title`
+# parses as append-rather-than-truncate, so it lengthens the title it meant to
+# cut — and a cap here keeps that branch out of reach. 120 is well inside it
+# and is what a title can be read at a glance; the longest marker in the repo
+# when this landed was 163, and detail below the first line still reaches the
+# issue as its body.
+MAX_TITLE_LENGTH = 120
 
 
 def tracked_files() -> list[Path]:
@@ -129,9 +144,9 @@ def block_state(line: str, marker: dict, in_block: bool) -> bool:
     return bool(opened) and not re.search(end, line[opened.end():])
 
 
-def scan_text(text: str, markers: list[dict]) -> list[tuple[int, str]]:
-    """Return (1-based line, description) findings for one file's content."""
-    findings: list[tuple[int, str]] = []
+def scan_text(text: str, markers: list[dict]) -> list[tuple[int, str, str]]:
+    """Return (1-based line, reason, issue title) findings for one file."""
+    findings: list[tuple[int, str, str]] = []
     open_blocks = [False] * len(markers)
     for number, line in enumerate(text.splitlines(), 1):
         for index, marker in enumerate(markers):
@@ -142,9 +157,22 @@ def scan_text(text: str, markers: list[dict]) -> list[tuple[int, str]]:
             if not comment:
                 continue
             match = TITLE_PATTERN.search(comment)
-            if not match or CANONICAL_PATTERN.match(comment):
+            if not match:
                 continue
-            findings.append((number, match.group(8)))
+            title = match.group(8)
+            if not CANONICAL_PATTERN.match(comment):
+                findings.append((number, "would file an issue titled", title))
+            elif len(title) > MAX_TITLE_LENGTH:
+                findings.append(
+                    (
+                        number,
+                        f"title runs to {len(title)} characters "
+                        f"(max {MAX_TITLE_LENGTH}) — move the detail to the next line",
+                        title,
+                    )
+                )
+            else:
+                continue
             break
     return findings
 
@@ -173,15 +201,16 @@ def main() -> int:
             continue
         if not full.is_file():
             continue
-        for number, title in scan_text(full.read_text(encoding="utf-8"), markers):
-            print(f'{relative}:{number}: would file an issue titled "{title}"')
+        for number, reason, title in scan_text(full.read_text(encoding="utf-8"), markers):
+            print(f'{relative}:{number}: {reason} "{title}"')
             total += 1
 
     if total:
         print(
-            f"\n{total} comment(s) the TODO-to-issue Action would file an issue for. "
-            "A marker must open the comment as TODO(priority:PN): description; "
-            "reword any other mention so it does not read as one.",
+            f"\n{total} comment(s) the TODO-to-issue Action would file a bad issue for. "
+            "A marker must open the comment as TODO(priority:PN): description, with a "
+            "description short enough to read as a title; reword any other mention so "
+            "it does not read as a marker at all.",
             file=sys.stderr,
         )
     return 1 if total else 0
