@@ -5,14 +5,7 @@ import { ecrRepositoryQueryOptions } from "@/features/ecr/data"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
 import { formatDate } from "@/lib/format"
@@ -117,33 +110,31 @@ export function RepositoryDetail({ repositoryName }: { repositoryName: string })
             </p>
           </div>
         </div>
-        {data.images.length === 0 ? (
-          <EmptyState
-            icon={<Boxes className="h-7 w-7" />}
-            title="No images yet"
-            description="Push a tag into this repository and refresh to reconcile digest metadata from the local registry."
-            className="py-10"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tags</TableHead>
-                <TableHead>Digest</TableHead>
-                <TableHead>Media type</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.images.map((image) => (
-                <TableRow key={`${image.digest}:${image.tags.join(",")}`}>
-                  <TableCell>{image.tags.join(", ") || "—"}</TableCell>
-                  <TableCell className="text-fg-muted">{image.digest}</TableCell>
-                  <TableCell className="text-fg-muted">{image.mediaType ?? "—"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <ResourceTable
+          variant="embedded"
+          query={{ data: data.images, isLoading: false }}
+          noun="images"
+          emptyIcon={Boxes}
+          emptyTitle="No images yet"
+          emptyDescription="Push a tag into this repository and refresh to reconcile digest metadata from the local registry."
+          // Three columns on a detail sub-table — nothing worth hiding.
+          columnToggle={false}
+          rowKey={(image) => `${image.digest}:${image.tags.join(",")}`}
+          columns={[
+            {
+              id: "tags",
+              header: "Tags",
+              sortValue: (image) => image.tags.join(", "),
+              cell: (image) => image.tags.join(", ") || "—",
+            },
+            { header: "Digest", cellClassName: "text-fg-muted", cell: (image) => image.digest },
+            {
+              header: "Media type",
+              cellClassName: "text-fg-muted",
+              cell: (image) => image.mediaType ?? "—",
+            },
+          ]}
+        />
       </section>
     </div>
   )

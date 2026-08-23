@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { DatabaseZap, Trash2 } from "lucide-react"
+import { DatabaseZap } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { DockerBanner } from "@/components/docker-banner"
 import {
@@ -14,14 +14,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -29,25 +21,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
-  RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 
-export function ClusterList() {
+interface ClusterListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function ClusterList({ sort, onSortChange }: ClusterListProps = {}) {
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -57,6 +51,8 @@ export function ClusterList() {
     refetch,
     error,
   } = useQuery(elasticacheClustersQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof clusters)[number]>()
 
   const createMut = useResourceMutation({
     options: createClusterMutationOptions(),
@@ -95,86 +91,69 @@ export function ClusterList() {
       }
     >
       <DockerBanner forService="elasticache" />
-      <ResourceListCard>
-        {isLoading || clusters.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={clusters.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<DatabaseZap className="h-10 w-10" />}
-                title="No cache clusters"
-                description="Create a cache cluster to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load cache clusters"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cluster ID</TableHead>
-                <TableHead>Engine</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Node type</TableHead>
-                <TableHead>Nodes</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {clusters.map((c) => (
-                <TableRow key={c.CacheClusterId}>
-                  <TableCell>
-                    <ResourceName icon={DatabaseZap} name={c.CacheClusterId} />
-                  </TableCell>
-                  <TableCell className="capitalize">{c.Engine}</TableCell>
-                  <TableCell className="text-fg-muted">{c.EngineVersion ?? "—"}</TableCell>
-                  <TableCell>
-                    <ClusterStatusBadge status={c.CacheClusterStatus ?? ""} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{c.CacheNodeType}</TableCell>
-                  <TableCell className="text-fg-muted">{c.NumCacheNodes}</TableCell>
-                  <TableCell>
-                    <RowActions>
-                      <RowAction
-                        label={`Delete ${c.CacheClusterId ?? "cluster"}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(c.CacheClusterId ?? "")}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+
+      <ResourceTable
+        query={{ data: clusters, isLoading, error }}
+        noun="cache clusters"
+        emptyIcon={DatabaseZap}
+        emptyTitle="No cache clusters"
+        emptyDescription="Create a cache cluster to get started."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        }
+        errorTitle="Failed to load cache clusters"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(c) => c.CacheClusterId ?? ""}
+        columns={[
+          {
+            id: "cluster",
+            header: "Cluster ID",
+            sortValue: (c) => c.CacheClusterId,
+            cell: (c) => <ResourceName icon={DatabaseZap} name={c.CacheClusterId} />,
+          },
+          { header: "Engine", cellClassName: "capitalize", cell: (c) => c.Engine },
+          {
+            header: "Version",
+            cellClassName: "text-fg-muted",
+            cell: (c) => c.EngineVersion ?? "—",
+          },
+          {
+            header: "Status",
+            cell: (c) => <ClusterStatusBadge status={c.CacheClusterStatus ?? ""} />,
+          },
+          { header: "Node type", cellClassName: "text-fg-muted", cell: (c) => c.CacheNodeType },
+          {
+            id: "nodes",
+            header: "Nodes",
+            cellClassName: "text-fg-muted",
+            sortValue: (c) => c.NumCacheNodes,
+            cell: (c) => c.NumCacheNodes,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (c) => c.CacheClusterId ?? "",
+          label: (c) => c.CacheClusterId ?? "",
+          noun: "cache cluster",
+          title: "Delete Cache Cluster",
+          actionLabel: (c) => `Delete ${c.CacheClusterId ?? "cluster"}`,
+          description: (c) => (
+            <>
+              Permanently delete <strong>{c.CacheClusterId}</strong>? This action cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateClusterDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(opts) => createMut.mutate(opts)}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Cache Cluster"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget}</strong>? This action cannot be undone.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )

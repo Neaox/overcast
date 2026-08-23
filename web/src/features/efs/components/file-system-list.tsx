@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { HardDrive, Trash2 } from "lucide-react"
+import { HardDrive } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import {
   efsFileSystemsQueryOptions,
@@ -13,14 +13,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -28,25 +20,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
-  RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { Combobox } from "@/components/ui/combobox"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 
-export function FileSystemList() {
+interface FileSystemListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function FileSystemList({ sort, onSortChange }: FileSystemListProps = {}) {
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -56,6 +50,8 @@ export function FileSystemList() {
     refetch,
     error,
   } = useQuery(efsFileSystemsQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof fileSystems)[number]>()
 
   const createMut = useResourceMutation({
     options: createFileSystemMutationOptions(),
@@ -93,91 +89,84 @@ export function FileSystemList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || fileSystems.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={fileSystems.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<HardDrive className="h-10 w-10" />}
-                title="No file systems"
-                description="Create a file system to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>
-                    Create file system
-                  </CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load file systems"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>File system</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Performance</TableHead>
-                <TableHead>Throughput</TableHead>
-                <TableHead>Encrypted</TableHead>
-                <TableHead>Mount targets</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {fileSystems.map((fs) => (
-                <TableRow key={fs.FileSystemId}>
-                  <TableCell>
-                    <ResourceName icon={HardDrive} name={fs.FileSystemId} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{fs.Name || "—"}</TableCell>
-                  <TableCell>
-                    <FileSystemStateBadge state={fs.LifeCycleState ?? ""} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{fs.PerformanceMode}</TableCell>
-                  <TableCell className="text-fg-muted">{fs.ThroughputMode}</TableCell>
-                  <TableCell className="text-fg-muted">{fs.Encrypted ? "Yes" : "No"}</TableCell>
-                  <TableCell className="text-fg-muted">{fs.NumberOfMountTargets ?? 0}</TableCell>
-                  <TableCell>
-                    <RowActions>
-                      <RowAction
-                        label={`Delete ${fs.FileSystemId ?? "file system"}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(fs.FileSystemId ?? "")}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+      <ResourceTable
+        query={{ data: fileSystems, isLoading, error }}
+        noun="file systems"
+        emptyIcon={HardDrive}
+        emptyTitle="No file systems"
+        emptyDescription="Create a file system to get started."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create file system</CreateAction>
+        }
+        errorTitle="Failed to load file systems"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(fs) => fs.FileSystemId ?? ""}
+        columns={[
+          {
+            id: "file-system",
+            header: "File system",
+            sortValue: (fs) => fs.FileSystemId,
+            cell: (fs) => <ResourceName icon={HardDrive} name={fs.FileSystemId} />,
+          },
+          {
+            id: "name",
+            header: "Name",
+            cellClassName: "text-fg-muted",
+            sortValue: (fs) => fs.Name,
+            cell: (fs) => fs.Name || "—",
+          },
+          {
+            header: "State",
+            cell: (fs) => <FileSystemStateBadge state={fs.LifeCycleState ?? ""} />,
+          },
+          {
+            header: "Performance",
+            cellClassName: "text-fg-muted",
+            cell: (fs) => fs.PerformanceMode,
+          },
+          {
+            header: "Throughput",
+            cellClassName: "text-fg-muted",
+            cell: (fs) => fs.ThroughputMode,
+          },
+          {
+            header: "Encrypted",
+            cellClassName: "text-fg-muted",
+            cell: (fs) => (fs.Encrypted ? "Yes" : "No"),
+          },
+          {
+            id: "mount-targets",
+            header: "Mount targets",
+            cellClassName: "text-fg-muted",
+            sortValue: (fs) => fs.NumberOfMountTargets ?? 0,
+            cell: (fs) => fs.NumberOfMountTargets ?? 0,
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (fs) => fs.FileSystemId ?? "",
+          label: (fs) => fs.FileSystemId ?? "",
+          noun: "file system",
+          title: "Delete File System",
+          actionLabel: (fs) => `Delete ${fs.FileSystemId ?? "file system"}`,
+          description: (fs) => (
+            <>
+              Permanently delete <strong>{fs.FileSystemId}</strong>? Its access points, tags, and
+              policy are removed with it. This action cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateFileSystemDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(opts) => createMut.mutate(opts)}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete File System"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget}</strong>? Its access points, tags, and
-            policy are removed with it. This action cannot be undone.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )
@@ -201,10 +190,7 @@ function FileSystemStateBadge({ state }: { state: string }) {
 
 const createSchema = z.object({
   Name: z.string(),
-  CreationToken: z
-    .string()
-    .min(1, "Creation token is required")
-    .max(64, "At most 64 characters"),
+  CreationToken: z.string().min(1, "Creation token is required").max(64, "At most 64 characters"),
   PerformanceMode: z.enum(["generalPurpose", "maxIO"]),
   ThroughputMode: z.enum(["bursting", "elastic", "provisioned"]),
   Encrypted: z.boolean(),

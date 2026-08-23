@@ -246,6 +246,14 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
  * stopped, deleted, and the failure events that carry the reason a database
  * would not come up. This is AWS's own channel for that question
  * (`DescribeEvents`); the console's failure UI is the same feed rendered.
+ *
+ * ResourceTable didn't fit because a failure event tints its whole row
+ * (`bg-danger/5`) — that is the panel's entire point, and `ResourceTable`
+ * has no per-row class/tone hook: it renders `<TableRow key>` and styling is
+ * declared per *column* (`cellClassName`), which cannot reach the row. Cell
+ * backgrounds do not fill the `<td>` padding, so faking it would leave gaps
+ * rather than a tinted row. Reported on #1327 as a `ResourceTable` gap; this
+ * panel converts the day a row-tone hook exists.
  */
 function EventsPanel({ instanceId }: { instanceId: string }) {
   const { data, isLoading, refetch, isFetching } = useQuery(

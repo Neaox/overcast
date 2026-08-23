@@ -3,7 +3,7 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Boxes, Eye, Trash2 } from "lucide-react"
+import { Boxes, Eye } from "lucide-react"
 import {
   createRepositoryMutationOptions,
   deleteRepositoryMutationOptions,
@@ -13,7 +13,6 @@ import {
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
@@ -24,24 +23,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
-import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { formatDate } from "@/lib/format"
+import type { EcrRepository } from "@/types"
 
 const schema = z.object({
   name: z
@@ -50,10 +40,16 @@ const schema = z.object({
     .regex(/^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/, "Use lowercase repo path segments"),
 })
 
-export function RepositoryList() {
+interface RepositoryListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function RepositoryList({ sort, onSortChange }: RepositoryListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<EcrRepository>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -100,100 +96,79 @@ export function RepositoryList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || repositories.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={repositories.length === 0}
-            error={error}
-            errorTitle="Failed to load repositories"
-            empty={
-              <EmptyState
-                icon={<Boxes className="h-10 w-10" />}
-                title="No repositories yet"
-                description="Create a repository, then push a local image to populate tags and digests."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create repository</CreateAction>
-                }
-              />
+      <ResourceTable
+        query={{ data: repositories, isLoading, error }}
+        noun="repositories"
+        emptyIcon={Boxes}
+        emptyTitle="No repositories yet"
+        emptyDescription="Create a repository, then push a local image to populate tags and digests."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create repository</CreateAction>
+        }
+        errorTitle="Failed to load repositories"
+        sort={sort}
+        onSortChange={onSortChange}
+        // Three columns, all load-bearing — nothing worth hiding.
+        columnToggle={false}
+        rowKey={(repository) => repository.name}
+        onRowClick={(repository) =>
+          navigate({
+            to: "/ecr/$repositoryName",
+            params: { repositoryName: repository.name },
+          })
+        }
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (repository) => repository.name,
+            cell: (repository) => <ResourceName icon={Boxes} name={repository.name} />,
+          },
+          { header: "URI", cellClassName: "text-fg-muted", cell: (repository) => repository.uri },
+          {
+            id: "created",
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (repository) => repository.createdAt,
+            cell: (repository) => formatDate(repository.createdAt),
+          },
+        ]}
+        rowActions={(repository) => (
+          <RowAction
+            label={`View ${repository.name}`}
+            onClick={() =>
+              navigate({
+                to: "/ecr/$repositoryName",
+                params: { repositoryName: repository.name },
+              })
             }
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>URI</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {repositories.map((repository) => (
-                <TableRow
-                  key={repository.name}
-                  onClick={() =>
-                    navigate({
-                      to: "/ecr/$repositoryName",
-                      params: { repositoryName: repository.name },
-                    })
-                  }
-                >
-                  <TableCell>
-                    <ResourceName icon={Boxes} name={repository.name} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{repository.uri}</TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatDate(repository.createdAt)}
-                  </TableCell>
-                  <TableCell onClick={(event) => event.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${repository.name}`}
-                        onClick={() =>
-                          navigate({
-                            to: "/ecr/$repositoryName",
-                            params: { repositoryName: repository.name },
-                          })
-                        }
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${repository.name}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(repository.name)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMutation,
+          getId: (repository) => repository.name,
+          label: (repository) => repository.name,
+          noun: "repository",
+          title: "Delete repository?",
+          description: (repository) => (
+            <>
+              Delete <span className="font-medium text-fg">{repository.name}</span> and its tracked
+              image metadata? Registry blobs may still exist in the local registry cache.
+            </>
+          ),
+        }}
+      />
 
       <CreateRepositoryDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         onSubmit={(name) => createMutation.mutate(name)}
         loading={createMutation.isPending}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete repository?"
-        description={
-          <>
-            Delete <span className="font-medium text-fg">{deleteTarget}</span> and its tracked image
-            metadata? Registry blobs may still exist in the local registry cache.
-          </>
-        }
-        isPending={deleteMutation.isPending}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )

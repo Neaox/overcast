@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Database, Eye, Trash2 } from "lucide-react"
+import { Database, Eye } from "lucide-react"
 import {
   dynamoTablesQueryOptions,
   dynamoKeys,
@@ -9,34 +9,30 @@ import {
 } from "@/features/dynamodb/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
-import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
+import type { DynamoTable } from "@/types"
 import { CreateTableDialog } from "./create-table-dialog"
 
-export function TableList() {
+interface TableListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function TableList({ sort, onSortChange }: TableListProps = {}) {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<DynamoTable>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -78,112 +74,91 @@ export function TableList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || tables.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={tables.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Database className="h-10 w-10" />}
-                title="No tables yet"
-                description="Create a table to start storing DynamoDB items."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>
-                }
-              />
+      <ResourceTable
+        query={{ data: tables, isLoading, error }}
+        noun="tables"
+        emptyIcon={Database}
+        emptyTitle="No tables yet"
+        emptyDescription="Create a table to start storing DynamoDB items."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>}
+        errorTitle="Failed to load tables"
+        sort={sort}
+        onSortChange={onSortChange}
+        // Four columns, all of them the reason someone opens this page.
+        columnToggle={false}
+        rowKey={(table) => table.tableName}
+        onRowClick={(table) =>
+          navigate({ to: "/dynamodb/$tableName", params: { tableName: table.tableName } })
+        }
+        columns={[
+          {
+            id: "name",
+            header: "Table name",
+            sortValue: (table) => table.tableName,
+            cell: (table) => <ResourceName icon={Database} name={table.tableName} />,
+          },
+          {
+            header: "Status",
+            cell: (table) => (
+              <Badge
+                variant={table.tableStatus === "ACTIVE" ? "success" : "default"}
+                className="text-xs"
+              >
+                {table.tableStatus}
+              </Badge>
+            ),
+          },
+          {
+            header: "Key schema",
+            cellClassName: "text-fg-muted",
+            cell: (table) => {
+              const hashKey = table.keySchema.find((k) => k.keyType === "HASH")
+              const sortKey = table.keySchema.find((k) => k.keyType === "RANGE")
+              return (
+                <>
+                  {hashKey?.attributeName ?? "—"}
+                  {sortKey && <span className="text-fg-subtle"> / {sortKey.attributeName}</span>}
+                </>
+              )
+            },
+          },
+          {
+            id: "items",
+            header: "Items",
+            // A sortable header is a full-width flex button inside the `<th>`,
+            // so `text-right` alone leaves the label hanging on the left of a
+            // right-aligned column; the child selector aligns the button too.
+            headerClassName: "text-right [&>button]:justify-end",
+            cellClassName: "text-right tabular-nums",
+            sortValue: (table) => table.itemCount,
+            cell: (table) => table.itemCount.toLocaleString(),
+          },
+        ]}
+        rowActions={(table) => (
+          <RowAction
+            label={`View ${table.tableName}`}
+            onClick={() =>
+              navigate({ to: "/dynamodb/$tableName", params: { tableName: table.tableName } })
             }
-            errorTitle="Failed to load tables"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Table name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Key schema</TableHead>
-                <TableHead className="text-right">Items</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {tables.map((table) => {
-                const hashKey = table.keySchema.find((k) => k.keyType === "HASH")
-                const sortKey = table.keySchema.find((k) => k.keyType === "RANGE")
-                return (
-                  <TableRow
-                    key={table.tableName}
-                    onClick={() =>
-                      navigate({
-                        to: "/dynamodb/$tableName",
-                        params: { tableName: table.tableName },
-                      })
-                    }
-                  >
-                    <TableCell>
-                      <ResourceName icon={Database} name={table.tableName} />
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={table.tableStatus === "ACTIVE" ? "success" : "default"}
-                        className="text-xs"
-                      >
-                        {table.tableStatus}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {hashKey?.attributeName ?? "—"}
-                      {sortKey && (
-                        <span className="text-fg-subtle"> / {sortKey.attributeName}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {table.itemCount.toLocaleString()}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`View ${table.tableName}`}
-                          onClick={() =>
-                            navigate({
-                              to: "/dynamodb/$tableName",
-                              params: { tableName: table.tableName },
-                            })
-                          }
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${table.tableName}`}
-                          tone="danger"
-                          onClick={() => setDeleteTarget(table.tableName)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (table) => table.tableName,
+          label: (table) => table.tableName,
+          noun: "table",
+          title: "Delete table",
+          description: (table) =>
+            `Are you sure you want to delete ${table.tableName}? This will permanently delete all items in the table.`,
+        }}
+      />
 
       <CreateTableDialog open={showCreate} onOpenChange={setShowCreate} />
-
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={() => setDeleteTarget(undefined)}
-        title="Delete table"
-        description={`Are you sure you want to delete ${deleteTarget}? This will permanently delete all items in the table.`}
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
     </ResourceListPage>
   )
 }
