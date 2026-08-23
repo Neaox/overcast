@@ -1,18 +1,26 @@
 # Inert-tier rollout — mass-producing Tier 1 across the AWS surface
 
 > Status: proposal, 2026-08-03. Owner: TBD.
-> Re-verified 2026-08-23: **Phases I0 and I1 have landed** (issue #1114) —
+> Re-verified 2026-08-23: **Phases I0, I1 and I2 have landed** (issue #1114) —
 > `internal/inert/conformance` turns §3 into executable, table-driven
 > conformance tests, run against a deliberately naive stub to prove the suite
-> bites, and `models/aws/shapes/` holds the pruned shape snapshot with its
-> `shapes-sha256`, offline check and size budget (see the phase table in §8
-> and §4.6's measurement). Phases I2 onward are still not started — there is
-> no `internal/inert` runtime, no `-inert-*` flags in `cmd/awsmodelgen`, and
-> none of the pilot services (servicediscovery, ELB Classic, batch) exists.
-> §3.1's authoritative classifier needs re-checking before I3: only 121 of
-> 426 modeled services declare Smithy `resource` shapes and none of the four
-> snapshot services do, so the name-prefix fallback is the only path for the
-> pilot (#1369). §2.2's census is
+> bites; `models/aws/shapes/` holds the pruned shape snapshot with its
+> `shapes-sha256`, offline check and size budget; and `internal/inert` is the
+> shared runtime, hand-wired to `organizations` (whose policy resource took it
+> from 1 to 9 `StatusInert` rows). See the phase table in §8, §4.6's
+> measurement and §4.3's as-shipped API. Phases I3 onward are still not
+> started — there are no `-inert-*` flags in `cmd/awsmodelgen` and none of the
+> pilot services (servicediscovery, ELB Classic, batch) exists.
+>
+> **Two premises I3 rests on failed re-measurement and need settling before it
+> starts.** §3.1's authoritative classifier: only 121 of 426 modeled services
+> declare Smithy `resource` shapes at all, and none of the four snapshot
+> services do, so the name-prefix fallback is the *only* path for the pilot
+> and for ~72% of the fleet (#1369). §3.3's error selection: `batch` declares
+> exactly two error shapes (`ClientException`/`ServerException`) across all 45
+> operations so every selector finds nothing, no snapshot service models an
+> invalid-token error at all, and the invalid-parameter pattern misses ELB's
+> `InvalidConfigurationRequestException` outright (#1373). §2.2's census is
 > re-derived as of this commit: capabilities now read 1,258 Supported / 153
 > Unsupported / 28 Inert / 14 Partial / 0 WIP across 1,453 rows.
 > `internal/capabilities/all.gen.go` is authoritative; re-derive §2.2 before
@@ -115,12 +123,15 @@ from the audited scope lists, never from the raw totals.
 > section again before budgeting any later wave, the same way.
 
 [`internal/capabilities/all.gen.go`](../../internal/capabilities/all.gen.go)
-declares **1,453 capability rows across 50 services**:
-1,258 `StatusSupported`, 153 `StatusUnsupported`, 28 `StatusInert`,
-14 `StatusPartial`, and **zero** `StatusWIP`.
+declares **1,461 capability rows across 50 services**:
+1,258 `StatusSupported`, 153 `StatusUnsupported`, 36 `StatusInert`,
+14 `StatusPartial`, and **zero** `StatusWIP`. (Phase I2 moved this: it added
+`organizations`' 8 policy operations, so `StatusInert` went 28 → 36 and the
+row total 1,453 → 1,461. Every later phase will move it again — re-derive
+rather than quoting this paragraph.)
 
 The `StatusInert` rows are services that are *already entirely Tier 1*:
-`transfer` (13), `cloudtrail` (12), `bedrock` (2), `organizations` (1). These,
+`transfer` (13), `cloudtrail` (12), `organizations` (9), `bedrock` (2). These,
 not Route 53, are the closest existing analogues to what this plan
 mass-produces — Route 53 is a *supported* service (see below, it now serves
 real DNS). `backup` left the wholly-inert set (#815/#904 made it a real REST
@@ -808,7 +819,7 @@ Design decisions that follow:
 ## 7. Interplay with existing services (inert backfill)
 
 The same machinery fills the `StatusUnsupported` gaps inside implemented services
-(§2.2 table: 154 rows across 21 services). The rules:
+(§2.2 table: **153 rows across 21 services**, re-derived 2026-08-23). The rules:
 
 1. **Precedence (§4.5) is absolute** — generated code cannot reach an implemented
    operation.
@@ -825,11 +836,17 @@ The same machinery fills the `StatusUnsupported` gaps inside implemented service
    STATUS.md tell the truth about which operations are memory-only. The zero
    `StatusPartial` / zero `StatusWIP` counts today mean these two statuses are
    effectively unused; backfill makes the Supported/Inert distinction load-bearing,
-   which is the honest outcome.
+   which is the honest outcome. (That claim has since expired: `StatusPartial`
+   is in real use — 14 rows across `backup`, `s3`, `iam`, `kms` and `sns` — so
+   §10's open question 5 about `StatusPartial` vs `StatusInert` is live, not
+   hypothetical.)
 
 Backfill order follows CDK/user demand, not row count: `cloudformation` (28) and
-`ses` (18) are the largest, but `sts` (6), `sqs` (2), `lambda` (1) and
-`dynamodb` (1) are the cheapest wins and should ride along with the pilot.
+`ses` (18) are the largest, but `sts` (6), `sqs` (2) and `lambda` (2) are the
+cheapest wins and should ride along with the pilot. `dynamodb` is no longer one
+of them — it grew from 1 unsupported row to 7 as its modeled surface widened,
+which is the general pattern: backfill targets get *more* expensive while they
+wait, so re-derive this list at wave-planning time rather than trusting it.
 
 ## 8. Phasing
 
