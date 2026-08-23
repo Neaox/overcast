@@ -204,8 +204,8 @@ function AddNotificationDialog({
 
             {/* Destination type — SQS only for now */}
             <div className="flex items-center gap-2 rounded-lg border border-accent bg-accent/10 px-3 py-2 text-sm font-medium text-fg">
-              <span className="flex h-5 w-5 items-center justify-center rounded bg-yellow-400/10">
-                <MessagesSquare className="h-3 w-3 text-yellow-400" />
+              <span className="flex h-5 w-5 items-center justify-center rounded bg-cat-3/10">
+                <MessagesSquare className="h-3 w-3 text-cat-3" />
               </span>
               SQS Queue
               <Check className="ml-auto h-3.5 w-3.5 text-accent" />
@@ -224,7 +224,7 @@ function AddNotificationDialog({
                 renderItem={(q, { selected }) => (
                   <span className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
-                      <MessagesSquare className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
+                      <MessagesSquare className="h-3.5 w-3.5 shrink-0 text-cat-3" />
                       <span>{q.name}</span>
                     </span>
                     {selected && <Check className="h-3 w-3 text-accent" />}
@@ -420,7 +420,7 @@ export function BucketConfig() {
           {(data?.queueConfigurations.length ?? 0) > 0 && (
             <ConfigSection
               title="SQS Queue Destinations"
-              icon={<Bell className="h-4 w-4 text-yellow-400" />}
+              icon={<Bell className="h-4 w-4 text-cat-3" />}
             >
               {data!.queueConfigurations.map((q) => (
                 <QueueRow
@@ -440,7 +440,7 @@ export function BucketConfig() {
           {(data?.topicConfigurations.length ?? 0) > 0 && (
             <ConfigSection
               title="SNS Topic Destinations"
-              icon={<Bell className="h-4 w-4 text-pink-400" />}
+              icon={<Bell className="h-4 w-4 text-cat-10" />}
             >
               {data!.topicConfigurations.map((t) => (
                 <TopicRow key={t.id || t.topicArn} config={t} />
@@ -449,7 +449,7 @@ export function BucketConfig() {
           )}
 
           {data?.eventBridgeEnabled && (
-            <ConfigSection title="EventBridge" icon={<Radio className="h-4 w-4 text-orange-400" />}>
+            <ConfigSection title="EventBridge" icon={<Radio className="h-4 w-4 text-cat-1" />}>
               <div className="flex flex-col gap-3 px-4 py-3">
                 <ConfigRow label="Destination">
                   <span className="flex flex-wrap items-center gap-2">
@@ -464,7 +464,7 @@ export function BucketConfig() {
           {(data?.lambdaConfigurations.length ?? 0) > 0 && (
             <ConfigSection
               title="Lambda Destinations"
-              icon={<Bell className="h-4 w-4 text-purple-400" />}
+              icon={<Bell className="h-4 w-4 text-cat-9" />}
             >
               {data!.lambdaConfigurations.map((l) => (
                 <LambdaRow key={l.id || l.functionArn} config={l} />
@@ -521,7 +521,7 @@ function LifecycleRules({
   if (rules.length === 0) return null
 
   return (
-    <ConfigSection title="Lifecycle Rules" icon={<Timer className="h-4 w-4 text-sky-400" />}>
+    <ConfigSection title="Lifecycle Rules" icon={<Timer className="h-4 w-4 text-cat-6" />}>
       {transitionDefaultMinimumObjectSize && (
         <div className="flex flex-col gap-3 px-4 py-3">
           <ConfigRow label="Default minimum transition size">
@@ -590,10 +590,7 @@ function WebsiteConfigurationPanel({ config }: { config: BucketWebsiteConfigurat
   if (!config) return null
 
   return (
-    <ConfigSection
-      title="Website Configuration"
-      icon={<Globe className="h-4 w-4 text-emerald-400" />}
-    >
+    <ConfigSection title="Website Configuration" icon={<Globe className="h-4 w-4 text-cat-4" />}>
       {config.redirectAllRequestsTo && (
         <div className="flex flex-col gap-3 px-4 py-3">
           <ConfigRow label="Redirect all requests to">

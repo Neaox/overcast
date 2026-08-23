@@ -856,7 +856,7 @@ const FolderRow = memo(function FolderRow({
     >
       <TableCell colSpan={3}>
         <div className="flex min-w-0 items-center gap-2">
-          <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
+          <Folder className="h-3.5 w-3.5 shrink-0 text-cat-3" />
           <span className="truncate text-accent hover:underline">
             <HighlightedName slices={highlightSlices(row.name, term, nameOffset)} />
           </span>

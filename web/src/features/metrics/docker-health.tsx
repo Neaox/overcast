@@ -44,7 +44,7 @@ export function DockerHealthPanel() {
       {disconnected.length > 0 && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-300"
+          className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning"
         >
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
           <div>
@@ -53,7 +53,7 @@ export function DockerHealthPanel() {
                 ? `${disconnected.length} service${disconnected.length > 1 ? "s" : ""} disconnected`
                 : "Docker is not available"}
             </p>
-            <p className="text-xs text-amber-300/70">
+            <p className="text-xs text-warning/70">
               Disconnected services operate in metadata-only mode — resources have no running
               containers.
             </p>

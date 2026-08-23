@@ -1,8 +1,8 @@
 /**
  * service-registry — single source of truth for all navigable AWS services.
  *
- * Every icon, color token, hex value, minimap letter, route path, nav category,
- * and description lives here. The sidebar, dashboard, global search, topology
+ * Every icon, colour slot, minimap letter, route path, nav category, and
+ * description lives here. The sidebar, dashboard, global search, topology
  * map, and docs button all derive their values from this registry.
  *
  * When adding a new service:
@@ -96,14 +96,22 @@ export interface ServiceEntry {
   label: string
   /** Lucide icon component. */
   icon: LucideIcon
-  /** Tailwind text color class (e.g. "text-orange-400"). */
+  /**
+   * Categorical-ramp text colour class (e.g. "text-cat-2"). Always a `cat-*`
+   * slot — never a raw Tailwind hue, which would be theme-blind. See the slot
+   * assignment note above SERVICES.
+   */
   color: string
-  /** Tailwind bg class, paired with the color (e.g. "bg-orange-400/10"). */
+  /** Tint of the same slot, paired with the color (e.g. "bg-cat-2/10"). */
   bg: string
-  /** Tailwind border class, paired with the color (e.g. "border-orange-400/30"). */
+  /** Hairline of the same slot, paired with the color (e.g. "border-cat-2/30"). */
   border: string
-  /** CSS hex color — used by canvas/SVG renderers (minimap, sweep animations). */
-  hex: string
+  /**
+   * The same slot as a raw CSS colour value (`var(--cat-2)`), for SVG
+   * presentation attributes and inline styles — the minimap dots, the map's
+   * node circles and the sweep animation, none of which can take a class.
+   */
+  css: string
   /** Single character shown in the minimap node pill. */
   letter: string
 
@@ -160,15 +168,37 @@ export interface ServiceEntry {
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
+/**
+ * Ramp-slot assignment (docs/plans/palette-categorical-tokens.md, decisions 1-4).
+ *
+ * Every `color`/`bg`/`border`/`css` below resolves through the ten-slot
+ * categorical ramp declared in `styles/global.css`, so each one has a distinct
+ * light and dark value. The slot is **the ramp slot whose OKLCH hue is nearest
+ * the colour this service already had** — nothing else. That rule is
+ * deterministic, order-independent, and moves no service more than 15 degrees
+ * of hue, which is what keeps colour memory intact across the migration
+ * (requirement 4: users navigate by "S3 is the orange one").
+ *
+ * Near-neutral colours are not identities: STS was `slate-300` (chroma 0.02,
+ * below any ramp slot's), so it takes `fg-muted` rather than being pushed onto
+ * a hue it never had.
+ *
+ * 35 services over 10 slots means slots are shared, deliberately (requirement
+ * 5). The sharing that falls out is the sharing users already see — services
+ * that shared a Tailwind hue share a slot now (ECR/EventBridge/Secrets Manager
+ * were all reds; Pipes/Kinesis were both cyans). Colour is never the only
+ * carrier: every surface that shows a service colour shows its icon and label
+ * beside it (requirement 6).
+ */
 export const SERVICES = {
   // ── Storage & Database ─────────────────────────────────────────────────
   s3: {
     label: "S3",
     icon: Archive,
-    color: "text-orange-400",
-    bg: "bg-orange-400/10",
-    border: "border-orange-400/30",
-    hex: "#fb923c",
+    color: "text-cat-2",
+    bg: "bg-cat-2/10",
+    border: "border-cat-2/30",
+    css: "var(--cat-2)",
     letter: "S",
     to: "/s3",
     category: "storage",
@@ -179,10 +209,10 @@ export const SERVICES = {
   efs: {
     label: "EFS",
     icon: HardDrive,
-    color: "text-emerald-400",
-    bg: "bg-emerald-400/10",
-    border: "border-emerald-400/30",
-    hex: "#34d399",
+    color: "text-cat-5",
+    bg: "bg-cat-5/10",
+    border: "border-cat-5/30",
+    css: "var(--cat-5)",
     letter: "Ef",
     to: "/efs",
     category: "storage",
@@ -194,10 +224,10 @@ export const SERVICES = {
   dynamodb: {
     label: "DynamoDB",
     icon: Database,
-    color: "text-blue-400",
-    bg: "bg-blue-400/10",
-    border: "border-blue-400/30",
-    hex: "#60a5fa",
+    color: "text-cat-7",
+    bg: "bg-cat-7/10",
+    border: "border-cat-7/30",
+    css: "var(--cat-7)",
     letter: "D",
     to: "/dynamodb",
     category: "storage",
@@ -208,10 +238,10 @@ export const SERVICES = {
   rds: {
     label: "RDS",
     icon: DatabaseZap,
-    color: "text-violet-400",
-    bg: "bg-violet-400/10",
-    border: "border-violet-400/30",
-    hex: "#a78bfa",
+    color: "text-cat-8",
+    bg: "bg-cat-8/10",
+    border: "border-cat-8/30",
+    css: "var(--cat-8)",
     letter: "R",
     to: "/rds",
     category: "storage",
@@ -223,10 +253,10 @@ export const SERVICES = {
   elasticache: {
     label: "ElastiCache",
     icon: DatabaseZap,
-    color: "text-green-500",
-    bg: "bg-green-500/10",
-    border: "border-green-500/30",
-    hex: "#22c55e",
+    color: "text-cat-4",
+    bg: "bg-cat-4/10",
+    border: "border-cat-4/30",
+    css: "var(--cat-4)",
     letter: "EC",
     to: "/elasticache",
     category: "storage",
@@ -237,10 +267,10 @@ export const SERVICES = {
   msk: {
     label: "MSK",
     icon: Radio,
-    color: "text-sky-500",
-    bg: "bg-sky-500/10",
-    border: "border-sky-500/30",
-    hex: "#0ea5e9",
+    color: "text-cat-7",
+    bg: "bg-cat-7/10",
+    border: "border-cat-7/30",
+    css: "var(--cat-7)",
     letter: "MSK",
     to: "/msk",
     category: "messaging",
@@ -253,10 +283,10 @@ export const SERVICES = {
   lambda: {
     label: "Lambda",
     icon: Zap,
-    color: "text-purple-400",
-    bg: "bg-purple-400/10",
-    border: "border-purple-400/30",
-    hex: "#c084fc",
+    color: "text-cat-9",
+    bg: "bg-cat-9/10",
+    border: "border-cat-9/30",
+    css: "var(--cat-9)",
     letter: "λ",
     to: "/lambda",
     category: "compute",
@@ -271,10 +301,10 @@ export const SERVICES = {
   ec2: {
     label: "EC2",
     icon: Cpu,
-    color: "text-sky-400",
-    bg: "bg-sky-400/10",
-    border: "border-sky-400/30",
-    hex: "#38bdf8",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "C",
     to: "/ec2",
     category: "compute",
@@ -286,10 +316,10 @@ export const SERVICES = {
   ecs: {
     label: "ECS",
     icon: Boxes,
-    color: "text-emerald-400",
-    bg: "bg-emerald-400/10",
-    border: "border-emerald-400/30",
-    hex: "#34d399",
+    color: "text-cat-5",
+    bg: "bg-cat-5/10",
+    border: "border-cat-5/30",
+    css: "var(--cat-5)",
     letter: "E",
     to: "/ecs",
     category: "compute",
@@ -300,10 +330,10 @@ export const SERVICES = {
   ecr: {
     label: "ECR",
     icon: Boxes,
-    color: "text-rose-400",
-    bg: "bg-rose-400/10",
-    border: "border-rose-400/30",
-    hex: "#fb7185",
+    color: "text-cat-1",
+    bg: "bg-cat-1/10",
+    border: "border-cat-1/30",
+    css: "var(--cat-1)",
     letter: "R",
     to: "/ecr",
     category: "compute",
@@ -315,10 +345,10 @@ export const SERVICES = {
   eks: {
     label: "EKS",
     icon: Boxes,
-    color: "text-emerald-300",
-    bg: "bg-emerald-300/10",
-    border: "border-emerald-300/30",
-    hex: "#86efac",
+    color: "text-cat-4",
+    bg: "bg-cat-4/10",
+    border: "border-cat-4/30",
+    css: "var(--cat-4)",
     letter: "K8s",
     to: "/eks",
     category: "compute",
@@ -330,10 +360,10 @@ export const SERVICES = {
   autoscaling: {
     label: "Auto Scaling",
     icon: Gauge,
-    color: "text-sky-300",
-    bg: "bg-sky-300/10",
-    border: "border-sky-300/30",
-    hex: "#7dd3fc",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "AS",
     to: "/autoscaling",
     category: "compute",
@@ -345,10 +375,10 @@ export const SERVICES = {
   stepfunctions: {
     label: "Step Functions",
     icon: Workflow,
-    color: "text-teal-300",
-    bg: "bg-teal-300/10",
-    border: "border-teal-300/30",
-    hex: "#5eead4",
+    color: "text-cat-5",
+    bg: "bg-cat-5/10",
+    border: "border-cat-5/30",
+    css: "var(--cat-5)",
     letter: "W",
     to: "/stepfunctions",
     category: "compute",
@@ -361,10 +391,10 @@ export const SERVICES = {
   sqs: {
     label: "SQS",
     icon: MessagesSquare,
-    color: "text-yellow-400",
-    bg: "bg-yellow-400/10",
-    border: "border-yellow-400/30",
-    hex: "#facc15",
+    color: "text-cat-3",
+    bg: "bg-cat-3/10",
+    border: "border-cat-3/30",
+    css: "var(--cat-3)",
     letter: "Q",
     to: "/sqs",
     category: "messaging",
@@ -375,10 +405,10 @@ export const SERVICES = {
   sns: {
     label: "SNS",
     icon: Bell,
-    color: "text-pink-400",
-    bg: "bg-pink-400/10",
-    border: "border-pink-400/30",
-    hex: "#f472b6",
+    color: "text-cat-10",
+    bg: "bg-cat-10/10",
+    border: "border-cat-10/30",
+    css: "var(--cat-10)",
     letter: "N",
     to: "/sns",
     category: "messaging",
@@ -389,10 +419,10 @@ export const SERVICES = {
   ses: {
     label: "SES",
     icon: Mail,
-    color: "text-amber-500",
-    bg: "bg-amber-500/10",
-    border: "border-amber-500/30",
-    hex: "#f59e0b",
+    color: "text-cat-2",
+    bg: "bg-cat-2/10",
+    border: "border-cat-2/30",
+    css: "var(--cat-2)",
     letter: "M",
     to: "/ses",
     category: "messaging",
@@ -403,10 +433,10 @@ export const SERVICES = {
   pipes: {
     label: "Pipes",
     icon: Cable,
-    color: "text-cyan-400",
-    bg: "bg-cyan-400/10",
-    border: "border-cyan-400/30",
-    hex: "#22d3ee",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "P",
     to: "/pipes",
     category: "messaging",
@@ -417,10 +447,10 @@ export const SERVICES = {
   kinesis: {
     label: "Kinesis",
     icon: Waves,
-    color: "text-cyan-300",
-    bg: "bg-cyan-300/10",
-    border: "border-cyan-300/30",
-    hex: "#67e8f9",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "K",
     to: "/kinesis",
     category: "messaging",
@@ -431,10 +461,10 @@ export const SERVICES = {
   eventbridge: {
     label: "EventBridge",
     icon: Waypoints,
-    color: "text-rose-400",
-    bg: "bg-rose-400/10",
-    border: "border-rose-400/30",
-    hex: "#fb7185",
+    color: "text-cat-1",
+    bg: "bg-cat-1/10",
+    border: "border-cat-1/30",
+    css: "var(--cat-1)",
     letter: "Ev",
     to: "/eventbridge",
     category: "messaging",
@@ -448,10 +478,10 @@ export const SERVICES = {
   secretsmanager: {
     label: "Secrets Manager",
     icon: KeyRound,
-    color: "text-red-400",
-    bg: "bg-red-400/10",
-    border: "border-red-400/30",
-    hex: "#f87171",
+    color: "text-cat-1",
+    bg: "bg-cat-1/10",
+    border: "border-cat-1/30",
+    css: "var(--cat-1)",
     letter: "Sm",
     to: "/secretsmanager",
     category: "security",
@@ -462,10 +492,10 @@ export const SERVICES = {
   iam: {
     label: "IAM",
     icon: Users,
-    color: "text-yellow-300",
-    bg: "bg-yellow-300/10",
-    border: "border-yellow-300/30",
-    hex: "#fde047",
+    color: "text-cat-3",
+    bg: "bg-cat-3/10",
+    border: "border-cat-3/30",
+    css: "var(--cat-3)",
     letter: "I",
     to: "/iam",
     category: "security",
@@ -476,10 +506,10 @@ export const SERVICES = {
   cognito: {
     label: "Cognito",
     icon: UserCheck,
-    color: "text-indigo-400",
-    bg: "bg-indigo-400/10",
-    border: "border-indigo-400/30",
-    hex: "#818cf8",
+    color: "text-cat-8",
+    bg: "bg-cat-8/10",
+    border: "border-cat-8/30",
+    css: "var(--cat-8)",
     letter: "U",
     to: "/cognito",
     category: "security",
@@ -490,10 +520,10 @@ export const SERVICES = {
   kms: {
     label: "KMS",
     icon: Key,
-    color: "text-amber-400",
-    bg: "bg-amber-400/10",
-    border: "border-amber-400/30",
-    hex: "#fbbf24",
+    color: "text-cat-3",
+    bg: "bg-cat-3/10",
+    border: "border-cat-3/30",
+    css: "var(--cat-3)",
     letter: "Km",
     to: "/kms",
     category: "security",
@@ -507,10 +537,10 @@ export const SERVICES = {
   ssm: {
     label: "SSM",
     icon: SlidersHorizontal,
-    color: "text-orange-300",
-    bg: "bg-orange-300/10",
-    border: "border-orange-300/30",
-    hex: "#fdba74",
+    color: "text-cat-2",
+    bg: "bg-cat-2/10",
+    border: "border-cat-2/30",
+    css: "var(--cat-2)",
     letter: "Ss",
     to: "/ssm",
     category: "security",
@@ -524,10 +554,10 @@ export const SERVICES = {
   sts: {
     label: "STS",
     icon: Fingerprint,
-    color: "text-slate-300",
-    bg: "bg-slate-300/10",
-    border: "border-slate-300/30",
-    hex: "#cbd5e1",
+    color: "text-fg-muted",
+    bg: "bg-fg-muted/10",
+    border: "border-fg-muted/30",
+    css: "var(--fg-muted)",
     letter: "St",
     to: "/sts",
     category: "security",
@@ -539,10 +569,10 @@ export const SERVICES = {
   waf: {
     label: "WAF",
     icon: ShieldAlert,
-    color: "text-red-300",
-    bg: "bg-red-300/10",
-    border: "border-red-300/30",
-    hex: "#fca5a5",
+    color: "text-cat-1",
+    bg: "bg-cat-1/10",
+    border: "border-cat-1/30",
+    css: "var(--cat-1)",
     letter: "Wf",
     to: "/waf",
     category: "security",
@@ -554,10 +584,10 @@ export const SERVICES = {
   shield: {
     label: "Shield",
     icon: ShieldCheck,
-    color: "text-indigo-300",
-    bg: "bg-indigo-300/10",
-    border: "border-indigo-300/30",
-    hex: "#a5b4fc",
+    color: "text-cat-8",
+    bg: "bg-cat-8/10",
+    border: "border-cat-8/30",
+    css: "var(--cat-8)",
     letter: "Sh",
     to: "/shield",
     category: "security",
@@ -570,10 +600,10 @@ export const SERVICES = {
   apigateway: {
     label: "API Gateway",
     icon: PlugZap,
-    color: "text-green-300",
-    bg: "bg-green-300/10",
-    border: "border-green-300/30",
-    hex: "#86efac",
+    color: "text-cat-4",
+    bg: "bg-cat-4/10",
+    border: "border-cat-4/30",
+    css: "var(--cat-4)",
     letter: "A",
     to: "/apigateway",
     category: "networking",
@@ -589,10 +619,10 @@ export const SERVICES = {
   cloudfront: {
     label: "CloudFront",
     icon: Globe,
-    color: "text-purple-300",
-    bg: "bg-purple-300/10",
-    border: "border-purple-300/30",
-    hex: "#d8b4fe",
+    color: "text-cat-9",
+    bg: "bg-cat-9/10",
+    border: "border-cat-9/30",
+    css: "var(--cat-9)",
     letter: "Cf",
     to: "/cloudfront",
     category: "networking",
@@ -619,10 +649,10 @@ export const SERVICES = {
   appsync: {
     label: "AppSync",
     icon: Braces,
-    color: "text-pink-300",
-    bg: "bg-pink-300/10",
-    border: "border-pink-300/30",
-    hex: "#f9a8d4",
+    color: "text-cat-10",
+    bg: "bg-cat-10/10",
+    border: "border-cat-10/30",
+    css: "var(--cat-10)",
     letter: "As",
     to: "/appsync",
     category: "networking",
@@ -633,10 +663,10 @@ export const SERVICES = {
   cloudformation: {
     label: "CloudFormation",
     icon: Layers,
-    color: "text-cyan-300",
-    bg: "bg-cyan-300/10",
-    border: "border-cyan-300/30",
-    hex: "#67e8f9",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "CF",
     to: "/cloudformation/",
     category: "networking",
@@ -647,10 +677,10 @@ export const SERVICES = {
   appregistry: {
     label: "Applications",
     icon: Boxes,
-    color: "text-cyan-200",
-    bg: "bg-cyan-200/10",
-    border: "border-cyan-200/30",
-    hex: "#a5f3fc",
+    color: "text-cat-6",
+    bg: "bg-cat-6/10",
+    border: "border-cat-6/30",
+    css: "var(--cat-6)",
     letter: "App",
     to: "/applications/",
     category: "networking",
@@ -662,10 +692,10 @@ export const SERVICES = {
   cloudwatch: {
     label: "CloudWatch",
     icon: Activity,
-    color: "text-green-400",
-    bg: "bg-green-400/10",
-    border: "border-green-400/30",
-    hex: "#4ade80",
+    color: "text-cat-4",
+    bg: "bg-cat-4/10",
+    border: "border-cat-4/30",
+    css: "var(--cat-4)",
     letter: "CW",
     to: "/cloudwatch",
     category: "monitoring",
@@ -686,10 +716,10 @@ export const SERVICES = {
   logs: {
     label: "CloudWatch Logs",
     icon: ScrollText,
-    color: "text-teal-400",
-    bg: "bg-teal-400/10",
-    border: "border-teal-400/30",
-    hex: "#2dd4bf",
+    color: "text-cat-5",
+    bg: "bg-cat-5/10",
+    border: "border-cat-5/30",
+    css: "var(--cat-5)",
     letter: "L",
     to: "/cloudwatch/logs",
     category: "monitoring",
@@ -702,19 +732,19 @@ export const SERVICES = {
   vpc: {
     label: "VPC",
     icon: Network,
-    color: "text-teal-400",
-    bg: "bg-teal-400/10",
-    border: "border-teal-400/30",
-    hex: "#2dd4bf",
+    color: "text-cat-5",
+    bg: "bg-cat-5/10",
+    border: "border-cat-5/30",
+    css: "var(--cat-5)",
     letter: "V",
   },
   igw: {
     label: "Internet Gateway",
     icon: Globe,
-    color: "text-blue-400",
-    bg: "bg-blue-400/10",
-    border: "border-blue-400/30",
-    hex: "#60a5fa",
+    color: "text-cat-7",
+    bg: "bg-cat-7/10",
+    border: "border-cat-7/30",
+    css: "var(--cat-7)",
     letter: "IG",
   },
 } as const satisfies Record<string, ServiceEntry>

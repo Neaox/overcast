@@ -16,9 +16,10 @@ import { sourceFiles } from "@/test/source-files"
  *   `card`). None are declared, so each is an invisible element, and none of
  *   them can ever become valid: they are not the names we chose.
  *
- * Tailwind's own palette (`text-blue-400`, `bg-amber-500/15`) is deliberately
- * still out of scope — that is the separate palette-collapse task, and those
- * utilities do render.
+ * Tailwind's own palette (`text-blue-400`, `bg-amber-500/15`) stays out of
+ * scope *here* — those utilities do render, so a raw hue is not the failure
+ * this pattern is about. It is forbidden for a different reason, by the
+ * raw-hue allowlist further down.
  *
  * `cat` and `scrim` are ours: the categorical identity ramp (`text-cat-7`) and
  * the in-card dim wash (`bg-scrim-dim`). They are listed so that a slot outside
@@ -27,6 +28,22 @@ import { sourceFiles } from "@/test/source-files"
  */
 const COLOUR_UTILITY =
   /(?<![\w-])(?:bg|text|border|ring|outline|accent|fill|stroke|caret|placeholder|divide|from|via|to)-(bg|fg|accent|danger|warning|success|border|sidebar|cloud|cat|scrim|muted|primary|secondary|surface|card|popover|destructive|input|foreground|background|ring)[a-z0-9-]*\b/g
+
+/**
+ * Every file under `src/` with its text, read once and shared by both scans
+ * below. Two independent walks of ~1000 files is enough I/O on a cold cache to
+ * push a 5s test over, and neither scan needs anything the other doesn't.
+ *
+ * `global.test.ts` is excluded at the source: it quotes undeclared tokens and
+ * raw hues on purpose, as the counterexamples each pattern is tested against.
+ */
+let sourceTextCache: Array<{ file: string; text: string }> | undefined
+function sourceTexts(): Array<{ file: string; text: string }> {
+  sourceTextCache ??= [...sourceFiles("src")]
+    .filter((file) => !file.endsWith("global.test.ts"))
+    .map((file) => ({ file, text: readFileSync(file, "utf8") }))
+  return sourceTextCache
+}
 
 /** Names declared as `--color-<name>` inside global.css's `@theme { … }` block. */
 function declaredThemeColours(css: string): Set<string> {
@@ -94,21 +111,17 @@ describe("semantic colour tokens", () => {
     const declared = declaredThemeColours(readFileSync("src/styles/global.css", "utf8"))
     const unresolved: string[] = []
 
-    for (const file of sourceFiles("src")) {
-      // this file quotes undeclared tokens on purpose, as counterexamples
-      if (file.endsWith("global.test.ts")) continue
-      readFileSync(file, "utf8")
-        .split("\n")
-        .forEach((line, i) => {
-          for (const match of line.matchAll(COLOUR_UTILITY)) {
-            const utility = match[0]
-            // strip the bg-/text-/border- prefix to get the theme token name
-            const token = utility.slice(utility.indexOf("-") + 1)
-            if (!declared.has(token)) {
-              unresolved.push(`${file}:${i + 1}  ${utility}  (no --color-${token})`)
-            }
+    for (const { file, text } of sourceTexts()) {
+      text.split("\n").forEach((line, i) => {
+        for (const match of line.matchAll(COLOUR_UTILITY)) {
+          const utility = match[0]
+          // strip the bg-/text-/border- prefix to get the theme token name
+          const token = utility.slice(utility.indexOf("-") + 1)
+          if (!declared.has(token)) {
+            unresolved.push(`${file}:${i + 1}  ${utility}  (no --color-${token})`)
           }
-        })
+        }
+      })
     }
 
     expect(unresolved, `Undeclared colour tokens:\n${unresolved.join("\n")}`).toEqual([])
@@ -135,6 +148,96 @@ describe("semantic colour tokens", () => {
 
   it("leaves Tailwind's own palette alone — those utilities do render", () => {
     expect([..."bg-amber-500/15 dark:text-blue-400".matchAll(COLOUR_UTILITY)]).toEqual([])
+  })
+})
+
+/**
+ * docs/plans/palette-categorical-tokens.md requirement 8.
+ *
+ * A raw Tailwind hue renders fine — which is exactly why it needs a test rather
+ * than failing at build. `text-purple-400` is one fixed value painted on
+ * `#F4F8FC` and on `#10161D` alike, so it can only ever be tuned for one theme
+ * and tolerated in the other. Every colour in `src/` now resolves through a
+ * token carrying its own light and dark value: state onto `--success` /
+ * `--warning` / `--danger` / `--accent`, identity onto the `--cat-*` ramp,
+ * syntax onto `--token-*`.
+ *
+ * ALLOWLIST is empty, and the intent is that it stays that way. Adding an entry
+ * is a decision that some hue genuinely cannot be a token — not a way to land a
+ * call site in a hurry. Entries are `src/…:class`, never a bare file, so an
+ * exemption covers one known site rather than opening a whole file up.
+ */
+describe("raw Tailwind palette classes (docs/plans/palette-categorical-tokens.md §8)", () => {
+  const RAW_HUE =
+    /(?<![\w-])(?:bg|text|border(?:-[xytblrse])?|ring(?:-offset)?|outline|accent|fill|stroke|caret|placeholder|divide(?:-[xy])?|from|via|to|shadow|decoration)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone)-(?:50|[1-9]00|950)(?![\d])(?:\/\d+)?/g
+
+  /** `src/…:class` sites allowed to keep a raw hue. Each needs a stated reason. */
+  const ALLOWLIST = new Set<string>([])
+
+  /**
+   * Comments are prose about the migration, not code the browser paints — the
+   * files explaining *why* a hue was wrong necessarily name one. Stripping them
+   * is also what stops this test being the reason nobody can write the sentence
+   * "`text-yellow-400` disappears on a light row".
+   */
+  function stripComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
+  }
+
+  it("uses no raw Tailwind palette class in src/ outside the allowlist", () => {
+    const offenders: string[] = []
+
+    for (const { file, text } of sourceTexts()) {
+      const rel = file.replace(/\\/g, "/")
+      const key = rel.slice(rel.lastIndexOf("src/"))
+      stripComments(text)
+        .split("\n")
+        .forEach((line, i) => {
+          for (const match of line.matchAll(RAW_HUE)) {
+            if (ALLOWLIST.has(`${key}:${match[0].replace(/\/\d+$/, "")}`)) continue
+            offenders.push(`${file}:${i + 1}  ${match[0]}`)
+          }
+        })
+    }
+
+    expect(
+      offenders,
+      "Raw Tailwind palette classes are theme-blind — use a --cat-*, --token-* or\n" +
+        "semantic token instead (docs/plans/palette-categorical-tokens.md):\n" +
+        offenders.join("\n"),
+    ).toEqual([])
+  })
+
+  // guard-the-guard: the pattern has to catch the shapes that actually occurred
+  // in the 429 sites this replaced, and leave the token vocabulary alone.
+  it.each([
+    ["text-purple-400", "text-purple-400"],
+    ["bg-amber-400/10", "bg-amber-400/10"],
+    ["hover:bg-emerald-500/15", "bg-emerald-500/15"],
+    ["dark:text-yellow-400", "text-yellow-400"],
+    ["shadow-amber-950/20", "shadow-amber-950/20"],
+    ["border-l-red-500/60", "border-l-red-500/60"],
+    ["from-teal-400/8", "from-teal-400/8"],
+  ])("catches %s", (source, expected) => {
+    expect([...source.matchAll(RAW_HUE)].map((m) => m[0])).toEqual([expected])
+  })
+
+  it.each([
+    "text-cat-7",
+    "bg-success/15",
+    "text-fg-muted",
+    "token string",
+    "bg-accent/15",
+    "border-l-danger/60",
+  ])("leaves the token vocabulary alone: %s", (source) => {
+    expect([...source.matchAll(RAW_HUE)]).toEqual([])
+  })
+
+  it("does not read hues out of comments", () => {
+    const src = ["// text-blue-400 was theme-blind", "/* bg-amber-500/15 */", "const a = 1"].join(
+      "\n",
+    )
+    expect([...stripComments(src).matchAll(RAW_HUE)]).toEqual([])
   })
 })
 

@@ -12,39 +12,48 @@ import { SERVICES } from "@/lib/service-registry"
  *  Derived automatically from the central service registry. */
 export const SERVICE_THEME: Record<
   string,
-  { hex: string; color: string; bg: string; border: string; letter: string } | undefined
+  { css: string; color: string; bg: string; border: string; letter: string } | undefined
 > = Object.fromEntries(
   Object.entries(SERVICES).map(([key, s]) => [
     key,
-    { hex: s.hex, color: s.color, bg: s.bg, border: s.border, letter: s.letter },
+    { css: s.css, color: s.color, bg: s.bg, border: s.border, letter: s.letter },
   ]),
 )
 
-/** Edge-type theme tokens. Keys match the topology API edge type strings. */
+/**
+ * Edge-type theme tokens. Keys match the topology API edge type strings.
+ *
+ * An edge is drawn in the colour of the service that owns it, so each entry
+ * points at the same ramp slot that service does in the registry — kept as a
+ * literal `var(--cat-*)` rather than read back out of SERVICES because two of
+ * these (`esm-filter`, `cfn-ref`) name a *relationship* rather than a service.
+ */
 export const EDGE_THEME: Record<
   string,
   { color: string; dash: boolean; label: string } | undefined
 > = {
-  notification: { color: "#fb923c", dash: false, label: "S3 notification" },
-  subscription: { color: "#f472b6", dash: false, label: "SNS subscription" },
-  esm: { color: "#a78bfa", dash: false, label: "Lambda ESM" },
-  "esm-filter": { color: "#facc15", dash: true, label: "ESM filter" },
-  pipe: { color: "#38bdf8", dash: true, label: "EventBridge Pipe" },
-  logs: { color: "#34d399", dash: false, label: "CloudWatch Logs" },
-  dlq: { color: "#f87171", dash: true, label: "Dead Letter Queue" },
-  "vpc-attachment": { color: "#2dd4bf", dash: false, label: "IGW Attachment" },
-  "vpc-member": { color: "#2dd4bf", dash: true, label: "VPC Member" },
-  "cfn-export": { color: "#818cf8", dash: true, label: "CFN Export" },
-  "cfn-ref": { color: "#94a3b8", dash: true, label: "CFN Reference" },
-  "apigw-integration": { color: "#86efac", dash: false, label: "API Gateway → Lambda" },
+  notification: { color: "var(--cat-2)", dash: false, label: "S3 notification" },
+  subscription: { color: "var(--cat-10)", dash: false, label: "SNS subscription" },
+  esm: { color: "var(--cat-9)", dash: false, label: "Lambda ESM" },
+  "esm-filter": { color: "var(--cat-3)", dash: true, label: "ESM filter" },
+  pipe: { color: "var(--cat-6)", dash: true, label: "EventBridge Pipe" },
+  logs: { color: "var(--cat-5)", dash: false, label: "CloudWatch Logs" },
+  dlq: { color: "var(--danger)", dash: true, label: "Dead Letter Queue" },
+  "vpc-attachment": { color: "var(--cat-5)", dash: false, label: "IGW Attachment" },
+  "vpc-member": { color: "var(--cat-5)", dash: true, label: "VPC Member" },
+  "cfn-export": { color: "var(--cat-6)", dash: true, label: "CFN Export" },
+  "cfn-ref": { color: "var(--fg-subtle)", dash: true, label: "CFN Reference" },
+  "apigw-integration": { color: "var(--cat-4)", dash: false, label: "API Gateway → Lambda" },
 }
 
-export const DEFAULT_EDGE_COLOR = "#6b7280"
+/** Colour for a node or edge whose type the registry has no entry for. */
+export const FALLBACK_COLOR = "var(--fg-subtle)"
 
-/** Convert a hex color to an rgba sweep-animation color (35% opacity). */
-export function hexToSweep(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},0.35)`
+/**
+ * A service colour dimmed to a 35%-opacity wash, for the sweep animation that
+ * runs across an active node. `color-mix` rather than an rgba() literal because
+ * the input is now a `var(--cat-*)` whose value differs per theme.
+ */
+export function toSweep(color: string): string {
+  return `color-mix(in oklab, ${color} 35%, transparent)`
 }

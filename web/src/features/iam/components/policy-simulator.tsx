@@ -51,16 +51,15 @@ export function EnforcementNotice() {
   if (enforcing) {
     return (
       <div
-        className="flex items-start gap-3 rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-sm text-amber-300"
+        className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning"
         data-testid="iam-enforcement-notice"
       >
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <span className="font-medium">IAM enforcement is ON.</span> Requests are evaluated
-          against the calling principal&apos;s policies before they reach a service, and a call
-          the policies do not allow fails with <code>AccessDenied</code> — that is the emulator
-          denying it, not your application. Unset <code>OVERCAST_ENFORCE_IAM</code> to turn it
-          off.
+          <span className="font-medium">IAM enforcement is ON.</span> Requests are evaluated against
+          the calling principal&apos;s policies before they reach a service, and a call the policies
+          do not allow fails with <code>AccessDenied</code> — that is the emulator denying it, not
+          your application. Unset <code>OVERCAST_ENFORCE_IAM</code> to turn it off.
         </div>
       </div>
     )
@@ -68,13 +67,13 @@ export function EnforcementNotice() {
 
   return (
     <div
-      className="flex items-start gap-3 rounded-lg border border-sky-400/30 bg-sky-400/5 px-4 py-3 text-sm text-sky-300"
+      className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-accent"
       data-testid="iam-enforcement-notice"
     >
       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        <span className="font-medium">IAM enforcement is OFF (the default).</span> Requests
-        succeed regardless of policy; the simulator below reports what <em>would</em> happen. Set{" "}
+        <span className="font-medium">IAM enforcement is OFF (the default).</span> Requests succeed
+        regardless of policy; the simulator below reports what <em>would</em> happen. Set{" "}
         <code>OVERCAST_ENFORCE_IAM=true</code> to have requests actually checked.
       </div>
     </div>
@@ -200,7 +199,8 @@ export function PolicySimulator() {
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <span className="font-medium">{error.name || "Simulation failed"}</span> — {error.message}
+            <span className="font-medium">{error.name || "Simulation failed"}</span> —{" "}
+            {error.message}
           </div>
         </div>
       )}

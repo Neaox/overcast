@@ -874,15 +874,18 @@ function highlightJSON(text: string): ReactNode[] {
     const index = match.index
     if (index > lastIndex) nodes.push(text.slice(lastIndex, index))
     const token = match[0]
+    // The shared syntax-token classes (styles/syntax-tokens.css), so this
+    // hand-rolled highlighter reads the same as every Prism-rendered block
+    // and flips with the theme for free.
     const className = match[1]
-      ? "text-accent"
+      ? "token property"
       : match[2]
-        ? "text-emerald-400"
+        ? "token string"
         : match[3]
-          ? "text-sky-400"
+          ? "token boolean"
           : match[4]
-            ? "text-fg-muted"
-            : "text-amber-400"
+            ? "token null"
+            : "token number"
     nodes.push(
       <span key={`${index}-${tokenIndex++}`} className={className}>
         {token}

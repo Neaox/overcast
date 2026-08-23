@@ -9,7 +9,7 @@
 import { memo } from "react"
 import { Handle, Position, type NodeProps } from "@xyflow/react"
 import { cn } from "@/lib/utils"
-import { SERVICE_THEME } from "./map-theme"
+import { SERVICE_THEME, FALLBACK_COLOR } from "./map-theme"
 
 export interface MiniNodeData extends Record<string, unknown> {
   service: string
@@ -24,7 +24,7 @@ export const MiniNode = memo(function MiniNode({ data }: NodeProps) {
   const { service, label, eventCount } = data as MiniNodeData
 
   const meta = SERVICE_THEME[service] ?? {
-    hex: "#6b7280",
+    css: FALLBACK_COLOR,
     color: "text-fg-muted",
     bg: "bg-fg-muted/10",
     border: "border-fg-muted/30",
@@ -60,7 +60,7 @@ export const MiniNode = memo(function MiniNode({ data }: NodeProps) {
       {(eventCount ?? 0) > 0 && (
         <span
           className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full"
-          style={{ backgroundColor: meta.hex }}
+          style={{ backgroundColor: meta.css }}
         />
       )}
 

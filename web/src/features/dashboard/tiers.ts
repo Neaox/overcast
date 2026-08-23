@@ -15,11 +15,11 @@ export const TIER_BADGE: Record<EmulationTier, { label: string; className: strin
   full: null,
   partial: {
     label: "Partial",
-    className: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+    className: "border-warning/40 bg-warning/10 text-warning",
   },
   inert: {
     label: "Inert",
-    className: "border-sky-400/40 bg-sky-400/10 text-sky-400",
+    className: "border-accent/40 bg-accent/10 text-accent",
   },
   stub: {
     label: "Stub",

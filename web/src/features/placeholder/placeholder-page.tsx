@@ -72,7 +72,7 @@ export function PlaceholderPage({
         <h1 className="font-mono text-2xl font-semibold text-fg">{serviceName}</h1>
         {isWip && (
           <Tooltip content="This service is a work in progress — support is being actively improved.">
-            <span className="mb-0.5 inline-flex cursor-default items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-xs font-medium text-amber-600 dark:text-amber-400">
+            <span className="mb-0.5 inline-flex cursor-default items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 font-mono text-xs font-medium text-warning">
               <AlertCircle className="h-3 w-3" />
               WIP
             </span>

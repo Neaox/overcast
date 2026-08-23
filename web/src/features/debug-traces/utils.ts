@@ -8,22 +8,34 @@ export function nsToHuman(ns: number): string {
 }
 
 export function statusColor(code: number): string {
-  if (code >= 500) return "text-red-400"
-  if (code >= 400) return "text-amber-400"
-  return "text-emerald-400"
+  if (code >= 500) return "text-danger"
+  if (code >= 400) return "text-warning"
+  return "text-success"
 }
 
 /** HTTP status code → standard reason phrase (RFC 9110). */
 export function statusMessage(code: number): string {
   if (code === 0) return ""
   const map: Record<number, string> = {
-    200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
-    301: "Moved Permanently", 302: "Found", 304: "Not Modified",
-    400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
-    404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout",
-    409: "Conflict", 429: "Too Many Requests",
-    500: "Internal Server Error", 502: "Bad Gateway",
-    503: "Service Unavailable", 504: "Gateway Timeout",
+    200: "OK",
+    201: "Created",
+    202: "Accepted",
+    204: "No Content",
+    301: "Moved Permanently",
+    302: "Found",
+    304: "Not Modified",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    408: "Request Timeout",
+    409: "Conflict",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
   }
   return map[code] ?? ""
 }
@@ -69,7 +81,13 @@ export function traceRequestUrl(baseUrl: string, path: string, host?: string): s
 
 /** Generate a minimal curl command from trace data. */
 export function traceToCurl(
-  t: { method: string; path: string; host: string; requestHeaders: Record<string, string[]>; requestBody?: string },
+  t: {
+    method: string
+    path: string
+    host: string
+    requestHeaders: Record<string, string[]>
+    requestBody?: string
+  },
   baseUrl: string,
 ): string {
   const lines: string[] = [`curl -X ${t.method}`]

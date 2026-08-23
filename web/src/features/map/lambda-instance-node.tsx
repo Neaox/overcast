@@ -205,9 +205,9 @@ function pillFrac(
 
 /** Picks bar color based on fraction remaining (0-1). */
 function barColor(frac: number): string {
-  if (frac > 0.5) return "bg-emerald-500"
-  if (frac > 0.2) return "bg-yellow-400"
-  return "bg-red-500"
+  if (frac > 0.5) return "bg-success"
+  if (frac > 0.2) return "bg-warning"
+  return "bg-danger"
 }
 
 function areLambdaInstanceCardPropsEqual(
@@ -329,15 +329,15 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
   const hasLogs = Boolean(instance.logGroup && instance.logStream)
   const shortId = instance.instanceId ? instance.instanceId.slice(0, 8) : "????????"
   const statusDotClass = {
-    running: "bg-emerald-400",
-    starting: "animate-pulse bg-amber-400",
-    initializing: "animate-pulse bg-sky-400",
+    running: "bg-success",
+    starting: "animate-pulse bg-warning",
+    initializing: "animate-pulse bg-accent",
     idle: "bg-fg-muted/40",
   }[instance.status]
   const statusBadgeClass = {
-    running: "bg-emerald-500/20 text-emerald-400",
-    starting: "bg-amber-500/20 text-amber-400",
-    initializing: "bg-sky-500/20 text-sky-400",
+    running: "bg-success/20 text-success",
+    starting: "bg-warning/20 text-warning",
+    initializing: "bg-accent/20 text-accent",
     idle: "bg-fg-muted/15 text-fg-muted",
   }[instance.status]
 
@@ -354,7 +354,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
       <div
         className={cn(
           "relative flex flex-col gap-1 rounded border px-2 pt-1.5 pb-4.5 text-[11px] shadow-sm",
-          "overflow-hidden border-purple-400/30 bg-bg-elevated",
+          "overflow-hidden border-cat-9/30 bg-bg-elevated",
           isExpired && "opacity-55",
         )}
         style={{ width: "100%", height: LAMBDA_INSTANCE_H - 4 }}
@@ -370,7 +370,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           </span>
           {isProvisioned && (
             <span
-              className="rounded bg-purple-400/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-purple-300 uppercase"
+              className="rounded bg-cat-9/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-cat-9 uppercase"
               title="Provisioned concurrency — kept warm, exempt from the idle timeout"
             >
               prov
@@ -388,7 +388,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
             <button
               type="button"
               data-peek-trigger
-              className="ml-0.5 flex items-center rounded p-0.5 text-purple-400 hover:bg-purple-400/15"
+              className="ml-0.5 flex items-center rounded p-0.5 text-cat-9 hover:bg-cat-9/15"
               title="Peek log stream"
               onClick={(e) => {
                 e.stopPropagation()
@@ -443,7 +443,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
                   <div
                     className={cn(
                       "absolute inset-y-0 left-0",
-                      isProvisioned ? "bg-purple-400" : barColor(frac),
+                      isProvisioned ? "bg-cat-9" : barColor(frac),
                     )}
                     style={{ width: `${f * 100}%`, opacity: 0.7 }}
                   />
@@ -474,9 +474,9 @@ function TriggerRow({
   const trigger = fmtTrigger(event)
   const TriggerIcon = trigger.serviceKey ? SERVICES[trigger.serviceKey].icon : undefined
   const statusClass: Record<string, string | undefined> = {
-    starting: "font-medium text-amber-400",
-    initializing: "font-medium text-sky-400",
-    running: "text-emerald-400",
+    starting: "font-medium text-warning",
+    initializing: "font-medium text-accent",
+    running: "text-success",
   }
 
   return (
@@ -518,7 +518,7 @@ function MetricBar({
       <span className={cn(fieldLabel, "w-7 shrink-0 text-fg-muted/60")}>{label}</span>
       <div className="h-1 flex-1 overflow-hidden rounded-full bg-fg-muted/15">
         <div
-          className="h-full rounded-full bg-purple-400/60"
+          className="h-full rounded-full bg-cat-9/60"
           style={{ width: `${Math.round(frac * 100)}%` }}
         />
       </div>
