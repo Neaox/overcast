@@ -3,6 +3,7 @@ package lambda
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -42,6 +43,15 @@ func newRICBackedContainerInstance(t *testing.T) (*containerInstance, string) {
 	srv.RegisterContainer("127.0.0.1", arn)
 
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Port: 4566}
+	sink := newLogSink(logSinkConfig{
+		logger:     zap.NewNop(),
+		clk:        clock.New(),
+		group:      "/aws/lambda/demo",
+		stream:     "stream",
+		region:     "us-east-1",
+		runtimeAPI: srv,
+	})
+	t.Cleanup(sink.close)
 	return &containerInstance{
 		id:          "cafebabe1234deadbeef",
 		containerIP: "127.0.0.1",
@@ -55,6 +65,8 @@ func newRICBackedContainerInstance(t *testing.T) (*containerInstance, string) {
 		clk:        clock.New(),
 		exitNotify: newExitNotifier(),
 		endpoint:   containerendpoint.New(cfg, "http://172.18.0.1:4566"),
+		logSink:    sink,
+		logCtx:     sink.ctx,
 		healthy:    true,
 	}, addr
 }
@@ -85,6 +97,27 @@ func serveOneInvocation(t *testing.T, addr string) {
 	post.Body.Close()
 }
 
+// reportLineOf returns the REPORT line from an invocation's X-Amz-Log-Result —
+// the tail the caller is handed, which is where the per-request buffer is
+// snapshotted before the invocation releases it.
+func reportLineOf(t *testing.T, result *InvokeResult) string {
+	t.Helper()
+	if result == nil || result.LogResult == "" {
+		t.Fatal("the invocation returned no LogResult to read the REPORT line from")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(result.LogResult)
+	if err != nil {
+		t.Fatalf("decode LogResult: %v", err)
+	}
+	for _, line := range strings.Split(string(decoded), "\n") {
+		if strings.HasPrefix(line, "REPORT RequestId:") {
+			return line
+		}
+	}
+	t.Fatalf("no REPORT line in the invocation's tail:\n%s", decoded)
+	return ""
+}
+
 // awsReportWithInit pins the exact AWS field order and format of a cold-start
 // REPORT line: Duration, Billed Duration, Memory Size, Max Memory Used,
 // Init Duration.
@@ -104,24 +137,26 @@ func TestContainerInstanceInvoke_reportsInitDurationOnColdStartOnly(t *testing.T
 	go serveOneInvocation(t, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
+	cold, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{LogTail: true})
+	if err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
 
 	// Then: the REPORT line carries Init Duration, last, in AWS format.
-	report := reportLine(t, ci)
+	report := reportLineOf(t, cold)
 	if !awsReportWithInit.MatchString(report) {
 		t.Errorf("cold-start REPORT does not match AWS format with Init Duration:\n%q", report)
 	}
 
 	// When: the same environment serves a warm invocation.
 	go serveOneInvocation(t, addr)
-	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
+	warm, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{LogTail: true})
+	if err != nil {
 		t.Fatalf("second invoke: %v", err)
 	}
 
 	// Then: the warm REPORT omits Init Duration.
-	report = reportLine(t, ci)
+	report = reportLineOf(t, warm)
 	if strings.Contains(report, "Init Duration") {
 		t.Errorf("warm REPORT should omit Init Duration, got %q", report)
 	}
@@ -138,12 +173,13 @@ func TestContainerInstanceInvoke_provisionedEnvironmentOmitsInitDuration(t *test
 	go serveOneInvocation(t, addr)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{}); err != nil {
+	result, err := ci.Invoke(ctx, []byte(`{}`), InvokeOptions{LogTail: true})
+	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 
 	// Then: even the first REPORT omits Init Duration.
-	report := reportLine(t, ci)
+	report := reportLineOf(t, result)
 	if strings.Contains(report, "Init Duration") {
 		t.Errorf("provisioned REPORT should omit Init Duration, got %q", report)
 	}

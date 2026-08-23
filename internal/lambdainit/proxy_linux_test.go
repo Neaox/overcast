@@ -285,6 +285,51 @@ func TestProxyObservesTheRequestIDAndStampsTheResult(t *testing.T) {
 	}
 }
 
+// The other half of the ordering contract: the init drains and stamps the
+// sequence on GET /next too, so the host knows what the container printed
+// before it asked for work — the INIT phase before the first invocation, and
+// anything printed after answering the previous one before later invocations.
+// Without it the host writes the next START before that output has landed, and
+// CloudWatch shows INIT output *after* the first START.
+func TestProxyDrainsAndStampsTheSequenceOnNext(t *testing.T) {
+	var seenSeq atomic.Pointer[string]
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/next") {
+			v := r.Header.Get(initproto.HeaderLogSeq)
+			seenSeq.Store(&v)
+			w.Header().Set("Lambda-Runtime-Aws-Request-Id", "req-7")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "{}")
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer target.Close()
+
+	// The drain must happen *before* the request is forwarded, or the number
+	// stamped on it describes a moment that has not been reached yet.
+	var drained atomic.Int64
+	var stampedAfterDrain atomic.Bool
+	addr := startProxy(t, target.Listener.Addr().String(), func(context.Context) uint64 {
+		drained.Add(1)
+		stampedAfterDrain.Store(seenSeq.Load() == nil)
+		return 12
+	})
+
+	if _, err := ricNext(addr); err != nil {
+		t.Fatal(err)
+	}
+	if got := drained.Load(); got != 1 {
+		t.Fatalf("the pipes were drained %d times for one /next, want 1", got)
+	}
+	if !stampedAfterDrain.Load() {
+		t.Error("/next was forwarded before the drain, so its sequence describes a moment that had not happened")
+	}
+	if v := seenSeq.Load(); v == nil || *v != "12" {
+		t.Fatalf("the forwarded /next carried %s = %v, want 12", initproto.HeaderLogSeq, v)
+	}
+}
+
 func startProxy(t *testing.T, hostAddr string, drain func(context.Context) uint64) string {
 	t.Helper()
 	return startProxyWithTracker(t, hostAddr, &requestTracker{}, drain)

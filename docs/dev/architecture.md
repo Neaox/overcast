@@ -828,13 +828,24 @@ behind them — and everything else (S3, SQS, DynamoDB, and so on) is unaffected
 1. `Invoke` arrives. The pool checks concurrency limits and either reuses a
    warm container, starts a cold one, or queues.
 2. A cold start pulls the runtime image if needed, builds a single tar
-   containing the function code, any layers and a bootstrap shim, creates the
-   container, copies the tar in, starts it, and waits for an IP.
-3. The container's AWS runtime client long-polls Overcast's **Lambda Runtime
-   API** (port 9001) for work — the same protocol real Lambda uses. Its first
-   poll is the signal that initialisation finished.
+   containing the function code, any layers and **Overcast's init**, creates the
+   container, copies the tar in, starts it, and waits for an IP. The init is the
+   container's entrypoint; the command the container would otherwise have run —
+   a zip function's `/lambda-entrypoint.sh <handler>`, an image function's
+   `ENTRYPOINT`+`CMD` — becomes its argument list.
+3. The init runs as PID 1, launches that command and any `/opt/extensions`
+   binaries as its children, and serves the Runtime API on `127.0.0.1:9001`
+   inside the container, proxying it to Overcast's per-environment endpoint
+   (port 9001 on the host). The container's AWS runtime client long-polls it for
+   work — the same protocol real Lambda uses. Its first poll is the signal that
+   initialisation finished.
 4. Overcast hands over the event; the handler runs; the client posts the
-   response back; the waiting HTTP request completes.
+   response back; the waiting HTTP request completes. Because the init owns the
+   children's stdout and stderr, it knows which invocation every line belongs
+   to: it ships them to Overcast on a second, long-lived connection, and it
+   drains both pipes before forwarding the response, so the invocation's log
+   tail and its CloudWatch ordering are exact rather than inferred. See
+   [the plan](../plans/lambda-in-container-init.md).
 5. The container returns to a warm pool rather than being destroyed, so the
    next invocation skips steps 2 and 3.
 

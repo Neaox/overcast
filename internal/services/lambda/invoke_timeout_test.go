@@ -34,6 +34,15 @@ func newStalledContainerInstance(t *testing.T) *containerInstance {
 	t.Cleanup(func() { _ = srv.Stop(context.Background()) })
 
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", Port: 4566}
+	sink := newLogSink(logSinkConfig{
+		logger:     zap.NewNop(),
+		clk:        clock.New(),
+		group:      "/aws/lambda/demo",
+		stream:     "stream",
+		region:     "us-east-1",
+		runtimeAPI: srv,
+	})
+	t.Cleanup(sink.close)
 	return &containerInstance{
 		id:          "cafebabe1234deadbeef",
 		containerIP: "172.19.0.3",
@@ -47,21 +56,29 @@ func newStalledContainerInstance(t *testing.T) *containerInstance {
 		clk:        clock.New(),
 		exitNotify: newExitNotifier(),
 		endpoint:   containerendpoint.New(cfg, "http://172.18.0.1:4566"),
+		logSink:    sink,
+		logCtx:     sink.ctx,
 		healthy:    true,
 	}
 }
 
-// reportLine returns the REPORT line from the instance's rolling tail buffer.
+// reportLine returns the REPORT line from whichever request buffer holds it.
+// A failure path leaves the buffer in place — the environment is unhealthy and
+// about to be closed — so this is what the invocation recorded about itself.
 func reportLine(t *testing.T, ci *containerInstance) string {
 	t.Helper()
-	ci.tailMu.Lock()
-	defer ci.tailMu.Unlock()
-	for _, line := range strings.Split(string(ci.tailBuf), "\n") {
-		if strings.HasPrefix(line, "REPORT RequestId:") {
-			return line
+	ci.logSink.mu.Lock()
+	defer ci.logSink.mu.Unlock()
+	var seen []string
+	for _, buf := range ci.logSink.buffers {
+		for _, line := range strings.Split(string(buf.buf), "\n") {
+			seen = append(seen, line)
+			if strings.HasPrefix(line, "REPORT RequestId:") {
+				return line
+			}
 		}
 	}
-	t.Fatalf("no REPORT line in tail buffer:\n%s", ci.tailBuf)
+	t.Fatalf("no REPORT line in any request buffer:\n%s", strings.Join(seen, "\n"))
 	return ""
 }
 

@@ -168,6 +168,22 @@ exports.handler = async () => ({
 })
 ```
 
+## Reading a function container's own logs
+
+A Lambda container runs under Overcast's init (`internal/lambdainit`), which owns the runtime's
+stdout and stderr. It **tees** every line it reads to its own — which are the container's — so
+`docker logs <container>` still shows the function's output byte for byte, exactly as it did before
+the init existed. That copy is the debugging backup, never a second transport: CloudWatch, the
+`X-Amz-Log-Result` tail and the Telemetry API are fed from the init's own frame stream and are never
+reconciled against the daemon's copy.
+
+Interleaved with the function's output you will see lines prefixed `[overcast-init]` on stderr.
+Those are Overcast's own diagnostics — the runtime's pid and argv, each extension it started, where
+each invocation began and ended and how many lines it drained, log-channel reconnects and gaps, the
+child's exit code. They go to the container's stderr and nowhere else: they never reach CloudWatch,
+the tail or the Telemetry API, which stay AWS-shaped. They are the first place to look when a
+container dies before its runtime ever polls for work.
+
 ## Ports
 
 Never bind **4566** or **4567** — those belong to the user's own instance. Use

@@ -55,11 +55,26 @@ const (
 	// long-lived chunked request per init, not one per invocation.
 	LogsPath = "/overcast/v1/logs"
 
-	// HeaderLogSeq is added by the init to the forwarded
-	// POST /runtime/invocation/{id}/response and .../error requests. It reads
-	// "every frame with seq <= N was published on the log stream before this
-	// request was forwarded", which is what lets the host finalise an
-	// invocation knowing it has the whole of that invocation's output.
+	// HeaderLogSeq is added by the init to three forwarded requests, and reads
+	// the same on all of them: "every frame with seq <= N was published on the
+	// log stream before this request was forwarded". The init drains both pipes
+	// immediately before stamping it, so the number is a fact about what the
+	// runtime had written, not an estimate.
+	//
+	// It bounds an invocation at both ends, which is what makes the host's view
+	// of the log ordered rather than merely attributed:
+	//
+	//   - GET /runtime/invocation/next — the runtime has gone idle and is
+	//     asking for work, so everything it wrote up to now belongs to what
+	//     came *before* the invocation the host is about to hand out. On the
+	//     first /next that is the INIT phase; on later ones it is whatever the
+	//     runtime printed after answering the previous invocation. The host
+	//     waits for that seq before it writes the next START, so INIT output
+	//     precedes the first START exactly as it does on AWS.
+	//   - POST /runtime/invocation/{id}/response and .../error — everything
+	//     the runtime wrote for that invocation is published, so the host can
+	//     finalise it knowing it has the whole of its output and can put END
+	//     and REPORT strictly after it.
 	HeaderLogSeq = "X-Overcast-Log-Seq"
 )
 

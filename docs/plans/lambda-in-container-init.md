@@ -1,14 +1,21 @@
 # Lambda in-container init: own the runtime's stdout — plan
 
-> Status: **in progress** 2026-08-23 — Phase 0 (shared `internal/containerlogs`
-> follower; ECS adopts it) **merged** in #1404; Phase 1 (the init binary,
-> `initproto`, `initbin` embed and build plumbing; no host wiring) on PR #1405;
-> Phases 2–3 not started. Measured init size: 6.4 MiB (amd64) / 5.9 MiB
-> (arm64) stripped — the `net/http` proxy is the floor, so §3.2's "~5 MB
-> total" is ~13 MB embedded and ~6.7 MB copied per cold start; Phase 2
-> measures the copy cost and decides on gzip-on-embed or the seeded volume.
-> This document is the design, the cost/benefit case, the phased delivery and
-> — deliberately — the deletion ledger. It was written straight after #1402,
+> Status: **in progress** 2026-08-23 — Phases 0 (#1404), 1 (#1405) and the
+> cursor fix found while baselining (#1406) are merged; Phase 2 (the cut-over)
+> is implemented on `feat/lambda-init-cutover`. §3.2's copy was measured at
+> +273–376 ms per cold start on Docker Desktop (~20 MB/s CopyToContainer), so
+> the seeded-volume alternative is what shipped: content-addressed volume,
+> inspect per cold start, seed once per process, archive copy retained only as
+> a logged fallback — cold p50 lands at −13 to +13 ms vs main. The ordering
+> invariant grew a second half in review: the init stamps `X-Overcast-Log-Seq`
+> on `/next` as well as `/response`, so INIT-phase and between-invocation
+> output precedes the next START. Known deliberate cost (documented in
+> docs/services/lambda.md): the init's ~0.3 ms CPU per invoke comes out of the
+> function's CFS quota, so 128 MB functions see ~1 in 8 invokes stall ~80 ms in
+> sustained back-to-back bursts, as on AWS. Phase 3 (Observer removal, stale
+> comments, this doc's completion) remains. This document is the design, the
+> cost/benefit case, the phased delivery and — deliberately — the deletion
+> ledger. It was written straight after #1402,
 > the fourth round of fixes to the `X-Amz-Log-Result` tail wait (#873, #1160,
 > #1325, run 32622332545), when the question "is this a flaw in the
 > architecture we chose?" was answered *yes*.

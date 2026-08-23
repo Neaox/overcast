@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/services/lambda/initproto"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -83,6 +84,11 @@ type runtimeContainerConfig struct {
 	ContainerID        string
 	Handler            string
 	ExpectedExtensions []string
+	// LogSink is where this environment's in-container init ships its output.
+	// It is created before the container exists, because the init starts
+	// publishing INIT-phase frames the moment the container starts — long
+	// before the acquire that created it returns. See container_logs.go.
+	LogSink *logSink
 }
 
 type extensionRegistrationRequest struct {
@@ -135,6 +141,13 @@ type invokeResponse struct {
 	FunctionError string // "" for success, "Unhandled" for a runtime-reported error
 	IsInitError   bool   // true if POST /runtime/init/error was called
 	ErrorPayload  []byte // error details JSON when FunctionError != ""
+	// LogSeq is the highest log frame the in-container init had published when
+	// it forwarded this response — initproto.HeaderLogSeq. Waiting for the
+	// ingest to reach it is what makes the tail and the CloudWatch ordering
+	// exact. Zero when the header is absent, which means the responder is not
+	// behind our init (a direct Runtime API client, or a test) and there is
+	// nothing to wait for.
+	LogSeq uint64
 }
 
 // RuntimeAPIServer serves the Lambda Runtime API to containers.
@@ -152,6 +165,14 @@ type RuntimeAPIServer struct {
 	firstNextAt      map[string]time.Time     // container IP → time of first GET /next
 	ready            map[string]chan struct{} // container IP → closed after first GET /next
 	containerPorts   map[int]string           // per-environment listener port → container IP
+	// logSinks is the ingest's own index, keyed by the per-environment
+	// listener port rather than by the container's address. It exists because
+	// the init opens its log stream the moment the container starts, which is
+	// before Docker will tell us the address — so an ingest that could only be
+	// resolved by address would spend the whole INIT phase waiting for a
+	// registration, and the INIT output would land after the first START.
+	// The port is the same authority containerForRequestLocked prefers anyway.
+	logSinks map[int]*logSink
 	// server fronts every listener the caller bound, plus every per-environment
 	// listener added since; http.Server tracks them itself, so Stop's Shutdown
 	// closes them all and nothing here needs to hold them.
@@ -231,6 +252,7 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 		firstNextAt:      make(map[string]time.Time),
 		ready:            make(map[string]chan struct{}),
 		containerPorts:   make(map[int]string),
+		logSinks:         make(map[int]*logSink),
 		logger:           logger,
 		addr:             containerAddr,
 		containerHost:    containerHost,
@@ -254,6 +276,10 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 	mux.HandleFunc("/2020-01-01/extension/init/error", s.handleExtensionError)
 	mux.HandleFunc("/2020-01-01/extension/exit/error", s.handleExtensionError)
 	mux.HandleFunc("/2020-08-15/logs", s.handleExtensionLogsSubscribe)
+	// Not an AWS API: the emulator-internal log channel from the in-container
+	// init. It is on this mux because this is the listener a Lambda container
+	// can reach and the one that identifies it. See log_ingest.go.
+	mux.HandleFunc(initproto.LogsPath, s.handleContainerLogs)
 
 	s.server = &http.Server{Handler: mux}
 
@@ -473,6 +499,24 @@ func (l *containerListener) Addr() string {
 // Called once the environment's address is known and registered, because every
 // other piece of per-container state — readiness, extensions, log delivery —
 // is still keyed by that address.
+// RegisterLogSink indexes an execution environment's log sink against its own
+// listener, before the container exists. See RuntimeAPIServer.logSinks.
+func (l *containerListener) RegisterLogSink(sink *logSink) {
+	if l == nil || sink == nil {
+		return
+	}
+	l.srv.mu.Lock()
+	l.srv.logSinks[l.port] = sink
+	l.srv.mu.Unlock()
+}
+
+// logSinkForPort returns the sink of the environment that owns a listener.
+func (s *RuntimeAPIServer) logSinkForPort(port int) *logSink {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.logSinks[port]
+}
+
 func (l *containerListener) Attach(containerIP string) {
 	if l == nil || containerIP == "" {
 		return
@@ -491,6 +535,7 @@ func (l *containerListener) Close() error {
 	l.once.Do(func() {
 		l.srv.mu.Lock()
 		delete(l.srv.containerPorts, l.port)
+		delete(l.srv.logSinks, l.port)
 		l.srv.mu.Unlock()
 		for _, ln := range l.lns {
 			_ = ln.Close()
@@ -1178,6 +1223,15 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	// without it, a successful cold start and one that never made contact leave
 	// Overcast's log looking exactly the same, and #800 spent its diagnosis
 	// reading that silence as proof of the second.
+	// What the init had published when the runtime went idle. Everything at or
+	// below it belongs before the invocation this poll is about to be given,
+	// and Invoke waits for it before writing that invocation's START.
+	if seq, err := strconv.ParseUint(r.Header.Get(initproto.HeaderLogSeq), 10, 64); err == nil && seq > 0 {
+		if sink := s.logSinkForPort(localPortOf(r)); sink != nil {
+			sink.noteIdleSeq(seq)
+		}
+	}
+
 	if s.noteFirstNext(containerIP) {
 		s.logger.Debug("runtime api: execution environment finished INIT",
 			zap.String("function", functionNameFromARN(functionARN)),
@@ -1407,6 +1461,22 @@ func (s *RuntimeAPIServer) handleInvocationAction(w http.ResponseWriter, r *http
 	reqID := parts[0]
 	action := parts[1]
 
+	// The in-container init adds this on the way through: every log frame at or
+	// below it was published on the log stream before this request was
+	// forwarded. The invoke path waits for the ingest to catch up to it before
+	// it writes END/REPORT and snapshots the tail. Absent — a Runtime API
+	// client that is not behind our init — reads as zero, which is "nothing to
+	// wait for"; so does a value we cannot parse, because refusing the response
+	// over a log header would be a far worse failure than a tail that is one
+	// line short.
+	logSeq, seqErr := strconv.ParseUint(r.Header.Get(initproto.HeaderLogSeq), 10, 64)
+	if seqErr != nil {
+		// Including overflow, where ParseUint hands back MaxUint64 rather than
+		// zero: waiting for a sequence no init will ever reach would cost every
+		// such invocation the whole bound.
+		logSeq = 0
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024+1024)) // 6MB + buffer
 	if err != nil {
 		http.Error(w, "read body failed", http.StatusInternalServerError)
@@ -1431,7 +1501,7 @@ func (s *RuntimeAPIServer) handleInvocationAction(w http.ResponseWriter, r *http
 
 	switch action {
 	case "response":
-		inv.ResultCh <- invokeResponse{Payload: body}
+		inv.ResultCh <- invokeResponse{Payload: body, LogSeq: logSeq}
 	case "error":
 		// Every error a runtime reports here — a thrown exception, a
 		// Runtime.ExitError, anything — reaches the invoker as
@@ -1443,6 +1513,7 @@ func (s *RuntimeAPIServer) handleInvocationAction(w http.ResponseWriter, r *http
 		inv.ResultCh <- invokeResponse{
 			FunctionError: "Unhandled",
 			ErrorPayload:  body,
+			LogSeq:        logSeq,
 		}
 	default:
 		http.Error(w, "unknown action: "+action, http.StatusBadRequest)

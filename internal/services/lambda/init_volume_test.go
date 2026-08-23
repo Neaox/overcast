@@ -1,0 +1,329 @@
+package lambda
+
+// init_volume_test.go — the init arrives in a seeded volume, not in every
+// container's provisioning archive.
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"io"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+)
+
+// initVolumeMountOf returns the read-only mount that delivers the init, if the
+// create request carries one.
+func initVolumeMountOf(create docker.CreateContainerRequest) (docker.Mount, bool) {
+	if create.HostConfig == nil {
+		return docker.Mount{}, false
+	}
+	for _, m := range create.HostConfig.Mounts {
+		if m.Target == initVolumeTarget {
+			return m, true
+		}
+	}
+	return docker.Mount{}, false
+}
+
+// archiveHasInit reports whether a provisioning archive carries the init.
+func archiveHasInit(t *testing.T, archive []byte) bool {
+	t.Helper()
+	want := strings.TrimPrefix(initproto.InitPath, "/")
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("read provisioning archive: %v", err)
+		}
+		if hdr.Name == want {
+			return true
+		}
+	}
+}
+
+// The ordinary path: the volume is seeded once, the function container mounts
+// it read-only where the entrypoint expects the init, and the provisioning
+// archive carries nothing of the init at all.
+func TestInitVolume_containerMountsTheSeededVolumeInsteadOfCopyingTheInit(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	create := acquireAgainstDaemon(t, daemon, zipFunction(t))
+
+	mount, ok := initVolumeMountOf(create)
+	if !ok {
+		t.Fatalf("the container has no mount at %s: %+v", initVolumeTarget, create.HostConfig)
+	}
+	if mount.Type != "volume" {
+		t.Errorf("init mount type = %q, want volume", mount.Type)
+	}
+	if !mount.ReadOnly {
+		t.Error("the init volume is mounted writable; a function must not be able to rewrite its own init")
+	}
+	if !strings.HasPrefix(mount.Source, "overcast-lambda-init-") {
+		t.Errorf("init volume name = %q, want the overcast-lambda-init-<version>-<arch> shape", mount.Source)
+	}
+	if !strings.HasSuffix(mount.Source, "-amd64") {
+		t.Errorf("init volume name = %q, want it to name the architecture", mount.Source)
+	}
+
+	// The volume exists, carries our labels, and holds the init.
+	labels, held := daemon.volumeLabels(mount.Source)
+	if !held {
+		t.Fatalf("the daemon holds no volume named %q", mount.Source)
+	}
+	for key, want := range map[string]string{
+		docker.LabelManaged:        "true",
+		docker.LabelService:        "lambda",
+		docker.LabelLambdaInitArch: "amd64",
+	} {
+		if labels[key] != want {
+			t.Errorf("volume label %s = %q, want %q", key, labels[key], want)
+		}
+	}
+	if labels[docker.LabelLambdaInitVersion] == "" {
+		t.Errorf("the volume carries no %s label, so nothing can tell it from one Docker auto-created", docker.LabelLambdaInitVersion)
+	}
+	if !strings.Contains(mount.Source, labels[docker.LabelLambdaInitVersion]) {
+		t.Errorf("the volume's name %q does not carry its version label %q", mount.Source, labels[docker.LabelLambdaInitVersion])
+	}
+
+	seeded, ok := daemon.seededArchive()
+	if !ok {
+		t.Fatal("nothing was copied into the seeding container")
+	}
+	if !archiveHasInitNamed(t, seeded, "init") {
+		t.Error("the archive copied into the volume does not hold the init")
+	}
+}
+
+// archiveHasInitNamed reports whether an archive holds an executable entry of
+// this name.
+func archiveHasInitNamed(t *testing.T, archive []byte, name string) bool {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("read seed archive: %v", err)
+		}
+		if hdr.Name == name {
+			if hdr.Mode&0o111 == 0 {
+				t.Errorf("the seeded init is not executable (mode %o)", hdr.Mode)
+			}
+			if hdr.Size == 0 {
+				t.Error("the seeded init is empty")
+			}
+			return true
+		}
+	}
+}
+
+// Two cold starts racing must produce one seed, not two.
+func TestInitVolume_isSeededOncePerProcess(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	for i := 0; i < 3; i++ {
+		fn := zipFunction(t)
+		if _, err := cr.acquireContainer(context.Background(), fn, func(string) {}, initTypeOnDemand, false); err == nil {
+			t.Fatal("expected the fake daemon's start failure")
+		}
+	}
+
+	daemon.mu.Lock()
+	seeds := len(daemon.seeds)
+	daemon.mu.Unlock()
+	if seeds != 1 {
+		t.Errorf("the init volume was seeded %d times across three cold starts, want 1", seeds)
+	}
+}
+
+// A volume of our name that carries none of our labels is one Docker
+// auto-created empty for a container that named it, which is what is left
+// behind when a user prunes ours mid-cold-start. Seeding into it would leave
+// every later container without an entrypoint, so it is removed and re-seeded.
+func TestInitVolume_unlabelledVolumeOfOurNameIsReplaced(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+	daemon.seedVolume(name, nil) // as the daemon auto-creates it: no labels
+
+	fn := zipFunction(t)
+	if _, err := cr.acquireContainer(context.Background(), fn, func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+
+	if removed := daemon.removedVolumes(); !slices.Contains(removed, name) {
+		t.Errorf("the unlabelled volume was not removed; removals were %v", removed)
+	}
+	labels, held := daemon.volumeLabels(name)
+	if !held {
+		t.Fatal("the volume was not re-seeded")
+	}
+	if labels[docker.LabelLambdaInitVersion] == "" {
+		t.Error("the re-seeded volume carries no version label")
+	}
+}
+
+// An init volume from a previous build is removed when the current one is first
+// seeded, so a long-lived daemon does not accumulate one per Overcast version.
+func TestInitVolume_supersededVolumesArePruned(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	const stale = "overcast-lambda-init-deadbeef1234-amd64"
+	daemon.seedVolume(stale, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: "deadbeef1234",
+		docker.LabelLambdaInitArch:    "amd64",
+	})
+	// A Lambda volume that is not an init volume — nothing here may touch it.
+	const unrelated = "overcast-lambda-something-else"
+	daemon.seedVolume(unrelated, map[string]string{
+		docker.LabelManaged: "true",
+		docker.LabelService: "lambda",
+	})
+
+	fn := zipFunction(t)
+	if _, err := cr.acquireContainer(context.Background(), fn, func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the fake daemon's start failure")
+	}
+
+	held := daemon.volumeNames()
+	if slices.Contains(held, stale) {
+		t.Errorf("the superseded init volume survived: %v", held)
+	}
+	if !slices.Contains(held, unrelated) {
+		t.Errorf("a Lambda volume that is not an init volume was removed: %v", held)
+	}
+}
+
+// A daemon that will not manage volumes still runs functions: the init goes
+// back into the provisioning archive, which is the only reason that path still
+// exists.
+func TestInitVolume_daemonWithoutVolumesFallsBackToTheArchive(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.refuseVolumes = true
+	create := acquireAgainstDaemon(t, daemon, zipFunction(t))
+
+	if _, ok := initVolumeMountOf(create); ok {
+		t.Error("the container mounts an init volume the daemon refused to create")
+	}
+	if got := create.ContainerConfig.Entrypoint; !slices.Equal(got, []string{initproto.InitPath}) {
+		t.Errorf("entrypoint = %v, want the init even on the fallback path", got)
+	}
+	archive, ok := daemon.archives["overcast-lambda-zip-fn"]
+	if !ok {
+		// The container name carries a timestamp; find it by prefix.
+		daemon.mu.Lock()
+		for name, body := range daemon.archives {
+			if strings.HasPrefix(name, "overcast-lambda-zip-fn-") {
+				archive, ok = body, true
+			}
+		}
+		daemon.mu.Unlock()
+	}
+	if !ok {
+		t.Fatal("no provisioning archive was copied into the container")
+	}
+	if !archiveHasInit(t, archive) {
+		t.Error("the provisioning archive does not carry the init, and no volume does either")
+	}
+}
+
+// The volume is addressed by what is in it, so an Overcast built with a
+// different init can never read a stale one.
+func TestInitVolumeName_isDerivedFromTheInitsContent(t *testing.T) {
+	a := initVolumeName([]byte("one init"), "amd64")
+	b := initVolumeName([]byte("another init"), "amd64")
+	if a == b {
+		t.Fatal("two different inits share a volume name")
+	}
+	if again := initVolumeName([]byte("one init"), "amd64"); again != a {
+		t.Fatalf("the same init produced two names: %q and %q", a, again)
+	}
+	if arm := initVolumeName([]byte("one init"), "arm64"); arm == a {
+		t.Fatal("the two architectures share a volume name")
+	}
+	if got := initVolumeVersion(a); got == "" || !strings.Contains(a, got) {
+		t.Errorf("initVolumeVersion(%q) = %q", a, got)
+	}
+}
+
+// The mount goes alongside a function's EFS mounts, not instead of them.
+func TestWithInitVolume_keepsTheMountsItWasGiven(t *testing.T) {
+	efs := []docker.Mount{{Type: "volume", Source: "fs-1", Target: "/mnt/data"}}
+	got := withInitVolume(efs, "overcast-lambda-init-abc-amd64")
+	if len(got) != 2 || got[0].Target != "/mnt/data" || got[1].Target != initVolumeTarget {
+		t.Fatalf("mounts = %+v, want the EFS mount and the init volume", got)
+	}
+	if unchanged := withInitVolume(efs, ""); len(unchanged) != 1 {
+		t.Fatalf("mounts = %+v with no init volume, want only the EFS mount", unchanged)
+	}
+}
+
+// An empty init volume — what a process killed mid-seed leaves behind, and the
+// one state the labels cannot tell from a good seed — is self-healing: the
+// container will not start, Docker names the path it could not exec, and the
+// volume is dropped so the next cold start re-seeds it.
+func TestInitVolume_anEmptyVolumeIsDroppedWhenTheContainerCannotStart(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.startError = "OCI runtime create failed: exec: \"" + initproto.InitPath + "\": stat " + initproto.InitPath + ": no such file or directory"
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the start failure")
+	}
+	if removed := daemon.removedVolumes(); !slices.Contains(removed, name) {
+		t.Errorf("the init volume survived a start that could not find the init; removals were %v", removed)
+	}
+	if _, held := cr.initVolumes.Load(name); held {
+		t.Error("the seeding state was kept, so the next cold start will not re-seed")
+	}
+}
+
+// A start that failed for its own reasons has a perfectly good volume, and
+// throwing it away would cost every such failure a re-seed.
+func TestInitVolume_anUnrelatedStartFailureKeepsTheVolume(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	daemon.startError = "driver failed programming external connectivity: port is already allocated"
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+
+	binary, err := lambdaInitBinary("x86_64")
+	if err != nil {
+		t.Fatalf("init binary: %v", err)
+	}
+	name := initVolumeName(binary, "amd64")
+
+	if _, err := cr.acquireContainer(context.Background(), zipFunction(t), func(string) {}, initTypeOnDemand, false); err == nil {
+		t.Fatal("expected the start failure")
+	}
+	if removed := daemon.removedVolumes(); slices.Contains(removed, name) {
+		t.Errorf("an unrelated start failure removed the init volume; removals were %v", removed)
+	}
+	if !slices.Contains(daemon.volumeNames(), name) {
+		t.Error("the init volume is gone after an unrelated start failure")
+	}
+}

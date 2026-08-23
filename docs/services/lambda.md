@@ -84,8 +84,6 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 - Account-wide concurrency quotas and requests-per-second limits are not
   emulated; only per-function reserved concurrency is enforced.
 - Runtime-specific environment validation is minimal.
-- Lambda extensions support currently covers Docker-backed zip functions. Image
-  function extension startup is not yet wrapped.
 - Extension Logs API support is limited to HTTP destinations and best-effort
   delivery. Telemetry API subscriptions are not yet implemented.
 - Under the JSON log format, the init-phase platform records
@@ -364,6 +362,29 @@ entry per execution environment, so a function serving five concurrent
 invocations shows five instances. A retired environment stops being listed at
 the moment it is retired rather than lingering until the idle timeout.
 
+### CPU is shared with the init, and small functions feel it in bursts
+
+Every execution environment runs an Overcast init process as PID 1 — the parent
+of the runtime, and what makes an invocation's log attribution exact (see
+[Log format and log levels](#log-format-and-log-levels)). It is inside the
+container, so its CPU comes out of the function's CPU allocation, exactly as
+AWS's own RAPID init does.
+
+Lambda's allocation is proportional to memory, so a 128 MB function gets about
+7% of a vCPU, and the kernel enforces that as a quota per 100 ms period. Under a
+*sustained burst* of back-to-back invocations, the small amount of extra CPU the
+init uses is enough to exhaust that quota, and the container is then throttled
+until the period rolls over. Measured on a 128 MB `nodejs22.x` hello-world
+driven with no think time: warm p50 is unchanged at ~5 ms, but roughly one
+invocation in eight stalls for ~80 ms, taking p95 from ~15 ms to ~80 ms.
+
+It is not a defect and it is not emulated away — throttling a container that
+overruns its CPU allocation is what Lambda does, and giving the init CPU the
+function does not pay for would make the emulation *less* faithful. It
+disappears entirely with any of: more memory (at 1769 MB, a full vCPU, there are
+no stalls at all), or any gap between invocations (at 200 ms of think time,
+none). Load-testing a 128 MB function against Overcast is where you will see it.
+
 ---
 
 ## Partial batch responses
@@ -630,10 +651,11 @@ AWS-calling extension requirements, and troubleshooting guidance.
 
 ## Lambda Extensions
 
-Docker-backed zip functions start executable external extensions found directly
-under `/opt/extensions` in attached layers before the runtime entrypoint starts.
-Layer file modes are preserved, so extension binaries and scripts must be
-executable in the layer zip.
+Docker-backed functions — zip and container image alike — start executable
+external extensions found directly under `/opt/extensions` before the runtime
+entrypoint starts, as children of the same in-container init that owns the
+runtime. Layer file modes are preserved, so extension binaries and scripts must
+be executable in the layer zip.
 
 Supported Runtime API extension paths:
 
