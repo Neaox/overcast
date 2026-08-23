@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/Neaox/overcast/internal/awsmodel"
 )
 
 // The pruned shape snapshot.
@@ -103,27 +105,27 @@ var shapeTraitAllowlist = map[string]struct{}{
 // carries only what the routing manifest needs; the pruner needs members,
 // identifiers and the rest of the resource vocabulary as well.
 type rawShape struct {
-	Type                 string                     `json:"type"`
-	Version              string                     `json:"version"`
-	Input                *reference                 `json:"input"`
-	Output               *reference                 `json:"output"`
-	Errors               []reference                `json:"errors"`
-	Member               *reference                 `json:"member"`
-	Key                  *reference                 `json:"key"`
-	Value                *reference                 `json:"value"`
-	Members              map[string]rawMember       `json:"members"`
-	Identifiers          map[string]reference       `json:"identifiers"`
-	Properties           map[string]reference       `json:"properties"`
-	Create               *reference                 `json:"create"`
-	Put                  *reference                 `json:"put"`
-	Read                 *reference                 `json:"read"`
-	Update               *reference                 `json:"update"`
-	Delete               *reference                 `json:"delete"`
-	List                 *reference                 `json:"list"`
-	Operations           []reference                `json:"operations"`
-	CollectionOperations []reference                `json:"collectionOperations"`
-	Resources            []reference                `json:"resources"`
-	Traits               map[string]json.RawMessage `json:"traits"`
+	Type                 string                        `json:"type"`
+	Version              string                        `json:"version"`
+	Input                *awsmodel.Reference           `json:"input"`
+	Output               *awsmodel.Reference           `json:"output"`
+	Errors               []awsmodel.Reference          `json:"errors"`
+	Member               *awsmodel.Reference           `json:"member"`
+	Key                  *awsmodel.Reference           `json:"key"`
+	Value                *awsmodel.Reference           `json:"value"`
+	Members              map[string]rawMember          `json:"members"`
+	Identifiers          map[string]awsmodel.Reference `json:"identifiers"`
+	Properties           map[string]awsmodel.Reference `json:"properties"`
+	Create               *awsmodel.Reference           `json:"create"`
+	Put                  *awsmodel.Reference           `json:"put"`
+	Read                 *awsmodel.Reference           `json:"read"`
+	Update               *awsmodel.Reference           `json:"update"`
+	Delete               *awsmodel.Reference           `json:"delete"`
+	List                 *awsmodel.Reference           `json:"list"`
+	Operations           []awsmodel.Reference          `json:"operations"`
+	CollectionOperations []awsmodel.Reference          `json:"collectionOperations"`
+	Resources            []awsmodel.Reference          `json:"resources"`
+	Traits               map[string]json.RawMessage    `json:"traits"`
 }
 
 type rawMember struct {
@@ -284,7 +286,7 @@ func pruneModel(path string, wanted map[string]struct{}) ([]shapeSnapshot, error
 		if !ok {
 			return nil, fmt.Errorf("%s: service %s has no aws.api#service trait", path, shapeID)
 		}
-		var trait serviceTrait
+		var trait awsmodel.ServiceTrait
 		if err := json.Unmarshal(rawTrait, &trait); err != nil {
 			return nil, fmt.Errorf("parse service trait in %s: %w", path, err)
 		}
@@ -308,10 +310,10 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		Service:      service,
 		Smithy:       parsed.Smithy,
 		Namespace:    namespace,
-		ServiceShape: shapeName(serviceID),
+		ServiceShape: awsmodel.ShapeName(serviceID),
 		SDKID:        sdkID,
 		APIVersion:   parsed.Shapes[serviceID].Version,
-		Protocols:    modelProtocols(parsed.Shapes[serviceID].Traits),
+		Protocols:    awsmodel.ModelProtocols(parsed.Shapes[serviceID].Traits),
 		Shapes:       make(map[string]prunedShape),
 	}
 	relative := func(id string) string {
@@ -323,7 +325,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 
 	visited := make(map[string]struct{})
 	var visit func(id string) error
-	visitRef := func(ref *reference) (string, error) {
+	visitRef := func(ref *awsmodel.Reference) (string, error) {
 		if ref == nil {
 			return "", nil
 		}
@@ -332,7 +334,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		}
 		return relative(ref.Target), nil
 	}
-	visitRefs := func(refs []reference) ([]string, error) {
+	visitRefs := func(refs []awsmodel.Reference) ([]string, error) {
 		if len(refs) == 0 {
 			return nil, nil
 		}
@@ -348,7 +350,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		sort.Strings(out)
 		return slices.Compact(out), nil
 	}
-	visitMap := func(refs map[string]reference) (map[string]string, error) {
+	visitMap := func(refs map[string]awsmodel.Reference) (map[string]string, error) {
 		if len(refs) == 0 {
 			return nil, nil
 		}
@@ -380,7 +382,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 		out := prunedShape{Type: raw.Type, Version: raw.Version}
 		var err error
 		for _, link := range []struct {
-			ref  *reference
+			ref  *awsmodel.Reference
 			dest *string
 		}{
 			{raw.Input, &out.Input}, {raw.Output, &out.Output},
@@ -393,7 +395,7 @@ func pruneService(parsed rawModel, serviceID, service, sdkID string) (shapeSnaps
 			}
 		}
 		for _, list := range []struct {
-			refs []reference
+			refs []awsmodel.Reference
 			dest *[]string
 		}{
 			{raw.Errors, &out.Errors}, {raw.Operations, &out.Operations},

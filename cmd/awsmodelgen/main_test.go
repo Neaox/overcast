@@ -2,10 +2,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -137,54 +135,6 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 func TestGenerateManifest_rejectsEmptyModels(t *testing.T) {
 	if _, err := generateManifest(t.TempDir(), "test-revision"); err == nil {
 		t.Fatal("generateManifest() unexpectedly succeeded")
-	}
-}
-
-func TestTargetPrefixForService_usesKnownLegacyOverride(t *testing.T) {
-	protocols := []string{"AWSJSON11"}
-	if got, want := targetPrefixForService("com.amazonaws.cloudtrail#CloudTrail_20131101", protocols), "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101."; got != want {
-		t.Errorf("targetPrefixForService() = %q, want %q", got, want)
-	}
-}
-
-func TestTargetPrefixForService_ignoresNonJSONProtocols(t *testing.T) {
-	if got := targetPrefixForService("example.widget#Widget", []string{"RESTJSON"}); got != "" {
-		t.Errorf("targetPrefixForService() = %q, want empty", got)
-	}
-}
-
-func TestModelProtocol_hasStablePrecedence(t *testing.T) {
-	// Given: a service that carries more than one recognized protocol trait.
-	traits := map[string]json.RawMessage{
-		"aws.protocols#restJson1":  {},
-		"aws.protocols#awsJson1_1": {},
-	}
-
-	// Then: the canonical protocol is selected deterministically.
-	if got, want := modelProtocol(traits), "AWSJSON11"; got != want {
-		t.Errorf("modelProtocol() = %q, want %q", got, want)
-	}
-}
-
-func TestModelProtocol_recognizesSmithyRPCV2Protocols(t *testing.T) {
-	for trait, want := range map[string]string{
-		"smithy.protocols#rpcv2Cbor": "RPCV2CBOR",
-		"smithy.protocols#rpcv2Json": "RPCV2JSON",
-	} {
-		if got := modelProtocol(map[string]json.RawMessage{trait: {}}); got != want {
-			t.Errorf("modelProtocol(%q) = %q, want %q", trait, got, want)
-		}
-	}
-}
-
-func TestModelProtocols_preservesAdditiveTraits(t *testing.T) {
-	traits := map[string]json.RawMessage{
-		"aws.protocols#awsJson1_1":   {},
-		"smithy.protocols#rpcv2Cbor": {},
-	}
-
-	if got, want := modelProtocols(traits), []string{"AWSJSON11", "RPCV2CBOR"}; !slices.Equal(got, want) {
-		t.Errorf("modelProtocols() = %v, want %v", got, want)
 	}
 }
 
