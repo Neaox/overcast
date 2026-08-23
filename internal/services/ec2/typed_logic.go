@@ -278,7 +278,8 @@ type describeTagsReq struct {
 }
 
 type allocateAddressReq struct {
-	Domain string `json:"Domain"`
+	Domain            string                `json:"Domain"`
+	TagSpecifications []ec2TagSpecification `json:"TagSpecification"`
 }
 
 type releaseAddressReq struct {
@@ -2021,6 +2022,12 @@ func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (
 }
 
 func (h *Handler) allocateAddressTyped(ctx context.Context, req *allocateAddressReq) (*allocateAddressResp, *protocol.AWSError) {
+	tags := typedTagSpecifications(req.TagSpecifications, "elastic-ip")
+	// Checked before the address is allocated, as on AWS: a rejected tag must
+	// fail the call rather than leave an untagged allocation behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		return nil, aerr
+	}
 	allocID := fmt.Sprintf("eipalloc-%s", shortID())
 	ip := fmt.Sprintf("203.0.113.%d", syntheticIPCounter.Add(1)%254+1)
 	domain := req.Domain
@@ -2033,6 +2040,11 @@ func (h *Handler) allocateAddressTyped(ctx context.Context, req *allocateAddress
 		Domain:       domain,
 	}
 	if aerr := h.store.putElasticIP(ctx, addr); aerr != nil {
+		return nil, aerr
+	}
+	// AllocateAddressResult carries no tagSet in the model — the tags show up
+	// through DescribeAddresses and DescribeTags, so the store is their only home.
+	if aerr := h.putResourceTags(ctx, allocID, tags); aerr != nil {
 		return nil, aerr
 	}
 	return &allocateAddressResp{

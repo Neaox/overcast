@@ -45,6 +45,7 @@ import (
 // happens to implement — which is the point: a list read off the
 // implementation cannot notice the implementation is missing something.
 var tagSpecCreates = map[string]string{
+	"AllocateAddress":            "elastic-ip",
 	"RunInstances":               "instance",
 	"CreateVpc":                  "vpc",
 	"CreateSubnet":               "subnet",
@@ -67,8 +68,6 @@ var tagSpecCreates = map[string]string{
 // tables have nothing to catch. An entry is deleted when the operation starts
 // honouring the field, never widened to quiet a failure.
 var tagSpecCreatesUnimplemented = map[string]string{
-	"AllocateAddress": "neither dispatch path parses TagSpecification.N, so an " +
-		"Elastic IP tagged at allocation comes back untagged; predates the typed registry",
 	"AuthorizeSecurityGroupIngress": "tags the security-group-rule resources the call " +
 		"creates, and Overcast models security group rules as fields on the group rather " +
 		"than as taggable resources of their own",
@@ -81,6 +80,7 @@ var tagSpecCreatesUnimplemented = map[string]string{
 // to compile the lookup, and an operation missing from it fails
 // TestTypedTagSpecifications_everyTagSpecCreateDeclaresTheField.
 var typedRequestTypeOf = map[string]string{
+	"AllocateAddress":            "allocateAddressReq",
 	"RunInstances":               "runInstancesReq",
 	"CreateVpc":                  "createVpcReq",
 	"CreateSubnet":               "createSubnetReq",

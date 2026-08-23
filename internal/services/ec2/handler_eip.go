@@ -25,6 +25,14 @@ type xmlAllocateAddressResponse struct {
 
 // AllocateAddress allocates an Elastic IP address.
 func (h *Handler) AllocateAddress(w http.ResponseWriter, r *http.Request) {
+	tags := parseTagSpecifications(r, "elastic-ip")
+	// Checked before the address is allocated, as on AWS: a rejected tag must
+	// fail the call rather than leave an untagged allocation behind (#1196).
+	if aerr := validateTagSpecifications(tags); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+
 	allocID := fmt.Sprintf("eipalloc-%s", shortID())
 	// Generate a synthetic public IP in the 203.0.113.0/24 documentation range.
 	ip := fmt.Sprintf("203.0.113.%d", syntheticIPCounter.Add(1)%254+1)
@@ -40,6 +48,12 @@ func (h *Handler) AllocateAddress(w http.ResponseWriter, r *http.Request) {
 		Domain:       domain,
 	}
 	if aerr := h.store.putElasticIP(r.Context(), addr); aerr != nil {
+		protocol.WriteEC2QueryXMLError(w, r, aerr)
+		return
+	}
+	// AllocateAddressResult carries no tagSet in the model — the tags show up
+	// through DescribeAddresses and DescribeTags, so the store is their only home.
+	if aerr := h.putResourceTags(r.Context(), allocID, tags); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
