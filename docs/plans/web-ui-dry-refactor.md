@@ -24,7 +24,13 @@
 > behaviour). `ResourceTable`/`QueryListState` gained `isFiltered`/`onClearFilter` in the same
 > change, so the empty state distinguishes "nothing exists" from "nothing matches" without each page
 > hand-rolling the ternary. The client-side matching consolidation (`useResourceFilter` itself) is
-> still open — see P9. None of the other scaffold
+> still open — see P9. **2026-08-23 (#1327 wave A):** `ResourceTable`'s row model is now TanStack
+> Table v9 (`useTable`), so sorting, column visibility and optional pagination/virtualization are
+> one engine shared by every list instead of four ad-hoc sort states; `hooks/use-sort-search-param.ts`
+> deep-links the sort as `?sort=name` / `?sort=-name` (JSON:API's leading-dash form) the way
+> `useFilterSearchParam` deep-links `q`.
+> See P3 for the feature set, the state-ownership split and the bundle numbers; #1327's waves B–D
+> move the remaining 55 bespoke `<Table>` sites onto it. None of the other scaffold
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
@@ -348,7 +354,7 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
 - **Highest risk reduced of any item:** it is the only way the skeleton treatment, the reduced-motion
   rule and the cold-boot state ever reach detail pages.
 
-### P3 — `ResourceTable` — **M** — **LANDED 2026-08-22** (#1200); still unblocks P5, P9
+### P3 — `ResourceTable` — **M** — **LANDED 2026-08-22** (#1200), re-engined on TanStack Table v9 2026-08-23 (#1327 wave A); still unblocks P5, P9
 
 - **Collapses:** the state-branch + table body of all 12 index pages in §1's Archetype C table —
   8 converted in #1200 wave 1 (2026-08-22), the remaining 4 (`apigateway/usage-plans-page`,
@@ -373,6 +379,42 @@ Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weig
   Sub-tables get `<ResourceTable variant="embedded">` (no card surface) — first exercised by
   `apigateway/usage-plans-page`'s nested plan-keys table (#1200 wave 2, 2026-08-23), and now the
   default choice for every `ResourceTable` composed inside a `ResourceListSection` tab body too.
+- **2026-08-23 — the row model is now TanStack Table v9** (#1327 wave A). `@tanstack/react-table`
+  had been a dependency since the initial commit and had never been imported; `ResourceTable` gave
+  the pages a consistent *shape* but no sorting, no column visibility and no pagination, so the
+  four ad-hoc sort states in the tree were the only sorting the app had. `useTable` now owns the
+  order and membership of rows and columns. It renders nothing: `Table`, `TableRow`, `TableHead`,
+  `TableCell`/`TableCellProse`, `QueryListState`, `EmptyState`, `ResourceListCard` and
+  `ConfirmDialog` are unchanged, and the loading / empty / filtered-empty / error branch still runs
+  before the table is built. Three of v9's sixteen stock features are registered —
+  `rowSortingFeature`, `columnVisibilityFeature`, `rowPaginationFeature` — because
+  `tableFeatures()` is the tree-shaking boundary; `stockFeatures` (all sixteen) and the deprecated
+  `useLegacyTable` are deliberately unused. Measured: the shared `resource-table` chunk went
+  1.1 kB → 13.6 kB gzip, against 27.9 kB for the same table built on `stockFeatures`.
+  - **API added, all optional** — `sortValue` on a column makes it sortable and supplies the value
+    to order by (a bare `sortable: true` cannot work: `cell` returns a `ReactNode`, which has no
+    ordering); `sortFn`, `id`, `hideable`, `defaultHidden` per column; `sort`/`onSortChange`/
+    `defaultSort`, `pageSize`, `columnToggle`, `virtualize` on the table. The one signature change
+    is `ResourceTable<T>` → `ResourceTable<T extends RowData>` (v9's `Record<string, any> |
+    Array<any>`), which every caller already satisfied.
+  - **Row actions stay outside the column model** — chrome, not data: never sorted, never hidden,
+    and keeping them out is what makes the columns menu correct without an exclusion list.
+  - **State ownership** — sorting is the page's when it wants it, via `hooks/use-sort-search-param.ts`
+    (`?sort=name` ascending, `?sort=-name` descending — JSON:API's leading-dash convention, so the
+    common case is just the column's name), the twin of `useFilterSearchParam`'s `q`, undebounced because
+    a header click is a decision, not a keystroke; wired on the four single-list pages that already
+    validate `q` (kms, ssm, appsync, stepfunctions). The tabbed pages (iam, eventbridge, ec2) keep
+    sorting in local state — one `sort` token cannot name which of several tables under one route
+    it applies to. Column visibility is local state (a viewing preference, not part of what a
+    shared link means) and reuses `CheckboxFilterDropdown` rather than a second dropdown.
+  - **Virtualization is composition, not a feature** — v9 ships none, and its guide is explicit that
+    virtualization is a rendering strategy rather than a table feature. `virtualize` therefore
+    windows `getRowModel().rows` with the `@tanstack/react-virtual` Archetype E's kernel already
+    uses, using spacer rows so the real `<table>` keeps laying out the columns. That is what lets
+    #1327's Wave D evaluate `log-search-results.tsx` without the two virtualizers competing.
+  - **Still not built:** `rowTo`, `select?`, `filter?`. Selection is now one feature import
+    (`rowSelectionFeature`) away rather than a rewrite, but nothing needs it yet; filtering stays
+    at the page level, where `q` already lives.
 
 ### P4 — Route the busy-button contract through `Button.busy` — **S** — depends on nothing
 

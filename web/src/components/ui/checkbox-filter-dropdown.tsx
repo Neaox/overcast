@@ -22,6 +22,8 @@ interface CheckboxFilterDropdownProps {
   /** Make every item hidden (hide-model: hide all; show-model: deselect all). */
   onHideAll: () => void
   triggerLabel: string
+  /** Which edge the menu is anchored to. `"end"` for a trigger sitting at the right of its row. */
+  align?: "start" | "end"
 }
 
 export function CheckboxFilterDropdown({
@@ -32,6 +34,7 @@ export function CheckboxFilterDropdown({
   onShowAll,
   onHideAll,
   triggerLabel,
+  align = "start",
 }: CheckboxFilterDropdownProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
@@ -69,7 +72,7 @@ export function CheckboxFilterDropdown({
       </Button>
 
       {open && (
-        <div className="absolute top-full left-0 z-50 mt-1 w-52 rounded-lg border border-border bg-bg-elevated shadow-lg">
+        <div className={cn("absolute top-full z-50 mt-1 w-52 rounded-lg border border-border bg-bg-elevated shadow-lg", align === "end" ? "right-0" : "left-0")}>
           {visibleCount > 0 ? (
             <button className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5" onClick={onHideAll}>
               {model === "hide" ? "Hide all" : "Deselect all"}

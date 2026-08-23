@@ -1,5 +1,27 @@
 import * as React from "react"
 import type { LucideIcon } from "lucide-react"
+import { Trash2 } from "lucide-react"
+import { useVirtualizer } from "@tanstack/react-virtual"
+import {
+  columnVisibilityFeature,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_datetime,
+  sortFn_text,
+  tableFeatures,
+  useTable,
+} from "@tanstack/react-table"
+import type {
+  ColumnDef,
+  PaginationState,
+  RowData,
+  SortFn,
+  SortingState,
+  Updater,
+} from "@tanstack/react-table"
 import {
   Table,
   TableBody,
@@ -9,11 +31,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
+import { CheckboxFilterDropdown } from "@/components/ui/checkbox-filter-dropdown"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { QueryListState, EmptyState } from "@/components/ui/primitives"
 import { ResourceListCard, RowAction, RowActions } from "@/components/ui/resource-list-page"
+import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
-import { Trash2 } from "lucide-react"
 
 /**
  * Shared body for a service list/index page: the `isLoading || empty` branch,
@@ -30,8 +54,12 @@ import { Trash2 } from "lucide-react"
  *   rowKey={(t) => t.TopicArn ?? ""}
  *   onRowClick={(t) => navigate({ to: "/sns/$topic", params: { topic: shortName(t) } })}
  *   columns={[
- *     { header: "Name", cell: (t) => <ResourceName icon={Bell} name={shortName(t)} /> },
- *     { header: "ARN",  cell: (t) => <ArnText arn={t.TopicArn} /> },
+ *     {
+ *       header: "Name",
+ *       sortValue: (t) => shortName(t),
+ *       cell: (t) => <ResourceName icon={Bell} name={shortName(t)} />,
+ *     },
+ *     { header: "ARN", cell: (t) => <ArnText arn={t.TopicArn} /> },
  *   ]}
  *   onDelete={{
  *     target: deleteTarget,
@@ -45,6 +73,38 @@ import { Trash2 } from "lucide-react"
  * />
  * ```
  *
+ * ## The engine
+ *
+ * The row model is TanStack Table v9 (`useTable`), so sorting, column
+ * visibility and pagination are one implementation shared by every list in the
+ * app rather than a per-page `useState`. Only three of v9's sixteen stock
+ * features are registered (see `resourceTableFeatures` below) — `tableFeatures`
+ * is the tree-shaking boundary, so the other thirteen never reach the bundle.
+ *
+ * Everything *visible* is still the repo's own primitives: `Table`, `TableRow`,
+ * `TableHead`, `TableCell`/`TableCellProse`, `QueryListState`, `EmptyState`,
+ * `ResourceListCard`, `ConfirmDialog`. TanStack owns the order and membership
+ * of rows and columns; it renders nothing.
+ *
+ * Row actions are deliberately **not** a TanStack column. They are chrome, not
+ * data — never sorted, never hidden — and keeping them out of the column model
+ * is what makes the column-visibility menu correct without an exclusion list.
+ *
+ * ## Sorting
+ *
+ * A column is sortable exactly when it declares `sortValue`. A bare
+ * `sortable: true` could not work: `cell` returns a `ReactNode`, which has no
+ * ordering — the accessor is the opt-in. Sorting is single-column, cycling
+ * none → asc → desc → none on header click.
+ *
+ * Sort state is the caller's if it wants it: pass `sort`/`onSortChange` from
+ * `useSortSearchParam` and the sorted view deep-links as `?sort=name` (or
+ * `?sort=-name` for descending — JSON:API's leading-dash convention), the same
+ * contract `q` and `tab` already have. Omit them and `ResourceTable` keeps the
+ * sort in local state, so a page gets sorting for free.
+ *
+ * ## Delete
+ *
  * `onDelete` is deliberately controlled by the caller rather than owning the
  * `deleteTarget` state itself: the mutation's `onSuccess` (from
  * `useResourceMutation`) is what clears it today, and that callback lives on
@@ -56,13 +116,91 @@ import { Trash2 } from "lucide-react"
  * for wiring the filter itself to the route's search params.
  */
 
-export interface ResourceTableColumn<T> {
+/**
+ * The v9 feature set, declared once at module scope so it is referentially
+ * stable across renders (v9 rebuilds its models when `features`, `data` or
+ * `columns` change identity).
+ *
+ * Adopted: row sorting, column visibility, row pagination. Deliberately not
+ * adopted: filtering (the page filters `query.data` and `useFilterSearchParam`
+ * owns `q` — moving it in here would fork that contract), row selection,
+ * column sizing/resizing/pinning/ordering, grouping, aggregation, expanding,
+ * faceting, cell selection. `stockFeatures` is never used: it bundles all
+ * sixteen and defeats the point. Neither is `useLegacyTable`, which is
+ * deprecated and bundles every feature.
+ *
+ * `sortFns` registers only the three built-ins v9's `'auto'` resolution can ask
+ * for (`datetime`, `alphanumeric`, `text`); anything else falls back to
+ * `sortFn_basic`, which the feature imports itself.
+ *
+ * Pagination is in the shared set even though it is opt-in per caller: this is
+ * one component, so a conditional feature set would mean two `tableFeatures()`
+ * objects and two divergent `useTable` types for a few hundred bytes. With
+ * `pageSize` unset the page size is larger than any list this UI renders, so
+ * the paginated row model is a pass-through.
+ */
+const resourceTableFeatures = tableFeatures({
+  rowSortingFeature,
+  columnVisibilityFeature,
+  rowPaginationFeature,
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    datetime: sortFn_datetime,
+    text: sortFn_text,
+  },
+})
+
+type ResourceTableFeatures = typeof resourceTableFeatures
+
+/** Page size used when the caller did not ask for pagination — effectively "all rows". */
+const UNPAGED_PAGE_SIZE = 1_000_000
+
+/** Height a `TableCell` row renders at (`py-2.5` on 12px mono), the virtualizer's default estimate. */
+const DEFAULT_ROW_HEIGHT = 37
+
+const EMPTY_ROWS: never[] = []
+const EMPTY_SORTING: SortingState = []
+
+/** A value a column can be ordered by. `cell` renders a `ReactNode`, which cannot be compared. */
+export type ResourceTableSortValue = string | number | boolean | Date | null | undefined
+
+/** Single-column sort, matching the one-token `?sort=name` / `?sort=-name` search param. */
+export interface ResourceTableSort {
+  id: string
+  desc: boolean
+}
+
+export interface ResourceTableColumn<T extends RowData> {
+  /**
+   * Stable column id — the sort key that appears in the URL and the key the
+   * column-visibility menu remembers. Defaults to a slug of `header` when that
+   * is a string, else the column's position. Give a sortable column an explicit
+   * `id` if its header text is likely to be reworded.
+   */
+  id?: string
   header: React.ReactNode
   headerClassName?: string
   cellClassName?: string
   /** Renders the cell with `TableCellProse` (sans, for a sentence a human wrote) instead of the mono default. */
   prose?: boolean
   cell: (item: T) => React.ReactNode
+  /**
+   * Makes the column sortable, and supplies the value to sort by. Ordering is
+   * inferred from the values (`Date` → datetime, mixed text and digits →
+   * alphanumeric, so `stream-2` sorts before `stream-10`).
+   */
+  sortValue?: (item: T) => ResourceTableSortValue
+  /** Overrides the inferred comparison — a v9 built-in's name or a `SortFn`. */
+  sortFn?: "auto" | "alphanumeric" | "datetime" | "text" | SortFn<ResourceTableFeatures, T>
+  /**
+   * Whether the columns menu may hide this column. Defaults to `true` for every
+   * column but the first, which identifies the row and stays put.
+   */
+  hideable?: boolean
+  /** Starts hidden, discoverable through the columns menu. Implies `hideable`. */
+  defaultHidden?: boolean
 }
 
 interface ResourceTableQuery<T> {
@@ -96,7 +234,17 @@ interface ResourceTableDeleteConfig<T> {
   actionLabel?: (item: T) => string
 }
 
-interface ResourceTableProps<T> {
+/** Opt-in row virtualization. Only worth reaching for past a few hundred rows. */
+interface ResourceTableVirtualizeConfig {
+  /** Row height estimate in px. Defaults to the 37px a `TableCell` renders at. */
+  estimateRowHeight?: number
+  /** Height of the scroll viewport in px. Defaults to 560. */
+  maxHeight?: number
+  /** Rows rendered beyond the viewport on each side. Defaults to 8. */
+  overscan?: number
+}
+
+interface ResourceTableProps<T extends RowData> {
   query: ResourceTableQuery<T>
   columns: ResourceTableColumn<T>[]
   rowKey: (item: T) => string
@@ -125,12 +273,49 @@ interface ResourceTableProps<T> {
   /** Extra per-row actions rendered before the delete action, if any. */
   rowActions?: (item: T) => React.ReactNode
   onDelete?: ResourceTableDeleteConfig<T>
+  /**
+   * Current sort, when the page owns it — pair with `onSortChange`, usually
+   * both straight from `useSortSearchParam` so the sort deep-links. Omit both
+   * and the sort lives in this component's own state.
+   */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+  /** Sort applied before the user touches a header. Ignored once `sort`/`onSortChange` take over. */
+  defaultSort?: ResourceTableSort
+  /** Rows per page. Unset means no pagination and no pager. */
+  pageSize?: number
+  /**
+   * Forces the columns menu on or off. Defaults to showing it once more than
+   * one column can be hidden — a two-column table has nothing worth toggling.
+   */
+  columnToggle?: boolean
+  /** Virtualizes the rows. `true` accepts every default. */
+  virtualize?: boolean | ResourceTableVirtualizeConfig
   /** `"card"` (default) wraps the table in `ResourceListCard`; `"embedded"` renders bare for sub-tables. */
   variant?: "card" | "embedded"
   className?: string
 }
 
-export function ResourceTable<T>({
+/**
+ * `"Created at"` → `"created-at"`. Only used when a column has a string header
+ * and no explicit `id`, so the URL reads `?sort=-created-at` rather than
+ * `?sort=-col-3`.
+ */
+function slugifyHeader(header: React.ReactNode, index: number): string {
+  if (typeof header !== "string") return `col-${index}`
+  const slug = header
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+  return slug || `col-${index}`
+}
+
+/** Human label for a column — the sort tooltip's and the columns menu's text. */
+function columnLabel(header: React.ReactNode | undefined, id: string): string {
+  return typeof header === "string" ? header : id
+}
+
+export function ResourceTable<T extends RowData>({
   query,
   columns,
   rowKey,
@@ -148,12 +333,239 @@ export function ResourceTable<T>({
   loadingCount,
   rowActions,
   onDelete,
+  sort,
+  onSortChange,
+  defaultSort,
+  pageSize,
+  columnToggle,
+  virtualize,
   variant = "card",
   className,
 }: ResourceTableProps<T>) {
-  const items = query.data ?? []
+  const items: T[] = query.data ?? EMPTY_ROWS
   const isEmpty = items.length === 0
   const hasActionsColumn = Boolean(rowActions || onDelete)
+
+  // Every caller writes its `columns` array inline, so the array — and the
+  // closures in it — are new on every render. The definitions handed to
+  // TanStack therefore read through a ref and are memoized on the shape that
+  // actually matters to the row model (ids, sortability, hideability), which
+  // keeps the column instances stable while the render closures stay fresh.
+  const resolved = columns.map((column, index) => ({
+    ...column,
+    id: column.id ?? slugifyHeader(column.header, index),
+  }))
+  const resolvedRef = React.useRef(resolved)
+  resolvedRef.current = resolved
+  const rowKeyRef = React.useRef(rowKey)
+  rowKeyRef.current = rowKey
+
+  const columnSignature = resolved
+    .map((c) => `${c.id}|${c.sortValue ? 1 : 0}|${c.hideable ?? ""}|${c.defaultHidden ? 1 : 0}`)
+    .join(",")
+
+  const columnDefs = React.useMemo<ColumnDef<ResourceTableFeatures, T, unknown>[]>(
+    () =>
+      resolvedRef.current.map((column, index) => ({
+        id: column.id,
+        accessorFn: (item: T) => resolvedRef.current[index]?.sortValue?.(item) ?? null,
+        header: () => resolvedRef.current[index]?.header,
+        cell: (context) => resolvedRef.current[index]?.cell(context.row.original),
+        enableSorting: Boolean(column.sortValue),
+        sortFn: column.sortFn ?? "auto",
+        enableHiding: column.hideable ?? (column.defaultHidden === true || index > 0),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the signature is the memo key; the defs read live columns through the ref
+    [columnSignature],
+  )
+
+  // ── State ownership ────────────────────────────────────────────────────
+  // Sorting is always controlled from TanStack's point of view; who holds the
+  // value is the only difference between the URL-bound and the local case, so
+  // there is one code path rather than two option shapes.
+  const [internalSort, setInternalSort] = React.useState<ResourceTableSort | undefined>(defaultSort)
+  const isSortControlled = onSortChange !== undefined
+  const activeSort = isSortControlled ? sort : internalSort
+  const sortId = activeSort?.id
+  const sortDesc = activeSort?.desc
+
+  const sortingState = React.useMemo<SortingState>(
+    () => (sortId ? [{ id: sortId, desc: Boolean(sortDesc) }] : EMPTY_SORTING),
+    [sortId, sortDesc],
+  )
+  const sortingStateRef = React.useRef(sortingState)
+  sortingStateRef.current = sortingState
+  const commitSortRef = React.useRef(isSortControlled ? onSortChange : setInternalSort)
+  commitSortRef.current = isSortControlled ? onSortChange : setInternalSort
+
+  const handleSortingChange = React.useCallback((updater: Updater<SortingState>) => {
+    const next = typeof updater === "function" ? updater(sortingStateRef.current) : updater
+    commitSortRef.current(next.length > 0 ? { id: next[0].id, desc: next[0].desc } : undefined)
+  }, [])
+
+  const [columnVisibility, setColumnVisibility] = React.useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {}
+    for (const column of resolved) if (column.defaultHidden) initial[column.id] = false
+    return initial
+  })
+  const handleVisibilityChange = React.useCallback((updater: Updater<Record<string, boolean>>) => {
+    setColumnVisibility((previous) => (typeof updater === "function" ? updater(previous) : updater))
+  }, [])
+
+  const [pageIndex, setPageIndex] = React.useState(0)
+  const effectivePageSize = pageSize ?? UNPAGED_PAGE_SIZE
+  const pageSizeRef = React.useRef(effectivePageSize)
+  pageSizeRef.current = effectivePageSize
+  const paginationState = React.useMemo<PaginationState>(
+    () => ({ pageIndex, pageSize: effectivePageSize }),
+    [pageIndex, effectivePageSize],
+  )
+  const handlePaginationChange = React.useCallback((updater: Updater<PaginationState>) => {
+    setPageIndex((previous) =>
+      typeof updater === "function"
+        ? updater({ pageIndex: previous, pageSize: pageSizeRef.current }).pageIndex
+        : updater.pageIndex,
+    )
+  }, [])
+
+  const table = useTable<ResourceTableFeatures, T>({
+    features: resourceTableFeatures,
+    data: items,
+    columns: columnDefs,
+    getRowId: (item, index) => rowKeyRef.current(item) || String(index),
+    enableMultiSort: false,
+    state: { sorting: sortingState, columnVisibility, pagination: paginationState },
+    onSortingChange: handleSortingChange,
+    onColumnVisibilityChange: handleVisibilityChange,
+    onPaginationChange: handlePaginationChange,
+  })
+
+  // A filter that shrinks the list can strand the pager past the last page.
+  const pageCount = table.getPageCount()
+  React.useEffect(() => {
+    if (pageIndex > 0 && pageIndex >= pageCount) setPageIndex(0)
+  }, [pageIndex, pageCount])
+
+  const rows = table.getRowModel().rows
+
+  // ── Virtualization ─────────────────────────────────────────────────────
+  // v9 has no virtualization feature — its own guide is explicit that
+  // "virtualization is a rendering strategy, not a table feature" — so this is
+  // renderer composition over `getRowModel().rows` with the
+  // `@tanstack/react-virtual` the app already uses in eight other places. The
+  // hook runs unconditionally (with `count: 0` when off) because hooks must;
+  // the spacer-row technique below keeps the real `<table>` doing the
+  // column-width arithmetic, so a virtualized table looks identical to a
+  // plain one.
+  const virtualConfig: ResourceTableVirtualizeConfig =
+    virtualize && virtualize !== true ? virtualize : {}
+  const scrollRef = React.useRef<HTMLDivElement>(null)
+  const rowHeight = virtualConfig.estimateRowHeight ?? DEFAULT_ROW_HEIGHT
+  const virtualizer = useVirtualizer({
+    count: virtualize ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    getItemKey: (index) => rows[index]?.id ?? index,
+    overscan: virtualConfig.overscan ?? 8,
+  })
+  const virtualRows = virtualizer.getVirtualItems()
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0
+  const paddingBottom =
+    virtualRows.length > 0
+      ? virtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0
+
+  // ── Rendering ──────────────────────────────────────────────────────────
+  const columnsById = new Map(resolved.map((column) => [column.id, column]))
+  const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide())
+  const showColumnToggle = columnToggle ?? hideableColumns.length > 1
+
+  const renderRow = (row: (typeof rows)[number]) => (
+    <TableRow key={row.id} onClick={onRowClick ? () => onRowClick(row.original) : undefined}>
+      {row.getVisibleCells().map((cell) => {
+        const column = columnsById.get(cell.column.id)
+        const Cell = column?.prose ? TableCellProse : TableCell
+        return (
+          <Cell key={cell.id} className={column?.cellClassName}>
+            <table.FlexRender cell={cell} />
+          </Cell>
+        )
+      })}
+      {hasActionsColumn && (
+        <TableCell onClick={(event) => event.stopPropagation()}>
+          <RowActions>
+            {rowActions?.(row.original)}
+            {onDelete && (
+              <RowAction
+                label={
+                  onDelete.actionLabel?.(row.original) ?? `Delete ${onDelete.label(row.original)}`
+                }
+                tone="danger"
+                onClick={() => onDelete.onRequest(row.original)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </RowAction>
+            )}
+          </RowActions>
+        </TableCell>
+      )}
+    </TableRow>
+  )
+
+  const headerRow = (
+    <TableRow>
+      {table.getHeaderGroups()[0]?.headers.map((header) => {
+        const column = columnsById.get(header.column.id)
+        const canSort = header.column.getCanSort()
+        const sorted = header.column.getIsSorted()
+        const label = columnLabel(column?.header, header.column.id)
+        return (
+          <TableHead
+            key={header.id}
+            scope="col"
+            className={cn(canSort && "p-0", column?.headerClassName)}
+            aria-sort={
+              sorted === "asc"
+                ? "ascending"
+                : sorted === "desc"
+                  ? "descending"
+                  : canSort
+                    ? "none"
+                    : undefined
+            }
+          >
+            {header.isPlaceholder ? null : canSort ? (
+              // The arrow only appears on the active column — a permanent arrow
+              // on every header reads as a state rather than an offer. Same
+              // shape as `s3/components/object-controls.tsx`'s `SortHead`.
+              <button
+                type="button"
+                onClick={header.column.getToggleSortingHandler()}
+                title={`Sort by ${label.toLowerCase()}`}
+                // `fieldLabel` is repeated here rather than inherited from the
+                // `<th>`: a `<button>` does not pick up the label's case and
+                // metrics, so without it a sortable header renders visibly
+                // larger and in mixed case next to its plain neighbours.
+                className={cn(
+                  fieldLabel,
+                  "inline-flex h-full w-full cursor-pointer items-center gap-1 px-4 py-2 transition-colors select-none hover:text-fg",
+                  sorted && "text-fg",
+                )}
+              >
+                <table.FlexRender header={header} />
+                <span className={cn("text-[9px] leading-none", !sorted && "opacity-0")} aria-hidden>
+                  {sorted === "asc" ? "▲" : "▼"}
+                </span>
+              </button>
+            ) : (
+              <table.FlexRender header={header} />
+            )}
+          </TableHead>
+        )
+      })}
+      {hasActionsColumn && <TableHead className="w-20 text-right" />}
+    </TableRow>
+  )
 
   const body =
     query.isLoading || isEmpty ? (
@@ -181,59 +593,109 @@ export function ResourceTable<T>({
         }
       />
     ) : (
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {columns.map((col, i) => (
-              <TableHead key={i} className={col.headerClassName}>
-                {col.header}
-              </TableHead>
-            ))}
-            {hasActionsColumn && <TableHead className="w-20 text-right" />}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items.map((item) => {
-            const key = rowKey(item)
-            return (
-              <TableRow key={key} onClick={onRowClick ? () => onRowClick(item) : undefined}>
-                {columns.map((col, i) => {
-                  const Cell = col.prose ? TableCellProse : TableCell
-                  return (
-                    <Cell key={i} className={col.cellClassName}>
-                      {col.cell(item)}
-                    </Cell>
-                  )
-                })}
-                {hasActionsColumn && (
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      {rowActions?.(item)}
-                      {onDelete && (
-                        <RowAction
-                          label={onDelete.actionLabel?.(item) ?? `Delete ${onDelete.label(item)}`}
-                          tone="danger"
-                          onClick={() => onDelete.onRequest(item)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      )}
-                    </RowActions>
-                  </TableCell>
+      <>
+        {virtualize ? (
+          <div
+            ref={scrollRef}
+            data-slot="virtual-scroll"
+            className="overflow-auto"
+            style={{ maxHeight: virtualConfig.maxHeight ?? 560 }}
+          >
+            <Table>
+              <TableHeader className="sticky top-0 z-10">{headerRow}</TableHeader>
+              <TableBody>
+                {paddingTop > 0 && (
+                  <tr aria-hidden>
+                    <td style={{ height: paddingTop }} />
+                  </tr>
                 )}
-              </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
+                {virtualRows.map((virtualRow) => renderRow(rows[virtualRow.index]))}
+                {paddingBottom > 0 && (
+                  <tr aria-hidden>
+                    <td style={{ height: paddingBottom }} />
+                  </tr>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>{headerRow}</TableHeader>
+            <TableBody>{rows.map(renderRow)}</TableBody>
+          </Table>
+        )}
+
+        {pageSize !== undefined && pageCount > 1 && (
+          <div
+            className={cn(
+              "flex items-center justify-between gap-2 text-xs text-fg-subtle",
+              variant === "card" ? "border-t border-border px-3 py-2" : "pt-2",
+            )}
+          >
+            <span className="font-mono">
+              Page {pageIndex + 1} of {pageCount} · {items.length} {noun}
+            </span>
+            <span className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!table.getCanPreviousPage()}
+                onClick={() => table.previousPage()}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!table.getCanNextPage()}
+                onClick={() => table.nextPage()}
+              >
+                Next
+              </Button>
+            </span>
+          </div>
+        )}
+      </>
     )
+
+  // The columns menu sits *above* the card, not inside it: `ResourceListCard`
+  // clips its children (`overflow-hidden`, which is what rounds the table's
+  // corners), so a menu rendered inside would be cut off against the card's
+  // edge on a short table. Anchored to its right edge for the same reason on
+  // the other side — the trigger sits at the end of its row.
+  const toolbar =
+    showColumnToggle && !(query.isLoading || isEmpty) ? (
+      <div className={cn("flex items-center justify-end", variant === "card" ? "mb-2" : "pb-2")}>
+        <CheckboxFilterDropdown
+          triggerLabel="Columns"
+          model="hide"
+          align="end"
+          items={hideableColumns.map((column) => ({
+            id: column.id,
+            label: columnLabel(columnsById.get(column.id)?.header, column.id),
+          }))}
+          selected={
+            new Set(hideableColumns.filter((column) => !column.getIsVisible()).map((c) => c.id))
+          }
+          onToggle={(id) => table.getColumn(id)?.toggleVisibility()}
+          onShowAll={() => table.toggleAllColumnsVisible(true)}
+          onHideAll={() => table.toggleAllColumnsVisible(false)}
+        />
+      </div>
+    ) : null
 
   return (
     <>
       {variant === "embedded" ? (
-        <div className={className}>{body}</div>
+        <div className={className}>
+          {toolbar}
+          {body}
+        </div>
       ) : (
-        <ResourceListCard className={cn(className)}>{body}</ResourceListCard>
+        <>
+          {toolbar}
+          <ResourceListCard className={cn(className)}>{body}</ResourceListCard>
+        </>
       )}
 
       {onDelete && (
