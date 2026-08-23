@@ -60,7 +60,7 @@ func readerWorks(ci *containerInstance) { ci.logParkedAt.Store(logReaderBetweenR
 // container is actually in from the moment its streamLogs goroutine is
 // scheduled until the moment ContainerLogsStream first returns:
 // logParkedAt at its zero value (logReaderNotReading) and
-// logStreamEverOpened still false. newTailWaitInstance does not model this —
+// logStreamEverAnswered still false. newTailWaitInstance does not model this —
 // readerParks always leaves the reader already parked in a Read, i.e. with a
 // stream that has opened — so nothing before this test drove
 // waitForScannerIdle through it.
@@ -80,12 +80,23 @@ func newNeverConnectedInstance(clk clock.Clock) *containerInstance {
 }
 
 // streamOpens does to the instance what streamOnce does the instant
-// ContainerLogsStream returns: the connection now exists (logStreamEverOpened
+// ContainerLogsStream returns: the connection now exists (logStreamEverAnswered
 // becomes permanently true) and the reader is between Reads on it, having not
 // reached its first one yet.
 func streamOpens(ci *containerInstance) {
-	ci.logStreamEverOpened.Store(true)
+	ci.logStreamEverAnswered.Store(true)
 	readerWorks(ci)
+}
+
+// streamOpenFails does to the instance what streamOnce does when
+// ContainerLogsStream returns an error instead of a stream: Docker has answered
+// the first connect — with a refusal — and the reader is not reading, waiting
+// out the reconnect backoff. Nothing has opened, but nothing is in flight
+// either, which is what tells this apart from newNeverConnectedInstance's
+// still-unanswered connect.
+func streamOpenFails(ci *containerInstance) {
+	ci.logStreamEverAnswered.Store(true)
+	ci.logParkedAt.Store(logReaderNotReading)
 }
 
 // deliverBytes does to the instance what logReadTracker does the instant Docker
@@ -285,8 +296,9 @@ func TestWaitForScannerIdle_parkedReaderSurvivesContention(t *testing.T) {
 
 	// When: this invocation's line takes 60 ms to come through Docker — well
 	// past the 25 ms bound that correctly governs a reconnect backoff, but
-	// still within the wait's own 100 ms deadline. Nothing here involves a
-	// reconnect: the connection has been open and parked the whole time.
+	// still within the 80 ms a reader parked in a live Read is owed. Nothing
+	// here involves a reconnect: the connection has been open and parked the
+	// whole time.
 	elapsed := runScannerWait(t, mock, ci, mark, 60*time.Millisecond, "hello from lambda")
 
 	// Then: the wait held on for it. A live connection's own delivery delay
@@ -414,8 +426,9 @@ func TestWaitForScannerIdle_neverConnectedStreamIsNotSilence(t *testing.T) {
 	// containers — and the handler's line follows 10 ms after that: 70 ms after
 	// the invocation began. That is past the 25 ms bound that governs an
 	// already-open reader's silence — which is exactly what made this a false
-	// red on real CI runs, where the connect alone can outrun 25 ms — but well
-	// inside the 100 ms deadline that bounds the wait as a whole.
+	// red on real CI runs, where the connect alone can outrun 25 ms — and well
+	// inside the 100 ms that then bounded the wait as a whole. (A connect
+	// slower than that is the next test but one.)
 	start := mock.Now()
 	opened, delivered := false, false
 	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
@@ -443,10 +456,11 @@ func TestWaitForScannerIdle_neverConnectedStreamIsNotSilence(t *testing.T) {
 
 // TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline pins the
 // cost side of the fix above: a container whose log stream never manages to
-// connect at all — daemon down, container killed before Docker ever accepted
-// the streaming request — must not hold the invoke response hostage. Losing
-// the firstReadMax bound for an unopened stream must not mean losing a bound
-// altogether; deadlineMax is what is left to catch it.
+// connect at all — daemon wedged, the streaming request never answered — must
+// not hold the invoke response hostage. A connect still in flight is bounded by
+// nothing but deadlineMax (the 100 ms progress bound does not run until Docker
+// has answered — see TestWaitForScannerIdle_slowFirstConnectIsNotTimedByTheProgressBound),
+// so deadlineMax is what is left to catch it, and it must.
 func TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline(t *testing.T) {
 	mock := clock.NewMock()
 	mock.Set(time.Unix(1_700_000_000, 0))
@@ -455,11 +469,158 @@ func TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline(t *testi
 
 	elapsed := runScannerWait(t, mock, ci, mark, -1, "")
 
-	if elapsed < 100*time.Millisecond {
-		t.Errorf("wait for a stream that never connected returned after %v, expected to run out the 100ms deadline", elapsed)
+	if elapsed < time.Second {
+		t.Errorf("wait for a stream that never connected returned after %v, expected to run out the 1s deadline", elapsed)
 	}
-	if elapsed > 110*time.Millisecond {
-		t.Errorf("wait for a stream that never connected ran %v past the 100ms deadline", elapsed)
+	if elapsed > time.Second+10*time.Millisecond {
+		t.Errorf("wait for a stream that never connected ran %v past the 1s deadline", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_slowFirstConnectIsNotTimedByTheProgressBound is the
+// regression test for the third cold-start miss (run 32622332545, after #1166
+// and #1331): a cold-started invocation's tail wait begins before the
+// container's very first ContainerLogsStream call has returned, and that call
+// takes longer than 100 ms to come back — a Docker daemon round trip issued
+// from Overcast's own goroutine, queued behind whatever else a loaded CI
+// runner's daemon is doing. #1166 stopped timing that state as "asked and told
+// nothing", but left it under the wait's absolute 100 ms deadline, measured
+// from the moment the wait began. A connect that lands after that — followed
+// by the handler's line a few milliseconds later — found nobody waiting.
+//
+// A connect still in flight is Overcast's own round trip, not evidence about
+// the function, and its completion is an observable event. So it is bounded by
+// the deadline alone; the progress bound starts running once Docker has
+// answered.
+func TestWaitForScannerIdle_slowFirstConnectIsNotTimedByTheProgressBound(t *testing.T) {
+	// Given: an invocation that begins before its container's log stream has
+	// ever connected.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	mark := ci.beginTail()
+
+	// When: the connect takes 120 ms to come back — past the 100 ms that used
+	// to bound the whole wait — the reader parks on it, and Docker hands over
+	// the handler's line 10 ms after that.
+	start := mock.Now()
+	opened, delivered := false, false
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		elapsed := mock.Now().Sub(start)
+		if !opened && elapsed >= 120*time.Millisecond {
+			streamOpens(ci)
+			readerParks(ci)
+			opened = true
+		}
+		if !delivered && elapsed >= 130*time.Millisecond {
+			deliverLine(ci, "hello from lambda")
+			delivered = true
+		}
+	})
+	elapsed := mock.Now().Sub(start)
+
+	// Then: the wait was still there for it.
+	if !strings.Contains(tailContents(ci), "hello from lambda") {
+		t.Errorf("tail is missing the handler's output: %q", tailContents(ci))
+	}
+	if elapsed < 130*time.Millisecond {
+		t.Errorf("wait returned after %v, before the slow connect delivered the line at 130ms", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_lateParkKeepsItsFullSilenceBound pins the other half
+// of the same change. parkedReadMax (80 ms) is the room a reader parked in a
+// live Read gets for Docker to hand over the first bytes — but it used to be
+// cut short by the absolute deadline whenever the park happened late in the
+// wait: a reader that parked 60 ms in got 40 ms, not 80. The deadline now runs
+// from the last observed progress — the park included — so the bound means
+// what it says wherever the park lands.
+func TestWaitForScannerIdle_lateParkKeepsItsFullSilenceBound(t *testing.T) {
+	// Given: an invocation whose container's stream connects and parks 60 ms
+	// into the wait.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	mark := ci.beginTail()
+
+	// When: the line takes a further 55 ms to arrive — 115 ms into the wait,
+	// past the old absolute deadline, but well inside the 80 ms the park is
+	// owed.
+	start := mock.Now()
+	opened, delivered := false, false
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		elapsed := mock.Now().Sub(start)
+		if !opened && elapsed >= 60*time.Millisecond {
+			streamOpens(ci)
+			readerParks(ci)
+			opened = true
+		}
+		if !delivered && elapsed >= 115*time.Millisecond {
+			deliverLine(ci, "hello from lambda")
+			delivered = true
+		}
+	})
+	elapsed := mock.Now().Sub(start)
+
+	// Then: the wait held for it.
+	if !strings.Contains(tailContents(ci), "hello from lambda") {
+		t.Errorf("tail is missing the handler's output: %q", tailContents(ci))
+	}
+	if elapsed < 115*time.Millisecond {
+		t.Errorf("wait returned after %v, before the line arrived at 115ms — the absolute deadline cut the parked reader's 80ms bound short", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_silentHandlerAfterSlowConnectGivesUpAtParkedReadMax
+// pins the cost of the slow-connect fix: a handler that prints nothing, on a
+// container whose stream was slow to connect, pays the connect and then the
+// ordinary parkedReadMax silence — not the 1 s deadline. The deadline is for a
+// pipeline that never answers at all, not one that answered late.
+func TestWaitForScannerIdle_silentHandlerAfterSlowConnectGivesUpAtParkedReadMax(t *testing.T) {
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	mark := ci.beginTail()
+
+	start := mock.Now()
+	opened := false
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		if !opened && mock.Now().Sub(start) >= 120*time.Millisecond {
+			streamOpens(ci)
+			readerParks(ci)
+			opened = true
+		}
+	})
+	elapsed := mock.Now().Sub(start)
+
+	if elapsed < 200*time.Millisecond {
+		t.Errorf("silent handler after a 120ms connect waited only %v, expected the connect plus the ~80ms parkedReadMax bound", elapsed)
+	}
+	if elapsed > 215*time.Millisecond {
+		t.Errorf("silent handler after a 120ms connect waited %v, expected to give up around 200ms rather than run towards the 1s deadline", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_refusedFirstConnectIsBoundedLikeABackoff pins the
+// line between "Docker has not answered the first connect" and "Docker
+// answered it with an error". The first is bounded by the deadline alone (see
+// above); the second must not be. A daemon that refuses the logs endpoint
+// outright — a log driver that cannot be read back, say — answers every
+// attempt the same way, 50 ms of backoff apart, and a tail wait that held a
+// second for each of them would turn a missing log tail into a slow invoke.
+// Once refused, the reader is in the same position as a reconnect backoff —
+// no live connection, nothing in flight — and is timed the same way.
+func TestWaitForScannerIdle_refusedFirstConnectIsBoundedLikeABackoff(t *testing.T) {
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newNeverConnectedInstance(mock)
+	streamOpenFails(ci)
+	mark := ci.beginTail()
+
+	elapsed := runScannerWait(t, mock, ci, mark, -1, "")
+
+	if elapsed > 30*time.Millisecond {
+		t.Errorf("refused first connect held the wait for %v, expected to give up around the 25ms firstReadMax like a reconnect backoff", elapsed)
 	}
 }
 
@@ -469,15 +630,15 @@ func TestWaitForScannerIdle_streamThatNeverConnectsGivesUpAtTheDeadline(t *testi
 // reconnect backoff, not the racy first-connect window — and that must stay
 // bounded by firstReadMax exactly as before. Losing this bound would leave
 // every invocation that lands during a reconnect paying up to the full 100 ms
-// deadline instead of the 25 ms grace, on a case the reconnect backoff opening
-// at 50 ms already covers.
+// progress bound instead of the 25 ms grace, on a case the reconnect backoff
+// opening at 50 ms already covers.
 func TestWaitForScannerIdle_reconnectBackoffStillBoundedByFirstReadMax(t *testing.T) {
 	mock := clock.NewMock()
 	mock.Set(time.Unix(1_700_000_000, 0))
 	ci := newNeverConnectedInstance(mock)
 	// The stream connected once already and is now between connections — a
 	// reconnect backoff, not a first connect.
-	ci.logStreamEverOpened.Store(true)
+	ci.logStreamEverAnswered.Store(true)
 	mark := ci.beginTail()
 
 	elapsed := runScannerWait(t, mock, ci, mark, -1, "")
@@ -540,7 +701,8 @@ func TestBeginTail_dropsThePreviousInvocationsStragglerOutput(t *testing.T) {
 // TestWaitForScannerIdle_silentHandlerReturnsPromptly pins the cost of the
 // ambiguity the fix introduces: a handler that prints nothing is
 // indistinguishable from one whose output has not arrived, so it waits. It must
-// wait out its bound and stop there, not sit on the 100 ms deadline.
+// wait out its bound and stop there, not sit on the 100 ms progress bound — let
+// alone the 1 s deadline.
 //
 // newTailWaitInstance leaves the reader parked inside a live Read() (the
 // ordinary state a warm container is in), so this exercises the liveParked
@@ -559,13 +721,13 @@ func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	// When: the wait runs with nothing ever delivered.
 	elapsed := runScannerWait(t, mock, ci, ci.beginTail(), -1, "")
 
-	// Then: it gives up at the liveParked grace period rather than the full
-	// 100ms deadline.
+	// Then: it gives up at the liveParked grace period rather than the 100ms
+	// progress bound.
 	if elapsed < 80*time.Millisecond {
 		t.Errorf("silent handler waited only %v, expected to run out the ~80ms parkedReadMax bound", elapsed)
 	}
 	if elapsed > 90*time.Millisecond {
-		t.Errorf("silent handler waited %v, expected to give up around the 80ms parkedReadMax bound rather than the 100ms deadline", elapsed)
+		t.Errorf("silent handler waited %v, expected to give up around the 80ms parkedReadMax bound rather than the 100ms progress bound", elapsed)
 	}
 }
 
