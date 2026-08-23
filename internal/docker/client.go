@@ -144,6 +144,19 @@ const (
 	// label or belongs to something else; either way its owner cannot be
 	// established, so it must not be swept.
 	LabelInstance = "overcast.instance"
+
+	// LabelLambdaInitVersion and LabelLambdaInitArch mark the volume holding
+	// the in-container Lambda init. They live here rather than in the lambda
+	// package so that every label key Overcast stamps on a Docker resource can
+	// be read in one place — which is what makes it possible to tell, from
+	// this file alone, that no other service's sweep can see this volume.
+	//
+	// The version is the first 12 hex characters of the SHA-256 of the init
+	// binary itself, so an Overcast built with a different init addresses a
+	// different volume and can never run against a stale one.
+	LabelLambdaInitVersion = "overcast.lambda.init.version"
+	// LabelLambdaInitArch is the GOARCH the init in the volume was built for.
+	LabelLambdaInitArch = "overcast.lambda.init.arch"
 )
 
 // ManagedLabels returns the standard Overcast labels for a Docker resource.
@@ -1432,6 +1445,38 @@ func (d *Client) VolumeExists(ctx context.Context, name string) (bool, error) {
 	default:
 		return false, fmt.Errorf("inspect volume %s: status %d", name, resp.StatusCode)
 	}
+}
+
+// InspectVolume returns the daemon's record of a named volume, reporting
+// whether it exists at all.
+//
+// It answers the question VolumeExists cannot: not just "is there a volume of
+// this name" but "is it *ours*". A volume Docker auto-created for a container
+// that named one carries no labels, and a caller that assumes such a volume
+// holds what it seeded there would hand out an empty one forever.
+func (d *Client) InspectVolume(ctx context.Context, name string) (*VolumeSummary, bool, error) {
+	if err := d.acquireOp(ctx); err != nil {
+		return nil, false, fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	defer d.releaseOp()
+
+	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/volumes/"+url.PathEscape(name), nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, false, nil
+	default:
+		return nil, false, fmt.Errorf("inspect volume %s: status %d", name, resp.StatusCode)
+	}
+	var vol VolumeSummary
+	if err := json.NewDecoder(resp.Body).Decode(&vol); err != nil {
+		return nil, false, fmt.Errorf("inspect volume %s: decode: %w", name, err)
+	}
+	return &vol, true, nil
 }
 
 // RemoveVolume removes a named Docker volume. A missing volume is not an

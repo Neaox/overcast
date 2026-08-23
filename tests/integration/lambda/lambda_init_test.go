@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -669,6 +670,113 @@ function call(method, path, headers, body) {
 	if indexOfLine(messages, "[overcast-extension:") >= 0 {
 		t.Errorf("an extension line still carries the old prefix convention:\n%s", strings.Join(messages, "\n"))
 	}
+}
+
+// ─── the seeded init volume ──────────────────────────────────────────────────
+
+// The init is not copied into a container any more; it is mounted from a volume
+// seeded once per Overcast process. Two things have to be true against a real
+// daemon for that to work, and neither is worth assuming: an archive extracted
+// into a *created but never started* container has to reach the volume mounted
+// over its destination, and a function container has to be able to exec what is
+// in that volume as its entrypoint.
+//
+// The second is proved by the invoke succeeding at all — the container's
+// entrypoint is /var/overcast/init and nothing put it there but the volume. The
+// first is proved by reading the volume back through a container that had no
+// part in seeding it.
+func TestInvoke_initIsMountedFromASeededVolume(t *testing.T) {
+	skipIfNoDocker(t)
+	requireLambdaInit(t)
+
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
+	code := makeZip(t, "index.js", `
+exports.handler = async () => {
+  console.log("ran from a volume-mounted init marker-vol");
+  return { ok: true };
+};
+`)
+	createFunctionWithCode(t, srv, "vol-fn", "nodejs20.x", "index.handler", code)
+	waitForFunctionActive(t, srv, "vol-fn")
+
+	// The function runs, so its entrypoint was executable — from the volume.
+	tail := string(invokeForLogTail(t, srv, "vol-fn", []byte("{}")))
+	if !strings.Contains(tail, "ran from a volume-mounted init marker-vol") {
+		t.Fatalf("the function did not run under an init mounted from a volume:\n%s", tail)
+	}
+
+	dc := dockerClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// The volume exists, is ours, and names the architecture it holds.
+	volumes, err := dc.ListVolumes(ctx, "lambda")
+	if err != nil {
+		t.Fatalf("list lambda volumes: %v", err)
+	}
+	var initVolume string
+	for _, v := range volumes {
+		if v.Labels[docker.LabelLambdaInitVersion] != "" {
+			initVolume = v.Name
+			break
+		}
+	}
+	if initVolume == "" {
+		t.Fatalf("no volume carries %s; got %+v", docker.LabelLambdaInitVersion, volumes)
+	}
+	if !strings.HasPrefix(initVolume, "overcast-lambda-init-") {
+		t.Errorf("init volume name = %q, want the overcast-lambda-init-… shape", initVolume)
+	}
+
+	// Read it back through a container that had nothing to do with seeding it.
+	want := initArtefactSize(t, "amd64")
+	reader, err := dc.CreateContainer(ctx, "overcast-test-init-volume-reader-"+strconv.FormatInt(time.Now().UnixNano(), 10),
+		&docker.CreateContainerRequest{
+			ContainerConfig: &docker.ContainerConfig{
+				Image:      "public.ecr.aws/lambda/nodejs:20",
+				Entrypoint: []string{"/bin/sh"},
+				Cmd:        []string{"-c", "test -x /var/overcast/init && wc -c < /var/overcast/init"},
+			},
+			Platform: "linux/amd64",
+			HostConfig: &docker.HostConfig{
+				Mounts: []docker.Mount{{Type: "volume", Source: initVolume, Target: "/var/overcast", ReadOnly: true}},
+			},
+		})
+	if err != nil {
+		t.Fatalf("create the container that reads the init volume: %v", err)
+	}
+	defer func() { _ = dc.RemoveContainerForce(reader) }()
+	if err := dc.StartContainer(ctx, reader); err != nil {
+		t.Fatalf("start the reader: %v", err)
+	}
+	code2, err := dc.WaitContainer(ctx, reader)
+	if err != nil {
+		t.Fatalf("wait for the reader: %v", err)
+	}
+	raw, _ := dc.ContainerLogs(ctx, reader, "20")
+	out := strings.TrimSpace(string(docker.DemuxStream(raw)))
+	if code2 != 0 {
+		t.Fatalf("the init in the volume is missing or not executable (exit %d): %s", code2, out)
+	}
+	if got, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err != nil {
+		t.Fatalf("could not read the init's size from %q: %v", out, err)
+	} else if got != want {
+		t.Errorf("the volume holds %d bytes, want the %d-byte artefact — the seed is incomplete", got, want)
+	}
+}
+
+// initArtefactSize is the size of the built init this checkout embeds.
+func initArtefactSize(t *testing.T, goarch string) int64 {
+	t.Helper()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "internal", "services", "lambda", "initbin", "dist", "lambda-init-linux-"+goarch))
+	if err != nil {
+		t.Fatalf("stat the init artefact: %v", err)
+	}
+	return info.Size()
 }
 
 // ─── output that precedes an invocation ──────────────────────────────────────

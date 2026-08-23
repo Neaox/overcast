@@ -22,9 +22,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -91,9 +93,21 @@ type pullRecord struct {
 type recordingDaemon struct {
 	*httptest.Server
 
-	mu      sync.Mutex
-	pulls   []pullRecord
-	creates []docker.CreateContainerRequest
+	// refuseVolumes makes every volume call fail, which is how a daemon that
+	// will not manage volumes for us is modelled — the case the init's archive
+	// fallback exists for.
+	refuseVolumes bool
+	// startError, when set, is what a container start fails with. The default
+	// names neither the init nor anything else the runtime reads.
+	startError string
+
+	mu       sync.Mutex
+	pulls    []pullRecord
+	creates  []docker.CreateContainerRequest
+	seeds    []docker.CreateContainerRequest
+	volumes  map[string]map[string]string // name → labels
+	archives map[string][]byte            // container name → the last archive put into it
+	removed  []string                     // volumes removed, in order
 }
 
 func newRecordingDaemon(t *testing.T) *recordingDaemon {
@@ -109,7 +123,37 @@ func newRecordingDaemon(t *testing.T) *recordingDaemon {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/containers/create":
 			d.recordCreate(t, r)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "0123456789abcdef"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": r.URL.Query().Get("name")})
+
+		// ── volumes: the init arrives in one, seeded once ──────────────────
+		case d.refuseVolumes && strings.HasPrefix(r.URL.Path, "/v1.45/volumes"):
+			http.Error(w, "this daemon does not do volumes", http.StatusInternalServerError)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/volumes/create":
+			d.recordVolumeCreate(t, r)
+			w.WriteHeader(http.StatusCreated)
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/volumes":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"Volumes": d.volumeList()})
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/volumes/"):
+			name := strings.TrimPrefix(r.URL.Path, "/v1.45/volumes/")
+			labels, ok := d.volumeLabels(name)
+			if !ok {
+				http.Error(w, "no such volume", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": name, "Labels": labels})
+
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.45/volumes/"):
+			d.removeVolume(strings.TrimPrefix(r.URL.Path, "/v1.45/volumes/"))
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/archive"):
+			d.recordArchive(t, r)
+			w.WriteHeader(http.StatusOK)
 
 		// Every image is absent until it has been pulled, so ensureImage always
 		// pulls exactly once — and the inspect that follows the pull answers
@@ -134,7 +178,11 @@ func newRecordingDaemon(t *testing.T) *recordingDaemon {
 		// Starting is where this daemon gives up, ending the acquire just past
 		// the create under test.
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
-			http.Error(w, "fake daemon does not start containers", http.StatusInternalServerError)
+			msg := d.startError
+			if msg == "" {
+				msg = "fake daemon does not start containers"
+			}
+			http.Error(w, msg, http.StatusInternalServerError)
 
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -173,7 +221,116 @@ func (d *recordingDaemon) recordCreate(t *testing.T, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// The throwaway container that seeds the init volume is not a function
+	// container, and a test counting cold starts must not see it.
+	if strings.Contains(r.URL.Query().Get("name"), "-seed-") {
+		d.seeds = append(d.seeds, req)
+		return
+	}
 	d.creates = append(d.creates, req)
+}
+
+func (d *recordingDaemon) recordVolumeCreate(t *testing.T, r *http.Request) {
+	t.Helper()
+	var req struct {
+		Name   string            `json:"Name"`
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Errorf("decode volume create body: %v", err)
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.volumes == nil {
+		d.volumes = map[string]map[string]string{}
+	}
+	if _, exists := d.volumes[req.Name]; !exists {
+		// Docker returns the existing volume as it is; options apply on first
+		// creation only.
+		d.volumes[req.Name] = req.Labels
+	}
+}
+
+func (d *recordingDaemon) recordArchive(t *testing.T, r *http.Request) {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read archive body: %v", err)
+		return
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.45/containers/"), "/archive")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.archives == nil {
+		d.archives = map[string][]byte{}
+	}
+	d.archives[name] = body
+}
+
+// seedVolume plants a volume the way the daemon would already hold it.
+func (d *recordingDaemon) seedVolume(name string, labels map[string]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.volumes == nil {
+		d.volumes = map[string]map[string]string{}
+	}
+	d.volumes[name] = labels
+}
+
+func (d *recordingDaemon) volumeLabels(name string) (map[string]string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	labels, ok := d.volumes[name]
+	return labels, ok
+}
+
+func (d *recordingDaemon) volumeList() []map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]map[string]any, 0, len(d.volumes))
+	for name, labels := range d.volumes {
+		out = append(out, map[string]any{"Name": name, "Labels": labels})
+	}
+	return out
+}
+
+func (d *recordingDaemon) removeVolume(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.volumes, name)
+	d.removed = append(d.removed, name)
+}
+
+// volumeNames lists the volumes the daemon currently holds.
+func (d *recordingDaemon) volumeNames() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]string, 0, len(d.volumes))
+	for name := range d.volumes {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// seededArchive returns the archive put into the init-volume seeder.
+func (d *recordingDaemon) seededArchive() ([]byte, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for name, body := range d.archives {
+		if strings.Contains(name, "-seed-") {
+			return body, true
+		}
+	}
+	return nil, false
+}
+
+// removedVolumes lists the volumes the daemon was asked to remove.
+func (d *recordingDaemon) removedVolumes() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.removed...)
 }
 
 // hasPulled reports whether this daemon has served a pull yet, which is what

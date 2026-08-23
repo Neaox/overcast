@@ -70,7 +70,16 @@ type ContainerRuntime struct {
 	tarCache         *tarCache                            // pre-built code/layer tars; nil = disabled
 	imageVerified    sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
 	imageConfigs     sync.Map                             // pull key → docker.ImageConfig: the image's own ENTRYPOINT/CMD, which the init now has to reproduce
-	coldStartSem     chan struct{}                        // bounds concurrent container creation/INIT bursts
+	// The in-container init is delivered in a named volume seeded once per
+	// process and architecture, rather than copied into every container — see
+	// init_volume.go. initVolumes holds one seeding attempt per volume name,
+	// initVolumeWarned keeps the archive-fallback warning to one line, and
+	// initVolumePruned makes the sweep of superseded volumes a once-per-process
+	// job.
+	initVolumes      sync.Map // volume name → *initVolumeState
+	initVolumeWarned sync.Map // volume name → struct{}
+	initVolumePruned atomic.Bool
+	coldStartSem     chan struct{} // bounds concurrent container creation/INIT bursts
 	// instances stamps each runtime container with this instance's identity, so
 	// the GC's sweeps can tell them from another Overcast's on the same daemon.
 	// The same value must reach the GC — see NewContainerRuntime.
@@ -576,22 +585,25 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		}
 	}
 	// The init, for every container: it is the entrypoint, so an execution
-	// environment without it is not an execution environment. Image functions
-	// get the provisioning archive for this reason alone — before the init
-	// there was nothing in it for them, and "always at least the init" is what
-	// keeps this one code path rather than two.
-	//
-	// Written straight into the archive rather than through appendComponent:
-	// the init is ~6.5 MB and a component tar would copy it twice.
-	if err := appendLambdaInit(tw, fn.Architectures); err != nil {
-		// Deliberately fatal, and the error is passed through verbatim: it
-		// names the missing artefact and the command that builds it. A silent
-		// fallback would mean a container whose output cannot be attributed to
-		// an invocation, which is the failure this whole mechanism exists to
-		// remove.
-		return nil, err
+	// environment without it is not an execution environment. It normally
+	// arrives in a volume seeded once per process (init_volume.go) rather than
+	// in this archive, because copying ~6.5 MB per cold start costs more than
+	// the rest of the cold start put together. A missing *artefact* is fatal —
+	// the error names the file and the command that builds it — while a daemon
+	// that will not manage a volume falls back to the archive here, which is
+	// the only reason appendLambdaInit still exists.
+	initDeliv, initErr := cr.resolveInitDelivery(ctx, fn, ref.resolved.Ref, platform)
+	if initErr != nil {
+		return nil, initErr
 	}
-	hasEntries = true
+	if initDeliv.volume == "" {
+		// Written straight into the archive rather than through
+		// appendComponent: a component tar would copy the binary twice.
+		if err := appendLambdaInit(tw, fn.Architectures); err != nil {
+			return nil, err
+		}
+		hasEntries = true
+	}
 	if err := tw.Close(); err != nil {
 		return nil, fmt.Errorf("close provisioning tar: %w", err)
 	}
@@ -668,7 +680,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		Platform:        platform,
 		HostConfig: &docker.HostConfig{
 			Binds:       bindMountTaskDir(hotReloadPath),
-			Mounts:      cr.efsMounts(ctx, fn),
+			Mounts:      withInitVolume(cr.efsMounts(ctx, fn), initDeliv.volume),
 			NetworkMode: cr.network,
 			Memory:      int64(fn.MemorySize) * 1024 * 1024,
 			MemorySwap:  int64(fn.MemorySize) * 1024 * 1024, // disable swap
@@ -768,6 +780,17 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 
 	progress("Starting container")
 	if err := cr.docker.StartContainer(ctx, id); err != nil {
+		// A start that failed because the init is not where the entrypoint
+		// points means the volume we mounted is empty — the state a process
+		// killed between creating the volume and filling it leaves behind, and
+		// the one state the labels cannot tell apart from a good seed.
+		// Dropping it is what makes that self-healing, and it is narrowed to
+		// that error rather than run on every failed start: a start that failed
+		// for its own reasons has a perfectly good volume, and Docker names the
+		// path it could not exec.
+		if initDeliv.volume != "" && strings.Contains(err.Error(), initproto.InitPath) {
+			cr.forgetInitVolume(ctx, initDeliv.volume)
+		}
 		cleanup()
 		return nil, fmt.Errorf("start container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
@@ -2286,8 +2309,23 @@ func lambdaInitBinary(arch string) ([]byte, error) {
 	return data, err
 }
 
+// withInitVolume adds the read-only mount that puts the init at
+// initproto.InitPath, when a volume is what is delivering it.
+func withInitVolume(mounts []docker.Mount, volume string) []docker.Mount {
+	if volume == "" {
+		return mounts
+	}
+	return append(mounts, docker.Mount{
+		Type:     "volume",
+		Source:   volume,
+		Target:   initVolumeTarget,
+		ReadOnly: true,
+	})
+}
+
 // appendLambdaInit writes the init into the provisioning archive at
-// initproto.InitPath, which is where the container's entrypoint points.
+// initproto.InitPath. It is the fallback for a daemon that will not give us a
+// volume to mount the init from — see init_volume.go.
 //
 // The directory header is emitted because /var/overcast is Overcast's own and
 // exists in no base image — unlike /var, /var/task and /opt, whose headers are
