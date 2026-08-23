@@ -129,7 +129,7 @@ jobs:
             --json number --jq '.[].number' > prs.txt
           echo "Open pull requests into main: $(wc -l < prs.txt | tr -d ' ')"
 
-          judged=0 stale=0
+          posted=0 judged=0 stale=0
           while read -r number; do
             [ -n "$number" ] || continue
             # The head as of now, not as of the listing: a push between the
@@ -144,11 +144,18 @@ jobs:
             verdict="$(python3 scripts/lockfile-freshness.py check \
               --head "$head" --base origin/main --details-file "details-$number.md" 2>/dev/null)"
             echo "#$number @ ${head:0:10}: $verdict"
-            [ "$verdict" != "not-applicable" ] || continue
 
-            judged=$((judged + 1))
+            # Every open pull request gets a verdict, the not-applicable ones
+            # included. That is what lets a dispatch give a pull request
+            # opened before this check existed — or before it was made
+            # required — its green tick without a push, and it costs one API
+            # call per open pull request per lockfile push.
             conclusion=success
-            title="Lockfile generated against the current main"
+            title="Does not change a lockfile"
+            if [ "$verdict" != "not-applicable" ]; then
+              judged=$((judged + 1))
+              title="Lockfile generated against the current main"
+            fi
             if [ "$verdict" = "stale" ]; then
               stale=$((stale + 1))
               conclusion=failure
@@ -159,18 +166,22 @@ jobs:
             # run under a name is the one the merge box and branch
             # protection read, so this supersedes the verdict `check` gave
             # when the head was pushed.
-            gh api "repos/$REPO/check-runs" \
-              -f name='Lockfile freshness' \
-              -f head_sha="$head" \
-              -f status=completed \
-              -f conclusion="$conclusion" \
-              -f details_url="$RUN_URL" \
-              -f "output[title]=$title" \
-              -f "output[summary]=$(cat "details-$number.md")" \
-              --jq '.html_url' || echo "::warning::#$number: posting the check run failed."
+            if gh api "repos/$REPO/check-runs" \
+                -f name='Lockfile freshness' \
+                -f head_sha="$head" \
+                -f status=completed \
+                -f conclusion="$conclusion" \
+                -f details_url="$RUN_URL" \
+                -f "output[title]=$title" \
+                -f "output[summary]=$(cat "details-$number.md")" \
+                --jq '.html_url'; then
+              posted=$((posted + 1))
+            else
+              echo "::warning::#$number: posting the check run failed."
+            fi
           done < prs.txt
 
-          echo "Judged $judged lockfile pull request(s); $stale stale." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Posted a verdict on $posted open pull request(s): $judged change a lockfile, $stale of those stale." | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$EVENT" = "push" ]; then
             echo "Triggered by a push that changed web/pnpm-lock.yaml." >> "$GITHUB_STEP_SUMMARY"
           fi
