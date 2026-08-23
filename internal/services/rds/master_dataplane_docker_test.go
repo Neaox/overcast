@@ -145,11 +145,15 @@ func newRealRDSTestService(t *testing.T, image string) (*Service, *docker.Client
 		RDSPortBase: probeFreePort(t),
 	}
 	planes := dataplane.Networks(cfg, dataplane.Placement{})
-	for _, plane := range planes {
-		if _, err := dc.CreateNetwork(ctx, plane); err != nil {
-			t.Fatalf("create test network %s: %v", plane, err)
-		}
-	}
+	// Registered before the planes are created, not after. There is more than
+	// one, so a failure partway through the loop below is a t.Fatalf with the
+	// earlier planes already created — and a cleanup registered after the loop
+	// is never registered at all, leaking them for the life of the daemon.
+	// helpers.WithECSDocker explains why a leaked network is worse than untidy:
+	// the daemon's address pool is small enough that leaks compound into
+	// "Docker not available" for every later container test.
+	// Removing a plane the loop never reached is not an error — RemoveNetwork
+	// reports not-found, which the loop below already tolerates.
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cleanupCancel()
@@ -159,6 +163,11 @@ func newRealRDSTestService(t *testing.T, image string) (*Service, *docker.Client
 			}
 		}
 	})
+	for _, plane := range planes {
+		if _, err := dc.CreateNetwork(ctx, plane); err != nil {
+			t.Fatalf("create test network %s: %v", plane, err)
+		}
+	}
 
 	svc := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	svc.SetDocker(dc)
