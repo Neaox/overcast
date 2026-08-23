@@ -39,6 +39,18 @@ func TestFrameRoundTrip(t *testing.T) {
 			name:  "embedded newline and quotes survive",
 			frame: initproto.Frame{Seq: 5, Src: initproto.SrcStdout, T: 2, Msg: "a\nb\t\"c\""},
 		},
+		{
+			name:  "init start record",
+			frame: initproto.Frame{Seq: 6, T: 3, Rec: initproto.Record{Type: initproto.RecInitStart}},
+		},
+		{
+			name:  "init runtime done record carries a status",
+			frame: initproto.Frame{Seq: 7, T: 4, Rec: initproto.Record{Type: initproto.RecInitRuntimeDone, Status: initproto.StatusSuccess}},
+		},
+		{
+			name:  "init report record carries a status and a duration",
+			frame: initproto.Frame{Seq: 8, T: 5, Rec: initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusError, DurationMs: 214.88}},
+		},
 	}
 
 	for _, tc := range tests {
@@ -116,6 +128,16 @@ func TestDecodeToleratesUnknownFieldsAndBlankLines(t *testing.T) {
 			in:   `{"seq":10,"src":"stdout","t":1,"msg":"tail"}`,
 			want: initproto.Frame{Seq: 10, Src: initproto.SrcStdout, T: 1, Msg: "tail"},
 		},
+		{
+			name: "a line frame carrying no record decodes to a zero record",
+			in:   `{"seq":11,"src":"stdout","t":1,"msg":"hi"}` + "\n",
+			want: initproto.Frame{Seq: 11, Src: initproto.SrcStdout, T: 1, Msg: "hi"},
+		},
+		{
+			name: "a record with a member this decoder does not know keeps the rest",
+			in:   `{"seq":12,"t":1,"rec":{"type":"initReport","status":"success","durationMs":1.5,"spans":[]}}` + "\n",
+			want: initproto.Frame{Seq: 12, T: 1, Rec: initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusSuccess, DurationMs: 1.5}},
+		},
 	}
 
 	for _, tc := range tests {
@@ -128,6 +150,28 @@ func TestDecodeToleratesUnknownFieldsAndBlankLines(t *testing.T) {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A record frame is a frame like any other — same stream, same sequence — and
+// its existence costs an ordinary line frame nothing on the wire: "rec" is
+// omitted entirely, so what a line looks like is exactly what it always looked
+// like.
+func TestRecordFrameWireShape(t *testing.T) {
+	var line strings.Builder
+	if err := (initproto.Frame{Seq: 1, Src: initproto.SrcStdout, T: 7, Msg: "hi"}).Encode(&line); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if got, want := strings.TrimSpace(line.String()), `{"seq":1,"src":"stdout","t":7,"msg":"hi"}`; got != want {
+		t.Fatalf("line frame:\n got %s\nwant %s", got, want)
+	}
+
+	var rec strings.Builder
+	if err := (initproto.Frame{Seq: 2, T: 8, Rec: initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusSuccess, DurationMs: 214.88}}).Encode(&rec); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if got, want := strings.TrimSpace(rec.String()), `{"seq":2,"t":8,"rec":{"type":"initReport","status":"success","durationMs":214.88}}`; got != want {
+		t.Fatalf("record frame:\n got %s\nwant %s", got, want)
 	}
 }
 

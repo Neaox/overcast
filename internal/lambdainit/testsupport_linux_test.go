@@ -273,12 +273,17 @@ type fakeHost struct {
 
 	invocations chan invocation
 
-	mu      sync.Mutex
-	cond    *sync.Cond
-	frames  []initproto.Frame // de-duplicated by seq, in arrival order
-	seen    map[uint64]bool
-	calls   []recordedCall
-	streams int
+	mu     sync.Mutex
+	cond   *sync.Cond
+	frames []initproto.Frame // de-duplicated by seq, in arrival order
+	seen   map[uint64]bool
+	calls  []recordedCall
+	// nextSeqs is the X-Overcast-Log-Seq stamped on each GET /next, in arrival
+	// order. It is the boundary the host waits for before it writes a START,
+	// so a test can assert that a frame the init published landed at or below
+	// it.
+	nextSeqs []string
+	streams  int
 	// dropAfter, when positive, ends the log stream once that many frames have
 	// been recorded on it — a host-side connection loss, mid-stream.
 	dropAfter int
@@ -324,6 +329,11 @@ func (h *fakeHost) wake() {
 func (h *fakeHost) enqueue(inv invocation) { h.invocations <- inv }
 
 func (h *fakeHost) handleNext(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	h.nextSeqs = append(h.nextSeqs, r.Header.Get(initproto.HeaderLogSeq))
+	h.cond.Broadcast()
+	h.mu.Unlock()
+
 	var inv invocation
 	select {
 	case inv = <-h.invocations:
@@ -461,6 +471,12 @@ func (h *fakeHost) snapshotCalls() []recordedCall {
 	out := make([]recordedCall, len(h.calls))
 	copy(out, h.calls)
 	return out
+}
+
+func (h *fakeHost) snapshotNextSeqs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.nextSeqs...)
 }
 
 func (h *fakeHost) streamCount() int {

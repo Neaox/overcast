@@ -86,11 +86,12 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 - Runtime-specific environment validation is minimal.
 - Extension Logs API support is limited to HTTP destinations and best-effort
   delivery. Telemetry API subscriptions are not yet implemented.
-- Under the JSON log format, the init-phase platform records
-  (`platform.initStart`, `platform.initReport`) are not emitted. Both are
-  `DEBUG` at the default `SystemLogLevel`, so nothing is missing from a default
-  log stream, but lowering the level will not make them appear. Tracked in
-  [#660](https://github.com/Neaox/overcast/issues/660).
+- The SnapStart restore records (`platform.restoreStart`,
+  `platform.restoreRuntimeDone`, `platform.restoreReport`) are not emitted,
+  because SnapStart itself is not emulated, and neither are
+  `platform.logsDropped` (Overcast's log channel reports a dropped run of
+  frames in its own log rather than as a Telemetry record) or the
+  `spans` member of any record.
 - `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}`
   object returns `501`. AWS's semantics for that shape have not been captured,
   and guessing between "no-op" and "reset to defaults" would mutate the function
@@ -451,11 +452,14 @@ line the function writes reaches CloudWatch Logs.
 through the Lambda Telemetry API, one JSON object per log line, each shaped
 `{"time", "type", "record"}` with a millisecond-precision UTC timestamp:
 
-| Event `type`           | Replaces | System log level                | Record                                                                                             |
-| ---------------------- | -------- | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `platform.start`       | `START`  | `INFO`                          | `requestId`, `version`                                                                             |
-| `platform.runtimeDone` | `END`    | `DEBUG` on success, else `WARN` | `requestId`, `status`, `metrics`: `durationMs`, `producedBytes`                                    |
-| `platform.report`      | `REPORT` | `INFO` on success, else `WARN`  | `requestId`, `status`, `metrics`: `durationMs`, `billedDurationMs`, `memorySizeMB`, `maxMemoryUsedMB` |
+| Event `type`               | Replaces | System log level                                             | Record                                                                                                |
+| -------------------------- | -------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `platform.initStart`       | —        | `DEBUG`                                                       | `initializationType`, `phase`, `functionName`, `functionVersion`                                        |
+| `platform.initRuntimeDone` | —        | `DEBUG` on success, else `WARN`                               | `initializationType`, `phase`, `status`                                                                 |
+| `platform.initReport`      | —        | `DEBUG` on-demand, `INFO` provisioned, `WARN` when it failed  | `initializationType`, `phase`, `status`, `metrics`: `durationMs`                                        |
+| `platform.start`           | `START`  | `INFO`                                                        | `requestId`, `version`                                                                                  |
+| `platform.runtimeDone`     | `END`    | `DEBUG` on success, else `WARN`                               | `requestId`, `status`, `metrics`: `durationMs`, `producedBytes`                                         |
+| `platform.report`          | `REPORT` | `INFO` on success, else `WARN`                                | `requestId`, `status`, `metrics`: `durationMs`, `billedDurationMs`, `memorySizeMB`, `maxMemoryUsedMB`   |
 
 The levels are AWS's own system-log-level event mapping, not an Overcast
 convention. `status` is `success`, `failure` (the handler returned an error),
@@ -463,9 +467,12 @@ convention. `status` is `success`, `failure` (the handler returned an error),
 `metrics.initDurationMs` appears in `platform.report` only on the first report
 of an on-demand cold start, exactly where the text `REPORT` carries
 `Init Duration`. Overcast emits only the subset of the Telemetry API schema it
-genuinely observes: the `errorType` member both records model is never
-populated, because nothing in the emulator knows an AWS error type to put
-there.
+genuinely observes: the `errorType` member the invocation records model is never
+populated, because nothing in the emulator knows an AWS error type to put there,
+and `platform.initStart` omits `runtimeVersion`, `runtimeVersionArn`,
+`instanceId` and `instanceMaxMemory` for the same reason — the absent
+`runtimeVersion` is also why AWS's mapping makes that record `DEBUG` rather than
+`INFO`.
 
 At the default `SystemLogLevel` of `INFO`, a successful invocation therefore
 logs two records — `platform.runtimeDone` is `DEBUG` and only appears once you
@@ -476,10 +483,45 @@ lower the level:
 {"time":"2026-08-09T04:21:07.884Z","type":"platform.report","record":{"requestId":"8f2a1c3e-…","status":"success","metrics":{"durationMs":371.42,"billedDurationMs":372,"memorySizeMB":512,"maxMemoryUsedMB":78,"initDurationMs":214.88}}}
 ```
 
-The **init-phase** records, `platform.initStart` and `platform.initReport`, are
-not emitted at all. Both are `DEBUG` at the default system log level, so a
-default log stream is complete without them, but asking for `DEBUG` will not
-produce them either. See [Known limitations](#known-limitations).
+#### The init-phase records
+
+The three **init-phase** records come from Overcast's in-container init, which
+is PID 1 in every execution environment and the proxy in front of the Runtime
+API — so it sees the phase begin (before it starts the extensions and the
+runtime) and end (the runtime's first `GET /next`) without inferring either.
+They travel on the same sequence-ordered stream as the container's own output,
+which is what fixes their place in the log:
+
+```json
+{"time":"2026-08-09T04:21:07.113Z","type":"platform.initStart","record":{"initializationType":"on-demand","phase":"init","functionName":"my-function","functionVersion":"$LATEST"}}
+… whatever the function printed while it was initialising …
+{"time":"2026-08-09T04:21:07.498Z","type":"platform.initRuntimeDone","record":{"initializationType":"on-demand","phase":"init","status":"success"}}
+{"time":"2026-08-09T04:21:07.499Z","type":"platform.initReport","record":{"initializationType":"on-demand","phase":"init","status":"success","metrics":{"durationMs":385.44}}}
+{"time":"2026-08-09T04:21:07.512Z","type":"platform.start","record":{"requestId":"8f2a1c3e-…","version":"$LATEST"}}
+```
+
+All three are `DEBUG` for a successful on-demand cold start, so a default log
+stream never shows them and `SystemLogLevel: DEBUG` is what produces them. A
+provisioned environment's `platform.initReport` is `INFO`, and an environment
+whose runtime died before it ever asked for work reports `status: error` on both
+closing records — `WARN`, and therefore visible at the default level.
+
+`platform.initReport`'s `metrics.durationMs` is measured inside the execution
+environment. It is a different span from the `Init Duration` on the text
+`REPORT` line and `platform.report`'s `metrics.initDurationMs`, which Overcast
+measures from the host: the two differ by a few milliseconds, usually with the
+init's the larger, because the container is already running by the time the
+Docker API answers the call that started it. It is also the only one of the two
+that exists for a proactively initialised environment, which — like real Lambda
+— reports no `Init Duration` at all.
+
+In **Text** format none of the three is written to CloudWatch Logs. AWS's
+plain-text counterpart of `platform.initStart` is an `INIT_START` line whose
+entire content is a managed runtime's version and that version's ARN, neither of
+which Overcast has (and neither of which a container-image function has at all),
+and the other two records have no plain-text counterpart. Telemetry and Logs API
+subscribers receive all three in either format — see
+[Filtering](#filtering) below.
 
 ### Filtering
 
@@ -1091,11 +1133,11 @@ the only way to read them back.
 
 ### Invocation
 
-| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | AWS Docs                                                                               |
-| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried per the function's FunctionEventInvokeConfig (AWS's default of twice, waiting AWS's one minute then two, when unconfigured) and then delivered to its on-failure destination and its DeadLetterConfig target; MaximumEventAgeInSeconds is measured from acceptance and discards the event before the next attempt rather than after it, but the resulting record's condition reads RetriesExhausted because AWS does not document a distinct value for an aged-out event; records AWS/Lambda CloudWatch metrics (Invocations, Errors, Duration, Throttles, ConcurrentExecutions — service-metrics-platform.md Lambda pilot) at this outcome boundary for every invocation mechanism (sync, async, function URLs, event source mappings); DryRun never invokes and so never records; Resource/ExecutedVersion metric dimensions are not recorded yet | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
-| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
-| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
+| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | AWS Docs                                                                               |
+| -------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; the in-container init also reports the INIT phase as platform.initStart, platform.initRuntimeDone and platform.initReport, ordered against the phase's own output, and Telemetry/Logs API subscribers receive every platform record in either log format; an InvocationType=Event invocation whose function errors is retried per the function's FunctionEventInvokeConfig (AWS's default of twice, waiting AWS's one minute then two, when unconfigured) and then delivered to its on-failure destination and its DeadLetterConfig target; MaximumEventAgeInSeconds is measured from acceptance and discards the event before the next attempt rather than after it, but the resulting record's condition reads RetriesExhausted because AWS does not document a distinct value for an aged-out event; records AWS/Lambda CloudWatch metrics (Invocations, Errors, Duration, Throttles, ConcurrentExecutions — service-metrics-platform.md Lambda pilot) at this outcome boundary for every invocation mechanism (sync, async, function URLs, event source mappings); DryRun never invokes and so never records; Resource/ExecutedVersion metric dimensions are not recorded yet | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
+| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
+| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
 
 ### Aliases & versions
 
