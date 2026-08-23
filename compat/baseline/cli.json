@@ -2804,6 +2804,20 @@
     {
       "suite": "cli",
       "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPattern",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-patterns",
+      "test": "TestEventPatternNoMatch",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
       "group": "eventbridge-rules",
       "test": "DeleteRule",
       "status": "pass"
@@ -3485,6 +3499,13 @@
       "service": "lambda",
       "group": "lambda-crud",
       "test": "UpdateFunctionConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-invoke-error",
+      "test": "InvokeWithError",
       "status": "pass"
     },
     {
