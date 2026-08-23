@@ -22,8 +22,11 @@
 //	go run ./scripts/bench-lambda.go -cold 5 -warm 20 -runtime nodejs22.x
 //	go run ./scripts/bench-lambda.go -apigw=false            # skip the API GW round
 //
-// Output: per-runtime table with cold p50/p95/max, warm p50/p95, and API GW
-// warm p50/p95 (gateway overhead = apigw-warm minus warm). Conditions to
+// Output: per-runtime table with cold p50/p95/max, warm p50/p95, warm p50 with
+// X-Amz-Log-Result requested, and API GW warm p50/p95 (gateway overhead =
+// apigw-warm minus warm). The tail column is the one that moves when the log
+// pipeline changes: a tail-requesting invoke is the only one that ever had to
+// wait for the function's own output to arrive. Conditions to
 // record with any published numbers: host OS, Docker backend, image cache
 // state, store backend, and the overcast version.
 package main
@@ -61,32 +64,33 @@ func main() {
 	}
 
 	type row struct {
-		runtime            string
-		cold, warm, apigwW []float64 // ms
+		runtime                  string
+		cold, warm, tail, apigwW []float64 // ms
 	}
 	var rows []row
 	for _, rt := range strings.Split(*runtimeCSV, ",") {
 		rt = strings.TrimSpace(rt)
 		fmt.Printf("\n── %s: %d cold rounds × (1 cold + %d warm) ──\n", rt, *coldN, *warmN)
 		r := row{runtime: rt}
-		if err := benchRuntime(*endpoint, rt, *coldN, *warmN, *apigw, *cooldown, *padMB, &r.cold, &r.warm, &r.apigwW); err != nil {
+		if err := benchRuntime(*endpoint, rt, *coldN, *warmN, *apigw, *cooldown, *padMB, &r.cold, &r.warm, &r.tail, &r.apigwW); err != nil {
 			fmt.Fprintf(os.Stderr, "  %s FAILED: %v\n", rt, err)
 			continue
 		}
 		rows = append(rows, r)
 	}
 
-	fmt.Printf("\n%-12s %10s %10s %10s │ %10s %10s │ %12s %12s\n",
-		"Runtime", "cold-p50", "cold-p95", "cold-max", "warm-p50", "warm-p95", "apigw-p50", "apigw-p95")
-	fmt.Println(strings.Repeat("─", 108))
+	fmt.Printf("\n%-12s %10s %10s %10s │ %10s %10s │ %10s %10s │ %12s %12s\n",
+		"Runtime", "cold-p50", "cold-p95", "cold-max", "warm-p50", "warm-p95", "tail-p50", "tail-p95", "apigw-p50", "apigw-p95")
+	fmt.Println(strings.Repeat("─", 130))
 	for _, r := range rows {
-		fmt.Printf("%-12s %9.0fms %9.0fms %9.0fms │ %9.1fms %9.1fms │ %11.1fms %11.1fms\n",
+		fmt.Printf("%-12s %9.0fms %9.0fms %9.0fms │ %9.1fms %9.1fms │ %9.1fms %9.1fms │ %11.1fms %11.1fms\n",
 			r.runtime, pctl(r.cold, 50), pctl(r.cold, 95), pctl(r.cold, 100),
-			pctl(r.warm, 50), pctl(r.warm, 95), pctl(r.apigwW, 50), pctl(r.apigwW, 95))
+			pctl(r.warm, 50), pctl(r.warm, 95), pctl(r.tail, 50), pctl(r.tail, 95),
+			pctl(r.apigwW, 50), pctl(r.apigwW, 95))
 	}
 }
 
-func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown time.Duration, padMB int, cold, warm, apigwW *[]float64) error {
+func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown time.Duration, padMB int, cold, warm, tail, apigwW *[]float64) error {
 	name := fmt.Sprintf("bench-lambda-%s-%d", strings.ReplaceAll(rt, ".", "-"), time.Now().Unix())
 	if err := createFunction(endpoint, name, rt, padMB); err != nil {
 		return fmt.Errorf("create function: %w", err)
@@ -149,6 +153,21 @@ func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown ti
 			*warm = append(*warm, ms)
 		}
 		fmt.Printf(", warm p50 %.1fms", pctl(roundWarm, 50))
+
+		// The same warm invoke, asking for the log tail. Kept separate rather
+		// than folded into the warm numbers: it is the only invoke shape whose
+		// cost depends on where the function's own output is, which is exactly
+		// what the log pipeline decides.
+		var roundTail []float64
+		for i := 0; i < warmRounds; i++ {
+			ms, err := timeInvokeTail(endpoint, name)
+			if err != nil {
+				return fmt.Errorf("warm invoke with tail: %w", err)
+			}
+			roundTail = append(roundTail, ms)
+			*tail = append(*tail, ms)
+		}
+		fmt.Printf(", tail p50 %.1fms", pctl(roundTail, 50))
 
 		if apiID != "" {
 			var roundGW []float64
@@ -270,6 +289,36 @@ func bumpEnv(endpoint, name string, round int) error {
 
 func timeInvoke(endpoint, name string) (float64, error) {
 	return timeHTTP(http.MethodPost, endpoint+"/2015-03-31/functions/"+name+"/invocations", strings.NewReader("{}"))
+}
+
+// timeInvokeTail times an invoke that asks for X-Amz-Log-Result, and refuses to
+// report a duration for one that came back without it — an empty tail measured
+// as fast would be the wrong answer to the question this column asks.
+func timeInvokeTail(endpoint, name string) (float64, error) {
+	req, err := http.NewRequest(http.MethodPost, endpoint+"/2015-03-31/functions/"+name+"/invocations", strings.NewReader("{}"))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Amz-Log-Type", "Tail")
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	elapsed := float64(time.Since(start).Microseconds()) / 1000.0
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, payload)
+	}
+	if fe := resp.Header.Get("X-Amz-Function-Error"); fe != "" {
+		return 0, fmt.Errorf("function error %s: %s", fe, payload)
+	}
+	if resp.Header.Get("X-Amz-Log-Result") == "" {
+		return 0, fmt.Errorf("no X-Amz-Log-Result on a Tail invoke")
+	}
+	return elapsed, nil
 }
 
 func createProxyAPI(endpoint, functionName string) (string, error) {
