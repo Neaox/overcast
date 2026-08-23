@@ -18,15 +18,10 @@ import {
   createV2AuthorizerMutationOptions,
   deleteV2AuthorizerMutationOptions,
 } from "@/features/apigateway/data"
+import type { AuthorizerV2 } from "@/features/apigateway/data"
+import type { HttpRoute, HttpStage } from "@/types/apigateway"
 import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogContent,
@@ -58,16 +53,10 @@ export function HttpApiDetail({ apiId }: Props) {
   const [showCreateRoute, setShowCreateRoute] = useState(false)
   const [showCreateIntegration, setShowCreateIntegration] = useState(false)
   const [showCreateStage, setShowCreateStage] = useState(false)
-  const [deleteRouteTarget, setDeleteRouteTarget] = useState<{
-    routeId: string
-    routeKey: string
-  }>()
-  const [deleteStageTarget, setDeleteStageTarget] = useState<string>()
+  const [deleteRouteTarget, setDeleteRouteTarget] = useState<HttpRoute>()
+  const [deleteStageTarget, setDeleteStageTarget] = useState<HttpStage>()
   const [showCreateV2Authorizer, setShowCreateV2Authorizer] = useState(false)
-  const [deleteV2AuthorizerTarget, setDeleteV2AuthorizerTarget] = useState<{
-    authorizerId: string
-    name: string
-  }>()
+  const [deleteV2AuthorizerTarget, setDeleteV2AuthorizerTarget] = useState<AuthorizerV2>()
 
   // Form state
   const [newRouteKey, setNewRouteKey] = useState("")
@@ -90,17 +79,30 @@ export function HttpApiDetail({ apiId }: Props) {
   const {
     data: routes = [],
     isLoading: routesLoading,
+    error: routesError,
     refetch: refetchRoutes,
   } = useQuery(routesQueryOptions(apiId))
 
-  const { data: integrations = [], refetch: refetchIntegrations } = useQuery(
-    httpIntegrationsQueryOptions(apiId),
-  )
+  const {
+    data: integrations = [],
+    isLoading: integrationsLoading,
+    error: integrationsError,
+    refetch: refetchIntegrations,
+  } = useQuery(httpIntegrationsQueryOptions(apiId))
 
-  const { data: stages = [], refetch: refetchStages } = useQuery(httpStagesQueryOptions(apiId))
-  const { data: v2Authorizers = [], refetch: refetchV2Authorizers } = useQuery(
-    v2AuthorizersQueryOptions(apiId),
-  )
+  const {
+    data: stages = [],
+    isLoading: stagesLoading,
+    error: stagesError,
+    refetch: refetchStages,
+  } = useQuery(httpStagesQueryOptions(apiId))
+
+  const {
+    data: v2Authorizers = [],
+    isLoading: v2AuthorizersLoading,
+    error: v2AuthorizersError,
+    refetch: refetchV2Authorizers,
+  } = useQuery(v2AuthorizersQueryOptions(apiId))
 
   const deleteMut = useMutation({
     ...deleteHttpApiMutationOptions(),
@@ -307,44 +309,51 @@ export function HttpApiDetail({ apiId }: Props) {
               Create Route
             </Button>
           </div>
-          {routes.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No routes defined.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Route Key</TableHead>
-                  <TableHead>Route ID</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {routes.map((route) => (
-                  <TableRow key={route.routeId}>
-                    <TableCell className="font-medium">{route.routeKey}</TableCell>
-                    <TableCell className="text-fg-muted">{route.routeId}</TableCell>
-                    <TableCell className="text-fg-muted">{route.target || "—"}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={() =>
-                          setDeleteRouteTarget({
-                            routeId: route.routeId,
-                            routeKey: route.routeKey,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: routes, isLoading: routesLoading, error: routesError }}
+            noun="routes"
+            emptyTitle="No routes defined."
+            errorTitle="Failed to load routes"
+            rowKey={(route) => route.routeId}
+            columns={[
+              {
+                header: "Route Key",
+                cellClassName: "font-medium",
+                sortValue: (route) => route.routeKey,
+                cell: (route) => route.routeKey,
+              },
+              {
+                header: "Route ID",
+                cellClassName: "text-fg-muted",
+                cell: (route) => route.routeId,
+              },
+              {
+                header: "Target",
+                cellClassName: "text-fg-muted",
+                cell: (route) => route.target || "—",
+              },
+            ]}
+            onDelete={{
+              target: deleteRouteTarget,
+              onRequest: setDeleteRouteTarget,
+              onOpenChange: (open) => !open && setDeleteRouteTarget(undefined),
+              mutation: {
+                mutate: (routeId: string) => deleteRouteMut.mutate({ apiId, routeId }),
+                isPending: deleteRouteMut.isPending,
+              },
+              getId: (route) => route.routeId,
+              label: (route) => route.routeKey,
+              noun: "route",
+              title: "Delete Route",
+              description: (route) => (
+                <>
+                  Delete route <span className="font-mono font-semibold">{route.routeKey}</span>?
+                </>
+              ),
+            }}
+          />
         </div>
       )}
 
@@ -357,36 +366,36 @@ export function HttpApiDetail({ apiId }: Props) {
               Create Integration
             </Button>
           </div>
-          {integrations.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No integrations defined.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Integration ID</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>URI</TableHead>
-                  <TableHead>Payload Format</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {integrations.map((int) => (
-                  <TableRow key={int.integrationId}>
-                    <TableCell>{int.integrationId}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">{int.integrationType}</Badge>
-                    </TableCell>
-                    <TableCell className="max-w-60 truncate text-fg-muted">
-                      {int.integrationUri || "—"}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {int.payloadFormatVersion || "1.0"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: integrations, isLoading: integrationsLoading, error: integrationsError }}
+            noun="integrations"
+            emptyTitle="No integrations defined."
+            errorTitle="Failed to load integrations"
+            rowKey={(int) => int.integrationId}
+            columns={[
+              {
+                header: "Integration ID",
+                sortValue: (int) => int.integrationId,
+                cell: (int) => int.integrationId,
+              },
+              {
+                header: "Type",
+                cell: (int) => <Badge variant="default">{int.integrationType}</Badge>,
+              },
+              {
+                header: "URI",
+                cellClassName: "max-w-60 truncate text-fg-muted",
+                cell: (int) => int.integrationUri || "—",
+              },
+              {
+                header: "Payload Format",
+                cellClassName: "text-fg-muted",
+                cell: (int) => int.payloadFormatVersion || "1.0",
+              },
+            ]}
+          />
         </div>
       )}
 
@@ -399,43 +408,55 @@ export function HttpApiDetail({ apiId }: Props) {
               Create Stage
             </Button>
           </div>
-          {stages.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No stages.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Stage Name</TableHead>
-                  <TableHead>Auto Deploy</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stages.map((stage) => (
-                  <TableRow key={stage.stageName}>
-                    <TableCell className="font-medium">{stage.stageName}</TableCell>
-                    <TableCell>
-                      <Badge variant={stage.autoDeploy ? "success" : "default"}>
-                        {stage.autoDeploy ? "Yes" : "No"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{formatDate(stage.createdDate)}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={() => setDeleteStageTarget(stage.stageName)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: stages, isLoading: stagesLoading, error: stagesError }}
+            noun="stages"
+            emptyTitle="No stages."
+            errorTitle="Failed to load stages"
+            rowKey={(stage) => stage.stageName}
+            columns={[
+              {
+                header: "Stage Name",
+                cellClassName: "font-medium",
+                sortValue: (stage) => stage.stageName,
+                cell: (stage) => stage.stageName,
+              },
+              {
+                header: "Auto Deploy",
+                cell: (stage) => (
+                  <Badge variant={stage.autoDeploy ? "success" : "default"}>
+                    {stage.autoDeploy ? "Yes" : "No"}
+                  </Badge>
+                ),
+              },
+              {
+                header: "Created",
+                cellClassName: "text-fg-muted",
+                sortValue: (stage) => stage.createdDate,
+                cell: (stage) => formatDate(stage.createdDate),
+              },
+            ]}
+            onDelete={{
+              target: deleteStageTarget,
+              onRequest: setDeleteStageTarget,
+              onOpenChange: (open) => !open && setDeleteStageTarget(undefined),
+              mutation: {
+                mutate: (stageName: string) => deleteStageMut.mutate({ apiId, stageName }),
+                isPending: deleteStageMut.isPending,
+              },
+              getId: (stage) => stage.stageName,
+              label: (stage) => stage.stageName,
+              noun: "stage",
+              title: "Delete Stage",
+              description: (stage) => (
+                <>
+                  Delete stage <span className="font-mono font-semibold">{stage.stageName}</span>?
+                </>
+              ),
+            }}
+          />
         </div>
       )}
 
@@ -448,46 +469,55 @@ export function HttpApiDetail({ apiId }: Props) {
               Add Authorizer
             </Button>
           </div>
-          {v2Authorizers.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No authorizers defined.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Identity Source</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {v2Authorizers.map((auth) => (
-                  <TableRow key={auth.authorizerId}>
-                    <TableCell className="font-medium">{auth.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">{auth.authorizerType}</Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{auth.identitySource || "—"}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={() =>
-                          setDeleteV2AuthorizerTarget({
-                            authorizerId: auth.authorizerId,
-                            name: auth.name,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{
+              data: v2Authorizers,
+              isLoading: v2AuthorizersLoading,
+              error: v2AuthorizersError,
+            }}
+            noun="authorizers"
+            emptyTitle="No authorizers defined."
+            errorTitle="Failed to load authorizers"
+            rowKey={(auth) => auth.authorizerId}
+            columns={[
+              {
+                header: "Name",
+                cellClassName: "font-medium",
+                sortValue: (auth) => auth.name,
+                cell: (auth) => auth.name,
+              },
+              {
+                header: "Type",
+                cell: (auth) => <Badge variant="default">{auth.authorizerType}</Badge>,
+              },
+              {
+                header: "Identity Source",
+                cellClassName: "text-fg-muted",
+                cell: (auth) => auth.identitySource || "—",
+              },
+            ]}
+            onDelete={{
+              target: deleteV2AuthorizerTarget,
+              onRequest: setDeleteV2AuthorizerTarget,
+              onOpenChange: (open) => !open && setDeleteV2AuthorizerTarget(undefined),
+              mutation: {
+                mutate: (authorizerId: string) =>
+                  deleteV2AuthorizerMut.mutate({ apiId, authorizerId }),
+                isPending: deleteV2AuthorizerMut.isPending,
+              },
+              getId: (auth) => auth.authorizerId,
+              label: (auth) => auth.name,
+              noun: "authorizer",
+              title: "Delete Authorizer",
+              description: (auth) => (
+                <>
+                  Delete authorizer <span className="font-mono font-semibold">{auth.name}</span>?
+                </>
+              ),
+            }}
+          />
         </div>
       )}
 
@@ -504,39 +534,6 @@ export function HttpApiDetail({ apiId }: Props) {
         }
         isPending={deleteMut.isPending}
         onConfirm={() => deleteMut.mutate(apiId)}
-      />
-
-      {/* Delete route confirmation */}
-      <ConfirmDialog
-        open={!!deleteRouteTarget}
-        onOpenChange={(open) => !open && setDeleteRouteTarget(undefined)}
-        title="Delete Route"
-        description={
-          <>
-            Delete route{" "}
-            <span className="font-mono font-semibold">{deleteRouteTarget?.routeKey}</span>?
-          </>
-        }
-        isPending={deleteRouteMut.isPending}
-        onConfirm={() =>
-          deleteRouteTarget && deleteRouteMut.mutate({ apiId, routeId: deleteRouteTarget.routeId })
-        }
-      />
-
-      {/* Delete stage confirmation */}
-      <ConfirmDialog
-        open={!!deleteStageTarget}
-        onOpenChange={(open) => !open && setDeleteStageTarget(undefined)}
-        title="Delete Stage"
-        description={
-          <>
-            Delete stage <span className="font-mono font-semibold">{deleteStageTarget}</span>?
-          </>
-        }
-        isPending={deleteStageMut.isPending}
-        onConfirm={() =>
-          deleteStageTarget && deleteStageMut.mutate({ apiId, stageName: deleteStageTarget })
-        }
       />
 
       {/* Create route dialog */}
@@ -699,27 +696,6 @@ export function HttpApiDetail({ apiId }: Props) {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Delete v2 authorizer confirmation */}
-      <ConfirmDialog
-        open={!!deleteV2AuthorizerTarget}
-        onOpenChange={(open) => !open && setDeleteV2AuthorizerTarget(undefined)}
-        title="Delete Authorizer"
-        description={
-          <>
-            Delete authorizer{" "}
-            <span className="font-mono font-semibold">{deleteV2AuthorizerTarget?.name}</span>?
-          </>
-        }
-        isPending={deleteV2AuthorizerMut.isPending}
-        onConfirm={() =>
-          deleteV2AuthorizerTarget &&
-          deleteV2AuthorizerMut.mutate({
-            apiId,
-            authorizerId: deleteV2AuthorizerTarget.authorizerId,
-          })
-        }
-      />
 
       {/* Create v2 authorizer dialog */}
       <Dialog

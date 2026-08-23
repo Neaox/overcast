@@ -27,15 +27,7 @@ import {
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -164,47 +156,29 @@ const TABS: { key: Tab; label: string; icon: typeof Braces }[] = [
 // ─── Data Sources Tab ──────────────────────────────────────────────────────
 
 function DataSourcesTab({ apiId }: { apiId: string }) {
-  const { data: dataSources = [], isLoading } = useQuery(appsyncDataSourcesQueryOptions(apiId))
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (dataSources.length === 0) {
-    return (
-      <EmptyState
-        icon={<Database className="h-6 w-6" />}
-        title="No data sources"
-        description="Add data sources via the AWS SDK or CLI."
-      />
-    )
-  }
+  const {
+    data: dataSources = [],
+    isLoading,
+    error,
+  } = useQuery(appsyncDataSourcesQueryOptions(apiId))
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead>Type</TableHead>
-          <TableHead>Description</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {dataSources.map((ds) => (
-          <TableRow key={ds.name}>
-            <TableCell>{ds.name}</TableCell>
-            <TableCell>
-              <Badge variant="outline">{ds.type}</Badge>
-            </TableCell>
-            <TableCellProse>{ds.description || "—"}</TableCellProse>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: dataSources, isLoading, error }}
+      noun="data sources"
+      emptyIcon={Database}
+      emptyTitle="No data sources"
+      emptyDescription="Add data sources via the AWS SDK or CLI."
+      errorTitle="Failed to load data sources"
+      rowKey={(ds) => ds.name ?? ""}
+      columns={[
+        { header: "Name", sortValue: (ds) => ds.name, cell: (ds) => ds.name },
+        { header: "Type", cell: (ds) => <Badge variant="outline">{ds.type}</Badge> },
+        { header: "Description", prose: true, cell: (ds) => ds.description || "—" },
+      ]}
+    />
   )
 }
 
@@ -248,41 +222,34 @@ function ResolversTab({ apiId }: { apiId: string }) {
 }
 
 function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string }) {
-  const { data: resolvers = [], isLoading } = useQuery(
-    appsyncResolversQueryOptions(apiId, typeName),
-  )
+  const {
+    data: resolvers = [],
+    isLoading,
+    error,
+  } = useQuery(appsyncResolversQueryOptions(apiId, typeName))
 
   return (
     <div>
       <h3 className="mb-2 font-mono text-sm font-semibold">{typeName}</h3>
-      {isLoading ? (
-        <div className="flex justify-center py-4">
-          <Spinner className="h-4 w-4" />
-        </div>
-      ) : resolvers.length === 0 ? (
-        <p className="text-sm text-fg-subtle">No resolvers for {typeName}.</p>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Field</TableHead>
-              <TableHead>Data Source</TableHead>
-              <TableHead>Kind</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {resolvers.map((r) => (
-              <TableRow key={`${r.typeName}.${r.fieldName}`}>
-                <TableCell>{r.fieldName}</TableCell>
-                <TableCell className="text-fg-muted">{r.dataSourceName || "—"}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{r.kind}</Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: resolvers, isLoading, error }}
+        noun="resolvers"
+        emptyTitle={`No resolvers for ${typeName}.`}
+        errorTitle={`Failed to load resolvers for ${typeName}`}
+        loadingCount={2}
+        rowKey={(r) => `${r.typeName}.${r.fieldName}`}
+        columns={[
+          { header: "Field", sortValue: (r) => r.fieldName, cell: (r) => r.fieldName },
+          {
+            header: "Data Source",
+            cellClassName: "text-fg-muted",
+            cell: (r) => r.dataSourceName || "—",
+          },
+          { header: "Kind", cell: (r) => <Badge variant="outline">{r.kind}</Badge> },
+        ]}
+      />
     </div>
   )
 }
@@ -290,45 +257,29 @@ function ResolverGroup({ apiId, typeName }: { apiId: string; typeName: string })
 // ─── Functions Tab ─────────────────────────────────────────────────────────
 
 function FunctionsTab({ apiId }: { apiId: string }) {
-  const { data: functions = [], isLoading } = useQuery(appsyncFunctionsQueryOptions(apiId))
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (functions.length === 0) {
-    return (
-      <EmptyState
-        icon={<FunctionSquare className="h-6 w-6" />}
-        title="No functions"
-        description="Add pipeline functions via the AWS SDK or CLI."
-      />
-    )
-  }
+  const { data: functions = [], isLoading, error } = useQuery(appsyncFunctionsQueryOptions(apiId))
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead>Data Source</TableHead>
-          <TableHead>Description</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {functions.map((fn) => (
-          <TableRow key={fn.functionId}>
-            <TableCell>{fn.name}</TableCell>
-            <TableCell className="text-fg-muted">{fn.dataSourceName || "—"}</TableCell>
-            <TableCellProse>{fn.description || "—"}</TableCellProse>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: functions, isLoading, error }}
+      noun="functions"
+      emptyIcon={FunctionSquare}
+      emptyTitle="No functions"
+      emptyDescription="Add pipeline functions via the AWS SDK or CLI."
+      errorTitle="Failed to load functions"
+      rowKey={(fn) => fn.functionId ?? ""}
+      columns={[
+        { header: "Name", sortValue: (fn) => fn.name, cell: (fn) => fn.name },
+        {
+          header: "Data Source",
+          cellClassName: "text-fg-muted",
+          cell: (fn) => fn.dataSourceName || "—",
+        },
+        { header: "Description", prose: true, cell: (fn) => fn.description || "—" },
+      ]}
+    />
   )
 }
 
@@ -343,7 +294,7 @@ function ApiKeysTab({
   deleteKeyTarget?: string
   setDeleteKeyTarget: (v: string | undefined) => void
 }) {
-  const { data: apiKeys = [], isLoading } = useQuery(appsyncApiKeysQueryOptions(apiId))
+  const { data: apiKeys = [], isLoading, error } = useQuery(appsyncApiKeysQueryOptions(apiId))
 
   const createMut = useResourceMutation({
     options: createApiKeyMutationOptions(apiId),
@@ -358,14 +309,6 @@ function ApiKeysTab({
     onSuccess: () => setDeleteKeyTarget(undefined),
   })
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col gap-3">
       <div className="flex justify-end">
@@ -379,59 +322,43 @@ function ApiKeysTab({
         </Button>
       </div>
 
-      {apiKeys.length === 0 ? (
-        <EmptyState
-          icon={<Key className="h-6 w-6" />}
-          title="No API keys"
-          description="Create an API key for API_KEY authentication."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key ID</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Expires</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {apiKeys.map((k) => (
-              <TableRow key={k.id}>
-                <TableCell>{k.id}</TableCell>
-                <TableCellProse>{k.description || "—"}</TableCellProse>
-                <TableCell className="text-fg-muted">
-                  {k.expires ? new Date(k.expires * 1000).toLocaleDateString() : "—"}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteKeyTarget(k.id)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-
-      <ConfirmDialog
-        open={!!deleteKeyTarget}
-        onOpenChange={(open) => !open && setDeleteKeyTarget(undefined)}
-        title="Delete API Key"
-        description={
-          <>
-            Delete API key <span className="font-mono font-semibold">{deleteKeyTarget}</span>?
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteKeyTarget && deleteMut.mutate(deleteKeyTarget)}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: apiKeys, isLoading, error }}
+        noun="API keys"
+        emptyIcon={Key}
+        emptyTitle="No API keys"
+        emptyDescription="Create an API key for API_KEY authentication."
+        errorTitle="Failed to load API keys"
+        rowKey={(k) => k.id ?? ""}
+        columns={[
+          { header: "Key ID", sortValue: (k) => k.id, cell: (k) => k.id },
+          { header: "Description", prose: true, cell: (k) => k.description || "—" },
+          {
+            header: "Expires",
+            cellClassName: "text-fg-muted",
+            sortValue: (k) => k.expires ?? 0,
+            cell: (k) => (k.expires ? new Date(k.expires * 1000).toLocaleDateString() : "—"),
+          },
+        ]}
+        onDelete={{
+          // The target lives on the parent page (it survives a tab switch), so
+          // the row is resolved from the id rather than held here.
+          target: apiKeys.find((k) => k.id === deleteKeyTarget),
+          onRequest: (k) => setDeleteKeyTarget(k.id),
+          onOpenChange: (open) => !open && setDeleteKeyTarget(undefined),
+          mutation: deleteMut,
+          getId: (k) => k.id ?? "",
+          label: (k) => k.id ?? "",
+          noun: "API key",
+          title: "Delete API Key",
+          description: (k) => (
+            <>
+              Delete API key <span className="font-mono font-semibold">{k.id}</span>?
+            </>
+          ),
+        }}
       />
     </div>
   )
@@ -443,9 +370,13 @@ function SchemaTab({ apiId }: { apiId: string }) {
   const { data: schemaStatus, isLoading: statusLoading } = useQuery(
     appsyncSchemaStatusQueryOptions(apiId),
   )
-  const { data: types = [], isLoading: typesLoading } = useQuery(appsyncTypesQueryOptions(apiId))
+  const {
+    data: types = [],
+    isLoading: typesLoading,
+    error: typesError,
+  } = useQuery(appsyncTypesQueryOptions(apiId))
 
-  if (statusLoading || typesLoading) {
+  if (statusLoading) {
     return (
       <div className="flex justify-center py-8">
         <Spinner className="h-5 w-5" />
@@ -467,38 +398,34 @@ function SchemaTab({ apiId }: { apiId: string }) {
         </div>
       )}
 
-      {types.length === 0 ? (
-        <EmptyState
-          icon={<FileCode className="h-6 w-6" />}
-          title="No schema"
-          description="Upload a schema via the AWS SDK or CLI."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Type Name</TableHead>
-              <TableHead>Format</TableHead>
-              <TableHead>Definition</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {types.map((t) => (
-              <TableRow key={t.name}>
-                <TableCell className="font-semibold">{t.name}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{t.format}</Badge>
-                </TableCell>
-                <TableCell>
-                  <pre className="max-w-lg truncate font-mono text-xs text-fg-subtle">
-                    {t.definition}
-                  </pre>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: types, isLoading: typesLoading, error: typesError }}
+        noun="types"
+        emptyIcon={FileCode}
+        emptyTitle="No schema"
+        emptyDescription="Upload a schema via the AWS SDK or CLI."
+        errorTitle="Failed to load schema types"
+        rowKey={(t) => t.name ?? ""}
+        columns={[
+          {
+            header: "Type Name",
+            cellClassName: "font-semibold",
+            sortValue: (t) => t.name,
+            cell: (t) => t.name,
+          },
+          { header: "Format", cell: (t) => <Badge variant="outline">{t.format}</Badge> },
+          {
+            header: "Definition",
+            cell: (t) => (
+              <pre className="max-w-lg truncate font-mono text-xs text-fg-subtle">
+                {t.definition}
+              </pre>
+            ),
+          },
+        ]}
+      />
     </div>
   )
 }

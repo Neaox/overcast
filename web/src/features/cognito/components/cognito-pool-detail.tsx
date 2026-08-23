@@ -56,6 +56,7 @@ import {
   updatePoolVerificationMessagesMutationOptions,
 } from "@/features/cognito/data"
 import type {
+  CognitoUser,
   PasswordPolicy,
   ManagedLoginBranding,
   AdminCreateUserConfig,
@@ -77,6 +78,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogContent,
@@ -1053,7 +1055,7 @@ function UsersTab({
   const { toast } = useToast()
   const [filter, setFilter] = useState("")
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<CognitoUser>()
   const [passwordTarget, setPasswordTarget] = useState<string>()
   const [detailTarget, setDetailTarget] = useState<string>()
 
@@ -1061,6 +1063,7 @@ function UsersTab({
     data: users = [],
     isLoading,
     isFetching,
+    error,
     refetch,
   } = useQuery(cognitoUsersQueryOptions(poolId))
 
@@ -1132,95 +1135,105 @@ function UsersTab({
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-5 w-5" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<UserCheck className="h-6 w-6 opacity-40" />}
-          title={filter ? "No matching users" : "No users"}
-          description={filter ? "Try a different search." : "Create a user to get started."}
-          action={
-            !filter && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Create user
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Username</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Enabled</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-28" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((user) => (
-              <TableRow key={user.username}>
-                <TableCell>
-                  <button
-                    className="text-left font-mono text-sm text-fg underline-offset-2 hover:text-accent hover:underline"
-                    onClick={() => setDetailTarget(user.username)}
-                  >
-                    {user.username}
-                  </button>
-                </TableCell>
-                <TableCell className="text-fg-muted">{user.attributes["email"] ?? "—"}</TableCell>
-                <TableCell>
-                  <UserStatusBadge status={user.userStatus} />
-                </TableCell>
-                <TableCell>
-                  <Badge variant={user.enabled ? "default" : "outline"}>
-                    {user.enabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-fg-muted">{formatDate(user.userCreateDate)}</TableCell>
-                <TableCell>
-                  <div className="flex items-center justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title={user.enabled ? "Disable user" : "Enable user"}
-                      disabled={disableMut.isPending || enableMut.isPending}
-                      onClick={() =>
-                        user.enabled
-                          ? disableMut.mutate({ poolId, username: user.username })
-                          : enableMut.mutate({ poolId, username: user.username })
-                      }
-                    >
-                      <ShieldCheck className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Set password"
-                      onClick={() => setPasswordTarget(user.username)}
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-danger hover:text-danger"
-                      title="Delete user"
-                      onClick={() => setDeleteTarget(user.username)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        query={{ data: filtered, isLoading, error }}
+        noun="users"
+        emptyIcon={UserCheck}
+        emptyTitle="No users"
+        emptyDescription="Create a user to get started."
+        emptyAction={
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Create user
+          </Button>
+        }
+        errorTitle="Failed to load users"
+        isFiltered={!!filter}
+        onClearFilter={() => setFilter("")}
+        filteredEmptyTitle="No matching users"
+        filteredEmptyDescription="Try a different search."
+        rowKey={(user) => user.username}
+        columns={[
+          {
+            header: "Username",
+            sortValue: (user) => user.username,
+            cell: (user) => (
+              <button
+                className="text-left font-mono text-sm text-fg underline-offset-2 hover:text-accent hover:underline"
+                onClick={() => setDetailTarget(user.username)}
+              >
+                {user.username}
+              </button>
+            ),
+          },
+          {
+            header: "Email",
+            cellClassName: "text-fg-muted",
+            sortValue: (user) => user.attributes["email"] ?? "",
+            cell: (user) => user.attributes["email"] ?? "—",
+          },
+          { header: "Status", cell: (user) => <UserStatusBadge status={user.userStatus} /> },
+          {
+            header: "Enabled",
+            cell: (user) => (
+              <Badge variant={user.enabled ? "default" : "outline"}>
+                {user.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            ),
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (user) => user.userCreateDate,
+            cell: (user) => formatDate(user.userCreateDate),
+          },
+        ]}
+        rowActions={(user) => (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              title={user.enabled ? "Disable user" : "Enable user"}
+              disabled={disableMut.isPending || enableMut.isPending}
+              onClick={() =>
+                user.enabled
+                  ? disableMut.mutate({ poolId, username: user.username })
+                  : enableMut.mutate({ poolId, username: user.username })
+              }
+            >
+              <ShieldCheck className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Set password"
+              onClick={() => setPasswordTarget(user.username)}
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: {
+            mutate: (username: string) => deleteMut.mutate({ poolId, username }),
+            isPending: deleteMut.isPending,
+          },
+          getId: (user) => user.username,
+          label: (user) => user.username,
+          noun: "user",
+          title: "Delete User",
+          actionLabel: (user) => `Delete user ${user.username}`,
+          description: (user) => (
+            <>
+              Delete user <span className="font-mono font-semibold">{user.username}</span>? This
+              cannot be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateUserDialog
         open={showCreate}
@@ -1235,22 +1248,6 @@ function UsersTab({
         onOpenChange={(v) => !v && setPasswordTarget(undefined)}
         poolId={poolId}
         username={passwordTarget ?? ""}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete User"
-        description={
-          <>
-            Delete user <span className="font-mono font-semibold">{deleteTarget}</span>? This cannot
-            be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate({ poolId, username: deleteTarget })}
       />
 
       <UserDetailDialog
@@ -1382,7 +1379,11 @@ function GroupRow({
   const qc = useQueryClient()
   const { toast } = useToast()
 
-  const { data: members = [], isLoading: membersLoading } = useQuery({
+  const {
+    data: members = [],
+    isLoading: membersLoading,
+    error: membersError,
+  } = useQuery({
     ...cognitoGroupMembersQueryOptions(poolId, group.name),
     enabled: expanded,
   })
@@ -1424,51 +1425,46 @@ function GroupRow({
 
       {expanded && (
         <div className="border-t border-border px-4 pb-3">
-          {membersLoading ? (
-            <div className="flex justify-center py-4">
-              <Spinner className="h-4 w-4" />
-            </div>
-          ) : members.length === 0 ? (
-            <p className="py-4 text-center text-sm text-fg-muted">No members in this group.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Username</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-16" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members.map((member) => (
-                  <TableRow key={member.username}>
-                    <TableCell>{member.username}</TableCell>
-                    <TableCell>
-                      <UserStatusBadge status={member.userStatus} />
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-danger hover:text-danger"
-                        title="Remove from group"
-                        disabled={removeMut.isPending}
-                        onClick={() =>
-                          removeMut.mutate({
-                            poolId,
-                            username: member.username,
-                            groupName: group.name,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            className="pt-3"
+            query={{ data: members, isLoading: membersLoading, error: membersError }}
+            noun="members"
+            emptyTitle="No members in this group."
+            errorTitle="Failed to load group members"
+            loadingCount={2}
+            rowKey={(member) => member.username}
+            columns={[
+              {
+                header: "Username",
+                sortValue: (member) => member.username,
+                cell: (member) => member.username,
+              },
+              {
+                header: "Status",
+                cell: (member) => <UserStatusBadge status={member.userStatus} />,
+              },
+            ]}
+            rowActions={(member) => (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-danger hover:text-danger"
+                title="Remove from group"
+                disabled={removeMut.isPending}
+                onClick={() =>
+                  removeMut.mutate({
+                    poolId,
+                    username: member.username,
+                    groupName: group.name,
+                  })
+                }
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          />
         </div>
       )}
     </Card>
@@ -2388,6 +2384,15 @@ function UserDetailDialog({
                 </Button>
               </div>
 
+              {/*
+                ResourceTable didn't fit because this is an attribute grid, not
+                a resource list: the rows are `[name, value]` pairs of one
+                user's attributes, a row switches into an inline edit form on
+                click, and an "add attribute" row is appended below the data.
+                None of that is a query result with a row identity, so the
+                loading/empty/error and row-action contracts have nothing to
+                bind to. See #1327 and CONTRIBUTING § Tables.
+              */}
               <Table>
                 <TableHeader>
                   <TableRow>

@@ -1,33 +1,23 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Eye, UserCheck, Trash2 } from "lucide-react"
+import { Eye, UserCheck } from "lucide-react"
 import {
   cognitoPoolsQueryOptions,
   cognitoKeys,
   deletePoolMutationOptions,
 } from "@/features/cognito/data"
+import type { CognitoPool } from "@/services/api/cognito"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListFilter,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreatePoolDialog } from "@/features/cognito/components/create-pool-dialog"
 import { formatDate } from "@/lib/format"
@@ -36,12 +26,15 @@ interface CognitoPageProps {
   /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
   filter: string
   onFilterChange: (value: string) => void
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
 }
 
-export function CognitoPage({ filter, onFilterChange }: CognitoPageProps) {
+export function CognitoPage({ filter, onFilterChange, sort, onSortChange }: CognitoPageProps) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string }>()
+  const [deleteTarget, setDeleteTarget] = useState<CognitoPool>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -95,85 +88,66 @@ export function CognitoPage({ filter, onFilterChange }: CognitoPageProps) {
         placeholder="Filter user pools…"
       />
 
-      <ResourceListCard>
-        {isLoading || filtered.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={filtered.length === 0}
-            error={error}
-            emptyIcon={<UserCheck className="h-10 w-10" />}
-            emptyTitle="No user pools"
-            emptyDescription="Create a user pool to get started."
-            emptyAction={
-              <CreateAction onClick={() => setShowCreate(true)}>Create pool</CreateAction>
-            }
-            isFiltered={!!filter}
-            onClearFilter={() => onFilterChange("")}
-            errorTitle="Failed to load user pools"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Pool ID</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((pool) => (
-                <TableRow
-                  key={pool.id}
-                  onClick={() => navigate({ to: "/cognito/$poolId", params: { poolId: pool.id } })}
-                >
-                  <TableCell>
-                    <ResourceName icon={UserCheck} name={pool.name} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{pool.id}</TableCell>
-                  <TableCell className="text-fg-muted">{formatDate(pool.creationDate)}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${pool.name}`}
-                        onClick={() =>
-                          navigate({ to: "/cognito/$poolId", params: { poolId: pool.id } })
-                        }
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${pool.name}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget({ id: pool.id, name: pool.name })}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <ResourceTable
+        query={{ data: filtered, isLoading, error }}
+        noun="user pools"
+        emptyIcon={UserCheck}
+        emptyTitle="No user pools"
+        emptyDescription="Create a user pool to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create pool</CreateAction>}
+        errorTitle="Failed to load user pools"
+        isFiltered={!!filter}
+        onClearFilter={() => onFilterChange("")}
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(pool) => pool.id}
+        onRowClick={(pool) => navigate({ to: "/cognito/$poolId", params: { poolId: pool.id } })}
+        columns={[
+          {
+            header: "Name",
+            sortValue: (pool) => pool.name,
+            cell: (pool) => <ResourceName icon={UserCheck} name={pool.name} />,
+          },
+          {
+            header: "Pool ID",
+            cellClassName: "text-fg-muted",
+            sortValue: (pool) => pool.id,
+            cell: (pool) => pool.id,
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (pool) => pool.creationDate,
+            cell: (pool) => formatDate(pool.creationDate),
+          },
+        ]}
+        rowActions={(pool) => (
+          <RowAction
+            label={`View ${pool.name}`}
+            onClick={() => navigate({ to: "/cognito/$poolId", params: { poolId: pool.id } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (pool) => pool.id,
+          label: (pool) => pool.name,
+          noun: "user pool",
+          title: "Delete User Pool",
+          description: (pool) => (
+            <>
+              Delete pool <span className="font-mono font-semibold">{pool.name}</span>? This cannot
+              be undone.
+            </>
+          ),
+        }}
+      />
 
       <CreatePoolDialog open={showCreate} onOpenChange={setShowCreate} />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete User Pool"
-        description={
-          <>
-            Delete pool <span className="font-mono font-semibold">{deleteTarget?.name}</span>? This
-            cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
-      />
     </ResourceListPage>
   )
 }

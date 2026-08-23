@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Eye, Globe, Trash2 } from "lucide-react"
+import { Eye, Globe } from "lucide-react"
 import {
   restApisQueryOptions,
   httpApisQueryOptions,
@@ -9,26 +9,16 @@ import {
   deleteRestApiMutationOptions,
   deleteHttpApiMutationOptions,
 } from "@/features/apigateway/data"
+import type { HttpApi, RestApi } from "@/types/apigateway"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { formatDate } from "@/lib/format"
@@ -43,8 +33,8 @@ export function ApiGatewayList() {
   const [tab, setTab] = useState<Tab>("rest")
   const [showCreateRest, setShowCreateRest] = useState(false)
   const [showCreateHttp, setShowCreateHttp] = useState(false)
-  const [deleteRestTarget, setDeleteRestTarget] = useState<{ id: string; name: string }>()
-  const [deleteHttpTarget, setDeleteHttpTarget] = useState<{ id: string; name: string }>()
+  const [deleteRestTarget, setDeleteRestTarget] = useState<RestApi>()
+  const [deleteHttpTarget, setDeleteHttpTarget] = useState<HttpApi>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -126,201 +116,138 @@ export function ApiGatewayList() {
 
       {/* REST APIs tab */}
       {tab === "rest" && (
-        <ResourceListCard>
-          {restLoading || restApis.length === 0 ? (
-            <QueryListState
-              isLoading={restLoading}
-              isEmpty={restApis.length === 0}
-              error={restError}
-              empty={
-                <EmptyState
-                  icon={<Globe className="h-10 w-10" />}
-                  title="No REST APIs"
-                  description="Create a REST API to get started."
-                  action={
-                    <CreateAction onClick={() => setShowCreateRest(true)}>
-                      Create REST API
-                    </CreateAction>
-                  }
-                />
-              }
-              errorTitle="Failed to load REST APIs"
-            />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Protocol</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-20 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {restApis.map((api) => (
-                  <TableRow
-                    key={api.id}
-                    onClick={() =>
-                      navigate({
-                        to: "/apigateway/rest/$apiId",
-                        params: { apiId: api.id },
-                      })
-                    }
-                  >
-                    <TableCell>
-                      <ResourceName icon={Globe} name={api.name} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{api.id}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">REST</Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`View ${api.name}`}
-                          onClick={() =>
-                            navigate({
-                              to: "/apigateway/rest/$apiId",
-                              params: { apiId: api.id },
-                            })
-                          }
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${api.name}`}
-                          tone="danger"
-                          onClick={() => setDeleteRestTarget({ id: api.id, name: api.name })}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        <ResourceTable
+          query={{ data: restApis, isLoading: restLoading, error: restError }}
+          noun="REST APIs"
+          emptyIcon={Globe}
+          emptyTitle="No REST APIs"
+          emptyDescription="Create a REST API to get started."
+          emptyAction={
+            <CreateAction onClick={() => setShowCreateRest(true)}>Create REST API</CreateAction>
+          }
+          errorTitle="Failed to load REST APIs"
+          rowKey={(api) => api.id}
+          onRowClick={(api) =>
+            navigate({ to: "/apigateway/rest/$apiId", params: { apiId: api.id } })
+          }
+          columns={[
+            {
+              header: "Name",
+              sortValue: (api) => api.name,
+              cell: (api) => <ResourceName icon={Globe} name={api.name} />,
+            },
+            {
+              header: "ID",
+              cellClassName: "text-fg-muted",
+              sortValue: (api) => api.id,
+              cell: (api) => api.id,
+            },
+            { header: "Protocol", cell: () => <Badge variant="default">REST</Badge> },
+            {
+              header: "Created",
+              cellClassName: "text-fg-muted",
+              sortValue: (api) => api.createdDate,
+              cell: (api) => formatDate(api.createdDate),
+            },
+          ]}
+          rowActions={(api) => (
+            <RowAction
+              label={`View ${api.name}`}
+              onClick={() => navigate({ to: "/apigateway/rest/$apiId", params: { apiId: api.id } })}
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </RowAction>
           )}
-        </ResourceListCard>
+          onDelete={{
+            target: deleteRestTarget,
+            onRequest: setDeleteRestTarget,
+            onOpenChange: (open) => !open && setDeleteRestTarget(undefined),
+            mutation: deleteRestMut,
+            getId: (api) => api.id,
+            label: (api) => api.name,
+            noun: "REST API",
+            title: "Delete REST API",
+            description: (api) => (
+              <>
+                Delete <span className="font-mono font-semibold">{api.name}</span>? This action
+                cannot be undone.
+              </>
+            ),
+          }}
+        />
       )}
 
       {/* HTTP APIs tab */}
       {tab === "http" && (
-        <ResourceListCard>
-          {httpLoading || httpApis.length === 0 ? (
-            <QueryListState
-              isLoading={httpLoading}
-              isEmpty={httpApis.length === 0}
-              error={httpError}
-              empty={
-                <EmptyState
-                  icon={<Globe className="h-10 w-10" />}
-                  title="No HTTP APIs"
-                  description="Create an HTTP API to get started."
-                  action={
-                    <CreateAction onClick={() => setShowCreateHttp(true)}>
-                      Create HTTP API
-                    </CreateAction>
-                  }
-                />
+        <ResourceTable
+          query={{ data: httpApis, isLoading: httpLoading, error: httpError }}
+          noun="HTTP APIs"
+          emptyIcon={Globe}
+          emptyTitle="No HTTP APIs"
+          emptyDescription="Create an HTTP API to get started."
+          emptyAction={
+            <CreateAction onClick={() => setShowCreateHttp(true)}>Create HTTP API</CreateAction>
+          }
+          errorTitle="Failed to load HTTP APIs"
+          rowKey={(api) => api.apiId}
+          onRowClick={(api) =>
+            navigate({ to: "/apigateway/http/$apiId", params: { apiId: api.apiId } })
+          }
+          columns={[
+            {
+              header: "Name",
+              sortValue: (api) => api.name,
+              cell: (api) => <ResourceName icon={Globe} name={api.name} />,
+            },
+            {
+              header: "API ID",
+              cellClassName: "text-fg-muted",
+              sortValue: (api) => api.apiId,
+              cell: (api) => api.apiId,
+            },
+            {
+              header: "Protocol",
+              cell: (api) => <Badge variant="success">{api.protocolType}</Badge>,
+            },
+            {
+              header: "Created",
+              cellClassName: "text-fg-muted",
+              sortValue: (api) => api.createdDate,
+              cell: (api) => formatDate(api.createdDate),
+            },
+          ]}
+          rowActions={(api) => (
+            <RowAction
+              label={`View ${api.name}`}
+              onClick={() =>
+                navigate({ to: "/apigateway/http/$apiId", params: { apiId: api.apiId } })
               }
-              errorTitle="Failed to load HTTP APIs"
-            />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>API ID</TableHead>
-                  <TableHead>Protocol</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-20 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {httpApis.map((api) => (
-                  <TableRow
-                    key={api.apiId}
-                    onClick={() =>
-                      navigate({
-                        to: "/apigateway/http/$apiId",
-                        params: { apiId: api.apiId },
-                      })
-                    }
-                  >
-                    <TableCell>
-                      <ResourceName icon={Globe} name={api.name} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{api.apiId}</TableCell>
-                    <TableCell>
-                      <Badge variant="success">{api.protocolType}</Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{formatDate(api.createdDate)}</TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`View ${api.name}`}
-                          onClick={() =>
-                            navigate({
-                              to: "/apigateway/http/$apiId",
-                              params: { apiId: api.apiId },
-                            })
-                          }
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${api.name}`}
-                          tone="danger"
-                          onClick={() => setDeleteHttpTarget({ id: api.apiId, name: api.name })}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </RowAction>
           )}
-        </ResourceListCard>
+          onDelete={{
+            target: deleteHttpTarget,
+            onRequest: setDeleteHttpTarget,
+            onOpenChange: (open) => !open && setDeleteHttpTarget(undefined),
+            mutation: deleteHttpMut,
+            getId: (api) => api.apiId,
+            label: (api) => api.name,
+            noun: "HTTP API",
+            title: "Delete HTTP API",
+            description: (api) => (
+              <>
+                Delete <span className="font-mono font-semibold">{api.name}</span>? This action
+                cannot be undone.
+              </>
+            ),
+          }}
+        />
       )}
 
       {/* Create dialogs */}
       <CreateRestApiDialog open={showCreateRest} onOpenChange={setShowCreateRest} />
       <CreateHttpApiDialog open={showCreateHttp} onOpenChange={setShowCreateHttp} />
-
-      {/* Delete REST API confirmation */}
-      <ConfirmDialog
-        open={!!deleteRestTarget}
-        onOpenChange={(open) => !open && setDeleteRestTarget(undefined)}
-        title="Delete REST API"
-        description={
-          <>
-            Delete <span className="font-mono font-semibold">{deleteRestTarget?.name}</span>? This
-            action cannot be undone.
-          </>
-        }
-        isPending={deleteRestMut.isPending}
-        onConfirm={() => deleteRestTarget && deleteRestMut.mutate(deleteRestTarget.id)}
-      />
-
-      {/* Delete HTTP API confirmation */}
-      <ConfirmDialog
-        open={!!deleteHttpTarget}
-        onOpenChange={(open) => !open && setDeleteHttpTarget(undefined)}
-        title="Delete HTTP API"
-        description={
-          <>
-            Delete <span className="font-mono font-semibold">{deleteHttpTarget?.name}</span>? This
-            action cannot be undone.
-          </>
-        }
-        isPending={deleteHttpMut.isPending}
-        onConfirm={() => deleteHttpTarget && deleteHttpMut.mutate(deleteHttpTarget.id)}
-      />
     </ResourceListPage>
   )
 }
