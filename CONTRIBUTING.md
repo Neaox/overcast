@@ -55,6 +55,8 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
     - [Linting — oxlint](#linting--oxlint)
     - [API access policy (SDK-first)](#api-access-policy-sdk-first)
     - [Frontend — Tailwind CSS v4](#frontend--tailwind-css-v4)
+    - [Tables — reach for `ResourceTable` before composing `<Table>` yourself](#tables--reach-for-resourcetable-before-composing-table-yourself)
+    - [Attribute grids — `DefinitionCard`, not a two-column `<Table>`](#attribute-grids--definitioncard-not-a-two-column-table)
     - [Topology map methodology](#topology-map-methodology)
     - [Service home screen](#service-home-screen)
     - [Global search](#global-search)
@@ -1597,6 +1599,34 @@ reader can tell a decision from an oversight. Fifty-five bespoke tables accumula
 before this rule existed; their migration, and `ResourceTable`'s move onto TanStack
 Table v9 (sorting, column visibility, pagination on one engine), is tracked in
 [#1327](https://github.com/Neaox/overcast/issues/1327). Do not add to the count.
+
+### Attribute grids — `DefinitionCard`, not a two-column `<Table>`
+
+The other half of that decision: when the thing on screen is **one resource's
+attributes** rather than a list of resources, the answer is not a bespoke
+`<Table>` either — it is **`DefinitionCard` / `DefinitionList` / `Definition`**
+(`web/src/components/ui/definition-card.tsx`). A table of two columns whose left
+column is a fixed set of field names is a definition list wearing a table's
+markup: it has nothing to sort, hide, page or act on, and a screen reader gets
+"row, Distribution ID, E1" instead of a term and its definition.
+
+`Definition` owns the typography so no detail page has to restate it: the label
+is the field-label spec from `lib/typography.ts` (the same spec `TableHead`
+uses, so a detail-page label and a column header read alike), and the value is
+**mono by default** because ARNs, ids, timestamps, counts and sizes are machine
+output — `variant="prose"` is the marked exception for a sentence a human wrote.
+Absence renders as an em dash, so a field that is unset stays visible instead of
+vanishing from the grid. `copyable` puts the shared inline `CopyButton` beside a
+value and names it after its label. The list is a container-query grid, so the
+same markup is a vertical run inside a narrow card and a three-up grid on a
+full-width page with no call site choosing.
+
+Reach for it whenever a page shows "here are this thing's fields": the metadata
+card a detail page opens with, a configuration tab, a dialog's file metadata, a
+panel showing a single setting. Keep `StatusBadge`, `Timestamp`, `ArnText` and
+the rest as the value node — the component owns typography and layout, not
+content. Its adoption across the detail pages is tracked in
+[#1101](https://github.com/Neaox/overcast/issues/1101).
 
 ### Topology map methodology
 
