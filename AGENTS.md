@@ -228,16 +228,66 @@ The full checklists are in CONTRIBUTING.md:
 
 ---
 
+## Claiming an issue
+
+Work on this repo runs in parallel. Before writing anything for an issue, claim
+it, and check nobody else already has:
+
+```bash
+bash scripts/issue-claim.sh 1325
+```
+
+That reports any conflict and, if clear, sets `status/in-progress` and assigns
+you. Pass `--check` to look without claiming. With no argument it takes the
+issue number from the branch name, which is why agent branches are named
+`claude/issue-<n>-<slug>`.
+
+**Why a script rather than a habit.** `gh issue view <n>` renders title, body
+and comments — not timeline events. GitHub cross-references a pull request onto
+an issue the moment the PR body names it, so the strongest available signal is
+one `gh issue view` does not show. On 2026-08-22 two agents both worked #1325:
+the second opened [PR #1351](https://github.com/Neaox/overcast/pull/1351) with
+auto-merge armed 1h43m after the first was cross-referenced onto the issue, and
+25 minutes after that first PR had already merged. The issue was open,
+unassigned and uncommented the whole time. `status/in-progress` existed in the
+label taxonomy throughout and neither agent set it — a convention nothing
+enforces is not a convention, which is why this is a script wired into a hook.
+
+**A reference is not a claim.** A PR may contribute a piece of an issue, or
+cite it for context, without owning it. Only a *closing* reference counts —
+GitHub's `closingIssuesReferences`, populated solely by a `Closes`/`Fixes`
+keyword. The script keeps the two apart and reports mere mentions as context.
+
+**It warns, it never blocks.** `scripts/hooks/duplicate-work-warning.sh` runs on
+`git push` and `gh pr create` and reports a live claim by someone else. Deciding
+whether two changes are the same change needs both diffs read, so that call is
+yours. If your work genuinely is distinct — a different window, a follow-up, a
+piece the other PR left — name the other PR in your body and say what it does
+not cover, then carry on.
+
+**If it turns out to be a duplicate**, do not open the PR. Check first whether
+your work still applies to `main` at all: restore main's version of the file you
+changed (`git checkout origin/main -- <file>`) and run only your new tests. A
+test that passes against `main` is not a regression test, it is a duplicate.
+Then close the branch and report what you found, including anything of yours
+worth keeping as a follow-up.
+
+Being unable to check — no `gh`, no auth, no network — is not evidence of being
+clear. The script says so and exits 0 rather than failing a push.
+
+---
+
 ## Agent workflow — before and after every task
 
 ### Before editing
 
-1. Identify the **service** and **AWS protocol** (Query, JSON 1.1, REST JSON, REST XML)
-2. Locate an **existing implementation** to mirror — copy the pattern, not the temptation to invent
-3. Check **config impact** — does it need a new field in `*config.Config`?
-4. Check **storage impact** — does it need `state.Store` changes? Both implementations?
-5. Check **docs impact** — capability tables, service docs, STATUS.md, changelog fragment under `.changelog/` (never edit `CHANGELOG.md`'s `[Unreleased]` directly — see `.changelog/README.md`)
-6. Define a **minimal useful test plan** — failing test first
+1. **Claim the issue** — `bash scripts/issue-claim.sh` (see [Claiming an issue](#claiming-an-issue))
+2. Identify the **service** and **AWS protocol** (Query, JSON 1.1, REST JSON, REST XML)
+3. Locate an **existing implementation** to mirror — copy the pattern, not the temptation to invent
+4. Check **config impact** — does it need a new field in `*config.Config`?
+5. Check **storage impact** — does it need `state.Store` changes? Both implementations?
+6. Check **docs impact** — capability tables, service docs, STATUS.md, changelog fragment under `.changelog/` (never edit `CHANGELOG.md`'s `[Unreleased]` directly — see `.changelog/README.md`)
+7. Define a **minimal useful test plan** — failing test first
 
 ### Before finishing
 
@@ -249,6 +299,7 @@ The full checklists are in CONTRIBUTING.md:
 6. Verify **CloudFormation handlers** are registered for any new resource types (or stubbed)
 7. Widen to `go build ./...` and `go vet ./...` — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
 8. Run **`make lint-go`** (golangci-lint). Build, vet and tests do **not** cover it: CI runs `Lint` as its own required job, and staticcheck findings it reports (unused variables, redundant declarations, merged decl/assign) pass all three of the above. If you touched `web/`, run **`make lint-web`** and **`pnpm run typecheck`** there too.
+9. **Re-check the ground you started from**, immediately before `gh pr create`: `git fetch origin main` and `bash scripts/issue-claim.sh --check`. A fetch at the start of a session proves nothing about `main` at the end of one — see [Claiming an issue](#claiming-an-issue). A `mergeStateStatus` of `DIRTY` on a freshly-opened PR is the same news arriving late; diagnose it with `git merge-tree --write-tree origin/main HEAD` before assuming a lockfile.
 
 If the host has no Go toolchain, use `scripts/docker-go.sh` (Git Bash/macOS/Linux)
 or `scripts/docker-go.ps1` (PowerShell) for every `go` command; both work from

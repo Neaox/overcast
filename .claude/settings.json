@@ -20,6 +20,20 @@
           },
           {
             "type": "command",
+            "if": "Bash(git push *)",
+            "command": "bash scripts/hooks/duplicate-work-warning.sh",
+            "timeout": 30,
+            "statusMessage": "Checking whether this issue is already claimed"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh pr create *)",
+            "command": "bash scripts/hooks/duplicate-work-warning.sh",
+            "timeout": 30,
+            "statusMessage": "Checking whether this issue is already claimed"
+          },
+          {
+            "type": "command",
             "command": "bash scripts/hooks/pr-checks-poll-loop-warning.sh",
             "timeout": 10,
             "statusMessage": "Checking for a hand-rolled CI poll loop"
