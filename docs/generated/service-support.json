@@ -2979,7 +2979,7 @@
           "operation": "AllocateAddress",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Generates eipalloc- ID and synthetic public IP; Domain honoured"
+          "notes": "Generates eipalloc- ID and synthetic public IP; Domain honoured; supports TagSpecification"
         },
         {
           "operation": "AssociateAddress",
