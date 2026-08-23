@@ -76,7 +76,9 @@ type ContainerRuntime struct {
 	instances *serviceutil.InstanceDomain
 
 	// initBurst tracks containers that are still in the INIT phase with burst
-	// CPU. Keyed by function ARN → {containerID, steadyStateCPUs}.
+	// CPU. Keyed by container ID: a function can have several environments in
+	// INIT at once, and the throttle-down belongs to the one whose RIC reported
+	// it, not to the function.
 	initBurstMu sync.Mutex
 	initBurst   map[string]initBurstEntry
 }
@@ -686,6 +688,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
 				FunctionARN:        fn.ARN,
 				FunctionName:       fn.Name,
+				ContainerID:        id,
 				Handler:            fn.Handler,
 				ExpectedExtensions: expectedExtensions,
 			})
@@ -702,6 +705,9 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		if registeredIP != "" {
 			cr.runtimeAPI.UnregisterContainer(registeredIP)
 		}
+		// A container that never reaches its first GET /next would otherwise
+		// leave its burst entry behind — nothing else deletes one.
+		cr.clearInitBurst(id)
 		_ = cr.docker.RemoveContainerForce(id)
 	}
 
@@ -743,20 +749,20 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 
 	// Register for INIT-burst throttle-down when the RIC first polls /next.
-	cr.registerInitBurst(fn.ARN, id, fn.MemorySize)
+	cr.registerInitBurst(id, fn.MemorySize)
 	mark("start")
 
 	progress("Waiting for runtime to initialize")
 	if containerIP == "" {
 		containerIP, err = cr.awaitContainerIP(ctx, id)
 		if err != nil {
-			cr.clearInitBurst(fn.ARN)
 			cleanup()
 			return nil, err
 		}
 		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
 			FunctionARN:        fn.ARN,
 			FunctionName:       fn.Name,
+			ContainerID:        id,
 			Handler:            fn.Handler,
 			ExpectedExtensions: expectedExtensions,
 		})
@@ -896,6 +902,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		endpoint:       cr.endpoint,
 		rapiListener:   rapiListener,
 	}
+	ci.forgetInitBurst = func() { cr.clearInitBurst(id) }
 
 	if cr.logWriter != nil {
 		go ci.streamLogs()
@@ -1290,6 +1297,13 @@ type containerInstance struct {
 	// working to. See discardUnclaimedOutput.
 	tailUnclaimed     bool
 	tailUnclaimedMark tailMark
+
+	// forgetInitBurst drops this container's pending INIT-burst entry when the
+	// environment is destroyed. An environment that dies before its first
+	// GET /next never reports INIT complete, so nothing else would ever remove
+	// the entry that throttle-down is waiting to act on. Set by
+	// newContainerInstance.
+	forgetInitBurst func()
 
 	// initStartedAt is when the container was started, for environments whose
 	// init was triggered by an invoke (on-demand cold starts). Zero for
@@ -2298,6 +2312,9 @@ func (ci *containerInstance) Healthy() bool { return ci.healthy }
 // via the GC with exponential backoff.
 func (ci *containerInstance) Close() error {
 	ci.logger.Debug("stopping lambda container", zap.String("container", ci.id[:12]))
+	if ci.forgetInitBurst != nil {
+		ci.forgetInitBurst()
+	}
 	if ci.logWriter != nil {
 		ci.waitForLogDrain(context.Background(), 0)
 	}
@@ -2843,7 +2860,15 @@ type initBurstEntry struct {
 
 // registerInitBurst records that a container was started with burst CPU and
 // should be throttled to the proportional allocation after INIT completes.
-func (cr *ContainerRuntime) registerInitBurst(functionARN, containerID string, memoryMB int) {
+//
+// Keyed by container, because a function routinely has more than one
+// environment in INIT at the same time — two event source mappings on one
+// stream deliver to the same function at the same instant, and each concurrent
+// invocation cold starts its own. Keying this by function ARN meant the second
+// registration displaced the first: the environment that finished INIT first
+// threw the throttle at whichever container had registered last, cutting a
+// container still in INIT from 2 CPUs to a fraction of one (#1336).
+func (cr *ContainerRuntime) registerInitBurst(containerID string, memoryMB int) {
 	// Skip registration if the function already gets burst-level CPU or more
 	// from its memory allocation — throttling would be a no-op.
 	if cpuAllocation(memoryMB) >= initBurstCPUs {
@@ -2854,7 +2879,7 @@ func (cr *ContainerRuntime) registerInitBurst(functionARN, containerID string, m
 	if cr.initBurst == nil {
 		cr.initBurst = make(map[string]initBurstEntry)
 	}
-	cr.initBurst[functionARN] = initBurstEntry{
+	cr.initBurst[containerID] = initBurstEntry{
 		containerID: containerID,
 		memorySize:  memoryMB,
 	}
@@ -2862,21 +2887,21 @@ func (cr *ContainerRuntime) registerInitBurst(functionARN, containerID string, m
 
 // clearInitBurst removes a pending init-burst entry without throttling.
 // Called on error paths when the container is being torn down.
-func (cr *ContainerRuntime) clearInitBurst(functionARN string) {
+func (cr *ContainerRuntime) clearInitBurst(containerID string) {
 	cr.initBurstMu.Lock()
-	delete(cr.initBurst, functionARN)
+	delete(cr.initBurst, containerID)
 	cr.initBurstMu.Unlock()
 }
 
 // ThrottleInitBurst reduces a container's CPU allocation from the INIT burst
-// level to the steady-state proportional allocation. Called when the RIC issues
-// its first GET /next, signalling that the INIT phase is complete. Safe to call
-// for functions that don't have a pending burst entry (no-op).
-func (cr *ContainerRuntime) ThrottleInitBurst(functionARN string) {
+// level to the steady-state proportional allocation. Called when that
+// container's RIC issues its first GET /next, signalling that its INIT phase is
+// complete. Safe to call for a container with no pending burst entry (no-op).
+func (cr *ContainerRuntime) ThrottleInitBurst(containerID string) {
 	cr.initBurstMu.Lock()
-	entry, ok := cr.initBurst[functionARN]
+	entry, ok := cr.initBurst[containerID]
 	if ok {
-		delete(cr.initBurst, functionARN)
+		delete(cr.initBurst, containerID)
 	}
 	cr.initBurstMu.Unlock()
 

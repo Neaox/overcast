@@ -75,8 +75,12 @@ type runtimeWaiter struct {
 }
 
 type runtimeContainerConfig struct {
-	FunctionARN        string
-	FunctionName       string
+	FunctionARN  string
+	FunctionName string
+	// ContainerID is the Docker container behind this environment. The Runtime
+	// API itself addresses environments by their listener and IP; this is what
+	// lets a callback name the container to whoever works in Docker's terms.
+	ContainerID        string
 	Handler            string
 	ExpectedExtensions []string
 }
@@ -168,10 +172,11 @@ type RuntimeAPIServer struct {
 	logsDeliveries   chan extensionLogDelivery
 
 	// OnFirstNext is called (in a goroutine) the first time a container's RIC
-	// issues GET /next.  The argument is the function ARN.  Setting this lets
-	// the instance tracker transition the instance from "initializing" to
-	// "running".
-	OnFirstNext func(functionARN string)
+	// issues GET /next — the moment that container's INIT phase ends. It is
+	// told which environment reported it, not only which function: a function
+	// can have several environments in INIT at once, and anything acting on
+	// this (the INIT-burst throttle-down) acts on one container.
+	OnFirstNext func(functionARN, containerID string)
 }
 
 // NewRuntimeAPIServer creates and starts the Runtime API server.
@@ -1335,7 +1340,7 @@ func (s *RuntimeAPIServer) maybeMarkReadyLocked(containerIP string) {
 	close(ready)
 	delete(s.ready, containerIP)
 	if cb := s.OnFirstNext; cb != nil {
-		go cb(cfg.FunctionARN)
+		go cb(cfg.FunctionARN, cfg.ContainerID)
 	}
 }
 
