@@ -3,6 +3,8 @@ package lambda
 import (
 	"testing"
 	"time"
+
+	"github.com/Neaox/overcast/internal/services/lambda/initproto"
 )
 
 // logging_json_test.go pins the wire shapes and level mapping of JSON logging
@@ -243,5 +245,132 @@ func TestFunctionInstanceIdentity_changesWithLoggingConfig(t *testing.T) {
 	implicit.ApplicationLogLevel, implicit.SystemLogLevel = "", ""
 	if got := functionInstanceIdentity(&implicit); got != baseID {
 		t.Fatal("identity changed when the default levels were spelled out — a pointless cold start")
+	}
+}
+
+// The init-phase records, against the shapes in AWS's Telemetry API Event
+// schema reference. Overcast fills in every member AWS marks as required and
+// omits the four optional ones it cannot observe (runtimeVersion,
+// runtimeVersionArn, instanceId, instanceMaxMemory) — see platformInitRecord.
+func TestRenderPlatformEvent_initPhaseRecords(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  platformRecord
+		want string
+	}{
+		{
+			name: "initStart",
+			rec: platformInitStartRecord{
+				InitializationType: initTypeOnDemand,
+				Phase:              initPhaseInit,
+				FunctionName:       "myFunction",
+				FunctionVersion:    functionVersionLatest,
+			},
+			want: `{"time":"2026-08-09T12:34:56.789Z","type":"platform.initStart","record":{"initializationType":"on-demand","phase":"init","functionName":"myFunction","functionVersion":"$LATEST"}}`,
+		},
+		{
+			name: "initRuntimeDone",
+			rec: platformInitRuntimeDoneRecord{
+				InitializationType: initTypeProvisioned,
+				Phase:              initPhaseInit,
+				Status:             invokeStatusSuccess,
+			},
+			want: `{"time":"2026-08-09T12:34:56.789Z","type":"platform.initRuntimeDone","record":{"initializationType":"provisioned-concurrency","phase":"init","status":"success"}}`,
+		},
+		{
+			name: "initReport",
+			rec: platformInitReportRecord{
+				InitializationType: initTypeOnDemand,
+				Phase:              initPhaseInit,
+				Status:             invokeStatusSuccess,
+				Metrics:            initReportMetrics{DurationMs: 125.33},
+			},
+			want: `{"time":"2026-08-09T12:34:56.789Z","type":"platform.initReport","record":{"initializationType":"on-demand","phase":"init","status":"success","metrics":{"durationMs":125.33}}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := renderPlatformEvent(testRecordTime, tc.rec); got != tc.want {
+				t.Errorf("renderPlatformEvent()\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// The init-phase rows of AWS's system log level event mapping. The initStart
+// rows are conditioned on runtimeVersion, which Overcast never sets, so only
+// the DEBUG one is reachable; the three initReport rows resolve in the order
+// AWS lists them, with a failed phase overriding the initialization type.
+func TestPlatformRecordSystemLogLevel_initPhaseRecords(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  platformRecord
+		want logLevel
+	}{
+		{"initStart, runtimeVersion is not set", platformInitStartRecord{}, logLevelDebug},
+		{"initRuntimeDone success", platformInitRuntimeDoneRecord{Status: invokeStatusSuccess}, logLevelDebug},
+		{"initRuntimeDone failure", platformInitRuntimeDoneRecord{Status: invokeStatusError}, logLevelWarn},
+		{"initReport on-demand", platformInitReportRecord{Status: invokeStatusSuccess, InitializationType: initTypeOnDemand}, logLevelDebug},
+		{"initReport provisioned", platformInitReportRecord{Status: invokeStatusSuccess, InitializationType: initTypeProvisioned}, logLevelInfo},
+		{"initReport failed on-demand", platformInitReportRecord{Status: invokeStatusError, InitializationType: initTypeOnDemand}, logLevelWarn},
+		{"initReport failed provisioned", platformInitReportRecord{Status: invokeStatusError, InitializationType: initTypeProvisioned}, logLevelWarn},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rec.systemLogLevel(); got != tc.want {
+				t.Errorf("systemLogLevel() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// What the init reports, plus what only the host knows, is the AWS record.
+func TestPlatformInitRecord(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    initproto.Record
+		want  platformRecord
+		wantK bool
+	}{
+		{
+			name:  "initStart",
+			in:    initproto.Record{Type: initproto.RecInitStart},
+			want:  platformInitStartRecord{InitializationType: initTypeOnDemand, Phase: initPhaseInit, FunctionName: "fn", FunctionVersion: functionVersionLatest},
+			wantK: true,
+		},
+		{
+			name:  "initRuntimeDone success",
+			in:    initproto.Record{Type: initproto.RecInitRuntimeDone, Status: initproto.StatusSuccess},
+			want:  platformInitRuntimeDoneRecord{InitializationType: initTypeOnDemand, Phase: initPhaseInit, Status: invokeStatusSuccess},
+			wantK: true,
+		},
+		{
+			name:  "initReport carries the init-measured duration",
+			in:    initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusError, DurationMs: 12.5},
+			want:  platformInitReportRecord{InitializationType: initTypeOnDemand, Phase: initPhaseInit, Status: invokeStatusError, Metrics: initReportMetrics{DurationMs: 12.5}},
+			wantK: true,
+		},
+		{
+			name: "an unknown record type is not invented",
+			in:   initproto.Record{Type: "somethingElse", Status: initproto.StatusSuccess},
+		},
+		{
+			name: "a closing record with no status is not invented",
+			in:   initproto.Record{Type: initproto.RecInitReport},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := platformInitRecord(tc.in, "fn", initTypeOnDemand)
+			if ok != tc.wantK {
+				t.Fatalf("platformInitRecord ok = %v, want %v", ok, tc.wantK)
+			}
+			if !ok {
+				return
+			}
+			if got != tc.want {
+				t.Errorf("platformInitRecord() = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }

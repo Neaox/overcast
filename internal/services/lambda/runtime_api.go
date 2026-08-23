@@ -1121,10 +1121,55 @@ func normalizeExtensionLogURI(rawURI, containerIP string) string {
 	return parsed.String()
 }
 
+// PublishExtensionLog publishes one log line — a "function" or "extension"
+// record — to the subscribers of that type on this container. The record is the
+// line itself, which is the shape AWS gives those two types.
 func (s *RuntimeAPIServer) PublishExtensionLog(containerIP, typ, record string) {
 	if record == "" {
 		return
 	}
+	s.publishTelemetryEvent(containerIP, typ, map[string]any{
+		"time":   s.clk.Now().UTC().Format(time.RFC3339Nano),
+		"type":   typ,
+		"record": record,
+	})
+}
+
+// PublishPlatformRecord publishes one platform event to the subscribers of the
+// "platform" type. event is the complete Telemetry API event, already
+// marshalled by the caller that owns the schema (see logging_json.go): the
+// {"time","type","record"} envelope, whose type is the event's own —
+// "platform.initStart", "platform.start", … — and whose record is an object.
+// That is what AWS documents, and it is why this does not go through
+// PublishExtensionLog, whose record is a string.
+func (s *RuntimeAPIServer) PublishPlatformRecord(containerIP, event string) {
+	if event == "" {
+		return
+	}
+	s.publishTelemetryEvent(containerIP, "platform", json.RawMessage(event))
+}
+
+// hasTelemetrySubscribers reports whether anything on this container is
+// subscribed to typ. It exists so a caller on the invoke path can skip building
+// a record nobody will read: in Text mode the platform records are marshalled
+// for subscribers alone, and the overwhelmingly common case is that there are
+// none.
+func (s *RuntimeAPIServer) hasTelemetrySubscribers(containerIP, typ string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ext := range s.extensions {
+		if ext.ContainerIP == containerIP && ext.Logs != nil && ext.Logs.Types[typ] {
+			return true
+		}
+	}
+	return false
+}
+
+// publishTelemetryEvent queues one event for delivery to every extension
+// subscribed to typ on this container. Delivery is asynchronous and
+// best-effort: a full queue drops the event rather than holding up whatever
+// produced it, which is on the invoke path.
+func (s *RuntimeAPIServer) publishTelemetryEvent(containerIP, typ string, event any) {
 	s.mu.Lock()
 	subs := make([]string, 0)
 	for _, ext := range s.extensions {
@@ -1137,11 +1182,7 @@ func (s *RuntimeAPIServer) PublishExtensionLog(containerIP, typ, record string) 
 	if len(subs) == 0 {
 		return
 	}
-	body, err := json.Marshal([]map[string]any{{
-		"time":   s.clk.Now().UTC().Format(time.RFC3339Nano),
-		"type":   typ,
-		"record": record,
-	}})
+	body, err := json.Marshal([]any{event})
 	if err != nil {
 		return
 	}

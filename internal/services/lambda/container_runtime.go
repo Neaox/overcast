@@ -644,7 +644,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	// this function returns a containerInstance — and those frames are what the
 	// INIT-timeout diagnostic quotes. Handed to the containerInstance on
 	// success and closed on every other path out of here.
-	sink := cr.newLogSink(fn, logStream)
+	sink := cr.newLogSink(fn, logStream, initType)
 	// Indexed against this environment's own listener before the container
 	// exists, so the init's first log connection is answered rather than made
 	// to wait for Docker to report an address — see RuntimeAPIServer.logSinks.
@@ -944,18 +944,21 @@ func (cr *ContainerRuntime) logRegion(fn *Function) string {
 
 // newLogSink builds the host end of a container's log channel. It is called
 // before the container exists — see the call site.
-func (cr *ContainerRuntime) newLogSink(fn *Function, logStream string) *logSink {
-	appLogLevel, _ := resolveLogLevels(fn)
+func (cr *ContainerRuntime) newLogSink(fn *Function, logStream, initType string) *logSink {
+	appLogLevel, sysLogLevel := resolveLogLevels(fn)
 	return newLogSink(logSinkConfig{
-		logger:      cr.logger,
-		clk:         cr.clk,
-		logWriter:   cr.logWriter,
-		group:       fn.logGroupName(),
-		stream:      logStream,
-		region:      cr.logRegion(fn),
-		logFormat:   resolveLogFormat(fn),
-		appLogLevel: appLogLevel,
-		runtimeAPI:  cr.runtimeAPI,
+		logger:       cr.logger,
+		clk:          cr.clk,
+		logWriter:    cr.logWriter,
+		group:        fn.logGroupName(),
+		stream:       logStream,
+		region:       cr.logRegion(fn),
+		functionName: fn.Name,
+		initType:     initType,
+		logFormat:    resolveLogFormat(fn),
+		appLogLevel:  appLogLevel,
+		sysLogLevel:  sysLogLevel,
+		runtimeAPI:   cr.runtimeAPI,
 	})
 }
 
@@ -1985,6 +1988,23 @@ func (ci *containerInstance) publishRuntimeLog(logType, line string) {
 	if ci.containerIP != "" {
 		ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, line)
 	}
+}
+
+// publishPlatformRecord hands one marshalled Telemetry API platform event to
+// subscribers. Same separation as publishRuntimeLog, and for the same reason:
+// what a subscriber sees is the complete set of records in the shape AWS
+// documents, whatever the log format and the system log level do to the
+// CloudWatch copy.
+func (ci *containerInstance) publishPlatformRecord(event string) {
+	if ci.containerIP != "" {
+		ci.runtimeAPI.PublishPlatformRecord(ci.containerIP, event)
+	}
+}
+
+// hasPlatformSubscribers reports whether marshalling a platform record for the
+// Telemetry/Logs API would reach anybody.
+func (ci *containerInstance) hasPlatformSubscribers() bool {
+	return ci.containerIP != "" && ci.runtimeAPI.hasTelemetrySubscribers(ci.containerIP, "platform")
 }
 
 // deliverSynthLine writes a line the execution environment produced — START,

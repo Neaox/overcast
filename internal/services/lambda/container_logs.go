@@ -65,15 +65,24 @@ const (
 // long before the acquire returns a containerInstance, and those frames are
 // what the INIT-timeout diagnostic quotes.
 type logSinkConfig struct {
-	logger      *zap.Logger
-	clk         clock.Clock
-	logWriter   events.LogWriter // nil when CloudWatch Logs is not wired
-	group       string
-	stream      string
-	region      string
-	logFormat   string
-	appLogLevel logLevel
-	runtimeAPI  *RuntimeAPIServer
+	logger    *zap.Logger
+	clk       clock.Clock
+	logWriter events.LogWriter // nil when CloudWatch Logs is not wired
+	group     string
+	stream    string
+	region    string
+	// functionName and initType are what an init-phase platform record carries
+	// that the init cannot know: which function this environment runs, and
+	// whether AWS would call its initialization "on-demand" or
+	// "provisioned-concurrency". Both are settled before the container exists,
+	// which is why the host fills them in at ingest rather than passing them
+	// into the container — see platformInitRecord.
+	functionName string
+	initType     string
+	logFormat    string
+	appLogLevel  logLevel
+	sysLogLevel  logLevel
+	runtimeAPI   *RuntimeAPIServer
 }
 
 // logSink is one container's log pipeline: the host end of the init's frame
@@ -256,6 +265,9 @@ func (s *logSink) idleSequence() uint64 {
 // subscribers are fed asynchronously through a queue, and the ordering promise
 // is about CloudWatch and the tail.
 func (s *logSink) frame(f initproto.Frame) bool {
+	if f.Rec.Type != "" {
+		return s.platformFrame(f)
+	}
 	// An extension's output is an extension record, named by the directory
 	// entry the init started it from — no prefix convention to parse back out.
 	logType := "function"
@@ -315,6 +327,80 @@ func (s *logSink) frame(f initproto.Frame) bool {
 		s.cfg.runtimeAPI.PublishExtensionLog(containerIP, logType, f.Msg)
 	}
 	return batched
+}
+
+// platformFrame handles one of the init's platform-telemetry observations and
+// reports whether it is now waiting in the CloudWatch batch. It is frame's
+// other half, and it keeps that function's one ordering rule: the record
+// reaches the batch, and *then* lastSeq moves and the waiters are woken, inside
+// one critical section.
+//
+// Three things separate a record from a line:
+//
+//   - It is marshalled here, into the Telemetry API event AWS documents, from
+//     the observation the init made plus what only the host knows (the
+//     function, its version, how the environment was initialized).
+//   - Subscribers see it whatever the log format is, because the Telemetry API
+//     is not affected by the CloudWatch log format or level. CloudWatch sees it
+//     only under LogFormat: JSON, filtered by SystemLogLevel — in Text mode
+//     AWS's counterpart of platform.initStart is an INIT_START line whose
+//     entire content is a managed runtime's version and its ARN, neither of
+//     which Overcast has (and neither of which a container-image function has
+//     at all), and there is no plain-text counterpart of the other two.
+//   - It never enters a tail buffer. It belongs to no invocation, so
+//     X-Amz-Log-Result is unaffected, and it is not container output, so the
+//     INIT-timeout diagnostic does not quote it.
+func (s *logSink) platformFrame(f initproto.Frame) bool {
+	rec, ok := platformInitRecord(f.Rec, s.cfg.functionName, s.cfg.initType)
+	if !ok {
+		s.cfg.logger.Debug("lambda container logs: the init reported a platform record this build does not know",
+			zap.String("container", s.container()),
+			zap.String("record", f.Rec.Type),
+			zap.String("status", f.Rec.Status),
+		)
+		// Still a frame: it has to advance the sequence, or a waiter for a seq
+		// at or above it would be held to its bound.
+		return s.advanceSeq(f.Seq)
+	}
+	// Marshalled unconditionally, unlike the invocation records
+	// (emitPlatformRecord, which builds one for a Text-mode subscriber only if
+	// there is one): there are exactly three of these per execution
+	// environment, and none of them is on the invoke path.
+	event := renderPlatformEvent(s.cfg.clk.Now(), rec)
+	toCloudWatch := s.cfg.logFormat == logFormatJSON && rec.systemLogLevel() >= s.cfg.sysLogLevel
+
+	s.mu.Lock()
+	if f.Seq <= s.lastSeq {
+		s.mu.Unlock()
+		return false
+	}
+	containerIP := s.containerIP
+	batched := false
+	if toCloudWatch && event != "" {
+		s.batcher.Line(containerlogs.Line{Message: event})
+		s.pending++
+		batched = true
+	}
+	s.lastSeq = f.Seq
+	s.notifyLocked()
+	s.mu.Unlock()
+
+	if containerIP != "" {
+		s.cfg.runtimeAPI.PublishPlatformRecord(containerIP, event)
+	}
+	return batched
+}
+
+// advanceSeq moves the watermark for a frame that put nothing anywhere, and
+// reports false because nothing is waiting in the batch.
+func (s *logSink) advanceSeq(seq uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > s.lastSeq {
+		s.lastSeq = seq
+		s.notifyLocked()
+	}
+	return false
 }
 
 // flush writes the pending CloudWatch batch and reports how many lines it held.
