@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Eye, Zap, Trash2 } from "lucide-react"
+import { Eye, Zap } from "lucide-react"
 import {
   lambdaFunctionsQueryOptions,
   lambdaKeys,
@@ -9,16 +9,6 @@ import {
 } from "@/features/lambda/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { LambdaFunction } from "@/types"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, EmptyState } from "@/components/ui/primitives"
 import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import {
   CreateAction,
@@ -27,8 +17,8 @@ import {
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { CreateFunctionWizard } from "./create-wizard"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { cn } from "@/lib/utils"
@@ -36,8 +26,9 @@ import { cn } from "@/lib/utils"
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function FunctionList() {
+  const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<LambdaFunction>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -59,6 +50,7 @@ export function FunctionList() {
   })
 
   const activeCount = functions.filter((fn) => fn.State === "Active").length
+  const isEmpty = !isLoading && !error && functions.length === 0
 
   return (
     <ResourceListPage
@@ -79,108 +71,102 @@ export function FunctionList() {
         </>
       }
     >
+      {/*
+       * `variant="embedded"` inside this page's own `ResourceListCard` rather
+       * than `variant="card"`: `RegionElsewhereNotice` has to render directly
+       * beneath the empty state, inside the card (its `-mt-8` tucks it into the
+       * `EmptyState`'s bottom padding), and `ResourceTable` builds that empty
+       * state internally with no slot after it. Embedding the table in the card
+       * this page owns is what keeps the notice where it reads. The columns menu
+       * is off for the same reason — inside the card its popover is clipped by
+       * the `overflow-hidden` that rounds the table's corners.
+       */}
       <ResourceListCard>
-        {isLoading || functions.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={functions.length === 0}
-            error={error}
-            empty={
+        <ResourceTable
+          variant="embedded"
+          columnToggle={false}
+          query={{ data: functions, isLoading, error }}
+          noun="functions"
+          emptyIcon={Zap}
+          emptyTitle="No functions yet"
+          emptyDescription="Create a function to get started."
+          emptyAction={
+            <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
+          }
+          errorTitle="Failed to load functions"
+          rowKey={(fn) => fn.FunctionArn ?? fn.FunctionName ?? ""}
+          onRowClick={(fn) =>
+            navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })
+          }
+          columns={[
+            {
+              header: "Name",
+              sortValue: (fn) => fn.FunctionName,
+              cell: (fn) => <ResourceName icon={Zap} name={fn.FunctionName ?? ""} />,
+            },
+            { header: "Runtime", cellClassName: "text-fg-muted", cell: (fn) => fn.Runtime },
+            { header: "Handler", cellClassName: "text-fg-muted", cell: (fn) => fn.Handler },
+            {
+              header: "Memory",
+              cellClassName: "text-fg-muted",
+              sortValue: (fn) => fn.MemorySize ?? 128,
+              cell: (fn) => `${fn.MemorySize ?? 128} MB`,
+            },
+            {
+              header: "Timeout",
+              cellClassName: "text-fg-muted",
+              sortValue: (fn) => fn.Timeout ?? 3,
+              cell: (fn) => `${fn.Timeout ?? 3}s`,
+            },
+            {
+              header: "State",
+              cell: (fn) => (
+                <span
+                  className={cn(
+                    "font-mono text-xs",
+                    fn.State === "Active" ? "font-medium text-success" : "text-fg-muted",
+                  )}
+                >
+                  {fn.State}
+                </span>
+              ),
+            },
+          ]}
+          rowActions={(fn) => (
+            <RowAction
+              label={`View ${fn.FunctionName ?? ""}`}
+              onClick={() =>
+                navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })
+              }
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </RowAction>
+          )}
+          onDelete={{
+            target: deleteTarget,
+            onRequest: setDeleteTarget,
+            onOpenChange: (open) => !open && setDeleteTarget(undefined),
+            mutation: {
+              mutate: (name) => deleteMut.mutate({ name }),
+              isPending: deleteMut.isPending,
+            },
+            getId: (fn) => fn.FunctionName ?? "",
+            label: (fn) => fn.FunctionName ?? "",
+            noun: "function",
+            title: "Delete function",
+            description: (fn) => (
               <>
-                <EmptyState
-                  icon={<Zap className="h-10 w-10" />}
-                  title="No functions yet"
-                  description="Create a function to get started."
-                  action={
-                    <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
-                  }
-                />
-                <RegionElsewhereNotice kind="lambda-functions" noun="functions" />
+                Delete <span className="font-mono font-medium">{fn.FunctionName}</span>, including
+                every published version and alias? This cannot be undone. To remove a single
+                version, use the function's Versions tab.
               </>
-            }
-            errorTitle="Failed to load functions"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Runtime</TableHead>
-                <TableHead>Handler</TableHead>
-                <TableHead>Memory</TableHead>
-                <TableHead>Timeout</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {functions.map((fn) => (
-                <FunctionRow key={fn.FunctionArn} fn={fn} onDelete={setDeleteTarget} />
-              ))}
-            </TableBody>
-          </Table>
-        )}
+            ),
+          }}
+        />
+        {isEmpty && <RegionElsewhereNotice kind="lambda-functions" noun="functions" />}
       </ResourceListCard>
 
       <CreateFunctionWizard open={showCreate} onOpenChange={setShowCreate} />
-
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={() => setDeleteTarget(undefined)}
-        title="Delete function"
-        description={
-          <>
-            Delete <span className="font-mono font-medium">{deleteTarget}</span>, including every
-            published version and alias? This cannot be undone. To remove a single version, use the
-            function's Versions tab.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate({ name: deleteTarget })}
-      />
     </ResourceListPage>
-  )
-}
-
-// ─── FunctionRow ─────────────────────────────────────────────────────────────
-
-function FunctionRow({ fn, onDelete }: { fn: LambdaFunction; onDelete: (name: string) => void }) {
-  const navigate = useNavigate()
-  const name = fn.FunctionName ?? ""
-
-  return (
-    <TableRow onClick={() => navigate({ to: "/lambda/$name", params: { name } })}>
-      <TableCell>
-        <ResourceName icon={Zap} name={name} />
-      </TableCell>
-      <TableCell className="text-fg-muted">{fn.Runtime}</TableCell>
-      <TableCell className="text-fg-muted">{fn.Handler}</TableCell>
-      <TableCell className="text-fg-muted">{fn.MemorySize ?? 128} MB</TableCell>
-      <TableCell className="text-fg-muted">{fn.Timeout ?? 3}s</TableCell>
-      <TableCell>
-        <span
-          className={cn(
-            "font-mono text-xs",
-            fn.State === "Active" ? "font-medium text-success" : "text-fg-muted",
-          )}
-        >
-          {fn.State}
-        </span>
-      </TableCell>
-      <TableCell onClick={(e) => e.stopPropagation()}>
-        <RowActions>
-          <RowAction
-            label={`View ${name}`}
-            onClick={() => navigate({ to: "/lambda/$name", params: { name } })}
-          >
-            <Eye className="h-3.5 w-3.5" />
-          </RowAction>
-          <RowAction label={`Delete ${name}`} tone="danger" onClick={() => onDelete(name)}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </RowAction>
-        </RowActions>
-      </TableCell>
-    </TableRow>
   )
 }

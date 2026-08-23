@@ -17,14 +17,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Combobox } from "@/components/ui/combobox"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -33,19 +25,18 @@ import {
 } from "@/components/ui/dialog"
 import { FormField } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
-import type { LambdaLayer, LambdaRuntimeInfo } from "@/types"
+import type { LambdaRuntimeInfo } from "@/types"
 import { cn } from "@/lib/utils"
 import { formatDate } from "@/lib/format"
 import {
@@ -98,47 +89,78 @@ export function LayerList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || layers.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={layers.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Layers className="h-10 w-10" />}
-                title="No layers yet"
-                description="Publish a layer version to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Publish version</CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load layers"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Latest version</TableHead>
-                <TableHead>Compatible runtimes</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {layers.map((layer) => (
-                <LayerRow
-                  key={layer.LayerArn}
-                  layer={layer}
-                  onDelete={() => setDeleteTarget(layer.LayerName ?? "")}
-                />
-              ))}
-            </TableBody>
-          </Table>
+      <ResourceTable
+        columnToggle={false}
+        query={{ data: layers, isLoading, error }}
+        noun="layers"
+        emptyIcon={Layers}
+        emptyTitle="No layers yet"
+        emptyDescription="Publish a layer version to get started."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Publish version</CreateAction>
+        }
+        errorTitle="Failed to load layers"
+        rowKey={(layer) => layer.LayerArn ?? layer.LayerName ?? ""}
+        onRowClick={(layer) =>
+          navigate({
+            to: "/lambda/layers/$layerName",
+            params: { layerName: layer.LayerName ?? "" },
+          })
+        }
+        columns={[
+          {
+            header: "Name",
+            sortValue: (layer) => layer.LayerName,
+            cell: (layer) => <ResourceName icon={Layers} name={layer.LayerName ?? ""} />,
+          },
+          {
+            header: "Latest version",
+            sortValue: (layer) => layer.LatestMatchingVersion?.Version ?? 0,
+            cell: (layer) => layer.LatestMatchingVersion?.Version,
+          },
+          {
+            header: "Compatible runtimes",
+            cell: (layer) =>
+              (layer.LatestMatchingVersion?.CompatibleRuntimes?.length ?? 0) > 0
+                ? layer.LatestMatchingVersion!.CompatibleRuntimes!.join(", ")
+                : "—",
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (layer) => layer.LatestMatchingVersion?.CreatedDate,
+            cell: (layer) => formatDate(layer.LatestMatchingVersion?.CreatedDate ?? ""),
+          },
+        ]}
+        rowActions={(layer) => (
+          <>
+            <RowAction
+              label={`View ${layer.LayerName ?? ""}`}
+              onClick={() =>
+                navigate({
+                  to: "/lambda/layers/$layerName",
+                  params: { layerName: layer.LayerName ?? "" },
+                })
+              }
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </RowAction>
+            {/*
+             * Not `ResourceTable`'s `onDelete`: deleting a layer means deleting
+             * every version of it, so the dialog first has to count them —
+             * `DeleteLayerDialog` runs its own query and loops the mutation,
+             * which the shared single-`mutate(id)` confirm flow cannot express.
+             */}
+            <RowAction
+              label={`Delete ${layer.LayerName ?? ""}`}
+              tone="danger"
+              onClick={() => setDeleteTarget(layer.LayerName ?? "")}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </RowAction>
+          </>
         )}
-      </ResourceListCard>
+      />
 
       {showCreate && (
         <PublishLayerDialog
@@ -158,40 +180,6 @@ export function LayerList() {
         />
       )}
     </ResourceListPage>
-  )
-}
-
-// ─── Row ──────────────────────────────────────────────────────────────────────
-
-function LayerRow({ layer, onDelete }: { layer: LambdaLayer; onDelete: () => void }) {
-  const navigate = useNavigate()
-  const lv = layer.LatestMatchingVersion
-  const layerName = layer.LayerName ?? ""
-
-  return (
-    <TableRow onClick={() => navigate({ to: "/lambda/layers/$layerName", params: { layerName } })}>
-      <TableCell>
-        <ResourceName icon={Layers} name={layerName} />
-      </TableCell>
-      <TableCell>{lv?.Version}</TableCell>
-      <TableCell>
-        {(lv?.CompatibleRuntimes?.length ?? 0) > 0 ? lv!.CompatibleRuntimes!.join(", ") : "—"}
-      </TableCell>
-      <TableCell className="text-fg-muted">{formatDate(lv?.CreatedDate ?? "")}</TableCell>
-      <TableCell onClick={(e) => e.stopPropagation()}>
-        <RowActions>
-          <RowAction
-            label={`View ${layerName}`}
-            onClick={() => navigate({ to: "/lambda/layers/$layerName", params: { layerName } })}
-          >
-            <Eye className="h-3.5 w-3.5" />
-          </RowAction>
-          <RowAction label={`Delete ${layerName}`} tone="danger" onClick={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </RowAction>
-        </RowActions>
-      </TableCell>
-    </TableRow>
   )
 }
 

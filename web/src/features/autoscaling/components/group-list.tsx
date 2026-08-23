@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
-import { Activity, Boxes, SlidersHorizontal } from "lucide-react"
+import { Activity, Boxes, ChevronRight, SlidersHorizontal } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import {
   autoscalingActivitiesQueryOptions,
@@ -28,14 +28,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -43,15 +35,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 
 export function AutoScalingGroupList() {
   const [selected, setSelected] = useState<string>()
@@ -94,87 +85,103 @@ export function AutoScalingGroupList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || groups.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={groups.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Boxes className="h-10 w-10" />}
-                title="No Auto Scaling groups"
-                description="Create a launch configuration and a group — the reconciler will launch EC2 instances to match its desired capacity."
+      {/*
+       * The expanded group's detail renders below the table rather than as a
+       * tinted row: `ResourceTable` owns row rendering and has no per-row
+       * class hook, so the chevron column carries the expansion state — the
+       * shape `apigateway/usage-plans-page` already established.
+       */}
+      <ResourceTable
+        query={{ data: groups, isLoading, error }}
+        noun="Auto Scaling groups"
+        emptyIcon={Boxes}
+        emptyTitle="No Auto Scaling groups"
+        emptyDescription="Create a launch configuration and a group — the reconciler will launch EC2 instances to match its desired capacity."
+        errorTitle="Failed to load Auto Scaling groups"
+        rowKey={(group) => group.AutoScalingGroupName ?? ""}
+        onRowClick={(group) =>
+          setSelected(
+            selected === group.AutoScalingGroupName ? undefined : group.AutoScalingGroupName,
+          )
+        }
+        columns={[
+          {
+            header: "",
+            headerClassName: "w-8",
+            cellClassName: "w-8",
+            hideable: false,
+            cell: (group) => (
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 text-fg-muted transition-transform",
+                  selected === group.AutoScalingGroupName && "rotate-90",
+                )}
               />
+            ),
+          },
+          {
+            header: "Group",
+            // The identity column stays put — the chevron column ahead of it is
+            // chrome, so "Group" is what a reader scans for.
+            hideable: false,
+            sortValue: (group) => group.AutoScalingGroupName,
+            cell: (group) => <ResourceName icon={Boxes} name={group.AutoScalingGroupName ?? ""} />,
+          },
+          {
+            header: "In service / desired",
+            cellClassName: "font-mono text-xs",
+            sortValue: (group) => inServiceCount(group.Instances ?? []),
+            cell: (group) => (
+              <span className="inline-flex items-center gap-2">
+                {capacitySummary(inServiceCount(group.Instances ?? []), group.DesiredCapacity)}
+                {isConverged(group.Instances ?? [], group.DesiredCapacity) ? null : (
+                  <Badge variant="info">converging</Badge>
+                )}
+              </span>
+            ),
+          },
+          {
+            header: "Min",
+            cellClassName: "text-fg-muted",
+            sortValue: (group) => group.MinSize ?? 0,
+            cell: (group) => group.MinSize ?? 0,
+          },
+          {
+            header: "Max",
+            cellClassName: "text-fg-muted",
+            sortValue: (group) => group.MaxSize ?? 0,
+            cell: (group) => group.MaxSize ?? 0,
+          },
+          {
+            header: "Launch configuration",
+            cellClassName: "text-fg-muted",
+            cell: (group) => group.LaunchConfigurationName || "—",
+          },
+          {
+            header: "Availability zones",
+            cellClassName: "text-fg-muted",
+            cell: (group) => (group.AvailabilityZones ?? []).join(", ") || "—",
+          },
+          {
+            header: "Health check",
+            cellClassName: "text-fg-muted",
+            cell: (group) => group.HealthCheckType || "—",
+          },
+        ]}
+        rowActions={(group) => (
+          <RowAction
+            label={`Set desired capacity for ${group.AutoScalingGroupName ?? ""}`}
+            onClick={() =>
+              setCapacityTarget({
+                name: group.AutoScalingGroupName ?? "",
+                desired: group.DesiredCapacity ?? 0,
+              })
             }
-            errorTitle="Failed to load Auto Scaling groups"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Group</TableHead>
-                <TableHead>In service / desired</TableHead>
-                <TableHead>Min</TableHead>
-                <TableHead>Max</TableHead>
-                <TableHead>Launch configuration</TableHead>
-                <TableHead>Availability zones</TableHead>
-                <TableHead>Health check</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.map((group) => {
-                const instances = group.Instances ?? []
-                const inService = instances.filter(
-                  (i) => i.LifecycleState === "InService",
-                ).length
-                const name = group.AutoScalingGroupName ?? ""
-                return (
-                  <TableRow
-                    key={name}
-                    className={cn(selected === name && "bg-bg-muted")}
-                    onClick={() => setSelected(selected === name ? undefined : name)}
-                  >
-                    <TableCell>
-                      <ResourceName icon={Boxes} name={name} />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      <span className="inline-flex items-center gap-2">
-                        {capacitySummary(inService, group.DesiredCapacity)}
-                        {isConverged(instances, group.DesiredCapacity) ? null : (
-                          <Badge variant="info">converging</Badge>
-                        )}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{group.MinSize ?? 0}</TableCell>
-                    <TableCell className="text-fg-muted">{group.MaxSize ?? 0}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {group.LaunchConfigurationName || "—"}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {(group.AvailabilityZones ?? []).join(", ") || "—"}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{group.HealthCheckType || "—"}</TableCell>
-                    <TableCell>
-                      <RowActions>
-                        <RowAction
-                          label={`Set desired capacity for ${name}`}
-                          onClick={() =>
-                            setCapacityTarget({ name, desired: group.DesiredCapacity ?? 0 })
-                          }
-                        >
-                          <SlidersHorizontal className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+      />
 
       {selectedGroup ? (
         <GroupDetail
@@ -188,8 +195,7 @@ export function AutoScalingGroupList() {
         onClose={() => setCapacityTarget(undefined)}
         isPending={capacityMut.isPending}
         onSubmit={(desiredCapacity) =>
-          capacityTarget &&
-          capacityMut.mutate({ group: capacityTarget.name, desiredCapacity })
+          capacityTarget && capacityMut.mutate({ group: capacityTarget.name, desiredCapacity })
         }
       />
     </ResourceListPage>
@@ -197,6 +203,11 @@ export function AutoScalingGroupList() {
 }
 
 // ─── Group detail ─────────────────────────────────────────────────────────
+
+/** Numerator of "in service / desired" — also what the column sorts by. */
+function inServiceCount(instances: Array<{ LifecycleState?: string }>): number {
+  return instances.filter((i) => i.LifecycleState === "InService").length
+}
 
 interface GroupInstance {
   InstanceId?: string
@@ -220,46 +231,53 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
           <CardTitle>Instances</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          {instances.length === 0 ? (
-            <p className="text-fg-muted text-sm">No instances yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Instance</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Zone</TableHead>
-                  <TableHead>Lifecycle</TableHead>
-                  <TableHead>Health</TableHead>
-                  <TableHead>Protected</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {instances.map((instance) => (
-                  <TableRow key={instance.InstanceId}>
-                    <TableCell className="font-mono text-xs">{instance.InstanceId}</TableCell>
-                    <TableCell className="text-fg-muted">{instance.InstanceType || "—"}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {instance.AvailabilityZone || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={lifecycleTone(instance.LifecycleState)}>
-                        {instance.LifecycleState ?? "unknown"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={healthTone(instance.HealthStatus)}>
-                        {instance.HealthStatus ?? "unknown"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {instance.ProtectedFromScaleIn ? "Yes" : "No"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: instances, isLoading: false }}
+            noun="instances"
+            emptyTitle="No instances yet."
+            rowKey={(instance) => instance.InstanceId ?? ""}
+            columns={[
+              {
+                header: "Instance",
+                cellClassName: "font-mono text-xs",
+                sortValue: (instance) => instance.InstanceId,
+                cell: (instance) => instance.InstanceId,
+              },
+              {
+                header: "Type",
+                cellClassName: "text-fg-muted",
+                cell: (instance) => instance.InstanceType || "—",
+              },
+              {
+                header: "Zone",
+                cellClassName: "text-fg-muted",
+                cell: (instance) => instance.AvailabilityZone || "—",
+              },
+              {
+                header: "Lifecycle",
+                cell: (instance) => (
+                  <Badge variant={lifecycleTone(instance.LifecycleState)}>
+                    {instance.LifecycleState ?? "unknown"}
+                  </Badge>
+                ),
+              },
+              {
+                header: "Health",
+                cell: (instance) => (
+                  <Badge variant={healthTone(instance.HealthStatus)}>
+                    {instance.HealthStatus ?? "unknown"}
+                  </Badge>
+                ),
+              },
+              {
+                header: "Protected",
+                cellClassName: "text-fg-muted",
+                cell: (instance) => (instance.ProtectedFromScaleIn ? "Yes" : "No"),
+              },
+            ]}
+          />
         </CardContent>
       </Card>
 
@@ -268,36 +286,39 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
           <CardTitle>Scaling policies</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          {groupPolicies.length === 0 ? (
-            <p className="text-fg-muted text-sm">No scaling policies.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Policy</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Adjustment</TableHead>
-                  <TableHead>Cooldown</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {groupPolicies.map((policy) => (
-                  <TableRow key={policy.PolicyARN}>
-                    <TableCell>{policy.PolicyName}</TableCell>
-                    <TableCell className="text-fg-muted">{policy.PolicyType || "—"}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {policy.PolicyType === "StepScaling"
-                        ? `${(policy.StepAdjustments ?? []).length} step(s)`
-                        : `${policy.AdjustmentType ?? "—"} ${policy.ScalingAdjustment ?? 0}`}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {policy.Cooldown != null ? `${policy.Cooldown}s` : "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: groupPolicies, isLoading: false }}
+            noun="scaling policies"
+            emptyTitle="No scaling policies."
+            rowKey={(policy) => policy.PolicyARN ?? policy.PolicyName ?? ""}
+            columns={[
+              {
+                header: "Policy",
+                sortValue: (policy) => policy.PolicyName,
+                cell: (policy) => policy.PolicyName,
+              },
+              {
+                header: "Type",
+                cellClassName: "text-fg-muted",
+                cell: (policy) => policy.PolicyType || "—",
+              },
+              {
+                header: "Adjustment",
+                cellClassName: "text-fg-muted",
+                cell: (policy) =>
+                  policy.PolicyType === "StepScaling"
+                    ? `${(policy.StepAdjustments ?? []).length} step(s)`
+                    : `${policy.AdjustmentType ?? "—"} ${policy.ScalingAdjustment ?? 0}`,
+              },
+              {
+                header: "Cooldown",
+                cellClassName: "text-fg-muted",
+                cell: (policy) => (policy.Cooldown != null ? `${policy.Cooldown}s` : "—"),
+              },
+            ]}
+          />
         </CardContent>
       </Card>
 
@@ -306,34 +327,36 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
           <CardTitle>Lifecycle hooks</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          {hooks.length === 0 ? (
-            <p className="text-fg-muted text-sm">No lifecycle hooks.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Hook</TableHead>
-                  <TableHead>Transition</TableHead>
-                  <TableHead>Default result</TableHead>
-                  <TableHead>Heartbeat</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {hooks.map((hook) => (
-                  <TableRow key={hook.LifecycleHookName}>
-                    <TableCell>{hook.LifecycleHookName}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {(hook.LifecycleTransition ?? "").replace("autoscaling:", "")}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{hook.DefaultResult || "—"}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {hook.HeartbeatTimeout != null ? `${hook.HeartbeatTimeout}s` : "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: hooks, isLoading: false }}
+            noun="lifecycle hooks"
+            emptyTitle="No lifecycle hooks."
+            rowKey={(hook) => hook.LifecycleHookName ?? ""}
+            columns={[
+              {
+                header: "Hook",
+                sortValue: (hook) => hook.LifecycleHookName,
+                cell: (hook) => hook.LifecycleHookName,
+              },
+              {
+                header: "Transition",
+                cellClassName: "text-fg-muted",
+                cell: (hook) => (hook.LifecycleTransition ?? "").replace("autoscaling:", ""),
+              },
+              {
+                header: "Default result",
+                cellClassName: "text-fg-muted",
+                cell: (hook) => hook.DefaultResult || "—",
+              },
+              {
+                header: "Heartbeat",
+                cellClassName: "text-fg-muted",
+                cell: (hook) => (hook.HeartbeatTimeout != null ? `${hook.HeartbeatTimeout}s` : "—"),
+              },
+            ]}
+          />
         </CardContent>
       </Card>
 
@@ -342,36 +365,36 @@ function GroupDetail({ name, instances }: { name: string; instances: GroupInstan
           <CardTitle>Recent scaling activities</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          {activities.length === 0 ? (
-            <p className="text-fg-muted flex items-center gap-2 text-sm">
-              <Activity className="h-4 w-4" /> Nothing has scaled yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activities.slice(0, 15).map((activity) => (
-                  <TableRow key={activity.ActivityId}>
-                    <TableCell className="text-fg-muted whitespace-nowrap">
-                      {formatTime(activity.StartTime)}
-                    </TableCell>
-                    <TableCell>{activity.Description}</TableCell>
-                    <TableCell>
-                      <Badge variant={activityTone(activity.StatusCode)}>
-                        {activity.StatusCode ?? "unknown"}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            // Still the 15 most recent the panel always showed; the sort orders
+            // that window rather than reaching past it.
+            query={{ data: activities.slice(0, 15), isLoading: false }}
+            noun="scaling activities"
+            emptyIcon={Activity}
+            emptyTitle="Nothing has scaled yet."
+            rowKey={(activity) => activity.ActivityId ?? ""}
+            defaultSort={{ id: "started", desc: true }}
+            columns={[
+              {
+                id: "started",
+                header: "Started",
+                cellClassName: "text-fg-muted whitespace-nowrap",
+                sortValue: (activity) => activity.StartTime,
+                cell: (activity) => formatTime(activity.StartTime),
+              },
+              { header: "Description", cell: (activity) => activity.Description },
+              {
+                header: "Status",
+                cell: (activity) => (
+                  <Badge variant={activityTone(activity.StatusCode)}>
+                    {activity.StatusCode ?? "unknown"}
+                  </Badge>
+                ),
+              },
+            ]}
+          />
         </CardContent>
       </Card>
     </div>
@@ -422,7 +445,7 @@ function SetCapacityDialog({
           }}
         >
           <DialogBody className="space-y-4">
-            <p className="text-fg-muted text-sm">
+            <p className="text-sm text-fg-muted">
               The reconciler will launch or terminate EC2 instances for{" "}
               <strong>{target?.name}</strong> until the group matches. A value outside the
               group&rsquo;s min/max is rejected, as it is on AWS.

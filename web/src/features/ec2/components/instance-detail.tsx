@@ -13,14 +13,7 @@ import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { InstanceStateBadge } from "./instance-state-badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogBody,
@@ -323,36 +316,40 @@ function RulesTable({
   const sourceLabel = direction === "inbound" ? "Source" : "Destination"
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Protocol</TableHead>
-          <TableHead>Port Range</TableHead>
-          <TableHead>{sourceLabel}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rules.map((rule, idx) => {
-          const protocol = rule.ipProtocol === "-1" ? "All" : rule.ipProtocol.toUpperCase()
-          const portRange =
-            rule.ipProtocol === "-1"
-              ? "All"
-              : rule.fromPort === rule.toPort
-                ? String(rule.fromPort ?? "—")
-                : `${rule.fromPort ?? "—"}–${rule.toPort ?? "—"}`
-          const source = rule.ipRanges?.map((r) => r.cidrIp).join(", ") || "—"
-
-          return (
-            <TableRow key={idx}>
-              <TableCell>{protocol}</TableCell>
-              <TableCell>{portRange}</TableCell>
-              <TableCell>{source}</TableCell>
-            </TableRow>
-          )
-        })}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: rules, isLoading: false }}
+      noun="rules"
+      // The caller renders its own one-line "No inbound rules." above this, so
+      // the table is only ever mounted with rows.
+      emptyTitle={`No ${direction} rules.`}
+      rowKey={(rule) => `${rule.ipProtocol}-${rule.fromPort ?? ""}-${rule.toPort ?? ""}`}
+      columns={[
+        {
+          header: "Protocol",
+          sortValue: (rule) => rule.ipProtocol,
+          cell: (rule) => (rule.ipProtocol === "-1" ? "All" : rule.ipProtocol.toUpperCase()),
+        },
+        {
+          header: "Port Range",
+          sortValue: (rule) => rule.fromPort ?? -1,
+          cell: (rule) => portRangeLabel(rule),
+        },
+        {
+          header: sourceLabel,
+          cell: (rule) => rule.ipRanges?.map((r) => r.cidrIp).join(", ") || "—",
+        },
+      ]}
+    />
   )
+}
+
+/** "All", a single port, or a `from–to` span. */
+function portRangeLabel(rule: Ec2IpPermission): string {
+  if (rule.ipProtocol === "-1") return "All"
+  if (rule.fromPort === rule.toPort) return String(rule.fromPort ?? "—")
+  return `${rule.fromPort ?? "—"}–${rule.toPort ?? "—"}`
 }
 
 // ─── Networking Panel ─────────────────────────────────────────────────────
@@ -400,22 +397,18 @@ function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Key</TableHead>
-          <TableHead>Value</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {tags.map((tag) => (
-          <TableRow key={tag.key}>
-            <TableCell>{tag.key}</TableCell>
-            <TableCell>{tag.value}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: tags, isLoading: false }}
+      noun="tags"
+      emptyTitle="No tags configured"
+      rowKey={(tag) => tag.key}
+      columns={[
+        { header: "Key", sortValue: (tag) => tag.key, cell: (tag) => tag.key },
+        { header: "Value", cell: (tag) => tag.value },
+      ]}
+    />
   )
 }
 

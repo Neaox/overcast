@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Play, Square, Plus, RefreshCw, Trash2, Pencil, ScrollText } from "lucide-react"
 import {
@@ -22,14 +22,6 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -38,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
@@ -182,6 +175,7 @@ function TasksPanel({
   const refetch = () => Promise.all([runningQuery.refetch(), stoppedQuery.refetch()])
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
   const selection = selectTasksForView(tasks, view, serviceFilter)
+  const expandedTaskRow = selection.tasks.find((t) => t.taskArn === expandedTask)
 
   const runMut = useResourceMutation({
     options: runTaskMutationOptions(),
@@ -252,91 +246,78 @@ function TasksPanel({
         </p>
       )}
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
+      {/*
+       * The expanded task's containers render in a block below the table rather
+       * than as an inserted row: `ResourceTable` has no row-expansion concept,
+       * and IAM's Groups tab and `usage-plans-page` already settled on this
+       * shape for the same reason (#1200 wave 2). Same toggle, same content,
+       * bottom of the list rather than under the clicked row.
+       */}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: selection.tasks, isLoading }}
+        noun="tasks"
+        emptyTitle={`No ${selection.effectiveView} tasks`}
+        emptyDescription={
+          selection.effectiveView === "stopped"
+            ? "No stopped tasks are retained for this view."
+            : "No tasks are currently running."
+        }
+        rowKey={(t) => t.taskArn}
+        onRowClick={(t) => setExpandedTask(expandedTask === t.taskArn ? undefined : t.taskArn)}
+        defaultSort={{ id: "time", desc: true }}
+        columns={[
+          {
+            header: "Task ID",
+            sortValue: (t) => shortTaskId(t),
+            cell: (t) => (
+              <Link
+                to="/ecs/$cluster/tasks/$taskId"
+                params={{ cluster: clusterName, taskId: shortTaskId(t) }}
+                className="text-accent hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {shortTaskId(t).slice(0, 12)}
+              </Link>
+            ),
+          },
+          { header: "Status", cell: (t) => <TaskStatusBadge status={t.lastStatus} /> },
+          {
+            header: "Task Definition",
+            cellClassName: "max-w-xs truncate text-fg-muted",
+            cell: (t) => shortTaskDef(t.taskDefinitionArn),
+          },
+          { header: "Outcome", cell: (t) => taskOutcome(t) },
+          { header: "Launch Type", cell: (t) => t.launchType ?? "—" },
+          {
+            // Explicit id: this header is "Created" or "Stopped" depending on
+            // the view, and the sort key must not move with it.
+            id: "time",
+            header: selection.effectiveView === "stopped" ? "Stopped" : "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (t) => (selection.effectiveView === "stopped" ? t.stoppedAt : t.createdAt),
+            cell: (t) => taskDisplayTime(t, selection.effectiveView),
+          },
+        ]}
+        rowActions={(t) =>
+          t.lastStatus !== "STOPPED" ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-fg-muted hover:text-danger"
+              onClick={() => stopMut.mutate({ cluster: clusterName, task: t.taskArn })}
+            >
+              <Square className="h-3.5 w-3.5" />
+            </Button>
+          ) : null
+        }
+      />
+
+      {expandedTaskRow && (
+        <div className="rounded border border-border bg-bg-muted p-4">
+          <ContainersList clusterName={clusterName} task={expandedTaskRow} />
         </div>
-      ) : selection.tasks.length === 0 ? (
-        <EmptyState
-          title={`No ${selection.effectiveView} tasks`}
-          description={
-            selection.effectiveView === "stopped"
-              ? "No stopped tasks are retained for this view."
-              : "No tasks are currently running."
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Task ID</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Task Definition</TableHead>
-              <TableHead>Outcome</TableHead>
-              <TableHead>Launch Type</TableHead>
-              <TableHead>{selection.effectiveView === "stopped" ? "Stopped" : "Created"}</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {selection.tasks.map((t) => {
-              const shortId = t.taskArn.split("/").pop() ?? t.taskArn
-              const isExpanded = expandedTask === t.taskArn
-              return (
-                <Fragment key={t.taskArn}>
-                  <TableRow
-                    className="cursor-pointer"
-                    onClick={() => setExpandedTask(isExpanded ? undefined : t.taskArn)}
-                  >
-                    <TableCell>
-                      <Link
-                        to="/ecs/$cluster/tasks/$taskId"
-                        params={{ cluster: clusterName, taskId: shortId }}
-                        className="text-accent hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {shortId.slice(0, 12)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <TaskStatusBadge status={t.lastStatus} />
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-fg-muted">
-                      {shortTaskDef(t.taskDefinitionArn)}
-                    </TableCell>
-                    <TableCell>{taskOutcome(t)}</TableCell>
-                    <TableCell>{t.launchType ?? "—"}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {taskDisplayTime(t, selection.effectiveView)}
-                    </TableCell>
-                    <TableCell>
-                      {t.lastStatus !== "STOPPED" && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="text-fg-muted hover:text-danger"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            stopMut.mutate({ cluster: clusterName, task: t.taskArn })
-                          }}
-                        >
-                          <Square className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  {isExpanded && (
-                    <TableRow key={`${t.taskArn}-containers`}>
-                      <TableCell colSpan={7} className="bg-bg-muted p-4">
-                        <ContainersList clusterName={clusterName} task={t} />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
-              )
-            })}
-          </TableBody>
-        </Table>
       )}
 
       <RunTaskDialog
@@ -483,39 +464,41 @@ function TaskDefinitionsPanel() {
               </button>
 
               {expandedFamily === family && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Revision</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>CPU</TableHead>
-                      <TableHead>Memory</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {revisions.map((td) => (
-                      <TableRow key={td.taskDefinitionArn}>
-                        <TableCell>{td.revision}</TableCell>
-                        <TableCell>
-                          <TaskStatusBadge status={td.status} />
-                        </TableCell>
-                        <TableCell className="text-fg-muted">{td.cpu ?? "—"}</TableCell>
-                        <TableCell className="text-fg-muted">{td.memory ?? "—"}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="text-fg-muted hover:text-danger"
-                            onClick={() => deregisterMut.mutate(td.taskDefinitionArn)}
-                          >
-                            <Square className="h-3.5 w-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <ResourceTable
+                  variant="embedded"
+                  columnToggle={false}
+                  query={{ data: revisions, isLoading: false }}
+                  noun="revisions"
+                  emptyTitle="No revisions"
+                  rowKey={(td) => td.taskDefinitionArn}
+                  // The family list was already built newest-revision-first.
+                  defaultSort={{ id: "revision", desc: true }}
+                  columns={[
+                    {
+                      id: "revision",
+                      header: "Revision",
+                      sortValue: (td) => td.revision,
+                      cell: (td) => td.revision,
+                    },
+                    { header: "Status", cell: (td) => <TaskStatusBadge status={td.status} /> },
+                    { header: "CPU", cellClassName: "text-fg-muted", cell: (td) => td.cpu ?? "—" },
+                    {
+                      header: "Memory",
+                      cellClassName: "text-fg-muted",
+                      cell: (td) => td.memory ?? "—",
+                    },
+                  ]}
+                  rowActions={(td) => (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="text-fg-muted hover:text-danger"
+                      onClick={() => deregisterMut.mutate(td.taskDefinitionArn)}
+                    >
+                      <Square className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                />
               )}
             </div>
           ))}
@@ -537,37 +520,38 @@ function TaskDefinitionsPanel() {
                 </span>
               </button>
               {expandedFamily === "__ungrouped__" && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Family</TableHead>
-                      <TableHead>Revision</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ungrouped.map((td) => (
-                      <TableRow key={td.taskDefinitionArn}>
-                        <TableCell className="font-medium">{td.family}</TableCell>
-                        <TableCell>{td.revision}</TableCell>
-                        <TableCell>
-                          <TaskStatusBadge status={td.status} />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="text-fg-muted hover:text-danger"
-                            onClick={() => deregisterMut.mutate(td.taskDefinitionArn)}
-                          >
-                            <Square className="h-3.5 w-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <ResourceTable
+                  variant="embedded"
+                  columnToggle={false}
+                  query={{ data: ungrouped, isLoading: false }}
+                  noun="task definitions"
+                  emptyTitle="No task definitions"
+                  rowKey={(td) => td.taskDefinitionArn}
+                  columns={[
+                    {
+                      header: "Family",
+                      cellClassName: "font-medium",
+                      sortValue: (td) => td.family,
+                      cell: (td) => td.family,
+                    },
+                    {
+                      header: "Revision",
+                      sortValue: (td) => td.revision,
+                      cell: (td) => td.revision,
+                    },
+                    { header: "Status", cell: (td) => <TaskStatusBadge status={td.status} /> },
+                  ]}
+                  rowActions={(td) => (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="text-fg-muted hover:text-danger"
+                      onClick={() => deregisterMut.mutate(td.taskDefinitionArn)}
+                    >
+                      <Square className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                />
               )}
             </div>
           )}
@@ -608,6 +592,7 @@ function ServicesPanel({
   } = useQuery(ecsServicesQueryOptions(clusterName))
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
   const { data: tasks = [] } = useQuery(ecsTasksQueryOptions(clusterName, "STOPPED"))
+  const expandedServiceRow = services.find((svc) => svc.serviceName === expandedService)
 
   const createMut = useResourceMutation({
     options: createServiceMutationOptions(),
@@ -644,118 +629,105 @@ function ServicesPanel({
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner className="h-6 w-6" />
-        </div>
-      ) : services.length === 0 ? (
-        <EmptyState
-          title="No services"
-          description="Create a service to maintain running tasks."
-          action={
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Service
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Service Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Running</TableHead>
-              <TableHead>Task Definition</TableHead>
-              <TableHead>Launch Type</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {services.map((svc) => {
-              const isExpanded = expandedService === svc.serviceName
+      {/* Expanded service detail renders below the table — see the Tasks panel. */}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: services, isLoading }}
+        noun="services"
+        emptyTitle="No services"
+        emptyDescription="Create a service to maintain running tasks."
+        emptyAction={
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create Service
+          </Button>
+        }
+        rowKey={(svc) => svc.serviceArn}
+        onRowClick={(svc) =>
+          setExpandedService(expandedService === svc.serviceName ? undefined : svc.serviceName)
+        }
+        columns={[
+          {
+            header: "Service Name",
+            cellClassName: "font-medium",
+            sortValue: (svc) => svc.serviceName,
+            cell: (svc) => svc.serviceName,
+          },
+          {
+            header: "Status",
+            cell: (svc) => {
               const primary = svc.deployments.find((d) => d.status === "PRIMARY")
               return (
-                <Fragment key={svc.serviceArn}>
-                  <TableRow
-                    className="cursor-pointer"
-                    onClick={() => setExpandedService(isExpanded ? undefined : svc.serviceName)}
-                  >
-                    <TableCell className="font-medium">{svc.serviceName}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <TaskStatusBadge status={svc.status} />
-                        {primary?.rolloutState && (
-                          <RolloutStateBadge state={primary.rolloutState} />
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          svc.runningCount < svc.desiredCount ? "text-warning" : "text-success",
-                        )}
-                      >
-                        {svc.runningCount}/{svc.desiredCount} running
-                      </span>
-                      {svc.pendingCount > 0 && (
-                        <span className="ml-1 text-xs text-fg-muted">
-                          ({svc.pendingCount} pending)
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-fg-muted">
-                      {shortTaskDef(svc.taskDefinition)}
-                    </TableCell>
-                    <TableCell>{svc.launchType || "—"}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {svc.createdAt ? new Date(svc.createdAt).toLocaleString() : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-fg-muted"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setUpdateTarget(svc)
-                          }}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-fg-muted hover:text-danger"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setDeleteTarget(svc.serviceName)
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  {isExpanded && (
-                    <TableRow key={`${svc.serviceArn}-detail`}>
-                      <TableCell colSpan={7} className="bg-bg-muted p-4">
-                        <ServiceDetailPanel
-                          clusterName={clusterName}
-                          service={svc}
-                          tasks={tasks}
-                          onViewTasks={(view) => onViewTasks(svc.serviceName, view)}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
+                <div className="flex items-center gap-1.5">
+                  <TaskStatusBadge status={svc.status} />
+                  {primary?.rolloutState && <RolloutStateBadge state={primary.rolloutState} />}
+                </div>
               )
-            })}
-          </TableBody>
-        </Table>
+            },
+          },
+          {
+            header: "Running",
+            sortValue: (svc) => svc.runningCount,
+            cell: (svc) => (
+              <>
+                <span
+                  className={cn(
+                    svc.runningCount < svc.desiredCount ? "text-warning" : "text-success",
+                  )}
+                >
+                  {svc.runningCount}/{svc.desiredCount} running
+                </span>
+                {svc.pendingCount > 0 && (
+                  <span className="ml-1 text-xs text-fg-muted">({svc.pendingCount} pending)</span>
+                )}
+              </>
+            ),
+          },
+          {
+            header: "Task Definition",
+            cellClassName: "max-w-xs truncate text-fg-muted",
+            cell: (svc) => shortTaskDef(svc.taskDefinition),
+          },
+          { header: "Launch Type", cell: (svc) => svc.launchType || "—" },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (svc) => svc.createdAt,
+            cell: (svc) => (svc.createdAt ? new Date(svc.createdAt).toLocaleString() : "—"),
+          },
+        ]}
+        rowActions={(svc) => (
+          <>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 text-fg-muted"
+              onClick={() => setUpdateTarget(svc)}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 text-fg-muted hover:text-danger"
+              onClick={() => setDeleteTarget(svc.serviceName)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
+      />
+
+      {expandedServiceRow && (
+        <div className="rounded border border-border bg-bg-muted p-4">
+          <ServiceDetailPanel
+            clusterName={clusterName}
+            service={expandedServiceRow}
+            tasks={tasks}
+            onViewTasks={(view) => onViewTasks(expandedServiceRow.serviceName, view)}
+          />
+        </div>
       )}
 
       <CreateServiceDialog
@@ -969,8 +941,7 @@ function taskDisplayTime(task: EcsTask, view: "running" | "stopped") {
 }
 
 function RolloutStateBadge({ state }: { state: string }) {
-  const variant =
-    state === "COMPLETED" ? "success" : state === "FAILED" ? "danger" : "warning"
+  const variant = state === "COMPLETED" ? "success" : state === "FAILED" ? "danger" : "warning"
   return <Badge variant={variant}>{state}</Badge>
 }
 
@@ -986,6 +957,11 @@ function TaskStatusBadge({ status }: { status: string }) {
           ? "danger"
           : "default"
   return <Badge variant={variant}>{status}</Badge>
+}
+
+/** The id segment of a task ARN — what the Task ID column shows and links to. */
+function shortTaskId(task: EcsTask) {
+  return task.taskArn.split("/").pop() ?? task.taskArn
 }
 
 function shortTaskDef(arn: string) {
@@ -1023,8 +999,7 @@ function RunTaskDialog({
   // call without a subnet. An EC2 launch may still be awsvpc, so the fields
   // stay available rather than being hidden.
   const selected = taskDefs.find((td) => td.taskDefinitionArn === taskDef)
-  const requiresNetworking =
-    launchType === "FARGATE" || selected?.networkMode === "awsvpc"
+  const requiresNetworking = launchType === "FARGATE" || selected?.networkMode === "awsvpc"
   const canRun = !!taskDef && (!requiresNetworking || networking.subnets.length > 0)
 
   return (
@@ -1075,11 +1050,7 @@ function RunTaskDialog({
               <option value="EC2">EC2</option>
             </select>
           </div>
-          <AwsvpcFields
-            value={networking}
-            onChange={setNetworking}
-            required={requiresNetworking}
-          />
+          <AwsvpcFields value={networking} onChange={setNetworking} required={requiresNetworking} />
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
@@ -1333,66 +1304,63 @@ function ContainerInstancesPanel({ clusterName }: { clusterName: string }) {
     ecsContainerInstancesQueryOptions(clusterName),
   )
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner className="h-6 w-6" />
-      </div>
-    )
-  }
-
-  if (instances.length === 0) {
-    return (
-      <EmptyState
-        title="No container instances"
-        description="No EC2 container instances are registered to this cluster."
-      />
-    )
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Container Instance ARN</TableHead>
-          <TableHead>EC2 Instance</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Agent Connected</TableHead>
-          <TableHead>Running</TableHead>
-          <TableHead>Pending</TableHead>
-          <TableHead>Registered At</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {instances.map((ci) => (
-          <ContainerInstanceRow key={ci.containerInstanceArn} ci={ci} />
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: instances, isLoading }}
+      noun="container instances"
+      emptyTitle="No container instances"
+      emptyDescription="No EC2 container instances are registered to this cluster."
+      rowKey={(ci) => ci.containerInstanceArn}
+      columns={[
+        {
+          header: "Container Instance ARN",
+          sortValue: (ci) => shortContainerInstanceId(ci),
+          cell: (ci) => (
+            <span title={ci.containerInstanceArn}>
+              {shortContainerInstanceId(ci).slice(0, 12)}…
+            </span>
+          ),
+        },
+        {
+          header: "EC2 Instance",
+          cellClassName: "text-fg-muted",
+          cell: (ci) => ci.ec2InstanceId ?? "—",
+        },
+        { header: "Status", cell: (ci) => <TaskStatusBadge status={ci.status} /> },
+        {
+          header: "Agent Connected",
+          cell: (ci) => (
+            <Badge variant={ci.agentConnected ? "success" : "warning"}>
+              {ci.agentConnected ? "Connected" : "Disconnected"}
+            </Badge>
+          ),
+        },
+        {
+          header: "Running",
+          sortValue: (ci) => ci.runningTasksCount,
+          cell: (ci) => ci.runningTasksCount,
+        },
+        {
+          header: "Pending",
+          sortValue: (ci) => ci.pendingTasksCount,
+          cell: (ci) => ci.pendingTasksCount,
+        },
+        {
+          header: "Registered At",
+          cellClassName: "text-fg-muted",
+          sortValue: (ci) => ci.registeredAt,
+          cell: (ci) => (ci.registeredAt ? new Date(ci.registeredAt).toLocaleString() : "—"),
+        },
+      ]}
+    />
   )
 }
 
-function ContainerInstanceRow({ ci }: { ci: EcsContainerInstance }) {
-  const shortArn = ci.containerInstanceArn.split("/").pop() ?? ci.containerInstanceArn
-  return (
-    <TableRow>
-      <TableCell title={ci.containerInstanceArn}>{shortArn.slice(0, 12)}…</TableCell>
-      <TableCell className="text-fg-muted">{ci.ec2InstanceId ?? "—"}</TableCell>
-      <TableCell>
-        <TaskStatusBadge status={ci.status} />
-      </TableCell>
-      <TableCell>
-        <Badge variant={ci.agentConnected ? "success" : "warning"}>
-          {ci.agentConnected ? "Connected" : "Disconnected"}
-        </Badge>
-      </TableCell>
-      <TableCell>{ci.runningTasksCount}</TableCell>
-      <TableCell>{ci.pendingTasksCount}</TableCell>
-      <TableCell className="text-fg-muted">
-        {ci.registeredAt ? new Date(ci.registeredAt).toLocaleString() : "—"}
-      </TableCell>
-    </TableRow>
-  )
+/** The id segment of a container-instance ARN — what the first column shows. */
+function shortContainerInstanceId(ci: EcsContainerInstance) {
+  return ci.containerInstanceArn.split("/").pop() ?? ci.containerInstanceArn
 }
 
 // ─── Cluster Tags Panel ───────────────────────────────────────────────────
@@ -1400,34 +1368,19 @@ function ContainerInstanceRow({ ci }: { ci: EcsContainerInstance }) {
 function ClusterTagsPanel({ clusterArn }: { clusterArn: string }) {
   const { data: tags = [], isLoading } = useQuery(ecsTagsQueryOptions(clusterArn))
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (tags.length === 0) {
-    return <EmptyState title="No tags" description="This cluster has no tags." />
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Key</TableHead>
-          <TableHead>Value</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {tags.map((tag, i) => (
-          <TableRow key={i}>
-            <TableCell>{tag.key}</TableCell>
-            <TableCell className="text-fg-muted">{tag.value}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: tags, isLoading }}
+      noun="tags"
+      emptyTitle="No tags"
+      emptyDescription="This cluster has no tags."
+      rowKey={(tag) => tag.key}
+      columns={[
+        { header: "Key", sortValue: (tag) => tag.key, cell: (tag) => tag.key },
+        { header: "Value", cellClassName: "text-fg-muted", cell: (tag) => tag.value },
+      ]}
+    />
   )
 }

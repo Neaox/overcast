@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Boxes, Eye, Trash2 } from "lucide-react"
+import { Boxes, Eye } from "lucide-react"
 import {
   ecsClustersQueryOptions,
   ecsKeys,
@@ -13,14 +13,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -28,27 +20,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { DockerBanner } from "@/components/docker-banner"
+import type { EcsCluster } from "@/types"
 
 export function ClusterList() {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<EcsCluster>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -96,99 +87,77 @@ export function ClusterList() {
       }
     >
       <DockerBanner forService="ecs" />
-      <ResourceListCard>
-        {isLoading || clusters.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={clusters.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Boxes className="h-10 w-10" />}
-                title="No clusters yet"
-                description="Create a cluster to start running containers."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load clusters"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cluster name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Running tasks</TableHead>
-                <TableHead>Active services</TableHead>
-                <TableHead>Pending tasks</TableHead>
-                <TableHead>Container instances</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {clusters.map((c) => (
-                <TableRow
-                  key={c.clusterArn}
-                  onClick={() =>
-                    navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })
-                  }
-                >
-                  <TableCell>
-                    <ResourceName icon={Boxes} name={c.clusterName} />
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={c.status} />
-                  </TableCell>
-                  <TableCell>{c.runningTasksCount}</TableCell>
-                  <TableCell>{c.activeServicesCount}</TableCell>
-                  <TableCell>{c.pendingTasksCount}</TableCell>
-                  <TableCell>{c.registeredContainerInstancesCount}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${c.clusterName}`}
-                        onClick={() =>
-                          navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })
-                        }
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${c.clusterName}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(c.clusterName)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+
+      <ResourceTable
+        query={{ data: clusters, isLoading, error }}
+        noun="clusters"
+        emptyIcon={Boxes}
+        emptyTitle="No clusters yet"
+        emptyDescription="Create a cluster to start running containers."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create cluster</CreateAction>
+        }
+        errorTitle="Failed to load clusters"
+        rowKey={(c) => c.clusterArn}
+        onRowClick={(c) => navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })}
+        columns={[
+          {
+            header: "Cluster name",
+            sortValue: (c) => c.clusterName,
+            cell: (c) => <ResourceName icon={Boxes} name={c.clusterName} />,
+          },
+          { header: "Status", cell: (c) => <StatusBadge status={c.status} /> },
+          {
+            header: "Running tasks",
+            sortValue: (c) => c.runningTasksCount,
+            cell: (c) => c.runningTasksCount,
+          },
+          {
+            header: "Active services",
+            sortValue: (c) => c.activeServicesCount,
+            cell: (c) => c.activeServicesCount,
+          },
+          {
+            header: "Pending tasks",
+            sortValue: (c) => c.pendingTasksCount,
+            cell: (c) => c.pendingTasksCount,
+          },
+          {
+            header: "Container instances",
+            sortValue: (c) => c.registeredContainerInstancesCount,
+            cell: (c) => c.registeredContainerInstancesCount,
+          },
+        ]}
+        rowActions={(c) => (
+          <RowAction
+            label={`View ${c.clusterName}`}
+            onClick={() => navigate({ to: "/ecs/$cluster", params: { cluster: c.clusterName } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (c) => c.clusterName,
+          label: (c) => c.clusterName,
+          noun: "cluster",
+          title: "Delete Cluster",
+          description: (c) => (
+            <>
+              Permanently delete cluster <strong>{c.clusterName}</strong>?
+            </>
+          ),
+        }}
+      />
 
       <CreateClusterDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(name) => createMut.mutate(name)}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Cluster"
-        description={
-          <>
-            Permanently delete cluster <strong>{deleteTarget}</strong>?
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )
