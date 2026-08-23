@@ -114,7 +114,7 @@
 | EKS             | 50  |
 | ELBv2           | 21  |
 | MSK             | 30  |
-| Organizations   | 1   |
+| Organizations   | 9   |
 | Transfer Family | 13  |
 
 <!-- END overcast:status -->

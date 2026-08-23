@@ -4028,7 +4028,7 @@ export const DOCS_NAV = [
     "path": "docs/services/organizations.md",
     "href": "services/organizations.md",
     "title": "Organizations — AWS Organizations",
-    "description": "This is a stub implementation suitable for unblocking CDK bootstrap calls and similar operations that require a minimal Organizations API response.",
+    "description": "Policies are stored and returned faithfully; DescribeOrganization is a fixed stub, and nothing is ever attached or enforced.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -4066,6 +4066,16 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Operations",
         "id": "operations"
+      },
+      {
+        "depth": 3,
+        "text": "Policy operations",
+        "id": "policy-operations"
+      },
+      {
+        "depth": 3,
+        "text": "Tag operations",
+        "id": "tag-operations"
       }
     ]
   },

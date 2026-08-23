@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1453,
+  "total_ops": 1461,
   "services": [
     {
       "service": "s3",
@@ -8703,12 +8703,59 @@
     {
       "service": "organizations",
       "display_name": "Organizations",
-      "total_ops": 1,
-      "implemented_ops": 1,
+      "total_ops": 9,
+      "implemented_ops": 9,
       "operations": [
         {
           "operation": "DescribeOrganization",
           "status": "🧊 Inert"
+        },
+        {
+          "operation": "CreatePolicy",
+          "category": "Policy operations",
+          "status": "🧊 Inert",
+          "notes": "Stores the policy and derives its ID and ARN. The document is never evaluated."
+        },
+        {
+          "operation": "DescribePolicy",
+          "category": "Policy operations",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "UpdatePolicy",
+          "category": "Policy operations",
+          "status": "🧊 Inert",
+          "notes": "Merges the members the caller sent; the policy ARN is stable across a rename."
+        },
+        {
+          "operation": "DeletePolicy",
+          "category": "Policy operations",
+          "status": "🧊 Inert",
+          "notes": "PolicyInUseException is unreachable: attaching a policy is not emulated, so no policy can be in use."
+        },
+        {
+          "operation": "ListPolicies",
+          "category": "Policy operations",
+          "status": "🧊 Inert",
+          "notes": "Filters by the required policy type and paginates. An invalid NextToken is rejected, never restarted."
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tag operations",
+          "status": "🧊 Inert",
+          "notes": "Policies only. A root, OU or account ID returns TargetNotFoundException, since none of those are stored yet."
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tag operations",
+          "status": "🧊 Inert",
+          "notes": "Policies only, as for TagResource."
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tag operations",
+          "status": "🧊 Inert",
+          "notes": "Policies only, as for TagResource."
         }
       ]
     },

@@ -445,26 +445,54 @@ So: typed records, marshalled to JSON for persistence in the existing
 `state.Store` — the pattern every current service uses, so no new storage
 subsystem, no migration, and `/_overcast/debug/state` keeps working.
 
-### 4.3 The shared inert runtime — `internal/inert`
+### 4.3 The shared inert runtime — `internal/inert` — **landed (I2)**
 
-A new *small* package holding the behaviour that is identical for every generated
-resource, so it is written and tested once rather than emitted 400 times:
+A *small* package holding the behaviour that is identical for every generated
+resource, so it is written and tested once rather than emitted 400 times. As
+shipped:
 
 ```go
 package inert
 
+// Config is the per-service wiring. One per service, handed to every store —
+// so a generated service emits the wiring once rather than once per resource.
+type Config struct {
+    Store  state.Store
+    Clock  clock.Clock                     // §3.5: never time.Now()
+    Logger *serviceutil.ServiceLogger
+    Region func(ctx context.Context) string // nil ⇒ global service, unscoped keys
+}
+
 // Store is the generic metadata store: one namespace per service+collection,
-// records keyed by region-scoped identifier.
-type Store[T any] struct { /* state.Store + namespace + clock + logger */ }
+// records keyed by region-scoped identifier, persisted as JSON in state.Store.
+type Store[T any] struct{ /* Config + namespace */ }
+
+func NewStore[T any](cfg Config, namespace string) *Store[T]
 
 func (s *Store[T]) Put(ctx context.Context, id string, rec *T) error
 func (s *Store[T]) Get(ctx context.Context, id string) (*T, bool, error)   // malformed record ⇒ (nil,false,nil) + warn
 func (s *Store[T]) Delete(ctx context.Context, id string) error
 func (s *Store[T]) List(ctx context.Context) ([]*T, error)                  // stable-sorted, skips malformed
 func (s *Store[T]) Page(ctx context.Context, token string, limit int, opts serviceutil.PaginateOptions) (serviceutil.Page[*T], error)
+func (s *Store[T]) Now() time.Time                                         // the injected clock, §3.5
 
-// Tags is one shared ARN-keyed tag store used by every generated service.
-type Tags struct { /* … */ }
+// StorageError and PageError map a store failure onto the wire envelope, so
+// the mapping lives here rather than in the generator's templates. PageError
+// turns serviceutil.ErrInvalidPageToken into the service's own modeled
+// invalid-token error — never a silent restart at page 1.
+func StorageError(err error) *protocol.AWSError
+func PageError(err error, invalidToken *protocol.AWSError) *protocol.AWSError
+
+// Tags is one shared ARN-keyed tag store used by every generated service, so
+// Create-time tags and TagResource write to the same place (§7.3). It wraps
+// serviceutil.NSStore rather than reimplementing it.
+type Tags struct{ /* serviceutil.NSStore */ }
+
+func NewTags(cfg Config, namespace string) *Tags
+func (t *Tags) Load(ctx context.Context, key string) (map[string]string, *protocol.AWSError)
+func (t *Tags) Apply(ctx context.Context, key string, incoming map[string]string, cfg serviceutil.TagValidationConfig) (map[string]string, *protocol.AWSError)
+func (t *Tags) Remove(ctx context.Context, key string, keys []string) (map[string]string, *protocol.AWSError)
+func (t *Tags) Delete(ctx context.Context, key string) *protocol.AWSError
 
 // Binding is one generated operation's declarative description.
 type Binding struct {
@@ -474,9 +502,37 @@ type Binding struct {
     Invoke   op.Operation
 }
 
-// Lookup binary-searches a sorted []Binding. Zero-alloc, mirroring awsapi.Registry.
+// Lookup binary-searches a sorted []Binding. Zero-alloc, mirroring awsapi's
+// generated indexes: the search is hand-rolled rather than sort.Search,
+// because a closure over the name escapes and puts an allocation on the
+// dispatch hot path.
 func Lookup(bindings []Binding, name string) (Binding, bool)
+
+// Sorted is Lookup's precondition, asserted per service so a generator
+// emitting bindings out of order fails loudly instead of resolving some
+// operations to the wrong handler.
+func Sorted(bindings []Binding) bool
+
+// Collisions returns every binding a hand-written operation shadows and that
+// the service's inert_overrides.txt does not declare — §4.5(3).
+func Collisions(bindings []Binding, handWritten, allowed []string) []string
 ```
+
+Measured on the eight-operation table the pilot ships (AMD Ryzen 9 5900X,
+`go test -bench Lookup -benchmem -count=3`): `Lookup` at **13.1–13.7 ns/op,
+0 B/op, 0 allocs/op**. The map this replaces looks up marginally faster
+(9.6–10.3 ns/op) and that is not the trade being made: building it costs
+**265–279 ns and 688 B in 2 allocations per service, on every process start**,
+which is the §6.1 cost a static sorted slice removes entirely.
+
+Two divergences from this section's original sketch, both recorded rather than
+silent. `Config` names the dependencies the sketch wrote inline on `Store[T]`,
+so the wiring is emitted once per service instead of once per resource, and it
+carries the `Region` hook §3.5's global/regional split needs. `StorageError` /
+`PageError` exist because the store methods return a bare `error` — which is
+right, since `Page` has to be able to say "that token is garbage"
+distinguishably — but every generated handler would otherwise repeat the same
+mapping.
 
 This is where route53/store.go's 362 lines of put/get/list/scan/skip-malformed
 collapses into one generic implementation. It replaces nothing that exists — the
@@ -786,7 +842,7 @@ stale generated output, or a red required check.
 | --- | --- | --- | --- |
 | **I0** — contract & truth ✅ **done** | Write §3 as executable conformance tests in `internal/inert/conformance` (table-driven: per class, per protocol family). Fix STATUS.md's stale prose (§2.2 corrections). Add the `Tier 0/1/2` vocabulary to CONTRIBUTING. | S | Conformance suite exists and **fails** against a deliberately naive stub; STATUS.md matches the capability registry. Landed in [PR #1360](https://github.com/Neaox/overcast/pull/1360): `internal/inert/conformance.Check`/`Run` cover all 15 clauses named above; `TestNaiveStub_ViolatesExpectedClauses` runs the suite against a naive in-memory stub over both JSON 1.1 and the AWS Query protocol and pins the exact 10-clause violation set. STATUS.md's only remaining drift (CloudFormation's resource-type count) is fixed; the two corrections §2.2 originally cited had already been applied. |
 | **I1** — shape snapshot — **landed** | Build the pruner in `cmd/awsmodelgen` (`-shapes-out`); commit `models/aws/shapes/` for the pilot's three services; add `shapes-sha256` to `models/aws/VERSION`; extend `make aws-models-check` and the A5 workflow. Amend [aws-api-operation-coverage.md §3](./aws-api-operation-coverage.md) with the §4.6 reconciliation. Shipped with `organizations` as a fourth service, for I2. | M | **Met.** Snapshot is byte-deterministic (regen-and-diff, plus a repeat-run test); offline `aws-models-check` validates `shapes-sha256` and the size budget with no network and no model checkout; a test proves no runtime package reads the snapshot. Measured 268,548 bytes / 167 ops / 1,608 B per op and fleet budget 24 MiB — see §4.6's measurement. |
-| **I2** — inert runtime | `internal/inert`: `Store[T]`, `Tags`, `Binding`, zero-alloc `Lookup`. Hand-write **one** service against it end to end to prove the API (recommend rewriting `organizations`, 1 op / 226 lines, as the smoke test) — and bring **at least one additional `organizations` operation** to Tier 1 while there, because [compat-coverage-modelgen.md](./compat-coverage-modelgen.md) §4.2.5's decisive pilot criterion is watching exactly such an op flip from `unimplemented` to `pass` via regeneration alone. | M | Conformance suite passes for the hand-wired service; `Lookup` benchmarks at `0 allocs/op`; ≥1 new `organizations` op at `StatusInert`. |
+| **I2** — inert runtime — **landed** | `internal/inert`: `Config`, `Store[T]`, `Tags`, `Binding`, zero-alloc `Lookup`, plus `Sorted`/`Collisions` for the two invariants a generator can break silently (§4.3 records the API as shipped and its two divergences from the original sketch). `organizations` rewritten against it end to end, and its **policy** resource brought to Tier 1: `CreatePolicy`/`DescribePolicy`/`UpdatePolicy`/`DeletePolicy`/`ListPolicies` plus `TagResource`/`UntagResource`/`ListTagsForResource` — a full CRUD-plus-tag surface rather than a second static getter, so the runtime is exercised rather than merely linked. `AttachPolicy` stays Tier 0 per §3.6. | M | **Met.** `conformance.Check` returns zero violations for a real `organizations` Fixture over the service's own `Dispatch`; 13 of the 15 clauses run, and the two that skip do so because the model declares no member for them — `3.5/timestamps` (Organizations models no timestamp on `Policy`/`PolicySummary`; the rule is held instead by `TestPolicyTimestampsComeFromTheClock` and `TestStore_NowComesFromTheInjectedClock` against the stored record) and `3.5/idempotency` (no `ClientToken`/`CallerReference` member). `Lookup` benchmarks at 13.1–13.7 ns/op, **0 allocs/op**, against 265–279 ns and 688 B/2 allocs to build the map it replaces. 8 new `organizations` operations at `StatusInert` (1 → 9), reachable at their modeled `X-Amz-Target` bindings per `TestAllDeclaredCapabilitiesAreReachable`. **Compat suites are deliberately not part of this phase**: §8.1's seven-suite gate applies to waves (I4+), and [compat-coverage-modelgen.md](./compat-coverage-modelgen.md) / #1113 is the prerequisite that makes per-operation compat coverage affordable — the new surface is covered by Go tests instead. |
 | **I3** — generator | `cmd/awsmodelgen -inert-*`: types, ops, resources, capabilities, `tier0` list. Error-selection, ID/ARN templates, pagination member detection, verb classification (§3.6). Regen-and-diff CI job. | L | Generated output for the pilot compiles, passes conformance, and regen-diff is green. |
 | **I4** — pilot wave (3 services, 104 ops) | **JSON 1.1:** `servicediscovery` / Cloud Map (30 ops) — CFN `AWS::ServiceDiscovery::{PrivateDnsNamespace,PublicDnsNamespace,HttpNamespace,Service,Instance}`. **Query:** `elastic-load-balancing` / ELB Classic (29 ops) — CFN `AWS::ElasticLoadBalancing::LoadBalancer`; exercises Query `Marker`/`PageSize` pagination and XML list flattening. **REST-JSON:** `batch` (45 ops) — CFN `AWS::Batch::{ComputeEnvironment,JobQueue,JobDefinition,SchedulingPolicy}`; exercises REST bindings and the awsapi REST-trie/S3-safety boundary. Plus cheap backfills: `sts`, `sqs`, `lambda`, `dynamodb`. | L | Per §8.1 below. |
 | **I5** — CFN mass-production | Vendor `models/cfn/`; `bindings.yaml` + `bindings.gen.go`; `genericResourceHandler`; stub-handler counter + compat assertion; decompose the CDK suite into per-service stacks. | L | Pilot services' CFN types deploy/destroy through generated handlers with zero stub-handler hits; existing 132 hand-written types unchanged and still winning precedence. |
