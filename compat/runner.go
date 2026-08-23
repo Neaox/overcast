@@ -65,7 +65,11 @@ type RunConfig struct {
 	Suites []string
 	// Service filters runs to a single AWS service (e.g. "s3"). Empty = all.
 	Service string
-	// Group filters runs to a single test group (e.g. "s3-crud"). Empty = all.
+	// Group filters runs to one or more test groups (e.g. "s3-crud", or
+	// "s3-crud,sqs-basic" — every suite already parses OVERCAST_COMPAT_GROUPS,
+	// the env var this becomes, as a comma-separated list; see cmd/compat's
+	// --shard, which packs a whole shard's group names in here at once).
+	// Empty = all.
 	Group string
 	// Test filters runs to a single test within a group. Empty = all.
 	// Only meaningful when Group is also set.

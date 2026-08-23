@@ -20,6 +20,7 @@
 //	--endpoint        Target an instance you already run (skips managing one)
 //	--start-overcast  auto | always | never
 //	--suite           Comma-separated suite names to run (default: all)
+//	--shard           Run only shard i of n test groups, e.g. "2/4" (default: all)
 //	--format          Output format: pretty | json | agent | junit
 //	--serve           Start the compatibility dashboard HTTP server
 //	--port            Preferred dashboard port; a free one is picked if taken
@@ -52,6 +53,7 @@ var (
 	endpoint            = flag.String("endpoint", envOr("OVERCAST_ENDPOINT", ""), "Overcast base URL (default: a throwaway instance compat starts itself)")
 	region              = flag.String("region", envOr("OVERCAST_DEFAULT_REGION", "us-east-1"), "AWS region")
 	suiteFlag           = flag.String("suite", "", "Comma-separated suite names to run (empty = all)")
+	shardFlag           = flag.String("shard", "", "Run only shard i of n test groups, e.g. \"2/4\" (1-based i; empty = every group, today's behaviour)")
 	format              = flag.String("format", envOr("OVERCAST_COMPAT_FORMAT", "pretty"), "Output format: pretty|json|agent")
 	serve               = flag.Bool("serve", false, "Start the compatibility dashboard HTTP server")
 	port                = flag.String("port", envOr("OVERCAST_COMPAT_PORT", ":7777"), "Preferred dashboard listen address; a free port is chosen if it is taken")
@@ -368,6 +370,14 @@ func run() int {
 		return 2
 	}
 
+	// --shard: resolve which groups this shard runs, same reasoning as above —
+	// fail before anything is launched. See shard.go for the partitioning.
+	shardGroups, err := resolveShardGroups(*shardFlag, *registryFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+		return 2
+	}
+
 	// --dev is the one-command loop: manage the emulator, serve the dashboard
 	// with a hot-reloading UI, open a browser.
 	if *dev {
@@ -592,6 +602,10 @@ func run() int {
 		Endpoint: endpointURL,
 		Region:   *region,
 		Suites:   suites,
+		// shardGroups is "" unless --shard was given, in which case it is
+		// already the comma-separated OVERCAST_COMPAT_GROUPS value for this
+		// shard — see resolveShardGroups in shard.go.
+		Group: shardGroups,
 	}
 	if srv != nil {
 		cfg.OnEvent = srv.Broadcast
