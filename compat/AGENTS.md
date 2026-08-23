@@ -633,8 +633,12 @@ and pull request by `.github/workflows/compat.yml`, and both fail the build.
 
 ### 1. No new failures — the baseline is a ratchet
 
-[compat/baseline.json](./baseline.json) records the expected status of every
-(suite, group, test) triple. `go run ./cmd/compat --compare-baseline` fails when:
+[compat/baseline/](./baseline) records the expected status of every
+(suite, group, test) triple, as one JSON shard per suite —
+`compat/baseline/node-js-sdk.json` and so on. Every tool reads the directory and
+aggregates it; `--baseline-file` also still accepts a single baseline file, so a
+branch cut before the split stays comparable. `go run ./cmd/compat
+--compare-baseline` fails when:
 
 - a result is **worse** than the baseline records, ranked
   `pass` > `skip`/`na` > `unimplemented` > `fail`; or
@@ -754,23 +758,30 @@ than its raw failure count suggests — fixing it removes the quarantine and the
 failure together.
 
 **Improvements are promoted for you.** On push to `main`, the aggregate job runs
-`--update-baseline` and commits `compat/baseline.json` when a result improved.
-Do not hand-edit the baseline to record a fix — merge the fix and the ratchet
-tightens itself. `make -C compat baseline-update` still exists for making an
-improvement visible in a PR diff.
+`--update-baseline` and commits the changed shards under `compat/baseline/` when
+a result improved. Do not hand-edit the baseline to record a fix — merge the fix
+and the ratchet tightens itself. `make -C compat baseline-update` still exists
+for making an improvement visible in a PR diff, and it rewrites every shard
+canonically, so a hand-edited one shows up as churn in the next promotion.
 
 > This automated commit is the **only** exception to the "never push to `main`"
 > rule in the root [AGENTS.md](../AGENTS.md). It is granted to the workflow, not
-> to agents or contributors: it touches `compat/baseline.json` and nothing else.
+> to agents or contributors: it touches `compat/baseline/` and nothing else.
+
+**Each shard has a size budget.** `go run ./cmd/compat --lint-baseline-size`
+(`make -C compat baseline-size`, and a step in the compat workflow) fails when a
+shard exceeds 512 KiB — a little over 4x the largest one today. Sharding only
+buys a reviewable diff while a shard stays small, so tripping the budget means
+sharding further, by service say, not raising the number.
 
 **Changing what CI measures means re-seeding, not comparing.** The baseline
 records what a particular configuration produces. Change the configuration —
 turn a class of test on, add a suite, change the emulator's defaults — and the
 next run legitimately differs from the baseline in both directions, so comparing
 is meaningless and the gate fires on work that is not a regression. Re-seed
-instead: empty `compat/baseline.json` to `{"version": 1, "entries": []}`, run
-`--update-baseline` against an artifact **from the new configuration**, and say
-in the PR why the seed moved.
+instead: delete the shards under `compat/baseline/`, run `--update-baseline`
+against an artifact **from the new configuration**, and say in the PR why the
+seed moved.
 
 This is not hypothetical. Enabling the Docker-dependent tests in CI turned five
 results over: the CDK ESM assertions started passing, and two `cli` Lambda and
@@ -1030,16 +1041,17 @@ failing the pre-push gate with "no packages to test".
   operation, fold the distinction into the name (`CreateUserPoolClientWithTokenValidity`)
   and put the bare operation in `op` — never use a descriptive name with spaces.
 - Avoid removing or renaming an existing group or test entry: the name is the
-  join key across every suite, `compat/baseline.json`, and dashboard history, so
+  join key across every suite, `compat/baseline/`, and dashboard history, so
   a rename must update all of them in the same commit. A rename is only
   justified when an entry violates the schema. If an operation is simply no
   longer relevant, mark it `"deprecated": true` rather than deleting it.
 - **A rename you cannot avoid must carry the state files with it.**
-  `compat/baseline.json` is keyed by `suite/group/test`, so renaming one test
-  orphans one entry *per suite* — seven or eight of them — and each orphan fails
-  the gate as `compat baseline missing result`. `compat/flaky.json` and
-  `compat/parity-debt.json` are keyed the same way. Rename in the registry and
-  every suite, re-key all three files, and land it in one PR.
+  `compat/baseline/` is keyed by `suite/group/test`, so renaming one test
+  orphans one entry *per suite* — seven or eight of them, one per shard — and
+  each orphan fails the gate as `compat baseline missing result`.
+  `compat/flaky.json` and `compat/parity-debt.json` are keyed the same way.
+  Rename in the registry and every suite, re-key all three files, and land it
+  in one PR.
 - Bump the `version` field only for breaking schema changes; adding new groups
   is non-breaking and does not require a version bump.
 - CI validates the registry against `registry.schema.json` (the `Compat registry

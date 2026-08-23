@@ -3,7 +3,7 @@
 
 The registry is the join key for every compat suite: group and test names are
 matched verbatim across seven suite implementations, the dashboard, and
-compat/baseline.json. Nothing enforced the schema until now, so names could
+compat/baseline/. Nothing enforced the schema until now, so names could
 drift from the documented PascalCase convention without CI noticing.
 
 Beyond the schema, this checks referential invariants JSON Schema cannot

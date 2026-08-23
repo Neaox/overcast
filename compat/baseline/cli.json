@@ -1,0 +1,5269 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "CreateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "DeleteApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-http",
+      "test": "GetApis",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "CreateRestApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "DeleteRestApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-rest",
+      "test": "GetRestApis",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "CreateUsagePlanWithLimits",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "DeleteUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "test": "GetUsagePlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "CreateApplication",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "DeleteApplication",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "GetApplication",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "GetApplicationNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "ListApplications",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "ListApplicationsInvalidToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "test": "UpdateApplication",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "CreateConfigurationProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "DeleteConfigurationProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "GetConfigurationProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "GetConfigurationProfileNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "ListConfigurationProfiles",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "ListConfigurationProfilesByType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "test": "UpdateConfigurationProfile",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "CreateDeploymentStrategy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "DeleteDeploymentStrategy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "GetDeploymentStrategy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "ListDeploymentStrategies",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "test": "UpdateDeploymentStrategy",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "GetDeployment",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "ListDeployments",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "StartDeployment",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "test": "StopDeployment",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "CreateEnvironment",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "DeleteEnvironment",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "GetEnvironment",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "GetEnvironmentNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "ListEnvironments",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "ListEnvironmentsApplicationNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "test": "UpdateEnvironment",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentDefinitions",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentRunEvents",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "test": "ListExperimentRuns",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "CreateExtension",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "CreateExtensionAssociation",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "DeleteExtension",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "DeleteExtensionAssociation",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "GetExtension",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "GetExtensionAssociation",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "ListExtensionAssociations",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "ListExtensions",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "UpdateExtension",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "test": "UpdateExtensionAssociation",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "CreateHostedConfigurationVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "CreateHostedConfigurationVersionStaleVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "DeleteHostedConfigurationVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "GetHostedConfigurationVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "GetHostedConfigurationVersionNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "ListHostedConfigurationVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "test": "ListHostedConfigurationVersionsByLabel",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "CreateApplicationWithTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "ListTagsForResourceNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "GetLatestConfigurationInvalidToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "GetLatestConfigurationReusedToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionApplicationNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionEnvironmentNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-errors",
+      "test": "StartConfigurationSessionProfileNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfigurationAfterNewVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "GetLatestConfigurationWithNextPollToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "StartConfigurationSession",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appconfigdata",
+      "group": "appconfigdata-sessions",
+      "test": "StartConfigurationSessionWithPollInterval",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "CreateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "DeleteApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "ListApiKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-api-keys",
+      "test": "UpdateApiKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "CreateGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "DeleteGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "GetGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "ListGraphqlApis",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-apis",
+      "test": "UpdateGraphqlApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "CreateApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "DeleteApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "FlushApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "GetApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-cache",
+      "test": "UpdateApiCache",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "CreateDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "DeleteDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "GetDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "ListDataSources",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-datasources",
+      "test": "UpdateDataSource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "AssociateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "CreateDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "DeleteDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "DisassociateApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "GetApiAssociation",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "GetDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "ListDomainNames",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-domains",
+      "test": "UpdateDomainName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-env-vars",
+      "test": "GetGraphqlApiEnvironmentVariables",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-env-vars",
+      "test": "PutGraphqlApiEnvironmentVariables",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "CreateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "DeleteFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "GetFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "ListFunctions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-functions",
+      "test": "UpdateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "CreateResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "DeleteResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "GetResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "ListResolvers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "ListResolversByFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-resolvers",
+      "test": "UpdateResolver",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-schemas",
+      "test": "GetSchemaCreationStatus",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-schemas",
+      "test": "StartSchemaCreation",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "CreateType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "DeleteType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "GetType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "ListTypes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "appsync",
+      "group": "appsync-types",
+      "test": "UpdateType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "DescribeBackupJob",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "ListBackupJobs",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "ListRecoveryPointsByBackupVault",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-jobs",
+      "test": "StartBackupJob",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "CreateBackupPlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "DeleteBackupPlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "DeleteBackupPlanNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlanNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "GetBackupPlanVersionNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "ListBackupPlans",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "ListBackupPlansPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "UpdateBackupPlan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-plans",
+      "test": "UpdateBackupPlanNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "CreateBackupSelection",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "DeleteBackupSelection",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "GetBackupSelection",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-selections",
+      "test": "ListBackupSelections",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "ListTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVault",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVaultAlreadyExists",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "CreateBackupVaultInvalidName",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DeleteBackupVault",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DeleteBackupVaultNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DescribeBackupVault",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "DescribeBackupVaultNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaults",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaultsByShared",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "backup",
+      "group": "backup-vaults",
+      "test": "ListBackupVaultsPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "CreateStack",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "DeleteStack",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "DescribeStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "ListStacks",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "UpdateStack",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudformation",
+      "group": "cloudformation-stacks",
+      "test": "ValidateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "CreateCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "DeleteCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "GetCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "GetCachePolicyConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "ListCachePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-cache-policy",
+      "test": "UpdateCachePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "CreateContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "DeleteContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "GetContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "GetContinuousDeploymentPolicyConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "ListContinuousDeploymentPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-continuous-deployment",
+      "test": "UpdateContinuousDeploymentPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "CreateDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "DeleteDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "GetDistribution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-distributions",
+      "test": "ListDistributions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "CreateFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "DeleteFieldLevelEncryption",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "GetFieldLevelEncryption",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "GetFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "ListFieldLevelEncryptionConfigs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-config",
+      "test": "UpdateFieldLevelEncryptionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "CreateFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "DeleteFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "GetFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "GetFieldLevelEncryptionProfileConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "ListFieldLevelEncryptionProfiles",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-fle-profile",
+      "test": "UpdateFieldLevelEncryptionProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "CreateKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "DeleteKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "GetKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "GetKeyGroupConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "ListKeyGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-key-group",
+      "test": "UpdateKeyGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "CreateMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "DeleteMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-monitoring",
+      "test": "GetMonitoringSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "CreateOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "DeleteOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "GetOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "ListOriginAccessControls",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-oac",
+      "test": "UpdateOriginAccessControl",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "CreateRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "DeleteRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "GetRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "ListRealtimeLogConfigs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudfront",
+      "group": "cloudfront-realtime-log",
+      "test": "UpdateRealtimeLogConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "CreateUserPoolClientWithTokenValidity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "DeleteUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "DescribeUserPoolClientTokenValidity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-token-validity",
+      "test": "UpdateUserPoolClientTokenValidity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "AdminCreateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "AdminDeleteUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "CreateUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "CreateUserPoolClient",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "DeleteUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "DescribeUserPool",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUserPoolClients",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUserPools",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cognito",
+      "group": "cognito-userpools",
+      "test": "ListUsers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-batch",
+      "test": "BatchGetItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-batch",
+      "test": "BatchWriteItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "DeleteItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "GetItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "PutItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "PutItemConditionFail",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-items",
+      "test": "UpdateItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "Query",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryPagination",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryWithFilterExpression",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "QueryWithLimit",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "Scan",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-query",
+      "test": "ScanWithFilter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "CreateTable",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "DeleteTable",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "DescribeTable",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "ListTables",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-tables",
+      "test": "UpdateTable",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-ttl",
+      "test": "DescribeTimeToLive",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-ttl",
+      "test": "UpdateTimeToLive",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactGetItems",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactWriteConditionFail",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "dynamodb",
+      "group": "dynamodb-txn",
+      "test": "TransactWriteItems",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeAvailabilityZones",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeImages",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeInstanceTypes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "DescribeRegions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "RunInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "StartInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "StopInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-instances",
+      "test": "TerminateInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "CreateKeyPair",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "DeleteKeyPair",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-keypairs",
+      "test": "DescribeKeyPairs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "AuthorizeSecurityGroupIngress",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "DescribeSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-security-group-rules",
+      "test": "RevokeSecurityGroupIngress",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "AttachInternetGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "AttachVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateInternetGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateSecurityGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateSubnet",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateVpc",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "CreateVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteSecurityGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteSubnet",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteVpc",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DeleteVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeSubnets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeVpcs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DescribeVpnGateways",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ec2",
+      "group": "ec2-vpc",
+      "test": "DetachVpnGateway",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "BatchDeleteImage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "BatchGetImage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "DescribeImages",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "DescribeImagesNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "ListImages",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "ListImagesPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-images",
+      "test": "PutImage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "DeleteLifecyclePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "DeleteRepositoryPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetLifecyclePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetLifecyclePolicyNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "GetRepositoryPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "PutLifecyclePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "test": "SetRepositoryPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "test": "DescribeRegistry",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "test": "GetAuthorizationToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "CreateRepository",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "CreateRepositoryAlreadyExists",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepository",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepositoryForce",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DeleteRepositoryNotEmpty",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositories",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesAll",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "test": "DescribeRepositoriesSigned",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "CreateCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DeleteCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DeregisterTaskDefinition",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "DescribeClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "ListClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "ListTaskDefinitions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-clusters",
+      "test": "RegisterTaskDefinition",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "CreateService",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "DeleteService",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "DescribeServices",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "ListServices",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-services",
+      "test": "UpdateService",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "DescribeTasks",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "ListTasks",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "RunTask",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ecs",
+      "group": "ecs-tasks",
+      "test": "StopTask",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "CreateMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DeleteMountTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "DescribeMountTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "test": "ModifyMountTargetSecurityGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "CreateAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DeleteAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "DescribeAddonVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "ListAddons",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-addons",
+      "test": "UpdateAddon",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "AssociateAccessPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "AssociateIdentityProviderConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "CreateAccessEntry",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DeleteAccessEntry",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DescribeAccessEntry",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DescribeIdentityProviderConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DisassociateAccessPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "DisassociateIdentityProviderConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAccessEntries",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAccessPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListAssociatedAccessPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "ListIdentityProviderConfigs",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "test": "UpdateAccessEntry",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "CreateCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "CreateClusterAlreadyExists",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DeleteCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DeleteClusterNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeClusterNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeClusterVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "DescribeUpdate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListClustersPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "ListUpdates",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterConfigNoChanges",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-clusters",
+      "test": "UpdateClusterVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "CreateFargateProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DeleteFargateProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DescribeFargateProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "DescribeFargateProfileNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "test": "ListFargateProfiles",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "CreateNodegroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "CreateNodegroupAlreadyExists",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DeleteNodegroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DescribeNodegroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "DescribeNodegroupNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "ListNodegroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "ListNodegroupsClusterNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "UpdateNodegroupConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "test": "UpdateNodegroupVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "CreateClusterWithTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eks",
+      "group": "eks-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "CreateCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "DeleteCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-clusters",
+      "test": "DescribeCacheClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-modify",
+      "test": "ModifyCacheCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-modify",
+      "test": "ModifyReplicationGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "CreateCacheParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "DeleteCacheParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-parameter-groups",
+      "test": "DescribeCacheParameterGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-replication-groups",
+      "test": "CreateReplicationGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-replication-groups",
+      "test": "DescribeReplicationGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-subnet-groups",
+      "test": "CreateCacheSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "elasticache",
+      "group": "elasticache-subnet-groups",
+      "test": "DescribeCacheSubnetGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "CreateEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "DeleteEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "DescribeEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "ListEventBridgeTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "ListEventBuses",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-buses",
+      "test": "TagEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-events",
+      "test": "PutEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-events",
+      "test": "PutEventsBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DeleteRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DescribeRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "DisableRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "EnableRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "ListRules",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "ListTargetsByRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "PutRule",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "PutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-rules",
+      "test": "RemoveTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsToQueueTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutEventsWithInputTransformer",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "test": "PutFanoutTargets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "AddUserToGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "CreateGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "DeleteGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "GetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "ListGroupsForUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-groups",
+      "test": "RemoveUserFromGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "CreatePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "DeletePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-policies",
+      "test": "ListPolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "AddRoleToInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "AttachRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "CreateRole",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DeleteRole",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DeleteRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "DetachRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetInstanceProfile",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRole",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "GetRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListAttachedRolePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListRolePolicies",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "ListRoles",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-roles",
+      "test": "PutRolePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyExplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulateCustomPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyAllowed",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-simulate",
+      "test": "SimulatePrincipalPolicyImplicitDeny",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "CreateAccessKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "CreateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteAccessKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "DeleteUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "GetUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "GetUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "ListAccessKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "ListUsers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "PutUserPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "iam",
+      "group": "iam-users",
+      "test": "UpdateUser",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "GetRecords",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "GetShardIterator",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "PutRecord",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-records",
+      "test": "PutRecords",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "ListShards",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "MergeShards",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-shards",
+      "test": "SplitShard",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "AddTagsToStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "CreateStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DeleteStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DescribeStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "DescribeStreamSummary",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "ListStreams",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kinesis",
+      "group": "kinesis-streams",
+      "test": "ListTagsForStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-asymmetric",
+      "test": "Sign",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-asymmetric",
+      "test": "Verify",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "Decrypt",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "Encrypt",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "GenerateDataKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-crypto",
+      "test": "GenerateDataKeyWithoutPlaintext",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CancelKeyDeletion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CreateKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "CreateKmsAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "DescribeKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "DisableKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "EnableKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKMSResourceTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ListKmsAliases",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "PutKeyPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "ScheduleKeyDeletion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "TagKMSResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "kms",
+      "group": "kms-keys",
+      "test": "UntagKMSResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "CreateAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "DeleteAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "GetAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "ListAliases",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "ListVersionsByFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "PublishVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-aliases",
+      "test": "UpdateAlias",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "CreateFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "DeleteFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "GetFunction",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "ListFunctions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "UpdateFunctionCode",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-crud",
+      "test": "UpdateFunctionConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-invoke-stream",
+      "test": "InvokeWithResponseStream",
+      "status": "na"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeAsync",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeDryRun",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-invoke",
+      "test": "InvokeSync",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "DeleteLayerVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "ListLayers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-layers",
+      "test": "PublishLayerVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "AddPermission",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "GetPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "lambda",
+      "group": "lambda-policy",
+      "test": "RemovePermission",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "DeleteLogStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "DescribeLogStreams",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "FilterLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "GetLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-events",
+      "test": "PutLogEvents",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "CreateLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "CreateLogStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DeleteLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DeleteRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "DescribeLogGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "PutRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "TagLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "cloudwatch-logs",
+      "group": "logs-groups",
+      "test": "VerifyRetentionPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2NeitherType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2Provisioned",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "CreateClusterV2Serverless",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2NotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "DescribeClusterV2Provisioned",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClusterOperationsV2",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2ByClusterType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters-v2",
+      "test": "ListClustersV2Paginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "CreateCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "CreateClusterConflict",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DeleteCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DeleteClusterNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DescribeCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "DescribeClusterNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "GetBootstrapBrokers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "GetBootstrapBrokersNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClusterOperations",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListClustersByNameFilter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListKafkaVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "ListNodes",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfigurationStaleVersion",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-clusters",
+      "test": "UpdateClusterConfigurationUnknownConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "CreateConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "CreateConfigurationConflict",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DeleteConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DeleteConfigurationNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DescribeConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "DescribeConfigurationNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "ListConfigurationRevisions",
+      "status": "unimplemented"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-configurations",
+      "test": "ListConfigurations",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "CreateClusterV2WithTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "ListTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "msk",
+      "group": "msk-tags",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "CreateDomain",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "CreateDomainAlreadyExists",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DeleteDomain",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DeleteDomainNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomain",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomainNotFound",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "DescribeDomains",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNames",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNamesByEngineType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-domains",
+      "test": "ListDomainNamesInvalidEngineType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "AddTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "CreateDomainWithTagList",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "ListTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "opensearch",
+      "group": "opensearch-tags",
+      "test": "RemoveTags",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "CreatePipeRejectsUnsupportedTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DeletePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "DescribePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "ListPipes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "PipeDeliversToTarget",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "test": "UpdatePipe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "AddClusterMember",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "CreateClusterForMembers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DeleteClusterAfterMembers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DescribeClusterMembers",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "DescribeMemberInheritedSettings",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-cluster-members",
+      "test": "RemoveClusterMember",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "CreateDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "DeleteDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "DescribeDBClusters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "ModifyDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "StartDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-clusters",
+      "test": "StopDBCluster",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "CreateDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DeleteDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DescribeDBEngineVersions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "DescribeDBInstances",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "ModifyDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "StartDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-instances",
+      "test": "StopDBInstance",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "CreateDBParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "DeleteDBParameterGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-parameter-groups",
+      "test": "DescribeDBParameterGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "CreateDBSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "DeleteDBSubnetGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "rds",
+      "group": "rds-subnet-groups",
+      "test": "DescribeDBSubnetGroups",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "CopyObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "CreateSourceBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-copy",
+      "test": "PutSourceObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-cors",
+      "test": "GetBucketCors",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-cors",
+      "test": "PutBucketCors",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "CreateBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "DeleteObjects",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "GetObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "HeadObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "ListObjectsV2",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "ListObjectsV2Delimiter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObject",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectFormContentType",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectMultipleKeys",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-crud",
+      "test": "PutObjectPlusInKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "DeleteBucketLifecycle",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "GetBucketLifecycleConfigurationAfterDelete",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-lifecycle",
+      "test": "PutBucketLifecycleConfiguration",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "AbortMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "CompleteMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "CreateMultipartUpload",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-multipart",
+      "test": "UploadPart",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "GetBucketTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "GetObjectTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "PutBucketTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-tagging",
+      "test": "PutObjectTagging",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-versioning",
+      "test": "GetBucketVersioning",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-versioning",
+      "test": "PutBucketVersioning",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-website",
+      "test": "GetBucketWebsite",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "s3",
+      "group": "s3-website",
+      "test": "PutBucketWebsite",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "BatchGetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "CreateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "DeleteSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "DescribeSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "GetRandomPassword",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "GetSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "ListSecretVersionIds",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "ListSecrets",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "PutSecretValue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "TagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "UntagResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-crud",
+      "test": "UpdateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "DeleteResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "GetResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "PutResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-policy",
+      "test": "ValidateResourcePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "CancelRotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "GetSecretValueByStage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "PutSecretValuePending",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "RotateSecretWithoutLambda",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "secretsmanager",
+      "group": "secretsmanager-rotate",
+      "test": "UpdateSecretVersionStage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "DeleteIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "GetIdentityVerificationAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "ListIdentities",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "ListVerifiedEmailAddresses",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "SetIdentityFeedbackForwardingEnabled",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "VerifyEmailAddress",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-identities",
+      "test": "VerifyEmailIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "GetSendQuota",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendEmailWithReplyTo",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-send",
+      "test": "SendRawEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "CreateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "DeleteTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "GetTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "ListTemplates",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "SendTemplatedEmail",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ses",
+      "group": "ses-templates",
+      "test": "UpdateTemplate",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "DescribeExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "GetExecutionHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "ListExecutions",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "test": "StopExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "CreateStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "DeleteStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "DescribeStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "ListStateMachines",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "stepfunctions",
+      "group": "sfn-statemachines",
+      "test": "StartExecution",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "CreateProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DeleteProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DescribeProtection",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "DescribeSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "shield",
+      "group": "shield-protections",
+      "test": "ListProtections",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "Publish",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "PublishBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-publish",
+      "test": "PublishWithAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "GetSubscriptionAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "ListSubscriptionsByTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "PublishDeliveredToSQS",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "SetSubscriptionAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "SubscribeSQS",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-subscriptions",
+      "test": "Unsubscribe",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "CreateTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "DeleteTopic",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "GetTopicAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "ListTopics",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sns",
+      "group": "sns-topics",
+      "test": "SetTopicAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "CreateDLQ",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "GetRedrivePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-dlq",
+      "test": "SetRedrivePolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "CreateFifoQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "ReceiveFifoMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-fifo",
+      "test": "SendFifoMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "ChangeMessageVisibility",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "DeleteMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "DeleteMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "PurgeQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "ReceiveMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "SendMessage",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-messages",
+      "test": "SendMessageBatch",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "CreateQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "DeleteQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "GetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "GetQueueUrl",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "ListQueues",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "SetQueueAttributes",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "TagQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sqs",
+      "group": "sqs-queues",
+      "test": "UntagQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "DeleteParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "DescribeParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameterHistory",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "GetParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "ListSSMTagsForResource",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutMultipleParameters",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "PutParameterOverwrite",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-parameters",
+      "test": "TagParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPath",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPathPaginated",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-path",
+      "test": "GetParametersByPathRecursive",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "GetSecureStringParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "GetSecureStringWithoutDecryption",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "ssm",
+      "group": "ssm-secure",
+      "test": "PutSecureStringParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sts",
+      "group": "sts-assume",
+      "test": "AssumeRole",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sts",
+      "group": "sts-assume",
+      "test": "AssumeRoleWithWebIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetCallerIdentity",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetFederationToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "sts",
+      "group": "sts-identity",
+      "test": "GetSessionToken",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "CreateWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "DeleteWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "GetWebACL",
+      "status": "pass"
+    },
+    {
+      "suite": "cli",
+      "service": "waf",
+      "group": "waf-webacls",
+      "test": "ListWebACLs",
+      "status": "pass"
+    }
+  ]
+}

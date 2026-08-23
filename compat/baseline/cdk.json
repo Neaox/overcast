@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "Bootstrap",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "Deploy",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "Destroy",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "PutStreamTriggerItem",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "Synth",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "UpdateLambdaTimeout",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyBucket",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyDestroyed",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyDynamoDBEsm",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyDynamoDBStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyEventBus",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyEventSourceMapping",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredDdbEsm",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFilteredEsmDelivery",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyFunctionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyKmsKey",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyLambdaInvokedByStream",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyLogGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyNestedQueue",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyNestedStack",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyParameter",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyPolicy",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyQueues",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyRestApi",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyRole",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifySecret",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifySecurityGroup",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyStackStatus",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyStateMachine",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyStateMachineStatus",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyTable",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyTopicSubscription",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyUpdateStatus",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyUpdatedFunctionConfig",
+      "status": "pass"
+    },
+    {
+      "suite": "cdk",
+      "service": "cdk",
+      "group": "cdk-lifecycle",
+      "test": "VerifyVpc",
+      "status": "pass"
+    }
+  ]
+}

@@ -11,9 +11,10 @@ guard against regressions in what's already working.
 > **Two rules CI enforces**, documented in full at
 > [AGENTS.md § Baseline & uniformity policy](./AGENTS.md#baseline--uniformity-policy):
 >
-> 1. **No new failures.** [baseline.json](./baseline.json) records every test's
->    expected status; a result that gets worse, or a new failing test, fails the
->    build. Improvements are promoted automatically on `main`.
+> 1. **No new failures.** [baseline/](./baseline) records every test's expected
+>    status, as one JSON shard per suite; a result that gets worse, or a new
+>    failing test, fails the build. Improvements are promoted automatically on
+>    `main`.
 > 2. **Every SDK/CLI suite tests the same operations.** Add to
 >    [suites/registry.json](./suites/registry.json) first, then implement in all
 >    of them. Gaps must be declared in [parity-debt.json](./parity-debt.json),

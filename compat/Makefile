@@ -12,7 +12,7 @@
 
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: run json ci build clean dev serve ui baseline-check failures-check baseline-update baseline-lint
+.PHONY: run json ci build clean dev serve ui baseline-check failures-check baseline-update baseline-lint baseline-size
 
 ## dev — dashboard with a hot-reloading UI, on free ports, opened in a browser
 dev:
@@ -51,19 +51,23 @@ clean:
 report:
 	go run ../cmd/compat --report
 
-## baseline-check — fail if compat-results.json regresses against compat/baseline.json
+## baseline-check — fail if compat-results.json regresses against compat/baseline/
 baseline-check:
-	go run ../cmd/compat --compare-baseline --baseline-file baseline.json --results-file ../compat-results.json
+	go run ../cmd/compat --compare-baseline --baseline-file baseline --results-file ../compat-results.json
 
 ## failures-check — fail if compat-results.json holds any failing test, baseline or no baseline
 failures-check:
 	go run ../cmd/compat --max-failures 0 --results-file ../compat-results.json
 
-## baseline-update — update compat/baseline.json with improvements from compat-results.json
+## baseline-update — update compat/baseline/ with improvements from compat-results.json
 baseline-update:
-	go run ../cmd/compat --update-baseline --baseline-file baseline.json --results-file ../compat-results.json
+	go run ../cmd/compat --update-baseline --baseline-file baseline --results-file ../compat-results.json
 
-## baseline-lint — reject baseline downgrades; set OLD_BASELINE to compare against a non-default file
+## baseline-lint — reject baseline downgrades; OLD_BASELINE is the baseline to compare against (a shard directory or a single file)
 baseline-lint:
 	@if [ -z "$(OLD_BASELINE)" ]; then echo "OLD_BASELINE is required" >&2; exit 2; fi
-	go run ../cmd/compat --lint-baseline-from "$(OLD_BASELINE)" --lint-baseline-to baseline.json
+	go run ../cmd/compat --lint-baseline-from "$(OLD_BASELINE)" --lint-baseline-to baseline
+
+## baseline-size — fail if any per-suite baseline shard has outgrown its size budget
+baseline-size:
+	go run ../cmd/compat --lint-baseline-size --baseline-file baseline
