@@ -1,6 +1,7 @@
 # Model-driven compat coverage — scenario generation across every suite
 
-> Status: proposal, 2026-08-03. Owner: TBD.
+> Status: **in progress** — G0 complete, G1 partly complete; see the § 2
+> note for what has landed and what has not. Proposed 2026-08-03. Owner: TBD.
 > Siblings written concurrently, and part of the same tier programme:
 > [inert-tier-rollout.md](./inert-tier-rollout.md) (Tier 1 implementation — the
 > thing generated tests will mostly exercise),
@@ -69,28 +70,51 @@ at full operation depth (§3.9).
 
 ## 2. Current state (verified 2026-08-03)
 
-> **Re-verified 2026-08-21: the plan itself is still entirely unimplemented**
-> (no `cmd/compatgen`, no `compat/model/`, no
-> `compat/suites/registry.generated.json`, baseline not sharded — no phase of
-> §5 has landed), **but this section's counts are a 2026-08-03 snapshot and
-> have drifted.** Known movement since: `compat/suites/registry.json` is now
-> **136 groups / 778 tests / 36 services**; `compat/baseline.json` is **3,668
-> entries (~569 KB)**; `compat/parity-debt.json` is down from 558 entries to
-> **3** (the rust/dotnet backfill happened by hand, mooting most of §7.5);
-> capabilities now total **1,434 rows — 1,240 Supported / 154 Unsupported /
-> 28 Inert / 12 Partial** (Auto Scaling was promoted out of inert by #474,
-> Backup became a real REST implementation via #815/#904, and `StatusPartial`
-> is in live use). The alias table has 16 entries and has moved within
-> `registry_data.go`, so the line-number citations below are approximate.
-> Treat the generated artifacts named in this section as authoritative and
-> recompute before acting; do not trust the prose numbers.
+> **Re-verified 2026-08-23: phase G0 is complete and G1 is partly done.**
+> What landed, all under #1113:
+>
+> | Deliverable | PR |
+> | --- | --- |
+> | `--shard i/n` over the existing `OVERCAST_COMPAT_GROUPS` plumbing | #1356 |
+> | `suites`-scoping amendment (§3.6, §7.2) + its lint, and the `service`-key lint (§7.7) | #1357 |
+> | `registry.generated.json` + `registry.generated.schema.json`, `--generated-registry-file`, `candidate`/`gated` gate semantics | #1367 |
+> | `internal/awsmodel` — the shared Smithy AST reader (G1) | #1359 |
+> | `compat/baseline.json` → `compat/baseline/<suite>.json` + a per-shard size budget | #1370 |
+>
+> **G1's pruned shape snapshot is also done**, but via
+> [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 rather than this
+> plan — §3.7 said "build once, whichever plan gets there first", and that plan
+> got there first. `models/aws/shapes/` and the `shapes-sha256` in
+> [models/aws/VERSION](../../models/aws/VERSION) exist today; the pruner is
+> `cmd/awsmodelgen/shapes.go`, and it is already a consumer of
+> `internal/awsmodel`. **Do not build a second distillation.**
+>
+> **Still unimplemented: `cmd/compatgen` and `compat/model/`** — the IR and
+> recipe schemas, `--scaffold`/`--review-report`/`--explain`, and `gaps.json`.
+> That is the whole of what stands between here and the G2 pilot. G0's tail is
+> also outstanding: the seven per-suite loaders and `compat/mcp.go` do not yet
+> read the generated sibling, which is harmless only while it stays empty.
+>
+> **This section's counts are a 2026-08-03 snapshot and have drifted.**
+> Recomputed 2026-08-23: `compat/suites/registry.json` is **140 groups / 790
+> tests / 36 services**; the baseline is **5,404 entries** across eight shards
+> (largest `dotnet-sdk.json` at 127,377 B of a 512 KiB per-shard ceiling) —
+> 3,230 `pass`, 2,137 `skip`, 36 `unimplemented`, 1 `na`, **0 `fail`**;
+> `compat/parity-debt.json` holds **325** entries. Capabilities totalled
+> **1,434 rows — 1,240 Supported / 154 Unsupported / 28 Inert / 12 Partial**
+> at the 2026-08-21 check (Auto Scaling promoted out of inert by #474, Backup
+> made a real REST implementation via #815/#904, `StatusPartial` in live use).
+> The alias table has 16 entries and has moved within `registry_data.go`, so
+> the line-number citations below are approximate. Treat the generated
+> artifacts named in this section as authoritative and recompute before
+> acting; do not trust the prose numbers.
 
 Counts below were computed from the checked-in generated artifacts, not from
 `STATUS.md` — **`STATUS.md` prose is stale** (it describes Shield as "Stub — all
 ops return 501" while `internal/capabilities/all.gen.go:*` declares five Shield
 operations `StatusSupported`). Treat `internal/capabilities/all.gen.go`,
 `internal/awsapi/manifest.gen.go`, `compat/suites/registry.json` and
-`compat/baseline.json` as the sources of truth.
+`compat/baseline/` as the sources of truth.
 
 ### 2.1 The model universe
 
@@ -149,9 +173,11 @@ table and the model are kept in agreement.
   - **900 declared capabilities have no compat test at all.**
   - **0 of the 48 `StatusInert` operations have a compat test.** The tier that
     exists specifically so CDK works is completely unmeasured by compat.
-- [compat/baseline.json](../../compat/baseline.json) — **3,367 entries, 532 KB**:
-  2,690 `pass`, 676 `skip`, 1 `na`, **0 `fail`** (the ratchet reached zero in
-  #462 and `--max-failures 0` now asserts it absolutely).
+- [compat/baseline/](../../compat/baseline) — **3,367 entries, 532 KB** at the
+  time of writing: 2,690 `pass`, 676 `skip`, 1 `na`, **0 `fail`** (the ratchet
+  reached zero in #462 and `--max-failures 0` now asserts it absolutely). Since
+  #1370 this is a directory of per-suite shards rather than a single
+  `compat/baseline.json`; see the §2 note for current figures.
 - [compat/parity-debt.json](../../compat/parity-debt.json) — 558 registry tests
   of debt, all in `rust-sdk` (297) and `dotnet-sdk` (261).
 
@@ -495,11 +521,14 @@ an assertion and never by adding it to `flaky.json`.
 
 #### Volume: baseline, parity, CI runtime, dashboard
 
-- **Baseline size.** 3,367 entries / 532 KB today. Tier-1 fleet coverage plausibly
-  reaches 3,000–4,000 generated tests × the suites in scope, i.e. a
-  five-to-tenfold increase. Shard the file to `compat/baseline/<suite>.json` in
-  **G0, while it is still small**, keeping the format and the lint semantics;
-  add a per-shard size budget that fails CI when exceeded. (Considered and
+- **Baseline size.** ~~3,367 entries / 532 KB today.~~ **Done in #1370.** Tier-1
+  fleet coverage plausibly reaches 3,000–4,000 generated tests × the suites in
+  scope, i.e. a five-to-tenfold increase, so the file was sharded to
+  `compat/baseline/<suite>.json` in **G0, while it was still small**, keeping
+  the format and the lint semantics. The per-shard budget is **512 KiB**, about
+  4x the largest shard today — tripping it means sharding further, by service,
+  not raising the number. `--baseline-file` still accepts a single file, so a
+  base commit older than the split remains lintable against. (Considered and
   deferred: dropping `pass` entries to shrink the file — it would weaken the
   "failing and absent from the baseline" check that #462 relies on.)
 - **Parity debt.** Generated groups must not inflate debt: `suites` scoping means
@@ -733,6 +762,26 @@ operations, exactly one declared capability** — `DescribeOrganization`,
 — and **zero compat coverage today**. It is a Tier 1 candidate in
 `inert-tier-rollout.md`, so the pilot doubles as that plan's acceptance rig.
 
+> **Moved since this was written (checked 2026-08-23).**
+> [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I2 (#1376) landed the
+> shared Tier 1 runtime and proved it on `organizations` policies, so the
+> service now declares **nine** `StatusInert` operations, not one:
+> `CreatePolicy`, `DeletePolicy`, `DescribeOrganization`, `DescribePolicy`,
+> `ListPolicies`, `ListTagsForResource`, `TagResource`, `UntagResource`,
+> `UpdatePolicy`.
+>
+> This does not invalidate the pilot — it *improves* it, and the criteria below
+> need recounting rather than rewriting. The probe group covers 54 undeclared
+> operations, not 62. More usefully, criterion 5 — the regeneration
+> demonstration that justifies the whole plan — no longer needs a hypothetical
+> future operation to move: eight operations already crossed from undeclared to
+> `StatusInert` since this plan was written, so the demonstration can be run
+> against a move that has actually happened. The policy resources also give the
+> recipe a real Create → Describe/List → Update → Delete lifecycle to express,
+> where before there was only a single read. Recount against
+> `internal/capabilities/all.gen.go` when starting G2; do not trust the figures
+> in this section.
+
 Acceptance criteria:
 
 1. `organizations-gen-probe` covers the 62 undeclared operations; **all record
@@ -760,15 +809,19 @@ after.
 
 ## 5. Phasing
 
-| Phase | Contents | Effort | Acceptance gate |
-| --- | --- | --- | --- |
-| **G0** Foundations | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
-| **G1** Model layer | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
-| **G2** Pilot | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
-| **G3** Typed backends | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
-| **G4** Tier-1 fleet rollout | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
-| **G5** Steady state | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
-| **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |
+Status as of 2026-08-23 is in the §2 note: **G0 is done bar its loader tail,
+and G1 is done bar `cmd/compatgen`.** The `Status` column below records that;
+`Contents` is left as written so the original scope stays legible.
+
+| Phase | Status | Contents | Effort | Acceptance gate |
+| --- | --- | --- | --- | --- |
+| **G0** Foundations | **Done**, bar the loader tail (#1356, #1357, #1367, #1370) | Shard `compat/baseline.json` → `compat/baseline/<suite>.json` (+ size budget); `--shard i/n` and `--generated-registry-file` in `cmd/compat`; `registry.generated.schema.json`; all 8 loaders read the generated sibling and fall back to a scenario resolver hook; `candidate`/`gated` state honoured by both gates; `compat/AGENTS.md` amendment for generated `suites` scoping + the lint that bounds it | M | With an **empty** generated registry, every gate, report and dashboard behaves exactly as today; baseline shards aggregate byte-identically; the scoping lint rejects a hand-written group that adds `suites` |
+| **G1** Model layer | **Partly done** — `internal/awsmodel` #1359, shape snapshot via inert-tier I1; `cmd/compatgen` outstanding | Extract `internal/awsmodel` AST reader; `cmd/compatgen` skeleton; the pruned shape snapshot `models/aws/shapes/` + `shapes-sha256` (shared deliverable with [inert-tier-rollout.md](./inert-tier-rollout.md) Phase I1 — build once, whichever plan gets there first); IR + recipe JSON schemas; `--scaffold`, `--review-report`, `--explain`; `gaps.json` | M | `make compat-model-check` regenerates byte-identically offline; the sha gate catches a hand edit; the snapshot is within its size budget; scaffolding a service produces a recipe skeleton a human can complete |
+| **G2** Pilot | Not started | `python-sdk`, `node-js-sdk` and `cli` interpreters; `recipes/sqs.json` + `recipes/organizations.json`; the §4 acceptance criteria | L | Every §4.1 and §4.2 criterion met, including the regeneration demonstration in §4.2.5 |
+| **G3** Typed backends | Not started | Source emitters for `go-sdk`, then `java-sdk`, `dotnet-sdk`, `rust-sdk` (one suite per PR); member→field naming rules per language | L each | Generated source compiles in the suite's normal build; the pilot groups produce **identical** results to the interpreter suites; generated `suites` scoping widens automatically on regeneration |
+| **G4** Tier-1 fleet rollout | Not started | One service per PR, ordered by [inert-tier-rollout.md](./inert-tier-rollout.md) then [full-emulation-priority.md](./full-emulation-priority.md); capped probe groups for [services-never-emulated.md](./services-never-emulated.md) | L, parallelizable per service | Per service: recipe reviewed, no unexplained refusal in `gaps.json`, soak passed, CI wall-clock within budget, coverage metric moves |
+| **G5** Steady state | Not started | Weekly model-refresh PR regenerates scenarios; coverage becomes the dashboard headline; `--slowest N` latency census | S | A model-refresh PR shows added/removed operations per service and cannot break the gate; coverage per service/tier is published |
+| **G6** Native-group migration (§3.11; overlaps G4/G5, starts any time after G3) | Not started | Port the existing 94 hand-written groups to authored IR scenarios, group by group: same registry names, one parallel soak cycle, results must match, then delete the per-language code. Exceptions file + lint for what stays native (streaming, presigned flows, the idiom suite). | L, parallelizable per group | Per group: soak-parity with the native predecessor, native code deleted, registry names unchanged; fleet-wide: rust/dotnet parity debt reaches zero via backends, the exceptions file is the only remaining native test code and every entry carries a reason |
 
 Every phase begins with a failing check, lands as small independently
 reviewable PRs, and leaves `main` green under both existing gates.
