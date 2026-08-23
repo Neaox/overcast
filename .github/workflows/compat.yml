@@ -548,8 +548,23 @@ jobs:
           echo "Prose-only pull request: no suite ran, so there are no results" \
                "to merge and no baseline to compare. Reporting success."
 
+      # persist-credentials: false — by default checkout writes GITHUB_TOKEN
+      # into .git/config as an `http.extraheader` Authorization header on every
+      # github.com request, and that header wins over credentials embedded in a
+      # URL. "Publish promotion PR" below force-pushes with the promotion App
+      # token in the URL, and under the default that push went out as
+      # github-actions[bot] anyway (the PR timeline showed it: the PR *opened*
+      # as overcast-compat[bot] via `gh`, which reads GH_TOKEN, but every
+      # force-push was github-actions[bot]). Since mid-2026 GitHub holds
+      # pull_request workflows for a head updated by github-actions[bot] in
+      # `action_required` until a maintainer approves them — so every
+      # promotion sat waiting for a click (PR #1347). Nothing else in this job
+      # fetches or pushes through git; the base checkout below authenticates
+      # itself, and the push supplies its own token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN_SUITES == 'true'
+        with:
+          persist-credentials: false
 
       # The two lint steps below compare this PR's compat files against the
       # base revision, which the shallow checkout above (fetch-depth 1, the
@@ -778,13 +793,19 @@ jobs:
       # baseline-change lint) as a human edit. Successive promotions coalesce
       # on the fixed branch; a superseded one is simply overwritten.
       #
-      # The push and the PR need a GitHub App installation token: the default
-      # GITHUB_TOKEN starts no workflows, so a PR it created would wait on
-      # required checks that never run. The App needs exactly two repository
-      # permissions — Contents: read & write (force-push the branch, and merge
-      # once checks pass) and Pull requests: read & write (open the PR, arm
-      # auto-merge). Not Workflows: the promotion commit touches
-      # compat/baseline/ and nothing else.
+      # The push and the PR need a GitHub App installation token: a push or PR
+      # made as github-actions[bot] (GITHUB_TOKEN) either starts no workflows
+      # or, since mid-2026, starts them held for manual approval — either way
+      # the PR waits on required checks that do not run by themselves. The
+      # App needs exactly two repository permissions — Contents: read & write
+      # (force-push the branch, and merge once checks pass) and Pull requests:
+      # read & write (open the PR, arm auto-merge). Not Workflows: the
+      # promotion commit touches compat/baseline/ and nothing else.
+      #
+      # Both the push and `gh` must actually present that token. `gh` reads
+      # GH_TOKEN; `git push` takes it from the URL, which only works because
+      # this job's checkout runs with persist-credentials: false — see the
+      # comment on that step. Do not re-enable persisted credentials here.
       #
       # Identify the App by its Client ID, not its App ID: `app-id` carries a
       # deprecationMessage as of the action's v3, and GitHub recommends the
