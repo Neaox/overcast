@@ -85,7 +85,12 @@ export function ApiKeysPage() {
         errorTitle="Failed to load API keys"
         rowKey={(key) => key.id}
         columns={[
-          { header: "Name", cellClassName: "font-medium", cell: (key) => key.name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (key) => key.name,
+            cell: (key) => key.name,
+          },
           { header: "ID", cellClassName: "text-fg-muted", cell: (key) => key.id },
           { header: "Value", cell: (key) => <ApiKeyValue value={key.value} /> },
           {
@@ -99,6 +104,7 @@ export function ApiKeysPage() {
           {
             header: "Created",
             cellClassName: "text-fg-muted",
+            sortValue: (key) => new Date(key.createdDate),
             cell: (key) => formatDate(new Date(key.createdDate)),
           },
         ]}

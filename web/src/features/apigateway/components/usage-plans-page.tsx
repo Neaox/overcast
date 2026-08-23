@@ -182,12 +182,18 @@ function PlanKeys({ plan }: { plan: UsagePlan }) {
         errorTitle="Failed to load usage plan keys"
         rowKey={(key) => key.id}
         columns={[
-          { header: "Name", cellClassName: "font-medium", cell: (key) => key.name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (key) => key.name,
+            cell: (key) => key.name,
+          },
           { header: "ID", cellClassName: "text-fg-muted", cell: (key) => key.id },
           { header: "Value", cell: (key) => <ApiKeyValue value={key.value} /> },
           { header: "Type", cellClassName: "text-fg-muted", cell: (key) => key.type },
           {
             header: "Used today",
+            sortValue: (key) => usageByKey.get(key.id)?.used ?? 0,
             cell: (key) => usageByKey.get(key.id)?.used ?? 0,
           },
           {
@@ -339,7 +345,12 @@ export function UsagePlansPage({
               />
             ),
           },
-          { header: "Name", cellClassName: "font-medium", cell: (plan) => plan.name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (plan) => plan.name,
+            cell: (plan) => plan.name,
+          },
           { header: "ID", cellClassName: "text-fg-muted", cell: (plan) => plan.id },
           { header: "Description", prose: true, cell: (plan) => plan.description || "—" },
           {

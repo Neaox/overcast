@@ -21,7 +21,7 @@ import {
   ResourceListFilter,
   ResourceListPage,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
@@ -31,9 +31,12 @@ interface KmsPageProps {
   /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
   filter: string
   onFilterChange: (value: string) => void
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
 }
 
-export function KmsPage({ filter, onFilterChange }: KmsPageProps) {
+export function KmsPage({ filter, onFilterChange, sort, onSortChange }: KmsPageProps) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -95,12 +98,19 @@ export function KmsPage({ filter, onFilterChange }: KmsPageProps) {
         emptyTitle="No keys"
         emptyDescription="Create a key to get started."
         emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create key</CreateAction>}
+        sort={sort}
+        onSortChange={onSortChange}
         isFiltered={!!filter}
         onClearFilter={() => onFilterChange("")}
         rowKey={(key) => key.KeyId ?? ""}
         onRowClick={(key) => navigate({ to: "/kms/$keyId", params: { keyId: key.KeyId ?? "" } })}
         columns={[
-          { header: "Key ID", cellClassName: "font-medium", cell: (key) => key.KeyId },
+          {
+            header: "Key ID",
+            cellClassName: "font-medium",
+            sortValue: (key) => key.KeyId,
+            cell: (key) => key.KeyId,
+          },
           {
             header: "ARN",
             cellClassName: "text-fg-muted",

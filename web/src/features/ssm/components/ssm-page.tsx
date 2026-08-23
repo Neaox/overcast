@@ -29,7 +29,7 @@ import {
   ResourceListFilter,
   ResourceListPage,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { InertBanner } from "@/components/inert-banner"
 import { useToast } from "@/components/ui/toast"
@@ -39,9 +39,12 @@ interface SsmPageProps {
   /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
   filter: string
   onFilterChange: (value: string) => void
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
 }
 
-export function SsmPage({ filter, onFilterChange }: SsmPageProps) {
+export function SsmPage({ filter, onFilterChange, sort, onSortChange }: SsmPageProps) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -131,12 +134,19 @@ export function SsmPage({ filter, onFilterChange }: SsmPageProps) {
         emptyAction={
           <CreateAction onClick={() => setShowCreate(true)}>Create parameter</CreateAction>
         }
+        sort={sort}
+        onSortChange={onSortChange}
         isFiltered={!!filter}
         onClearFilter={() => onFilterChange("")}
         rowKey={(param) => param.Name ?? ""}
         onRowClick={(param) => navigate({ to: "/ssm/$name", params: { name: param.Name ?? "" } })}
         columns={[
-          { header: "Name", cellClassName: "font-medium", cell: (param) => param.Name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (param) => param.Name,
+            cell: (param) => param.Name,
+          },
           {
             header: "Type",
             cell: (param) => <Badge variant="outline">{param.Type}</Badge>,
@@ -149,6 +159,7 @@ export function SsmPage({ filter, onFilterChange }: SsmPageProps) {
           {
             header: "Last modified",
             cellClassName: "text-fg-muted",
+            sortValue: (param) => param.LastModifiedDate,
             cell: (param) => formatDate(param.LastModifiedDate),
           },
         ]}

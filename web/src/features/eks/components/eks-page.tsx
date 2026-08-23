@@ -77,7 +77,12 @@ export function EksPage() {
         }
         rowKey={(c) => c.arn || c.name || ""}
         columns={[
-          { header: "Name", cellClassName: "font-medium", cell: (c) => c.name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (c) => c.name,
+            cell: (c) => c.name,
+          },
           {
             header: "Status",
             cell: (c) => (
