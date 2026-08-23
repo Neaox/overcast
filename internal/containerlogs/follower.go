@@ -26,8 +26,6 @@
 //     log file once the container has stopped.
 //   - CloudWatchBatcher is the LineSink both services end at: batched writes to
 //     one log stream, with a bounded retry.
-//   - Observer is a transitional hook for Lambda's tail-wait machinery; see its
-//     doc comment.
 //
 // Nothing here calls time.Now: every deadline, backoff and fallback timestamp
 // comes from an injected clock.Clock, so a test drives the whole pipeline on a
@@ -136,8 +134,6 @@ type Config struct {
 	Clock clock.Clock
 	// Logger receives the follower's own diagnostics. Defaults to a no-op.
 	Logger *zap.Logger
-	// Observer is optional and transitional — see Observer.
-	Observer Observer
 }
 
 // Follower follows one container's log stream for as long as its context lives.
@@ -147,7 +143,6 @@ type Follower struct {
 	sink   LineSink
 	clk    clock.Clock
 	log    *zap.Logger
-	obs    Observer
 	cursor cursor
 }
 
@@ -159,16 +154,12 @@ func New(cfg Config) *Follower {
 		sink:   cfg.Sink,
 		clk:    cfg.Clock,
 		log:    cfg.Logger,
-		obs:    cfg.Observer,
 	}
 	if f.clk == nil {
 		f.clk = clock.New()
 	}
 	if f.log == nil {
 		f.log = zap.NewNop()
-	}
-	if f.obs == nil {
-		f.obs = nopObserver{}
 	}
 	return f
 }
@@ -225,11 +216,6 @@ type scanResult struct {
 func (f *Follower) followOnce(ctx context.Context, since time.Time) {
 	stream, err := f.client.ContainerLogsStream(ctx, f.id, since)
 	if err != nil {
-		// The daemon has answered, if only to refuse. That is what an Observer
-		// needs to know: a follower with no stream and nothing in flight is
-		// backing off from an answer, not waiting on a question still in
-		// flight.
-		f.obs.StreamAnswered()
 		if ctx.Err() == nil {
 			f.log.Warn("container logs: open stream failed",
 				zap.String("container", shortID(f.id)),
@@ -243,18 +229,7 @@ func (f *Follower) followOnce(ctx context.Context, since time.Time) {
 	// Wrap the multiplexed stream so the line reader sees a plain byte stream,
 	// with the timestamp the daemon repeats on each continuation chunk of a
 	// long line dropped rather than spliced into the middle of it.
-	tracked := &trackedReader{r: docker.NewLogDemuxReader(stream), obs: f.obs}
-	// The reader is on this connection but has not reached its first Read,
-	// which is the same position it is in between any two of them. Bounding the
-	// state to the connection's life at both ends matters: once this one is
-	// gone nothing can arrive over it, and an observer left believing a read is
-	// outstanding would wait out a reconnect backoff for an answer that cannot
-	// come.
-	f.obs.StreamAnswered()
-	f.obs.StreamOpened()
-	defer f.obs.StreamClosed()
-
-	reader := bufio.NewReaderSize(tracked, readBufferSize)
+	reader := bufio.NewReaderSize(docker.NewLogDemuxReader(stream), readBufferSize)
 	adm := f.cursor.newAdmission(!since.IsZero())
 
 	// Line assembly runs on its own goroutine so a CloudWatch write never
@@ -270,7 +245,6 @@ func (f *Follower) followOnce(ctx context.Context, since time.Time) {
 				}
 				return
 			}
-			f.obs.LineScanned()
 			lines <- scanResult{line: line}
 		}
 	}()
@@ -280,7 +254,7 @@ func (f *Follower) followOnce(ctx context.Context, since time.Time) {
 		if pending == 0 {
 			return
 		}
-		f.obs.LinesRetired(f.sink.Flush())
+		f.sink.Flush()
 		pending = 0
 	}
 
@@ -331,16 +305,10 @@ func (f *Follower) followOnce(ctx context.Context, since time.Time) {
 }
 
 // accept runs one raw line through the cursor and the sink, reporting whether
-// it is now pending delivery. Every line that does not make it is retired here,
-// so an Observer's in-flight count is decremented exactly once per line
-// however the line ends.
+// it is now pending delivery.
 func (f *Follower) accept(raw string, adm *cursorAdmission, backfill bool) bool {
 	line, ok := admitLine(raw, adm, backfill)
-	if !ok || !f.sink.Line(line) {
-		f.obs.LinesRetired(1)
-		return false
-	}
-	return true
+	return ok && f.sink.Line(line)
 }
 
 // drain empties the reader goroutine's queue after cancellation, returning how
@@ -412,21 +380,6 @@ func (f *Follower) Reconcile(ctx context.Context) {
 	if delivered > 0 {
 		f.sink.Flush()
 	}
-}
-
-// trackedReader reports every Read on the log stream to an Observer. It is the
-// only thing that can tell a follower parked on a live daemon round trip apart
-// from one that has no connection at all — see Observer.
-type trackedReader struct {
-	r   io.Reader
-	obs Observer
-}
-
-func (t *trackedReader) Read(p []byte) (int, error) {
-	t.obs.ReadStarted()
-	n, err := t.r.Read(p)
-	t.obs.ReadReturned(n)
-	return n, err
 }
 
 // shortID trims a container ID to the 12 characters the daemon's own tooling

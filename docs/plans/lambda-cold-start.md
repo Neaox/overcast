@@ -1,5 +1,13 @@
 # Lambda cold-start & invoke-path latency — plan
 
+> Update 2026-08-24: the invoke path changed shape again —
+> [lambda-in-container-init.md](./lambda-in-container-init.md) put an init
+> process (PID 1) inside every execution environment, delivered by a seeded
+> volume rather than a per-cold-start copy. Cold p50 measured within ±13 ms of
+> the numbers below; warm non-tail +0.46 ms (the Runtime API now hops through
+> the in-container proxy); warm `LogType: Tail` ~160 ms → ~5 ms. The anatomy
+> table below predates that change; its create/copy/start phases still hold.
+>
 > Status: **complete** 2026-08-21 (PRs #403–#411, #413; investigation and
 > every phase executed the same day; default flip closed by issue #1099).
 > Phase 0 (instrumentation + paced bench harness + baselines), Phase 1

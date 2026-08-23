@@ -43,8 +43,11 @@ type Client struct {
 // a slot, keeping the daemon responsive.
 const maxConcurrentOps = 8
 
-// maxDockerConns keeps short Docker API calls responsive while Lambda log
-// followers hold long-lived connections open.
+// maxDockerConns keeps short Docker API calls responsive while long-lived
+// connections are open — ECS's awslogs followers hold one per followed task
+// container. (Lambda's did too, one per warm container, until the in-container
+// init replaced daemon read-back for function logs — its log channel runs over
+// Overcast's own Runtime API listener and never touches this transport.)
 const maxDockerConns = 64
 
 // NewClient creates a Docker client for the given endpoint.

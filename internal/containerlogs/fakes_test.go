@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,20 +34,25 @@ func stdoutLine(ts time.Time, msg string) []byte {
 // follower's context is cancelled — which is what the daemon client does when
 // it closes the response body underneath a reader.
 type fakeStream struct {
-	data   []byte
-	off    int
-	hold   bool
-	ctx    context.Context
-	closed chan struct{}
-	once   sync.Once
+	data     []byte
+	off      int
+	hold     bool
+	ctx      context.Context
+	closed   chan struct{}
+	once     sync.Once
+	consumed atomic.Bool // every payload byte has been handed to the reader
 }
 
 func (s *fakeStream) Read(p []byte) (int, error) {
 	if s.off < len(s.data) {
 		n := copy(p, s.data[s.off:])
 		s.off += n
+		if s.off >= len(s.data) {
+			s.consumed.Store(true)
+		}
 		return n, nil
 	}
+	s.consumed.Store(true)
 	if !s.hold {
 		return 0, io.EOF
 	}
@@ -77,6 +83,7 @@ type streamScript struct {
 type fakeStreamer struct {
 	mu       sync.Mutex
 	scripts  []streamScript
+	streams  []*fakeStream
 	opened   int
 	since    []time.Time
 	backfill []byte
@@ -96,7 +103,18 @@ func (f *fakeStreamer) ContainerLogsStream(ctx context.Context, _ string, since 
 		idx = len(f.scripts) - 1
 	}
 	script := f.scripts[idx]
-	return &fakeStream{data: script.payload, hold: script.hold, ctx: ctx, closed: make(chan struct{})}, nil
+	stream := &fakeStream{data: script.payload, hold: script.hold, ctx: ctx, closed: make(chan struct{})}
+	f.streams = append(f.streams, stream)
+	return stream, nil
+}
+
+// consumed reports whether connection i has handed its whole payload to the
+// reader — the observable a test waits on when it needs the follower's queue
+// full before acting.
+func (f *fakeStreamer) consumed(i int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return i < len(f.streams) && f.streams[i].consumed.Load()
 }
 
 func (f *fakeStreamer) ContainerLogsSince(_ context.Context, _ string, since time.Time) (io.ReadCloser, error) {

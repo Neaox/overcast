@@ -1,6 +1,9 @@
 package initbin
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -134,5 +137,35 @@ func TestPackageEmbedResolves(t *testing.T) {
 		if got, want := err == nil, Present(arch); got != want {
 			t.Errorf("For(%q) succeeded=%v but Present(%q)=%v", arch, got, arch, want)
 		}
+	}
+}
+
+// TestEnvDistDirOverridesTheEmbed pins the seam the repository's test
+// bootstraps depend on: an embed is baked at compile time, so a test binary
+// compiled on a bare checkout — before `make lambda-init` ever ran — can only
+// use artefacts built mid-run through this override. It must win over the
+// embed, and it must fail with its own actionable error when it points
+// somewhere useless, rather than falling back silently.
+func TestEnvDistDirOverridesTheEmbed(t *testing.T) {
+	dir := t.TempDir()
+	want := []byte("not-a-real-init-but-bytes-all-the-same")
+	if err := os.WriteFile(filepath.Join(dir, "lambda-init-linux-amd64"), want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvDistDir, dir)
+
+	got, err := For("x86_64")
+	if err != nil {
+		t.Fatalf("For with %s set: %v", EnvDistDir, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("For read %d bytes, want the %d written to the override directory", len(got), len(want))
+	}
+
+	// And: an override pointing at a directory without the artefact is its own
+	// loud error naming the variable, never a silent fall-through to the embed.
+	t.Setenv(EnvDistDir, t.TempDir())
+	if _, err := For("x86_64"); err == nil || !strings.Contains(err.Error(), EnvDistDir) {
+		t.Fatalf("For with a useless override = %v, want an error naming %s", err, EnvDistDir)
 	}
 }

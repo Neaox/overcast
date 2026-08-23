@@ -1,21 +1,29 @@
 # Lambda in-container init: own the runtime's stdout — plan
 
-> Status: **in progress** 2026-08-23 — Phases 0 (#1404), 1 (#1405) and the
-> cursor fix found while baselining (#1406) are merged; Phase 2 (the cut-over)
-> is implemented on `feat/lambda-init-cutover`. §3.2's copy was measured at
-> +273–376 ms per cold start on Docker Desktop (~20 MB/s CopyToContainer), so
-> the seeded-volume alternative is what shipped: content-addressed volume,
-> inspect per cold start, seed once per process, archive copy retained only as
-> a logged fallback — cold p50 lands at −13 to +13 ms vs main. The ordering
-> invariant grew a second half in review: the init stamps `X-Overcast-Log-Seq`
-> on `/next` as well as `/response`, so INIT-phase and between-invocation
-> output precedes the next START. Known deliberate cost (documented in
-> docs/services/lambda.md): the init's ~0.3 ms CPU per invoke comes out of the
-> function's CFS quota, so 128 MB functions see ~1 in 8 invokes stall ~80 ms in
-> sustained back-to-back bursts, as on AWS. Phase 3 (Observer removal, stale
-> comments, this doc's completion) remains. This document is the design, the
-> cost/benefit case, the phased delivery and — deliberately — the deletion
-> ledger. It was written straight after #1402,
+> Status: **complete** 2026-08-24 — Phase 0 (#1404, shared
+> `internal/containerlogs` follower; ECS adopts it), Phase 1 (#1405, the init
+> binary, `initproto`, `initbin` embed, build plumbing), the cursor fix found
+> while baselining (#1406), Phase 2 (#1407, the cut-over: every Lambda
+> container runs under the init; exact tails and CloudWatch ordering; the
+> tail/drain wait machinery of #873/#1160/#1325/#1402 deleted) and Phase 3
+> (the `Observer` transitional hook removed, stale comments fixed, the
+> bare-checkout `go test` contract restored via `initbin.EnvDistDir`).
+>
+> What shipped differs from the original design in three measured ways: the
+> per-cold-start archive copy was +273–376 ms on Docker Desktop (~20 MB/s
+> CopyToContainer), so a **seeded, content-addressed volume** delivers the
+> init (cold p50 −13 to +13 ms vs before; one ~580 ms seed per process;
+> archive copy retained as a logged fallback); the ordering invariant covers
+> **both ends** of an invocation (`X-Overcast-Log-Seq` on `/next` as well as
+> `/response`, so INIT-phase and between-invocation output precedes the next
+> START); and the init's ~0.3 ms CPU per invoke comes out of the function's
+> CFS quota, so 128 MB functions see ~1 in 8 invokes stall ~80 ms in
+> sustained back-to-back bursts — faithful to AWS, documented in
+> docs/services/lambda.md. End-to-end evidence: the image e2e scores 19/19
+> against this architecture vs 16/18 for daemon read-back on the same script,
+> with `docker logs` byte-identical via the tee.
+>
+> This document was written straight after #1402,
 > the fourth round of fixes to the `X-Amz-Log-Result` tail wait (#873, #1160,
 > #1325, run 32622332545), when the question "is this a flaw in the
 > architecture we chose?" was answered *yes*.
