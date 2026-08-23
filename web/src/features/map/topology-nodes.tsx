@@ -307,7 +307,16 @@ const SqsStatsBar = memo(function SqsStatsBar({
     }
 
     if (!next) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Deliberate set-state-in-effect: the animation is a reaction to a prop
+    // delta, not derived state, and the timeout below resets it.
+    //
+    // This carried an `eslint-disable-next-line react-hooks/set-state-in-effect`
+    // until #1330 made oxlint the primary linter. oxlint's port of that rule
+    // misses a setState whose guard is derived from a ref read — it does report
+    // the unconditional one in region-group-node.tsx — so the directive became an
+    // "unused disable directive" warning instead. Filed upstream as
+    // https://github.com/oxc-project/oxc/issues/26007; restore the directive when
+    // that closes.
     setDirection(next)
     const t = setTimeout(() => setDirection(null), MSG_ANIM_TTL)
     return () => clearTimeout(t)
@@ -1769,8 +1778,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
     // work, then ones warming up, then idle capacity, then fading ghosts.
     const live = [...liveInstances].sort(
       (a, b) =>
-        instanceSortRank(a) - instanceSortRank(b) ||
-        a.instanceId.localeCompare(b.instanceId),
+        instanceSortRank(a) - instanceSortRank(b) || a.instanceId.localeCompare(b.instanceId),
     )
     return [
       ...live.map((i) => ({ instance: i, isGhost: false, deletedAt: 0 })),
