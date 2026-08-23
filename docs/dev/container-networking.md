@@ -133,16 +133,27 @@ INIT — reported to the user as their function's `Runtime.InitError`.
 So identity comes from **the listener the request arrived on**, not from where
 it came from. Each execution environment gets a listener of its own
 (`RuntimeAPIServer.AddContainerListener`, bound at port 0 across the same
-`BindHosts`), is told about only that port through `AWS_LAMBDA_RUNTIME_API`, and
+`BindHosts`), is told about only that port through `OVERCAST_RUNTIME_API`, and
 gives it up in `containerInstance.Close`; the count is bounded by
 `LAMBDA_MAX_INSTANCES`. The source-address lookup remains as the fallback, which
 is what the containerised row above still uses.
 
-Nothing else was available: the RIC builds its own requests, so no header or
-token can be injected, and `AWS_LAMBDA_RUNTIME_API` is parsed as a bare
-`host:port`, so there is no path prefix either. "Attribute the only initialising
-container" is racy the moment two cold starts overlap, which the cold-start
-semaphore explicitly permits.
+Nothing else was available when this was decided: the RIC builds its own
+requests, so no header or token could be injected, and `AWS_LAMBDA_RUNTIME_API`
+is parsed as a bare `host:port`, so there was no path prefix either. "Attribute
+the only initialising container" is racy the moment two cold starts overlap,
+which the cold-start semaphore explicitly permits.
+
+Two variables now, and the split matters. `AWS_LAMBDA_RUNTIME_API` carries the
+AWS value, `127.0.0.1:9001`, because what the runtime and the extensions talk to
+is the Runtime API served by Overcast's init *inside* the container
+(`internal/lambdainit`). `OVERCAST_RUNTIME_API` carries this environment's own
+host endpoint, and only the init reads it. Identity is unchanged — the init
+dials the per-environment listener, so the port it arrives on still names the
+environment — but the init *is* a component of Overcast's, so it can add
+headers where the RIC could not, which is how `X-Overcast-Log-Seq` travels back
+on a forwarded response. The same listener serves the init's log stream
+(`POST /overcast/v1/logs`), identified in exactly the same way.
 
 ## 2. A container calling another container
 

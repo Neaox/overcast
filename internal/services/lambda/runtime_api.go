@@ -1469,7 +1469,13 @@ func (s *RuntimeAPIServer) handleInvocationAction(w http.ResponseWriter, r *http
 	// wait for"; so does a value we cannot parse, because refusing the response
 	// over a log header would be a far worse failure than a tail that is one
 	// line short.
-	logSeq, _ := strconv.ParseUint(r.Header.Get(initproto.HeaderLogSeq), 10, 64)
+	logSeq, seqErr := strconv.ParseUint(r.Header.Get(initproto.HeaderLogSeq), 10, 64)
+	if seqErr != nil {
+		// Including overflow, where ParseUint hands back MaxUint64 rather than
+		// zero: waiting for a sequence no init will ever reach would cost every
+		// such invocation the whole bound.
+		logSeq = 0
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024+1024)) // 6MB + buffer
 	if err != nil {

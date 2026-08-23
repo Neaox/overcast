@@ -87,6 +87,8 @@ If a later address in the list fails to bind, everything already opened is close
 
 **The Lambda Runtime API narrows deliberately, and the wildcard is only a fallback.** A wildcard would put an unauthenticated control channel for every Lambda container on whatever network this machine is attached to, and nothing off this machine is a legitimate caller. But loopback alone would strand every invocation, because containers connect back to it over the control plane. So it binds loopback plus one reachable address, chosen from where Overcast is running — its own network IP when containerised, the network gateway on native Linux, the host's default-route address under Docker Desktop.
 
+Inside the container the value of `AWS_LAMBDA_RUNTIME_API` is now the AWS one, `127.0.0.1:9001` — the loopback proxy Overcast's init serves — and this listener's per-environment port travels in `OVERCAST_RUNTIME_API`, which only the init reads. The port, the config variable and the bind policy are unchanged; the same listener also serves the init's log stream, `POST /overcast/v1/logs`.
+
 Which case applies is decided by **actually attempting the bind** rather than by inspecting the operating system: getting it wrong by inspection leaves Lambda unable to answer an invocation, and `uname -s` reports Linux under WSL2 either way.
 
 The full matrix, and why the gateway is preferred on native Linux, is in
