@@ -12,14 +12,7 @@ import {
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogContent,
@@ -132,59 +125,63 @@ export function StateMachineDetail({ name }: Props) {
 
       <div className="flex flex-col gap-2">
         <SectionLabel>Executions</SectionLabel>
-        {execsLoading ? (
-          <div className="flex justify-center py-16">
-            <Spinner className="h-6 w-6" />
-          </div>
-        ) : executions.length === 0 ? (
-          <EmptyState
-            icon={<Play className="h-6 w-6" />}
-            title="No executions"
-            description="Start an execution to run this state machine."
-            action={
-              <Button size="sm" onClick={() => setShowStart(true)}>
-                <Play className="mr-1.5 h-3.5 w-3.5" /> Start Execution
-              </Button>
-            }
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Stopped</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {executions.map((execution) => (
-                <TableRow key={execution.executionArn}>
-                  <TableCell>
-                    <Link
-                      className="font-medium text-accent hover:underline"
-                      to="/stepfunctions/execution/$name/$execution"
-                      params={{ name, execution: execution.name ?? "" }}
-                    >
-                      {execution.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={executionStatusVariant(execution.status)}>
-                      {execution.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatTimestamp(execution.startDate)}
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatTimestamp(execution.stopDate)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <ResourceTable
+          variant="embedded"
+          query={{ data: executions, isLoading: execsLoading }}
+          noun="executions"
+          emptyIcon={Play}
+          emptyTitle="No executions"
+          emptyDescription="Start an execution to run this state machine."
+          emptyAction={
+            <Button size="sm" onClick={() => setShowStart(true)}>
+              <Play className="mr-1.5 h-3.5 w-3.5" /> Start Execution
+            </Button>
+          }
+          rowKey={(execution) => execution.executionArn ?? ""}
+          // Most recent run first: ListExecutions returns them that way and a
+          // reader arriving here is looking for the last one, so the table says
+          // so rather than relying on the order happening to hold.
+          defaultSort={{ id: "started", desc: true }}
+          // Four columns on a sub-table, all of them load-bearing.
+          columnToggle={false}
+          columns={[
+            {
+              id: "name",
+              header: "Name",
+              sortValue: (execution) => execution.name,
+              cell: (execution) => (
+                <Link
+                  className="font-medium text-accent hover:underline"
+                  to="/stepfunctions/execution/$name/$execution"
+                  params={{ name, execution: execution.name ?? "" }}
+                >
+                  {execution.name}
+                </Link>
+              ),
+            },
+            {
+              id: "status",
+              header: "Status",
+              cell: (execution) => (
+                <Badge variant={executionStatusVariant(execution.status)}>{execution.status}</Badge>
+              ),
+            },
+            {
+              id: "started",
+              header: "Started",
+              cellClassName: "text-fg-muted",
+              sortValue: (execution) => execution.startDate,
+              cell: (execution) => formatTimestamp(execution.startDate),
+            },
+            {
+              id: "stopped",
+              header: "Stopped",
+              cellClassName: "text-fg-muted",
+              sortValue: (execution) => execution.stopDate,
+              cell: (execution) => formatTimestamp(execution.stopDate),
+            },
+          ]}
+        />
       </div>
 
       <Dialog open={showStart} onOpenChange={setShowStart}>

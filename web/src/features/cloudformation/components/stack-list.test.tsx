@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw"
+import { within } from "@testing-library/react"
 import { renderWithData, screen, waitFor } from "@/test/render"
 import { server } from "@/test/server"
 import { cfnStacksQueryOptions } from "@/features/cloudformation/data"
@@ -125,5 +126,61 @@ describe("StackList", () => {
     )
 
     expect(asked).toBe(0)
+  })
+})
+
+// The list is on `ResourceTable`'s TanStack row model since #1327 wave B, so
+// sorting is the engine's rather than a per-page `useState`. These pin the two
+// halves a caller has to get right: the header actually reorders rows, and the
+// column's explicit id — the token that ends up in `?sort=` — is what the page
+// is told about.
+describe("StackList — sorting", () => {
+  const unordered = seed([
+    { StackName: "zulu-api", StackStatus: "CREATE_COMPLETE" },
+    { StackName: "alpha-api", StackStatus: "CREATE_COMPLETE" },
+    { StackName: "mike-api", StackStatus: "CREATE_COMPLETE" },
+  ])
+
+  const stackNames = () =>
+    screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => within(row).getAllByRole("cell")[0].textContent)
+
+  it("reorders the rows on a header click, and reverses on the second", async () => {
+    const { user } = renderWithData(<StackList />, unordered)
+
+    expect(stackNames()).toEqual(["zulu-api", "alpha-api", "mike-api"])
+
+    await user.click(screen.getByRole("button", { name: "Stack name" }))
+    expect(stackNames()).toEqual(["alpha-api", "mike-api", "zulu-api"])
+    expect(screen.getByRole("columnheader", { name: /stack name/i })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    )
+
+    await user.click(screen.getByRole("button", { name: "Stack name" }))
+    expect(stackNames()).toEqual(["zulu-api", "mike-api", "alpha-api"])
+  })
+
+  it("hands the route the column's own sort id, not a slug of the header", async () => {
+    const onSortChange = vi.fn()
+    const { user } = renderWithData(
+      <StackList sort={undefined} onSortChange={onSortChange} />,
+      unordered,
+    )
+
+    await user.click(screen.getByRole("button", { name: "Stack name" }))
+
+    expect(onSortChange).toHaveBeenCalledWith({ id: "name", desc: false })
+  })
+
+  it("orders by the sort the route supplies, before any click", () => {
+    renderWithData(
+      <StackList sort={{ id: "name", desc: true }} onSortChange={vi.fn()} />,
+      unordered,
+    )
+
+    expect(stackNames()).toEqual(["zulu-api", "mike-api", "alpha-api"])
   })
 })

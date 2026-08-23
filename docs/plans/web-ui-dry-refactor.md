@@ -67,7 +67,20 @@
 > (SNS subscriptions), `sns/topic-detail`, `kinesis/stream-detail` (shards + tags),
 > `pipes/pipe-detail` and `eventbridge/event-bus-detail` to `variant="embedded"`; the SQS messages
 > table stays bespoke (expansion rows, per-row tombstone styling and Archetype-E ghost rows, all
-> recorded at the call site). None of the other scaffold
+> recorded at the call site).
+>
+> **2026-08-23 (#1327 waves B–D, CloudFormation/CloudWatch Logs/SSM/Step Functions):**
+> `cloudformation/stack-list` and `cloudwatch/logs/log-group-list` are on `ResourceTable` with
+> deep-linked `?sort=`, and eleven detail sub-tables on `variant="embedded"` — the stack detail's
+> parameters/outputs/tags/resource-summary/resources/events, the log group's streams, the SSM
+> parameter's version history, the state machine's executions and the Secrets Manager rotation
+> card's versions; `stepfunctions/execution-detail`'s state history stays bespoke (expandable
+> rows, which `ResourceTable` has no seam for). Wave D decided: `log-search-results` stays bespoke
+> — `virtualize` was measured against it at 8,334 results (mount 15.0 → 18.3 ms, scroll p95 18.5 →
+> 20.0 ms, DOM 208 → 289 nodes) and separately cannot paint the per-row level tint, measure wrapped
+> rows, or hold a scroll position; `iam/policy-simulator` stays bespoke (a result grid, no row
+> identity); `debug-page`'s `FlatKeyTable` stays bespoke (its paging reads the virtual window);
+> `secretsmanager/secret-rotation-card` converted. None of the other scaffold
 > components exist yet —
 > no `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or

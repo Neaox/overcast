@@ -18,14 +18,6 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -33,22 +25,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
   SelectCheckbox,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { useToast } from "@/components/ui/toast"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { formatLogDate } from "@/lib/log-format"
 
-export function LogGroupList() {
+interface LogGroupListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function LogGroupList({ sort, onSortChange }: LogGroupListProps = {}) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -139,105 +136,120 @@ export function LogGroupList() {
         </div>
       )}
 
-      <ResourceListCard>
-        {isLoading || groups.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={groups.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<FileText className="h-10 w-10" />}
-                title="No log groups yet"
-                description="Create a log group to start collecting logs."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create log group</CreateAction>
+      <ResourceTable
+        query={{ data: groups, isLoading, error }}
+        noun="log groups"
+        emptyIcon={FileText}
+        emptyTitle="No log groups yet"
+        emptyDescription="Create a log group to start collecting logs."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create log group</CreateAction>
+        }
+        errorTitle="Failed to load log groups"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(g) => g.logGroupName ?? ""}
+        onRowClick={(g) =>
+          navigate({ to: "/cloudwatch/logs/group", search: { groupName: g.logGroupName ?? "" } })
+        }
+        columns={[
+          {
+            // Selection is not a TanStack feature here — `rowSelectionFeature`
+            // is deliberately unregistered (see `resource-table.tsx`) — so the
+            // checkbox is an ordinary leading column whose cell stops the click
+            // from reaching the row's navigate handler. Being column 0 already
+            // makes it unhideable.
+            id: "select",
+            headerClassName: "w-10 pr-0",
+            cellClassName: "pr-0",
+            header: (
+              <SelectCheckbox
+                label="Select all log groups"
+                checked={selectedGroups.size === groups.length}
+                indeterminate={selectedGroups.size > 0 && selectedGroups.size < groups.length}
+                onCheckedChange={(checked) =>
+                  setSelectedGroups(
+                    checked ? new Set(groups.map((g) => g.logGroupName ?? "")) : new Set(),
+                  )
                 }
               />
-            }
-            errorTitle="Failed to load log groups"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10 pr-0">
+            ),
+            cell: (g) => {
+              const groupName = g.logGroupName ?? ""
+              return (
+                <span className="contents" onClick={(e) => e.stopPropagation()}>
                   <SelectCheckbox
-                    label="Select all log groups"
-                    checked={selectedGroups.size === groups.length}
-                    indeterminate={selectedGroups.size > 0 && selectedGroups.size < groups.length}
-                    onCheckedChange={(checked) =>
-                      setSelectedGroups(
-                        checked ? new Set(groups.map((g) => g.logGroupName ?? "")) : new Set(),
-                      )
-                    }
+                    label={`Select ${groupName}`}
+                    checked={selectedGroups.has(groupName)}
+                    onCheckedChange={(checked) => {
+                      const next = new Set(selectedGroups)
+                      if (checked) next.add(groupName)
+                      else next.delete(groupName)
+                      setSelectedGroups(next)
+                    }}
                   />
-                </TableHead>
-                <TableHead>Log group name</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Retention</TableHead>
-                <TableHead>ARN</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.map((g) => {
-                const groupName = g.logGroupName ?? ""
-                return (
-                  <TableRow
-                    key={groupName}
-                    onClick={() =>
-                      navigate({ to: "/cloudwatch/logs/group", search: { groupName } })
-                    }
-                  >
-                    <TableCell className="pr-0" onClick={(e) => e.stopPropagation()}>
-                      <SelectCheckbox
-                        label={`Select ${groupName}`}
-                        checked={selectedGroups.has(groupName)}
-                        onCheckedChange={(checked) => {
-                          const next = new Set(selectedGroups)
-                          if (checked) next.add(groupName)
-                          else next.delete(groupName)
-                          setSelectedGroups(next)
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell title={groupName}>
-                      <ResourceName icon={FileText} name={groupName} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{formatLogDate(g.creationTime)}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {g.retentionInDays ? retentionLabel(g.retentionInDays) : "Never expire"}
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-fg-muted" title={g.arn}>
-                      {g.arn}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`View ${groupName}`}
-                          onClick={() =>
-                            navigate({ to: "/cloudwatch/logs/group", search: { groupName } })
-                          }
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${groupName}`}
-                          tone="danger"
-                          onClick={() => setDeleteTarget(groupName)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+                </span>
+              )
+            },
+          },
+          {
+            id: "name",
+            header: "Log group name",
+            // The identity column, even though the checkbox pushes it off
+            // index 0 — hiding it would leave rows with nothing to read them by.
+            hideable: false,
+            sortValue: (g) => g.logGroupName,
+            // The `title` sits on the name itself rather than the cell: it is
+            // the truncating text a hover tooltip is for, and `ResourceTable`
+            // owns the `<td>`.
+            cell: (g) => (
+              <ResourceName
+                icon={FileText}
+                name={<span title={g.logGroupName}>{g.logGroupName}</span>}
+              />
+            ),
+          },
+          {
+            id: "created",
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (g) => g.creationTime,
+            cell: (g) => formatLogDate(g.creationTime),
+          },
+          {
+            id: "retention",
+            header: "Retention",
+            cellClassName: "text-fg-muted",
+            cell: (g) => (g.retentionInDays ? retentionLabel(g.retentionInDays) : "Never expire"),
+          },
+          {
+            id: "arn",
+            header: "ARN",
+            cellClassName: "max-w-xs truncate text-fg-muted",
+            cell: (g) => <span title={g.arn}>{g.arn}</span>,
+          },
+        ]}
+        rowActions={(g) => {
+          const groupName = g.logGroupName ?? ""
+          return (
+            <>
+              <RowAction
+                label={`View ${groupName}`}
+                onClick={() => navigate({ to: "/cloudwatch/logs/group", search: { groupName } })}
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </RowAction>
+              <RowAction
+                label={`Delete ${groupName}`}
+                tone="danger"
+                onClick={() => setDeleteTarget(groupName)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </RowAction>
+            </>
+          )
+        }}
+      />
 
       {/* ── Create log group dialog ── */}
       <CreateLogGroupDialog

@@ -35,14 +35,8 @@ import { LogSearchResults } from "@/features/cloudwatch/logs/components/log-sear
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
+import { RowAction, SelectCheckbox } from "@/components/ui/resource-list-page"
 import {
   Dialog,
   DialogBody,
@@ -96,6 +90,12 @@ export function LogGroupDetail({ groupName }: Props) {
     [groupTags],
   )
 
+  // The default order is a composite `ResourceTable`'s single-column sort
+  // cannot express — most-recently-written first, falling back from ingestion
+  // to event time, then by name — so it stays here and is handed to the table
+  // as the row order. No `defaultSort` for the same reason: leaving the table
+  // unsorted keeps this exact order, and the none → asc → desc → none cycle
+  // returns to it.
   const sortedStreams = useMemo(
     () =>
       [...streams].sort((a, b) => {
@@ -369,131 +369,125 @@ export function LogGroupDetail({ groupName }: Props) {
       )}
 
       {/* Streams table */}
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6" />
+      {selectedStreams.size > 0 && (
+        <div className="flex items-center gap-3 rounded-md border border-border bg-bg-muted px-3 py-2">
+          <span className="text-sm font-medium">
+            {selectedStreams.size} stream{selectedStreams.size !== 1 ? "s" : ""} selected
+          </span>
+          <Button size="sm" variant="danger" onClick={() => setShowBulkDelete(true)}>
+            <Trash2 className="mr-1 h-3.5 w-3.5" />
+            Delete Selected
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedStreams(new Set())}>
+            Clear
+          </Button>
         </div>
-      ) : streams.length === 0 ? (
-        <EmptyState
-          icon={<FileText className="h-10 w-10" />}
-          title="No log streams"
-          description="Create a log stream or wait for your application to generate logs."
-          action={
-            <Button onClick={() => setShowCreateStream(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Stream
-            </Button>
-          }
-        />
-      ) : (
-        <>
-          {selectedStreams.size > 0 && (
-            <div className="flex items-center gap-3 rounded-md border border-border bg-bg-muted px-3 py-2">
-              <span className="text-sm font-medium">
-                {selectedStreams.size} stream{selectedStreams.size !== 1 ? "s" : ""} selected
-              </span>
-              <Button size="sm" variant="danger" onClick={() => setShowBulkDelete(true)}>
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                Delete Selected
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedStreams(new Set())}>
-                Clear
-              </Button>
-            </div>
-          )}
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded accent-accent"
-                    checked={
-                      sortedStreams.length > 0 && selectedStreams.size === sortedStreams.length
-                    }
-                    ref={(el) => {
-                      if (el)
-                        el.indeterminate =
-                          selectedStreams.size > 0 && selectedStreams.size < sortedStreams.length
-                    }}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedStreams(new Set(sortedStreams.map((s) => s.logStreamName ?? "")))
-                      } else {
-                        setSelectedStreams(new Set())
-                      }
-                    }}
-                  />
-                </TableHead>
-                <TableHead>Stream Name</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Last Event</TableHead>
-                <TableHead>Last Ingestion</TableHead>
-                <TableHead className="w-10" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedStreams.map((s) => (
-                <TableRow
-                  key={s.logStreamName}
-                  className="cursor-pointer"
-                  onClick={() =>
-                    navigate({
-                      to: "/cloudwatch/logs/stream",
-                      search: { groupName, streamName: s.logStreamName ?? "" },
-                    })
-                  }
-                >
-                  <TableCell className="p-0">
-                    <label
-                      className="flex cursor-pointer items-center justify-center p-3"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded accent-accent"
-                        checked={selectedStreams.has(s.logStreamName ?? "")}
-                        onChange={(e) => {
-                          const next = new Set(selectedStreams)
-                          if (e.target.checked) {
-                            next.add(s.logStreamName ?? "")
-                          } else {
-                            next.delete(s.logStreamName ?? "")
-                          }
-                          setSelectedStreams(next)
-                        }}
-                      />
-                    </label>
-                  </TableCell>
-                  <TableCell className="font-medium" title={s.logStreamName}>
-                    {s.logStreamName}
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{formatLogDate(s.creationTime)}</TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatLogDate(s.lastEventTimestamp)}
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatLogDate(s.lastIngestionTime)}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-fg-muted hover:text-danger"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteStreamTarget(s.logStreamName)
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </>
       )}
+      <ResourceTable
+        variant="embedded"
+        query={{ data: sortedStreams, isLoading, error: streamsError }}
+        noun="log streams"
+        emptyIcon={FileText}
+        emptyTitle="No log streams"
+        emptyDescription="Create a log stream or wait for your application to generate logs."
+        emptyAction={
+          <Button onClick={() => setShowCreateStream(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create Stream
+          </Button>
+        }
+        errorTitle="Failed to load log streams"
+        rowKey={(s) => s.logStreamName ?? ""}
+        onRowClick={(s) =>
+          navigate({
+            to: "/cloudwatch/logs/stream",
+            search: { groupName, streamName: s.logStreamName ?? "" },
+          })
+        }
+        columns={[
+          {
+            // Selection is an ordinary leading column, not a TanStack feature —
+            // `rowSelectionFeature` is deliberately unregistered. The label
+            // stops the click reaching the row's navigate handler.
+            id: "select",
+            headerClassName: "w-10",
+            cellClassName: "p-0",
+            header: (
+              <SelectCheckbox
+                label="Select all log streams"
+                checked={sortedStreams.length > 0 && selectedStreams.size === sortedStreams.length}
+                indeterminate={
+                  selectedStreams.size > 0 && selectedStreams.size < sortedStreams.length
+                }
+                onCheckedChange={(checked) =>
+                  setSelectedStreams(
+                    checked ? new Set(sortedStreams.map((s) => s.logStreamName ?? "")) : new Set(),
+                  )
+                }
+              />
+            ),
+            cell: (s) => (
+              <label
+                className="flex cursor-pointer items-center justify-center p-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <SelectCheckbox
+                  label={`Select ${s.logStreamName ?? ""}`}
+                  checked={selectedStreams.has(s.logStreamName ?? "")}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(selectedStreams)
+                    if (checked) next.add(s.logStreamName ?? "")
+                    else next.delete(s.logStreamName ?? "")
+                    setSelectedStreams(next)
+                  }}
+                />
+              </label>
+            ),
+          },
+          {
+            id: "name",
+            header: "Stream Name",
+            cellClassName: "font-medium",
+            // The identity column; the checkbox in front of it is why this
+            // needs saying rather than falling out of "index 0".
+            hideable: false,
+            sortValue: (s) => s.logStreamName,
+            cell: (s) => <span title={s.logStreamName}>{s.logStreamName}</span>,
+          },
+          {
+            id: "created",
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (s) => s.creationTime,
+            cell: (s) => formatLogDate(s.creationTime),
+          },
+          {
+            id: "last-event",
+            header: "Last Event",
+            cellClassName: "text-fg-muted",
+            sortValue: (s) => s.lastEventTimestamp,
+            cell: (s) => formatLogDate(s.lastEventTimestamp),
+          },
+          {
+            id: "last-ingestion",
+            header: "Last Ingestion",
+            cellClassName: "text-fg-muted",
+            sortValue: (s) => s.lastIngestionTime,
+            cell: (s) => formatLogDate(s.lastIngestionTime),
+          },
+        ]}
+        // Sub-table on a detail page: no columns menu, no deep-linked sort.
+        columnToggle={false}
+        rowActions={(s) => (
+          <RowAction
+            label={`Delete ${s.logStreamName ?? ""}`}
+            tone="danger"
+            onClick={() => setDeleteStreamTarget(s.logStreamName)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </RowAction>
+        )}
+      />
 
       {/* ── Create stream dialog ── */}
       <CreateStreamDialog
