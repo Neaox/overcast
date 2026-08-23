@@ -16,15 +16,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -33,20 +24,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
-export function DistributionList() {
+interface DistributionListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function DistributionList({ sort, onSortChange }: DistributionListProps) {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
@@ -106,94 +102,86 @@ export function DistributionList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || distributions.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={distributions.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Globe className="h-10 w-10" />}
-                title="No distributions yet"
-                description="Create a CloudFront distribution to serve content from your origins."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>
-                    Create distribution
-                  </CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load distributions"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Domain name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead>Origins</TableHead>
-                <TableHead>Comment</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {distributions.map((d) => (
-                <TableRow
-                  key={d.id}
-                  onClick={() =>
-                    navigate({
-                      to: "/cloudfront/$distributionId",
-                      params: { distributionId: d.id },
-                    })
-                  }
-                >
-                  <TableCell>
-                    <ResourceName icon={Globe} name={d.id} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{d.domainName}</TableCell>
-                  <TableCell>
-                    <Badge variant={d.status === "Deployed" ? "success" : "warning"}>
-                      {d.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={d.enabled ? "accent" : "default"}>
-                      {d.enabled ? "Yes" : "No"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{d.origins.length}</TableCell>
-                  <TableCellProse className="max-w-xs truncate">{d.comment}</TableCellProse>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <RowActions>
-                      <RowAction
-                        label={`View ${d.id}`}
-                        onClick={() =>
-                          navigate({
-                            to: "/cloudfront/$distributionId",
-                            params: { distributionId: d.id },
-                          })
-                        }
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${d.id}`}
-                        tone="danger"
-                        onClick={() => void handleDelete(d.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <ResourceTable
+        query={{ data: distributions, isLoading, error }}
+        noun="distributions"
+        emptyIcon={Globe}
+        emptyTitle="No distributions yet"
+        emptyDescription="Create a CloudFront distribution to serve content from your origins."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create distribution</CreateAction>
+        }
+        errorTitle="Failed to load distributions"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(d) => d.id}
+        onRowClick={(d) =>
+          navigate({ to: "/cloudfront/$distributionId", params: { distributionId: d.id } })
+        }
+        columns={[
+          {
+            id: "id",
+            header: "ID",
+            sortValue: (d) => d.id,
+            cell: (d) => <ResourceName icon={Globe} name={d.id} />,
+          },
+          {
+            id: "domain-name",
+            header: "Domain name",
+            cellClassName: "text-fg-muted",
+            sortValue: (d) => d.domainName,
+            cell: (d) => d.domainName,
+          },
+          {
+            header: "Status",
+            cell: (d) => (
+              <Badge variant={d.status === "Deployed" ? "success" : "warning"}>{d.status}</Badge>
+            ),
+          },
+          {
+            header: "Enabled",
+            cell: (d) => (
+              <Badge variant={d.enabled ? "accent" : "default"}>{d.enabled ? "Yes" : "No"}</Badge>
+            ),
+          },
+          {
+            id: "origins",
+            header: "Origins",
+            cellClassName: "text-fg-muted",
+            sortValue: (d) => d.origins.length,
+            cell: (d) => d.origins.length,
+          },
+          {
+            header: "Comment",
+            prose: true,
+            cellClassName: "max-w-xs truncate",
+            cell: (d) => d.comment,
+          },
+        ]}
+        // The delete flow needs the distribution's ETag, which only GetDistribution
+        // returns — so it is an async lookup before the confirm, not the
+        // `onDelete` shape (a synchronous row → id → `mutate(id)`). Both actions
+        // therefore stay in `rowActions` with the page's own ConfirmDialog below.
+        rowActions={(d) => (
+          <>
+            <RowAction
+              label={`View ${d.id}`}
+              onClick={() =>
+                navigate({ to: "/cloudfront/$distributionId", params: { distributionId: d.id } })
+              }
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </RowAction>
+            <RowAction
+              label={`Delete ${d.id}`}
+              tone="danger"
+              onClick={() => void handleDelete(d.id)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </RowAction>
+          </>
         )}
-      </ResourceListCard>
+      />
 
       {/* ── Create distribution dialog ── */}
       <CreateDistributionDialog

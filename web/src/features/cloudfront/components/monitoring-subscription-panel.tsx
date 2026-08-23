@@ -20,6 +20,9 @@ export function MonitoringSubscriptionPanel({ distributionId }: { distributionId
   const status = data.realtimeMetricsSubscriptionStatus
   const isEnabled = status === "Enabled"
 
+  // ResourceTable didn't fit because there is no list here: GetMonitoringSubscription
+  // returns a single setting, and this renders it as one fixed label/value row.
+  // Nothing to sort, hide, click or delete. See CONTRIBUTING § Tables.
   return (
     <div className="rounded-md border border-border">
       <Table>

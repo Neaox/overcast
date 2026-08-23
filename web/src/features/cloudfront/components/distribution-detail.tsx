@@ -13,15 +13,8 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableCellProse, TableRow } from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogBody,
@@ -44,9 +37,11 @@ export function DistributionDetail() {
     cloudfrontDistributionQueryOptions(distributionId),
   )
 
-  const { data: invalidations = [], isLoading: invalidationsLoading } = useQuery(
-    cloudfrontInvalidationsQueryOptions(distributionId),
-  )
+  const {
+    data: invalidations = [],
+    isLoading: invalidationsLoading,
+    error: invalidationsError,
+  } = useQuery(cloudfrontInvalidationsQueryOptions(distributionId))
 
   const invalidateMut = useResourceMutation({
     options: createInvalidationMutationOptions(distributionId),
@@ -109,6 +104,9 @@ export function DistributionDetail() {
 
         {/* ── Config tab ── */}
         <TabPanel id="config">
+          {/* ResourceTable didn't fit because this is not a resource list: it is a
+              fixed label/value grid of one distribution's attributes, with no rows
+              to sort, hide or act on. See CONTRIBUTING § Tables. */}
           <div className="rounded-md border border-border">
             <Table>
               <TableBody>
@@ -159,30 +157,43 @@ export function DistributionDetail() {
 
         {/* ── Origins tab ── */}
         <TabPanel id="origins">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Origin ID</TableHead>
-                <TableHead>Domain Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Path</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {dist.origins.map((origin) => (
-                <TableRow key={origin.id}>
-                  <TableCell>{origin.id}</TableCell>
-                  <TableCell>{origin.domainName}</TableCell>
-                  <TableCell>
-                    <Badge variant={origin.s3OriginConfig ? "info" : "default"}>
-                      {origin.s3OriginConfig ? "S3" : "Custom"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{origin.originPath || "/"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ResourceTable
+            variant="embedded"
+            query={{ data: dist.origins, isLoading: false }}
+            noun="origins"
+            emptyTitle="No origins"
+            // A sub-table on a detail page: four columns, all of them the reason
+            // the tab exists, so there is nothing a columns menu would help with.
+            columnToggle={false}
+            rowKey={(origin) => origin.id}
+            columns={[
+              {
+                id: "origin-id",
+                header: "Origin ID",
+                sortValue: (origin) => origin.id,
+                cell: (origin) => origin.id,
+              },
+              {
+                id: "domain-name",
+                header: "Domain Name",
+                sortValue: (origin) => origin.domainName,
+                cell: (origin) => origin.domainName,
+              },
+              {
+                header: "Type",
+                cell: (origin) => (
+                  <Badge variant={origin.s3OriginConfig ? "info" : "default"}>
+                    {origin.s3OriginConfig ? "S3" : "Custom"}
+                  </Badge>
+                ),
+              },
+              {
+                header: "Path",
+                cellClassName: "text-fg-muted",
+                cell: (origin) => origin.originPath || "/",
+              },
+            ]}
+          />
 
           {/* Origin groups give a behavior a primary and a failover origin, so
               the origin list alone does not explain where traffic goes. Only
@@ -190,93 +201,102 @@ export function DistributionDetail() {
           {dist.originGroups.length > 0 && (
             <div className="mt-6">
               <h3 className="mb-2 text-sm font-medium">Origin Groups</h3>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Group ID</TableHead>
-                    <TableHead>Primary</TableHead>
-                    <TableHead>Failover</TableHead>
-                    <TableHead>Failover On</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {dist.originGroups.map((group) => (
-                    <TableRow key={group.id}>
-                      <TableCell>{group.id}</TableCell>
-                      <TableCell>{group.members[0] ?? "—"}</TableCell>
-                      <TableCell className="text-fg-muted">
-                        {group.members.slice(1).join(", ") || "—"}
-                      </TableCell>
-                      <TableCell>
-                        {group.failoverStatusCodes.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {group.failoverStatusCodes.map((code) => (
-                              <Badge key={code} variant="default">
-                                {code}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-fg-muted">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ResourceTable
+                variant="embedded"
+                query={{ data: dist.originGroups, isLoading: false }}
+                noun="origin groups"
+                emptyTitle="No origin groups"
+                columnToggle={false}
+                rowKey={(group) => group.id}
+                columns={[
+                  {
+                    id: "group-id",
+                    header: "Group ID",
+                    sortValue: (group) => group.id,
+                    cell: (group) => group.id,
+                  },
+                  { header: "Primary", cell: (group) => group.members[0] ?? "—" },
+                  {
+                    header: "Failover",
+                    cellClassName: "text-fg-muted",
+                    cell: (group) => group.members.slice(1).join(", ") || "—",
+                  },
+                  {
+                    header: "Failover On",
+                    cell: (group) =>
+                      group.failoverStatusCodes.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {group.failoverStatusCodes.map((code) => (
+                            <Badge key={code} variant="default">
+                              {code}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-fg-muted">—</span>
+                      ),
+                  },
+                ]}
+              />
             </div>
           )}
         </TabPanel>
 
         {/* ── Invalidations tab ── */}
         <TabPanel id="invalidations">
-          {invalidationsLoading ? (
-            <div className="flex justify-center py-8">
-              <Spinner className="h-5 w-5" />
-            </div>
-          ) : invalidations.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-fg-muted">
-              <p>No invalidations yet</p>
+          <ResourceTable
+            variant="embedded"
+            query={{
+              data: invalidations,
+              isLoading: invalidationsLoading,
+              error: invalidationsError,
+            }}
+            noun="invalidations"
+            emptyTitle="No invalidations yet"
+            emptyAction={
               <Button size="sm" variant="outline" onClick={() => setShowInvalidate(true)}>
                 Create Invalidation
               </Button>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Paths</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {invalidations.map((inv) => (
-                  <TableRow key={inv.id}>
-                    <TableCell>{inv.id}</TableCell>
-                    <TableCell>
-                      <Badge variant={inv.status === "Completed" ? "success" : "warning"}>
-                        {inv.status}
+            }
+            errorTitle="Failed to load invalidations"
+            columnToggle={false}
+            rowKey={(inv) => inv.id}
+            columns={[
+              {
+                id: "id",
+                header: "ID",
+                sortValue: (inv) => inv.id,
+                cell: (inv) => inv.id,
+              },
+              {
+                header: "Status",
+                cell: (inv) => (
+                  <Badge variant={inv.status === "Completed" ? "success" : "warning"}>
+                    {inv.status}
+                  </Badge>
+                ),
+              },
+              {
+                id: "created",
+                header: "Created",
+                cellClassName: "text-fg-muted",
+                sortValue: (inv) => (inv.createTime ? new Date(inv.createTime) : undefined),
+                cell: (inv) => (inv.createTime ? new Date(inv.createTime).toLocaleString() : "—"),
+              },
+              {
+                header: "Paths",
+                cell: (inv) => (
+                  <div className="flex flex-wrap gap-1">
+                    {inv.paths.map((p) => (
+                      <Badge key={p} variant="default" className="font-mono text-xs">
+                        {p}
                       </Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {inv.createTime ? new Date(inv.createTime).toLocaleString() : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {inv.paths.map((p) => (
-                          <Badge key={p} variant="default" className="font-mono text-xs">
-                            {p}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+                    ))}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </TabPanel>
 
         {/* ── Monitoring tab ── */}

@@ -29,6 +29,7 @@
 > one engine shared by every list instead of four ad-hoc sort states; `hooks/use-sort-search-param.ts`
 > deep-links the sort as `?sort=name` / `?sort=-name` (JSON:API's leading-dash form) the way
 > `useFilterSearchParam` deep-links `q`.
+> **2026-08-23 (#1327 waves B/C — CloudFront):** the six CloudFront list pages (`distribution-list`, `continuous-deployment-policy-list`, `fle-config-list`, `fle-profile-list`, `key-group-list`, `realtime-log-config-list`) and the `distribution-detail` Origins / Origin Groups / Invalidations sub-tables are on `ResourceTable`, with `?sort=` deep-linked from `routes/cloudfront/*`; `monitoring-subscription-panel` and the distribution's Configuration grid stay bespoke as label/value views, each with the CONTRIBUTING § Tables reason in a comment.
 > See P3 for the feature set, the state-ownership split and the bundle numbers; #1327's waves B–D
 > move the remaining 55 bespoke `<Table>` sites onto it. **2026-08-23 (#1327 waves B/C, compute
 > family):** `lambda/function-list`, `lambda/layer-list`, `ecs/cluster-list`,
