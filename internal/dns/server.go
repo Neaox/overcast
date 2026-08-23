@@ -190,7 +190,15 @@ func (s *Server) listenOn(udpAddr *net.UDPAddr) error {
 	if err != nil {
 		return fmt.Errorf("dns: listen udp %s: %w", s.addr, err)
 	}
-	tcp, err := s.listenTCP("tcp", net.JoinHostPort(udpAddr.IP.String(), strconv.Itoa(udpAddr.Port)))
+	// A wildcard bind — ":53", the containerised deployment's address — parses
+	// to a UDPAddr with a nil IP, and a nil IP's String() is the literal
+	// "<nil>": joining that with the port asked the TCP listener for a host
+	// actually named "<nil>". Keep the wildcard a wildcard.
+	tcpHost := ""
+	if udpAddr.IP != nil {
+		tcpHost = udpAddr.IP.String()
+	}
+	tcp, err := s.listenTCP("tcp", net.JoinHostPort(tcpHost, strconv.Itoa(udpAddr.Port)))
 	if err != nil {
 		_ = udp.Close()
 		return fmt.Errorf("dns: listen tcp %s: %w", s.addr, err)
