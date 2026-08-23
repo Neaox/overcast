@@ -1,38 +1,31 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Bell, Eye, Trash2 } from "lucide-react"
+import { Bell, Eye } from "lucide-react"
 import { snsTopicsQueryOptions, snsKeys, deleteTopicMutationOptions } from "@/features/sns/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, EmptyState } from "@/components/ui/primitives"
-import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CreateTopicDialog } from "./create-topic-dialog"
 import { ArnText } from "@/components/ui/arn-link"
 
+/** `arn:aws:sns:us-east-1:000000000000:alerts` → `alerts`. */
+function topicNameOf(topic: { TopicArn?: string }): string {
+  return topic.TopicArn?.split(":").pop() ?? ""
+}
+
 export function TopicList() {
   const navigate = useNavigate()
 
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -42,6 +35,8 @@ export function TopicList() {
     refetch,
     error,
   } = useQuery(snsTopicsQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof topics)[number]>()
 
   const deleteMut = useResourceMutation({
     options: deleteTopicMutationOptions(),
@@ -72,90 +67,62 @@ export function TopicList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || topics.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={topics.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Bell className="h-10 w-10" />}
-                title="No topics yet"
-                description="Create a topic to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create topic</CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load topics"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>ARN</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {topics.map((topic) => {
-                const topicName = topic.TopicArn?.split(":").pop() ?? ""
-                return (
-                  <TableRow
-                    key={topic.TopicArn}
-                    onClick={() => navigate({ to: "/sns/$topic", params: { topic: topicName } })}
-                  >
-                    <TableCell>
-                      <ResourceName icon={Bell} name={topicName} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      <ArnText arn={topic.TopicArn ?? ""} />
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`View ${topicName}`}
-                          onClick={() =>
-                            navigate({ to: "/sns/$topic", params: { topic: topicName } })
-                          }
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${topicName}`}
-                          tone="danger"
-                          onClick={() => setDeleteTarget(topicName)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+      <ResourceTable
+        query={{ data: topics, isLoading, error }}
+        noun="topics"
+        emptyIcon={Bell}
+        emptyTitle="No topics yet"
+        emptyDescription="Create a topic to get started."
+        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create topic</CreateAction>}
+        errorTitle="Failed to load topics"
+        // ListTopics returns the emulator's own storage order, which is not
+        // stable across refetches; A→Z is the order a name column implies.
+        defaultSort={{ id: "name", desc: false }}
+        rowKey={(topic) => topic.TopicArn ?? ""}
+        onRowClick={(topic) =>
+          navigate({ to: "/sns/$topic", params: { topic: topicNameOf(topic) } })
+        }
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (topic) => topicNameOf(topic),
+            cell: (topic) => <ResourceName icon={Bell} name={topicNameOf(topic)} />,
+          },
+          {
+            header: "ARN",
+            cellClassName: "text-fg-muted",
+            cell: (topic) => <ArnText arn={topic.TopicArn ?? ""} />,
+          },
+        ]}
+        rowActions={(topic) => (
+          <RowAction
+            label={`View ${topicNameOf(topic)}`}
+            onClick={() => navigate({ to: "/sns/$topic", params: { topic: topicNameOf(topic) } })}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (topic) => topicNameOf(topic),
+          label: (topic) => topicNameOf(topic),
+          noun: "topic",
+          title: "Delete topic?",
+          description: (topic) => (
+            <>
+              This will permanently delete{" "}
+              <span className="font-mono font-medium">{topicNameOf(topic)}</span> and all its
+              subscriptions.
+            </>
+          ),
+        }}
+      />
 
       <CreateTopicDialog open={showCreate} onOpenChange={setShowCreate} />
-
-      {/* Confirm delete dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete topic?"
-        description={
-          <>
-            This will permanently delete{" "}
-            <span className="font-mono font-medium">{deleteTarget}</span> and all its subscriptions.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
-      />
     </ResourceListPage>
   )
 }

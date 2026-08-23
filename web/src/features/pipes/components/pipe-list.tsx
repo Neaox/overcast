@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GitBranch, Trash2, ArrowRight, Check, AlertCircle } from "lucide-react"
+import { GitBranch, ArrowRight, Check, AlertCircle } from "lucide-react"
 import { SERVICES } from "@/lib/service-registry"
 import {
   pipeListQueryOptions,
@@ -25,31 +25,20 @@ import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
 import { Combobox } from "@/components/ui/combobox"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
-  RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { useToast } from "@/components/ui/toast"
@@ -115,7 +104,8 @@ function ArnPicker({
       }}
       items={candidates}
       filterFn={(c, q) =>
-        c.label.toLowerCase().includes(q.toLowerCase()) || c.arn.toLowerCase().includes(q.toLowerCase())
+        c.label.toLowerCase().includes(q.toLowerCase()) ||
+        c.arn.toLowerCase().includes(q.toLowerCase())
       }
       getItemValue={(c) => c.arn}
       isItemDisabled={(c) => c.disabledReason}
@@ -189,8 +179,7 @@ export function CreatePipeDialog({
   })
   const { data: buses = [] } = useQuery({ ...ebBusesQueryOptions(), enabled: open })
 
-  const resourcesLoading =
-    tablesLoading || queuesLoading || streamsLoading || functionsLoading
+  const resourcesLoading = tablesLoading || queuesLoading || streamsLoading || functionsLoading
 
   // Candidate lists mirror what the emulator accepts for each leg.
   const sourceCandidates: Candidate[] = useMemo(
@@ -334,7 +323,9 @@ export function CreatePipeDialog({
                   label="Resource"
                   required
                   hint="A DynamoDB stream, a Kinesis stream or an SQS queue. Search by name or paste an ARN."
-                  error={field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined}
+                  error={
+                    field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined
+                  }
                 >
                   {sourceCandidates.length === 0 && !resourcesLoading ? (
                     <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
@@ -404,7 +395,9 @@ export function CreatePipeDialog({
                   label="Resource"
                   required
                   hint="Lambda, SQS, SNS, Step Functions, Kinesis, Firehose or an EventBridge bus."
-                  error={field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined}
+                  error={
+                    field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined
+                  }
                 >
                   <ArnPicker
                     candidates={targetCandidates}
@@ -473,7 +466,6 @@ export function PipeList() {
 
   const [showCreate, setShowCreate] = useState(false)
   const [initialSourceArn, setInitialSourceArn] = useState("")
-  const [deleteTarget, setDeleteTarget] = useState<string>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   // React to hash changes via the router location — covers both initial load
@@ -511,6 +503,8 @@ export function PipeList() {
     refetch,
     error,
   } = useQuery(pipeListQueryOptions())
+
+  const [deleteTarget, setDeleteTarget] = useState<(typeof pipes)[number]>()
 
   // The wiring feed is what stops an unsupported combination being presented as
   // if it were running: a pipe stored by an older build can read RUNNING while
@@ -555,99 +549,88 @@ export function PipeList() {
         </>
       }
     >
-      <ResourceListCard>
-        {isLoading || pipes.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={pipes.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<GitBranch className="h-10 w-10" />}
-                title="No pipes yet"
-                description="Create a pipe to route DynamoDB, Kinesis or SQS records to a target."
-                action={<CreateAction onClick={openCreate}>Create pipe</CreateAction>}
-              />
-            }
-            errorTitle="Failed to load pipes"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Source → target</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pipes.map((p) => {
-                const w = wiringByName.get(p.Name ?? "")
-                return (
-                  <TableRow
-                    key={p.Name}
-                    onClick={() =>
-                      navigate({ to: "/pipes/$pipeName", params: { pipeName: p.Name ?? "" } })
-                    }
-                  >
-                    <TableCell>
-                      <ResourceName icon={GitBranch} name={p.Name} />
-                    </TableCell>
-                    <TableCell>
-                      <span className="flex items-center gap-1.5 font-mono text-xs">
-                        <span className="text-fg" title={p.Source}>
-                          {w?.SourceType ?? p.Source}
-                        </span>
-                        {w?.Enrichment ? (
-                          <>
-                            <ArrowRight className="h-3 w-3 text-fg-muted" />
-                            <span className="text-fg" title={w.Enrichment}>
-                              {w.EnrichmentType}
-                            </span>
-                          </>
-                        ) : null}
-                        <ArrowRight className="h-3 w-3 text-fg-muted" />
-                        <span className="text-fg" title={p.Target}>
-                          {w?.TargetType ?? p.Target}
-                        </span>
+      <ResourceTable
+        query={{ data: pipes, isLoading, error }}
+        noun="pipes"
+        emptyIcon={GitBranch}
+        emptyTitle="No pipes yet"
+        emptyDescription="Create a pipe to route DynamoDB, Kinesis or SQS records to a target."
+        emptyAction={<CreateAction onClick={openCreate}>Create pipe</CreateAction>}
+        errorTitle="Failed to load pipes"
+        // ListPipes returns the emulator's storage order; A→Z is what a name
+        // column implies. Created is sortable for "what did I just make".
+        defaultSort={{ id: "name", desc: false }}
+        // Four columns, all primary — a Columns menu here is clutter, not an offer.
+        columnToggle={false}
+        rowKey={(p) => p.Name ?? ""}
+        onRowClick={(p) => navigate({ to: "/pipes/$pipeName", params: { pipeName: p.Name ?? "" } })}
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (p) => p.Name,
+            cell: (p) => <ResourceName icon={GitBranch} name={p.Name} />,
+          },
+          {
+            header: "Source → target",
+            cell: (p) => {
+              const w = wiringByName.get(p.Name ?? "")
+              return (
+                <span className="flex items-center gap-1.5 font-mono text-xs">
+                  <span className="text-fg" title={p.Source}>
+                    {w?.SourceType ?? p.Source}
+                  </span>
+                  {w?.Enrichment ? (
+                    <>
+                      <ArrowRight className="h-3 w-3 text-fg-muted" />
+                      <span className="text-fg" title={w.Enrichment}>
+                        {w.EnrichmentType}
                       </span>
-                    </TableCell>
-                    <TableCell>
-                      {/*
-                        A pipe the emulator cannot run must not read RUNNING —
-                        that is the failure this view exists to make visible.
-                      */}
-                      {w && !w.Wired ? (
-                        <Badge variant="danger" title={w.Reason}>
-                          not wired
-                        </Badge>
-                      ) : (
-                        <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {p.CreationTime?.toLocaleString()}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        <RowAction
-                          label={`Delete ${p.Name ?? "pipe"}`}
-                          tone="danger"
-                          onClick={() => setDeleteTarget(p.Name)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+                    </>
+                  ) : null}
+                  <ArrowRight className="h-3 w-3 text-fg-muted" />
+                  <span className="text-fg" title={p.Target}>
+                    {w?.TargetType ?? p.Target}
+                  </span>
+                </span>
+              )
+            },
+          },
+          {
+            header: "State",
+            cell: (p) => {
+              const w = wiringByName.get(p.Name ?? "")
+              // A pipe the emulator cannot run must not read RUNNING — that is
+              // the failure this view exists to make visible.
+              return w && !w.Wired ? (
+                <Badge variant="danger" title={w.Reason}>
+                  not wired
+                </Badge>
+              ) : (
+                <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
+              )
+            },
+          },
+          {
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (p) => p.CreationTime,
+            cell: (p) => p.CreationTime?.toLocaleString(),
+          },
+        ]}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (p) => p.Name ?? "",
+          label: (p) => p.Name ?? "pipe",
+          noun: "pipe",
+          title: "Delete Pipe",
+          description: (p) =>
+            `Are you sure you want to delete ${p.Name}? In-flight events will not be delivered.`,
+        }}
+      />
 
       {/* Create pipe dialog */}
       <CreatePipeDialog
@@ -658,18 +641,6 @@ export function PipeList() {
           void qc.invalidateQueries({ queryKey: pipeKeys.all() })
           toast({ title: "Pipe created", description: name, variant: "success" })
         }}
-      />
-
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete Pipe"
-        description={`Are you sure you want to delete ${deleteTarget}? In-flight events will not be delivered.`}
-        confirmLabel="Delete"
-        variant="danger"
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )
