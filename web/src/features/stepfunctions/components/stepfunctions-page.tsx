@@ -15,7 +15,7 @@ import {
   ResourceListFilter,
   ResourceListPage,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
@@ -25,9 +25,17 @@ interface StepFunctionsPageProps {
   /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
   filter: string
   onFilterChange: (value: string) => void
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
 }
 
-export function StepFunctionsPage({ filter, onFilterChange }: StepFunctionsPageProps) {
+export function StepFunctionsPage({
+  filter,
+  onFilterChange,
+  sort,
+  onSortChange,
+}: StepFunctionsPageProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
@@ -89,12 +97,15 @@ export function StepFunctionsPage({ filter, onFilterChange }: StepFunctionsPageP
         emptyAction={
           <CreateAction onClick={() => setShowCreate(true)}>Create State Machine</CreateAction>
         }
+        sort={sort}
+        onSortChange={onSortChange}
         isFiltered={!!filter}
         onClearFilter={() => onFilterChange("")}
         rowKey={(sm) => sm.stateMachineArn ?? ""}
         columns={[
           {
             header: "Name",
+            sortValue: (sm) => sm.name,
             cell: (sm) => (
               <Link
                 className="font-medium text-accent hover:underline"

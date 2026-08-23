@@ -114,7 +114,12 @@ export function SecretsManagerPage() {
           })
         }
         columns={[
-          { header: "Name", cellClassName: "font-medium", cell: (sec) => sec.Name },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (sec) => sec.Name,
+            cell: (sec) => sec.Name,
+          },
           {
             header: "Description",
             prose: true,
@@ -123,6 +128,7 @@ export function SecretsManagerPage() {
           {
             header: "Last changed",
             cellClassName: "text-fg-muted",
+            sortValue: (sec) => sec.LastChangedDate,
             cell: (sec) => formatDate(sec.LastChangedDate),
           },
         ]}

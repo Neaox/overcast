@@ -95,6 +95,7 @@ export function SesPage() {
           {
             header: "Identity",
             cellClassName: "font-medium",
+            sortValue: (id) => id.IdentityName,
             cell: (id) => id.IdentityName,
           },
           {

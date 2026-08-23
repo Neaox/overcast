@@ -138,7 +138,7 @@ function BusesTab({ filter, onFilterChange }: FilterProps) {
           navigate({ to: "/eventbridge/$busName", params: { busName: bus.Name ?? "" } })
         }
         columns={[
-          { header: "Name", cell: (bus) => bus.Name },
+          { header: "Name", sortValue: (bus) => bus.Name, cell: (bus) => bus.Name },
           { header: "ARN", cellClassName: "text-fg-muted", cell: (bus) => bus.Arn },
         ]}
         rowActions={(bus) => (
@@ -239,7 +239,7 @@ function RulesTab({ filter, onFilterChange }: FilterProps) {
         onClearFilter={() => onFilterChange("")}
         rowKey={(rule) => rule.Name ?? ""}
         columns={[
-          { header: "Name", cell: (rule) => rule.Name },
+          { header: "Name", sortValue: (rule) => rule.Name, cell: (rule) => rule.Name },
           {
             header: "Event Bus",
             cellClassName: "text-fg-muted",

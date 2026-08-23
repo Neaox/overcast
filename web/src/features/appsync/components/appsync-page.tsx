@@ -15,7 +15,7 @@ import {
   ResourceListFilter,
   ResourceListPage,
 } from "@/components/ui/resource-list-page"
-import { ResourceTable } from "@/components/ui/resource-table"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
@@ -24,9 +24,12 @@ interface AppSyncPageProps {
   /** Current filter text — owned by the route's `q` search param, see `useFilterSearchParam`. */
   filter: string
   onFilterChange: (value: string) => void
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
 }
 
-export function AppSyncPage({ filter, onFilterChange }: AppSyncPageProps) {
+export function AppSyncPage({ filter, onFilterChange, sort, onSortChange }: AppSyncPageProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
   const navigate = useNavigate()
@@ -83,6 +86,8 @@ export function AppSyncPage({ filter, onFilterChange }: AppSyncPageProps) {
         emptyTitle="No GraphQL APIs"
         emptyDescription="Create a GraphQL API to get started."
         emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create API</CreateAction>}
+        sort={sort}
+        onSortChange={onSortChange}
         isFiltered={!!filter}
         onClearFilter={() => onFilterChange("")}
         rowKey={(api) => api.apiId ?? ""}
@@ -90,7 +95,7 @@ export function AppSyncPage({ filter, onFilterChange }: AppSyncPageProps) {
           navigate({ to: "/appsync/$apiId", params: { apiId: api.apiId ?? "" } })
         }
         columns={[
-          { header: "Name", cell: (api) => api.name },
+          { header: "Name", sortValue: (api) => api.name, cell: (api) => api.name },
           { header: "API ID", cellClassName: "text-fg-muted", cell: (api) => api.apiId },
           {
             header: "Auth Type",

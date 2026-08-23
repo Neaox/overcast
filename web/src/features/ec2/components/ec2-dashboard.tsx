@@ -201,6 +201,7 @@ function InstancesPanel() {
         columns={[
           {
             header: "Instance ID",
+            sortValue: (i) => i.instanceId,
             cell: (i) => (
               <Link
                 to="/ec2/$instanceId"
@@ -222,6 +223,7 @@ function InstancesPanel() {
           {
             header: "Launch Time",
             cellClassName: "text-fg-muted",
+            sortValue: (i) => (i.launchTime ? new Date(i.launchTime) : undefined),
             cell: (i) => (i.launchTime ? new Date(i.launchTime).toLocaleString() : "—"),
           },
         ]}
@@ -328,6 +330,7 @@ function VpcsPanel() {
         columns={[
           {
             header: "VPC ID",
+            sortValue: (v) => v.vpcId,
             cell: (v) => (
               <Link
                 to="/ec2/vpc/$vpcId"
@@ -432,8 +435,13 @@ function SecurityGroupsPanel() {
         }
         rowKey={(sg) => sg.groupId}
         columns={[
-          { header: "Group ID", cell: (sg) => sg.groupId },
-          { header: "Name", cellClassName: "font-medium", cell: (sg) => sg.groupName },
+          { header: "Group ID", sortValue: (sg) => sg.groupId, cell: (sg) => sg.groupId },
+          {
+            header: "Name",
+            cellClassName: "font-medium",
+            sortValue: (sg) => sg.groupName,
+            cell: (sg) => sg.groupName,
+          },
           {
             header: "Description",
             prose: true,
@@ -842,7 +850,11 @@ function ElasticIpsPanel() {
         }
         rowKey={(eip) => eip.allocationId}
         columns={[
-          { header: "Allocation ID", cell: (eip) => eip.allocationId },
+          {
+            header: "Allocation ID",
+            sortValue: (eip) => eip.allocationId,
+            cell: (eip) => eip.allocationId,
+          },
           { header: "Public IP", cell: (eip) => eip.publicIp },
           { header: "Domain", cell: (eip) => <Badge variant="default">{eip.domain}</Badge> },
           {
@@ -1025,7 +1037,11 @@ function NatGatewaysPanel() {
         }
         rowKey={(ngw) => ngw.natGatewayId}
         columns={[
-          { header: "NAT Gateway ID", cell: (ngw) => ngw.natGatewayId },
+          {
+            header: "NAT Gateway ID",
+            sortValue: (ngw) => ngw.natGatewayId,
+            cell: (ngw) => ngw.natGatewayId,
+          },
           { header: "State", cell: (ngw) => <NatGatewayStateBadge state={ngw.state} /> },
           { header: "VPC ID", cellClassName: "text-fg-muted", cell: (ngw) => ngw.vpcId },
           { header: "Subnet ID", cellClassName: "text-fg-muted", cell: (ngw) => ngw.subnetId },
@@ -1037,6 +1053,7 @@ function NatGatewaysPanel() {
           {
             header: "Created",
             cellClassName: "text-fg-muted",
+            sortValue: (ngw) => (ngw.createTime ? new Date(ngw.createTime) : undefined),
             cell: (ngw) => (ngw.createTime ? new Date(ngw.createTime).toLocaleString() : "—"),
           },
         ]}

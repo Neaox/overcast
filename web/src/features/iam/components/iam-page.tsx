@@ -147,7 +147,7 @@ function UsersTab({ filter, onFilterChange }: FilterProps) {
         onClearFilter={() => onFilterChange("")}
         rowKey={(u) => u.UserName ?? ""}
         columns={[
-          { header: "User Name", cell: (u) => u.UserName },
+          { header: "User Name", sortValue: (u) => u.UserName, cell: (u) => u.UserName },
           { header: "ARN", cellClassName: "text-fg-muted", cell: (u) => u.Arn },
           { header: "Path", cell: (u) => u.Path },
         ]}
@@ -241,7 +241,7 @@ function RolesTab({ filter, onFilterChange }: FilterProps) {
         onClearFilter={() => onFilterChange("")}
         rowKey={(r) => r.RoleName ?? ""}
         columns={[
-          { header: "Role Name", cell: (r) => r.RoleName },
+          { header: "Role Name", sortValue: (r) => r.RoleName, cell: (r) => r.RoleName },
           { header: "ARN", cellClassName: "text-fg-muted", cell: (r) => r.Arn },
           { header: "Path", cell: (r) => r.Path },
         ]}
@@ -335,9 +335,13 @@ function PoliciesTab({ filter, onFilterChange }: FilterProps) {
         onClearFilter={() => onFilterChange("")}
         rowKey={(p) => p.PolicyName ?? ""}
         columns={[
-          { header: "Policy Name", cell: (p) => p.PolicyName },
+          { header: "Policy Name", sortValue: (p) => p.PolicyName, cell: (p) => p.PolicyName },
           { header: "ARN", cellClassName: "text-fg-muted", cell: (p) => p.Arn },
-          { header: "Attachments", cell: (p) => p.AttachmentCount },
+          {
+            header: "Attachments",
+            sortValue: (p) => p.AttachmentCount,
+            cell: (p) => p.AttachmentCount,
+          },
         ]}
         onDelete={{
           target: deleteTarget,
@@ -468,6 +472,7 @@ function GroupsTab({ filter, onFilterChange }: FilterProps) {
         columns={[
           {
             header: "Group Name",
+            sortValue: (g) => g.GroupName,
             cell: (g) => {
               const name = g.GroupName ?? ""
               const isExpanded = expanded === name
