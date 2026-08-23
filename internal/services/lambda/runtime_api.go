@@ -173,6 +173,18 @@ type RuntimeAPIServer struct {
 	// registration, and the INIT output would land after the first START.
 	// The port is the same authority containerForRequestLocked prefers anyway.
 	logSinks map[int]*logSink
+	// initRecords is the init-phase platform events a container has published,
+	// keyed by container IP, held so a subscription that does not exist yet
+	// still receives them.
+	//
+	// It exists because of when those three events happen. platform.initStart
+	// is emitted before the extensions are even started, and initRuntimeDone /
+	// initReport can beat an extension that is still registering — yet AWS
+	// delivers all three to a Telemetry subscriber, because an extension's
+	// whole job is to be told about the phase it was started in. Without this
+	// they would be published to nobody and lost. The buffer holds only those
+	// three: every later record is emitted while subscriptions are live.
+	initRecords map[string][]json.RawMessage
 	// server fronts every listener the caller bound, plus every per-environment
 	// listener added since; http.Server tracks them itself, so Stop's Shutdown
 	// closes them all and nothing here needs to hold them.
@@ -253,6 +265,7 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 		ready:            make(map[string]chan struct{}),
 		containerPorts:   make(map[int]string),
 		logSinks:         make(map[int]*logSink),
+		initRecords:      make(map[string][]json.RawMessage),
 		logger:           logger,
 		addr:             containerAddr,
 		containerHost:    containerHost,
@@ -605,6 +618,7 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	delete(s.seenNext, containerIP)
 	delete(s.firstNextAt, containerIP)
 	delete(s.ready, containerIP)
+	delete(s.initRecords, containerIP)
 	// Any per-environment listener still pointing here goes with it. The
 	// listener is normally closed by containerInstance.Close, which drops its
 	// own entry; this covers an environment retired without one and keeps a
@@ -1092,14 +1106,22 @@ func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r
 	}
 	s.mu.Lock()
 	ext, ok := s.extensions[id]
+	var containerIP, deliveryURI string
 	if ok {
-		deliveryURI := normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
+		deliveryURI = normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
 		ext.Logs = &extensionLogsSubscription{Types: types, URI: deliveryURI}
+		containerIP = ext.ContainerIP
 	}
 	s.mu.Unlock()
 	if !ok {
 		http.Error(w, "invalid Lambda-Extension-Identifier", http.StatusForbidden)
 		return
+	}
+	if types["platform"] {
+		// The INIT phase this extension was started in has already reported
+		// itself, possibly before the extension's process existed. Those
+		// records are its business, so it gets them now.
+		s.deliverRetainedInitRecords(containerIP, deliveryURI)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -1147,6 +1169,49 @@ func (s *RuntimeAPIServer) PublishPlatformRecord(containerIP, event string) {
 		return
 	}
 	s.publishTelemetryEvent(containerIP, "platform", json.RawMessage(event))
+}
+
+// initPhaseRecordsRetained bounds the per-container replay buffer. Three
+// records is the whole INIT phase; the headroom is for an environment that
+// somehow reported one twice, and it is what stops a container nothing ever
+// subscribes to from holding an unbounded amount.
+const initPhaseRecordsRetained = 8
+
+// PublishInitPhaseRecord publishes one of the three init-phase platform events
+// and remembers it for a subscription that has not been made yet — see
+// RuntimeAPIServer.initRecords for why those three need that and no others.
+func (s *RuntimeAPIServer) PublishInitPhaseRecord(containerIP, event string) {
+	if event == "" || containerIP == "" {
+		return
+	}
+	s.mu.Lock()
+	held := s.initRecords[containerIP]
+	if len(held) < initPhaseRecordsRetained {
+		s.initRecords[containerIP] = append(held, json.RawMessage(event))
+	}
+	s.mu.Unlock()
+	s.publishTelemetryEvent(containerIP, "platform", json.RawMessage(event))
+}
+
+// deliverRetainedInitRecords sends a fresh platform subscription the init-phase
+// events its container published before it existed, in the order they
+// happened. Called once, as the subscription is created.
+func (s *RuntimeAPIServer) deliverRetainedInitRecords(containerIP, uri string) {
+	s.mu.Lock()
+	held := append([]json.RawMessage(nil), s.initRecords[containerIP]...)
+	s.mu.Unlock()
+	for _, event := range held {
+		body, err := json.Marshal([]any{event})
+		if err != nil {
+			continue
+		}
+		select {
+		case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
+		default:
+			s.logger.Debug("runtime api: dropping a retained init-phase record because the delivery queue is full",
+				zap.String("uri", uri))
+		}
+	}
 }
 
 // hasTelemetrySubscribers reports whether anything on this container is

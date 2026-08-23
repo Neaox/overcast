@@ -386,3 +386,78 @@ func TestEmitPlatformRecord_subscribersSeeTheJSONEventInTextMode(t *testing.T) {
 		t.Errorf("req-1 tail = %q, want %q", got, want)
 	}
 }
+
+// The INIT phase reports itself before there is anywhere to report it to:
+// platform.initStart is published as the container starts, which is before
+// Docker will say what address the container has and before the extensions
+// this environment will run have even been spawned. AWS still delivers all
+// three init-phase records to an extension that subscribes during INIT — being
+// told about the phase it was started in is what an extension is for — so they
+// are held and replayed, at both places they can be lost.
+func TestInitPhaseRecordsReachAnExtensionThatSubscribesDuringInit(t *testing.T) {
+	api, addr := newRuntimeAPITestServer(t)
+	const containerIP = "127.0.0.1"
+	api.RegisterContainerConfig(containerIP, runtimeContainerConfig{
+		FunctionARN:  "arn:aws:lambda:us-east-1:000000000000:function:fn",
+		FunctionName: "fn",
+	})
+
+	received := make(chan []map[string]any, 8)
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var batch []map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- batch
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+
+	s := newLogSink(logSinkConfig{
+		logger:       zap.NewNop(),
+		clk:          clock.New(),
+		group:        "/aws/lambda/fn",
+		stream:       "stream",
+		region:       "us-east-1",
+		functionName: "fn",
+		initType:     initTypeOnDemand,
+		logFormat:    logFormatJSON,
+		sysLogLevel:  logLevelDebug,
+		runtimeAPI:   api,
+	})
+	t.Cleanup(s.close)
+
+	// The container has no address yet, and nothing is subscribed.
+	s.frame(recordFrameOf(1, initproto.Record{Type: initproto.RecInitStart}))
+	s.attach(containerIP, "container123456")
+	s.frame(recordFrameOf(2, initproto.Record{Type: initproto.RecInitRuntimeDone, Status: initproto.StatusSuccess}))
+	s.frame(recordFrameOf(3, initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusSuccess, DurationMs: 9.5}))
+
+	// Only now does the extension get as far as subscribing, which is what a
+	// real one does: it is started inside the phase it wants to hear about.
+	extID := registerExtension(t, http.DefaultClient, addr, "telemetry-extension")
+	subscribeToLogs(t, addr, extID, dest.URL, "platform")
+
+	got := map[string]bool{}
+	for len(got) < 3 {
+		select {
+		case batch := <-received:
+			for _, event := range batch {
+				typ, _ := event["type"].(string)
+				if _, ok := event["record"].(map[string]any); !ok {
+					t.Fatalf("event %q carries record %#v, want a JSON object", typ, event["record"])
+				}
+				got[typ] = true
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("the subscriber received %v, want all three init-phase records", got)
+		}
+	}
+	for _, want := range []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"} {
+		if !got[want] {
+			t.Errorf("%s never reached the subscriber; got %v", want, got)
+		}
+	}
+}

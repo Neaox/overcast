@@ -191,14 +191,20 @@ type initReportMetrics struct {
 
 // platformInitReportRecord is the summary of the INIT phase.
 //
-// Its durationMs is measured inside the execution environment, from the runtime
-// child being spawned to its first GET /next. That is a slightly shorter span
-// than the Init Duration on the text REPORT line and in
-// platform.report's metrics.initDurationMs, which the host measures from
-// container start — the difference is the container's own start-up, which is
-// Docker's and not the runtime's. It is also the only one of the two that
-// exists for a proactively initialized environment, which reports no Init
-// Duration at all (see takeInitDuration).
+// Its durationMs is measured inside the execution environment: from the init
+// starting the phase — before it spawns the extensions or the runtime — to the
+// runtime's first GET /next, as the init observes it. That is a different span
+// from the Init Duration on the text REPORT line and in platform.report's
+// metrics.initDurationMs, which the host measures from its own StartContainer
+// call returning to its own handling of that same /next. They differ by a few
+// milliseconds, usually with this one the larger, because the container is
+// already running by the time the Docker API answers.
+//
+// It is measured here rather than reused from the host's pair for two reasons:
+// a proactively initialized environment records no Init Duration at all (see
+// takeInitDuration) and would otherwise have nothing to report, and the record
+// arrives on a stream that races the host's own bookkeeping of the first /next,
+// so a value read at ingest would not be deterministic.
 type platformInitReportRecord struct {
 	InitializationType string            `json:"initializationType"`
 	Phase              string            `json:"phase"`

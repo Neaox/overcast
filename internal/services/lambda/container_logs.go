@@ -131,7 +131,11 @@ type logSink struct {
 	buffers map[string]*tailBuffer
 	order   []string // request IDs in arrival order, for eviction
 	initBuf tailBuffer
-	closed  bool
+	// unaddressedRecords holds platform records that arrived before Docker had
+	// told us the container's address, which is what they are published
+	// against. Drained by attach.
+	unaddressedRecords []string
+	closed             bool
 }
 
 // newLogSink builds a container's sink. It talks to nothing until a frame or a
@@ -183,12 +187,24 @@ func (s *logSink) ensureStream() {
 }
 
 // attach records the container's address and ID once Docker has assigned them.
-// The address is what Telemetry/Logs API records are published against.
+// The address is what Telemetry/Logs API records are published against, so any
+// platform record that arrived before this is published now, in order — the
+// INIT phase starts reporting itself well before Docker will say where the
+// container is.
 func (s *logSink) attach(containerIP, containerID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.containerIP = containerIP
 	s.containerID = containerID
+	held := s.unaddressedRecords
+	s.unaddressedRecords = nil
+	s.mu.Unlock()
+
+	if containerIP == "" || s.cfg.runtimeAPI == nil {
+		return
+	}
+	for _, event := range held {
+		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
+	}
 }
 
 // container is this sink's container, short, for a diagnostic. Empty until the
@@ -375,6 +391,13 @@ func (s *logSink) platformFrame(f initproto.Frame) bool {
 		return false
 	}
 	containerIP := s.containerIP
+	if containerIP == "" && len(s.unaddressedRecords) < initPhaseRecordsRetained {
+		// The init publishes platform.initStart as the container starts, which
+		// is before Docker has told us the container's address — and the
+		// address is what a Telemetry record is published against. Held here
+		// until attach knows it; see attach.
+		s.unaddressedRecords = append(s.unaddressedRecords, event)
+	}
 	batched := false
 	if toCloudWatch && event != "" {
 		s.batcher.Line(containerlogs.Line{Message: event})
@@ -386,7 +409,10 @@ func (s *logSink) platformFrame(f initproto.Frame) bool {
 	s.mu.Unlock()
 
 	if containerIP != "" {
-		s.cfg.runtimeAPI.PublishPlatformRecord(containerIP, event)
+		// Retained as well as published: an extension subscribes to the
+		// Telemetry API during the very phase these records describe, and
+		// initStart is published before the extensions are even started.
+		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
 	}
 	return batched
 }

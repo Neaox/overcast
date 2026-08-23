@@ -18,6 +18,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -720,23 +722,32 @@ exports.handler = async () => {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// The volume exists, is ours, and names the architecture it holds.
+	// The volume exists, is ours, and is addressed by what is in it: the init's
+	// own content hash and the architecture. This build's volume is therefore
+	// found by name — "the first one carrying the label" is a different volume
+	// on any daemon that has hosted more than one build of the init, which a
+	// development machine does within an afternoon.
 	volumes, err := dc.ListVolumes(ctx, "lambda")
 	if err != nil {
 		t.Fatalf("list lambda volumes: %v", err)
 	}
+	wantVolume := "overcast-lambda-init-" + initArtefactVersion(t, "amd64") + "-amd64"
 	var initVolume string
+	var labelled []string
 	for _, v := range volumes {
-		if v.Labels[docker.LabelLambdaInitVersion] != "" {
+		if v.Labels[docker.LabelLambdaInitVersion] == "" {
+			continue
+		}
+		labelled = append(labelled, v.Name)
+		if v.Name == wantVolume {
 			initVolume = v.Name
-			break
 		}
 	}
 	if initVolume == "" {
-		t.Fatalf("no volume carries %s; got %+v", docker.LabelLambdaInitVersion, volumes)
+		t.Fatalf("no volume named %s; volumes carrying %s: %v", wantVolume, docker.LabelLambdaInitVersion, labelled)
 	}
-	if !strings.HasPrefix(initVolume, "overcast-lambda-init-") {
-		t.Errorf("init volume name = %q, want the overcast-lambda-init-… shape", initVolume)
+	if got := volumeVersionLabel(volumes, initVolume); got != initArtefactVersion(t, "amd64") {
+		t.Errorf("%s = %q, want the artefact's content hash %q", docker.LabelLambdaInitVersion, got, initArtefactVersion(t, "amd64"))
 	}
 
 	// Read it back through a container that had nothing to do with seeding it.
@@ -776,14 +787,44 @@ exports.handler = async () => {
 	}
 }
 
-// initArtefactSize is the size of the built init this checkout embeds.
-func initArtefactSize(t *testing.T, goarch string) int64 {
+// initArtefactPath is where the built init this checkout embeds lives.
+func initArtefactPath(t *testing.T, goarch string) string {
 	t.Helper()
 	root, err := repoRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(root, "internal", "services", "lambda", "initbin", "dist", "lambda-init-linux-"+goarch))
+	return filepath.Join(root, "internal", "services", "lambda", "initbin", "dist", "lambda-init-linux-"+goarch)
+}
+
+// initArtefactVersion is the content hash the init's volume is addressed by —
+// the same derivation initVolumeName uses, computed from the artefact rather
+// than trusted from a label, which is what makes the assertion about *this*
+// build's volume rather than whichever one the daemon listed first.
+func initArtefactVersion(t *testing.T, goarch string) string {
+	t.Helper()
+	binary, err := os.ReadFile(initArtefactPath(t, goarch))
+	if err != nil {
+		t.Fatalf("read the init artefact: %v", err)
+	}
+	sum := sha256.Sum256(binary)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// volumeVersionLabel is one volume's init-version label, by name.
+func volumeVersionLabel(volumes []docker.VolumeSummary, name string) string {
+	for _, v := range volumes {
+		if v.Name == name {
+			return v.Labels[docker.LabelLambdaInitVersion]
+		}
+	}
+	return ""
+}
+
+// initArtefactSize is the size of the built init this checkout embeds.
+func initArtefactSize(t *testing.T, goarch string) int64 {
+	t.Helper()
+	info, err := os.Stat(initArtefactPath(t, goarch))
 	if err != nil {
 		t.Fatalf("stat the init artefact: %v", err)
 	}
