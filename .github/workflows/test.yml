@@ -26,12 +26,30 @@ permissions:
 # its exit 8 means the head moved mid-watch, so the result it collected is
 # stale.
 #
-# Cancellation is deliberately limited to pull requests. A cancelled push to
-# main leaves the branch with no verdict at all, and a cancelled release run is
-# worse — so the group falls back to the ref, and cancel-in-progress is false
-# for everything that is not a PR.
+# Everything that is not a pull request gets a group of its own, keyed on the
+# run id, so it is neither cancelled nor queued. A cancelled push to main
+# leaves the commit with no verdict at all, and a cancelled release run is
+# worse — and cancel-in-progress: false is not enough to prevent either. A
+# concurrency group holds at most one *pending* run, and GitHub cancels it
+# when the next one arrives whatever cancel-in-progress says: "any existing
+# pending job or workflow in the same concurrency group will be canceled and
+# the new queued job or workflow will take its place." The flag only decides
+# whether the run already *in progress* goes too. This block used to fall back
+# to the ref for non-PR events, which is exactly that trap: during a burst of
+# merges, every push run that was still pending when the next merge landed was
+# dropped. On 2026-08-22, 60 of the day's 104 push runs to main concluded
+# `cancelled` without a job ever starting — among them 32599735383,
+# 32600052337 and 32600275985 (commits 1b57febb, 4136324a, 928b35ba) — while
+# the runs either side of them ran and failed on the broken web/pnpm-lock.yaml
+# that #1354 fixed, which is how the gap was noticed.
+#
+# `queue: max` would keep the ref group and let up to 100 runs wait in it
+# instead, but nothing here needs runs on main serialized — a verdict delayed
+# behind the whole queue is worse than one computed alongside — and
+# actionlint v1.7.7, the version this workflow's own Actionlint job pins,
+# rejects the key.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

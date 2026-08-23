@@ -167,7 +167,7 @@ Ordered by saving per unit of risk.
 
 ```yaml
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 ```
 
@@ -176,8 +176,28 @@ the release flow depends on — a cancelled `main` run leaves the branch with no
 verdict, and a cancelled release run is worse. Gate it on the event, not the
 workflow.
 
+**Amended 2026-08-23.** The block as first shipped fell back to `github.ref`
+for non-PR events, on the belief that `cancel-in-progress: false` alone kept a
+`main` run from being cancelled. It does not: a concurrency group holds at
+most one *pending* run, and GitHub cancels that one when the next arrives
+regardless of the flag ("any existing `pending` job or workflow in the same
+concurrency group will be canceled and the new queued job or workflow will
+take its place" — the flag only adds the in-progress run). In a burst of
+merges, every push run still queued when the next merge landed was dropped:
+on 2026-08-22, 60 of 104 push runs to `main` in `test.yml` and 56 of 103 in
+`compat.yml` concluded `cancelled` with no job ever started, and the gap
+surfaced only because the runs that did survive failed on the broken
+`web/pnpm-lock.yaml` (#1354), while the cancelled commits next to them carried
+no verdict at all.
+Non-PR events now key on `github.run_id` — a group of one, never cancelled,
+never queued. `queue: max` (up to 100 pending per group) was the alternative
+and was declined: nothing needs `main` runs serialized, a verdict delayed
+behind the queue is worse than one computed alongside, and actionlint v1.7.7
+rejects the key.
+
 *Saves:* one full CI + compat run per force-push. *Risks:* none, if the event
-gating is right.
+gating is right — and, as above, only if the non-PR fallback is unique per
+run, not per ref.
 
 **B. Close the two gaps in finding 5.** Digest-pin the BuildKit frontend in the
 Dockerfile, and add the existing mirror action to the `docker:` job. Both are a
