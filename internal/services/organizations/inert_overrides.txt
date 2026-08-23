@@ -1,0 +1,15 @@
+# Tier 1 bindings shadowed by a hand-written implementation.
+#
+# docs/plans/inert-tier-rollout.md §4.5: a hand-written implementation of an
+# operation always overrides the inert one, with no configuration and no
+# exception. Dispatch enforces that by consulting the hand-written table
+# first, which makes a colliding binding dead code — and dead code that looks
+# live is how a reviewer comes to believe an operation behaves in a way it
+# does not.
+#
+# So a collision is reviewed data, not a silent outcome: every operation
+# appearing in BOTH handWrittenOps (inert_ops.go) and inertBindings must be
+# listed here, one name per line, or TestInertBindings_CollisionsAreDeclared
+# fails. Adding a line is a deliberate act a reviewer sees.
+#
+# Blank lines and #-comments are ignored. There are no collisions today.

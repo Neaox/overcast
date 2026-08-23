@@ -75,9 +75,12 @@ var ServiceTiers = map[string]EmulationTier{
 	// unsupported operations return 501.
 	"waf":    TierStub,
 	"shield": TierStub,
-	// organizations answers exactly one op — DescribeOrganization, from a
-	// hardcoded org with no stored state — so that CDK bootstrap gets past it.
-	"organizations": TierStub,
+
+	// organizations stores policies for real — create, describe, update,
+	// delete, list and tag — so it is no longer a stub. DescribeOrganization
+	// remains a single hardcoded org, and nothing about a policy is ever
+	// attached or enforced (docs/plans/inert-tier-rollout.md §0).
+	"organizations": TierInert,
 
 	// Inert stubs — CRUD works for core resources, but no side-effects
 	"cloudwatch":  TierInert,

@@ -29,8 +29,8 @@ type availablePolicyTypeItem struct {
 func (s *Service) describeOrganizationTyped(_ context.Context, _ *describeOrganizationRequest) (*describeOrganizationResponse, *protocol.AWSError) {
 	return &describeOrganizationResponse{
 		Organization: organizationDetails{
-			Id:              "o-overcast",
-			Arn:             "arn:aws:organizations::000000000000:organization/o-overcast",
+			Id:              organizationID,
+			Arn:             "arn:aws:organizations::000000000000:organization/" + organizationID,
 			MasterAccountId: s.accountID(),
 			MasterUserEmail: "admin@overcast.local",
 			FeatureSet:      "ALL",
