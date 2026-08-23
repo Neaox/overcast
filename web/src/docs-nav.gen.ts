@@ -3840,6 +3840,11 @@ export const DOCS_NAV = [
         "id": "or"
       },
       {
+        "depth": 4,
+        "text": "What counts as a change",
+        "id": "what-counts-as-a-change"
+      },
+      {
         "depth": 3,
         "text": "CDK hot-reload tags",
         "id": "cdk-hot-reload-tags"

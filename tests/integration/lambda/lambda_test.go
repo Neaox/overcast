@@ -1763,6 +1763,35 @@ func skipIfContainerizedHotReloadBindMount(t *testing.T) {
 	}
 }
 
+// hotReloadSourceDir returns a fresh directory that both this process and the
+// Docker daemon can reach at the same path, which is what a bind-mount hot
+// reload test needs and what makes these tests skip in most rigs.
+//
+// OVERCAST_TEST_LAMBDA_HOT_RELOAD_DIR names such a directory when one exists:
+// run the suite in a container with a host directory mounted at the path the
+// daemon knows it by (on Docker Desktop for Windows, `F:\src` is `/f/src`) and
+// point the variable at it. Without it, the test falls back to the devcontainer
+// layout its siblings assume — a host-mounted /workspace — and skips when this
+// process is containerized and cannot promise the daemon sees the same tree.
+func hotReloadSourceDir(t *testing.T) string {
+	t.Helper()
+	shared := os.Getenv("OVERCAST_TEST_LAMBDA_HOT_RELOAD_DIR")
+	parent := shared
+	if parent == "" {
+		skipIfContainerizedHotReloadBindMount(t)
+		parent = "/workspace"
+	}
+	dir, err := os.MkdirTemp(parent, "hot-reload-")
+	if err != nil {
+		if shared != "" {
+			t.Fatalf("OVERCAST_TEST_LAMBDA_HOT_RELOAD_DIR=%q is not usable: %v", shared, err)
+		}
+		return t.TempDir()
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // makeZip creates a minimal zip archive containing a single file.
 func makeZip(t *testing.T, name, content string) []byte {
 	t.Helper()
@@ -1949,6 +1978,67 @@ exports.handler = async () => {
 	if out["source"] != "mounted" {
 		t.Fatalf("expected mounted source response, got: %s", body)
 	}
+}
+
+// TestInvoke_nodeRuntime_hotReload_sourceEditedInPlace is #1411
+// end to end: the second invocation must run the edited file, not the module
+// the warm container loaded on the first one.
+//
+// The two writes differ in length as well as content on purpose. A same-length
+// edit relies on the mtime alone, and some filesystems only resolve mtimes to
+// the second — a boundary the docs state and a test must not pretend away by
+// sleeping through it.
+func TestInvoke_nodeRuntime_hotReload_sourceEditedInPlace(t *testing.T) {
+	skipIfNoDocker(t)
+	sourceDir := hotReloadSourceDir(t)
+	handler := sourceDir + "/index.js"
+	if err := os.WriteFile(handler, []byte(`exports.handler = async () => ({ v: 1 });`+"\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker(), helpers.WithLambdaHotReload())
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+		FunctionName: "hot-edit-fn",
+		Runtime:      "nodejs20.x",
+		Handler:      "index.handler",
+		Role:         "arn:aws:iam::000000000000:role/lambda-role",
+		Code:         &lambdaCode{},
+		Tags:         map[string]string{"overcast:hot-reload-path": sourceDir},
+	})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+	waitForFunctionActive(t, srv, "hot-edit-fn")
+
+	invoke := func(t *testing.T, want float64) {
+		t.Helper()
+		invokeResp := invokeFunction(t, srv, "hot-edit-fn", map[string]any{"ping": true})
+		defer invokeResp.Body.Close()
+		body, _ := io.ReadAll(invokeResp.Body)
+		if invokeResp.Header.Get("X-Amz-Function-Error") == "Unhandled" &&
+			(strings.Contains(string(body), "Runtime.ExitError") || strings.Contains(string(body), "Runtime.ImportModuleError")) {
+			t.Skipf("hot-reload bind mount not supported in this Docker environment: %s", string(body))
+		}
+		helpers.AssertStatus(t, invokeResp, http.StatusOK)
+		var out map[string]any
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatalf("unmarshal response: %v — body: %s", err, body)
+		}
+		if out["v"] != want {
+			t.Fatalf("handler returned v=%v, want %v — body: %s", out["v"], want, body)
+		}
+	}
+
+	// Given: one invocation has run, so a warm container holds the module.
+	invoke(t, 1)
+
+	// When: the same file is edited in place — no create, no delete, no
+	// rename, which is what the directory's own mtime used to key on.
+	if err := os.WriteFile(handler, []byte(`exports.handler = async () => ({ v: 2, edited: true });`+"\n"), 0o644); err != nil {
+		t.Fatalf("rewrite source: %v", err)
+	}
+
+	// Then: the next invocation serves the edited source.
+	invoke(t, 2)
 }
 
 func TestInvoke_nodeRuntime_hotReloadMountedSource_withLayer(t *testing.T) {
