@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -433,5 +434,46 @@ func splitLabels(name string) func(func(string) bool) {
 			}
 			name = name[i+1:]
 		}
+	}
+}
+
+// TestServer_ListensOnTheWildcardAddress is the regression test for the
+// resolver that never started in the one environment it was built for.
+//
+// A containerised Overcast binds ":53" — the wildcard, no host — and
+// net.ResolveUDPAddr hands back a UDPAddr whose IP is nil. A nil IP's String()
+// is the literal "<nil>", and joining that with the port asked net.Listen for
+// the TCP side of a host named "<nil>": `listen tcp: lookup <nil>: no such
+// host`. The UDP socket had already bound; Listen reported failure, the caller
+// logged "dns resolver not started", and every containerised deployment ran
+// without the resolver while the unit tests — which all bind explicit
+// loopback addresses — stayed green.
+func TestServer_ListensOnTheWildcardAddress(t *testing.T) {
+	// Given: a free port, discovered by binding the wildcard and letting it go.
+	// (Racy by nature; retried, since another process can take it back.)
+	for attempt := 0; ; attempt++ {
+		probe, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			t.Fatalf("probe for a free port: %v", err)
+		}
+		port := probe.LocalAddr().(*net.UDPAddr).Port
+		_ = probe.Close()
+
+		// When: a server is asked to listen on the wildcard form of that port,
+		// exactly as a containerised Overcast asks for ":53".
+		srv := NewServer(net.JoinHostPort("", strconv.Itoa(port)), NewZone(netip.MustParseAddr(overcastAddr), "localhost.overcast.sh"), nil)
+		err = srv.Listen()
+		if err == nil {
+			defer srv.Close()
+			// Then: both sockets are bound.
+			if srv.UDPAddr() == "" || srv.TCPAddr() == "" {
+				t.Fatalf("wildcard listen left a socket unbound: udp=%q tcp=%q", srv.UDPAddr(), srv.TCPAddr())
+			}
+			return
+		}
+		if attempt >= 4 {
+			t.Fatalf("wildcard listen failed: %v", err)
+		}
+		// The port was taken between the probe and the bind; try another.
 	}
 }
