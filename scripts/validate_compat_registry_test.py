@@ -36,6 +36,17 @@ vcr = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = vcr
 SPEC.loader.exec_module(vcr)
 
+# The schema check needs jsonschema; the two lints under test do not. See
+# MainIntegrationTest for why that distinction is load-bearing here.
+#
+# find_spec returns None for a module that is simply absent, which is the CI
+# case, but it propagates ImportError from a finder that refuses the name --
+# so both mean "not usable here" and neither should be an error in a test file.
+try:
+    HAS_JSONSCHEMA = importlib.util.find_spec("jsonschema") is not None
+except ImportError:  # pragma: no cover - depends on the environment
+    HAS_JSONSCHEMA = False
+
 
 def group(name, service="s3", suites=None, generated=None):
     g = {"service": service, "name": name, "tests": [{"name": "Get"}]}
@@ -161,8 +172,17 @@ class CapabilityServiceKeyParsingTest(unittest.TestCase):
         self.assertGreater(len(keys), 20)
 
 
+@unittest.skipUnless(HAS_JSONSCHEMA, "jsonschema is not installed")
 class MainIntegrationTest(unittest.TestCase):
-    """main() wires both new lints in alongside the existing schema check."""
+    """main() wires both new lints in alongside the existing schema check.
+
+    Skipped without jsonschema. These are the only tests here that reach the
+    schema check, and the CI job that runs scripts/*_test.py installs no pip
+    dependencies on purpose -- the script tests are meant to stay cheap. The
+    lints themselves are pure Python and their unit tests above run
+    unconditionally; end-to-end coverage of main() against the real registry
+    is what the compat-registry job already does, with jsonschema installed.
+    """
 
     def test_main_still_passes_on_the_real_registry(self):
         self.assertEqual(vcr.main([]), 0)
