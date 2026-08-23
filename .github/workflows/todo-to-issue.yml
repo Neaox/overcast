@@ -50,8 +50,14 @@ jobs:
               {"name": "TODO(priority:P3)", "labels": ["auto-todo", "needs-info", "priority/p3"]},
               {"name": "TODO", "labels": ["auto-todo", "needs-info"]}
             ]
-          # {{ snippet }} already arrives fenced (the action wraps it in a code
-          # block of its own), so nothing here may fence it again.
+          # No {{ snippet }}. The action fences it as ```text whatever the
+          # language — it hardcodes ace_mode for every language loaded from a
+          # custom LANGUAGES file, and NO_STANDARD makes all of ours custom —
+          # and it emits the whole diff hunk, which on issue #1138 was twenty
+          # lines of code the marker had nothing to do with. {{ url }} is the
+          # better snippet: GitHub expands a permalink to a line range into an
+          # embedded blob, syntax-highlighted, line-numbered and click-through
+          # to the file at that commit.
           ISSUE_TEMPLATE: |
             ## What would you like
 
@@ -68,8 +74,6 @@ jobs:
             ## Source
 
             {{ url }}
-
-            {{ snippet }}
 
             ---
 
