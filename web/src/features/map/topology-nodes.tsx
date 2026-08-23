@@ -1385,11 +1385,11 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         <span
           key={eventCount}
           aria-hidden
-          className={cn(
-            "pointer-events-none absolute -inset-0.5 rounded-lg ring-2",
-            meta.color.replace("text-", "ring-"),
-          )}
-          style={{ animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards` }}
+          className="pointer-events-none absolute -inset-0.5 rounded-lg"
+          style={{
+            boxShadow: `0 0 0 2px ${meta.css}`,
+            animation: `overcastPulseRing ${PULSE_TTL}ms ease-out forwards`,
+          }}
         />
       )}
       {/* Inbound-write sweep flash — keyed by writeCount to re-trigger animation */}
@@ -1575,8 +1575,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
         <span
           className={cn(
             "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
-            meta.color.replace("text-", "bg-").replace("-400", "-600"),
-            "text-white",
+            "border border-current bg-bg-elevated",
+            meta.color,
           )}
           title={`${writeBurstCount} recent writes`}
         >
