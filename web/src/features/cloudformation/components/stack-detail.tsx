@@ -34,15 +34,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { cn } from "@/lib/utils"
@@ -368,23 +360,23 @@ export function StackDetail({ stackName, initialStackId }: Props) {
           {(stack.Parameters ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
               <h2 className="font-mono text-sm font-medium text-fg">Parameters</h2>
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Key</TableHead>
-                      <TableHead>Value</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(stack.Parameters ?? []).map((p) => (
-                      <TableRow key={p.ParameterKey}>
-                        <TableCell>{p.ParameterKey}</TableCell>
-                        <TableCell>{p.ParameterValue}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="overflow-hidden rounded-md border border-border">
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: stack.Parameters ?? [], isLoading: false }}
+                  noun="parameters"
+                  rowKey={(p) => p.ParameterKey ?? ""}
+                  columnToggle={false}
+                  columns={[
+                    {
+                      id: "key",
+                      header: "Key",
+                      sortValue: (p) => p.ParameterKey,
+                      cell: (p) => p.ParameterKey,
+                    },
+                    { id: "value", header: "Value", cell: (p) => p.ParameterValue },
+                  ]}
+                />
               </div>
             </section>
           )}
@@ -393,27 +385,36 @@ export function StackDetail({ stackName, initialStackId }: Props) {
           {(stack.Outputs ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
               <h2 className="font-mono text-sm font-medium text-fg">Outputs</h2>
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Key</TableHead>
-                      <TableHead>Value</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Export name</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(stack.Outputs ?? []).map((o) => (
-                      <TableRow key={o.OutputKey}>
-                        <TableCell className="font-medium">{o.OutputKey}</TableCell>
-                        <TableCell>{o.OutputValue}</TableCell>
-                        <TableCellProse>{o.Description ?? "—"}</TableCellProse>
-                        <TableCell className="text-fg-muted">{o.ExportName ?? "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="overflow-hidden rounded-md border border-border">
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: stack.Outputs ?? [], isLoading: false }}
+                  noun="outputs"
+                  rowKey={(o) => o.OutputKey ?? ""}
+                  columnToggle={false}
+                  columns={[
+                    {
+                      id: "key",
+                      header: "Key",
+                      cellClassName: "font-medium",
+                      sortValue: (o) => o.OutputKey,
+                      cell: (o) => o.OutputKey,
+                    },
+                    { id: "value", header: "Value", cell: (o) => o.OutputValue },
+                    {
+                      id: "description",
+                      header: "Description",
+                      prose: true,
+                      cell: (o) => o.Description ?? "—",
+                    },
+                    {
+                      id: "export-name",
+                      header: "Export name",
+                      cellClassName: "text-fg-muted",
+                      cell: (o) => o.ExportName ?? "—",
+                    },
+                  ]}
+                />
               </div>
             </section>
           )}
@@ -422,23 +423,18 @@ export function StackDetail({ stackName, initialStackId }: Props) {
           {(stack.Tags ?? []).length > 0 && (
             <section className="flex flex-col gap-2">
               <h2 className="font-mono text-sm font-medium text-fg">Tags</h2>
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Key</TableHead>
-                      <TableHead>Value</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(stack.Tags ?? []).map((t) => (
-                      <TableRow key={t.Key}>
-                        <TableCell>{t.Key}</TableCell>
-                        <TableCell>{t.Value}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="overflow-hidden rounded-md border border-border">
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: stack.Tags ?? [], isLoading: false }}
+                  noun="tags"
+                  rowKey={(t) => t.Key ?? ""}
+                  columnToggle={false}
+                  columns={[
+                    { id: "key", header: "Key", sortValue: (t) => t.Key, cell: (t) => t.Key },
+                    { id: "value", header: "Value", cell: (t) => t.Value },
+                  ]}
+                />
               </div>
             </section>
           )}
@@ -464,27 +460,41 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   View all
                 </Button>
               </div>
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Logical ID</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {resources.slice(0, 5).map((r) => (
-                      <TableRow key={r.LogicalResourceId}>
-                        <TableCell className="font-medium">
-                          <ResourceLink
-                            logicalId={r.LogicalResourceId ?? ""}
-                            resourceType={r.ResourceType ?? ""}
-                            physicalId={r.PhysicalResourceId}
-                          />
-                        </TableCell>
-                        <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
-                        <TableCell>
+              <div className="overflow-hidden rounded-md border border-border">
+                {/* No sortable columns: this is the first five rows of a longer
+                    list, and ordering a truncated preview would claim a rank
+                    the whole set does not have. Sorting lives on the Resources
+                    tab, which shows all of them. */}
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: resources.slice(0, 5), isLoading: false }}
+                  noun="resources"
+                  rowKey={(r) => r.LogicalResourceId ?? ""}
+                  columnToggle={false}
+                  columns={[
+                    {
+                      id: "logical-id",
+                      header: "Logical ID",
+                      cellClassName: "font-medium",
+                      cell: (r) => (
+                        <ResourceLink
+                          logicalId={r.LogicalResourceId ?? ""}
+                          resourceType={r.ResourceType ?? ""}
+                          physicalId={r.PhysicalResourceId}
+                        />
+                      ),
+                    },
+                    {
+                      id: "type",
+                      header: "Type",
+                      cellClassName: "text-fg-muted",
+                      cell: (r) => r.ResourceType,
+                    },
+                    {
+                      id: "status",
+                      header: "Status",
+                      cell: (r) => (
+                        <>
                           <span className="flex items-center gap-1.5">
                             {isStackInProgress(r.ResourceStatus ?? "") && (
                               <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
@@ -505,11 +515,11 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                               {r.ResourceStatusReason}
                             </p>
                           )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                        </>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </section>
           )}
@@ -536,62 +546,82 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                   </span>
                 </div>
               )}
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Logical ID</TableHead>
-                      <TableHead>Physical ID</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Last updated</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {resources.map((r) => (
-                      <TableRow key={r.LogicalResourceId}>
-                        <TableCell className="font-medium">
-                          <ResourceLink
-                            logicalId={r.LogicalResourceId ?? ""}
-                            resourceType={r.ResourceType ?? ""}
-                            physicalId={r.PhysicalResourceId}
-                          />
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate text-fg-muted">
-                          {r.PhysicalResourceId ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-fg-muted">{r.ResourceType}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <span className="flex items-center gap-1.5">
-                              {isStackInProgress(r.ResourceStatus ?? "") && (
-                                <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
-                              )}
-                              <Badge variant={resourceStatusVariant(r.ResourceStatus ?? "")}>
-                                {formatStatus(r.ResourceStatus ?? "")}
-                              </Badge>
-                            </span>
-                            {r.ResourceStatusReason && (
-                              <span
-                                className={cn(
-                                  "font-sans text-[13px]",
-                                  isFidelityReason(r.ResourceStatusReason)
-                                    ? "text-fg-muted"
-                                    : "text-danger",
-                                )}
-                              >
-                                {r.ResourceStatusReason}
-                              </span>
+              <div className="overflow-hidden rounded-md border border-border">
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: resources, isLoading: false }}
+                  noun="resources"
+                  rowKey={(r) => r.LogicalResourceId ?? ""}
+                  // Five columns, but this table lives inside its own bordered
+                  // panel: the columns menu would render above the table and
+                  // inside that border, reading as a header strip that is not
+                  // one. The Resources tab is short enough to scan whole.
+                  columnToggle={false}
+                  columns={[
+                    {
+                      id: "logical-id",
+                      header: "Logical ID",
+                      cellClassName: "font-medium",
+                      sortValue: (r) => r.LogicalResourceId,
+                      cell: (r) => (
+                        <ResourceLink
+                          logicalId={r.LogicalResourceId ?? ""}
+                          resourceType={r.ResourceType ?? ""}
+                          physicalId={r.PhysicalResourceId}
+                        />
+                      ),
+                    },
+                    {
+                      id: "physical-id",
+                      header: "Physical ID",
+                      cellClassName: "max-w-xs truncate text-fg-muted",
+                      cell: (r) => r.PhysicalResourceId ?? "—",
+                    },
+                    {
+                      id: "type",
+                      header: "Type",
+                      cellClassName: "text-fg-muted",
+                      sortValue: (r) => r.ResourceType,
+                      cell: (r) => r.ResourceType,
+                    },
+                    {
+                      id: "status",
+                      header: "Status",
+                      cell: (r) => (
+                        <div className="flex flex-col gap-1">
+                          <span className="flex items-center gap-1.5">
+                            {isStackInProgress(r.ResourceStatus ?? "") && (
+                              <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
                             )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-fg-muted">
-                          {r.LastUpdatedTimestamp ? r.LastUpdatedTimestamp.toLocaleString() : "—"}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                            <Badge variant={resourceStatusVariant(r.ResourceStatus ?? "")}>
+                              {formatStatus(r.ResourceStatus ?? "")}
+                            </Badge>
+                          </span>
+                          {r.ResourceStatusReason && (
+                            <span
+                              className={cn(
+                                "font-sans text-[13px]",
+                                isFidelityReason(r.ResourceStatusReason)
+                                  ? "text-fg-muted"
+                                  : "text-danger",
+                              )}
+                            >
+                              {r.ResourceStatusReason}
+                            </span>
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      id: "last-updated",
+                      header: "Last updated",
+                      cellClassName: "text-fg-muted",
+                      sortValue: (r) => r.LastUpdatedTimestamp,
+                      cell: (r) =>
+                        r.LastUpdatedTimestamp ? r.LastUpdatedTimestamp.toLocaleString() : "—",
+                    },
+                  ]}
+                />
               </div>
             </div>
           )}
@@ -613,48 +643,71 @@ export function StackDetail({ stackName, initialStackId }: Props) {
                 tabIndex={0}
                 className="max-h-150 overflow-y-auto"
               >
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Timestamp</TableHead>
-                      <TableHead>Logical ID</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Reason</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {events.map((e) => {
+                {/* No sortable columns, deliberately: DescribeStackEvents pages
+                    newest-first and older pages arrive as the reader scrolls,
+                    so ordering the loaded prefix by any column would present it
+                    as an order over the whole history. */}
+                <ResourceTable
+                  variant="embedded"
+                  query={{ data: events, isLoading: eventsFetching && events.length === 0 }}
+                  noun="events"
+                  rowKey={(e) => e.EventId ?? ""}
+                  columnToggle={false}
+                  columns={[
+                    {
+                      id: "timestamp",
+                      header: "Timestamp",
+                      cellClassName: "w-40 whitespace-nowrap text-fg-muted",
+                      cell: (e) => (e.Timestamp ? e.Timestamp.toLocaleString() : ""),
+                    },
+                    {
+                      id: "logical-id",
+                      header: "Logical ID",
+                      cellClassName: "font-medium",
+                      cell: (e) => (
+                        <ResourceLink
+                          logicalId={e.LogicalResourceId ?? ""}
+                          resourceType={e.ResourceType ?? ""}
+                          physicalId={e.PhysicalResourceId}
+                        />
+                      ),
+                    },
+                    {
+                      id: "type",
+                      header: "Type",
+                      cellClassName: "text-fg-muted",
+                      cell: (e) => e.ResourceType,
+                    },
+                    {
+                      id: "status",
+                      header: "Status",
+                      cell: (e) => (
+                        <Badge variant={resourceStatusVariant(e.ResourceStatus ?? "")}>
+                          {formatStatus(e.ResourceStatus ?? "")}
+                        </Badge>
+                      ),
+                    },
+                    {
+                      id: "reason",
+                      header: "Reason",
+                      prose: true,
                       // Not just *_FAILED: the rollback events are where a
                       // failed deploy explains itself, and the tone of the
                       // reason should match the tone of the badge beside it.
-                      const isFailed = resourceStatusVariant(e.ResourceStatus ?? "") === "danger"
-                      return (
-                        <TableRow key={e.EventId}>
-                          <TableCell className="w-40 whitespace-nowrap text-fg-muted">
-                            {e.Timestamp ? e.Timestamp.toLocaleString() : ""}
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            <ResourceLink
-                              logicalId={e.LogicalResourceId ?? ""}
-                              resourceType={e.ResourceType ?? ""}
-                              physicalId={e.PhysicalResourceId}
-                            />
-                          </TableCell>
-                          <TableCell className="text-fg-muted">{e.ResourceType}</TableCell>
-                          <TableCell>
-                            <Badge variant={resourceStatusVariant(e.ResourceStatus ?? "")}>
-                              {formatStatus(e.ResourceStatus ?? "")}
-                            </Badge>
-                          </TableCell>
-                          <TableCellProse className={cn("max-w-sm", isFailed && "text-danger")}>
-                            {e.ResourceStatusReason ?? ""}
-                          </TableCellProse>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+                      cellClassName: "max-w-sm",
+                      cell: (e) => (
+                        <span
+                          className={cn(
+                            resourceStatusVariant(e.ResourceStatus ?? "") === "danger" &&
+                              "text-danger",
+                          )}
+                        >
+                          {e.ResourceStatusReason ?? ""}
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
                 {isFetchingMoreEvents && (
                   <div className="flex justify-center py-3">
                     <Spinner className="h-4 w-4" />

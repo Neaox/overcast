@@ -13,14 +13,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -186,30 +179,43 @@ export function SsmParameterDetail({ name }: Props) {
       {history.length > 0 && (
         <section className="flex flex-col gap-2">
           <h2 className="font-mono text-sm font-medium text-fg">Version history</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Version</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead>Modified</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((entry) => (
-                <TableRow key={entry.Version}>
-                  <TableCell>v{entry.Version}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{entry.Type}</Badge>
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate">{entry.Value}</TableCell>
-                  <TableCell className="text-fg-muted">
-                    {formatDate(entry.LastModifiedDate)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ResourceTable
+            variant="embedded"
+            query={{ data: history, isLoading: false }}
+            noun="versions"
+            rowKey={(entry) => String(entry.Version)}
+            // Newest version first is what a history is read for, and the
+            // API's order does not guarantee it.
+            defaultSort={{ id: "version", desc: true }}
+            // Four columns on a sub-table, all of them load-bearing.
+            columnToggle={false}
+            columns={[
+              {
+                id: "version",
+                header: "Version",
+                sortValue: (entry) => entry.Version,
+                cell: (entry) => `v${entry.Version}`,
+              },
+              {
+                id: "type",
+                header: "Type",
+                cell: (entry) => <Badge variant="outline">{entry.Type}</Badge>,
+              },
+              {
+                id: "value",
+                header: "Value",
+                cellClassName: "max-w-xs truncate",
+                cell: (entry) => entry.Value,
+              },
+              {
+                id: "modified",
+                header: "Modified",
+                cellClassName: "text-fg-muted",
+                sortValue: (entry) => entry.LastModifiedDate,
+                cell: (entry) => formatDate(entry.LastModifiedDate),
+              },
+            ]}
+          />
         </section>
       )}
 

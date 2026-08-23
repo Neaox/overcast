@@ -237,6 +237,22 @@ function SimulationResults({
     )
   }
 
+  // ResourceTable didn't fit because this is the output of one simulation run,
+  // not a list of resources. #1327 wave D, decided rather than assumed:
+  //   - There is no row identity to key or click through to. The React key is
+  //     `action-resource-index` precisely because SimulatePrincipalPolicy can
+  //     return the same action/resource pair twice; `rowKey` has to be stable
+  //     and unique, and nothing here is.
+  //   - Its two nothing-states are "no simulation yet" and "the simulation
+  //     returned no results". `ResourceTable` speaks loading / empty / filtered
+  //     -empty / error, and none of those is "you have not asked a question".
+  //     Collapsing them would lose the distinction that tells a user whether to
+  //     press Run or to change the policy.
+  //   - Nothing here sorts usefully: the rows are the actions the user typed,
+  //     in the order they typed them, and reordering them would break the
+  //     correspondence with the input box above.
+  // CONTRIBUTING § Tables names this file as one of the two standing
+  // exceptions; this is that reason written down at the call site.
   return (
     <Table>
       <TableHeader>

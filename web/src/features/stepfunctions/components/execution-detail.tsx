@@ -158,6 +158,17 @@ export function ExecutionDetail({ name, execution }: Props) {
         ) : events.length === 0 ? (
           <EmptyState title="No history" description="This execution recorded no events." />
         ) : (
+          // ResourceTable didn't fit because the state history is an expandable
+          // list, not a flat one: clicking a row inserts a second full-width
+          // `<tr>` under it holding the failure line and the event's raw JSON.
+          // `ResourceTable` renders exactly one `<TableRow>` per row of its
+          // model and registers none of v9's expanding features
+          // (`rowExpandingFeature` is on the deliberately-skipped list in
+          // `resource-table.tsx`), so there is no seam to render the detail row
+          // through — and folding the JSON into the last cell instead would
+          // trade a full-width code panel for a column-width one. Revisit if
+          // #1327 ever adopts row expansion; the rest of this table is an
+          // ordinary `ResourceTable` shape.
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>

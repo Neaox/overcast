@@ -413,6 +413,23 @@ interface VirtualizedListProps {
  * — two spacer `<tr>`s bracket the currently-rendered slice of rows inside a
  * real `<table>`, so the DOM node count stays bounded regardless of
  * namespace size while keeping the existing Table/TableRow/TableHead styling.
+ *
+ * ResourceTable didn't fit because the paging is driven by the virtual window
+ * itself. #1327 wave D, decided rather than assumed:
+ *   - `useLoadMoreOnReachEnd` needs `virtualItems` to know the reader has
+ *     reached the end and fetch the next page. `ResourceTable`'s `virtualize`
+ *     owns its virtualizer privately and exposes neither the items nor the
+ *     scroll element, so the infinite scroll that makes a million-key namespace
+ *     browsable has nothing to hang off.
+ *   - The selected row is `data-[selected=true]` on the `<tr>`. `ResourceTable`
+ *     renders every row identically; there is no per-row class or attribute
+ *     hook, and this table is a master/detail pane where the selection *is* the
+ *     state.
+ *   - This is the raw backing store, not a service's resource list — the same
+ *     reason CONTRIBUTING § Tables names the debug page as a standing
+ *     exception. It has no service, no detail route and no row actions.
+ * `virtualize` would carry the row windowing; it is the paging and the
+ * selection that keep this bespoke.
  */
 function FlatKeyTable({
   rows,

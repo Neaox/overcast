@@ -12,14 +12,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { CodeBlock, SectionLabel } from "@/components/ui/primitives"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { SecretRotationStatus } from "@/services/api/secretsmanager"
@@ -97,38 +90,54 @@ export function SecretRotationCard({ status }: Props) {
         />
       </DefinitionCard>
 
-      {/* Version stages — where AWSCURRENT/AWSPENDING/AWSPREVIOUS actually sit. */}
-      <div className="rounded-md border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Version</TableHead>
-              <TableHead>Staging labels</TableHead>
-              <TableHead>Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {status.versions.map((v) => (
-              <TableRow key={v.versionId}>
-                <TableCell className="font-mono text-xs">{v.versionId}</TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {v.stages.length === 0 ? (
-                      <span className="text-fg-subtle">—</span>
-                    ) : (
-                      v.stages.map((s) => (
-                        <Badge key={s} variant={stageVariant(s)}>
-                          {s}
-                        </Badge>
-                      ))
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>{formatDate(v.createdDate * 1000)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      {/* Version stages — where AWSCURRENT/AWSPENDING/AWSPREVIOUS actually sit.
+          #1327 wave D: converted rather than left bespoke. It is a list of
+          resources (secret versions) and the conversion is what gives it the
+          "no versions" empty state it never had — a secret whose versions came
+          back empty used to render a headers-only table — plus newest-first
+          ordering that says so instead of trusting the API's. */}
+      <div className="overflow-hidden rounded-md border border-border">
+        <ResourceTable
+          variant="embedded"
+          query={{ data: status.versions, isLoading: false }}
+          noun="versions"
+          emptyTitle="No versions"
+          rowKey={(v) => v.versionId}
+          defaultSort={{ id: "created", desc: true }}
+          columnToggle={false}
+          columns={[
+            {
+              id: "version",
+              header: "Version",
+              cellClassName: "font-mono text-xs",
+              sortValue: (v) => v.versionId,
+              cell: (v) => v.versionId,
+            },
+            {
+              id: "stages",
+              header: "Staging labels",
+              cell: (v) => (
+                <div className="flex flex-wrap gap-1">
+                  {v.stages.length === 0 ? (
+                    <span className="text-fg-subtle">—</span>
+                  ) : (
+                    v.stages.map((s) => (
+                      <Badge key={s} variant={stageVariant(s)}>
+                        {s}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+              ),
+            },
+            {
+              id: "created",
+              header: "Created",
+              sortValue: (v) => v.createdDate,
+              cell: (v) => formatDate(v.createdDate * 1000),
+            },
+          ]}
+        />
       </div>
 
       {/* Last attempt — including which of the four steps it stopped at. */}
