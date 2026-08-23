@@ -63,6 +63,10 @@ type createTagCase struct {
 	// store keys on — CreateKeyPair tags a key by its name, matching
 	// DeleteKeyPair's tag cleanup.
 	tagResourceID func(params url.Values) string
+	// responseHasNoTagSet marks an operation whose result shape AWS models
+	// without a Tags member — AllocateAddressResult — so only the DescribeTags
+	// half of the contract can be asserted on it.
+	responseHasNoTagSet bool
 }
 
 func createTagCases() []createTagCase {
@@ -171,6 +175,15 @@ func createTagCases() []createTagCase {
 			},
 			idField: "vpnGatewayId",
 		},
+		{
+			action:       "AllocateAddress",
+			resourceType: "elastic-ip",
+			setup: func(t *testing.T, srv *helpers.TestServer) url.Values {
+				return url.Values{}
+			},
+			idField:             "allocationId",
+			responseHasNoTagSet: true,
+		},
 	}
 }
 
@@ -251,8 +264,10 @@ func TestCreate_tagSpecificationSurvivesTheWire(t *testing.T) {
 			helpers.AssertStatus(t, resp, http.StatusOK)
 			body := string(readBody(t, resp))
 
-			// Then: the response embeds the tag in its own tagSet
-			if !strings.Contains(body, "<key>Name</key>") || !strings.Contains(body, "<value>tagged-by-create</value>") {
+			// Then: the response embeds the tag in its own tagSet, where the
+			// result shape has one to embed it in
+			if !tc.responseHasNoTagSet &&
+				(!strings.Contains(body, "<key>Name</key>") || !strings.Contains(body, "<value>tagged-by-create</value>")) {
 				t.Errorf("%s response has no tagSet carrying Name=tagged-by-create:\n%s", tc.action, body)
 			}
 

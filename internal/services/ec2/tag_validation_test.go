@@ -298,6 +298,16 @@ func TestCreate_tagsAppliedAtCreate(t *testing.T) {
 				return len(kps)
 			},
 		},
+		{
+			name:         "AllocateAddress",
+			setup:        func(h *Handler) url.Values { return url.Values{} },
+			invoke:       func(h *Handler) http.HandlerFunc { return h.AllocateAddress },
+			resourceType: "elastic-ip",
+			countAfter: func(h *Handler) int {
+				eips, _ := h.store.listElasticIPs(context.Background())
+				return len(eips)
+			},
+		},
 	}
 
 	for _, tc := range cases {

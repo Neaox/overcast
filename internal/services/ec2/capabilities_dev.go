@@ -7,7 +7,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		capabilities.Capability{Service: "ec2", Operation: "AcceptVpcPeeringConnection", Category: "General", Status: capabilities.StatusSupported, Notes: "Transitions from `pending-acceptance` to `active`"},
-		capabilities.Capability{Service: "ec2", Operation: "AllocateAddress", Category: "General", Status: capabilities.StatusSupported, Notes: "Generates eipalloc- ID and synthetic public IP; Domain honoured"},
+		capabilities.Capability{Service: "ec2", Operation: "AllocateAddress", Category: "General", Status: capabilities.StatusSupported, Notes: "Generates eipalloc- ID and synthetic public IP; Domain honoured; supports TagSpecification"},
 		capabilities.Capability{Service: "ec2", Operation: "AssociateAddress", Category: "General", Status: capabilities.StatusSupported, Notes: "Associates EIP with instance; generates eipassoc- ID"},
 		capabilities.Capability{Service: "ec2", Operation: "AssociateRouteTable", Category: "General", Status: capabilities.StatusSupported, Notes: "Associates route table with subnet"},
 		capabilities.Capability{Service: "ec2", Operation: "AttachInternetGateway", Category: "General", Status: capabilities.StatusSupported, Notes: "Toggles VPC Docker network from `--internal` to external (bridge)"},
