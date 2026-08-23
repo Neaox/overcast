@@ -44,13 +44,13 @@ export const CollapsedStackNode = memo(function CollapsedStackNode({
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") handleClick()
       }}
-      className="flex cursor-pointer items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-400/5 px-3 transition-colors hover:border-indigo-400/60 hover:bg-indigo-400/10"
+      className="flex cursor-pointer items-center gap-2 rounded-lg border border-cat-6/30 bg-cat-6/5 px-3 transition-colors hover:border-cat-6/60 hover:bg-cat-6/10"
       style={{ width: w, height: h }}
     >
-      <Layers className="h-4 w-4 shrink-0 text-indigo-400" />
-      <span className="min-w-0 truncate text-xs font-semibold text-indigo-400">{stackName}</span>
+      <Layers className="h-4 w-4 shrink-0 text-cat-6" />
+      <span className="min-w-0 truncate text-xs font-semibold text-cat-6">{stackName}</span>
       {resourceCount > 0 && (
-        <span className="ml-auto shrink-0 rounded-full bg-indigo-400/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-indigo-400 tabular-nums">
+        <span className="ml-auto shrink-0 rounded-full border border-cat-6/40 bg-bg-elevated px-1.5 py-0.5 font-mono text-[10px] font-medium text-cat-6 tabular-nums">
           {resourceCount}
         </span>
       )}

@@ -540,7 +540,7 @@ export function QueueDetail({ queueName }: Props) {
 
       {/* ── Redrive (this queue IS a DLQ) ── */}
       {isDLQ && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-4">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="font-mono text-sm font-medium text-fg">Dead Letter Queue</p>

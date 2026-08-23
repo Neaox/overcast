@@ -52,6 +52,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [How to add a service](#how-to-add-a-service)
   - [Service package structure](#service-package-structure)
   - [Web UI standards](#web-ui-standards)
+    - [Linting — oxlint first, ESLint for the remainder](#linting--oxlint-first-eslint-for-the-remainder)
     - [API access policy (SDK-first)](#api-access-policy-sdk-first)
     - [Frontend — Tailwind CSS v4](#frontend--tailwind-css-v4)
     - [Topology map methodology](#topology-map-methodology)
@@ -181,6 +182,21 @@ same commit that graduates a service. The per-operation inventory lives in each
 service's `capabilities_dev.go`. Report operations honestly: `StatusSupported` means
 "behaves like AWS at inert level or above", never "returns a plausible-looking 200".
 
+### Operation-level tiers (Tier 0 / Tier 1 / Tier 2)
+
+The tiers above describe a whole *service*. [docs/plans/inert-tier-rollout.md](./docs/plans/inert-tier-rollout.md)
+defines a parallel, finer-grained vocabulary for a single *operation*, used when
+generating or reasoning about Tier 1 coverage at scale:
+
+| Tier | Name | Meaning |
+| --- | --- | --- |
+| **Tier 0** | protocol-correct 501 | Routed, and answers with the right `NotImplemented` envelope for its protocol family. No state, no shape. |
+| **Tier 1** | inert | Accepted, stores and echoes back everything the caller told it — CRUD, tagging, pagination, ARNs, timestamps, not-found/conflict errors — with no side effects. This is the per-operation form of the **inert** service tier above; see the plan's §3 for the normative contract and `internal/inert/conformance` for it as executable tests. |
+| **Tier 2** | full emulation | The operation actually does the thing (an invoke runs, a message is delivered). |
+
+A whole service's tier (stub/inert/partial/full) is a rollup of its operations' tiers — a
+service is "inert" once every in-scope operation it owns is at least Tier 1.
+
 ---
 
 ## Core principles
@@ -198,6 +214,11 @@ These guide every decision — from architecture to variable naming. Read them b
 9. **Maintainability is a feature.** Code is read 10× more than it is written. Optimise for the next reader: consistent structure, clear naming, small interfaces, minimal coupling. If a change in one package forces changes in three others, the design is wrong.
 10. **Honest TODOs.** Every `// TODO:` includes a description and priority:
     `// TODO(priority:P1): implement SigV4 validation` — picked up by the TODO-to-issue Action.
+    The marker only ever *opens* a comment, in exactly that form, and its description is
+    one line — the Action takes the rest of that line as the issue title. Naming a marker
+    mid-sentence files an issue out of the middle of your prose ([#1138](https://github.com/Neaox/overcast/issues/1138)),
+    so refer to deferred work in prose without writing the word: "the P3 note on
+    `apigateway.Method`". `make lint-todos` enforces this.
 11. **AWS compatibility over test convenience.** Never diverge from real AWS behaviour to make tests easier.
     Async behaviour (SNS delivery, SQS visibility timeouts, Lambda cold starts) stays async. Tests adapt.
 12. **AWS fidelity on core APIs — extensions are strictly additive.** Implemented AWS API
@@ -313,7 +334,7 @@ make test-integration  # full integration suite
 make test-coverage     # HTML coverage report → coverage.html
 make lint              # all linters: Go/emulation, web UI, GitHub Actions
 make lint-go           # Go/emulation lint (golangci-lint)
-make lint-web          # web UI lint (ESLint)
+make lint-web          # web UI lint (oxlint, then ESLint)
 make lint-actions      # GitHub Actions workflow lint (pinned actionlint)
 make fmt               # gofmt all files
 make vet               # go vet
@@ -493,7 +514,7 @@ See [tests/AGENTS.md](./tests/AGENTS.md) for test conventions.
 - **Format:** `gofmt`. Run `make fmt` before committing. Non-formatted code fails CI.
 - **Lint:** `golangci-lint` v2.x (pinned in the Makefile, fetched via `go run` — no install needed). Run `make lint`. Config in `.golangci.yml`, which uses the v2 schema.
 - **Naming:** Exported types get doc comments. Error sentinels: `ErrBucketNotFound`. Constructors: `NewHandler(...)`.
-- **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):`.
+- **Comments:** Exported symbols require doc comments (linter enforced). Mark deferred work with `// TODO(priority:Pn):` opening the comment — never mid-sentence (`make lint-todos`, see [Honest TODOs](#core-principles)).
 - **HTTP errors:** Use `protocol.WriteXMLError` (S3) or `protocol.WriteJSONError` (JSON services) — never raw `http.Error`.
 - **HTTP success responses:** Use protocol writers (`protocol.WriteXML`, `protocol.WriteQueryXML`, `protocol.WriteJSON`, `protocol.WriteAWSJSON`) rather than ad-hoc `json.Marshal` + header writing in handlers.
 - **Unimplemented:** Return `501` via the protocol-matching helper (`protocol.NotImplementedXML`, `protocol.NotImplementedQueryXML`, `protocol.NotImplementedJSON`) — never a bare `404`.
@@ -1494,6 +1515,40 @@ Never split `handler_stubs.go` — one stub file per service is always sufficien
 ---
 
 ## Web UI standards
+
+### Linting — oxlint first, ESLint for the remainder
+
+`pnpm run lint` in `web/` runs **oxlint** and then **ESLint**, in that order
+(`make lint-web` and `scripts/verify-changed.sh` both call it, so there is one
+entry point).
+
+- **[`web/.oxlintrc.json`](./web/.oxlintrc.json) owns the rule set** — every rule,
+  its severity, and the reasoning. It also loads
+  `web/eslint-plugin-classnames` and `@tanstack/eslint-plugin-query` as oxlint JS
+  plugins, aliased so rule names stay `classnames/…` and `@tanstack/query/…`.
+  Type-aware rules run through `oxlint-tsgolint`, which embeds its own
+  typescript-go, so they do not depend on the `typescript` devDependency.
+- **[`web/eslint.config.js`](./web/eslint.config.js) is the remainder**: the four
+  rules oxlint has no equivalent for, chiefly
+  `react-hooks/component-hook-factories`. It reads `.oxlintrc.json` through
+  `eslint-plugin-oxlint` and switches off everything oxlint owns, so the two
+  cannot drift and nothing is reported twice.
+
+**Add a rule to `.oxlintrc.json`, not to `eslint.config.js`.** ESLint's side is
+derived; a rule added there that oxlint also has will simply be double-reported.
+The only reason to touch `eslint.config.js` is a rule oxlint genuinely lacks.
+
+Suppression comments keep the `// eslint-disable-next-line <rule>` form — oxlint
+honours them, and the rule names are unchanged. One caveat worth knowing: for the
+React Compiler rules oxlint treats a suppression comment as an opt-out for the
+whole enclosing function, where ESLint scopes it to the named rule on the named
+line. Keep suppressions on the reported line, and do not assume a
+`react-hooks/exhaustive-deps` disable is silencing only `exhaustive-deps`.
+
+Editor: install `oxc.oxc-vscode` (in the workspace recommendations).
+`.vscode/settings.json` pins `oxc.configPath` to `web/.oxlintrc.json` — required,
+because the language server otherwise treats it as a nested config and ignores
+its `options` block ([oxc#19937](https://github.com/oxc-project/oxc/issues/19937)).
 
 ### API access policy (SDK-first)
 

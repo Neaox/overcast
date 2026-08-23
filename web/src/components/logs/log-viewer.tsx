@@ -113,7 +113,7 @@ export function LogViewer({
         )}
 
         {!loading && error && (
-          <div className="py-4 text-center text-[10px] text-red-400">{error}</div>
+          <div className="py-4 text-center text-[10px] text-danger">{error}</div>
         )}
 
         {!loading && !error && events.length === 0 && (

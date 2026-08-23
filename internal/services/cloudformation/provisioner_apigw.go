@@ -274,8 +274,8 @@ func (h *apigwMethodHandler) Create(ctx context.Context, router http.Handler, cf
 	}
 	// RequestModels, RequestValidatorId, OperationName and AuthorizationScopes
 	// are accepted by CDK/CFN but the service has no field for any of them
-	// (see the TODO(priority:P3) on apigateway.Method) — intentionally not
-	// forwarded rather than silently claimed as honoured.
+	// (the first three are tracked by the P3 note on apigateway.Method) —
+	// intentionally not forwarded rather than silently claimed as honoured.
 
 	data, _ := json.Marshal(body)
 	path := fmt.Sprintf("/restapis/%s/resources/%s/methods/%s", restApiID, resourceID, httpMethod)

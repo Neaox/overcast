@@ -157,9 +157,16 @@ func TestExcludedServices_ListsDirsWithoutTypedOps(t *testing.T) {
 
 // TestExcludedServices_RealServicesFromIssue748 pins that every service
 // reported missing from docs/operation-manifest.md by #748 (S3, Lambda, API
-// Gateway, CloudFront, Pipes, CloudWatch) is captured by excludedServices
-// against the real internal/services tree, so it can no longer disappear
-// from the doc without a visible entry.
+// Gateway, CloudFront, Pipes) is captured by excludedServices against the real
+// internal/services tree, so it can no longer disappear from the doc without a
+// visible entry.
+//
+// CloudWatch was #748's sixth name and is deliberately gone from this list:
+// #1280 gave it a typed_ops.go — the registry that lets it answer rpcv2Cbor —
+// so it now has a typed-dispatch section of its own rather than a row in the
+// exclusion table. A service leaving this list by acquiring typed dispatch is
+// the outcome #748 wanted; what the test still guards is a service leaving it
+// by going silently unreported.
 func TestExcludedServices_RealServicesFromIssue748(t *testing.T) {
 	root, err := findWorkspaceRoot(".")
 	if err != nil {
@@ -180,7 +187,7 @@ func TestExcludedServices_RealServicesFromIssue748(t *testing.T) {
 	for _, n := range excluded {
 		excludedSet[n] = true
 	}
-	for _, want := range []string{"s3", "lambda", "apigateway", "cloudfront", "pipes", "cloudwatch"} {
+	for _, want := range []string{"s3", "lambda", "apigateway", "cloudfront", "pipes"} {
 		if !excludedSet[want] {
 			t.Errorf("expected %q to be reported as excluded (no typed_ops.go), got excluded=%v", want, excluded)
 		}

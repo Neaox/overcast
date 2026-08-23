@@ -229,7 +229,10 @@ export function EventsPage() {
   }, [])
 
   const showAllSources = useCallback(() => setHiddenSources(new Set()), [])
-  const hideAllSources = useCallback(() => setHiddenSources(new Set(allSources.map((s) => s.id))), [allSources])
+  const hideAllSources = useCallback(
+    () => setHiddenSources(new Set(allSources.map((s) => s.id))),
+    [allSources],
+  )
 
   const clearFilters = useCallback(() => {
     setHiddenSources(new Set(DEFAULT_HIDDEN_SOURCES))
@@ -238,7 +241,11 @@ export function EventsPage() {
     setDateTo("")
   }, [])
 
-  const hasFilter = !setsEqual(hiddenSources, DEFAULT_HIDDEN_SOURCES) || textFilter !== "" || dateFrom !== "" || dateTo !== ""
+  const hasFilter =
+    !setsEqual(hiddenSources, DEFAULT_HIDDEN_SOURCES) ||
+    textFilter !== "" ||
+    dateFrom !== "" ||
+    dateTo !== ""
   const top5 = useMemo(() => topSources(rawEvents, 5), [rawEvents])
 
   return (
@@ -335,7 +342,7 @@ export function EventsPage() {
           }}
         >
           {paused ? (
-            <Play className="h-3.5 w-3.5 text-green-400" />
+            <Play className="h-3.5 w-3.5 text-success" />
           ) : (
             <Pause className="h-3.5 w-3.5" />
           )}

@@ -172,18 +172,22 @@ bench-startup:
 	$(GO) run ./scripts/bench-startup.go
 
 ## lint: run all linters (Go/emulation, web UI, GitHub Actions)
-lint: lint-go lint-web lint-actions lint-encoding
+lint: lint-go lint-web lint-actions lint-encoding lint-todos
 
 ## lint-encoding: scan tracked text files for mojibake, stray BOMs, and U+FFFD (see scripts/check_encoding.py)
 lint-encoding:
 	python3 scripts/check_encoding.py
+
+## lint-todos: scan comments for markers the TODO-to-issue Action would misfile (see scripts/check_todos.py)
+lint-todos:
+	python3 scripts/check_todos.py
 
 ## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 	@bash scripts/verify-changed.sh --record go
 
-## lint-web: run web UI linting
+## lint-web: run web UI linting (oxlint, then ESLint for the rules oxlint lacks)
 lint-web:
 	cd web && pnpm run lint
 

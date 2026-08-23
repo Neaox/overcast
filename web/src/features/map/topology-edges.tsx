@@ -13,7 +13,7 @@
 import { memo } from "react"
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react"
 import { cn } from "@/lib/utils"
-import { EDGE_THEME, DEFAULT_EDGE_COLOR } from "./map-theme"
+import { EDGE_THEME, FALLBACK_COLOR } from "./map-theme"
 
 export interface TopologyEdgeData extends Record<string, unknown> {
   /** true while an event is animating along this edge */
@@ -73,9 +73,7 @@ export const TopologyEdge = memo(function TopologyEdge({
   const isESMFilter = edgeType === "esm-filter"
   const isDashed = EDGE_THEME[edgeType ?? ""]?.dash ?? false
   const isStopped = isPipe && state === "STOPPED"
-  const color = isStopped
-    ? DEFAULT_EDGE_COLOR
-    : (EDGE_THEME[edgeType ?? ""]?.color ?? DEFAULT_EDGE_COLOR)
+  const color = isStopped ? FALLBACK_COLOR : (EDGE_THEME[edgeType ?? ""]?.color ?? FALLBACK_COLOR)
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -131,8 +129,8 @@ export const TopologyEdge = memo(function TopologyEdge({
               isStopped
                 ? "border-transparent bg-bg-muted text-fg-subtle"
                 : isDlq
-                  ? "border-red-400/25 bg-bg-elevated text-red-300"
-                  : "border-sky-400/25 bg-bg-elevated text-sky-300",
+                  ? "border-danger/25 bg-bg-elevated text-danger"
+                  : "border-accent/25 bg-bg-elevated text-accent",
             )}
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,

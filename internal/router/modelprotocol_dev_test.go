@@ -57,18 +57,23 @@ import (
 // protocol — is what "not reached" means for it too.
 //
 // CloudWatch is the only dispatched service the pinned models declare
-// rpcv2Cbor for. Running the probe finds its declared operations answered
-// over awsJson and awsQuery and *never* over rpcv2Cbor — the smithyRPCService
-// wiring for it has no ProtocolService (no Operations()/SupportedProtocols()),
-// so CBOR support is never even claimed, not merely dropped for a few
-// operations. That is uniform non-coverage, not the #794 shape this test's
-// asymmetry definition exists to catch (a protocol the service demonstrably
-// speaks somewhere, withheld from one operation) — spoken["cloudwatch"][cbor]
-// never becomes true, so nothing is flagged. It is a real gap (the Java v2 SDK
-// picks rpcv2Cbor for a service that declares it, and a caller who cannot
-// force another protocol gets a wall of 501s where AWS would answer), just not
-// one this gate's narrow contract reports; wiring CloudWatch's CBOR dispatch is
-// its own, separate piece of work.
+// rpcv2Cbor for, and when #1228 first ran this probe it answered none of its
+// fifteen declared operations over it: the smithyRPCService wiring for it had
+// no ProtocolService (no Operations()/SupportedProtocols()), so CBOR was never
+// claimed at all, not merely dropped for a few operations. That was uniform
+// non-coverage rather than the #794 shape this test's asymmetry definition
+// exists to catch (a protocol the service demonstrably speaks somewhere,
+// withheld from one operation) — spoken["cloudwatch"][cbor] never became true,
+// so nothing was flagged, and the gap was recorded in prose here and in
+// docs/plans/manifest-enforcement.md rather than in protocolAsymmetries.
+//
+// #1280 closed it: CloudWatch registers a ProtocolService whose typed
+// operations share the awsJson handlers' cores, so all fifteen answer over
+// rpcv2Cbor and this probe exercises the service for real. The consequence
+// worth knowing is that spoken["cloudwatch"][cbor] is now true, which means
+// this gate has teeth for CloudWatch it did not have before: an operation
+// added to the Query and JSON tables without a typed binding is a genuine
+// asymmetry from here on, and fails.
 func TestDeclaredProtocols_areDispatchedSymmetrically(t *testing.T) {
 	// Given: the running emulator, and every dispatched capability's modeled
 	// protocol set.

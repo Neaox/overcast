@@ -260,8 +260,8 @@ export function LambdaInvocationsDrawer({
                                 "font-mono text-[10px] tracking-[0.12em] uppercase",
                                 inv.durationMs
                                   ? inv.durationMs > 5000
-                                    ? "text-yellow-400"
-                                    : "text-emerald-400"
+                                    ? "text-warning"
+                                    : "text-success"
                                   : "text-fg-muted",
                               )}
                             >
@@ -320,9 +320,9 @@ export function LambdaInvocationsDrawer({
                         selectedStatus === "running"
                           ? "text-fg"
                           : selectedStatus === "failed"
-                            ? "text-red-400"
+                            ? "text-danger"
                             : selectedStatus === "completed"
-                              ? "text-emerald-400"
+                              ? "text-success"
                               : "text-fg-muted",
                       )}
                     >
@@ -356,7 +356,7 @@ export function LambdaInvocationsDrawer({
                             : " -> running"}
                         </div>
                         {selected.outcomeStatus === "failed" && selected.outcomeReason && (
-                          <div className="mt-0.5 font-mono text-[9px] text-red-400/90">
+                          <div className="mt-0.5 font-mono text-[9px] text-danger/90">
                             reason: {selected.outcomeReason}
                           </div>
                         )}

@@ -12,6 +12,7 @@ package lambda
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,13 +62,13 @@ func newAbandoningDaemon(t *testing.T) *abandoningDaemon {
 			}
 			w.WriteHeader(http.StatusNoContent)
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/images/create":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"Pull complete"}` + "\n"))
-
-		// Every image is absent, so the acquire always pulls first.
+		// The image is present and matches the platform, so the acquire goes
+		// straight to the create this test is about. Pulling first would be a
+		// second round trip that can fail for its own reasons on a loaded
+		// machine, and it is not what is under test.
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/images/"):
-			http.Error(w, "no such image", http.StatusNotFound)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"Os": "linux", "Architecture": "amd64"})
 
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -101,7 +102,12 @@ func TestAcquireContainer_createAbandonedMidFlightRemovesTheContainer(t *testing
 	var name string
 	select {
 	case name = <-daemon.creating:
-	case <-time.After(10 * time.Second):
+	// An acquire that fails before the create — the fake daemon unreachable,
+	// a socket the machine could not spare — is an environment failure rather
+	// than the behaviour under test, and saying so beats a bare timeout.
+	case err := <-done:
+		t.Fatalf("the acquire failed before reaching the container create: %v", err)
+	case <-time.After(30 * time.Second):
 		t.Fatal("the acquire never reached the container create")
 	}
 

@@ -1,8 +1,16 @@
-# Automatically create GitHub issues from TODO comments added in PRs.
-# Format: // TODO(priority:P1): description of the work
-# Supported priorities: P1, P2, P3 (mapped via !label syntax)
+# Automatically create GitHub issues from TODO-marked comments added in PRs.
 #
-# Only newly added TODOs are detected (the action diffs the push).
+# The marker must open the comment and carry a priority. The format and the
+# reasoning for it live in CONTRIBUTING.md under "Honest TODOs", and
+# `make lint-todos` enforces it. That gate is not cosmetic: this action matches
+# its marker *anywhere* in a comment and takes the rest of the line as the
+# issue title, so a marker named mid-sentence in prose becomes a nonsense
+# issue — see issue #1138, whose title was "on apigateway.Method) —
+# intentionally not" — and a stray lowercase "todo" in ordinary prose would
+# open one of its own. The identifier list below is matched in order, so the
+# priority variants come first and the bare marker last.
+#
+# Only newly added lines are detected (the action diffs the push).
 # Created issues use the feature request template structure and are
 # labelled `needs-info` so maintainers know to fill in details.
 #
@@ -26,10 +34,24 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NO_STANDARD: "true"
           LANGUAGES: .github/todo-languages.json
+          # repo_provider_test.go builds its fixtures as Go string literals
+          # that contain canonical markers — test data for the MCP
+          # repo_find_todos tool. The action cannot tell a string literal from
+          # a comment, so editing a fixture would file an issue for it.
+          IGNORE: ^internal/mcp/providers/repo_provider_test\.go$
+          # Matched in order, first hit wins. The priority variants exist so a
+          # priority in the marker becomes a `priority/pN` label instead of a
+          # `[priority:P3] ` prefix glued onto the issue title.
           IDENTIFIERS: |
             [
+              {"name": "TODO(priority:P0)", "labels": ["auto-todo", "needs-info", "priority/p0"]},
+              {"name": "TODO(priority:P1)", "labels": ["auto-todo", "needs-info", "priority/p1"]},
+              {"name": "TODO(priority:P2)", "labels": ["auto-todo", "needs-info", "priority/p2"]},
+              {"name": "TODO(priority:P3)", "labels": ["auto-todo", "needs-info", "priority/p3"]},
               {"name": "TODO", "labels": ["auto-todo", "needs-info"]}
             ]
+          # {{ snippet }} already arrives fenced (the action wraps it in a code
+          # block of its own), so nothing here may fence it again.
           ISSUE_TEMPLATE: |
             ## What would you like
 
@@ -47,14 +69,19 @@ jobs:
 
             {{ url }}
 
-            ```
             {{ snippet }}
-            ```
 
             ---
 
-            > This issue was auto-created from a TODO comment.
+            > This issue was auto-created from a comment marker.
             > Please add acceptance criteria, priority (`P1`/`P2`/`P3`),
             > and effort (`small`/`medium`/`large`) labels.
           CLOSE_ISSUES: "false"
-          ESCAPE: "true"
+          # ESCAPE backslash-escapes every Markdown metacharacter in the body,
+          # which turned "`down -v`" into "\`down \-v\`" on issue #1044. Our
+          # markers are prose that quotes identifiers in backticks, so the
+          # escaping costs more than it buys.
+          ESCAPE: "false"
+          # AUTO_P puts a blank line between every line of the comment, which
+          # splits one wrapped sentence into a paragraph per line.
+          AUTO_P: "false"

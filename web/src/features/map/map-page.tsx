@@ -57,7 +57,7 @@ import { useZoomCollapse } from "./use-zoom-collapse"
 import { VpcGroupNode } from "./vpc-group-node"
 import { VpcNetworkNode } from "./vpc-network-node"
 import { IgwNode } from "./igw-node"
-import { SERVICE_THEME, EDGE_THEME, DEFAULT_EDGE_COLOR } from "./map-theme"
+import { SERVICE_THEME, EDGE_THEME, FALLBACK_COLOR } from "./map-theme"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import type { LambdaInstance, TopologyNode } from "@/types"
 
@@ -484,7 +484,7 @@ function CustomMiniMap() {
             const et = EDGE_THEME[edgeType]
             const style = et
               ? { color: et.color, dash: et.dash }
-              : { color: DEFAULT_EDGE_COLOR, dash: false }
+              : { color: FALLBACK_COLOR, dash: false }
             const srcAbs = nodeAbsPos.get(src.id) ?? src.position
             const tgtAbs = nodeAbsPos.get(tgt.id) ?? tgt.position
             const [cx1, cy1] = toSvg(
@@ -521,7 +521,7 @@ function CustomMiniMap() {
           {topNodes.map((n) => {
             const svc = (n.data as { service?: string }).service ?? ""
             const theme = SERVICE_THEME[svc]
-            const color = theme?.hex ?? "#6b7280"
+            const color = theme?.css ?? FALLBACK_COLOR
             const letter = theme?.letter ?? "?"
             const abs = nodeAbsPos.get(n.id) ?? n.position
             const [cx, cy] = toSvg(abs.x + (n.width ?? 180) / 2, abs.y + (n.height ?? 56) / 2)
@@ -699,7 +699,7 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
       .filter((e) => e.type !== "nested-stack") // nesting shown visually
       .filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
       .map((e) => {
-        const edgeColor = EDGE_THEME[e.type]?.color ?? DEFAULT_EDGE_COLOR
+        const edgeColor = EDGE_THEME[e.type]?.color ?? FALLBACK_COLOR
         return {
           id: e.id,
           source: e.source,

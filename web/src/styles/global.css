@@ -184,11 +184,14 @@
   /* Categorical identity ramp — one hue per slot, all at the same OKLCH
      lightness so no slot is quietly weaker than its neighbours. At L=0.5 every
      slot clears WCAG AA for normal text on each surface it is used on:
-     #FFFFFF card 4.70–6.53, --accent-muted row hover 4.88–5.63, page bg
-     5.30–6.12. Chroma is the sRGB maximum at that lightness, which is why the
-     yellow-through-cyan slots are duller; the hue spacing is widened across
-     that same 95°–218° stretch to compensate, leaving the closest pair
-     (orange/amber) at ~3.4x the Oklab just-noticeable difference. */
+     #FFFFFF card 5.66–6.53, --accent-muted row hover 4.88–5.63, page bg
+     5.30–6.12, and 4.50–5.19 on a chip tinted with the slot's own colour at
+     the strengths call sites use (see docs/plans/palette-categorical-tokens.md
+     for the recorded per-slot table, both themes). Chroma is the sRGB maximum
+     at that lightness, which is why the yellow-through-cyan slots are duller;
+     the hue spacing is widened across that same 95°–218° stretch to
+     compensate, leaving the closest pair (orange/amber) at ~3.4x the Oklab
+     just-noticeable difference. */
   --cat-1: oklch(0.5 0.149 25); /* red */
   --cat-2: oklch(0.5 0.117 60); /* orange */
   --cat-3: oklch(0.5 0.102 95); /* amber */

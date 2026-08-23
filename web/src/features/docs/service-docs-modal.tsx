@@ -257,17 +257,17 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                     if (className?.includes("markdown-alert")) {
                       const type = className.match(/markdown-alert-(\w+)/)?.[1]
                       const styles: Record<string, { border: string; titleColor: string }> = {
-                        note: { border: "border-blue-400/60", titleColor: "oklch(0.67 0.19 240)" },
-                        tip: { border: "border-green-400/60", titleColor: "oklch(0.67 0.16 145)" },
+                        note: { border: "border-accent/60", titleColor: "var(--accent)" },
+                        tip: { border: "border-success/60", titleColor: "var(--success)" },
                         important: {
-                          border: "border-purple-400/60",
-                          titleColor: "oklch(0.67 0.19 290)",
+                          border: "border-cat-8/60",
+                          titleColor: "var(--cat-8)",
                         },
                         warning: {
-                          border: "border-amber-400/60",
-                          titleColor: "oklch(0.78 0.16 75)",
+                          border: "border-warning/60",
+                          titleColor: "var(--warning)",
                         },
-                        caution: { border: "border-red-400/60", titleColor: "oklch(0.67 0.19 25)" },
+                        caution: { border: "border-danger/60", titleColor: "var(--danger)" },
                       }
                       const s = styles[type ?? ""] ?? { border: "border-accent/40", titleColor: "" }
                       return (

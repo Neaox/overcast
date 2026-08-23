@@ -1,16 +1,22 @@
 # Inert-tier rollout — mass-producing Tier 1 across the AWS surface
 
 > Status: proposal, 2026-08-03. Owner: TBD.
-> Re-verified 2026-08-21: **no phase has started** — there is no
-> `internal/inert`, no `models/aws/shapes/`, no `-inert-*`/`-shapes-out` flags
-> in `cmd/awsmodelgen`, and none of the pilot services (servicediscovery, ELB
-> Classic, batch) exists. The §2 baseline has drifted since it was captured:
-> capabilities now read 1,240 Supported / 154 Unsupported / 28 Inert /
-> **12 Partial** (the zero-`StatusPartial` claim no longer holds), Backup left
-> the wholly-inert set (#815/#904 made it a real REST implementation), bedrock
-> gained two `StatusInert` rows (#857), and the tagging backfill grew
-> transfer/cloudtrail's inert row counts. `internal/capabilities/all.gen.go`
-> is authoritative; re-derive §2.2 before budgeting any wave.
+> Re-verified 2026-08-23: **Phases I0 and I1 have landed** (issue #1114) —
+> `internal/inert/conformance` turns §3 into executable, table-driven
+> conformance tests, run against a deliberately naive stub to prove the suite
+> bites, and `models/aws/shapes/` holds the pruned shape snapshot with its
+> `shapes-sha256`, offline check and size budget (see the phase table in §8
+> and §4.6's measurement). Phases I2 onward are still not started — there is
+> no `internal/inert` runtime, no `-inert-*` flags in `cmd/awsmodelgen`, and
+> none of the pilot services (servicediscovery, ELB Classic, batch) exists.
+> §3.1's authoritative classifier needs re-checking before I3: only 121 of
+> 426 modeled services declare Smithy `resource` shapes and none of the four
+> snapshot services do, so the name-prefix fallback is the only path for the
+> pilot (#1369). §2.2's census is
+> re-derived as of this commit: capabilities now read 1,258 Supported / 153
+> Unsupported / 28 Inert / 14 Partial / 0 WIP across 1,453 rows.
+> `internal/capabilities/all.gen.go` is authoritative; re-derive §2.2 before
+> budgeting any wave — the numbers drift every time a service graduates.
 > Siblings: [compat coverage modelgen](./compat-coverage-modelgen.md) (generated compat groups),
 > [services never emulated](./services-never-emulated.md) (the scope boundary this plan obeys),
 > [full emulation priority](./full-emulation-priority.md) (what graduates to Tier 2 and in what order).
@@ -99,51 +105,69 @@ from the audited scope lists, never from the raw totals.
 
 ### 2.2 What "implemented" means today
 
+> Re-derived 2026-08-23 for Phase I0 (this plan's own acceptance gate requires
+> re-deriving this section from the code, not copying the previous draft — the
+> previous numbers here (1,318 rows; 1,116/154/48/0/0) were themselves already
+> stale twice over by the time I0 landed). Reproduce with:
+> `go run -tags dev ./cmd/capgen --generate` (writes `all.gen.go`, prints the
+> row count), then `grep -c 'Status<X>' internal/capabilities/all.gen.go` per
+> status. `internal/capabilities/all.gen.go` is authoritative; re-derive this
+> section again before budgeting any later wave, the same way.
+
 [`internal/capabilities/all.gen.go`](../../internal/capabilities/all.gen.go)
-declares **1,318 capability rows across 50 services**:
-1,116 `StatusSupported`, 154 `StatusUnsupported`, 48 `StatusInert`,
-**zero** `StatusWIP` and **zero** `StatusPartial`.
+declares **1,453 capability rows across 50 services**:
+1,258 `StatusSupported`, 153 `StatusUnsupported`, 28 `StatusInert`,
+14 `StatusPartial`, and **zero** `StatusWIP`.
 
 The `StatusInert` rows are services that are *already entirely Tier 1*:
-`transfer` (10), `backup` (9), `cloudtrail` (9), `organizations` (1). These, not
-Route 53, are the closest existing analogues to what this plan mass-produces —
-Route 53 is a *supported* service that happens not to serve DNS.
-
-`autoscaling` was the fifth, and the largest, at 19 inert rows. It left the
-inert list on 2026-08-03 (#474): its groups now really converge, so its 25 rows
-are `StatusSupported`. The counts above are the pre-promotion figures and are
-kept as the baseline this plan was budgeted from.
+`transfer` (13), `cloudtrail` (12), `bedrock` (2), `organizations` (1). These,
+not Route 53, are the closest existing analogues to what this plan
+mass-produces — Route 53 is a *supported* service (see below, it now serves
+real DNS). `backup` left the wholly-inert set (#815/#904 made it a real REST
+implementation): its 6 remaining metadata-only rows are `StatusPartial`, not
+`StatusInert` — the first real use of that status, alongside one row each in
+`iam`/`kms`/`sns` and 5 in `s3`. `autoscaling` left the inert list earlier
+still (#474; its 25 rows are `StatusSupported`). None of these promotions
+change this plan's scope — they only move rows between statuses this plan
+already accounted for.
 
 Services carrying `StatusUnsupported` rows — i.e. the **inert-backfill** targets
-inside already-implemented services (§7):
+inside already-implemented services (§7), re-derived the same way (`grep`
+`Status: StatusSupported` / `StatusUnsupported` per service):
 
 | Service | Supported | Unsupported |
 | --- | --- | --- |
-| cloudformation | 20 | 28 |
-| ses | 24 | 18 |
-| rds | 20 | 13 |
-| msk | 16 | 13 |
-| eventbridge | 16 | 12 |
-| s3 | 36 | 11 |
-| ecs | 40 | 8 |
-| sns | 16 | 8 |
-| ssm | 10 | 8 |
-| secretsmanager | 14 | 7 |
+| cloudformation | 24 | 28 |
+| ses | 27 | 18 |
+| msk | 17 | 13 |
+| eventbridge | 18 | 11 |
+| rds | 24 | 10 |
+| ecs, s3 | 40 each | 8 each |
+| sns | 21 | 8 |
+| dynamodb, ssm | 21 / 11 | 7 each |
 | route53 | 19 | 6 |
 | sts | 5 | 6 |
-| cloudwatch-logs | 15 | 4 |
-| efs, elbv2 | 28 / 12 | 3 each |
-| apigateway, sqs | 103 / 19 | 2 each |
-| dynamodb, lambda | 18 / 47 | 1 each |
+| cloudwatch-logs | 18 | 4 |
+| efs, elbv2, secretsmanager | 28 / 18 / 19 | 3 each |
+| apigateway, cloudwatch, elasticache, lambda, sqs | 104 / 15 / 22 / 57 / 19 | 2 each |
 
-> STATUS.md corrections found: Secrets Manager is **14 of 21** implemented, not
-> "11 of 21". Shield is **not** "all ops return 501" — all five of its declared ops
-> are `StatusSupported` with real persisted state
-> ([internal/services/shield/typed_logic.go](../../internal/services/shield/typed_logic.go));
-> it is a *minimal* service, and its value as an exemplar is that it is the
-> smallest complete typed-only service (~470 lines for 5 ops), not that it is a
-> 501 stub. Route 53's STATUS.md line "inert (no DNS served)" describes a Tier 2
-> gap in a Tier-2-quality control plane, not a `StatusInert` capability set.
+> STATUS.md corrections re-checked for I0: STATUS.md's prose (`STATUS.md`
+> lines outside the `<!-- BEGIN overcast:status -->` block) already states
+> Secrets Manager at **22** ops (19 `StatusSupported` + 3 `StatusUnsupported`,
+> matching the registry) and Shield at **8** ops, all `StatusSupported` with
+> real persisted state
+> ([internal/services/shield/typed_logic.go](../../internal/services/shield/typed_logic.go))
+> — both of this plan's originally-cited corrections had already been applied
+> by the time I0 started; there was nothing left to fix. Route 53's STATUS.md
+> line no longer says "inert (no DNS served)" — it documents that Overcast's
+> resolver now answers real DNS queries from a zone's records (#1189), and its
+> 19/6 Supported/Unsupported split above is what a `StatusInert` write-up would
+> have described instead. The one real drift found: STATUS.md's CloudFormation
+> row cited "132 resource types"; `resourceHandlers` in
+> [provisioner.go](../../internal/services/cloudformation/provisioner.go) has
+> **136** (counted directly from the map literal) — `docs/cdk.md` already said
+> 136, only STATUS.md's prose was behind. Fixed in the same commit as this
+> section.
 
 ### 2.3 The machinery this plan extends
 
@@ -760,7 +784,7 @@ stale generated output, or a red required check.
 
 | Phase | Contents | Effort | Acceptance gate |
 | --- | --- | --- | --- |
-| **I0** — contract & truth | Write §3 as executable conformance tests in `internal/inert/conformance` (table-driven: per class, per protocol family). Fix STATUS.md's stale prose (§2.2 corrections). Add the `Tier 0/1/2` vocabulary to CONTRIBUTING. | S | Conformance suite exists and **fails** against a deliberately naive stub; STATUS.md matches the capability registry. |
+| **I0** — contract & truth ✅ **done** | Write §3 as executable conformance tests in `internal/inert/conformance` (table-driven: per class, per protocol family). Fix STATUS.md's stale prose (§2.2 corrections). Add the `Tier 0/1/2` vocabulary to CONTRIBUTING. | S | Conformance suite exists and **fails** against a deliberately naive stub; STATUS.md matches the capability registry. Landed in [PR #1360](https://github.com/Neaox/overcast/pull/1360): `internal/inert/conformance.Check`/`Run` cover all 15 clauses named above; `TestNaiveStub_ViolatesExpectedClauses` runs the suite against a naive in-memory stub over both JSON 1.1 and the AWS Query protocol and pins the exact 10-clause violation set. STATUS.md's only remaining drift (CloudFormation's resource-type count) is fixed; the two corrections §2.2 originally cited had already been applied. |
 | **I1** — shape snapshot — **landed** | Build the pruner in `cmd/awsmodelgen` (`-shapes-out`); commit `models/aws/shapes/` for the pilot's three services; add `shapes-sha256` to `models/aws/VERSION`; extend `make aws-models-check` and the A5 workflow. Amend [aws-api-operation-coverage.md §3](./aws-api-operation-coverage.md) with the §4.6 reconciliation. Shipped with `organizations` as a fourth service, for I2. | M | **Met.** Snapshot is byte-deterministic (regen-and-diff, plus a repeat-run test); offline `aws-models-check` validates `shapes-sha256` and the size budget with no network and no model checkout; a test proves no runtime package reads the snapshot. Measured 268,548 bytes / 167 ops / 1,608 B per op and fleet budget 24 MiB — see §4.6's measurement. |
 | **I2** — inert runtime | `internal/inert`: `Store[T]`, `Tags`, `Binding`, zero-alloc `Lookup`. Hand-write **one** service against it end to end to prove the API (recommend rewriting `organizations`, 1 op / 226 lines, as the smoke test) — and bring **at least one additional `organizations` operation** to Tier 1 while there, because [compat-coverage-modelgen.md](./compat-coverage-modelgen.md) §4.2.5's decisive pilot criterion is watching exactly such an op flip from `unimplemented` to `pass` via regeneration alone. | M | Conformance suite passes for the hand-wired service; `Lookup` benchmarks at `0 allocs/op`; ≥1 new `organizations` op at `StatusInert`. |
 | **I3** — generator | `cmd/awsmodelgen -inert-*`: types, ops, resources, capabilities, `tier0` list. Error-selection, ID/ARN templates, pagination member detection, verb classification (§3.6). Regen-and-diff CI job. | L | Generated output for the pilot compiles, passes conformance, and regen-diff is green. |

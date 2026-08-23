@@ -41,7 +41,7 @@ function highlightMatches(message: string, matcher: RegExp): React.ReactNode {
   // read a global regex's `lastIndex` between calls and skip every other match.
   return parts.map((part, i) =>
     i % 2 === 1 ? (
-      <mark key={i} className="rounded-sm bg-yellow-400/30 px-0.5 text-inherit">
+      <mark key={i} className="rounded-sm bg-warning/30 px-0.5 text-inherit">
         {part}
       </mark>
     ) : (

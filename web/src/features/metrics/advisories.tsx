@@ -22,8 +22,8 @@ type SeverityStyle = { icon: typeof Info; iconClass: string; badgeClass: string;
 // SeverityStyle | undefined, so the lookup below can never end up undefined.
 const DEFAULT_STYLE: SeverityStyle = {
   icon: Info,
-  iconClass: "text-blue-400",
-  badgeClass: "bg-blue-500/15 text-blue-400",
+  iconClass: "text-accent",
+  badgeClass: "bg-accent/15 text-accent",
   label: "Info",
 }
 

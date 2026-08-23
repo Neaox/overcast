@@ -318,6 +318,25 @@ func functionInstanceIdentity(fn *Function) string {
 
 // ─── Acquire / Release ───────────────────────────────────────────────────────
 
+// noteFunctionPresentLocked records the identity name is expected to run with,
+// and lifts any wholesale-eviction marker EvictFunction left behind.
+//
+// The two belong together. The marker means "this name was deleted, so an
+// environment released for it is a leftover" — true until the name is in use
+// again, at which point leaving it set destroys environments built for the live
+// function. Clearing it without recording an identity is the opposite mistake:
+// Release would have nothing to compare a late environment against, and would
+// pool a container built for the deleted incarnation.
+//
+// Every path that learns the function exists calls this: an invocation
+// (takeWarm), an update (InvalidateFunction), a reservation
+// (SetProvisionedConcurrency) and proactive initialization (ProactiveInit).
+// Caller must hold p.mu.
+func (p *InstancePool) noteFunctionPresentLocked(fn *Function) {
+	p.expected[fn.Name] = functionInstanceIdentity(fn)
+	delete(p.evicted, fn.Name)
+}
+
 // takeWarm removes and returns an idle instance for fn, or nil when the caller
 // must cold start. Pooled instances whose identity no longer matches fn (its
 // code or configuration changed) are closed here.
@@ -333,8 +352,7 @@ func (p *InstancePool) takeWarm(fn *Function) RuntimeInstance {
 		p.mu.Unlock()
 		return nil
 	}
-	p.expected[fn.Name] = identity
-	delete(p.evicted, fn.Name)
+	p.noteFunctionPresentLocked(fn)
 
 	var stale []RuntimeInstance
 	var chosen RuntimeInstance
@@ -801,8 +819,7 @@ func (p *InstancePool) InvalidateFunction(fn *Function) int {
 		p.mu.Unlock()
 		return 0
 	}
-	p.expected[name] = identity
-	delete(p.evicted, name)
+	p.noteFunctionPresentLocked(fn)
 	warm := p.entries[name]
 	var retire []RuntimeInstance
 	kept := warm[:0]
@@ -906,6 +923,12 @@ func (p *InstancePool) SetProvisionedConcurrency(fn *Function, target int) {
 		p.mu.Unlock()
 		return
 	}
+	// Reserving capacity for a name is proof it is in use — a function deleted
+	// and created again under the same name would otherwise have every
+	// environment the reservation builds destroyed on release as a leftover of
+	// the deleted one, leaving the reservation unfilled until something
+	// invoked the function.
+	p.noteFunctionPresentLocked(fn)
 	p.provisioned[fn.Name] = &provisionedState{target: target, fn: &snapshot}
 	p.mu.Unlock()
 
@@ -1138,6 +1161,9 @@ func (p *InstancePool) ProactiveInit(fn *Function) proactiveOutcome {
 		p.mu.Unlock()
 		return proactiveBusy
 	}
+	// Initializing ahead of traffic is proof the function exists, for the same
+	// reason a reservation is (see noteFunctionPresentLocked).
+	p.noteFunctionPresentLocked(fn)
 	// Reserve the slot and memory exactly as admit/admitContainer would, so
 	// concurrent real invocations see the capacity as taken.
 	p.checkedOut[name]++

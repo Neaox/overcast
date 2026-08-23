@@ -111,8 +111,8 @@ export function detectLogLevel(msg: string): LogLevel | null {
  * tint on every second row is noise rather than signal.
  */
 export const logLevelRowClass: Record<LogLevel, string> = {
-  error: "border-l-red-500/60 bg-red-500/5",
-  warn: "border-l-yellow-500/60 bg-yellow-500/5",
+  error: "border-l-danger/60 bg-danger/5",
+  warn: "border-l-warning/60 bg-warning/5",
   info: "",
   debug: "border-l-fg-muted/30 bg-fg-muted/3",
 }
@@ -120,16 +120,16 @@ export const logLevelRowClass: Record<LogLevel, string> = {
 /**
  * Badge tint by level, for the viewers that label the row as well as tint it.
  *
- * Each colour is stated twice because the badge has to read on both themes and
- * a `/15` background is close to whatever it sits on. The 400s are the dark
- * theme's: on a light row `text-yellow-400` is lighter than the paper behind it
- * and the label disappears, which is the one thing a badge cannot do. `debug`
- * needs no pair — `fg-muted` is a semantic token and already flips.
+ * Every colour is a semantic token, so each already carries its own light and
+ * dark value and the badge needs no `dark:` pair. The raw Tailwind hues these
+ * replaced did need one — on a light row `text-yellow-400` is lighter than the
+ * paper behind it and the label disappears, which is the one thing a badge
+ * cannot do.
  */
 export const logLevelBadgeClass: Record<LogLevel, string> = {
-  error: "bg-red-500/15 text-red-700 dark:text-red-400",
-  warn: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
-  info: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  error: "bg-danger/15 text-danger",
+  warn: "bg-warning/15 text-warning",
+  info: "bg-accent/15 text-accent",
   debug: "bg-fg-muted/15 text-fg-muted",
 }
 

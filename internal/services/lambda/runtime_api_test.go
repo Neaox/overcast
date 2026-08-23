@@ -27,14 +27,20 @@ func TestRuntimeAPI_OnFirstNextCalledOnce(t *testing.T) {
 	t.Cleanup(func() { srv.Stop(context.Background()) })
 
 	var callCount atomic.Int32
-	var lastARN atomic.Value
-	srv.OnFirstNext = func(arn string) {
+	var lastARN, lastContainer atomic.Value
+	srv.OnFirstNext = func(arn, containerID string) {
 		callCount.Add(1)
 		lastARN.Store(arn)
+		lastContainer.Store(containerID)
 	}
 
-	// Register a fake container IP.
-	srv.RegisterContainer("127.0.0.1", "arn:aws:lambda:us-east-1:000000000000:function:my-fn")
+	// Register a fake container IP, with the Docker container behind it —
+	// what the INIT-burst throttle acts on.
+	srv.RegisterContainerConfig("127.0.0.1", runtimeContainerConfig{
+		FunctionARN:  "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+		FunctionName: "my-fn",
+		ContainerID:  "container-my-fn",
+	})
 
 	// Submit an invocation so the first /next returns immediately.
 	srv.SubmitInvocation(
@@ -59,6 +65,11 @@ func TestRuntimeAPI_OnFirstNextCalledOnce(t *testing.T) {
 	}
 	if got, _ := lastARN.Load().(string); got != "arn:aws:lambda:us-east-1:000000000000:function:my-fn" {
 		t.Fatalf("OnFirstNext ARN = %q, want my-fn ARN", got)
+	}
+	// And with the environment that reported it: a function can have several
+	// in INIT at once, so the ARN alone does not say which container this was.
+	if got, _ := lastContainer.Load().(string); got != "container-my-fn" {
+		t.Fatalf("OnFirstNext container = %q, want container-my-fn", got)
 	}
 
 	// Submit another invocation for a second /next call.
@@ -157,7 +168,7 @@ func TestRuntimeAPI_OnFirstNextResetsAfterUnregister(t *testing.T) {
 	t.Cleanup(func() { srv.Stop(context.Background()) })
 
 	var callCount atomic.Int32
-	srv.OnFirstNext = func(arn string) {
+	srv.OnFirstNext = func(string, string) {
 		callCount.Add(1)
 	}
 

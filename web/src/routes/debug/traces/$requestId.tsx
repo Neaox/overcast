@@ -93,7 +93,7 @@ function TraceDetailPage() {
           <h2 className="text-lg font-semibold">{trace.method} {trace.path}</h2>
           <span className="flex items-center gap-2 text-sm text-fg-muted">
             {inFlight ? (
-              <span className="flex items-center gap-1 text-amber-400">
+              <span className="flex items-center gap-1 text-warning">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Processing…
               </span>
@@ -182,7 +182,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
         </div>
         <div className="flex items-center gap-2">
           {inFlight ? (
-            <span className="flex items-center gap-1 text-sm text-amber-400">
+            <span className="flex items-center gap-1 text-sm text-warning">
               <Loader2 className="h-3 w-3 animate-spin" />
               Processing…
             </span>
@@ -361,7 +361,7 @@ function HopDetailPanel({ hopId, hops, onClose }: { hopId: string; hops: TraceHo
         </div>
         <div><span className="text-fg-muted">Duration: </span><span className="font-mono">{nsToHuman(hop.duration)}</span></div>
         {hop.targetUri && <div className="col-span-3"><span className="text-fg-muted">Target: </span><span className="font-mono">{hop.targetUri}</span></div>}
-        {hop.error && <div className="col-span-3 text-red-400 font-mono">{hop.error}</div>}
+        {hop.error && <div className="col-span-3 text-danger font-mono">{hop.error}</div>}
       </div>
       <HopBodySection label="Request Body" hop={hop} which="request" className="mb-2" />
       <HopBodySection label="Response Body" hop={hop} which="response" />
@@ -520,7 +520,7 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
     <div className="flex flex-col gap-4">
       {upstreamTraces.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium text-emerald-400 mb-2">↑ Called by ({upstreamTraces.length})</h3>
+          <h3 className="text-sm font-medium text-cat-5 mb-2">↑ Called by ({upstreamTraces.length})</h3>
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
@@ -552,7 +552,7 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
 
       {hops.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium text-amber-400 mb-2">↓ Called ({hops.length})</h3>
+          <h3 className="text-sm font-medium text-cat-3 mb-2">↓ Called ({hops.length})</h3>
           <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
@@ -636,7 +636,7 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
                         <HopBodySection label="Request Body" hop={hop} which="request" />
                         <HopBodySection label="Response Body" hop={hop} which="response" />
                         {hop.error && (
-                          <div className="text-red-400 font-mono">{hop.error}</div>
+                          <div className="text-danger font-mono">{hop.error}</div>
                         )}
                         {hop.stack ? (
                           <details className="mt-2">
@@ -720,7 +720,7 @@ function LogsTab({ entries, hops }: { entries: TraceLogEntry[]; hops: TraceHop[]
                   <tr className="border-b border-border hover:bg-bg-elevated cursor-pointer" onClick={() => setExpanded(isExpanded ? null : i)}>
                     <td className="px-3 py-2 text-fg-muted">{isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</td>
                     <td className="px-3 py-2">
-                      <Badge variant="outline" className={cn("text-xs", entry.level === "ERROR" ? "border-red-400/50 text-red-400" : entry.level === "WARN" ? "border-amber-400/50 text-amber-400" : "border-emerald-400/50 text-emerald-400")}>{entry.level}</Badge>
+                      <Badge variant="outline" className={cn("text-xs", entry.level === "ERROR" ? "border-danger/50 text-danger" : entry.level === "WARN" ? "border-warning/50 text-warning" : "border-success/50 text-success")}>{entry.level}</Badge>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-fg-muted whitespace-nowrap">{formatTimestamp(entry.timestamp)}</td>
                     {showHopLogs && <td className="px-3 py-2 text-xs text-fg-muted">{entry.source ?? "request"}</td>}
@@ -757,10 +757,10 @@ function ErrorsTab({ trace }: { trace: TraceEntry }) {
       {hasEntryError && (
         <div>
           <h3 className="text-sm font-medium text-fg-muted mb-2">Request Error</h3>
-          <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-4">
+          <div className="rounded-lg border border-danger/30 bg-danger/10 p-4">
             <div className="flex items-center gap-2 mb-1">
-              <AlertCircle className="h-4 w-4 text-red-400" />
-              <span className="font-mono text-sm text-red-400">{trace.awsErrorCode}</span>
+              <AlertCircle className="h-4 w-4 text-danger" />
+              <span className="font-mono text-sm text-danger">{trace.awsErrorCode}</span>
             </div>
             {trace.awsErrorMessage && <p className="text-sm text-fg-muted">{trace.awsErrorMessage}</p>}
           </div>
@@ -780,7 +780,7 @@ function ErrorsTab({ trace }: { trace: TraceEntry }) {
                     {statusMessage(hop.responseStatus) && ` (${statusMessage(hop.responseStatus)})`}
                   </span>
                 </div>
-                {hop.error && <pre className="text-xs font-mono text-red-400 mt-1 overflow-x-auto max-h-32">{hop.error}</pre>}
+                {hop.error && <pre className="text-xs font-mono text-danger mt-1 overflow-x-auto max-h-32">{hop.error}</pre>}
               </div>
             ))}
           </div>
@@ -816,7 +816,7 @@ function EventsTab({ requestId }: { requestId: string }) {
   if (isLoading) return <Spinner />
   if (isError) {
     return (
-      <div className="flex items-center justify-center gap-2 text-red-400 py-8 text-sm">
+      <div className="flex items-center justify-center gap-2 text-danger py-8 text-sm">
         <AlertCircle className="h-4 w-4" />
         Failed to load events for this request.
       </div>

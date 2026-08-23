@@ -29,6 +29,11 @@ interface PhaseGroup {
   totalMs: number
 }
 
+/* One ramp slot per startup phase — identity, not state, so the six sit on
+   `--cat-*` rather than on semantic tokens. Slots are the nearest hue to the
+   colour each phase already had, except Go init: `slate-500` has almost no
+   chroma but sits at blue's hue, so it takes the blue slot rather than the
+   muted foreground, which the `Other` fallback below already owns. */
 const GROUP_DEFS: Array<{
   label: string
   color: string
@@ -37,14 +42,14 @@ const GROUP_DEFS: Array<{
 }> = [
   {
     label: "Go init",
-    color: "bg-slate-500",
-    textColor: "text-slate-300",
+    color: "bg-cat-7",
+    textColor: "text-cat-7",
     match: (n) => n === "Go runtime + package init",
   },
   {
     label: "Config & store",
-    color: "bg-violet-500",
-    textColor: "text-violet-300",
+    color: "bg-cat-8",
+    textColor: "text-cat-8",
     match: (n) =>
       n.startsWith("config") ||
       n.startsWith("logger") ||
@@ -53,26 +58,26 @@ const GROUP_DEFS: Array<{
   },
   {
     label: "Middleware & bus",
-    color: "bg-sky-500",
-    textColor: "text-sky-300",
+    color: "bg-cat-6",
+    textColor: "text-cat-6",
     match: (n) => n.startsWith("middleware") || n.startsWith("bus") || n.startsWith("MCP"),
   },
   {
     label: "Service constructors",
-    color: "bg-emerald-500",
-    textColor: "text-emerald-300",
+    color: "bg-cat-5",
+    textColor: "text-cat-5",
     match: (n) => n.trimStart().startsWith("new:") || n.startsWith("service constructors"),
   },
   {
     label: "Route registration",
-    color: "bg-amber-500",
-    textColor: "text-amber-300",
+    color: "bg-cat-3",
+    textColor: "text-cat-3",
     match: (n) => n.trimStart().startsWith("routes:") || n.startsWith("RegisterRoutes"),
   },
   {
     label: "Cross-service wiring",
-    color: "bg-rose-500",
-    textColor: "text-rose-300",
+    color: "bg-cat-10",
+    textColor: "text-cat-10",
     match: (n) => n.startsWith("cross-service") || n.startsWith("router.New (full)"),
   },
 ]

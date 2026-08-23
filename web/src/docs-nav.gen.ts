@@ -819,7 +819,7 @@ export const DOCS_NAV = [
     "path": "docs/operation-manifest.md",
     "href": "operation-manifest.md",
     "title": "Overcast Operation Manifest",
-    "description": "Typed-dispatch: 809 ops across 37 services; 13 more services are REST-routed or not yet migrated (see below)",
+    "description": "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -862,6 +862,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "cloudtrail — 12 ops, modeled: 60, protocols: JSON10, JSON11, RPCv2CBOR",
         "id": "cloudtrail-12-ops-modeled-60-protocols-json10-json11-rpcv2cbor"
+      },
+      {
+        "depth": 2,
+        "text": "cloudwatch — 15 ops, modeled: 50, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cloudwatch-15-ops-modeled-50-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -2249,7 +2254,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch.md",
     "href": "services/cloudwatch.md",
     "title": "CloudWatch — Amazon CloudWatch",
-    "description": "Amazon CloudWatch (monitoring and alarms) answers both the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 — and the JSON protocol the AWS CLI and SDKs send.",
+    "description": "Amazon CloudWatch (monitoring and alarms) answers all three protocols its model declares: the Query protocol, the JSON protocol the AWS CLI and SDKs send, and Smithy RPC v2 CBOR.",
     "section": "Service Reference",
     "tags": [
       "amazon",

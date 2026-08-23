@@ -878,13 +878,14 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 
 	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts, s.instances)
 
-	// When a container's RIC issues its first GET /next, throttle the
-	// INIT-burst CPU down to the steady-state proportional allocation. The
-	// instance tracker's "running" transition is driven from the invocation
-	// path instead (awaitRuntimeReady returns at the same moment, and only the
-	// invocation knows which of a function's environments this is).
-	runtimeAPI.OnFirstNext = func(functionARN string) {
-		containerRuntime.ThrottleInitBurst(functionARN)
+	// When a container's RIC issues its first GET /next, throttle that
+	// container's INIT-burst CPU down to the steady-state proportional
+	// allocation. The instance tracker's "running" transition is driven from
+	// the invocation path instead (awaitRuntimeReady returns at the same
+	// moment, and only the invocation knows which of a function's environments
+	// this is).
+	runtimeAPI.OnFirstNext = func(_ string, containerID string) {
+		containerRuntime.ThrottleInitBurst(containerID)
 	}
 
 	containerRuntime.SetLayerContentFetcher(func(ctx context.Context, layerVersionARN string) ([]byte, error) {

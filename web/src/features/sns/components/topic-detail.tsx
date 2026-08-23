@@ -187,7 +187,7 @@ export function TopicDetail({ topicName }: Props) {
       void navigate({ to: "/sns" })
       toast({ title: "Topic deleted", description: topicName })
     }
-    // TODO: navigate and toast are stable references; topicName is a prop.
+    // navigate and toast are stable references; topicName is a prop.
     // All three are included here to satisfy exhaustive-deps.
   }, [lastEvent, navigate, toast, topicName])
 
@@ -302,8 +302,8 @@ export function TopicDetail({ topicName }: Props) {
                   )}
                 </span>
                 {connected && (
-                  <span className="flex items-center gap-1 text-xs text-green-500">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                  <span className="flex items-center gap-1 text-xs text-success">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
                     live
                   </span>
                 )}
@@ -546,7 +546,7 @@ function DeliveryIndicator({ state }: { state?: DeliveryState }) {
   if (state.status === "failed") {
     return (
       <span
-        className="flex items-center gap-1.5 text-xs text-red-500"
+        className="flex items-center gap-1.5 text-xs text-danger"
         title={state.reason ?? "Delivery failed"}
       >
         <XCircle className="h-3.5 w-3.5" aria-hidden />
@@ -556,7 +556,7 @@ function DeliveryIndicator({ state }: { state?: DeliveryState }) {
   }
   return (
     <span
-      className="flex items-center gap-1.5 text-xs text-green-500"
+      className="flex items-center gap-1.5 text-xs text-success"
       title="SNS handed the message to this subscriber. Whether the subscriber finished processing it is reported on that resource's own page."
     >
       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />

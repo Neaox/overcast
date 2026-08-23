@@ -3806,8 +3806,8 @@ func TestInvokeWithResponseStream_notFound(t *testing.T) {
 func TestInvokeWithResponseStream_nodeRuntime(t *testing.T) {
 	skipIfNoDocker(t)
 
-	// TODO(perf): When Approach B is implemented, these 5 Docker tests could
-	// share a single ContainerRuntime + InstancePool via a package-level
+	// Approach B (tracked on helpers.WithLambdaDocker) would let these 5 Docker
+	// tests share a single ContainerRuntime + InstancePool via a package-level
 	// singleton, enabling warm-container reuse across test functions.
 	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
 	code := makeZip(t, "index.js", `
