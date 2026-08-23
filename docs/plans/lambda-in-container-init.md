@@ -1,6 +1,10 @@
 # Lambda in-container init: own the runtime's stdout — plan
 
-> Status: **proposed** 2026-08-23. Nothing has started; this document is the
+> Status: **in progress** 2026-08-23 — Phase 0 (shared `internal/containerlogs`
+> follower; ECS adopts it; Lambda behaviour unchanged behind a transitional
+> `Observer`) implemented on `feat/containerlogs-follower`; Phase 1 (the init
+> binary, protocol, embed and build plumbing) in flight on
+> `feat/lambda-init-binary`; Phases 2–3 not started. This document is the
 > design, the cost/benefit case, the phased delivery and — deliberately — the
 > deletion ledger. It was written straight after #1402, the fourth round of
 > fixes to the `X-Amz-Log-Result` tail wait (#873, #1160, #1325, run

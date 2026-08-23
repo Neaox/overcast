@@ -180,7 +180,17 @@ const containerLogCaptureTimeout = 5 * time.Second
 // complete its stop, so every failure here is logged and swallowed, and the
 // read is given its own short deadline rather than the caller's.
 func (h *Handler) captureContainerLogs(ctx context.Context, task *Task, dockerID string) {
-	if !h.dockerReady.Load() || h.docker == nil || dockerID == "" {
+	if dockerID == "" {
+		return
+	}
+	// Every path that ends a container comes through here, which makes it the
+	// one place that knows the container's awslogs follower — if it has one —
+	// has nothing left to follow. Stopped first, and unconditionally: a
+	// follower left running would keep re-opening a log stream for a container
+	// that is about to be removed, and the emulator not being ready to read
+	// logs does not make that any less true.
+	h.stopLogStreaming(dockerID)
+	if !h.dockerReady.Load() || h.docker == nil {
 		return
 	}
 

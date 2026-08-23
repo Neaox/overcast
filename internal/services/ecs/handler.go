@@ -52,7 +52,14 @@ type Handler struct {
 	instances *serviceutil.InstanceDomain
 	// logWriter ships task container output to CloudWatch Logs for containers
 	// using the awslogs driver. Nil until InitLogWriter is called.
-	logWriter     events.LogWriter
+	logWriter events.LogWriter
+	// logPumps holds the running awslogs follower of every container that has
+	// one, keyed by Docker ID, so it can be stopped when the container is — a
+	// follower reconnects for as long as it lives, and nothing else would ever
+	// tell it the container is gone. See stopLogStreaming. logPumpsMu guards
+	// the map, not the followers.
+	logPumpsMu    sync.Mutex
+	logPumps      map[string]*logPump
 	seedMu        sync.Mutex      // guards seededRegions
 	seededRegions map[string]bool // regions where ensureBuiltinProviders has run
 

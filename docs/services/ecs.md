@@ -286,6 +286,12 @@ applies to every task whichever way it was started (`RunTask` or a service) and
 under either launch type, because the driver is a property of the container
 definition rather than of Fargate or EC2.
 
+Output is read back from the Docker daemon — where the real `awslogs` driver
+also lives — and that read reconnects if the daemon drops it, resuming from the
+last line delivered and recognising the ones the daemon replays on the way back
+in, so a hiccup costs neither the rest of a task's logs nor a duplicate of what
+was already written.
+
 Without it, Overcast captures the final 200 lines when a container exits.
 `GET /_overcast/ecs/tasks/{taskArn}/logs/{container}` returns that captured
 output for a stopped task, or a live tail for a running container. This is an

@@ -14,7 +14,6 @@ package lambda
 import (
 	"archive/tar"
 	"archive/zip"
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -37,6 +36,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/containerlogs"
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
@@ -905,6 +905,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 	ci.forgetInitBurst = func() { cr.clearInitBurst(id) }
 
 	if cr.logWriter != nil {
+		ci.initLogFollower()
 		go ci.streamLogs()
 	} else {
 		close(ci.logDone)
@@ -1256,27 +1257,31 @@ type containerInstance struct {
 	// Logging configuration, resolved from the function at creation time. The
 	// zero value (empty logFormat) is Text, which is what every containerInstance
 	// built outside newContainerInstance wants. See logging_json.go.
-	logFormat      string
-	appLogLevel    logLevel
-	sysLogLevel    logLevel
-	docker         *docker.Client
-	gc             *docker.GC // async fallback when direct removal fails
-	runtimeAPI     *RuntimeAPIServer
-	logger         *zap.Logger
-	clk            clock.Clock
-	logWriter      events.LogWriter   // nil if CWL not wired
-	logCtx         context.Context    // cancelled on Close
-	logCancel      context.CancelFunc // cancels logCtx
-	exitNotify     *exitNotifier      // Docker watcher exit notifications
-	tailMu         sync.Mutex
-	tailBuf        []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
-	tailAppendAt   atomic.Int64  // UnixNano of last container line appended to tailBuf; 0 until the first
-	logReadAt      atomic.Int64  // UnixNano of last Docker log read; 0 until first read
-	logInFlight    atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
-	logParkedAt    atomic.Int64  // where the log reader is: see logReaderNotReading / logReaderBetweenReads
-	peakMemMB      atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
-	logCursor      logCursor     // exact Docker timestamp cursor used for reconnect/reconcile deduplication
-	logDone        chan struct{} // closed when streamLogs goroutine exits
+	logFormat    string
+	appLogLevel  logLevel
+	sysLogLevel  logLevel
+	docker       *docker.Client
+	gc           *docker.GC // async fallback when direct removal fails
+	runtimeAPI   *RuntimeAPIServer
+	logger       *zap.Logger
+	clk          clock.Clock
+	logWriter    events.LogWriter   // nil if CWL not wired
+	logCtx       context.Context    // cancelled on Close
+	logCancel    context.CancelFunc // cancels logCtx
+	exitNotify   *exitNotifier      // Docker watcher exit notifications
+	tailMu       sync.Mutex
+	tailBuf      []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
+	tailAppendAt atomic.Int64  // UnixNano of last container line appended to tailBuf; 0 until the first
+	logReadAt    atomic.Int64  // UnixNano of last Docker log read; 0 until first read
+	logInFlight  atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
+	logParkedAt  atomic.Int64  // where the log reader is: see logReaderNotReading / logReaderBetweenReads
+	peakMemMB    atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
+	logDone      chan struct{} // closed when streamLogs goroutine exits
+	// logFollower reads the container's output back off the Docker daemon;
+	// logSink is what it hands each line to. Both are nil when CloudWatch Logs
+	// is not wired up — see newContainerInstance and container_logs.go.
+	logFollower    *containerlogs.Follower
+	logSink        *containerLogSink
 	readyCh        <-chan struct{}
 	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
 	rapiListener   *containerListener        // this environment's own Runtime API endpoint
@@ -2283,13 +2288,13 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace
 // writeLogLine emits a single synthesised log line (START / END / REPORT)
 // directly to CloudWatch Logs and updates the rolling tail buffer.
 //
-// We deliberately bypass the streamLogs goroutine for these lines: they are
-// produced by the execution environment, not by the container, so they never
-// arrive on the Docker log stream. Routing them through the streamLogs
-// channel would also create a reliability hole — if streamLogs fails to open
-// the Docker log connection (e.g. transient daemon error), the goroutine
-// returns before entering its select loop and any synth lines queued there
-// are silently lost. Writing directly guarantees delivery.
+// We deliberately bypass the log follower for these lines: they are produced by
+// the execution environment, not by the container, so they never arrive on the
+// Docker log stream at all. Routing them through the follower's batch would
+// also tie their delivery to a connection that may not exist — a follower
+// waiting out a reconnect backoff after a transient daemon error is not writing
+// anything — and END and REPORT are the two lines an invocation most needs on
+// the record. Writing directly guarantees delivery.
 //
 // Performance note: the CWL store now serves writes from an in-memory cache
 // and debounces persistence, so this synchronous path costs O(microseconds)
@@ -2339,42 +2344,6 @@ func (ci *containerInstance) deliverSynthLine(line string) {
 	})
 }
 
-func (ci *containerInstance) writeEventsWithRetry(ctx context.Context, entries []events.LogEntry) bool {
-	if ci.logWriter == nil || len(entries) == 0 {
-		return true
-	}
-	writeCtx := ctx
-	if writeCtx == nil || writeCtx.Err() != nil {
-		writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
-	}
-	_ = ci.logWriter.EnsureLogStream(writeCtx, ci.logGroupName, ci.logStream)
-	delays := []time.Duration{10 * time.Millisecond, 50 * time.Millisecond, 250 * time.Millisecond}
-	var err error
-	for attempt := 0; attempt < len(delays); attempt++ {
-		if attempt > 0 {
-			_ = ci.logWriter.EnsureLogStream(writeCtx, ci.logGroupName, ci.logStream)
-		}
-		err = ci.logWriter.WriteLogEvents(writeCtx, ci.logGroupName, ci.logStream, entries)
-		if err == nil {
-			return true
-		}
-		if attempt == len(delays)-1 {
-			break
-		}
-		select {
-		case <-ci.clk.After(delays[attempt]):
-		case <-writeCtx.Done():
-			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
-		}
-	}
-	ci.logger.Error("container logs: write events failed after retries",
-		zap.String("container", shortContainerID(ci.id)),
-		zap.Int("entries", len(entries)),
-		zap.Error(err),
-	)
-	return false
-}
-
 // billedDuration rounds elapsed time up to the nearest millisecond, matching
 // how AWS reports billed duration in REPORT lines.
 func billedDuration(d time.Duration) int64 {
@@ -2416,8 +2385,14 @@ func (ci *containerInstance) Close() error {
 	// port is per-execution-environment, and leaving it bound would accumulate
 	// one dead listener per container the pool retires.
 	_ = ci.rapiListener.Close()
-	if ci.logWriter != nil {
-		ci.reconcileLogs()
+	if ci.logFollower != nil {
+		// The container is stopping, so the daemon's persisted log file is
+		// about to be complete. One non-streaming pass over it backfills
+		// anything the follow never got — the last chance, since the container
+		// is removed moments later.
+		reconcileCtx, cancel := context.WithTimeout(context.Background(), logReconcileTimeout)
+		ci.logFollower.Reconcile(reconcileCtx)
+		cancel()
 	}
 	// Stop immediately + queue deferred removal via GC.
 	if ci.gc != nil && !ci.keepContainers {
@@ -2430,480 +2405,11 @@ func (ci *containerInstance) Close() error {
 	return nil
 }
 
-// The two values of containerInstance.logParkedAt that are a state rather
-// than the moment the reader parked in its current Read.
-const (
-	// logReaderNotReading: no Docker log stream is open, so nothing is on its
-	// way through one. This is the zero value, which is what an instance whose
-	// streamLogs has not started — or has ended — should read as. It covers two
-	// different situations that dockerSilentSince tells apart via
-	// logStreamEverAnswered: a container's very first connect, still racing
-	// container start, and an already-proven stream between reconnects.
-	logReaderNotReading = 0
-	// logReaderBetweenReads: a stream is open and the reader is not blocked in
-	// a Read on it — either it has not reached its first, or one has returned
-	// and it has not got back yet. Either way it has no question outstanding
-	// with Docker, so Docker having handed nothing over says nothing about the
-	// container.
-	logReaderBetweenReads = -1
-)
-
-// logReadTracker wraps an io.Reader and records two things about the reader
-// that pulls Docker's log stream: the time of the last successful read (used by
-// waitForLogDrain to detect that streamLogs has consumed all buffered output),
-// and whether it is currently blocked in a Read at all (used by both waits,
-// through dockerSilentSince — see logReaderBetweenReads).
-type logReadTracker struct {
-	r        io.Reader
-	readAt   *atomic.Int64
-	parkedAt *atomic.Int64
-	clk      clock.Clock
-}
-
-const (
-	maxCloudWatchLogEventBytes = 262144 - 26
-	maxDockerTimestampBytes    = 64
-	maxDockerLogLineBytes      = maxCloudWatchLogEventBytes + maxDockerTimestampBytes
-)
-
-type logCursor struct {
-	mu      sync.Mutex
-	hwNanos int64
-	hwCount int
-}
-
-type logCursorAdmission struct {
-	cursor    *logCursor
-	replay    bool
-	equalSeen int
-}
-
-func (c *logCursor) Since() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.hwNanos == 0 {
-		return time.Time{}
-	}
-	return time.Unix(0, c.hwNanos-1)
-}
-
-func (c *logCursor) NewAdmission(replay bool) *logCursorAdmission {
-	return &logCursorAdmission{cursor: c, replay: replay}
-}
-
-func (a *logCursorAdmission) Admit(ts time.Time) bool {
-	if ts.IsZero() {
-		return true
-	}
-	nanos := ts.UnixNano()
-	a.cursor.mu.Lock()
-	defer a.cursor.mu.Unlock()
-	switch {
-	case nanos < a.cursor.hwNanos:
-		return false
-	case nanos > a.cursor.hwNanos:
-		a.cursor.hwNanos = nanos
-		a.cursor.hwCount = 1
-		a.equalSeen = 0
-		return true
-	default:
-		if a.replay {
-			a.equalSeen++
-			if a.equalSeen <= a.cursor.hwCount {
-				return false
-			}
-		}
-		a.cursor.hwCount++
-		return true
-	}
-}
-
-func readBoundedLogLine(r *bufio.Reader, maxBytes int) (string, error) {
-	var out []byte
-	truncated := false
-	for {
-		part, err := r.ReadSlice('\n')
-		if len(part) > 0 && !truncated {
-			remaining := maxBytes - len(out)
-			if remaining > 0 {
-				if len(part) > remaining {
-					out = append(out, part[:remaining]...)
-					truncated = true
-				} else {
-					out = append(out, part...)
-				}
-			} else {
-				truncated = true
-			}
-		}
-		if err == nil {
-			return strings.TrimRight(string(out), "\r\n"), nil
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		if err == io.EOF && len(out) > 0 {
-			return strings.TrimRight(string(out), "\r\n"), nil
-		}
-		return "", err
-	}
-}
-
-func truncateLogMessage(msg string) string {
-	if len(msg) <= maxCloudWatchLogEventBytes {
-		return msg
-	}
-	return msg[:maxCloudWatchLogEventBytes]
-}
-
 func shortContainerID(id string) string {
 	if len(id) <= 12 {
 		return id
 	}
 	return id[:12]
-}
-
-func (t *logReadTracker) Read(p []byte) (int, error) {
-	t.parkedAt.Store(t.clk.Now().UnixNano())
-	n, err := t.r.Read(p)
-	t.parkedAt.Store(logReaderBetweenReads)
-	if n > 0 {
-		t.readAt.Store(t.clk.Now().UnixNano())
-	}
-	return n, err
-}
-
-// streamLogs runs as a background goroutine for the lifetime of the container.
-// It opens a follow=true streaming connection to Docker's log endpoint and
-// forwards each complete stdout/stderr line to CloudWatch Logs. It also
-// maintains a rolling tail buffer (≤4096 bytes) used to populate X-Amz-Log-Result.
-//
-// Resilience: if the Docker log stream fails mid-flight (daemon hiccup, DinD
-// proxy timeout, etc.), the goroutine reconnects with timestamps=true and
-// since=<last-seen-timestamp minus 1ns>. Duplicates from overlapping reconnect
-// windows are deduplicated via an exact timestamp+count cursor. On graceful
-// shutdown (Close), a non-streaming reconciliation pass fetches any remaining
-// bytes from Docker's persisted log file.
-//
-// Line assembly uses a bounded reader on a docker.DemuxReader so oversized log
-// lines are truncated instead of stalling the stream forever.
-//
-// The goroutine exits when logCtx is cancelled (i.e. when Close is called).
-func (ci *containerInstance) streamLogs() {
-	defer close(ci.logDone)
-	ctx := ci.logCtx
-
-	// Ensure the CloudWatch log group and stream exist before writing.
-	if err := ci.logWriter.EnsureLogStream(ctx, ci.logGroupName, ci.logStream); err != nil {
-		if ctx.Err() == nil {
-			ci.logger.Debug("container logs: ensure log stream failed",
-				zap.String("container", ci.id[:12]),
-				zap.String("group", ci.logGroupName),
-				zap.Error(err),
-			)
-		}
-		// Carry on — we still maintain tailBuf even without CWL delivery.
-	}
-
-	// Reconnection loop: keeps streaming until logCtx is cancelled.
-	var since time.Time
-	backoff := 50 * time.Millisecond
-	const maxBackoff = 2 * time.Second
-
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		ci.streamOnce(ctx, since)
-
-		// streamOnce returned — either because the Docker stream broke or
-		// because ctx was cancelled.
-		if ctx.Err() != nil {
-			return
-		}
-
-		// Update `since` from the high-watermark for the next reconnect.
-		since = ci.logCursor.Since()
-
-		// Exponential backoff on reconnect to avoid hammering Docker.
-		ci.logger.Debug("container logs: reconnecting",
-			zap.String("container", ci.id[:12]),
-			zap.Duration("backoff", backoff),
-		)
-		select {
-		case <-ci.clk.After(backoff):
-		case <-ctx.Done():
-			return
-		}
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-	}
-}
-
-// streamOnce opens one streaming connection and processes lines until the
-// stream ends or ctx is cancelled. It returns on any error so the outer loop
-// can reconnect.
-func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
-	stream, err := ci.docker.ContainerLogsStream(ctx, ci.id, since)
-	if err != nil {
-		// Docker has answered, if only to refuse. That is as much as a tail
-		// wait needs to know: a reader with no stream and nothing in flight is
-		// timed as a backoff from here on, not held for a connect that is
-		// still coming — see dockerSilentSince.
-		ci.logStreamEverAnswered.Store(true)
-		if ctx.Err() == nil {
-			ci.logger.Warn("container logs: open stream failed",
-				zap.String("container", ci.id[:12]),
-				zap.Error(err),
-			)
-		}
-		return
-	}
-	defer stream.Close()
-
-	// flush writes the batch durably to CloudWatch and decrements logInFlight
-	// only after the bounded retry loop completes.
-	flush := func(batch []events.LogEntry) {
-		if len(batch) == 0 {
-			return
-		}
-		writeCtx := ctx
-		if writeCtx.Err() != nil {
-			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
-		}
-		ci.writeEventsWithRetry(writeCtx, batch)
-		ci.logInFlight.Add(-int64(len(batch)))
-	}
-
-	// Wrap the multiplexed stream so the line reader sees a plain byte stream,
-	// with the timestamp Docker repeats on each continuation chunk of a long
-	// line dropped rather than spliced into the middle of it.
-	stripped := docker.NewLogDemuxReader(stream)
-	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, parkedAt: &ci.logParkedAt, clk: ci.clk}
-	// The reader is now on this connection but has not reached its first Read,
-	// which is the same position it is in between any two of them. Recording it
-	// bounds the state to the connection's life at both ends: once this one is
-	// gone nothing can arrive over it, and a "between reads" left behind would
-	// hold every tail wait open for its full deadline across a reconnect
-	// backoff.
-	//
-	// logStreamEverAnswered flips once and stays flipped: it is what tells
-	// dockerSilentSince a later logReaderNotReading is an ordinary reconnect
-	// backoff, not this connection racing container start. See its docstring.
-	ci.logStreamEverAnswered.Store(true)
-	ci.logParkedAt.Store(logReaderBetweenReads)
-	defer ci.logParkedAt.Store(logReaderNotReading)
-	reader := bufio.NewReaderSize(tracked, 64*1024)
-	admission := ci.logCursor.NewAdmission(!since.IsZero())
-
-	type scanResult struct {
-		line string
-		err  error
-	}
-	lines := make(chan scanResult, 64)
-	go func() {
-		defer close(lines)
-		for {
-			line, err := readBoundedLogLine(reader, maxDockerLogLineBytes)
-			if err != nil {
-				if err != io.EOF {
-					lines <- scanResult{err: err}
-				}
-				return
-			}
-			ci.logInFlight.Add(1)
-			lines <- scanResult{line: line}
-		}
-	}()
-
-	const (
-		batchMax      = 25
-		flushInterval = 5 * time.Millisecond
-	)
-
-	var batch []events.LogEntry
-	flushTimer := ci.clk.Timer(flushInterval)
-	flushTimer.Stop()
-	defer flushTimer.Stop()
-
-	for {
-		select {
-		case res, ok := <-lines:
-			if !ok {
-				flush(batch)
-				return
-			}
-			if res.err != nil {
-				if ctx.Err() == nil {
-					ci.logger.Debug("container log stream ended",
-						zap.String("container", ci.id[:12]),
-						zap.Error(res.err),
-					)
-				}
-				flush(batch)
-				return
-			}
-			line := res.line
-			ts, msg := parseDockerTimestamp(line)
-			if !admission.Admit(ts) {
-				ci.logInFlight.Add(-1)
-				continue
-			}
-			line = truncateLogMessage(msg)
-			if line == "" {
-				ci.logInFlight.Add(-1)
-				continue
-			}
-			if !ci.ingestContainerLine(line) {
-				ci.logInFlight.Add(-1)
-				continue
-			}
-
-			batch = append(batch, events.LogEntry{
-				Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
-				Message:   line,
-			})
-			if len(batch) >= batchMax {
-				flush(batch)
-				batch = batch[:0]
-				flushTimer.Stop()
-			} else {
-				flushTimer.Reset(flushInterval)
-			}
-
-		case <-flushTimer.C:
-			flush(batch)
-			batch = batch[:0]
-
-		case <-ctx.Done():
-			// Drain until the reader goroutine finishes or the bounded teardown cap
-			// fires. Cancelling ctx closes the Docker HTTP body; any bytes already
-			// buffered by the reader are still delivered before lines closes.
-			drainTimer := ci.clk.Timer(time.Second)
-		drainLoop:
-			for {
-				select {
-				case res, ok := <-lines:
-					if !ok {
-						break drainLoop
-					}
-					if res.err != nil {
-						break drainLoop
-					}
-					ts, msg := parseDockerTimestamp(res.line)
-					if !admission.Admit(ts) {
-						ci.logInFlight.Add(-1)
-						continue
-					}
-					msg = truncateLogMessage(msg)
-					if msg == "" {
-						ci.logInFlight.Add(-1)
-						continue
-					}
-					if !ci.ingestContainerLine(msg) {
-						ci.logInFlight.Add(-1)
-						continue
-					}
-					batch = append(batch, events.LogEntry{
-						Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
-						Message:   msg,
-					})
-				case <-drainTimer.C:
-					break drainLoop
-				}
-			}
-			drainTimer.Stop()
-			flush(batch)
-			return
-		}
-	}
-}
-
-// parseDockerTimestamp parses the RFC3339Nano timestamp prefix that Docker adds
-// when timestamps=true. Returns (time, message-without-prefix). If parsing
-// fails (line has no timestamp), returns (time.Time{}, original-line).
-func parseDockerTimestamp(line string) (time.Time, string) {
-	// Docker format: "2006-01-02T15:04:05.999999999Z message..." or
-	//                "2006-01-02T15:04:05.999999999+07:00 message..."
-	// Minimum timestamp length is len("2006-01-02T15:04:05Z") = 20.
-	spaceIdx := strings.IndexByte(line, ' ')
-	if spaceIdx < 20 || spaceIdx > 40 {
-		return time.Time{}, line
-	}
-	t, err := time.Parse(time.RFC3339Nano, line[:spaceIdx])
-	if err != nil {
-		return time.Time{}, line
-	}
-	return t, line[spaceIdx+1:]
-}
-
-func logEventTimestampMillis(ts time.Time, fallback time.Time) int64 {
-	if ts.IsZero() {
-		return fallback.UnixMilli()
-	}
-	return ts.UnixMilli()
-}
-
-// reconcileLogs fetches all container logs since the high-watermark via a
-// non-streaming request (Docker's persisted log file is complete once the
-// container has stopped) and writes any lines that the streaming follower
-// missed. This is the final safety net ensuring zero log loss.
-func (ci *containerInstance) reconcileLogs() {
-	since := ci.logCursor.Since()
-
-	dockerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	body, err := ci.docker.ContainerLogsSince(dockerCtx, ci.id, since)
-	if err != nil {
-		ci.logger.Debug("container logs: reconciliation fetch failed",
-			zap.String("container", ci.id[:12]),
-			zap.Error(err),
-		)
-		return
-	}
-	defer body.Close()
-
-	stripped := docker.NewLogDemuxReader(body)
-	reader := bufio.NewReaderSize(stripped, 64*1024)
-	admission := ci.logCursor.NewAdmission(!since.IsZero())
-
-	var batch []events.LogEntry
-	for {
-		line, readErr := readBoundedLogLine(reader, maxDockerLogLineBytes)
-		if readErr != nil {
-			if readErr != io.EOF {
-				ci.logger.Debug("container logs: reconciliation read ended",
-					zap.String("container", shortContainerID(ci.id)),
-					zap.Error(readErr),
-				)
-			}
-			break
-		}
-		ts, msg := parseDockerTimestamp(line)
-		if !admission.Admit(ts) {
-			continue
-		}
-		msg = truncateLogMessage(msg)
-		if msg == "" {
-			continue
-		}
-		batch = append(batch, events.LogEntry{
-			Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
-			Message:   msg,
-		})
-	}
-	if len(batch) > 0 {
-		// Use the container's region-scoped context so reconciliation logs
-		// land in the same regional log stream as the streaming path.
-		writeCtx := ci.logCtx
-		if writeCtx.Err() != nil {
-			writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
-		}
-		ci.writeEventsWithRetry(writeCtx, batch)
-	}
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

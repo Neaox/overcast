@@ -7,23 +7,22 @@ package ecs
 // place a user thinks to look. Without this a task that crash-loops explains
 // itself nowhere: the container is gone before `docker logs` can reach it, and
 // the emulator's own log only says the task stopped.
+//
+// On AWS the awslogs driver runs inside the Docker daemon, so reading a
+// container's output back from the daemon is the right model here. Reading it
+// back *well* is not this file's job: internal/containerlogs owns the
+// reconnect, the de-duplication across one, bounded line assembly and batched
+// writes. What is left here is where a container's output goes, and how long
+// the follower that ships it lives.
 
 import (
-	"bufio"
 	"context"
-	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/containerlogs"
 	"github.com/Neaox/overcast/internal/middleware"
 )
-
-// maxLogLine bounds a single log line so a container emitting one enormous
-// unterminated line cannot grow the buffer without limit.
-const maxLogLine = 256 * 1024
 
 // awslogsTarget is where one container's output goes.
 type awslogsTarget struct {
@@ -51,8 +50,13 @@ func awslogsTargetFor(cd ContainerDefinition, taskID string) (awslogsTarget, boo
 	return awslogsTarget{group: group, stream: stream}, true
 }
 
+// logPump is one container's running follower, held only so it can be stopped.
+type logPump struct {
+	cancel context.CancelFunc
+}
+
 // startLogStreaming pumps one container's output into CloudWatch Logs in the
-// background, until the container exits or the emulator stops.
+// background, until the container stops or the emulator does.
 //
 // The pump deliberately does not use the request context: it has to outlive the
 // RunTask/CreateService call that started the container. The region is carried
@@ -63,63 +67,105 @@ func (h *Handler) startLogStreaming(ctx context.Context, dockerID, taskID string
 		return
 	}
 
-	pumpCtx := middleware.ContextWithRegion(context.Background(), h.store.region(ctx))
+	region := h.store.region(ctx)
+	pumpCtx, cancel := context.WithCancel(middleware.ContextWithRegion(context.Background(), region))
 	if err := h.logWriter.EnsureLogGroup(pumpCtx, target.group); err != nil {
+		cancel()
 		h.log.Warn("ecs: awslogs: could not create log group",
 			zap.String("group", target.group), zap.Error(err))
 		return
 	}
 	if err := h.logWriter.EnsureLogStream(pumpCtx, target.group, target.stream); err != nil {
+		cancel()
 		h.log.Warn("ecs: awslogs: could not create log stream",
 			zap.String("group", target.group), zap.String("stream", target.stream), zap.Error(err))
 		return
 	}
 
-	go h.pumpContainerLogs(pumpCtx, dockerID, target)
+	follower := h.newAwslogsFollower(pumpCtx, h.docker, dockerID, region, target)
+	pump := h.registerLogPump(dockerID, cancel)
+	go func() {
+		defer h.forgetLogPump(dockerID, pump)
+		follower.Follow(pumpCtx)
+		// Follow returns only when the pump's context is cancelled, which is
+		// what stopLogStreaming does once the container has ended. That closes
+		// the daemon connection under a read that may have been mid-line, so
+		// one non-streaming pass over the daemon's persisted copy picks up
+		// whatever it cost: the copy is complete now the container has stopped,
+		// and the follower's cursor means only what is genuinely missing gets
+		// written. It races the container's removal, and loses harmlessly.
+		reconcileCtx, reconcileCancel := context.WithTimeout(
+			middleware.ContextWithRegion(context.Background(), region), containerLogCaptureTimeout)
+		defer reconcileCancel()
+		follower.Reconcile(reconcileCtx)
+	}()
 }
 
-// pumpContainerLogs copies a container's log stream into CloudWatch Logs one
-// line at a time.
-func (h *Handler) pumpContainerLogs(ctx context.Context, dockerID string, target awslogsTarget) {
-	stream, err := h.docker.ContainerLogsStream(ctx, dockerID, time.Time{})
-	if err != nil {
-		h.log.Warn("ecs: awslogs: could not open container log stream",
-			zap.String("container", dockerID), zap.Error(err))
-		return
-	}
-	defer stream.Close() //nolint:errcheck
+// newAwslogsFollower builds the follower that ships one container's output to a
+// CloudWatch log stream. The daemon client is a parameter rather than h.docker
+// so a test can drive the whole pipeline — reconnect included — without one.
+func (h *Handler) newAwslogsFollower(
+	ctx context.Context,
+	client containerlogs.LogStreamer,
+	dockerID, region string,
+	target awslogsTarget,
+) *containerlogs.Follower {
+	return containerlogs.New(containerlogs.Config{
+		Client:      client,
+		ContainerID: dockerID,
+		Clock:       h.clk,
+		Logger:      h.log.ZapLogger(),
+		Sink: containerlogs.NewCloudWatchBatcher(containerlogs.BatcherConfig{
+			Writer:  h.logWriter,
+			Group:   target.group,
+			Stream:  target.stream,
+			Context: ctx,
+			Region:  region,
+			Clock:   h.clk,
+			Logger:  h.log.ZapLogger(),
+		}),
+	})
+}
 
-	scanner := bufio.NewScanner(docker.NewLogDemuxReader(stream))
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLine)
-	for scanner.Scan() {
-		ts, message := splitDockerTimestamp(scanner.Text())
-		if message == "" {
-			continue
-		}
-		err := h.logWriter.WriteLogEvents(ctx, target.group, target.stream, []events.LogEntry{
-			{Timestamp: ts, Message: message},
-		})
-		if err != nil {
-			// A stream that vanished under us (state reset, log group deleted)
-			// is not worth retrying the whole container's output for.
-			h.log.Debug("ecs: awslogs: write failed",
-				zap.String("group", target.group), zap.String("stream", target.stream), zap.Error(err))
-			return
-		}
+// registerLogPump records a container's follower so it can be stopped when the
+// container is.
+func (h *Handler) registerLogPump(dockerID string, cancel context.CancelFunc) *logPump {
+	pump := &logPump{cancel: cancel}
+	h.logPumpsMu.Lock()
+	defer h.logPumpsMu.Unlock()
+	if existing := h.logPumps[dockerID]; existing != nil {
+		existing.cancel()
+	}
+	if h.logPumps == nil {
+		h.logPumps = make(map[string]*logPump)
+	}
+	h.logPumps[dockerID] = pump
+	return pump
+}
+
+// forgetLogPump drops a follower's registration once it has returned, unless a
+// later one has already taken its place.
+func (h *Handler) forgetLogPump(dockerID string, pump *logPump) {
+	h.logPumpsMu.Lock()
+	defer h.logPumpsMu.Unlock()
+	if h.logPumps[dockerID] == pump {
+		delete(h.logPumps, dockerID)
 	}
 }
 
-// splitDockerTimestamp separates the RFC3339 timestamp Docker prefixes onto each
-// line (the stream is opened with timestamps=true) from the message itself,
-// falling back to now for a line that does not carry one.
-func splitDockerTimestamp(line string) (int64, string) {
-	ts, msg, found := strings.Cut(line, " ")
-	if !found {
-		return time.Now().UnixMilli(), strings.TrimRight(line, "\r")
+// stopLogStreaming stops a container's follower.
+//
+// A follower reconnects whenever its stream ends, which is what keeps a running
+// container's output flowing across a daemon hiccup — and which means a stopped
+// container would otherwise be re-read for as long as the emulator lives.
+// Cancelling makes the follower deliver what it is holding and let go. Safe to
+// call for a container that never had one.
+func (h *Handler) stopLogStreaming(dockerID string) {
+	h.logPumpsMu.Lock()
+	pump := h.logPumps[dockerID]
+	delete(h.logPumps, dockerID)
+	h.logPumpsMu.Unlock()
+	if pump != nil {
+		pump.cancel()
 	}
-	parsed, err := time.Parse(time.RFC3339Nano, ts)
-	if err != nil {
-		return time.Now().UnixMilli(), strings.TrimRight(line, "\r")
-	}
-	return parsed.UnixMilli(), strings.TrimRight(msg, "\r")
 }
