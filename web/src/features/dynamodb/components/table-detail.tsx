@@ -51,13 +51,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
 import { ItemEditorDialog } from "./item-editor"
 import { FilterBuilder, matchesFilters, type FilterCondition } from "./filter-builder"
-import type { DynamoItem, DynamoAttrValue, DynamoTable, DynamoKeySchema } from "@/types"
+import type { DynamoItem, DynamoAttrValue, DynamoGSI, DynamoTable, DynamoKeySchema } from "@/types"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -752,6 +753,12 @@ export function TableDetail({ tableName }: Props) {
           <section>
             <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Key Schema</h3>
             <div className="rounded-md border border-border">
+              {/*
+                ResourceTable didn't fit because this is not a list of
+                resources: it is the one-or-two-row description of *this*
+                table's primary key. There is nothing to sort, nothing to hide,
+                and no empty/error state — the rows exist iff the table does.
+              */}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -786,28 +793,10 @@ export function TableDetail({ tableName }: Props) {
             <section>
               <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Global Secondary Indexes</h3>
               <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index name</TableHead>
-                      <TableHead>Keys</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {table.globalSecondaryIndexes.map((gsi) => (
-                      <TableRow key={gsi.indexName}>
-                        <TableCell>{gsi.indexName}</TableCell>
-                        <TableCell className="text-fg-muted">
-                          {gsi.keySchema.map((k) => k.attributeName).join(" / ")}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {gsi.itemCount.toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <IndexTable
+                  indexes={table.globalSecondaryIndexes}
+                  noun="global secondary indexes"
+                />
               </div>
             </section>
           )}
@@ -816,28 +805,7 @@ export function TableDetail({ tableName }: Props) {
             <section>
               <h3 className={cn(sectionLabel, "mb-2 text-fg-muted")}>Local Secondary Indexes</h3>
               <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index name</TableHead>
-                      <TableHead>Keys</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {table.localSecondaryIndexes.map((lsi) => (
-                      <TableRow key={lsi.indexName}>
-                        <TableCell>{lsi.indexName}</TableCell>
-                        <TableCell className="text-fg-muted">
-                          {lsi.keySchema.map((k) => k.attributeName).join(" / ")}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {lsi.itemCount.toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <IndexTable indexes={table.localSecondaryIndexes} noun="local secondary indexes" />
               </div>
             </section>
           )}
@@ -1051,6 +1019,49 @@ export function TableDetail({ tableName }: Props) {
   )
 }
 
+// ─── Secondary-index table ─────────────────────────────────────────────────
+
+/**
+ * The GSI/LSI listing on the Schema tab. Both index kinds carry the same three
+ * facts, so one embedded `ResourceTable` renders either; the caller supplies
+ * the plural noun the empty/error copy reads with.
+ */
+function IndexTable({ indexes, noun }: { indexes: DynamoGSI[]; noun: string }) {
+  return (
+    <ResourceTable
+      variant="embedded"
+      query={{ data: indexes, isLoading: false }}
+      noun={noun}
+      rowKey={(index) => index.indexName ?? ""}
+      // Three columns describing one index each — nothing worth hiding.
+      columnToggle={false}
+      columns={[
+        {
+          id: "index-name",
+          header: "Index name",
+          sortValue: (index) => index.indexName,
+          cell: (index) => index.indexName,
+        },
+        {
+          header: "Keys",
+          cellClassName: "text-fg-muted",
+          cell: (index) => index.keySchema.map((k) => k.attributeName).join(" / "),
+        },
+        {
+          id: "items",
+          header: "Items",
+          // The sortable header is a full-width flex button inside the `<th>`;
+          // `text-right` alone would leave its label on the left.
+          headerClassName: "text-right [&>button]:justify-end",
+          cellClassName: "text-right tabular-nums",
+          sortValue: (index) => index.itemCount,
+          cell: (index) => index.itemCount.toLocaleString(),
+        },
+      ]}
+    />
+  )
+}
+
 // ─── Shared items table ────────────────────────────────────────────────────
 
 interface ItemsTableProps {
@@ -1073,6 +1084,25 @@ interface ItemsTableProps {
   onToggleSelectAll: () => void
 }
 
+/*
+ * ResourceTable didn't fit because this table needs three things it
+ * deliberately does not have (see `resource-table.tsx` — row selection is one
+ * of the v9 features the shared component does not register):
+ *
+ *   1. Row selection — the checkbox column, the header's tri-state
+ *      select-all, and the selected-row tint that drives bulk delete.
+ *   2. Row expansion — an expanded item renders a *second* `<TableRow>`
+ *      carrying the raw JSON across a `colSpan`; `ResourceTable` renders
+ *      exactly one row per item.
+ *   3. Server-side paging — the rows arrive from Scan/Query through
+ *      `useInfiniteQuery` a page at a time (`LastEvaluatedKey`), so a
+ *      client-side sort over `items` would silently reorder only the pages
+ *      fetched so far and present it as the table's order. Sorting here has
+ *      to be DynamoDB's (`scanIndexForward` on a Query), not the table's.
+ *
+ * Columns are also derived per result set rather than declared. Tracked on
+ * #1327 (wave D's "specials" question, extended to this table).
+ */
 function ItemsTable({
   items,
   allAttrs,

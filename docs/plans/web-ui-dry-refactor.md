@@ -51,7 +51,15 @@
 > existing `q`). Two tables stay bespoke with a reason at the call site: `rest-api-detail`'s
 > resource tree expands a row into per-method `<TableRow>`s and `ResourceTable` has no row-expansion
 > concept (the same limitation §5 records for EC2), and `cognito-pool-detail`'s user-attribute grid
-> is an editable name/value grid, not a resource list. None of the other scaffold
+> is an editable name/value grid, not a resource list.
+>
+> **2026-08-23 (#1327 waves B/C — data family):** the six data-service list pages (`dynamodb/table-list`,
+> `rds/instance-list`, `elasticache/cluster-list`, `efs/file-system-list`, `s3/bucket-list`,
+> `ecr/repository-list`, each with a `sort` search param) and three detail sub-tables
+> (`ecr/repository-detail`'s Images, `dynamodb/table-detail`'s GSI and LSI listings, `variant="embedded"`)
+> are converted; `dynamodb/table-detail`'s Items table (row selection + row expansion + `LastEvaluatedKey`
+> paging), its Key Schema grid, and `rds/instance-detail`'s Events feed (needs a per-row tone
+> `ResourceTable` does not have) stay bespoke with the reason at the call site. None of the other scaffold
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or

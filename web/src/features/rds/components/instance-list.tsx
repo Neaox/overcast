@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Database, Eye, Trash2, Play, Square, AlertCircle } from "lucide-react"
+import { Database, Eye, Play, Square, AlertCircle } from "lucide-react"
 import {
   ServiceDocsModal,
   ServiceDocsButton,
@@ -21,14 +21,6 @@ import { Input } from "@/components/ui/input"
 import { Combobox } from "@/components/ui/combobox"
 import { FormField, fieldError } from "@/components/ui/form"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Dialog,
   DialogBody,
   DialogContent,
@@ -36,28 +28,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { QueryListState, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 import { DockerBanner } from "@/components/docker-banner"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
+import type { RdsInstance } from "@/types"
 
-export function InstanceList() {
+interface InstanceListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function InstanceList({ sort, onSortChange }: InstanceListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<RdsInstance>()
   const [docsOpen, openDocs, closeDocs] = useDocsFromHash()
 
   const {
@@ -120,124 +117,96 @@ export function InstanceList() {
       }
     >
       <DockerBanner forService="rds" />
-      <ResourceListCard>
-        {isLoading || instances.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={instances.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<Database className="h-10 w-10" />}
-                title="No DB instances"
-                description="Create a DB instance to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>
-                    Create DB instance
-                  </CreateAction>
-                }
-              />
-            }
-            errorTitle="Failed to load DB instances"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Instance ID</TableHead>
-                <TableHead>Engine</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Class</TableHead>
-                <TableHead>Endpoint</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-32 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {instances.map((db) => {
-                const instance = db.DBInstanceIdentifier ?? ""
-                return (
-                  <TableRow
-                    key={instance}
-                    onClick={() => navigate({ to: "/rds/$instance", params: { instance } })}
-                  >
-                    <TableCell>
-                      <ResourceName icon={Database} name={instance} />
-                    </TableCell>
-                    <TableCell>
-                      <EngineLabel engine={db.Engine ?? ""} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{db.EngineVersion}</TableCell>
-                    <TableCell>
-                      <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{db.DBInstanceClass}</TableCell>
-                    <TableCell className="text-fg-muted">
-                      {db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"}
-                    </TableCell>
-                    <TableCell className="text-fg-muted">
-                      {db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <RowActions>
-                        {db.DBInstanceStatus === "stopped" && (
-                          <RowAction
-                            label={`Start ${instance}`}
-                            onClick={() => startMut.mutate(instance)}
-                          >
-                            <Play className="h-3.5 w-3.5" />
-                          </RowAction>
-                        )}
-                        {db.DBInstanceStatus === "available" && (
-                          <RowAction
-                            label={`Stop ${instance}`}
-                            onClick={() => stopMut.mutate(instance)}
-                          >
-                            <Square className="h-3.5 w-3.5" />
-                          </RowAction>
-                        )}
-                        <RowAction
-                          label={`View ${instance}`}
-                          onClick={() => navigate({ to: "/rds/$instance", params: { instance } })}
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </RowAction>
-                        <RowAction
-                          label={`Delete ${instance}`}
-                          tone="danger"
-                          onClick={() => setDeleteTarget(instance)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </RowAction>
-                      </RowActions>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+
+      <ResourceTable
+        query={{ data: instances, isLoading, error }}
+        noun="DB instances"
+        emptyIcon={Database}
+        emptyTitle="No DB instances"
+        emptyDescription="Create a DB instance to get started."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create DB instance</CreateAction>
+        }
+        errorTitle="Failed to load DB instances"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(db) => db.DBInstanceIdentifier ?? ""}
+        onRowClick={(db) =>
+          navigate({ to: "/rds/$instance", params: { instance: db.DBInstanceIdentifier ?? "" } })
+        }
+        columns={[
+          {
+            id: "instance",
+            header: "Instance ID",
+            sortValue: (db) => db.DBInstanceIdentifier,
+            cell: (db) => <ResourceName icon={Database} name={db.DBInstanceIdentifier ?? ""} />,
+          },
+          { header: "Engine", cell: (db) => <EngineLabel engine={db.Engine ?? ""} /> },
+          { header: "Version", cellClassName: "text-fg-muted", cell: (db) => db.EngineVersion },
+          {
+            header: "Status",
+            cell: (db) => <RdsStatusBadge status={db.DBInstanceStatus ?? ""} />,
+          },
+          { header: "Class", cellClassName: "text-fg-muted", cell: (db) => db.DBInstanceClass },
+          {
+            header: "Endpoint",
+            cellClassName: "text-fg-muted",
+            cell: (db) => (db.Endpoint ? `${db.Endpoint.Address}:${db.Endpoint.Port}` : "—"),
+          },
+          {
+            id: "created",
+            header: "Created",
+            cellClassName: "text-fg-muted",
+            sortValue: (db) => db.InstanceCreateTime,
+            cell: (db) => (db.InstanceCreateTime ? db.InstanceCreateTime.toLocaleString() : "—"),
+          },
+        ]}
+        rowActions={(db) => {
+          const instance = db.DBInstanceIdentifier ?? ""
+          return (
+            <>
+              {db.DBInstanceStatus === "stopped" && (
+                <RowAction label={`Start ${instance}`} onClick={() => startMut.mutate(instance)}>
+                  <Play className="h-3.5 w-3.5" />
+                </RowAction>
+              )}
+              {db.DBInstanceStatus === "available" && (
+                <RowAction label={`Stop ${instance}`} onClick={() => stopMut.mutate(instance)}>
+                  <Square className="h-3.5 w-3.5" />
+                </RowAction>
+              )}
+              <RowAction
+                label={`View ${instance}`}
+                onClick={() => navigate({ to: "/rds/$instance", params: { instance } })}
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </RowAction>
+            </>
+          )
+        }}
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (v) => !v && setDeleteTarget(undefined),
+          mutation: deleteMut,
+          getId: (db) => db.DBInstanceIdentifier ?? "",
+          label: (db) => db.DBInstanceIdentifier ?? "",
+          noun: "DB instance",
+          title: "Delete DB Instance",
+          description: (db) => (
+            <>
+              Permanently delete <strong>{db.DBInstanceIdentifier}</strong>? This action cannot be
+              undone.
+            </>
+          ),
+        }}
+      />
 
       <CreateInstanceDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         onSubmit={(opts) => createMut.mutate(opts)}
-      />
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(undefined)}
-        title="Delete DB Instance"
-        description={
-          <>
-            Permanently delete <strong>{deleteTarget}</strong>? This action cannot be undone.
-          </>
-        }
-        isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )
