@@ -1,24 +1,20 @@
 import { useQuery } from "@tanstack/react-query"
 import { GitBranch } from "lucide-react"
 import { cloudfrontContinuousDeploymentPoliciesQueryOptions } from "@/features/cloudfront/data"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
-import {
-  RefreshAction,
-  ResourceListCard,
-  ResourceListPage,
-  ResourceName,
-} from "@/components/ui/resource-list-page"
+import { RefreshAction, ResourceListPage, ResourceName } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { Badge } from "@/components/ui/badge"
 
-export function ContinuousDeploymentPolicyList() {
+interface ContinuousDeploymentPolicyListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function ContinuousDeploymentPolicyList({
+  sort,
+  onSortChange,
+}: ContinuousDeploymentPolicyListProps) {
   const {
     data: policies = [],
     isLoading,
@@ -33,50 +29,44 @@ export function ContinuousDeploymentPolicyList() {
       count={policies.length}
       actions={<RefreshAction isFetching={isFetching} onClick={() => refetch()} />}
     >
-      <ResourceListCard>
-        {isLoading || policies.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={policies.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<GitBranch className="h-10 w-10" />}
-                title="No continuous deployment policies"
-                description="Continuous deployment policies let you test CloudFront configuration changes on a staging distribution."
-              />
-            }
-            errorTitle="Failed to load continuous deployment policies"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead>Last modified</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {policies.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <ResourceName icon={GitBranch} name={p.id} />
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={p.enabled ? "success" : "default"}>
-                      {p.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {p.lastModifiedTime ? new Date(p.lastModifiedTime).toLocaleString() : "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+      <ResourceTable
+        query={{ data: policies, isLoading, error }}
+        noun="continuous deployment policies"
+        emptyIcon={GitBranch}
+        emptyTitle="No continuous deployment policies"
+        emptyDescription="Continuous deployment policies let you test CloudFront configuration changes on a staging distribution."
+        errorTitle="Failed to load continuous deployment policies"
+        sort={sort}
+        onSortChange={onSortChange}
+        // Three columns, none of them secondary — there is nothing worth hiding.
+        columnToggle={false}
+        rowKey={(policy) => policy.id}
+        columns={[
+          {
+            id: "id",
+            header: "ID",
+            sortValue: (policy) => policy.id,
+            cell: (policy) => <ResourceName icon={GitBranch} name={policy.id} />,
+          },
+          {
+            header: "Enabled",
+            cell: (policy) => (
+              <Badge variant={policy.enabled ? "success" : "default"}>
+                {policy.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            ),
+          },
+          {
+            id: "last-modified",
+            header: "Last modified",
+            cellClassName: "text-fg-muted",
+            sortValue: (policy) =>
+              policy.lastModifiedTime ? new Date(policy.lastModifiedTime) : undefined,
+            cell: (policy) =>
+              policy.lastModifiedTime ? new Date(policy.lastModifiedTime).toLocaleString() : "—",
+          },
+        ]}
+      />
     </ResourceListPage>
   )
 }

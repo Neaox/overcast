@@ -1,24 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
 import { ShieldCheck } from "lucide-react"
 import { cloudfrontFLEProfilesQueryOptions } from "@/features/cloudfront/data"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
-import {
-  RefreshAction,
-  ResourceListCard,
-  ResourceListPage,
-  ResourceName,
-} from "@/components/ui/resource-list-page"
+import { RefreshAction, ResourceListPage, ResourceName } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 
-export function FLEProfileList() {
+interface FLEProfileListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function FLEProfileList({ sort, onSortChange }: FLEProfileListProps) {
   const {
     data: profiles = [],
     isLoading,
@@ -33,48 +25,47 @@ export function FLEProfileList() {
       count={profiles.length}
       actions={<RefreshAction isFetching={isFetching} onClick={() => refetch()} />}
     >
-      <ResourceListCard>
-        {isLoading || profiles.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={profiles.length === 0}
-            error={error}
-            empty={
-              <EmptyState
-                icon={<ShieldCheck className="h-10 w-10" />}
-                title="No FLE profiles"
-                description="Field-level encryption profiles define which public keys are used to encrypt specific fields."
-              />
-            }
-            errorTitle="Failed to load FLE profiles"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>ID</TableHead>
-                <TableHead>Comment</TableHead>
-                <TableHead>Last modified</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {profiles.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <ResourceName icon={ShieldCheck} name={p.name} />
-                  </TableCell>
-                  <TableCell className="text-fg-muted">{p.id}</TableCell>
-                  <TableCellProse>{p.comment || "—"}</TableCellProse>
-                  <TableCell className="text-fg-muted">
-                    {p.lastModifiedTime ? new Date(p.lastModifiedTime).toLocaleString() : "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </ResourceListCard>
+      <ResourceTable
+        query={{ data: profiles, isLoading, error }}
+        noun="FLE profiles"
+        emptyIcon={ShieldCheck}
+        emptyTitle="No FLE profiles"
+        emptyDescription="Field-level encryption profiles define which public keys are used to encrypt specific fields."
+        errorTitle="Failed to load FLE profiles"
+        sort={sort}
+        onSortChange={onSortChange}
+        // Four columns; the ID is the only one a reader could call secondary,
+        // and a three-column table is not worth a menu.
+        columnToggle={false}
+        rowKey={(profile) => profile.id}
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (profile) => profile.name,
+            cell: (profile) => <ResourceName icon={ShieldCheck} name={profile.name} />,
+          },
+          {
+            header: "ID",
+            cellClassName: "text-fg-muted",
+            cell: (profile) => profile.id,
+          },
+          {
+            header: "Comment",
+            prose: true,
+            cell: (profile) => profile.comment || "—",
+          },
+          {
+            id: "last-modified",
+            header: "Last modified",
+            cellClassName: "text-fg-muted",
+            sortValue: (profile) =>
+              profile.lastModifiedTime ? new Date(profile.lastModifiedTime) : undefined,
+            cell: (profile) =>
+              profile.lastModifiedTime ? new Date(profile.lastModifiedTime).toLocaleString() : "—",
+          },
+        ]}
+      />
     </ResourceListPage>
   )
 }
