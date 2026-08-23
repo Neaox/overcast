@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useForm } from "@tanstack/react-form"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { Eye, ShieldAlert, Trash2 } from "lucide-react"
+import { Eye, ShieldAlert } from "lucide-react"
 import { z } from "zod"
 import {
   createWebACLMutationOptions,
@@ -16,7 +16,6 @@ import { topologyKey } from "@/features/map/use-topology"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { FormField, fieldError } from "@/components/ui/form"
@@ -28,23 +27,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { EmptyState, QueryListState } from "@/components/ui/primitives"
-import {
   CreateAction,
   RefreshAction,
-  ResourceListCard,
   ResourceListPage,
   ResourceName,
   RowAction,
-  RowActions,
 } from "@/components/ui/resource-list-page"
+import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 
 const schema = z.object({
   name: z.string().min(1, "Web ACL name is required"),
@@ -52,7 +41,13 @@ const schema = z.object({
   description: z.string(),
 })
 
-export function WebACLList() {
+interface WebACLListProps {
+  /** Current table sort — owned by the route's `sort` search param, see `useSortSearchParam`. */
+  sort?: ResourceTableSort
+  onSortChange?: (next: ResourceTableSort | undefined) => void
+}
+
+export function WebACLList({ sort, onSortChange }: WebACLListProps = {}) {
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<WebACLSummary>()
@@ -97,79 +92,73 @@ export function WebACLList() {
       }
     >
       <MetadataOnlyNotice />
-      <ResourceListCard>
-        {isLoading || data.length === 0 ? (
-          <QueryListState
-            isLoading={isLoading}
-            isEmpty={data.length === 0}
-            error={error}
-            errorTitle="Failed to load Web ACLs"
-            empty={
-              <EmptyState
-                icon={<ShieldAlert className="h-10 w-10" />}
-                title="No Web ACLs yet"
-                description="Create metadata for a regional or CloudFront Web ACL."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create Web ACL</CreateAction>
-                }
-              />
-            }
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.map((acl) => (
-                <TableRow key={`${acl.scope}:${acl.id}`} onClick={() => openACL(acl)}>
-                  <TableCell>
-                    <ResourceName icon={ShieldAlert} name={acl.name} />
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-fg-muted">{acl.scope}</TableCell>
-                  <TableCell className="text-fg-muted">{acl.description || "—"}</TableCell>
-                  <TableCell onClick={(event) => event.stopPropagation()}>
-                    <RowActions>
-                      <RowAction label={`View ${acl.name}`} onClick={() => openACL(acl)}>
-                        <Eye className="h-3.5 w-3.5" />
-                      </RowAction>
-                      <RowAction
-                        label={`Delete ${acl.name}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(acl)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <ResourceTable
+        query={{ data, isLoading, error }}
+        noun="Web ACLs"
+        emptyIcon={ShieldAlert}
+        emptyTitle="No Web ACLs yet"
+        emptyDescription="Create metadata for a regional or CloudFront Web ACL."
+        emptyAction={
+          <CreateAction onClick={() => setShowCreate(true)}>Create Web ACL</CreateAction>
+        }
+        errorTitle="Failed to load Web ACLs"
+        sort={sort}
+        onSortChange={onSortChange}
+        rowKey={(acl) => `${acl.scope}:${acl.id}`}
+        onRowClick={openACL}
+        columns={[
+          {
+            header: "Name",
+            sortValue: (acl) => acl.name,
+            cell: (acl) => <ResourceName icon={ShieldAlert} name={acl.name} />,
+          },
+          {
+            header: "Scope",
+            cellClassName: "font-mono text-xs text-fg-muted",
+            sortValue: (acl) => acl.scope,
+            cell: (acl) => acl.scope,
+          },
+          {
+            header: "Description",
+            cellClassName: "text-fg-muted",
+            cell: (acl) => acl.description || "—",
+          },
+        ]}
+        rowActions={(acl) => (
+          <RowAction label={`View ${acl.name}`} onClick={() => openACL(acl)}>
+            <Eye className="h-3.5 w-3.5" />
+          </RowAction>
         )}
-      </ResourceListCard>
+        onDelete={{
+          target: deleteTarget,
+          onRequest: setDeleteTarget,
+          onOpenChange: (open) => !open && setDeleteTarget(undefined),
+          // DeleteWebACL needs the whole summary (it carries the lock token),
+          // but `ResourceTable`'s delete contract is `mutate(id: string)` — so
+          // the row key round-trips through `getId` and is resolved back here.
+          mutation: {
+            mutate: (key: string) => {
+              const acl = data.find((a) => `${a.scope}:${a.id}` === key)
+              if (acl) deleteMutation.mutate(acl)
+            },
+            isPending: deleteMutation.isPending,
+          },
+          getId: (acl) => `${acl.scope}:${acl.id}`,
+          label: (acl) => acl.name,
+          noun: "Web ACL",
+          title: "Delete Web ACL?",
+          description: (acl) => (
+            <>
+              Delete metadata for <span className="font-medium text-fg">{acl.name}</span>?
+            </>
+          ),
+        }}
+      />
       <CreateWebACLDialog
         open={showCreate}
         loading={createMutation.isPending}
         onClose={() => setShowCreate(false)}
         onSubmit={(value) => createMutation.mutate(value)}
-      />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(undefined)}
-        title="Delete Web ACL?"
-        description={
-          <>
-            Delete metadata for <span className="font-medium text-fg">{deleteTarget?.name}</span>?
-          </>
-        }
-        isPending={deleteMutation.isPending}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
       />
     </ResourceListPage>
   )

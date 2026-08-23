@@ -41,7 +41,17 @@
 > change's fence (see the PR for the follow-up). Two gaps surfaced: `ResourceTable` has no slot
 > after its empty state (Lambda's `RegionElsewhereNotice` has to sit there, so that page embeds the
 > table in its own card) and no per-row class hook (Auto Scaling's selected-row tint became a
-> chevron column, the `usage-plans-page` shape). None of the other scaffold
+> chevron column, the `usage-plans-page` shape).
+> **2026-08-23 (#1327 waves B/C — edge/identity):** `apigateway/api-list` (both tabs),
+> `waf/web-acl-list` and `cognito-page` are on `ResourceTable`, plus 14 `variant="embedded"`
+> sub-tables across `apigateway/http-api-detail` (routes, integrations, stages, authorizers),
+> `apigateway/rest-api-detail` (stages, deployments, authorizers), `appsync/api-detail` (data
+> sources, resolvers, functions, API keys, schema types) and `cognito-pool-detail` (users, group
+> members); `waf/index` and `cognito/index` gained the `sort` search param (Cognito's next to its
+> existing `q`). Two tables stay bespoke with a reason at the call site: `rest-api-detail`'s
+> resource tree expands a row into per-method `<TableRow>`s and `ResourceTable` has no row-expansion
+> concept (the same limitation §5 records for EC2), and `cognito-pool-detail`'s user-attribute grid
+> is an editable name/value grid, not a resource list. None of the other scaffold
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or

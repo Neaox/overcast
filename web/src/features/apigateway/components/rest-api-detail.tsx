@@ -40,6 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
   DialogContent,
@@ -79,10 +80,7 @@ export function RestApiDetail({ apiId }: Props) {
   const [selectedResource, setSelectedResource] = useState<ApiResource>()
   const [expandedResources, setExpandedResources] = useState<Set<string>>(new Set())
   const [showCreateAuthorizer, setShowCreateAuthorizer] = useState(false)
-  const [deleteAuthorizerTarget, setDeleteAuthorizerTarget] = useState<{
-    id: string
-    name: string
-  }>()
+  const [deleteAuthorizerTarget, setDeleteAuthorizerTarget] = useState<Authorizer>()
 
   // Test harness state
   const [testTarget, setTestTarget] = useState<{
@@ -142,13 +140,26 @@ export function RestApiDetail({ apiId }: Props) {
     refetch: refetchResources,
   } = useQuery(resourcesQueryOptions(apiId))
 
-  const { data: stages = [], refetch: refetchStages } = useQuery(stagesQueryOptions(apiId))
-  const { data: deployments = [], refetch: refetchDeployments } = useQuery(
-    deploymentsQueryOptions(apiId),
-  )
-  const { data: authorizers = [], refetch: refetchAuthorizers } = useQuery(
-    authorizersQueryOptions(apiId),
-  )
+  const {
+    data: stages = [],
+    isLoading: stagesLoading,
+    error: stagesError,
+    refetch: refetchStages,
+  } = useQuery(stagesQueryOptions(apiId))
+
+  const {
+    data: deployments = [],
+    isLoading: deploymentsLoading,
+    error: deploymentsError,
+    refetch: refetchDeployments,
+  } = useQuery(deploymentsQueryOptions(apiId))
+
+  const {
+    data: authorizers = [],
+    isLoading: authorizersLoading,
+    error: authorizersError,
+    refetch: refetchAuthorizers,
+  } = useQuery(authorizersQueryOptions(apiId))
 
   const deleteMut = useMutation({
     ...deleteRestApiMutationOptions(),
@@ -517,6 +528,17 @@ export function RestApiDetail({ apiId }: Props) {
             </Button>
           </div>
 
+          {/*
+            ResourceTable didn't fit because this table expands a row into
+            extra <TableRow>s of its own (`MethodDetails` renders one row per
+            method under the resource it belongs to, sharing the parent's
+            column widths). `ResourceTable` has no row-expansion concept — its
+            row model maps one row per item — so forcing it here would mean
+            either dropping the inline method list or lifting it out of the
+            table, both of which lose the indented parent/child reading. See
+            #1327; the same limitation is recorded for EC2 in
+            docs/plans/web-ui-dry-refactor.md.
+          */}
           <Table>
             <TableHeader>
               <TableRow>
@@ -792,32 +814,35 @@ export function RestApiDetail({ apiId }: Props) {
               Create Stage
             </Button>
           </div>
-          {stages.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">
-              No stages. Create a deployment first, then add a stage.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Stage Name</TableHead>
-                  <TableHead>Deployment ID</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stages.map((stage) => (
-                  <TableRow key={stage.stageName}>
-                    <TableCell className="font-medium">{stage.stageName}</TableCell>
-                    <TableCell className="text-fg-muted">{stage.deploymentId}</TableCell>
-                    <TableCellProse>{stage.description || "—"}</TableCellProse>
-                    <TableCell className="text-fg-muted">{formatDate(stage.createdDate)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: stages, isLoading: stagesLoading, error: stagesError }}
+            noun="stages"
+            emptyTitle="No stages. Create a deployment first, then add a stage."
+            errorTitle="Failed to load stages"
+            rowKey={(stage) => stage.stageName}
+            columns={[
+              {
+                header: "Stage Name",
+                cellClassName: "font-medium",
+                sortValue: (stage) => stage.stageName,
+                cell: (stage) => stage.stageName,
+              },
+              {
+                header: "Deployment ID",
+                cellClassName: "text-fg-muted",
+                cell: (stage) => stage.deploymentId,
+              },
+              { header: "Description", prose: true, cell: (stage) => stage.description || "—" },
+              {
+                header: "Created",
+                cellClassName: "text-fg-muted",
+                sortValue: (stage) => stage.createdDate,
+                cell: (stage) => formatDate(stage.createdDate),
+              },
+            ]}
+          />
         </div>
       )}
 
@@ -834,28 +859,33 @@ export function RestApiDetail({ apiId }: Props) {
               Create Deployment
             </Button>
           </div>
-          {deployments.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No deployments yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Deployment ID</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deployments.map((dep) => (
-                  <TableRow key={dep.id}>
-                    <TableCell>{dep.id}</TableCell>
-                    <TableCellProse>{dep.description || "—"}</TableCellProse>
-                    <TableCell className="text-fg-muted">{formatDate(dep.createdDate)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: deployments, isLoading: deploymentsLoading, error: deploymentsError }}
+            noun="deployments"
+            emptyTitle="No deployments yet."
+            errorTitle="Failed to load deployments"
+            // Newest first: a deployment list is read to find the latest one,
+            // and GetDeployments returns them in no particular order.
+            defaultSort={{ id: "created", desc: true }}
+            rowKey={(dep) => dep.id}
+            columns={[
+              {
+                header: "Deployment ID",
+                sortValue: (dep) => dep.id,
+                cell: (dep) => dep.id,
+              },
+              { header: "Description", prose: true, cell: (dep) => dep.description || "—" },
+              {
+                id: "created",
+                header: "Created",
+                cellClassName: "text-fg-muted",
+                sortValue: (dep) => dep.createdDate,
+                cell: (dep) => formatDate(dep.createdDate),
+              },
+            ]}
+          />
         </div>
       )}
 
@@ -868,41 +898,48 @@ export function RestApiDetail({ apiId }: Props) {
               Add Authorizer
             </Button>
           </div>
-          {authorizers.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">No authorizers defined.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Identity Source</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {authorizers.map((auth) => (
-                  <TableRow key={auth.id}>
-                    <TableCell className="font-medium">{auth.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">{auth.type}</Badge>
-                    </TableCell>
-                    <TableCell className="text-fg-muted">{auth.identitySource || "—"}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger hover:text-danger"
-                        onClick={() => setDeleteAuthorizerTarget({ id: auth.id, name: auth.name })}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: authorizers, isLoading: authorizersLoading, error: authorizersError }}
+            noun="authorizers"
+            emptyTitle="No authorizers defined."
+            errorTitle="Failed to load authorizers"
+            rowKey={(auth) => auth.id}
+            columns={[
+              {
+                header: "Name",
+                cellClassName: "font-medium",
+                sortValue: (auth) => auth.name,
+                cell: (auth) => auth.name,
+              },
+              { header: "Type", cell: (auth) => <Badge variant="default">{auth.type}</Badge> },
+              {
+                header: "Identity Source",
+                cellClassName: "text-fg-muted",
+                cell: (auth) => auth.identitySource || "—",
+              },
+            ]}
+            onDelete={{
+              target: deleteAuthorizerTarget,
+              onRequest: setDeleteAuthorizerTarget,
+              onOpenChange: (open) => !open && setDeleteAuthorizerTarget(undefined),
+              mutation: {
+                mutate: (authorizerId: string) =>
+                  deleteAuthorizerMut.mutate({ apiId, authorizerId }),
+                isPending: deleteAuthorizerMut.isPending,
+              },
+              getId: (auth) => auth.id,
+              label: (auth) => auth.name,
+              noun: "authorizer",
+              title: "Delete Authorizer",
+              description: (auth) => (
+                <>
+                  Delete authorizer <span className="font-mono font-semibold">{auth.name}</span>?
+                </>
+              ),
+            }}
+          />
         </div>
       )}
 
@@ -919,24 +956,6 @@ export function RestApiDetail({ apiId }: Props) {
         }
         isPending={deleteMut.isPending}
         onConfirm={() => deleteMut.mutate(apiId)}
-      />
-
-      {/* Delete authorizer confirmation */}
-      <ConfirmDialog
-        open={!!deleteAuthorizerTarget}
-        onOpenChange={(open) => !open && setDeleteAuthorizerTarget(undefined)}
-        title="Delete Authorizer"
-        description={
-          <>
-            Delete authorizer{" "}
-            <span className="font-mono font-semibold">{deleteAuthorizerTarget?.name}</span>?
-          </>
-        }
-        isPending={deleteAuthorizerMut.isPending}
-        onConfirm={() =>
-          deleteAuthorizerTarget &&
-          deleteAuthorizerMut.mutate({ apiId, authorizerId: deleteAuthorizerTarget.id })
-        }
       />
 
       {/* Create authorizer dialog */}
