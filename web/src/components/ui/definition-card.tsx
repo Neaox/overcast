@@ -1,6 +1,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { CopyButton } from "@/components/ui/copy-button"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -158,10 +159,34 @@ const definitionLabelVariants = cva("text-fg-subtle", {
   defaultVariants: { layout: "auto" },
 })
 
+/**
+ * The label names the field, so it is already the noun the copy control and its
+ * toast want — but in title case, which reads wrong mid-sentence ("Copied
+ * Domain Name"). Lowercasing every word that is not an acronym gives the
+ * `CopyButton` contract's shape: "Domain Name" → "domain name", "Key ID" →
+ * "key ID", "ARN" → "ARN".
+ */
+function copyNoun(label: string): string {
+  return label
+    .split(" ")
+    .map((word) => (/^[A-Z0-9]{2,}$/.test(word) ? word : word.toLowerCase()))
+    .join(" ")
+}
+
 interface DefinitionProps extends VariantProps<typeof definitionValueVariants> {
   label: React.ReactNode
   /** `null`, `undefined` and `""` render as an em dash. */
   value: React.ReactNode
+  /**
+   * Puts an inline copy control beside the value — for the identifiers a
+   * developer actually pastes elsewhere: ARNs, ids, endpoints, domain names.
+   *
+   * `true` copies the value, and is only meaningful when the value is a string
+   * or a number. When the value is a node — an `<ArnText>`, a badge, a list of
+   * chips — pass the text to copy instead. An empty value never gets a control:
+   * there is nothing to put on the clipboard.
+   */
+  copyable?: boolean | string
   /** Span the full row — for ARNs and anything else a grid cell cannot hold. */
   full?: boolean
   /** Overrides the enclosing list's layout for this one pair. */
@@ -180,6 +205,7 @@ function Definition({
   label,
   value,
   variant,
+  copyable,
   full,
   layout,
   className,
@@ -188,6 +214,13 @@ function Definition({
   const inherited = React.useContext(DefinitionLayoutContext)
   const resolved = layout ?? inherited
   const empty = value === null || value === undefined || value === ""
+  const copyText =
+    typeof copyable === "string"
+      ? copyable
+      : copyable && (typeof value === "string" || typeof value === "number")
+        ? String(value)
+        : undefined
+  const rendered = empty ? "—" : value
   return (
     <div
       className={cn(
@@ -206,7 +239,21 @@ function Definition({
           empty && "text-fg-subtle",
         )}
       >
-        {empty ? "—" : value}
+        {copyText && !empty ? (
+          // The value keeps its own wrapper so a long ARN still wraps inside the
+          // grid cell rather than pushing the copy control off the row.
+          <span className="flex min-w-0 items-start gap-1.5">
+            <span className="min-w-0 wrap-anywhere">{rendered}</span>
+            <CopyButton
+              value={copyText}
+              noun={typeof label === "string" ? copyNoun(label) : undefined}
+              tone="inline"
+              className="mt-0.5"
+            />
+          </span>
+        ) : (
+          rendered
+        )}
       </dd>
     </div>
   )
