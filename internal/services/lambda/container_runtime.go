@@ -667,6 +667,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		}
 	}
 	if err != nil {
+		// A create abandoned mid-flight — the function was deleted underneath
+		// this cold start, or the invocation gave up — may still have been
+		// completed by the daemon after we stopped waiting for the answer,
+		// leaving a container whose ID nothing here ever learned. The name is
+		// ours and unique to this acquire, so it is enough to remove by.
+		if ctx.Err() != nil {
+			_ = cr.docker.RemoveContainerForce(containerName)
+		}
 		return nil, fmt.Errorf("create container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
 
