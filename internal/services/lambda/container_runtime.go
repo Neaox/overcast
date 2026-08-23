@@ -497,7 +497,15 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		return nil, err
 	}
 	if hotReloadPath != "" {
-		if msg := typeScriptSourceDiagnostic(hotReloadPath, fn.Runtime); msg != "" {
+		// Both diagnostics read the tree from Overcast's own filesystem, which
+		// is not always the Docker-form path handed to the daemon — on a
+		// Windows host `/c/src/app` names nothing, so neither warning could
+		// ever fire when read through it.
+		localPath := hotReloadLocalPath(hotReloadTagPath(fn), hotReloadPath)
+		if msg := typeScriptSourceDiagnostic(localPath, fn.Runtime); msg != "" {
+			cr.logger.Warn(msg)
+		}
+		if msg := hotReloadVisibilityDiagnostic(localPath); msg != "" {
 			cr.logger.Warn(msg)
 		}
 	}

@@ -62,10 +62,10 @@ func functionCodeIdentity(fn *Function) string {
 		return imageHash(fn.ImageUri)
 	}
 	if p, err := validateFunctionHotReloadConfig(fn); err == nil && p != "" {
-		if st, statErr := os.Stat(p); statErr == nil {
-			return imageHash("hotreload:" + p + ":" + fmt.Sprintf("%d", st.ModTime().UnixNano()))
-		}
-		return imageHash("hotreload:" + p + ":missing")
+		// The identity of a bind-mounted function is the state of the mounted
+		// tree, not a package hash — see hot_reload_fingerprint.go for what is
+		// covered and what it costs on the invoke path.
+		return hotReloadFingerprints.digest(hotReloadLocalPath(hotReloadTagPath(fn), p))
 	}
 	// The hash maintained by setCode, so the invoke path does not SHA-256 the
 	// whole package on every acquire. Records persisted before the field

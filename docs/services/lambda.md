@@ -842,6 +842,57 @@ Path behavior:
 - Mount is read-only inside the container at `/var/task:ro`.
 - Host files must be readable by the runtime user in the container.
 
+#### What counts as a change
+
+Overcast decides whether a warm execution environment is still current by
+fingerprinting the mounted tree — every entry's path, and every file's size and
+modification time — before each invocation. When the fingerprint moves, the
+warm container is retired and the next invocation starts a fresh one against the
+edited source, exactly as `UpdateFunctionCode` does. That is what makes editing
+an already-loaded file work on runtimes that cache modules, such as Node's
+`require` cache and Python's `sys.modules`.
+
+The fingerprint is bounded, so that recomputing it before each invocation does
+not become the cost of invoking. Precisely:
+
+- **Dependency and VCS directories are not looked inside.** `node_modules`,
+  `.git`, `__pycache__`, `.venv`, `.mypy_cache` and `.pytest_cache` are
+  fingerprinted by name only. Creating, deleting or renaming one of them is
+  noticed; editing a file inside one is not. Touch any file in your own source
+  afterwards, or call `UpdateFunctionCode`, to pick such an edit up.
+- **20,000 entries and 24 directory levels.** A larger or deeper tree is
+  covered up to the limit — each directory in name order, depth-first — and
+  edits past it are not noticed. Point the tag at your handler's source
+  directory rather than at a workspace root and you will not meet this.
+- **A read costing more than 25 ms is rate-limited.** Below that the tree is
+  read before every invocation and an edit is always live on the next one. A
+  local disk takes 4–11 µs per entry, so a source tree of a few thousand files
+  stays under the budget. The same tree read across a Docker Desktop file share
+  — which is the case when Overcast itself runs in a container with your source
+  mounted into it — costs about 2 ms per entry, and there the rate limit
+  applies: the tree is re-read at most once per 20× what the previous read
+  cost, and at least once every 2 seconds, so an edit can take up to 2 seconds
+  rather than one invocation to be seen.
+- **Overcast must be able to read the path itself.** The bind mount is created
+  for the function's container by the Docker daemon, so the mount works whether
+  or not Overcast can see the directory — but the fingerprint is read by
+  Overcast, from its own filesystem. If you run Overcast in a container, mount
+  the source directory into the Overcast container at the same path as well;
+  otherwise the first invocation runs the mounted source and every later one
+  keeps that same container. Overcast logs a warning naming the path when this
+  happens.
+- **Filesystem timestamp granularity is 1–2 seconds on some filesystems**,
+  notably HFS+ and some network shares. Two saves within one tick that leave
+  the file the same size are one change as far as the filesystem is concerned,
+  and the second is not seen until something else in the tree changes. Size is
+  part of the fingerprint, so this only affects same-length edits.
+- **Symbolic links are not followed.** A symlink is fingerprinted by name;
+  changes to what it points at are not noticed.
+
+If none of that suits your project — a very large tree, a slow file share, or
+dependencies you edit directly — use [`cdk watch`](#quickest-cdk-path-cdk-watch)
+instead, which redeploys through `UpdateFunctionCode` on every save.
+
 ### CDK hot-reload tags
 
 When you add tags to an `AWS::Lambda::Function` resource in a CloudFormation
