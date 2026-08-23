@@ -28,6 +28,14 @@ const (
 	backoffMin = 50 * time.Millisecond
 	backoffMax = 2 * time.Second
 
+	// firstConnectBackoff is how long the *first* connection waits before
+	// retrying. It is much shorter than backoffMin because the only thing it
+	// ever waits out is the host finishing the container's registration, which
+	// is a race the init loses by microseconds if at all — not a daemon
+	// problem, and not something worth 50 ms of a cold start. Once a connection
+	// has done real work the ordinary backoff takes over.
+	firstConnectBackoff = 5 * time.Millisecond
+
 	// frameOverheadBytes approximates the JSON envelope around a frame's
 	// strings, so the byte bound accounts for framing rather than payload
 	// alone.
@@ -148,7 +156,7 @@ func (s *shipper) writtenSeq() uint64 {
 func (s *shipper) run(ctx context.Context) {
 	defer close(s.done)
 
-	backoff := backoffMin
+	backoff := firstConnectBackoff
 	for {
 		if !s.waitForWork(ctx) {
 			return

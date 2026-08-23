@@ -335,42 +335,6 @@ func TestContainerRuntimeCopyLayersToContainer_missingRemoteLayerReturnsLambdaLo
 	}
 }
 
-func TestLambdaBootstrapScript_startsExtensionsBeforeRuntime(t *testing.T) {
-	// When: the Lambda bootstrap script is rendered.
-	script := lambdaBootstrapScript()
-
-	// Then: it starts executable files under /opt/extensions before execing the runtime entrypoint.
-	if !bytes.Contains(script, []byte("/opt/extensions")) {
-		t.Fatal("bootstrap does not inspect /opt/extensions")
-	}
-	if !bytes.Contains(script, []byte("$ext")) || !bytes.Contains(script, []byte("&")) {
-		t.Fatal("bootstrap does not start extension executables in the background")
-	}
-	if !bytes.Contains(script, []byte("exec /lambda-entrypoint.sh")) {
-		t.Fatal("bootstrap does not hand off to the AWS Lambda entrypoint")
-	}
-}
-
-func TestLambdaBootstrapScript_prefixesExtensionLogs(t *testing.T) {
-	// When: the Lambda bootstrap script is rendered.
-	script := lambdaBootstrapScript()
-
-	// Then: extension stdout/stderr is marked so Logs API subscribers can receive extension records.
-	if !bytes.Contains(script, []byte("[overcast-extension:%s]")) {
-		t.Fatal("bootstrap does not prefix extension logs")
-	}
-}
-
-func TestClassifyRuntimeLogLine_extensionPrefix(t *testing.T) {
-	// When: a Docker log line came from the bootstrap extension wrapper.
-	typ, record := classifyRuntimeLogLine("[overcast-extension:bootstrap] extension ready")
-
-	// Then: it is delivered to Logs API extension subscribers without the wrapper prefix.
-	if typ != "extension" || record != "extension ready" {
-		t.Fatalf("type=%q record=%q", typ, record)
-	}
-}
-
 // AWS names a Lambda log stream after the date and the execution environment's
 // GUID: YYYY/MM/DD/[$LATEST] followed by 32 hex characters, as in
 // 2019/07/12/[$LATEST]312c2d81e2e64af58dbe557754f9aa13. Anything shorter fails

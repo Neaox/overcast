@@ -111,9 +111,21 @@ func newRecordingDaemon(t *testing.T) *recordingDaemon {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "0123456789abcdef"})
 
-		// Every image is absent, so ensureImage always pulls.
+		// Every image is absent until it has been pulled, so ensureImage always
+		// pulls exactly once — and the inspect that follows the pull answers
+		// with what a real Lambda image declares, which is what the execution
+		// environment's init runs as its child.
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/images/"):
-			http.Error(w, "no such image", http.StatusNotFound)
+			if !d.hasPulled() {
+				http.Error(w, "no such image", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"Os":           "linux",
+				"Architecture": "amd64",
+				"Config":       map[string]any{"Entrypoint": []string{"/lambda-entrypoint.sh"}, "Cmd": []string{"index.handler"}},
+			})
 
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/json"):
 			w.Header().Set("Content-Type", "application/json")
@@ -162,6 +174,14 @@ func (d *recordingDaemon) recordCreate(t *testing.T, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.creates = append(d.creates, req)
+}
+
+// hasPulled reports whether this daemon has served a pull yet, which is what
+// makes an image present.
+func (d *recordingDaemon) hasPulled() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.pulls) > 0
 }
 
 func (d *recordingDaemon) recordedPulls() []pullRecord {

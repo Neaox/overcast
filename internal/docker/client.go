@@ -272,10 +272,25 @@ type CreateContainerResponse struct {
 	Warnings []string `json:"Warnings,omitempty"`
 }
 
-// ImageInspect holds the platform metadata returned by Docker image inspect.
+// ImageInspect holds the metadata returned by Docker image inspect: the
+// platform, and the parts of the image's own configuration a caller needs when
+// it takes the entrypoint over.
 type ImageInspect struct {
-	Architecture string `json:"Architecture"`
-	OS           string `json:"Os"`
+	Architecture string      `json:"Architecture"`
+	OS           string      `json:"Os"`
+	Config       ImageConfig `json:"Config"`
+}
+
+// ImageConfig is the image's baked-in run configuration. Only the fields a
+// caller that replaces the entrypoint has to reproduce are modelled: Lambda's
+// in-container init runs as the container's entrypoint and launches the image's
+// original ENTRYPOINT+CMD as its child, so it has to know what that command
+// was — the daemon can no longer merge it in, because the entrypoint the
+// daemon is given is the init.
+type ImageConfig struct {
+	Entrypoint []string `json:"Entrypoint"`
+	Cmd        []string `json:"Cmd"`
+	WorkingDir string   `json:"WorkingDir"`
 }
 
 // ContainerInspect holds container state and networking details.
@@ -1297,6 +1312,33 @@ func (d *Client) ImageMatchesPlatform(ctx context.Context, image, platform strin
 		return false, nil
 	}
 	return inspect.OS == osName && inspect.Architecture == arch, nil
+}
+
+// InspectImage returns the daemon's view of a local image: its platform and the
+// run configuration baked into it. The image must already be present — this
+// never pulls.
+//
+// It is one round trip and the caller is expected to cache it: the only caller
+// on a hot path is Lambda's cold start, which needs an image function's
+// original ENTRYPOINT+CMD once per image, not once per container.
+func (d *Client) InspectImage(ctx context.Context, image string) (*ImageInspect, error) {
+	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/images/"+url.PathEscape(image)+"/json", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("inspect image %s: no such image", image)
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("inspect image %s: status %d: %s", image, resp.StatusCode, string(body))
+	}
+	var inspect ImageInspect
+	if err := json.NewDecoder(resp.Body).Decode(&inspect); err != nil {
+		return nil, fmt.Errorf("inspect image %s: decode: %w", image, err)
+	}
+	return &inspect, nil
 }
 
 // ─── Volume operations ─────────────────────────────────────────────────────

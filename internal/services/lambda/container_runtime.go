@@ -36,12 +36,12 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/containerlogs"
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/logging"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/services/lambda/initbin"
+	"github.com/Neaox/overcast/internal/services/lambda/initproto"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -69,6 +69,7 @@ type ContainerRuntime struct {
 	codeFetcher      CodeFetcher                          // populates fn.CodeZip at cold start; nil in tests
 	tarCache         *tarCache                            // pre-built code/layer tars; nil = disabled
 	imageVerified    sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
+	imageConfigs     sync.Map                             // pull key → docker.ImageConfig: the image's own ENTRYPOINT/CMD, which the init now has to reproduce
 	coldStartSem     chan struct{}                        // bounds concurrent container creation/INIT bursts
 	// instances stamps each runtime container with this instance's identity, so
 	// the GC's sweeps can tell them from another Overcast's on the same daemon.
@@ -574,15 +575,23 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			return nil, err
 		}
 	}
-	if !isImage {
-		bootTar, bootErr := lambdaBootstrapTar()
-		if bootErr != nil {
-			return nil, fmt.Errorf("build bootstrap tar: %w", bootErr)
-		}
-		if err := appendComponent("bootstrap", bootTar); err != nil {
-			return nil, err
-		}
+	// The init, for every container: it is the entrypoint, so an execution
+	// environment without it is not an execution environment. Image functions
+	// get the provisioning archive for this reason alone — before the init
+	// there was nothing in it for them, and "always at least the init" is what
+	// keeps this one code path rather than two.
+	//
+	// Written straight into the archive rather than through appendComponent:
+	// the init is ~6.5 MB and a component tar would copy it twice.
+	if err := appendLambdaInit(tw, fn.Architectures); err != nil {
+		// Deliberately fatal, and the error is passed through verbatim: it
+		// names the missing artefact and the command that builds it. A silent
+		// fallback would mean a container whose output cannot be attributed to
+		// an invocation, which is the failure this whole mechanism exists to
+		// remove.
+		return nil, err
 	}
+	hasEntries = true
 	if err := tw.Close(); err != nil {
 		return nil, fmt.Errorf("close provisioning tar: %w", err)
 	}
@@ -609,6 +618,25 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	env := cr.buildEnv(fn, logStream, initType, rapiListener.Addr())
 	containerName := fmt.Sprintf("overcast-lambda-%s-%d", sanitizeName(fn.Name), cr.clk.Now().UnixNano())
 
+	// The log sink exists before the container does, for the same reason the
+	// listener does: the init opens its log stream and starts publishing
+	// INIT-phase frames the moment the container starts, which is long before
+	// this function returns a containerInstance — and those frames are what the
+	// INIT-timeout diagnostic quotes. Handed to the containerInstance on
+	// success and closed on every other path out of here.
+	sink := cr.newLogSink(fn, logStream)
+	// Indexed against this environment's own listener before the container
+	// exists, so the init's first log connection is answered rather than made
+	// to wait for Docker to report an address — see RuntimeAPIServer.logSinks.
+	rapiListener.RegisterLogSink(sink)
+	go sink.ensureStream()
+	sinkHandedOff := false
+	defer func() {
+		if !sinkHandedOff {
+			sink.close()
+		}
+	}()
+
 	progress("Creating container")
 	ccfg := &docker.ContainerConfig{
 		// The resolved reference, not the requested one: the daemon stored the
@@ -618,14 +646,18 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		Env:    env,
 		Labels: cr.instances.ManagedLabels(ctx, "lambda", fn.Name),
 	}
-	// For zip functions, CMD is the handler. For image functions, the image's
-	// built-in ENTRYPOINT+CMD are used unless ImageConfig provides overrides.
-	if !isImage && fn.Handler != "" {
-		ccfg.Entrypoint = []string{"/bin/sh", "/var/overcast/bootstrap"}
-		ccfg.Cmd = []string{fn.Handler}
-	} else if isImage && fn.ImageConfig != nil {
-		ccfg.Entrypoint = fn.ImageConfig.EntryPoint
-		ccfg.Cmd = fn.ImageConfig.Command
+	// The init is PID 1 and the command the container would have run without it
+	// is its argument list, exactly as RAPID launches ENTRYPOINT+CMD on AWS.
+	child, childErr := cr.childCommand(ctx, fn, isImage, ref.resolved.Ref, platform)
+	if childErr != nil {
+		return nil, childErr
+	}
+	ccfg.Entrypoint = []string{initproto.InitPath}
+	ccfg.Cmd = child
+	if isImage && fn.ImageConfig != nil {
+		// WorkingDir stays a container-config field: it is Docker's job, the
+		// init inherits the cwd it is given, and the daemon still merges the
+		// image's own WORKDIR when this is empty.
 		ccfg.WorkingDir = fn.ImageConfig.WorkingDirectory
 	}
 
@@ -685,12 +717,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	if inspect, inspectErr := cr.docker.InspectContainer(ctx, id); inspectErr == nil {
 		containerIP = cr.extractContainerIP(inspect)
 		if containerIP != "" {
+			sink.attach(containerIP, id)
 			cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
 				FunctionARN:        fn.ARN,
 				FunctionName:       fn.Name,
 				ContainerID:        id,
 				Handler:            fn.Handler,
 				ExpectedExtensions: expectedExtensions,
+				LogSink:            sink,
 			})
 			rapiListener.Attach(containerIP)
 			registeredIP = containerIP
@@ -759,12 +793,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			cleanup()
 			return nil, err
 		}
+		sink.attach(containerIP, id)
 		cr.runtimeAPI.RegisterContainerConfig(containerIP, runtimeContainerConfig{
 			FunctionARN:        fn.ARN,
 			FunctionName:       fn.Name,
 			ContainerID:        id,
 			Handler:            fn.Handler,
 			ExpectedExtensions: expectedExtensions,
+			LogSink:            sink,
 		})
 		rapiListener.Attach(containerIP)
 		registeredIP = containerIP
@@ -786,8 +822,9 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		}, phases...)...,
 	)
 
-	ci := cr.newContainerInstance(id, containerIP, fn, logStream, rapiListener)
+	ci := cr.newContainerInstance(id, containerIP, fn, logStream, rapiListener, sink)
 	listenerHandedOff = true
+	sinkHandedOff = true
 	ci.initStartedAt = initStartedAt
 	for _, line := range skippedLayerLogLines {
 		ci.writeLogLine(ctx, line)
@@ -864,14 +901,35 @@ func (cr *ContainerRuntime) extractContainerIP(inspect *docker.ContainerInspect)
 	return ""
 }
 
-// newContainerInstance builds a containerInstance from the created container.
-func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Function, logStream string, rapiListener *containerListener) *containerInstance {
-	logRegion := regionFromFunctionARN(fn.ARN)
-	if logRegion == "" {
-		logRegion = cr.cfg.Region
+// logRegion is where a function's output belongs: the region encoded in its
+// ARN, so a cross-region invoke's lines land where the function lives, falling
+// back to the emulator's own.
+func (cr *ContainerRuntime) logRegion(fn *Function) string {
+	if region := regionFromFunctionARN(fn.ARN); region != "" {
+		return region
 	}
-	logCtx, logCancel := context.WithCancel(middleware.ContextWithRegion(context.Background(), logRegion))
+	return cr.cfg.Region
+}
 
+// newLogSink builds the host end of a container's log channel. It is called
+// before the container exists — see the call site.
+func (cr *ContainerRuntime) newLogSink(fn *Function, logStream string) *logSink {
+	appLogLevel, _ := resolveLogLevels(fn)
+	return newLogSink(logSinkConfig{
+		logger:      cr.logger,
+		clk:         cr.clk,
+		logWriter:   cr.logWriter,
+		group:       fn.logGroupName(),
+		stream:      logStream,
+		region:      cr.logRegion(fn),
+		logFormat:   resolveLogFormat(fn),
+		appLogLevel: appLogLevel,
+		runtimeAPI:  cr.runtimeAPI,
+	})
+}
+
+// newContainerInstance builds a containerInstance from the created container.
+func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Function, logStream string, rapiListener *containerListener, sink *logSink) *containerInstance {
 	appLogLevel, sysLogLevel := resolveLogLevels(fn)
 	ci := &containerInstance{
 		id:             id,
@@ -892,10 +950,9 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		logger:         cr.logger,
 		clk:            cr.clk,
 		logWriter:      cr.logWriter,
-		logCtx:         logCtx,
-		logCancel:      logCancel,
+		logSink:        sink,
+		logCtx:         sink.ctx,
 		exitNotify:     cr.exitNotify,
-		logDone:        make(chan struct{}),
 		healthy:        true,
 		keepContainers: cr.cfg.LambdaKeepContainers,
 		readyCh:        cr.runtimeAPI.ReadyChan(containerIP),
@@ -903,13 +960,6 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		rapiListener:   rapiListener,
 	}
 	ci.forgetInitBurst = func() { cr.clearInitBurst(id) }
-
-	if cr.logWriter != nil {
-		ci.initLogFollower()
-		go ci.streamLogs()
-	} else {
-		close(ci.logDone)
-	}
 	return ci
 }
 
@@ -1183,8 +1233,20 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType, runtimeA
 		// fromEnv chain) treat the absence of this variable as "not a
 		// Lambda environment" and fall through to other providers, so we
 		// always provide a placeholder.
-		"AWS_SESSION_TOKEN":           "overcast",
-		"AWS_LAMBDA_RUNTIME_API":      runtimeAPIAddr,
+		"AWS_SESSION_TOKEN": "overcast",
+		// The AWS value, verbatim: the Runtime API the runtime and the
+		// extensions talk to is the one Overcast's init serves on the
+		// container's own loopback, and a runtime interface client cannot tell
+		// it from RAPID's. The init proxies it through to this execution
+		// environment's endpoint on the host, which it is told about
+		// separately — the host's address is the init's business, not the
+		// runtime's.
+		"AWS_LAMBDA_RUNTIME_API": initproto.LambdaRuntimeAPI,
+		// Overcast's own variable, with no AWS counterpart: on AWS the init
+		// *is* the endpoint. The port is per-execution-environment and is what
+		// identifies this container to the Runtime API, so it is baked in at
+		// create time — see containerListener.
+		initproto.EnvRuntimeAPI:       runtimeAPIAddr,
 		"LAMBDA_TASK_ROOT":            "/var/task",
 		"AWS_LAMBDA_FUNCTION_TIMEOUT": fmt.Sprint(fn.Timeout),
 		"TZ":                          ":/etc/localtime",
@@ -1257,55 +1319,29 @@ type containerInstance struct {
 	// Logging configuration, resolved from the function at creation time. The
 	// zero value (empty logFormat) is Text, which is what every containerInstance
 	// built outside newContainerInstance wants. See logging_json.go.
-	logFormat    string
-	appLogLevel  logLevel
-	sysLogLevel  logLevel
-	docker       *docker.Client
-	gc           *docker.GC // async fallback when direct removal fails
-	runtimeAPI   *RuntimeAPIServer
-	logger       *zap.Logger
-	clk          clock.Clock
-	logWriter    events.LogWriter   // nil if CWL not wired
-	logCtx       context.Context    // cancelled on Close
-	logCancel    context.CancelFunc // cancels logCtx
-	exitNotify   *exitNotifier      // Docker watcher exit notifications
-	tailMu       sync.Mutex
-	tailBuf      []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
-	tailAppendAt atomic.Int64  // UnixNano of last container line appended to tailBuf; 0 until the first
-	logReadAt    atomic.Int64  // UnixNano of last Docker log read; 0 until first read
-	logInFlight  atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
-	logParkedAt  atomic.Int64  // where the log reader is: see logReaderNotReading / logReaderBetweenReads
-	peakMemMB    atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
-	logDone      chan struct{} // closed when streamLogs goroutine exits
-	// logFollower reads the container's output back off the Docker daemon;
-	// logSink is what it hands each line to. Both are nil when CloudWatch Logs
-	// is not wired up — see newContainerInstance and container_logs.go.
-	logFollower    *containerlogs.Follower
-	logSink        *containerLogSink
+	logFormat   string
+	appLogLevel logLevel
+	sysLogLevel logLevel
+	docker      *docker.Client
+	gc          *docker.GC // async fallback when direct removal fails
+	runtimeAPI  *RuntimeAPIServer
+	logger      *zap.Logger
+	clk         clock.Clock
+	logWriter   events.LogWriter // nil if CWL not wired
+	logCtx      context.Context  // the sink's context; ended by Close
+	exitNotify  *exitNotifier    // Docker watcher exit notifications
+	peakMemMB   atomic.Int64     // running peak memory (MB) — what REPORT's Max Memory Used reads
+	// logSink is the host end of the in-container init's log channel: the
+	// per-request tail buffers, the Telemetry API publish and the CloudWatch
+	// batcher. It is created before the container is, and outlives every one of
+	// the init's connections. Nil only for a containerInstance built by a test
+	// that does not care about output. See container_logs.go.
+	logSink        *logSink
 	readyCh        <-chan struct{}
 	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
 	rapiListener   *containerListener        // this environment's own Runtime API endpoint
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
-
-	// logStreamEverAnswered is true once Docker has answered this container's
-	// first ContainerLogsStream call — with a stream, or with an error. It is
-	// what lets dockerSilentSince tell a very first connect that is still in
-	// flight — a daemon round trip that races container start, so a
-	// cold-started invocation's wait can begin before it clears — apart from
-	// a reader that has no stream open because Docker already said so: a
-	// reconnect backoff after a stream that opened and broke, or the backoff
-	// after a connect Docker refused. In the first state nothing has been asked
-	// and nothing is known; in the other two "no stream open" really does mean
-	// the pipeline has nothing outstanding. See dockerSilentSince.
-	logStreamEverAnswered atomic.Bool
-
-	// tailUnclaimed records that a tail wait gave up before its invocation's
-	// output arrived, so whatever lands next belongs to an invocation that has
-	// already answered. Guarded by tailMu, along with the boundary that wait was
-	// working to. See discardUnclaimedOutput.
-	tailUnclaimed     bool
-	tailUnclaimedMark tailMark
 
 	// forgetInitBurst drops this container's pending INIT-burst entry when the
 	// environment is destroyed. An environment that dies before its first
@@ -1427,10 +1463,27 @@ func (ci *containerInstance) logInitTimeout() {
 	ci.logger.Warn(msg, fields...)
 }
 
-// initOutput is a bounded tail of what the container printed. Fetched only on
-// the failure path, and on a context of its own — the one that expired is
-// already cancelled.
+// initOutput is a bounded tail of what the container printed before its first
+// invocation.
+//
+// It comes from the INIT-phase buffer the host already holds: the in-container
+// init tags every line it reads with the invocation in flight at the time, and
+// during INIT there is none, so that buffer is exactly the INIT phase. No
+// daemon round trip, and no wait, on a path that is already a failure.
+//
+// It is empty in one case: the init never got far enough to publish anything —
+// it could not start, or could not reach this host. That is the case the
+// daemon's copy answers, because the init tees every line it reads to the
+// container's own stdout and writes its own [overcast-init] diagnostics to the
+// container's stderr before it gives up. So the fallback is not a redundant
+// second transport; it is the only place the evidence for that specific failure
+// exists.
 func (ci *containerInstance) initOutput() (string, error) {
+	if ci.logSink != nil {
+		if buffered := strings.TrimSpace(ci.logSink.initOutput()); buffered != "" {
+			return buffered, nil
+		}
+	}
 	if ci.docker == nil || ci.id == "" {
 		return "", nil
 	}
@@ -1508,13 +1561,6 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		deadline = ci.clk.Now().Add(900 * time.Second)
 	}
 
-	// Settle the previous invocation's straggling output before this one's tail
-	// opens, under the same gate as the wait itself: only a caller that will
-	// read LogResult pays for it.
-	if opts.LogTail && ci.logWriter != nil {
-		ci.discardUnclaimedOutput()
-	}
-	logMark := ci.beginTail()
 	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
 		ci.healthy = false
 		return extensionInvokeError(reason), nil
@@ -1531,6 +1577,15 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		zap.String("request_id", reqID),
 		zap.Int("event_bytes", len(event)),
 	)
+
+	// Everything the container printed before it asked for work belongs in
+	// front of this invocation's START: the INIT phase for a cold start, and
+	// anything the runtime printed after answering the previous invocation for
+	// a warm one. The init stamped that boundary on its GET /next, so this is
+	// the same wait as the response-side one, at the other end of the
+	// invocation — and normally zero, because those frames were published long
+	// before the poll that named them.
+	ci.awaitIdleLog()
 
 	// Emit the start record that real Lambda writes before every invocation.
 	ci.emitInvocationStart(reqID)
@@ -1571,13 +1626,18 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		// Cancel the pending invocation so its ResultCh is closed and no
 		// drain goroutine is needed. This also removes the map entry.
 		ci.runtimeAPI.CancelInvocation(reqID)
-		// Drain function output before writing END/REPORT and tearing down
-		// the container — otherwise any logs the function emitted before
-		// crashing would be lost when logCtx is cancelled.
-		if ci.logWriter != nil {
-			ci.waitForLogDrain(context.Background(), logDrainFirstReadGrace)
-		}
+		// Whatever the function printed on its way out is the output most
+		// worth keeping, and the container is about to be torn down. The init
+		// drains both pipes, flushes its log stream and closes it when its
+		// child exits, so the stream ending is the event that says everything
+		// has arrived — no silence to time, only a bound on an init that is
+		// itself gone.
+		ci.awaitContainerOutputEnd()
 		elapsed := ci.clk.Now().Sub(start)
+		// The buffer is not released here, and on neither of the other two
+		// failure paths: all three mark the environment unhealthy, so it is
+		// closed moments later and the whole sink goes with it. What the
+		// buffer still holds until then is the evidence for what happened.
 		ci.emitInvocationEnd(reqID, outcomeCrashed, elapsed, ci.reportMemoryMB(memSample), 0)
 		return nil, fmt.Errorf("lambda container exited unexpectedly (exit code %s) — check container logs for details", exitCode)
 	case <-ctx.Done():
@@ -1588,13 +1648,11 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		// Cancel the pending invocation so its ResultCh is closed and no
 		// drain goroutine is needed. This also removes the map entry.
 		ci.runtimeAPI.CancelInvocation(reqID)
-		// Drain function output before writing END/REPORT and tearing down
-		// the container — otherwise any logs the function emitted before
-		// the timeout would be lost when logCtx is cancelled. Use a fresh
-		// context (the invocation ctx is already done).
-		if ci.logWriter != nil {
-			ci.waitForLogDrain(context.Background(), logDrainFirstReadGrace)
-		}
+		// Same as the crash path: wait for the init's stream to end rather
+		// than for its output to go quiet. A container that is merely being
+		// abandoned by its caller has an init that is still running, so this
+		// returns on its bound — which is why the bound is short.
+		ci.awaitContainerOutputEnd()
 		elapsed := ci.clk.Now().Sub(start)
 		// Only a deadline is a Lambda timeout. A plain cancellation means the
 		// caller went away — the console closing its progress stream, an SDK
@@ -1650,31 +1708,27 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	// it so the message can be correlated with the function's logs.
 	result.RequestID = reqID
 
-	// Wait for the scanner to catch up on handler stdout so the
-	// X-Amz-Log-Result tail snapshot includes the function's output. Only
-	// callers that asked for a tail pay this: every other path discards
-	// LogResult, and warm p50 is ~6 ms, so an unconditional wait here would
-	// dominate it. We do NOT wait for CloudWatch flushes — those happen
-	// asynchronously after Invoke returns, as on AWS, where a function's logs
-	// reach CloudWatch some time after its caller has its response.
+	// Wait for this invocation's output to have arrived, then close the
+	// invocation. resp.LogSeq is what the in-container init put on the response
+	// as it forwarded it: "every log frame at or below this was published on
+	// the log stream before this request". The init publishes to a connection
+	// that is already open, before it sends the response on another, so this is
+	// normally satisfied the moment it is entered — there is no round trip
+	// here, and no clock.
 	//
-	// LocalStack chose the opposite trade and is worth knowing about rather
-	// than copying: its in-container init POSTs the invocation's collected logs
-	// back to LocalStack and only then the result, so every invoke pays for log
-	// delivery, tail or no tail. That ordering is what lets it attribute a line
-	// to an invocation without waiting on a clock — it owns the runtime's
-	// stdout, so the buffer boundary is the invocation boundary. Reading logs
-	// back off the Docker daemon, as here, buys the looser coupling and pays
-	// for it in waitForScannerIdle.
+	// Every invoke pays it, not only tail-requesting ones, because it is what
+	// puts END and REPORT strictly after the request's last line in CloudWatch
+	// as well as in the tail. logSeqWaitMax bounds a channel that is broken,
+	// not a handler that is slow.
 	logWaitStart := ci.clk.Now()
-	if opts.LogTail && ci.logWriter != nil {
-		ci.waitForScannerIdle(logMark)
-	}
+	ci.awaitRequestLog(resp.LogSeq)
 	logWait := ci.clk.Now().Sub(logWaitStart)
 
 	// Emit the END + REPORT records that real Lambda writes after every
-	// invocation. These are enqueued onto the synth channel for async batching
-	// alongside handler output — Invoke does not wait for their CWL delivery.
+	// invocation. Writing them flushes whatever the ingest has batched for this
+	// request first, which is what puts them strictly after the request's last
+	// line in CloudWatch — the wait above having established that the last line
+	// is in hand.
 	memWaitStart := ci.clk.Now()
 	memMB := ci.reportMemoryMB(memSample)
 	memWait := ci.clk.Now().Sub(memWaitStart)
@@ -1695,20 +1749,91 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		zap.Duration("total", ci.clk.Now().Sub(start)),
 	)
 
-	// Snapshot the tail buffer for X-Amz-Log-Result.
-	if opts.LogTail && ci.logWriter != nil {
-		ci.tailMu.Lock()
-		if n := len(ci.tailBuf); n > 0 {
-			snap := ci.tailBuf
-			if n > 4096 {
-				snap = snap[n-4096:]
-			}
+	// Snapshot this request's log for X-Amz-Log-Result: START, its own lines in
+	// the order the init read them, END, REPORT — and nothing from any other
+	// invocation, because nothing else was ever put in this buffer.
+	if opts.LogTail && ci.logSink != nil {
+		if snap := ci.logSink.snapshot(reqID); len(snap) > 0 {
 			result.LogResult = base64.StdEncoding.EncodeToString(snap)
 		}
-		ci.tailMu.Unlock()
 	}
+	ci.releaseRequestLog(reqID)
 
 	return result, nil
+}
+
+// logSeqWaitMax bounds awaitRequestLog. It is a fact about a *broken* log
+// channel, not a guess about a slow one: the frames it waits for were written
+// to an already-open connection before the response that names them was sent,
+// so the ordinary case is satisfied without blocking at all. What is left for
+// this bound to catch is the channel being down — the init reconnecting, the
+// host's ingest handler gone — and in that case the tail is simply what
+// arrived, which is exactly what "the last 4 KB of the execution log" promises.
+const logSeqWaitMax = 100 * time.Millisecond
+
+// containerOutputEndMax bounds the wait for the init's log stream to close on
+// the crash and timeout paths. The init drains, flushes and closes on child
+// exit, so this is the time a dying container is allowed for that; a container
+// whose init is still running (an abandoned invoke) pays it in full, which is
+// why it is short.
+const containerOutputEndMax = 2 * time.Second
+
+// awaitRequestLog waits for the ingest to have seen every frame the init had
+// published when it forwarded the response.
+func (ci *containerInstance) awaitRequestLog(seq uint64) {
+	if ci.logSink == nil || seq == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), logSeqWaitMax)
+	defer cancel()
+	if !ci.logSink.awaitLogSeq(ctx, seq) {
+		// Nothing else to mark: the tail is what arrived, and the container is
+		// still perfectly able to serve the next invocation.
+		ci.logger.Debug("lambda container logs: the invocation's last frames had not arrived when it answered",
+			zap.String("container", shortContainerID(ci.id)),
+			zap.Uint64("awaited_seq", seq),
+			zap.Duration("waited", logSeqWaitMax),
+		)
+	}
+}
+
+// awaitIdleLog waits for everything the container printed before it asked for
+// work to have been ingested, so the START written next follows it.
+func (ci *containerInstance) awaitIdleLog() {
+	if ci.logSink == nil {
+		return
+	}
+	seq := ci.logSink.idleSequence()
+	if seq == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), logSeqWaitMax)
+	defer cancel()
+	if !ci.logSink.awaitLogSeq(ctx, seq) {
+		ci.logger.Debug("lambda container logs: the output preceding an invocation had not arrived when it started",
+			zap.String("container", shortContainerID(ci.id)),
+			zap.Uint64("awaited_seq", seq),
+			zap.Duration("waited", logSeqWaitMax),
+		)
+	}
+}
+
+// awaitContainerOutputEnd waits for the init's log stream to end, which is the
+// event that means the container has said everything it is ever going to.
+func (ci *containerInstance) awaitContainerOutputEnd() {
+	if ci.logSink == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), containerOutputEndMax)
+	defer cancel()
+	_ = ci.logSink.awaitStreamEnd(ctx)
+}
+
+// releaseRequestLog drops an invocation's tail buffer once it has answered.
+func (ci *containerInstance) releaseRequestLog(reqID string) {
+	if ci.logSink != nil {
+		ci.logSink.release(reqID)
+	}
 }
 
 func extensionInvokeError(reason string) *InvokeResult {
@@ -1813,496 +1938,13 @@ func durationMillis(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000.0
 }
 
-// waitForScannerIdle waits for *this* invocation's container output to reach
-// the rolling tail buffer, then for the Docker log reader to go quiet, so the
-// X-Amz-Log-Result snapshot taken immediately afterwards is complete. Unlike
-// waitForLogDrain it does NOT wait for CloudWatch writes to complete — those
-// are batched asynchronously by streamLogs and are not on the invoke critical
-// path.
-//
-// It runs on the invoke success path only when the caller asked for a tail
-// (InvokeOptions.LogTail); see the call site for why that gate matters.
-//
-// mark is where the container's two log watermarks stood when the invocation
-// started, and it is what makes the wait per-invocation. Both only ever move
-// forward across the container's whole life, so neither says on its own *whose*
-// output set it:
-//
-//   - Cold container: both are still 0 while the handler's stdout sits
-//     undelivered in Docker's pipe. Reading that as "the function emitted
-//     nothing" — which this function used to do — snapshots a tail holding only
-//     the START/END/REPORT lines writeLogLine puts there directly.
-//   - Warm container: both still hold the *previous* invocation's timestamps,
-//     already older than idleThreshold, so the idle test passed instantly and
-//     the wait was effectively a no-op.
-//
-// The two watermarks answer different questions, and asking logReadAt the other
-// one's question is the second defect this collapses:
-//
-//   - tailAppendAt moves when a container line is appended to tailBuf. That is
-//     the signal that means what the caller needs, because tailBuf is exactly
-//     what the snapshot reads.
-//   - logReadAt moves when Docker hands over bytes, several steps earlier. A
-//     Read seldom lands a whole line — the line reader keeps reading until it
-//     finds a newline, and logInFlight does not count the line until it has one
-//     — so the pipeline routinely sits in a state where logReadAt has moved and
-//     the tail is still empty. Treating that as arrived-and-quiet returned a
-//     tail without the handler's own line, which then landed in whichever
-//     invocation's buffer was current when it was finally parsed: the next one.
-//
-// logReadAt still earns its place, for the question it does answer — whether
-// this invocation produced *anything* — which is what separates the two ways of
-// having an empty tail. Six bounds shape the wait:
-//
-//   - firstReadMax caps how long we wait when not a byte has arrived and the
-//     reader has no live connection open to Docker at all — a reconnect
-//     backoff, or the backoff after a connect Docker refused (per
-//     dockerSilentSince; a first connect that is still *in flight* is neither,
-//     and is not timed by this at all). A handler that prints nothing is
-//     indistinguishable from one whose output has not left Docker's pipe, so
-//     silence costs this much — paid only by tail-requesting invokes. It is
-//     measured from the moment the reader is actually blocked in a Read
-//     (dockerSilentSince), never from a moment it was away from the stream: a
-//     reader that has asked Docker nothing cannot have been told the container
-//     had nothing to say, and timing its backlog as though it had is what left
-//     warm invocations with a tail holding only START / END / REPORT (#873).
-//   - parkedReadMax replaces firstReadMax when the reader IS blocked inside an
-//     already-open Read() call — the ordinary state a warm container spends
-//     its idle time in, since the reader re-enters Read() the instant it hands
-//     the previous line off. That Read() is a live round trip to a daemon that
-//     may simply be busy (issue #1325), not a connection backing off from
-//     anything, so it is not fair to bound it as tightly as a reconnect: doing
-//     so is what let a genuinely-arriving warm-invoke line lose the race
-//     against firstReadMax under CI contention, the same shape of bug #1166
-//     fixed for a stream that had never connected at all, one stage further
-//     down the pipeline. It is still bounded short of progressMax so a handler
-//     that really does print nothing is charged for its silence, not for a
-//     stalled pipeline.
-//   - Once bytes have arrived, output exists and is on its way, so there is
-//     nothing to guess at: the wait holds for the line itself, bounded only by
-//     progressMax from the last byte and by deadlineMax overall. A handler
-//     that writes without a trailing newline pays those bounds, because the
-//     line reader has nothing to hand over until a newline turns up and the
-//     tail could not have shown the write either way.
-//   - idleThreshold is how long the appends must stop after one lands before
-//     the output is treated as complete; a handler's lines can span reads.
-//   - progressMax is how long the wait holds on while the pipeline shows no
-//     sign of moving at all — no connect answered, no park, no byte, no line,
-//     no in-flight count changing. It is measured from the last such event the
-//     wait observed, never from the moment the wait began: a bound that starts
-//     at wait start is a guess about how long Overcast's own pipeline takes to
-//     get going on a loaded machine, and that guess has been wrong on CI three
-//     times over (#873, #1160, #1325, each one stage further down the
-//     pipeline), whereas "nothing has happened for 100 ms" is a fact about the
-//     pipeline wherever in it the stall is. It is also what lets parkedReadMax
-//     mean what it says: a reader that parks late in the wait gets its full
-//     80 ms from the park, instead of whatever an absolute deadline had left.
-//     It does not run while Docker has yet to answer the container's first
-//     connect (dockerSilentSince's asked=false, logStreamEverAnswered false):
-//     that connect is Overcast's own daemon round trip, issued before the
-//     handler ran and racing container start, and its completion is an
-//     observable event — so until it lands there is nothing to measure
-//     progress against, and the one bound on it is deadlineMax.
-//   - deadlineMax bounds the whole thing, so a wedged log pipeline can never
-//     hold up the invoke response: a first connect the daemon never answers, a
-//     handler that writes without a newline forever, a stream that flaps.
-//     It is an order of magnitude over progressMax because it is a last
-//     resort, not a budget — the cases it catches are broken, not slow — and
-//     the only ordinary path that runs into it is a cold start whose daemon is
-//     too busy to answer a log-stream request within a second.
-func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
-	const (
-		idleThreshold = 5 * time.Millisecond
-		progressMax   = 100 * time.Millisecond
-		deadlineMax   = 1 * time.Second
-		firstReadMax  = 25 * time.Millisecond
-		// parkedReadMax is deliberately expressed relative to progressMax
-		// rather than as its own free-floating constant (issue #1325): it is
-		// the silence bound that must fire first for a parked reader that is
-		// told nothing, so that progressMax stays the backstop for a pipeline
-		// that has stalled rather than the price of a handler that printed
-		// nothing. The 20 ms between them is headroom for idleThreshold and
-		// one more tick's worth of processing once a line does land.
-		parkedReadMax = progressMax - 20*time.Millisecond // 80ms
-		tickInterval  = 1 * time.Millisecond
-	)
-	start := ci.clk.Now()
-	deadline := ci.clk.Timer(deadlineMax)
-	defer deadline.Stop()
-	tick := ci.clk.Ticker(tickInterval)
-	defer tick.Stop()
-	// However this wait ends, if it ends without this invocation's own output
-	// then that output is still coming and is still this invocation's. Leave
-	// the boundary behind so the next tail can drop it rather than open with a
-	// line it never wrote — see discardUnclaimedOutput.
-	defer func() {
-		if ci.tailAppendAt.Load() > mark.appended {
-			return
-		}
-		ci.tailMu.Lock()
-		ci.tailUnclaimed, ci.tailUnclaimedMark = true, mark
-		ci.tailMu.Unlock()
-	}()
-	// Where the pipeline stood when the wait began, and when it last moved.
-	// A reader already parked before the wait is not progress — it is the
-	// state the wait found — so nothing is owed to it beyond what
-	// dockerSilentSince measures from waitStart.
-	seen := ci.logPipelineState()
-	progressAt := start
-	for {
-		select {
-		case <-deadline.C:
-			return
-		case <-tick.C:
-			now := ci.clk.Now()
-			if state := ci.logPipelineState(); state != seen {
-				seen, progressAt = state, now
-			}
-			// Nothing has moved for progressMax. This is checked before the
-			// in-flight test below on purpose: lines parsed but stuck behind a
-			// slow CloudWatch flush are in flight too, and that stall must be
-			// bounded by this and not by the deadline.
-			if seen.answered && now.Sub(progressAt) >= progressMax {
-				return
-			}
-			// Lines parsed but not yet flushed mean output exists and is still
-			// moving, whatever the watermarks currently say.
-			if seen.inFlight > 0 {
-				continue
-			}
-			if last := seen.appended; last > mark.appended {
-				// This invocation's output has reached the buffer. One append
-				// is not the end of it, so wait out a quiet spell before
-				// calling the tail complete.
-				if now.Sub(time.Unix(0, last)) >= idleThreshold {
-					return
-				}
-				continue
-			}
-			if seen.read > mark.read {
-				// Docker has handed over bytes for this invocation but no
-				// complete line has come of them yet. Output exists; wait for
-				// it rather than for the clock.
-				continue
-			}
-			// Nothing has been read at all since this invocation started. That
-			// is evidence about the function only once the reader has actually
-			// put the question to Docker; until then it is evidence about
-			// Overcast's own scheduling. Grant the grace period from whichever
-			// came later — the start of the wait, or the reader's return to the
-			// stream — and hold on entirely while it is still away from it.
-			silentSince, asked, liveParked := ci.dockerSilentSince(start)
-			if !asked {
-				continue
-			}
-			// A reader blocked inside an already-open Read() (liveParked) is
-			// waiting on a live daemon round trip, not backed off from
-			// anything, so it earns the wider parkedReadMax bound rather than
-			// firstReadMax — see the docstring above and issue #1325.
-			bound := firstReadMax
-			if liveParked {
-				bound = parkedReadMax
-			}
-			if now.Sub(silentSince) >= bound {
-				return
-			}
-		}
-	}
-}
-
-// logPipelineState is everything waitForScannerIdle can observe about where
-// the container's log pipeline stands, read in one go per tick. Two of them
-// differing means the pipeline moved in between — the connect was answered,
-// the reader parked or came back, Docker handed over bytes, a line reached the
-// tail, a line was parsed or flushed — and that, not the wall clock, is what
-// the wait's progress bound is measured from.
-type logPipelineState struct {
-	answered bool
-	parked   int64
-	read     int64
-	appended int64
-	inFlight int64
-}
-
-func (ci *containerInstance) logPipelineState() logPipelineState {
-	return logPipelineState{
-		answered: ci.logStreamEverAnswered.Load(),
-		parked:   ci.logParkedAt.Load(),
-		read:     ci.logReadAt.Load(),
-		appended: ci.tailAppendAt.Load(),
-		inFlight: ci.logInFlight.Load(),
-	}
-}
-
-// dockerSilentSince answers the question the read-side bounds are really
-// asking — waitForScannerIdle's firstReadMax/parkedReadMax and
-// waitForLogDrain's firstReadGrace: since when has Docker had an unanswered
-// question from us and given us nothing back? It reports asked=false while
-// there is no such question outstanding, which is not the same as a negative
-// answer and must not be timed as one.
-//
-// The three states of logParkedAt map onto it directly, except that "not
-// reading" splits in two depending on logStreamEverAnswered (issue #1160), and
-// "parked in a Read" carries a liveParked flag callers may use to bound it
-// more generously than a reader with no live connection at all (issue #1325):
-//
-//   - Parked in a Read. That Read covers everything Docker held from the moment
-//     it began, so silence counts from then — or from the start of the wait if
-//     the reader was already parked before it, since output from earlier
-//     invocations is not this one's to wait for. Either way liveParked is
-//     true: this is a live round trip on a connection that is already open,
-//     not a reader backed off from one, and waitForScannerIdle uses that to
-//     pick parkedReadMax over firstReadMax. waitForLogDrain does not: a dying
-//     container's drain keeps the single firstReadGrace its caller chose,
-//     liveParked or not, so callers that do not need the distinction are free
-//     to ignore it.
-//   - Between Reads. The reader is somewhere in the loop that takes it back to
-//     the stream and cannot be told anything until it arrives; there is no
-//     question outstanding and no silence to measure.
-//   - Not reading, and Docker has never answered a connect. The very first
-//     ContainerLogsStream call for this container is still outstanding — a
-//     Docker daemon round trip that races container start rather than
-//     following it, and can lose that race under daemon contention. No
-//     question has reached Docker yet, so there is nothing to time against
-//     the wait's own clock: report false, the same as "between Reads", and
-//     let the wait's own deadline (1 s on the tail path, 2 s on the drain
-//     path) be the only bound. Before this distinction existed, this state was
-//     folded into the one below, and a slow first connect was timed as "asked
-//     and told nothing" from the wait's first tick — which is what let a
-//     genuinely-arriving cold-start line lose the race against a 25 ms bound
-//     sized for an already-open reader (#1160). After it, the state was still
-//     under the tail wait's then-absolute 100 ms deadline, which a connect
-//     answered late enough ran straight through; the tail wait's deadline now
-//     runs from the last observed progress, and this state is the one place
-//     it does not run at all — see waitForScannerIdle.
-//   - Not reading, but Docker has answered before. Either the stream opened
-//     and broke — an ordinary reconnect backoff, which opens again in 50 ms,
-//     or a stream that is never coming back at all — or Docker refused the
-//     connect outright, in which case the retry 50 ms away will most likely
-//     meet the same answer. Either way a reader with no live connection and
-//     nothing in flight is not worth extending a bound for: holding on could
-//     not usefully outlast the backoff, and Docker has already said its piece,
-//     so there is no reason left to assume it just hasn't had the chance yet.
-//     Time it from the start of the wait, exactly as before this distinction
-//     existed. liveParked is false here — there is no live connection at all
-//     right now, which is exactly what tells this state apart from the one
-//     above.
-func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (since time.Time, asked bool, liveParked bool) {
-	switch parked := ci.logParkedAt.Load(); {
-	case parked == logReaderBetweenReads:
-		return time.Time{}, false, false
-	case parked == logReaderNotReading && !ci.logStreamEverAnswered.Load():
-		return time.Time{}, false, false
-	case parked > waitStart.UnixNano():
-		return time.Unix(0, parked), true, true
-	default:
-		// parked is either logReaderNotReading (a reconnect backoff that has
-		// connected before — no live connection right now, liveParked stays
-		// false) or a real timestamp at or before waitStart (a Read that was
-		// already in flight when this invocation's wait began — liveParked is
-		// true, same as the fresh-park case above, just anchored at waitStart
-		// rather than the read's own, earlier start).
-		return waitStart, true, parked != logReaderNotReading
-	}
-}
-
-// tailMark is one invocation's boundary in the container's log history: both
-// watermarks as they stood when its tail buffer was reset.
-type tailMark struct {
-	read     int64 // ci.logReadAt — Docker handed over bytes
-	appended int64 // ci.tailAppendAt — a line reached ci.tailBuf
-}
-
-// beginTail starts a fresh tail for an invocation and returns its boundary. The
-// buffer is emptied so the invocation's output starts clean (which matters on
-// warm-container reuse), and the watermarks are read in the same critical
-// section: they are container-lifetime values, so what they hold at the reset
-// is precisely what "before this invocation" means to waitForScannerIdle.
-// Reading them outside the lock would let a line land in between and belong to
-// neither side of the boundary.
-func (ci *containerInstance) beginTail() tailMark {
-	ci.tailMu.Lock()
-	defer ci.tailMu.Unlock()
-	ci.tailBuf = ci.tailBuf[:0]
-	return tailMark{read: ci.logReadAt.Load(), appended: ci.tailAppendAt.Load()}
-}
-
-// discardUnclaimedOutput settles the previous invocation's account before a new
-// tail opens: if its wait expired before its output arrived, that output is
-// still on its way, and the invocation it belongs to has already answered. Run
-// immediately before beginTail, whose reset is what actually drops it.
-//
-// The wait it runs is the same bounded one the invocation itself ran, against
-// the same boundary — long enough for Docker to hand over what it was holding,
-// and no longer. Two things follow, both deliberate:
-//
-//   - The cost lands on the next tail-requesting invoke, and only after a
-//     give-up. Non-tail invokes never call this, for the same reason they never
-//     wait: they discard LogResult, and warm p50 is ~6 ms.
-//   - Straggler output is dropped from the *tail* only. It still reaches
-//     CloudWatch Logs by the streaming path, which never consults any of this,
-//     so nothing is lost — it is read one call further out.
-//
-// This narrows the window rather than closing it: output that stays in Docker's
-// pipe through both waits is still unattributable, and still lands in the next
-// tail. Closing it outright needs the line tagged at the point it is written,
-// which needs Overcast to own the runtime's stdout inside the container the way
-// AWS's RIE and LocalStack's init do. What this buys is that a single stall now
-// costs a truncated tail — which is what LogResult promises, "the last 4 KB of
-// the execution log" — instead of one carrying another request's line, which
-// LogResult can never mean.
-func (ci *containerInstance) discardUnclaimedOutput() {
-	ci.tailMu.Lock()
-	unclaimed, mark := ci.tailUnclaimed, ci.tailUnclaimedMark
-	ci.tailUnclaimed = false
-	ci.tailMu.Unlock()
-	if unclaimed {
-		ci.waitForScannerIdle(mark)
-	}
-}
-
-// logDrainFirstReadGrace is how long a teardown that follows a failed
-// invocation waits for a log stream that has produced nothing yet, before
-// accepting that the container really did print nothing. Bounded small: it is
-// only ever paid once per dying container, and only when there is no output at
-// all to go on.
-const logDrainFirstReadGrace = 25 * time.Millisecond
-
-// waitForLogDrain blocks until the streamLogs pipeline is fully quiescent —
-// i.e. every byte Docker has so far delivered has been parsed into a line AND
-// every parsed line has been written to CloudWatch Logs. This is essential
-// before tearing down the container (the streaming HTTP connection is closed
-// when logCtx is cancelled, so anything still buffered in the kernel/Docker
-// pipe is lost) and before writing END/REPORT lines so that ordering matches
-// AWS.
-//
-// Three signals are combined:
-//   - logReadAt: timestamp of the last successful Read from the Docker log
-//     stream. "Idle" = no new bytes for ≥10 ms. This catches the case where
-//     Docker is still flushing pipe data after the function returned.
-//   - logInFlight: counter of lines parsed by the scanner but not yet flushed
-//     to CWL. Must be 0 before drain returns, regardless of reader state.
-//   - logParkedAt, read through dockerSilentSince: whether the reader has a
-//     question outstanding with Docker at all, which is what decides whether
-//     "Docker has handed over nothing" means anything. See firstReadGrace.
-//
-// The 2 s safety-net only matters when something is genuinely stuck (slow
-// CWL writer, stalled Docker connection); the common case completes in
-// 10–15 ms.
-//
-// firstReadGrace says how long to keep waiting when the stream has never
-// produced anything at all (logReadAt == 0 AND inFlight == 0). Docker having
-// handed nothing over is the only evidence there is that the container printed
-// nothing, and — exactly as on the tail path — it is worth nothing at all while
-// the reader has asked Docker no question to be silent about. So the grace is
-// timed from dockerSilentSince rather than from the start of the wait, and
-// while the reader is between Reads it is not timed down at all. A container
-// that dies early is where that matters most: opening the log stream is a
-// Docker round trip racing container start, so the reader is likelier than
-// usual to be short of its first Read, and the output at stake is the stack
-// trace that says why it died. #873 was this same misreading on the tail path,
-// where it cost a truncated tail; here it costs the output outright.
-//
-// A reader with no stream open at all (logReaderNotReading) splits in two
-// (issue #1160). If the stream has connected before, dockerSilentSince still
-// times it from the start of the wait: nothing arrives over a connection that
-// does not exist, a reconnect backoff opens at 50 ms — twice the grace, so
-// holding on could not outlast one anyway — and a stream that can never be
-// opened again would otherwise park every teardown on the 2 s deadline. But if
-// the stream has never once connected, opening it is a Docker round trip that
-// races container start — exactly the case the previous paragraph calls out as
-// where a dying-early container is likeliest to be short of its first Read —
-// and timing that race against the 25 ms grace read a connect that was merely
-// slow as a container that had nothing to say. dockerSilentSince reports no
-// question outstanding for that case instead, same as between Reads, which
-// leaves the 2 s deadline as the only bound: long enough for a contended
-// daemon's first connect to clear, short enough that a stream which truly never
-// opens still lets teardown proceed.
-//
-// What none of this can resolve is a container that really did print nothing,
-// which looks the same from outside however long we wait. The size of the grace
-// is the answer to that, and the stakes and costs differ by caller, so the
-// choice is theirs:
-//
-//   - A container that died mid-invocation, or an invocation that timed out,
-//     passes logDrainFirstReadGrace. Whatever it printed on the way out is the
-//     output most worth keeping and the likeliest to be in flight, and logCtx
-//     is cancelled moments later, which loses it from CloudWatch for good.
-//   - Close passes 0, which is a caller declining the question rather than
-//     answering it: the branch returns at once without consulting the reader.
-//     Pool eviction closes stale instances on the acquire path
-//     (InstancePool.takeWarm), so a grace there is charged to the next cold
-//     start; and a container that produced no reads across its whole lifetime,
-//     having already drained through one of the paths above on any failed
-//     invocation, has nothing left to wait for.
-func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace time.Duration) {
-	const (
-		idleThreshold = 10 * time.Millisecond
-		deadlineMax   = 2 * time.Second
-		tickInterval  = 2 * time.Millisecond
-	)
-	start := ci.clk.Now()
-	deadline := ci.clk.Timer(deadlineMax)
-	defer deadline.Stop()
-	tick := ci.clk.Ticker(tickInterval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-deadline.C:
-			return
-		case <-tick.C:
-			// Phase A: parsed-but-unflushed work outstanding — keep waiting.
-			if ci.logInFlight.Load() > 0 {
-				continue
-			}
-			last := ci.logReadAt.Load()
-			// Reader has never produced anything — see firstReadGrace above.
-			if last == 0 {
-				if firstReadGrace == 0 {
-					return
-				}
-				// The drain does not distinguish a live-parked Read from a
-				// reconnect backoff the way waitForScannerIdle does (issue
-				// #1325) — the caller already chose firstReadGrace for this
-				// specific teardown, so the third return value is unused here.
-				silentSince, asked, _ := ci.dockerSilentSince(start)
-				if !asked {
-					continue
-				}
-				if ci.clk.Since(silentSince) >= firstReadGrace {
-					return
-				}
-				continue
-			}
-			// Reader has been idle long enough that no further bytes are
-			// expected from Docker, AND inFlight is 0 — fully drained.
-			if ci.clk.Since(time.Unix(0, last)) >= idleThreshold {
-				return
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// writeLogLine emits a single synthesised log line (START / END / REPORT)
-// directly to CloudWatch Logs and updates the rolling tail buffer.
-//
-// We deliberately bypass the log follower for these lines: they are produced by
-// the execution environment, not by the container, so they never arrive on the
-// Docker log stream at all. Routing them through the follower's batch would
-// also tie their delivery to a connection that may not exist — a follower
-// waiting out a reconnect backoff after a transient daemon error is not writing
-// anything — and END and REPORT are the two lines an invocation most needs on
-// the record. Writing directly guarantees delivery.
-//
-// Performance note: the CWL store now serves writes from an in-memory cache
-// and debounces persistence, so this synchronous path costs O(microseconds)
-// per call (cache lock + slice append + per-stream metadata update). Three
-// calls per invocation (START, END, REPORT) is negligible.
+// writeLogLine emits one synthesised log line that belongs to no invocation —
+// an Overcast warning about the environment itself, such as a layer that could
+// not be loaded. It lands in the INIT-phase buffer, which is where the
+// container's own pre-invocation output is.
 func (ci *containerInstance) writeLogLine(_ context.Context, line string) {
 	ci.publishRuntimeLog("platform", line)
-	ci.deliverSynthLine(line)
+	ci.deliverSynthLine("", line)
 }
 
 // publishRuntimeLog hands a record to Telemetry/Logs API subscribers. It is
@@ -2314,34 +1956,19 @@ func (ci *containerInstance) publishRuntimeLog(logType, line string) {
 	}
 }
 
-// deliverSynthLine writes a synthesised line to the rolling tail buffer and to
-// CloudWatch Logs.
-func (ci *containerInstance) deliverSynthLine(line string) {
-	// Append to the rolling tail buffer so these lines appear in the
-	// X-Amz-Log-Result (test tab) alongside the function's own stdout.
-	lineBytes := append([]byte(line), '\n')
-	ci.tailMu.Lock()
-	ci.tailBuf = append(ci.tailBuf, lineBytes...)
-	const maxTail = 4096
-	if n := len(ci.tailBuf); n > maxTail {
-		copy(ci.tailBuf, ci.tailBuf[n-maxTail:])
-		ci.tailBuf = ci.tailBuf[:maxTail]
-	}
-	ci.tailMu.Unlock()
-
-	if ci.logWriter == nil {
+// deliverSynthLine writes a line the execution environment produced — START,
+// END, REPORT — into requestID's tail buffer and to CloudWatch Logs.
+//
+// These lines never come off the container at all, so they are written rather
+// than batched: END and REPORT are the two lines an invocation most needs on
+// the record, and the invoke path has already established that everything
+// before them has arrived. The sink flushes whatever the ingest has batched
+// first, which is what makes the CloudWatch order exact.
+func (ci *containerInstance) deliverSynthLine(requestID, line string) {
+	if ci.logSink == nil {
 		return
 	}
-	// Use the container's logCtx which carries the function-ARN-derived region.
-	// This ensures START/END/REPORT lines land in the same regional log stream
-	// as the function's own stdout/stderr, even when invoked cross-region.
-	writeCtx := ci.logCtx
-	if writeCtx.Err() != nil {
-		writeCtx = middleware.ContextWithRegion(context.Background(), regionFromFunctionARN(ci.functionARN))
-	}
-	ci.writeEventsWithRetry(writeCtx, []events.LogEntry{
-		{Timestamp: ci.clk.Now().UnixMilli(), Message: line},
-	})
+	ci.logSink.synth(requestID, line)
 }
 
 // billedDuration rounds elapsed time up to the nearest millisecond, matching
@@ -2365,9 +1992,6 @@ func (ci *containerInstance) Close() error {
 	if ci.forgetInitBurst != nil {
 		ci.forgetInitBurst()
 	}
-	if ci.logWriter != nil {
-		ci.waitForLogDrain(context.Background(), 0)
-	}
 	if ci.containerIP != "" {
 		if queued := ci.runtimeAPI.EnqueueExtensionShutdown(ci.containerIP, "SPINDOWN", ci.clk.Now().Add(2*time.Second)); queued > 0 {
 			select {
@@ -2376,8 +2000,13 @@ func (ci *containerInstance) Close() error {
 			}
 		}
 	}
-	ci.logCancel()
-	<-ci.logDone
+	// Flush whatever the ingest has batched and end the sink's context. The
+	// init's own connection ends when the container does; nothing here has to
+	// wait for it, because a line that arrives afterwards is still written on a
+	// fresh region-carrying context by the batcher.
+	if ci.logSink != nil {
+		ci.logSink.close()
+	}
 	if ci.containerIP != "" {
 		ci.runtimeAPI.UnregisterContainer(ci.containerIP)
 	}
@@ -2385,15 +2014,6 @@ func (ci *containerInstance) Close() error {
 	// port is per-execution-environment, and leaving it bound would accumulate
 	// one dead listener per container the pool retires.
 	_ = ci.rapiListener.Close()
-	if ci.logFollower != nil {
-		// The container is stopping, so the daemon's persisted log file is
-		// about to be complete. One non-streaming pass over it backfills
-		// anything the follow never got — the last chance, since the container
-		// is removed moments later.
-		reconcileCtx, cancel := context.WithTimeout(context.Background(), logReconcileTimeout)
-		ci.logFollower.Reconcile(reconcileCtx)
-		cancel()
-	}
 	// Stop immediately + queue deferred removal via GC.
 	if ci.gc != nil && !ci.keepContainers {
 		ci.gc.StopAndScheduleRemove(ci.id)
@@ -2637,35 +2257,128 @@ func discoverExternalExtensions(zipData []byte) []string {
 	return extensions
 }
 
-// lambdaBootstrapTar is the static bootstrap archive, built once — its
-// content never varies between cold starts.
-var lambdaBootstrapTar = sync.OnceValues(buildLambdaBootstrapTar)
+// lambdaEntrypointPath is the entrypoint every AWS Lambda base image ships:
+// the shell shim that execs the runtime interface client with the handler as
+// its argument. It is what a zip function's container ran before the init
+// existed, and therefore what the init runs as its child.
+const lambdaEntrypointPath = "/lambda-entrypoint.sh"
 
-func buildLambdaBootstrapTar() ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	script := lambdaBootstrapScript()
+// initBinaryResult caches one architecture's init bytes. embed.FS.ReadFile
+// copies, and the artefact is ~6.5 MB, so without this every cold start would
+// allocate one.
+type initBinaryResult struct {
+	data []byte
+	err  error
+}
+
+var initBinaries sync.Map // Architectures value → initBinaryResult
+
+// lambdaInitBinary returns the in-container init built for a function's
+// architecture. The error is initbin's, which names the missing artefact and
+// the command that produces it.
+func lambdaInitBinary(arch string) ([]byte, error) {
+	if cached, ok := initBinaries.Load(arch); ok {
+		res := cached.(initBinaryResult)
+		return res.data, res.err
+	}
+	data, err := initbin.For(arch)
+	initBinaries.Store(arch, initBinaryResult{data: data, err: err})
+	return data, err
+}
+
+// appendLambdaInit writes the init into the provisioning archive at
+// initproto.InitPath, which is where the container's entrypoint points.
+//
+// The directory header is emitted because /var/overcast is Overcast's own and
+// exists in no base image — unlike /var, /var/task and /opt, whose headers are
+// deliberately omitted so extraction cannot reset the modes the image set.
+func appendLambdaInit(tw *tar.Writer, architectures []string) error {
+	arch := ""
+	if len(architectures) > 0 {
+		arch = architectures[0]
+	}
+	binary, err := lambdaInitBinary(arch)
+	if err != nil {
+		return err
+	}
+	dir, name, ok := strings.Cut(strings.TrimPrefix(initproto.InitPath, "/"), "/")
+	if !ok {
+		return fmt.Errorf("lambda init path %q must name a file under a directory", initproto.InitPath)
+	}
 	if err := tw.WriteHeader(&tar.Header{
-		Name:     "var/overcast/",
+		Name:     dir + "/",
 		Mode:     0o755,
 		Typeflag: tar.TypeDir,
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := tw.WriteHeader(&tar.Header{
-		Name: "var/overcast/bootstrap",
-		Size: int64(len(script)),
+		Name: dir + "/" + name,
+		Size: int64(len(binary)),
 		Mode: 0o755,
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	if _, err := tw.Write(script); err != nil {
-		return nil, err
+	_, err = tw.Write(binary)
+	return err
+}
+
+// childCommand is the command the container would have run if the init were not
+// there — the argument list the init execs as its child, exactly as RAPID
+// launches ENTRYPOINT+CMD on AWS.
+//
+// Zip functions are simple: the base image's shim with the handler after it.
+// Image functions are where the daemon used to do the work, merging the image's
+// own ENTRYPOINT and CMD into a create request that left them empty. The create
+// request now carries the init instead, so that merge happens here, and it
+// follows Docker's own rule so an image function runs exactly the process it
+// ran before: an ImageConfig entrypoint replaces the image's and drops the
+// image's CMD with it, while an ImageConfig command on its own replaces only
+// the CMD.
+func (cr *ContainerRuntime) childCommand(ctx context.Context, fn *Function, isImage bool, resolvedRef, platform string) ([]string, error) {
+	if !isImage {
+		child := []string{lambdaEntrypointPath}
+		if fn.Handler != "" {
+			child = append(child, fn.Handler)
+		}
+		return child, nil
 	}
-	if err := tw.Close(); err != nil {
-		return nil, err
+
+	var entrypoint, command []string
+	if ic := fn.ImageConfig; ic != nil && len(ic.EntryPoint) > 0 {
+		entrypoint, command = ic.EntryPoint, ic.Command
+	} else {
+		imageCfg, err := cr.imageConfig(ctx, resolvedRef, platform)
+		if err != nil {
+			return nil, fmt.Errorf("read the entrypoint of image %s: %w", fn.ImageUri, err)
+		}
+		entrypoint, command = imageCfg.Entrypoint, imageCfg.Cmd
+		if ic != nil && len(ic.Command) > 0 {
+			command = ic.Command
+		}
 	}
-	return buf.Bytes(), nil
+
+	child := append(append([]string{}, entrypoint...), command...)
+	if len(child) == 0 {
+		return nil, fmt.Errorf("image %s declares neither ENTRYPOINT nor CMD and the function's ImageConfig sets neither, so there is nothing for the execution environment to run", fn.ImageUri)
+	}
+	return child, nil
+}
+
+// imageConfig reads an image's baked-in run configuration, cached for the life
+// of the process beside the verification that put the image there: one daemon
+// round trip per image and platform, not one per cold start.
+func (cr *ContainerRuntime) imageConfig(ctx context.Context, resolvedRef, platform string) (docker.ImageConfig, error) {
+	key := imagePullKey(resolvedRef, platform)
+	if cached, ok := cr.imageConfigs.Load(key); ok {
+		return cached.(docker.ImageConfig), nil
+	}
+	inspect, err := cr.docker.InspectImage(ctx, resolvedRef)
+	if err != nil {
+		return docker.ImageConfig{}, err
+	}
+	cr.imageConfigs.Store(key, inspect.Config)
+	return inspect.Config, nil
 }
 
 // appendTarEntries re-writes every entry of a component tar into tw, so
@@ -2688,40 +2401,6 @@ func appendTarEntries(tw *tar.Writer, component []byte) error {
 			return err
 		}
 	}
-}
-
-func lambdaBootstrapScript() []byte {
-	return []byte(`#!/bin/sh
-set -eu
-
-if [ -d /opt/extensions ]; then
-  for ext in /opt/extensions/*; do
-    if [ -f "$ext" ] && [ -x "$ext" ]; then
-      name="$(basename "$ext")"
-      ("$ext" 2>&1 | while IFS= read -r line; do printf '[overcast-extension:%s] %s\n' "$name" "$line"; done) &
-    fi
-  done
-fi
-
-exec /lambda-entrypoint.sh "$@"
-`)
-}
-
-func classifyRuntimeLogLine(line string) (string, string) {
-	const prefix = "[overcast-extension:"
-	if !strings.HasPrefix(line, prefix) {
-		return "function", line
-	}
-	end := strings.Index(line, "] ")
-	if end < len(prefix) {
-		return "function", line
-	}
-	name := line[len(prefix):end]
-	record := strings.TrimPrefix(line[end+2:], " ")
-	if name == "" || record == "" {
-		return "function", line
-	}
-	return "extension", record
 }
 
 // zipToTar converts a zip archive (raw bytes) into a tar archive suitable for

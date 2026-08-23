@@ -62,13 +62,18 @@ func newAbandoningDaemon(t *testing.T) *abandoningDaemon {
 			}
 			w.WriteHeader(http.StatusNoContent)
 
-		// The image is present and matches the platform, so the acquire goes
+		// The image is present, matches the platform and declares an
+		// entrypoint the way every Lambda base image does, so the acquire goes
 		// straight to the create this test is about. Pulling first would be a
 		// second round trip that can fail for its own reasons on a loaded
 		// machine, and it is not what is under test.
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/images/"):
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"Os": "linux", "Architecture": "amd64"})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"Os":           "linux",
+				"Architecture": "amd64",
+				"Config":       map[string]any{"Entrypoint": []string{"/lambda-entrypoint.sh"}, "Cmd": []string{"index.handler"}},
+			})
 
 		default:
 			w.WriteHeader(http.StatusOK)

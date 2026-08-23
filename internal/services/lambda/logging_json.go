@@ -233,7 +233,7 @@ func renderPlatformEvent(now time.Time, rec platformRecord) string {
 //
 // SystemLogLevel filters the CloudWatch and tail copies only; subscribers see
 // every record either way.
-func (ci *containerInstance) emitPlatformRecord(textLine string, rec platformRecord) {
+func (ci *containerInstance) emitPlatformRecord(requestID, textLine string, rec platformRecord) {
 	line, deliver := textLine, true
 	if ci.logFormat == logFormatJSON {
 		line = renderPlatformEvent(ci.clk.Now(), rec)
@@ -244,13 +244,18 @@ func (ci *containerInstance) emitPlatformRecord(textLine string, rec platformRec
 	}
 	ci.publishRuntimeLog("platform", line)
 	if deliver {
-		ci.deliverSynthLine(line)
+		// Into the invocation's own buffer: the tail for a request is START,
+		// its lines, END, REPORT, and nothing else — which is only true because
+		// the request ID travels with the record rather than being inferred
+		// from what happens to be current.
+		ci.deliverSynthLine(requestID, line)
 	}
 }
 
 // emitInvocationStart writes the record that opens an invocation.
 func (ci *containerInstance) emitInvocationStart(requestID string) {
 	ci.emitPlatformRecord(
+		requestID,
 		"START RequestId: "+requestID+" Version: "+functionVersionLatest,
 		platformStartRecord{RequestID: requestID, Version: functionVersionLatest},
 	)
@@ -287,6 +292,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 	}
 
 	ci.emitPlatformRecord(
+		requestID,
 		"END RequestId: "+requestID,
 		platformRuntimeDoneRecord{
 			RequestID: requestID,
@@ -298,6 +304,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		},
 	)
 	ci.emitPlatformRecord(
+		requestID,
 		fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s%s",
 			requestID, durationMillis(elapsed), billedDuration(elapsed), ci.memorySize, maxMemoryMB, initField, outcome.textStatus),
 		platformReportRecord{
@@ -312,39 +319,6 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 			},
 		},
 	)
-}
-
-// ingestContainerLine handles one line of container output: it hands the line
-// to Telemetry/Logs API subscribers and, unless ApplicationLogLevel filters it
-// out, appends it to the rolling tail buffer. It reports whether the line
-// should also go to CloudWatch Logs.
-//
-// Filtering happens after the subscriber publish, never before: subscribers
-// receive the complete stream regardless of the CloudWatch log level.
-func (ci *containerInstance) ingestContainerLine(line string) bool {
-	logType, logRecord := classifyRuntimeLogLine(line)
-	ci.publishRuntimeLog(logType, logRecord)
-
-	// Log-level filtering requires the JSON log format; in Text mode AWS sends
-	// every application record through untouched.
-	if ci.logFormat == logFormatJSON && applicationLogLevel(logRecord) < ci.appLogLevel {
-		return false
-	}
-
-	// Append to rolling tail buffer (capped at 4096 bytes). The watermark goes
-	// up here rather than at the read, because this is the point at which the
-	// line is something a tail snapshot can see; waitForScannerIdle is waiting
-	// on exactly this.
-	const maxTail = 4096
-	ci.tailMu.Lock()
-	ci.tailBuf = append(append(ci.tailBuf, line...), '\n')
-	if n := len(ci.tailBuf); n > maxTail {
-		copy(ci.tailBuf, ci.tailBuf[n-maxTail:])
-		ci.tailBuf = ci.tailBuf[:maxTail]
-	}
-	ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
-	ci.tailMu.Unlock()
-	return true
 }
 
 // applicationLogLevel returns the level Lambda assigns to one line of function

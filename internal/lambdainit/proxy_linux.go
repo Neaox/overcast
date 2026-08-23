@@ -198,8 +198,28 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			p.diag.printf("request %s end (drained %d lines, through seq %d)", id, lines, seq)
 		}
-	case observeNext, observeNone:
-		// Nothing to do before forwarding; /next is observed on the way back.
+	case observeNext:
+		// Drain, then forward — the same guarantee as a response, at the other
+		// end of the invocation. The runtime is asking for work, so it has
+		// finished writing whatever it was going to write before this point:
+		// the INIT phase on the first /next, and anything printed after the
+		// previous invocation answered on later ones. Stamping that seq lets
+		// the host hold the next START until those lines have landed, which is
+		// what keeps INIT output in front of the first START in CloudWatch.
+		//
+		// The drain costs one poll cycle on a pipe that is almost always
+		// already empty here; the request that follows it is a long poll.
+		ctx, cancel := context.WithTimeout(r.Context(), drainMax)
+		seq := p.drain(ctx)
+		timedOut := ctx.Err() != nil
+		cancel()
+
+		r.Header.Set(initproto.HeaderLogSeq, strconv.FormatUint(seq, 10))
+		if timedOut {
+			p.diag.printf("idle drain timed out after %s at seq %d", drainMax, seq)
+		}
+	case observeNone:
+		// Nothing to observe; forward it untouched.
 	}
 	p.rp.ServeHTTP(w, r)
 }
