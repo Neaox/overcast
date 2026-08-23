@@ -39,8 +39,29 @@ tasks:
 
   # ---- Build ----------------------------------------------------------------
 
+  lambda-init:
+    desc: Build the in-container Lambda init for both Linux architectures
+    # Embedded into the overcast binary by internal/services/lambda/initbin. Both
+    # architectures always: a function's Architectures picks the one copied into
+    # its container, and an arm64 function runs under emulation on an amd64 host.
+    cmds:
+      - task: lambda-init-arch
+        vars: { GOARCH: amd64 }
+      - task: lambda-init-arch
+        vars: { GOARCH: arm64 }
+
+  lambda-init-arch:
+    internal: true
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: "{{.GOARCH}}"
+    cmds:
+      - go build -trimpath -ldflags="-s -w" -o internal/services/lambda/initbin/dist/lambda-init-linux-{{.GOARCH}} ./cmd/lambda-init
+
   build:
     desc: Compile the binary for the current platform (includes embedded web UI)
+    deps: [lambda-init]
     cmds:
       - cmd: mkdir -p {{.BUILD_DIR}}
         platforms: [darwin, linux]
@@ -64,6 +85,8 @@ tasks:
 
   build-slim:
     desc: Compile the slim binary (no web UI) for the current platform
+    # -tags slim does not drop the Lambda init: slim images run Lambda.
+    deps: [lambda-init]
     cmds:
       - cmd: mkdir -p {{.BUILD_DIR}}
         platforms: [darwin, linux]

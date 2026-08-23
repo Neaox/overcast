@@ -290,6 +290,7 @@ All three tools produce identical results:
 | Target         | make                    | task                    | go run (zero-install)                                    |
 | -------------- | ----------------------- | ----------------------- | -------------------------------------------------------- |
 | Build          | `make build`            | `task build`            | `go build ./cmd/overcast`                               |
+| Lambda init    | `make lambda-init`      | `task lambda-init`      | two cross-builds — read the `lambda-init` target          |
 | Run            | `make run`              | `task run`              | `go run ./scripts/run.go`                                |
 | Test           | `make test`             | `task test`             | `go test -race ./...`                                    |
 | Unit test      | `make test-unit`        | `task test-unit`        | `go test -race ./internal/...`                           |
@@ -300,6 +301,12 @@ All three tools produce identical results:
 | Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` (uncapped — prefer the targets) |
 | Docker image   | `make docker-console`   | `task docker-console`   | `docker build -t "overcast:$(sh scripts/image-tag.sh)" .`  |
 | Drop the image | `make docker-clean`     | `task docker-clean`     | `docker image rm "overcast:$(sh scripts/image-tag.sh)"`     |
+
+`make build` and `make build-slim` depend on `lambda-init`, so you only run it
+directly after a bare `go build`. It cross-compiles the in-container Lambda init
+for both Linux architectures into `internal/services/lambda/initbin/dist/`,
+where the binary embeds it from; the artefacts are gitignored build output and a
+checkout without them still builds, vets and tests.
 
 The image is tagged after the current branch rather than a fixed `overcast:dev`,
 so two checkouts cannot build into one name and silently run each other's code.

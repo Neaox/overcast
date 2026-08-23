@@ -266,7 +266,8 @@ Exits non-zero if any backend's p50 wall time exceeds `-threshold`
 
 **Manual (for ad-hoc investigation):**
 
-1. Build: `make build` (or `go build ./...`).
+1. Build: `make build` (or `go build ./...`; only `make build` also runs
+   `make lambda-init`, which the binary needs to invoke Lambda functions).
 2. Run with a clean data dir and an empty config:
    `rm -rf /tmp/overcast && ./bin/overcast serve` (or `make run`).
 3. Measure 10 cold starts and record p50/max:

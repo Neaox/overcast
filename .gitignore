@@ -14,6 +14,11 @@ bin/
 # any stray root-level .exe (ad-hoc Windows cross-compile tests, etc.) — this
 # also covers the .exe forms of the binaries listed above.
 /*.exe
+# The in-container Lambda init (`make lambda-init` / `task lambda-init`), which
+# internal/services/lambda/initbin embeds. Build output, exactly like web/dist,
+# so it is not committed — the committed dist/.gitkeep beside it is what keeps
+# `//go:embed all:dist` resolving in a bare checkout. See AGENTS.md.
+internal/services/lambda/initbin/dist/lambda-init-linux-*
 
 # go test binaries (from `go test -c`) and profiler outputs
 *.test

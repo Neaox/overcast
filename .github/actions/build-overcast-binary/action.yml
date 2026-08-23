@@ -26,6 +26,15 @@ inputs:
 runs:
   using: composite
   steps:
+    # Every overcast binary embeds the in-container Lambda init for both Linux
+    # architectures. It is build output rather than a committed file, and
+    # //go:embed reads the tree at compile time — so without this step the asset
+    # ships with nothing but the placeholder and fails at the first Lambda
+    # invoke that needs it. Before the build, always.
+    - name: Build the Lambda init
+      shell: bash
+      run: make lambda-init
+
     - name: Build binary
       shell: bash
       env:
