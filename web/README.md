@@ -42,21 +42,19 @@ The UI is served at `http://localhost:5173`. Its dev server proxies `/api/*` to 
 | ----------------------- | ------------------------------------ |
 | `pnpm run dev`          | Start Vite dev server with HMR       |
 | `pnpm run build`        | Type-check and build for production  |
-| `pnpm run lint`         | Run oxlint, then ESLint              |
-| `pnpm run lint:oxlint`  | oxlint only (the primary linter)     |
-| `pnpm run lint:eslint`  | ESLint only (the remainder)          |
+| `pnpm run lint`         | Lint with oxlint                     |
+| `pnpm run lint:fix`     | Lint and apply oxlint's autofixes    |
 | `pnpm run format`       | Format all files with Prettier       |
 | `pnpm run format:check` | Check formatting without writing     |
 | `pnpm run preview`      | Preview the production build locally |
 
 ## Linting
 
-[oxlint](https://oxc.rs) is the primary linter. **[`.oxlintrc.json`](./.oxlintrc.json) owns
-the rule set** — add new rules there, not to `eslint.config.js`. ESLint runs second and only
-covers what oxlint has no equivalent for (chiefly `react-hooks/component-hook-factories`);
-[`eslint.config.js`](./eslint.config.js) reads `.oxlintrc.json` and switches off every rule
-oxlint owns, so the two cannot drift. See
-[CONTRIBUTING.md](../CONTRIBUTING.md#linting--oxlint-first-eslint-for-the-remainder).
+[oxlint](https://oxc.rs) is the only linter — there is no ESLint here.
+**[`.oxlintrc.json`](./.oxlintrc.json) owns the rule set**, including the two JS plugins
+(`eslint-plugin-classnames`, `@tanstack/eslint-plugin-query`) and the type-aware rules;
+add new rules there. Its header explains why ESLint could be retired with nothing lost.
+See [CONTRIBUTING.md](../CONTRIBUTING.md#linting--oxlint).
 
 ## Directory layout
 

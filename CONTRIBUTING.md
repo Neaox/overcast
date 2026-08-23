@@ -52,7 +52,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [How to add a service](#how-to-add-a-service)
   - [Service package structure](#service-package-structure)
   - [Web UI standards](#web-ui-standards)
-    - [Linting — oxlint first, ESLint for the remainder](#linting--oxlint-first-eslint-for-the-remainder)
+    - [Linting — oxlint](#linting--oxlint)
     - [API access policy (SDK-first)](#api-access-policy-sdk-first)
     - [Frontend — Tailwind CSS v4](#frontend--tailwind-css-v4)
     - [Topology map methodology](#topology-map-methodology)
@@ -334,7 +334,7 @@ make test-integration  # full integration suite
 make test-coverage     # HTML coverage report → coverage.html
 make lint              # all linters: Go/emulation, web UI, GitHub Actions
 make lint-go           # Go/emulation lint (golangci-lint)
-make lint-web          # web UI lint (oxlint, then ESLint)
+make lint-web          # web UI lint (oxlint)
 make lint-actions      # GitHub Actions workflow lint (pinned actionlint)
 make fmt               # gofmt all files
 make vet               # go vet
@@ -1516,11 +1516,11 @@ Never split `handler_stubs.go` — one stub file per service is always sufficien
 
 ## Web UI standards
 
-### Linting — oxlint first, ESLint for the remainder
+### Linting — oxlint
 
-`pnpm run lint` in `web/` runs **oxlint** and then **ESLint**, in that order
+`pnpm run lint` in `web/` is **`oxlint .`**, and that is the whole gate
 (`make lint-web` and `scripts/verify-changed.sh` both call it, so there is one
-entry point).
+entry point). **There is no ESLint in this repository.**
 
 - **[`web/.oxlintrc.json`](./web/.oxlintrc.json) owns the rule set** — every rule,
   its severity, and the reasoning. It also loads
@@ -1528,15 +1528,16 @@ entry point).
   plugins, aliased so rule names stay `classnames/…` and `@tanstack/query/…`.
   Type-aware rules run through `oxlint-tsgolint`, which embeds its own
   typescript-go, so they do not depend on the `typescript` devDependency.
-- **[`web/eslint.config.js`](./web/eslint.config.js) is the remainder**: the four
-  rules oxlint has no equivalent for, chiefly
-  `react-hooks/component-hook-factories`. It reads `.oxlintrc.json` through
-  `eslint-plugin-oxlint` and switches off everything oxlint owns, so the two
-  cannot drift and nothing is reported twice.
+- **New rules go in `.oxlintrc.json`.** There is nowhere else to put one.
 
-**Add a rule to `.oxlintrc.json`, not to `eslint.config.js`.** ESLint's side is
-derived; a rule added there that oxlint also has will simply be double-reported.
-The only reason to touch `eslint.config.js` is a rule oxlint genuinely lacks.
+ESLint was retired in [#1330](https://github.com/Neaox/overcast/issues/1330)
+step 3. The four rules it was still running turned out to enforce nothing: three
+are inert by construction, and `react-hooks/component-hook-factories` is
+unreachable in `eslint-plugin-react-hooks` 7.0.1 (the React Compiler pass behind
+it is gated off, and forcing it on makes the plugin swallow every diagnostic for
+the file). `.oxlintrc.json`'s header has the full derivation. Removing ESLint is
+also what unblocked TypeScript 7 — `@typescript-eslint/typescript-estree` crashed
+at module load under it, whatever rules were enabled.
 
 Suppression comments keep the `// eslint-disable-next-line <rule>` form — oxlint
 honours them, and the rule names are unchanged. One caveat worth knowing: for the

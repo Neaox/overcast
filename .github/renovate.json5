@@ -38,6 +38,13 @@
 // pins (`pinDigests` is deliberately not enabled: the pins exist, and nothing
 // unpinned should gain a pin as a side effect).
 //
+// One package rule has already come and gone: a `typescript` hold at `<7`,
+// because @typescript-eslint/typescript-estree crashed at module load under the
+// native compiler and took `pnpm run lint` with it. #1330 step 3 removed ESLint
+// from web/ altogether, so nothing in the repo loads typescript-estree any more
+// and TypeScript 7 went in unheld. If a package rule here ever exists to work
+// around one tool, delete it when that tool goes — not later.
+//
 // The compat suites are excluded deliberately, as they were under Dependabot.
 // They are test harnesses: their Dockerfiles, go.mod files and package.json
 // files exist to observe the emulator with particular SDK versions, and
@@ -254,42 +261,15 @@
       groupName: 'web dependencies (non-major)',
     },
     {
-      // TypeScript 7 is the native compiler rewrite, and typescript-eslint
-      // cannot run under it: TS 7's package entry point exports only
-      // `version`/`versionMajorMinor` (the legacy compiler API moved behind
-      // `typescript/unstable/*`), so @typescript-eslint/typescript-estree
-      // throws `Cannot read properties of undefined (reading 'Cjs')` on
-      // `ts.Extension.Cjs` at module load and `pnpm run lint` dies before it
-      // lints a file. Upstream closed typescript-eslint#12518 as not planned —
-      // there is no TS 7 API to build against yet — and tracks the work in
-      // typescript-eslint#10940, targeted at TypeScript 7.1.
-      //
-      // This is a one-package hold, not a verdict on TS 7: on the #1259 branch
-      // with typescript 7.0.2 installed, `typecheck`, the 1,395-test vitest
-      // suite and the production vite build all passed. Only the linter fell
-      // over. The alternative — a second aliased TypeScript just for tsc —
-      // would put two compilers in the lockfile and have the linter type-check
-      // against a different compiler than the build, which is worse than
-      // waiting.
-      //
-      // Lift this the moment typescript-eslint publishes a release whose
-      // `typescript` peer range admits 7.x.
-      matchManagers: ['npm'],
-      matchPackageNames: ['typescript'],
-      allowedVersions: '<7',
-      description: 'Hold TypeScript below 7 until typescript-eslint supports it (#1259)',
-    },
-    {
-      // The three oxlint packages are peer-locked to each other:
-      // eslint-plugin-oxlint pins `oxlint: ~1.79.0` and oxlint pins
-      // `oxlint-tsgolint: >=…`. They are also exact-pinned in web/package.json
+      // The two oxlint packages are peer-locked to each other: oxlint pins
+      // `oxlint-tsgolint: >=…`, and both are exact-pinned in web/package.json
       // for the same reason. Splitting a bump across PRs would land a broken
       // peer set, so group them across every update type — majors included,
       // which the 'web dependencies (non-major)' group above does not cover.
       // Reviewed, not automerged: an oxlint bump is a lint-rule bump, and
-      // web/.oxlintrc.json is the whole gate now (#1330).
+      // web/.oxlintrc.json is the entire lint gate now (#1330).
       matchManagers: ['npm'],
-      matchPackageNames: ['oxlint', 'oxlint-tsgolint', 'eslint-plugin-oxlint'],
+      matchPackageNames: ['oxlint', 'oxlint-tsgolint'],
       groupName: 'oxlint',
     },
     {

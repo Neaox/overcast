@@ -81,8 +81,8 @@
   },
 
   // ---- Linting (web/) -----------------------------------------------------
-  // oxlint is the primary linter for web/ (#1330); ESLint keeps only the rules
-  // oxlint has no equivalent for. `oxc.configPath` is required, not optional:
+  // oxlint is the only linter for web/ (#1330) — there is no ESLint in the repo.
+  // `oxc.configPath` is required, not optional:
   // the language server treats web/.oxlintrc.json as a *nested* config when the
   // workspace is opened at the repo root, and then ignores its `options` block —
   // including `typeAware` (https://github.com/oxc-project/oxc/issues/19937).
@@ -141,7 +141,7 @@
   "chat.tools.terminal.autoApprove": {
     "go": true,
     "pnpm exec tsc": true,
-    "pnpm exec eslint": true,
+    "pnpm exec oxlint": true,
     "strings": true
   }
 }

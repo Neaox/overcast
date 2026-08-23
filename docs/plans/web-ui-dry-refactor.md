@@ -832,6 +832,8 @@ extraction without enforcement decays within a release.
 
 Twelve rules now, all `warn`, all about hygiene the new scaffolds should own. It is an ESLint
 flat-config plugin with a `rules/` directory — adding rules is a file plus one line in `index.js`.
+(It keeps that shape, but nothing runs it under ESLint any more: oxlint's JS-plugin host loads it
+since #1368, and #1330 step 3 removed ESLint from the repo entirely.)
 All six proposed additions landed, each proven against the real tree (`pnpm lint`, 2026-08-23) rather
 than a synthetic fixture — none of the six has a dedicated `RuleTester` unit test, matching the
 original six, which don't have one either:
@@ -854,7 +856,7 @@ original six, which don't have one either:
   config surface needed, since a disable comment already requires and preserves a reason.
 - **`no-duplicate-class-cluster`** — cross-file by nature (a single file's AST can't answer "is this
   common"), so it reads the whole `src/` tree itself with `node:fs` on first use and caches the
-  result for the rest of the `eslint` process, rather than relying on ESLint's own per-file,
+  result for the rest of the lint process, rather than relying on the linter's own per-file,
   order-dependent traversal. Default thresholds (4-token sliding window, present in >15 files) were
   tuned against the current distribution — lower thresholds surfaced thousands of hits on generic
   3-token combinations like `flex items-center gap-2`. **155 real hits**, topped by
