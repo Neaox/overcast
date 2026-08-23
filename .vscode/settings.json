@@ -59,11 +59,17 @@
   // ---- TypeScript / React (web/) -----------------------------------------
   "[typescript]": {
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.oxc": "always"
+    }
   },
   "[typescriptreact]": {
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.oxc": "always"
+    }
   },
   "[json]": {
     "editor.formatOnSave": true,
@@ -73,6 +79,16 @@
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+
+  // ---- Linting (web/) -----------------------------------------------------
+  // oxlint is the primary linter for web/ (#1330); ESLint keeps only the rules
+  // oxlint has no equivalent for. `oxc.configPath` is required, not optional:
+  // the language server treats web/.oxlintrc.json as a *nested* config when the
+  // workspace is opened at the repo root, and then ignores its `options` block —
+  // including `typeAware` (https://github.com/oxc-project/oxc/issues/19937).
+  // Naming it here makes it the root config, so the editor sees the same rules
+  // and the same type-aware setting the CLI does.
+  "oxc.configPath": "web/.oxlintrc.json",
 
   // ---- File associations --------------------------------------------------
   "files.associations": {

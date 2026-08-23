@@ -9,6 +9,7 @@
     "yzhang.markdown-all-in-one",
     "eamodio.gitlens",
     "esbenp.prettier-vscode",
-    "bradlc.vscode-tailwindcss"
+    "bradlc.vscode-tailwindcss",
+    "oxc.oxc-vscode"
   ]
 }

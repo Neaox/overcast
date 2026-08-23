@@ -52,6 +52,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [How to add a service](#how-to-add-a-service)
   - [Service package structure](#service-package-structure)
   - [Web UI standards](#web-ui-standards)
+    - [Linting — oxlint first, ESLint for the remainder](#linting--oxlint-first-eslint-for-the-remainder)
     - [API access policy (SDK-first)](#api-access-policy-sdk-first)
     - [Frontend — Tailwind CSS v4](#frontend--tailwind-css-v4)
     - [Topology map methodology](#topology-map-methodology)
@@ -328,7 +329,7 @@ make test-integration  # full integration suite
 make test-coverage     # HTML coverage report → coverage.html
 make lint              # all linters: Go/emulation, web UI, GitHub Actions
 make lint-go           # Go/emulation lint (golangci-lint)
-make lint-web          # web UI lint (ESLint)
+make lint-web          # web UI lint (oxlint, then ESLint)
 make lint-actions      # GitHub Actions workflow lint (pinned actionlint)
 make fmt               # gofmt all files
 make vet               # go vet
@@ -1509,6 +1510,40 @@ Never split `handler_stubs.go` — one stub file per service is always sufficien
 ---
 
 ## Web UI standards
+
+### Linting — oxlint first, ESLint for the remainder
+
+`pnpm run lint` in `web/` runs **oxlint** and then **ESLint**, in that order
+(`make lint-web` and `scripts/verify-changed.sh` both call it, so there is one
+entry point).
+
+- **[`web/.oxlintrc.json`](./web/.oxlintrc.json) owns the rule set** — every rule,
+  its severity, and the reasoning. It also loads
+  `web/eslint-plugin-classnames` and `@tanstack/eslint-plugin-query` as oxlint JS
+  plugins, aliased so rule names stay `classnames/…` and `@tanstack/query/…`.
+  Type-aware rules run through `oxlint-tsgolint`, which embeds its own
+  typescript-go, so they do not depend on the `typescript` devDependency.
+- **[`web/eslint.config.js`](./web/eslint.config.js) is the remainder**: the four
+  rules oxlint has no equivalent for, chiefly
+  `react-hooks/component-hook-factories`. It reads `.oxlintrc.json` through
+  `eslint-plugin-oxlint` and switches off everything oxlint owns, so the two
+  cannot drift and nothing is reported twice.
+
+**Add a rule to `.oxlintrc.json`, not to `eslint.config.js`.** ESLint's side is
+derived; a rule added there that oxlint also has will simply be double-reported.
+The only reason to touch `eslint.config.js` is a rule oxlint genuinely lacks.
+
+Suppression comments keep the `// eslint-disable-next-line <rule>` form — oxlint
+honours them, and the rule names are unchanged. One caveat worth knowing: for the
+React Compiler rules oxlint treats a suppression comment as an opt-out for the
+whole enclosing function, where ESLint scopes it to the named rule on the named
+line. Keep suppressions on the reported line, and do not assume a
+`react-hooks/exhaustive-deps` disable is silencing only `exhaustive-deps`.
+
+Editor: install `oxc.oxc-vscode` (in the workspace recommendations).
+`.vscode/settings.json` pins `oxc.configPath` to `web/.oxlintrc.json` — required,
+because the language server otherwise treats it as a nested config and ignores
+its `options` block ([oxc#19937](https://github.com/oxc-project/oxc/issues/19937)).
 
 ### API access policy (SDK-first)
 
