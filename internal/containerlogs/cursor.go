@@ -25,13 +25,31 @@ type cursor struct {
 }
 
 // cursorAdmission decides, for one connection, which of its lines are new.
-// A connection opened with a `since` is a replay: its first lines at the high
-// watermark are ones already delivered. A connection opened from the start of
-// the container is not, and admits everything it is offered.
+//
+// A connection opened with a `since` is a replay: the daemon sends back every
+// line from that timestamp on, so its first lines — the ones at or before the
+// watermark as it stood when the connection opened — are ones already
+// delivered. Once a line past that watermark has arrived the replay is over and
+// the connection is live. A connection opened from the start of the container
+// is live from its first line.
+//
+// A live connection never repeats a line, so nothing on it is dropped — not
+// even a line stamped earlier than the one before it. That ordering is real:
+// a container's stdout and stderr are separate pipes copied by separate daemon
+// goroutines, and the log file's order is the order they won the race, not the
+// order of their timestamps. A Python handler printing to both shows the
+// stderr line first in `docker logs`. Treating "older than the watermark" as
+// "already seen" on a live connection dropped that stdout line from CloudWatch
+// and the tail.
 type cursorAdmission struct {
-	cursor    *cursor
-	replay    bool
-	equalSeen int
+	cursor *cursor
+	// replaying is true while this connection may still be re-sending lines
+	// the follower delivered before it opened: at most those at or before
+	// resumeNanos, of which resumeCount at exactly that timestamp were seen.
+	replaying   bool
+	resumeNanos int64
+	resumeCount int
+	equalSeen   int
 }
 
 // Since is where to resume a follow: one nanosecond before the newest line
@@ -50,7 +68,14 @@ func (c *cursor) Since() time.Time {
 // newAdmission starts admitting lines from one connection. Pass replay=true
 // when the connection was opened with a `since`.
 func (c *cursor) newAdmission(replay bool) *cursorAdmission {
-	return &cursorAdmission{cursor: c, replay: replay}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return &cursorAdmission{
+		cursor:      c,
+		replaying:   replay && c.hwNanos != 0,
+		resumeNanos: c.hwNanos,
+		resumeCount: c.hwCount,
+	}
 }
 
 // Admit reports whether a line with this timestamp has yet to be delivered, and
@@ -64,22 +89,37 @@ func (a *cursorAdmission) Admit(ts time.Time) bool {
 	nanos := ts.UnixNano()
 	a.cursor.mu.Lock()
 	defer a.cursor.mu.Unlock()
+	if a.replaying {
+		switch {
+		case nanos < a.resumeNanos:
+			// Delivered before the break; the daemon replays it because its
+			// `since` is inclusive and by timestamp.
+			return false
+		case nanos == a.resumeNanos:
+			// The lines sharing the resume nanosecond: the first resumeCount
+			// of them were delivered, the rest are new.
+			a.equalSeen++
+			if a.equalSeen <= a.resumeCount {
+				return false
+			}
+			a.cursor.hwCount++
+			return true
+		default:
+			// Past the resume watermark: the replay is over and from here on
+			// the connection is live.
+			a.replaying = false
+		}
+	}
 	switch {
-	case nanos < a.cursor.hwNanos:
-		return false
 	case nanos > a.cursor.hwNanos:
 		a.cursor.hwNanos = nanos
 		a.cursor.hwCount = 1
-		a.equalSeen = 0
-		return true
-	default:
-		if a.replay {
-			a.equalSeen++
-			if a.equalSeen <= a.cursor.hwCount {
-				return false
-			}
-		}
+	case nanos == a.cursor.hwNanos:
 		a.cursor.hwCount++
-		return true
+	default:
+		// Older than the newest line delivered, on a live connection: the
+		// daemon wrote it out of timestamp order. Deliver it; the watermark
+		// stays where it is.
 	}
+	return true
 }
