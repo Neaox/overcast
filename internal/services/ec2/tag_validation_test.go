@@ -156,6 +156,16 @@ func tagSpecParams(resourceType, key, value string) url.Values {
 // carried at create must be stored immediately, and an invalid tag must
 // refuse the whole call rather than leave the resource behind (or, for
 // CreateVpcPeeringConnection, leave a second VPC pair created too).
+//
+// It invokes each *legacy handler function* directly, which is what it was
+// written to check and is also its blind spot: these operations are answered
+// by the typed registry now, not by the function this table calls, and it
+// stayed green through a cycle in which six of them dropped create-time tags
+// on the wire. Keep it — the legacy bodies are still reachable and still the
+// parity reference — but the gate that fails when *dispatch* loses the tags
+// is elsewhere: typed_tagspecifications_test.go (static),
+// typed_parity_mutations_dev_test.go (differential) and
+// tests/integration/ec2/ec2_tagspecification_test.go (through the router).
 func TestCreate_tagsAppliedAtCreate(t *testing.T) {
 	cases := []struct {
 		name         string

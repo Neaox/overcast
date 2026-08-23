@@ -414,6 +414,15 @@ func mutationCases() map[string][]mutationCase {
 				},
 			},
 			{name: "missing-cidr", params: url.Values{}},
+			{
+				name:   "with-tags",
+				params: withTagSpec(url.Values{"CidrBlock": {"10.9.0.0/16"}}, "vpc", "Name", "mut"),
+				after:  tagsAfter("vpcId"),
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				params: withTagSpec(url.Values{"CidrBlock": {"10.9.0.0/16"}}, "vpc", "aws:reserved", "x"),
+			},
 		},
 		"DeleteVpc": {
 			{
@@ -440,6 +449,17 @@ func mutationCases() map[string][]mutationCase {
 				params: url.Values{"VpcId": {"vpc-mut-a"}, "CidrBlock": {"10.0.2.0/24"}},
 			},
 			{name: "unknown-vpc", params: url.Values{"VpcId": {"vpc-mut-nope"}, "CidrBlock": {"10.0.2.0/24"}}},
+			{
+				name:   "with-tags",
+				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(url.Values{"VpcId": {"vpc-mut-a"}, "CidrBlock": {"10.0.2.0/24"}}, "subnet", "Name", "mut"),
+				after:  tagsAfter("subnetId"),
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(url.Values{"VpcId": {"vpc-mut-a"}, "CidrBlock": {"10.0.2.0/24"}}, "subnet", "aws:reserved", "x"),
+			},
 		},
 		"DeleteSubnet": {
 			{
@@ -468,6 +488,21 @@ func mutationCases() map[string][]mutationCase {
 				name:   "success",
 				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
 				params: url.Values{"GroupName": {"mutation-web"}, "GroupDescription": {"parity"}, "VpcId": {"vpc-mut-a"}},
+			},
+			{
+				name: "with-tags",
+				seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"GroupName": {"mutation-web"}, "GroupDescription": {"parity"}, "VpcId": {"vpc-mut-a"}},
+					"security-group", "Name", "mut"),
+				after: tagsAfter("groupId"),
+			},
+			{
+				name: "reserved-tag-key-refuses-the-create",
+				seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"GroupName": {"mutation-web"}, "GroupDescription": {"parity"}, "VpcId": {"vpc-mut-a"}},
+					"security-group", "aws:reserved", "x"),
 			},
 		},
 		"DeleteSecurityGroup": {
@@ -569,6 +604,7 @@ func mutationCases() map[string][]mutationCase {
 					indexed("SecurityGroupId", "sg-mut-run"),
 					url.Values{"TagSpecification.1.ResourceType": {"instance"}, "TagSpecification.1.Tag.1.Key": {"Name"}, "TagSpecification.1.Tag.1.Value": {"mut"}},
 				),
+				after: tagsAfter("instanceId"),
 			},
 			{
 				name:   "bad-tag-rejected",
@@ -669,6 +705,19 @@ func mutationCases() map[string][]mutationCase {
 				seed:   func(t *testing.T, h *Handler) { seedKeyPair(t, h, "mutation-dup") },
 				params: url.Values{"KeyName": {"mutation-dup"}},
 			},
+			{
+				name:   "with-tags",
+				params: withTagSpec(url.Values{"KeyName": {"mutation-key"}}, "key-pair", "Name", "mut"),
+				// A key pair's tags are stored against its name, matching
+				// DeleteKeyPair's tag cleanup — not against the minted keyPairId.
+				after: func(t *testing.T, h *Handler, _ string) string {
+					return dispatchLegacy(t, h, "DescribeTags", filterParams("resource-id", "mutation-key"))
+				},
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				params: withTagSpec(url.Values{"KeyName": {"mutation-key"}}, "key-pair", "aws:reserved", "x"),
+			},
 		},
 		"DeleteKeyPair": {
 			{
@@ -684,6 +733,17 @@ func mutationCases() map[string][]mutationCase {
 		"CreateRouteTable": {
 			{name: "success", seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") }, params: url.Values{"VpcId": {"vpc-mut-a"}}},
 			{name: "unknown-vpc", params: url.Values{"VpcId": {"vpc-mut-nope"}}},
+			{
+				name:   "with-tags",
+				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(url.Values{"VpcId": {"vpc-mut-a"}}, "route-table", "Name", "mut"),
+				after:  tagsAfter("routeTableId"),
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(url.Values{"VpcId": {"vpc-mut-a"}}, "route-table", "aws:reserved", "x"),
+			},
 		},
 		"DeleteRouteTable": {
 			{
@@ -769,6 +829,15 @@ func mutationCases() map[string][]mutationCase {
 		},
 		"CreateInternetGateway": {
 			{name: "success"},
+			{
+				name:   "with-tags",
+				params: withTagSpec(url.Values{}, "internet-gateway", "Name", "mut"),
+				after:  tagsAfter("internetGatewayId"),
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				params: withTagSpec(url.Values{}, "internet-gateway", "aws:reserved", "x"),
+			},
 		},
 		"DeleteInternetGateway": {
 			{
@@ -828,6 +897,27 @@ func mutationCases() map[string][]mutationCase {
 				params: url.Values{"VpcId": {"vpc-mut-a"}, "PeerVpcId": {"vpc-mut-b"}},
 			},
 			{name: "unknown-peer", seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") }, params: url.Values{"VpcId": {"vpc-mut-a"}, "PeerVpcId": {"vpc-mut-nope"}}},
+			{
+				name: "with-tags",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-a")
+					seedVPC(t, h, "vpc-mut-b")
+				},
+				params: withTagSpec(
+					url.Values{"VpcId": {"vpc-mut-a"}, "PeerVpcId": {"vpc-mut-b"}},
+					"vpc-peering-connection", "Name", "mut"),
+				after: tagsAfter("vpcPeeringConnectionId"),
+			},
+			{
+				name: "reserved-tag-key-refuses-the-create",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-a")
+					seedVPC(t, h, "vpc-mut-b")
+				},
+				params: withTagSpec(
+					url.Values{"VpcId": {"vpc-mut-a"}, "PeerVpcId": {"vpc-mut-b"}},
+					"vpc-peering-connection", "aws:reserved", "x"),
+			},
 		},
 		"AcceptVpcPeeringConnection": {
 			{
@@ -906,8 +996,17 @@ func mutationCases() map[string][]mutationCase {
 					"SubnetId":                        {"subnet-mut-a"},
 					"TagSpecification.1.ResourceType": {"natgateway"}, "TagSpecification.1.Tag.1.Key": {"Name"}, "TagSpecification.1.Tag.1.Value": {"mut"},
 				},
+				after: tagsAfter("natGatewayId"),
 			},
 			{name: "unknown-subnet", params: url.Values{"SubnetId": {"subnet-mut-nope"}}},
+			{
+				name: "reserved-tag-key-refuses-the-create",
+				seed: func(t *testing.T, h *Handler) {
+					seedVPC(t, h, "vpc-mut-a")
+					seedSubnet(t, h, "subnet-mut-a", "vpc-mut-a")
+				},
+				params: withTagSpec(url.Values{"SubnetId": {"subnet-mut-a"}}, "natgateway", "aws:reserved", "x"),
+			},
 		},
 		"DeleteNatGateway": {
 			{
@@ -930,8 +1029,13 @@ func mutationCases() map[string][]mutationCase {
 					"Type":                            {"ipsec.1"},
 					"TagSpecification.1.ResourceType": {"vpn-gateway"}, "TagSpecification.1.Tag.1.Key": {"Name"}, "TagSpecification.1.Tag.1.Value": {"mut"},
 				},
+				after: tagsAfter("vpnGatewayId"),
 			},
 			{name: "wrong-type", params: url.Values{"Type": {"ipsec.2"}}},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				params: withTagSpec(url.Values{"Type": {"ipsec.1"}}, "vpn-gateway", "aws:reserved", "x"),
+			},
 		},
 		"AttachVpnGateway": {
 			{
@@ -979,6 +1083,21 @@ func mutationCases() map[string][]mutationCase {
 				seed:   func(t *testing.T, h *Handler) { seedSubnet(t, h, "subnet-mut-a", "vpc-mut-a") },
 				params: url.Values{"SubnetId": {"subnet-mut-a"}, "Description": {"mutation parity"}},
 			},
+			{
+				name: "with-tags",
+				seed: func(t *testing.T, h *Handler) { seedSubnet(t, h, "subnet-mut-a", "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"SubnetId": {"subnet-mut-a"}, "Description": {"mutation parity"}},
+					"network-interface", "Name", "mut"),
+				after: tagsAfter("networkInterfaceId"),
+			},
+			{
+				name: "reserved-tag-key-refuses-the-create",
+				seed: func(t *testing.T, h *Handler) { seedSubnet(t, h, "subnet-mut-a", "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"SubnetId": {"subnet-mut-a"}, "Description": {"mutation parity"}},
+					"network-interface", "aws:reserved", "x"),
+			},
 		},
 		"DeleteNetworkInterface": {
 			{
@@ -1001,6 +1120,21 @@ func mutationCases() map[string][]mutationCase {
 				seed:   func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
 				params: url.Values{"VpcId": {"vpc-mut-a"}, "ServiceName": {"com.amazonaws.us-east-1.ec2"}, "VpcEndpointType": {"Interface"}},
 			},
+			{
+				name: "with-tags",
+				seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"VpcId": {"vpc-mut-a"}, "ServiceName": {"com.amazonaws.us-east-1.s3"}},
+					"vpc-endpoint", "Name", "mut"),
+				after: tagsAfter("vpcEndpointId"),
+			},
+			{
+				name: "reserved-tag-key-refuses-the-create",
+				seed: func(t *testing.T, h *Handler) { seedVPC(t, h, "vpc-mut-a") },
+				params: withTagSpec(
+					url.Values{"VpcId": {"vpc-mut-a"}, "ServiceName": {"com.amazonaws.us-east-1.s3"}},
+					"vpc-endpoint", "aws:reserved", "x"),
+			},
 		},
 		"DeleteVpcEndpoints": {
 			{
@@ -1013,6 +1147,37 @@ func mutationCases() map[string][]mutationCase {
 			},
 			{name: "unknown-id-silently-skipped", params: indexed("VpcEndpointId", "vpce-mut-nope")},
 		},
+	}
+}
+
+// withTagSpec returns params plus one TagSpecification.N entry, so a create
+// case can be checked with tag input without restating the whole request.
+//
+// Every create AWS models with a TagSpecifications member gets two of these:
+// one carrying a tag that must survive to the response's tagSet and the tag
+// store, and one carrying the reserved aws: prefix that must refuse the call
+// before the resource is made. Neither existed for six of these operations,
+// which is how the typed twins came to drop create-time tags on the floor
+// with the differential table still green.
+func withTagSpec(params url.Values, resourceType, key, value string) url.Values {
+	out := url.Values{}
+	for k, vs := range params {
+		out[k] = append([]string(nil), vs...)
+	}
+	out.Set("TagSpecification.1.ResourceType", resourceType)
+	out.Set("TagSpecification.1.Tag.1.Key", key)
+	out.Set("TagSpecification.1.Tag.1.Value", value)
+	return out
+}
+
+// tagsAfter drives a legacy DescribeTags for the resource a create minted, so
+// a case's compared string carries what the mutation *stored* and not only
+// what it echoed. CreateKeyPair is the reason both halves are checked: it
+// echoed a tagSet it had not written.
+func tagsAfter(idField string) func(t *testing.T, h *Handler, raw string) string {
+	return func(t *testing.T, h *Handler, raw string) string {
+		t.Helper()
+		return dispatchLegacy(t, h, "DescribeTags", filterParams("resource-id", xmlField(raw, idField)))
 	}
 }
 
@@ -1049,6 +1214,55 @@ func TestTypedParityMutations(t *testing.T) {
 						t.Errorf("the two dispatch paths disagree.\nlegacy:\n%s\n\ntyped:\n%s", legacy, typed)
 					}
 				})
+			}
+		})
+	}
+}
+
+// Every create AWS models with a TagSpecifications member must be checked in
+// this table with tag input, both ways round: a valid tag whose fate is
+// followed into the store by an `after` probe, and a reserved key that must
+// refuse the call.
+//
+// This is the row that did not exist. The differential table was the
+// guarantee behind routing 69 operations to the typed registry, and it had no
+// case anywhere that sent a create-time tag to CreateVpc, CreateSubnet,
+// CreateSecurityGroup, CreateInternetGateway, CreateRouteTable or
+// CreateNetworkInterface — so six typed twins that never decoded
+// TagSpecification.N compared byte-identical to six legacy handlers that did,
+// on requests that carried none.
+//
+// The `after` probe is required rather than optional because a response that
+// echoes a tagSet proves only that the handler read the request: CreateKeyPair
+// echoed tags it had not written.
+func TestTypedParityMutations_everyTagSpecCreateIsCheckedWithTags(t *testing.T) {
+	mutations := mutationCases()
+	for action, resourceType := range tagSpecCreates {
+		if !ec2TypedOps[action] {
+			continue
+		}
+		t.Run(action, func(t *testing.T) {
+			valid, reserved := false, false
+			for _, row := range mutations[action] {
+				if row.params.Get("TagSpecification.1.ResourceType") != resourceType {
+					continue
+				}
+				if strings.HasPrefix(row.params.Get("TagSpecification.1.Tag.1.Key"), "aws:") {
+					reserved = true
+					continue
+				}
+				if row.after != nil {
+					valid = true
+				}
+			}
+			if !valid {
+				t.Errorf("%s has no mutationCases row sending TagSpecification.1.ResourceType=%s with an "+
+					"`after` probe — nothing here would notice its typed body dropping create-time tags",
+					action, resourceType)
+			}
+			if !reserved {
+				t.Errorf("%s has no mutationCases row sending a reserved aws: tag key — nothing here would "+
+					"notice its typed body creating the resource instead of refusing the call", action)
 			}
 		})
 	}

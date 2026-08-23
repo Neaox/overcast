@@ -34,6 +34,24 @@ package ec2
 // same (absence of) event-bus publish — and needed only a parity row to prove
 // it, not a code change.
 //
+// That last claim was too generous, and the correction is the reason to read
+// this paragraph. "Already correct twins" was reached by reading the two
+// bodies for the parameters each *declared*, and six creates —
+// CreateVpc, CreateSubnet, CreateSecurityGroup, CreateInternetGateway,
+// CreateRouteTable and CreateNetworkInterface — declared no
+// TagSpecifications field at all, so there was nothing on the typed side to
+// read against legacy's parseTagSpecifications call and the omission read as
+// agreement. The differential table could not see it either: no row in
+// either parity table sent a create-time tag to any of the six, so both
+// dispatch paths answered identically on requests that carried none. All six
+// honour TagSpecification.N on both paths now, and three checks hold every
+// create that ever did: a static one over this package's source
+// (typed_tagspecifications_test.go, which also carries the ledger of the
+// operations AWS models with a TagSpecifications member that Overcast still
+// reads none of), tag rows in the differential table
+// (typed_parity_mutations_dev_test.go), and a wire-level table through the
+// router (tests/integration/ec2/ec2_tagspecification_test.go).
+//
 // ec2TypedDispatchRemainder is kept, empty, as the ledger's terminal state:
 // TestTypedDispatch_everyOpIsClassified still fails on an operation in
 // neither map, so a newly registered typed operation cannot arrive
