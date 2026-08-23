@@ -1,42 +1,69 @@
-// oxlint is the primary linter for web/ — see https://github.com/Neaox/overcast/issues/1330.
+// oxlint is the ONLY linter for web/ — see https://github.com/Neaox/overcast/issues/1330.
+// `pnpm run lint` is `oxlint .`; there is no ESLint in the repo any more (#1330
+// step 3). This file is the whole gate.
 //
-// `pnpm run lint` runs `oxlint .` first, then `eslint .`. This file owns the
-// rules; `eslint.config.js` reads it through `eslint-plugin-oxlint` and turns
-// every rule named here OFF on the ESLint side, so the two cannot drift and
-// nothing is reported twice.
+// The rule set was derived, in #1368, from what `eslint --print-config <a .tsx
+// file>` resolved at the time: the same on/off set, the same severities, and the
+// four option payloads we set by hand carried over verbatim. Nothing outside this
+// file contributes a rule.
 //
-// The rule set is a mirror of what `eslint --print-config <a .tsx file>`
-// resolves: the same on/off set, the same severities, and the four option
-// payloads we set by hand carried over verbatim.
-//
-// Mapping conventions used throughout:
+// Mapping conventions inherited from that derivation (they explain the rule
+// names below, and the `// eslint-disable-next-line <name>` suppressions in src/,
+// which oxlint honours under the *ESLint* spelling):
 //   `@typescript-eslint/x`  -> `typescript/x`
 //   `react-hooks/x`         -> `react/x`      (oxlint ships the React Compiler
 //                                              rules under the react plugin)
 //   `react-refresh/only-export-components` -> `react/only-export-components`
 //   `classnames/x`, `@tanstack/query/x` -> JS plugins, same rule names
 //
-// Rules enabled in eslint.config.js with NO oxlint equivalent. Three are inert
-// here; the fourth is a real, named loss and is the reason ESLint stays:
-//   react-hooks/component-hook-factories — THE remainder. Flags components and
-//                                          hooks defined inside other functions.
-//                                          No oxlint equivalent and none filed
-//                                          upstream, so ESLint keeps running it
-//                                          (eslint.config.js says the same).
-//   no-octal                            — octal literals are a syntax error in
-//                                         ESM/strict mode, so unreachable here
-//   react-hooks/config                  — validates the plugin's own config
-//   react-hooks/gating                  — memoization feature-gating, unused here
+// ---- Why ESLint could be deleted outright, with nothing lost ---------------
+//
+// #1368 left ESLint running four rules and recorded the first as an accepted
+// loss. Re-examined for step 3, all four turn out to enforce nothing:
+//
+//   react-hooks/component-hook-factories — supposedly THE remainder ("flags
+//     components and hooks defined inside other functions"). It is unreachable
+//     in eslint-plugin-react-hooks 7.0.1. The rule only reports diagnostics of
+//     `ErrorCategory.Factories`, which the React Compiler emits solely from
+//     `validateNoDynamicallyCreatedComponentsOrHooks`; that pass is gated on
+//     `environment.validateNoDynamicallyCreatedComponentsOrHooks`, which
+//     defaults to `false` and is NOT among the flags the plugin's own
+//     `COMPILER_OPTIONS.environment` turns on. Forcing it on via rule options
+//     does not help either: the pass raises the diagnostic with
+//     `CompilerError.throwDiagnostic`, `findFunctionsToCompile` does not catch
+//     it, and the plugin's `catch (err) {}` around `transformFromAstSync`
+//     swallows the throw — so the file yields *no* diagnostics at all. Measured
+//     both ways against a hook-factory/nested-component fixture: zero reports.
+//     Its nested-component half is in any case covered natively by
+//     `react/static-components` below, which does report on that fixture.
+//   react-hooks/config, react-hooks/gating — validate eslint-plugin-react-hooks'
+//     own config objects; meaningless outside that plugin.
+//   no-octal — octal literals are a syntax error in ESM/strict mode.
+//
+// The rule can be hosted here if upstream ever fixes it: oxlint's JS-plugin host
+// loads `eslint-plugin-react-hooks` fine (verified — aliased under a
+// non-reserved namespace, `react-hooks` itself is reserved, it reports through
+// oxc's parser with no typescript-estree involved). It is deliberately NOT
+// hosted, because it would re-run the Babel-based React Compiler over every file
+// in JS for a rule that cannot fire: 5.4 s -> 24.4 s for the full lint, a 4.5x
+// cost for zero findings. No oxc issue requests a native implementation as of
+// 2026-08-23 (oxc#20791 is the nearest, and is about eslint-plugin-react-x);
+// revisit if one lands, or if React fixes the rule.
+//
+// Deleting ESLint is also what unblocks TypeScript 7 (#1259): ESLint's parser
+// chain died at *module load* under TS 7 (`@typescript-eslint/typescript-estree`
+// throwing `Cannot read properties of undefined (reading 'Cjs')`), regardless of
+// which rules were enabled. Nothing in web/ depends on typescript-estree now.
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
 
-  // `plugins` REPLACES the default set (typescript + unicorn + oxc). We list
-  // only the two whose rules eslint.config.js actually enables, so oxlint does
-  // not report findings ESLint never would.
+  // `plugins` REPLACES the default set (typescript + unicorn + oxc). Only the
+  // two whose rules we actually enable are listed, so a plugin's own defaults
+  // can never quietly add a finding nobody chose.
   "plugins": ["typescript", "react"],
 
-  // Nothing on by category — every rule below is enabled explicitly, mirroring
-  // the resolved `eslint --print-config` output.
+  // Nothing on by category — every rule below is enabled explicitly. Adding a
+  // category here would enable rules this project has never opted into.
   "categories": {
     "correctness": "off"
   },
@@ -45,23 +72,23 @@
     // The type-aware rules (no-floating-promises, no-misused-promises,
     // no-unnecessary-condition, no-unnecessary-type-assertion,
     // consistent-type-imports) run through `oxlint-tsgolint`, which embeds its
-    // own typescript-go — it does not read the `typescript` devDependency, so
-    // this works today on TS 5.9.3 and is unaffected by the TS 7 bump (#1259),
-    // which is still held on typescript-eslint. Set here, not as a CLI flag, so
-    // the editor extension gets it too. `options.typeAware` is only honoured in
+    // own typescript-go — it does not read the `typescript` devDependency, so it
+    // was unaffected by the TypeScript 7 bump (#1259) either way. Set here, not
+    // as a CLI flag, so the editor extension and `pnpm run lint` agree and
+    // neither can forget it. `options.typeAware` is only honoured in
     // the *root* config file, which is why .vscode/settings.json pins
     // `oxc.configPath` (oxc#19937).
     "typeAware": true,
 
-    // ESLint's flat config defaults this to `warn`, but eslint.config.js turns
-    // it off: nearly every rule named by a suppression comment in src/ is
-    // switched off on the ESLint side now, so ESLint would flag all of them as
-    // unused. oxlint is the only tool that can still judge, so it takes it over
-    // at the same severity ESLint had.
+    // `warn`, matching the severity ESLint's flat config gave it before oxlint
+    // took it over. oxlint is now the only tool that can judge a suppression
+    // comment, so without this a stale `// eslint-disable-next-line` would sit
+    // in src/ forever.
     "reportUnusedDisableDirectives": "warn"
   },
 
-  // ESLint v9 config API-compatible plugins. Aliased so the rule names stay
+  // ESLint v9 config API-compatible plugins, run through oxlint's JS-plugin
+  // host (oxc's parser, no ESLint). Aliased so the rule names stay
   // byte-identical to the ESLint ones (suppression comments and docs keep
   // reading the same).
   "jsPlugins": [
@@ -75,9 +102,11 @@
     }
   ],
 
-  // `globalIgnores(["dist"])`, plus: eslint.config.js scopes its only config
-  // object to `**/*.{ts,tsx}`, so plain JS files match no config and are linted
-  // with zero rules. oxlint lints them by default, so exclude them for parity.
+  // `dist` is build output. The plain-JS exclusions are inherited from the
+  // ESLint config this replaced, which scoped its only config object to
+  // `**/*.{ts,tsx}` — so .js/.mjs/.cjs files (vite.config, prettier config, the
+  // local classnames plugin) have never been linted here and are not started on
+  // now. oxlint would lint them by default.
   "ignorePatterns": ["dist", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
 
   "env": {
@@ -153,8 +182,11 @@
       }
     ],
 
-    // ---- typescript-eslint recommendedTypeChecked ------------------------
-    // Rules marked (TA) need `--type-aware` (oxlint-tsgolint + TypeScript 7).
+    // ---- provenance: typescript-eslint recommendedTypeChecked ------------
+    // Five of these need type information (no-floating-promises,
+    // no-misused-promises, no-unnecessary-condition,
+    // no-unnecessary-type-assertion, consistent-type-imports); `options.typeAware`
+    // above is what makes them run.
     "typescript/await-thenable": "error",
     "typescript/ban-ts-comment": "error",
     "typescript/no-array-delete": "error",
@@ -189,7 +221,7 @@
     "typescript/triple-slash-reference": "error",
     "typescript/unbound-method": "error",
 
-    // Explicit overrides from eslint.config.js — options carried verbatim.
+    // Hand-set option payloads, carried verbatim from the ESLint config.
     "typescript/no-misused-promises": [
       "error",
       { "checksVoidReturn": { "arguments": false, "attributes": false, "properties": false } }
@@ -200,8 +232,8 @@
       { "prefer": "type-imports", "fixStyle": "inline-type-imports" }
     ],
 
-    // Explicitly off in eslint.config.js — repeated here so the intent survives
-    // a future `categories` change.
+    // Deliberately off (they were off under ESLint too). Spelled out rather than
+    // omitted so the intent survives a future `categories` change.
     "typescript/no-unsafe-assignment": "off",
     "typescript/no-unsafe-argument": "off",
     "typescript/no-unsafe-member-access": "off",
@@ -223,8 +255,8 @@
     "react/static-components": "error",
     "react/unsupported-syntax": "warn",
     "react/use-memo": "error",
-    // `react-hooks/incompatible-library` is off in eslint.config.js
-    // (TanStack Virtual); same here.
+    // Off because of TanStack Virtual, which the rule cannot see through; it was
+    // off under ESLint for the same reason.
     "react/incompatible-library": "off",
 
     // ---- react-refresh ----------------------------------------------------
