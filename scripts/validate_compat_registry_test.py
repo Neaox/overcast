@@ -7,15 +7,15 @@ Two lints added for issue #1113 Phase G0 (docs/plans/compat-coverage-modelgen.md
 1. Suites-scoping: a hand-written `compat/suites/registry.json` group may not
    declare `"suites"` outside the small allowed set (today just
    `cdk-lifecycle`); a *generated* group (one loaded from the sibling
-   `compat/suites/registry.generated.json`, which a separate in-flight PR
-   introduces) must always declare `"suites"`.
+   `compat/suites/registry.generated.json`, which cmd/compatgen owns) must
+   always declare `"suites"`.
 2. Service-key validation: every group's `service` must be a known Overcast
    capability service key (from `internal/capabilities/all.gen.go`), except
    the deliberate non-AWS `"cdk"` value used by `cdk-lifecycle`.
 
 The generated-registry half of lint 1 (and the generated-file leg of lint 2)
-must tolerate `compat/suites/registry.generated.json` being absent -- a
-sibling PR introduces that file. Until it lands, those checks are inert.
+must tolerate `compat/suites/registry.generated.json` being absent: the file is
+checked in, but a suite image or a branch cut before it existed has no copy.
 
 Run: python3 scripts/validate_compat_registry_test.py
 """
@@ -82,8 +82,15 @@ class SuitesScopeHandWrittenTest(unittest.TestCase):
         self.assertEqual(vcr.suites_scope_errors(registry), [])
 
 
-class GeneratedRegistryAbsentTest(unittest.TestCase):
-    """The generated registry does not exist yet -- a sibling PR adds it."""
+class GeneratedRegistryTest(unittest.TestCase):
+    """Both halves of the generated registry's presence.
+
+    Absence still has to be tolerated -- a suite image, a CI artifact, or a
+    maintenance branch cut before the file existed all read this lint's path
+    without it. Presence is now the ordinary case: the sibling PR landed
+    compat/suites/registry.generated.json, empty, and it is what
+    cmd/compatgen will rewrite wholly.
+    """
 
     def test_missing_generated_registry_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as d:
@@ -91,11 +98,18 @@ class GeneratedRegistryAbsentTest(unittest.TestCase):
             self.assertFalse(missing.exists())
             self.assertEqual(vcr.load_json_optional(missing), None)
 
-    def test_real_repo_has_no_generated_registry_yet(self):
-        # Documents the current state this lint must tolerate. When the
-        # sibling PR lands, this test starts exercising the loaded-file path
-        # instead and should be revisited, not deleted.
-        self.assertFalse(vcr.DEFAULT_GENERATED_REGISTRY.exists())
+    def test_real_generated_registry_loads_and_passes_its_checks(self):
+        # This replaces an assertion that the file did not exist yet, which
+        # was true only until the sibling PR merged and then failed on main.
+        # A test may not pin a fact that another in-flight branch is about to
+        # change; what is durable is that the checked-in file loads and is
+        # clean, which is the invariant regeneration must preserve.
+        loaded = vcr.load_json_optional(vcr.DEFAULT_GENERATED_REGISTRY)
+        self.assertIsNotNone(
+            loaded, f"{vcr.DEFAULT_GENERATED_REGISTRY} should be checked in"
+        )
+        keys = vcr.load_capability_service_keys(vcr.DEFAULT_CAPABILITIES)
+        self.assertEqual(vcr.generated_group_errors(loaded, keys), [])
 
 
 class GeneratedGroupMustDeclareSuitesTest(unittest.TestCase):

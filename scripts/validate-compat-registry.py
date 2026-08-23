@@ -15,16 +15,17 @@ express:
     allowed set (today just `cdk-lifecycle`) -- see compat/AGENTS.md's
     suites-scoping amendment (docs/plans/compat-coverage-modelgen.md §3.6);
   - a *generated* group (loaded from the sibling
-    compat/suites/registry.generated.json, introduced by a separate PR) must
+    compat/suites/registry.generated.json, which cmd/compatgen owns) must
     always declare `suites`, since it is mechanically derived from backend
     availability;
   - every group's `service` must be a known Overcast capability service key,
     with the deliberate, narrow exception of `cdk` on `cdk-lifecycle` (see
     docs/plans/compat-coverage-modelgen.md §7.7).
 
-The generated-registry file does not exist yet as of this writing (a sibling
-PR introduces it); its half of the checks above is skipped cleanly, with a
-note, until then.
+The generated-registry file is checked in but empty until cmd/compatgen
+populates it. Its absence is still tolerated -- a suite image, a CI artifact,
+or a maintenance branch cut before it existed all read this path without it --
+and its half of the checks above is then skipped cleanly, with a note.
 
 Usage:
     python3 scripts/validate-compat-registry.py
@@ -92,9 +93,10 @@ def load_json(path: Path) -> object:
 def load_json_optional(path: Path) -> object | None:
     """Like load_json, but a missing file is not an error -- it returns None.
 
-    Used for compat/suites/registry.generated.json, which does not exist yet
-    (a sibling PR introduces it). A malformed *existing* file is still a hard
-    error: only absence is tolerated.
+    Used for compat/suites/registry.generated.json, which is checked in but
+    need not be present everywhere this script runs -- a suite image or a
+    branch cut before it existed has no copy. A malformed *existing* file is
+    still a hard error: only absence is tolerated.
     """
     try:
         with path.open(encoding="utf-8") as f:
@@ -303,9 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         "--generated-registry",
         type=Path,
         default=DEFAULT_GENERATED_REGISTRY,
-        help="compat/suites/registry.generated.json. Optional -- a sibling PR "
-        "introduces it; until then this file is expected to be absent and "
-        "its checks are skipped.",
+        help="compat/suites/registry.generated.json. Optional: where the file "
+        "is absent its checks are skipped rather than failing.",
     )
     parser.add_argument("--capabilities-file", type=Path, default=DEFAULT_CAPABILITIES)
     args = parser.parse_args(argv)
@@ -325,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     if generated is None:
         print(
             f"(no generated registry at {args.generated_registry} -- "
-            "generated-group checks skipped until the sibling PR lands)"
+            "generated-group checks skipped)"
         )
     else:
         errors += generated_group_errors(generated, capability_keys)
