@@ -308,15 +308,8 @@ const SqsStatsBar = memo(function SqsStatsBar({
 
     if (!next) return
     // Deliberate set-state-in-effect: the animation is a reaction to a prop
-    // delta, not derived state, and the timeout below resets it.
-    //
-    // This carried an `eslint-disable-next-line react-hooks/set-state-in-effect`
-    // until #1330 made oxlint the primary linter. oxlint's port of that rule
-    // misses a setState whose guard is derived from a ref read — it does report
-    // the unconditional one in region-group-node.tsx — so the directive became an
-    // "unused disable directive" warning instead. Filed upstream as
-    // https://github.com/oxc-project/oxc/issues/26007; restore the directive when
-    // that closes.
+    // delta — detected against the previous render's counts held in the refs
+    // above — not derived state, and the timeout below resets it.
     setDirection(next)
     const t = setTimeout(() => setDirection(null), MSG_ANIM_TTL)
     return () => clearTimeout(t)
