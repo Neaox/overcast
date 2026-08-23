@@ -116,6 +116,13 @@ var weaklyServedBindings = map[string]string{
 // epoch timestamps and MetricDataResults onto the same computeMetricDataResults
 // core getMetricData (Query) already used — so the row is gone, not just
 // resolved, per this ledger's own rule that a resolved entry has to leave.
+//
+// It stayed empty through #1280, which wired CloudWatch's rpcv2Cbor dispatch —
+// the gap #1228's probe found and this ledger could not report, because a
+// protocol a service claims nowhere is uniform non-coverage rather than
+// asymmetry. All fifteen operations answer over CBOR, so there was no row to
+// add; what changed is that spoken["cloudwatch"][rpcv2Cbor] is now true, so a
+// sixteenth operation served over Query and JSON alone would land here.
 var protocolAsymmetries = map[string]string{}
 
 // assertProtocolAsymmetry compares the observed asymmetries with the recorded

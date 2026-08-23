@@ -7533,25 +7533,25 @@
           "operation": "GetMetricData",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns query-based metric values over time ranges, over both the Query and JSON protocols — the pinned model makes awsJson1_0 primary, so an SDK reaching it that way now gets the same result the Query protocol always returned (#886). Merges custom PutMetricData points with automatically-recorded service metrics (AWS/Lambda's Invocations/Errors/Duration/Throttles/ConcurrentExecutions pilot — docs/plans/service-metrics-platform.md) from internal/metrics, read-through, when service-metrics collection is enabled"
+          "notes": "Returns query-based metric values over time ranges, over all three protocols the model declares — Query, awsJson1_0 (primary, #886) and Smithy RPC v2 CBOR (#1280) — from one shared evaluation core, so an SDK gets the same result whichever it negotiates. Merges custom PutMetricData points with automatically-recorded service metrics (AWS/Lambda's Invocations/Errors/Duration/Throttles/ConcurrentExecutions pilot — docs/plans/service-metrics-platform.md) from internal/metrics, read-through, when service-metrics collection is enabled"
         },
         {
           "operation": "GetMetricStatistics",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Returns aggregated datapoints by period. Merges custom PutMetricData points with automatically-recorded service metrics from internal/metrics (docs/plans/service-metrics-platform.md), so an alarm on e.g. AWS/Lambda Errors evaluates against real invocation outcomes"
+          "notes": "Returns aggregated datapoints by period, over Query, awsJson and rpcv2Cbor alike (#1280). Merges custom PutMetricData points with automatically-recorded service metrics from internal/metrics (docs/plans/service-metrics-platform.md), so an alarm on e.g. AWS/Lambda Errors evaluates against real invocation outcomes"
         },
         {
           "operation": "ListMetrics",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists available metrics, merging custom PutMetricData series with automatically-recorded service metrics (docs/plans/service-metrics-platform.md)"
+          "notes": "Lists available metrics over Query, awsJson and rpcv2Cbor (#1280), merging custom PutMetricData series with automatically-recorded service metrics (docs/plans/service-metrics-platform.md)"
         },
         {
           "operation": "ListTagsForResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists tags for an alarm, over both the Query and JSON protocols. Alarms are the only taggable CloudWatch resource Overcast emulates, so any other ResourceARN is ResourceNotFoundException — or InvalidParameterValue when it is not a CloudWatch ARN at all"
+          "notes": "Lists tags for an alarm, over the Query, JSON and rpcv2Cbor protocols (#1280). Alarms are the only taggable CloudWatch resource Overcast emulates, so any other ResourceARN is ResourceNotFoundException — or InvalidParameterValue when it is not a CloudWatch ARN at all"
         },
         {
           "operation": "PutMetricAlarm",
@@ -7587,13 +7587,13 @@
           "operation": "TagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Adds or updates tags on an alarm, over both the Query and JSON protocols. Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS. Tag sets are validated — 50 tags per resource, keys 1-128 characters and not aws:-prefixed, values up to 256 — and a rejected set is not written"
+          "notes": "Adds or updates tags on an alarm, over the Query, JSON and rpcv2Cbor protocols (#1280). Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS. Tag sets are validated — 50 tags per resource, keys 1-128 characters and not aws:-prefixed, values up to 256 — and a rejected set is not written"
         },
         {
           "operation": "UntagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Removes tags from an alarm, over both the Query and JSON protocols. A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException"
+          "notes": "Removes tags from an alarm, over the Query, JSON and rpcv2Cbor protocols (#1280). A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException"
         }
       ]
     },

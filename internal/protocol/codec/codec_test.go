@@ -405,6 +405,64 @@ func TestRPCv2CBOR_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestRPCv2CBOR_DecodeOpenDocument_UsesStringKeyedMaps pins the decode mode
+// #1280 needed. A member typed `any` holds whatever the caller sent, and
+// services hand that value on to code that expects what encoding/json
+// produces — CloudWatch persists PutMetricAlarm's Metrics through
+// json.Marshal, which refuses map[any]any outright. Decoding CBOR maps into
+// `any` as map[any]any therefore turned a valid request into a 500
+// InternalError on this door and no other.
+func TestRPCv2CBOR_DecodeOpenDocument_UsesStringKeyedMaps(t *testing.T) {
+	body, err := cborlib.Marshal(map[string]any{
+		"Document": []any{map[string]any{"Id": "e1", "Expression": "m1 + m2"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal cbor request: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/service/Example/operation/Example", bytes.NewReader(body))
+
+	var in struct {
+		Document []any `json:"Document"`
+	}
+	if aerr := RPCv2CBOR.Decode(r, &in); aerr != nil {
+		t.Fatalf("decode: %v", aerr)
+	}
+	if len(in.Document) != 1 {
+		t.Fatalf("Document = %#v, want one member", in.Document)
+	}
+	if _, ok := in.Document[0].(map[string]any); !ok {
+		t.Fatalf("Document[0] is %T, want map[string]any — json.Marshal cannot serialise any other map shape", in.Document[0])
+	}
+	if _, err := json.Marshal(in.Document); err != nil {
+		t.Fatalf("decoded document is not JSON-serialisable, which is what services do with it: %v", err)
+	}
+}
+
+// TestRPCv2CBOR_DecodeNonStringMapKeys_Fails is the other side of that
+// decision: a map with non-string keys is now a decode error rather than a
+// value nothing downstream can use. No Smithy structure or document has them,
+// so a body carrying one was never a valid request for any operation.
+func TestRPCv2CBOR_DecodeNonStringMapKeys_Fails(t *testing.T) {
+	body, err := cborlib.Marshal(map[string]any{
+		"Document": map[int]string{1: "one"},
+	})
+	if err != nil {
+		t.Fatalf("marshal cbor request: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/service/Example/operation/Example", bytes.NewReader(body))
+
+	var in struct {
+		Document any `json:"Document"`
+	}
+	aerr := RPCv2CBOR.Decode(r, &in)
+	if aerr == nil {
+		t.Fatalf("expected a decode error for an integer-keyed map, got %#v", in.Document)
+	}
+	if aerr.HTTPStatus != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", aerr.HTTPStatus)
+	}
+}
+
 func TestRPCv2CBOR_DecodeMalformed(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not cbor"))
 	var in smallIn
