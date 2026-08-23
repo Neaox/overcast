@@ -954,6 +954,15 @@ func mutationCases() map[string][]mutationCase {
 		"AllocateAddress": {
 			{name: "default-domain", params: url.Values{}},
 			{name: "explicit-domain", params: url.Values{"Domain": {"standard"}}},
+			{
+				name:   "with-tags",
+				params: withTagSpec(url.Values{}, "elastic-ip", "Name", "mut"),
+				after:  tagsAfter("allocationId"),
+			},
+			{
+				name:   "reserved-tag-key-refuses-the-create",
+				params: withTagSpec(url.Values{}, "elastic-ip", "aws:reserved", "x"),
+			},
 		},
 		"ReleaseAddress": {
 			{
