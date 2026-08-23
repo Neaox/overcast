@@ -83,6 +83,39 @@ describe("ClusterDetail tasks", () => {
     expect(screen.queryByText("running-task")).not.toBeInTheDocument()
   })
 
+  it("orders tasks newest-first and reverses them on a header click", async () => {
+    const cluster: EcsCluster = {
+      clusterName: "demo",
+      clusterArn: "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+      status: "ACTIVE",
+      runningTasksCount: 2,
+      pendingTasksCount: 0,
+      activeServicesCount: 0,
+      registeredContainerInstancesCount: 0,
+    }
+    const older = { ...task("older-task00", "RUNNING"), createdAt: "2026-08-01T10:00:00Z" }
+    const newer = { ...task("newer-task00", "RUNNING"), createdAt: "2026-08-20T10:00:00Z" }
+
+    const { user } = renderWithData(<ClusterDetail clusterName="demo" />, [
+      [ecsClusterDetailQueryOptions("demo").queryKey, cluster],
+      [ecsTasksQueryOptions("demo", "RUNNING").queryKey, [older, newer]],
+      [ecsTasksQueryOptions("demo", "STOPPED").queryKey, []],
+      [ecsTaskDefinitionsQueryOptions().queryKey, []],
+      [ecsTaskDefinitionFamiliesQueryOptions().queryKey, []],
+    ])
+
+    const taskIds = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("cell")[0].textContent)
+
+    expect(taskIds()).toEqual(["newer-task00", "older-task00"])
+
+    await user.click(screen.getByRole("button", { name: /Created/ }))
+    expect(taskIds()).toEqual(["older-task00", "newer-task00"])
+  })
+
   it("opens a service selected by a topology deep link and connects it to its tasks", async () => {
     const cluster: EcsCluster = {
       clusterName: "demo",

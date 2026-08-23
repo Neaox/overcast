@@ -27,15 +27,7 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -191,37 +183,25 @@ function SubnetsPanel({ vpcId }: { vpcId: string }) {
   const { data: allSubnets = [], isLoading } = useQuery(ec2SubnetsQueryOptions())
   const subnets = allSubnets.filter((s) => s.vpcId === vpcId)
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (subnets.length === 0) {
-    return <EmptyState title="No subnets" description="This VPC has no subnets." />
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Subnet ID</TableHead>
-          <TableHead>CIDR Block</TableHead>
-          <TableHead>Availability Zone</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {subnets.map((s) => (
-          <TableRow key={s.subnetId}>
-            <TableCell>{s.subnetId}</TableCell>
-            <TableCell>{s.cidrBlock}</TableCell>
-            <TableCell>{s.availabilityZone}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: subnets, isLoading }}
+      noun="subnets"
+      emptyTitle="No subnets"
+      emptyDescription="This VPC has no subnets."
+      rowKey={(s) => s.subnetId}
+      columns={[
+        { header: "Subnet ID", sortValue: (s) => s.subnetId, cell: (s) => s.subnetId },
+        { header: "CIDR Block", cell: (s) => s.cidrBlock },
+        {
+          header: "Availability Zone",
+          sortValue: (s) => s.availabilityZone,
+          cell: (s) => s.availabilityZone,
+        },
+      ]}
+    />
   )
 }
 
@@ -251,24 +231,23 @@ function RouteTablesPanel({ vpcId }: { vpcId: string }) {
             <span className="font-mono text-sm font-medium">{rt.routeTableId}</span>
             {rt.associations.some((a) => a.main) && <Badge variant="default">Main</Badge>}
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Destination</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead>Origin</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rt.routes.map((route, idx) => (
-                <TableRow key={idx}>
-                  <TableCell>{route.destinationCidrBlock}</TableCell>
-                  <TableCell>{route.gatewayId || "local"}</TableCell>
-                  <TableCell className="text-fg-muted">{route.origin}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ResourceTable
+            variant="embedded"
+            columnToggle={false}
+            query={{ data: rt.routes, isLoading: false }}
+            noun="routes"
+            emptyTitle="No routes"
+            rowKey={(route) => `${route.destinationCidrBlock}-${route.gatewayId ?? "local"}`}
+            columns={[
+              {
+                header: "Destination",
+                sortValue: (route) => route.destinationCidrBlock,
+                cell: (route) => route.destinationCidrBlock,
+              },
+              { header: "Target", cell: (route) => route.gatewayId || "local" },
+              { header: "Origin", cellClassName: "text-fg-muted", cell: (route) => route.origin },
+            ]}
+          />
           {rt.associations.filter((a) => a.subnetId).length > 0 && (
             <p className="text-xs text-fg-muted">
               Associated subnets:{" "}
@@ -391,72 +370,64 @@ function InternetGatewaysPanel({ vpcId }: { vpcId: string }) {
         </div>
       )}
 
-      {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Spinner className="h-5 w-5" />
-        </div>
-      ) : igws.length === 0 ? (
-        <EmptyState
-          title="No internet gateways"
-          description="No internet gateway is attached to this VPC."
-          action={
-            <Button
-              onClick={handleCreateAndAttach}
-              disabled={createMut.isPending || attachMut.isPending}
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create & Attach
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Internet Gateway ID</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {igws.map((igw) => {
-              const att = igw.attachments.find((a) => a.vpcId === vpcId)
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: igws, isLoading }}
+        noun="internet gateways"
+        emptyTitle="No internet gateways"
+        emptyDescription="No internet gateway is attached to this VPC."
+        emptyAction={
+          <Button
+            onClick={handleCreateAndAttach}
+            disabled={createMut.isPending || attachMut.isPending}
+          >
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create & Attach
+          </Button>
+        }
+        rowKey={(igw) => igw.internetGatewayId}
+        columns={[
+          {
+            header: "Internet Gateway ID",
+            sortValue: (igw) => igw.internetGatewayId,
+            cell: (igw) => igw.internetGatewayId,
+          },
+          {
+            header: "State",
+            cell: (igw) => {
+              const state = igw.attachments.find((a) => a.vpcId === vpcId)?.state
               return (
-                <TableRow key={igw.internetGatewayId}>
-                  <TableCell>{igw.internetGatewayId}</TableCell>
-                  <TableCell>
-                    <Badge variant={att?.state === "available" ? "success" : "default"}>
-                      {att?.state ?? "unknown"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-fg-muted hover:text-warning"
-                        title="Detach"
-                        onClick={() => setDetachTarget(igw.internetGatewayId)}
-                      >
-                        <Unlink className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-fg-muted hover:text-danger"
-                        title="Delete"
-                        onClick={() => setDeleteTarget(igw.internetGatewayId)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+                <Badge variant={state === "available" ? "success" : "default"}>
+                  {state ?? "unknown"}
+                </Badge>
               )
-            })}
-          </TableBody>
-        </Table>
-      )}
+            },
+          },
+        ]}
+        rowActions={(igw) => (
+          <>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-fg-muted hover:text-warning"
+              title="Detach"
+              onClick={() => setDetachTarget(igw.internetGatewayId)}
+            >
+              <Unlink className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-fg-muted hover:text-danger"
+              title="Delete"
+              onClick={() => setDeleteTarget(igw.internetGatewayId)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
+      />
 
       <ConfirmDialog
         open={!!detachTarget}
@@ -540,77 +511,76 @@ function PeeringPanel({ vpcId }: { vpcId: string }) {
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Spinner className="h-5 w-5" />
-        </div>
-      ) : peerings.length === 0 ? (
-        <EmptyState
-          title="No peering connections"
-          description="This VPC has no peering connections."
-          action={
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Peering Connection
-            </Button>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Peering ID</TableHead>
-              <TableHead>Requester VPC</TableHead>
-              <TableHead>Accepter VPC</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {peerings.map((pcx) => (
-              <TableRow key={pcx.vpcPeeringConnectionId}>
-                <TableCell>{pcx.vpcPeeringConnectionId}</TableCell>
-                <TableCell>
-                  <VpcLink vpcId={pcx.requesterVpcInfo.vpcId} currentVpcId={vpcId} />
-                  <span className="ml-1 text-fg-muted">({pcx.requesterVpcInfo.cidrBlock})</span>
-                </TableCell>
-                <TableCell>
-                  <VpcLink vpcId={pcx.accepterVpcInfo.vpcId} currentVpcId={vpcId} />
-                  <span className="ml-1 text-fg-muted">({pcx.accepterVpcInfo.cidrBlock})</span>
-                </TableCell>
-                <TableCell>
-                  <PeeringStatusBadge code={pcx.status.code} />
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    {pcx.status.code === "pending-acceptance" && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Accept"
-                        onClick={() => acceptMut.mutate(pcx.vpcPeeringConnectionId)}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {(pcx.status.code === "active" || pcx.status.code === "pending-acceptance") && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-fg-muted hover:text-danger"
-                        title="Delete"
-                        onClick={() => setDeleteTarget(pcx.vpcPeeringConnectionId)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: peerings, isLoading }}
+        noun="peering connections"
+        emptyTitle="No peering connections"
+        emptyDescription="This VPC has no peering connections."
+        emptyAction={
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create Peering Connection
+          </Button>
+        }
+        rowKey={(pcx) => pcx.vpcPeeringConnectionId}
+        columns={[
+          {
+            header: "Peering ID",
+            sortValue: (pcx) => pcx.vpcPeeringConnectionId,
+            cell: (pcx) => pcx.vpcPeeringConnectionId,
+          },
+          {
+            header: "Requester VPC",
+            cell: (pcx) => (
+              <>
+                <VpcLink vpcId={pcx.requesterVpcInfo.vpcId} currentVpcId={vpcId} />
+                <span className="ml-1 text-fg-muted">({pcx.requesterVpcInfo.cidrBlock})</span>
+              </>
+            ),
+          },
+          {
+            header: "Accepter VPC",
+            cell: (pcx) => (
+              <>
+                <VpcLink vpcId={pcx.accepterVpcInfo.vpcId} currentVpcId={vpcId} />
+                <span className="ml-1 text-fg-muted">({pcx.accepterVpcInfo.cidrBlock})</span>
+              </>
+            ),
+          },
+          {
+            header: "Status",
+            sortValue: (pcx) => pcx.status.code,
+            cell: (pcx) => <PeeringStatusBadge code={pcx.status.code} />,
+          },
+        ]}
+        rowActions={(pcx) => (
+          <>
+            {pcx.status.code === "pending-acceptance" && (
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Accept"
+                onClick={() => acceptMut.mutate(pcx.vpcPeeringConnectionId)}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {(pcx.status.code === "active" || pcx.status.code === "pending-acceptance") && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-fg-muted hover:text-danger"
+                title="Delete"
+                onClick={() => setDeleteTarget(pcx.vpcPeeringConnectionId)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </>
+        )}
+      />
 
       <CreatePeeringDialog
         open={showCreate}
@@ -641,41 +611,36 @@ function PeeringPanel({ vpcId }: { vpcId: string }) {
 function EndpointsPanel({ vpcId }: { vpcId: string }) {
   const { data: endpoints = [], isLoading } = useQuery(ec2VpcEndpointsQueryOptions(vpcId))
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (endpoints.length === 0) {
-    return <EmptyState title="No endpoints" description="This VPC has no VPC endpoints." />
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Endpoint ID</TableHead>
-          <TableHead>Service Name</TableHead>
-          <TableHead>Type</TableHead>
-          <TableHead>State</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {endpoints.map((ep) => (
-          <TableRow key={ep.vpcEndpointId}>
-            <TableCell>{ep.vpcEndpointId}</TableCell>
-            <TableCell className="text-fg-muted">{ep.serviceName}</TableCell>
-            <TableCell>{ep.vpcEndpointType}</TableCell>
-            <TableCell>
-              <Badge variant={ep.state === "available" ? "success" : "default"}>{ep.state}</Badge>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: endpoints, isLoading }}
+      noun="endpoints"
+      emptyTitle="No endpoints"
+      emptyDescription="This VPC has no VPC endpoints."
+      rowKey={(ep) => ep.vpcEndpointId}
+      columns={[
+        {
+          header: "Endpoint ID",
+          sortValue: (ep) => ep.vpcEndpointId,
+          cell: (ep) => ep.vpcEndpointId,
+        },
+        {
+          header: "Service Name",
+          cellClassName: "text-fg-muted",
+          sortValue: (ep) => ep.serviceName,
+          cell: (ep) => ep.serviceName,
+        },
+        { header: "Type", cell: (ep) => ep.vpcEndpointType },
+        {
+          header: "State",
+          cell: (ep) => (
+            <Badge variant={ep.state === "available" ? "success" : "default"}>{ep.state}</Badge>
+          ),
+        },
+      ]}
+    />
   )
 }
 
@@ -685,45 +650,44 @@ function SecurityGroupsPanel({ vpcId }: { vpcId: string }) {
   const { data: allSGs = [], isLoading } = useQuery(ec2SecurityGroupsQueryOptions())
   const groups = allSGs.filter((sg) => sg.vpcId === vpcId)
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="h-5 w-5" />
-      </div>
-    )
-  }
-
-  if (groups.length === 0) {
-    return <EmptyState title="No security groups" description="No security groups in this VPC." />
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Group ID</TableHead>
-          <TableHead>Name</TableHead>
-          <TableHead>Description</TableHead>
-          <TableHead>Inbound Rules</TableHead>
-          <TableHead>Outbound Rules</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {groups.map((sg) => (
-          <TableRow key={sg.groupId}>
-            <TableCell>{sg.groupId}</TableCell>
-            <TableCell className="font-medium">{sg.groupName}</TableCell>
-            <TableCellProse className="max-w-xs truncate">{sg.description}</TableCellProse>
-            <TableCell>
-              <Badge variant="default">{sg.ipPermissions.length}</Badge>
-            </TableCell>
-            <TableCell>
-              <Badge variant="default">{sg.ipPermissionsEgress.length}</Badge>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      // Five columns, but the two rule counts and the description are all worth
+      // reading side by side on a security-group audit — nothing here is
+      // secondary enough to hide by default.
+      columnToggle={false}
+      query={{ data: groups, isLoading }}
+      noun="security groups"
+      emptyTitle="No security groups"
+      emptyDescription="No security groups in this VPC."
+      rowKey={(sg) => sg.groupId}
+      columns={[
+        { header: "Group ID", sortValue: (sg) => sg.groupId, cell: (sg) => sg.groupId },
+        {
+          header: "Name",
+          cellClassName: "font-medium",
+          sortValue: (sg) => sg.groupName,
+          cell: (sg) => sg.groupName,
+        },
+        {
+          header: "Description",
+          prose: true,
+          cellClassName: "max-w-xs truncate",
+          cell: (sg) => sg.description,
+        },
+        {
+          header: "Inbound Rules",
+          sortValue: (sg) => sg.ipPermissions.length,
+          cell: (sg) => <Badge variant="default">{sg.ipPermissions.length}</Badge>,
+        },
+        {
+          header: "Outbound Rules",
+          sortValue: (sg) => sg.ipPermissionsEgress.length,
+          cell: (sg) => <Badge variant="default">{sg.ipPermissionsEgress.length}</Badge>,
+        },
+      ]}
+    />
   )
 }
 
@@ -831,26 +795,19 @@ function VpcLink({ vpcId, currentVpcId }: { vpcId: string; currentVpcId: string 
 // ─── Tags Panel ───────────────────────────────────────────────────────────
 
 function TagsPanel({ tags }: { tags?: Array<{ key: string; value: string }> }) {
-  if (!tags || tags.length === 0) {
-    return <EmptyState title="No tags" description="This VPC has no tags." />
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Key</TableHead>
-          <TableHead>Value</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {tags.map((tag, i) => (
-          <TableRow key={i}>
-            <TableCell>{tag.key}</TableCell>
-            <TableCell className="text-fg-muted">{tag.value}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <ResourceTable
+      variant="embedded"
+      columnToggle={false}
+      query={{ data: tags ?? [], isLoading: false }}
+      noun="tags"
+      emptyTitle="No tags"
+      emptyDescription="This VPC has no tags."
+      rowKey={(tag) => tag.key}
+      columns={[
+        { header: "Key", sortValue: (tag) => tag.key, cell: (tag) => tag.key },
+        { header: "Value", cellClassName: "text-fg-muted", cell: (tag) => tag.value },
+      ]}
+    />
   )
 }

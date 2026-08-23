@@ -30,7 +30,17 @@
 > deep-links the sort as `?sort=name` / `?sort=-name` (JSON:API's leading-dash form) the way
 > `useFilterSearchParam` deep-links `q`.
 > See P3 for the feature set, the state-ownership split and the bundle numbers; #1327's waves B–D
-> move the remaining 55 bespoke `<Table>` sites onto it. None of the other scaffold
+> move the remaining 55 bespoke `<Table>` sites onto it. **2026-08-23 (#1327 waves B/C, compute
+> family):** `lambda/function-list`, `lambda/layer-list`, `ecs/cluster-list`,
+> `autoscaling/group-list` and `applications/application-list` are on `ResourceTable`, as are the
+> sub-tables in `lambda/layer-detail`, `ecs/cluster-detail` (5), `applications/application-detail`,
+> `ec2/instance-detail` (2) and `ec2/vpc-detail` (7) via `variant="embedded"` — 24 bespoke
+> `<Table>` sites in all. Sort is local state on every one of them: none of these five routes
+> validates search params today, and adding `sort` would mean editing route files outside this
+> change's fence (see the PR for the follow-up). Two gaps surfaced: `ResourceTable` has no slot
+> after its empty state (Lambda's `RegionElsewhereNotice` has to sit there, so that page embeds the
+> table in its own card) and no per-row class hook (Auto Scaling's selected-row tint became a
+> chevron column, the `usage-plans-page` shape). None of the other scaffold
 > components exist yet —
 > no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or

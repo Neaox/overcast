@@ -5,15 +5,8 @@ import {
   applicationResourcesQueryOptions,
 } from "@/features/applications/data"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
@@ -51,6 +44,12 @@ export function ApplicationDetail({ applicationId }: Props) {
         }
       />
 
+      {/*
+       * Stays a hand-built grid, not a `ResourceTable`: this is the
+       * application's attribute list — one fixed row per field — not a list of
+       * resources, so it has nothing to sort, hide or page (CONTRIBUTING §
+       * Tables). It is not a `<Table>` either.
+       */}
       <Card>
         <CardContent className="flex flex-col gap-2 text-sm">
           <div className="flex gap-2">
@@ -75,29 +74,19 @@ export function ApplicationDetail({ applicationId }: Props) {
       </Card>
 
       <h2 className="font-mono text-lg font-medium">Associated resources ({resources.length})</h2>
-      {resources.length === 0 ? (
-        <EmptyState
-          title="No associated resources"
-          description="Stacks and resources become associated when CDK's Application construct tags them, or when a CloudFormation ResourceAssociation is declared."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Type</TableHead>
-              <TableHead>ARN</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {resources.map((r) => (
-              <TableRow key={r.arn}>
-                <TableCell>{r.resourceType}</TableCell>
-                <TableCell>{r.arn}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <ResourceTable
+        variant="embedded"
+        columnToggle={false}
+        query={{ data: resources, isLoading: false }}
+        noun="associated resources"
+        emptyTitle="No associated resources"
+        emptyDescription="Stacks and resources become associated when CDK's Application construct tags them, or when a CloudFormation ResourceAssociation is declared."
+        rowKey={(r) => r.arn}
+        columns={[
+          { header: "Type", sortValue: (r) => r.resourceType, cell: (r) => r.resourceType },
+          { header: "ARN", sortValue: (r) => r.arn, cell: (r) => r.arn },
+        ]}
+      />
     </div>
   )
 }

@@ -6,7 +6,7 @@
 import { useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Trash2, Plus } from "lucide-react"
+import { Plus } from "lucide-react"
 import {
   layerVersionsQueryOptions,
   layerVersionMetadataQueryOptions,
@@ -17,37 +17,23 @@ import {
 } from "@/features/lambda/data"
 import { Route } from "@/routes/lambda/layers/$layerName"
 import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableCellProse,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { PageHeader } from "@/components/ui/primitives"
+import { ResourceTable } from "@/components/ui/resource-table"
 import { useToast } from "@/components/ui/toast"
 import { PublishLayerDialog } from "./layer-list"
-import type { LayerVersion, LambdaFunction } from "@/types"
+import type { LayerVersion } from "@/types"
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function LayerDetail() {
   const { layerName } = Route.useParams()
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const { toast } = useToast()
 
   const [showPublish, setShowPublish] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<LayerVersion>()
 
   const { data: versions = [], isLoading } = useQuery(layerVersionsQueryOptions(layerName))
   const { data: allFunctions = [] } = useQuery(lambdaFunctionsQueryOptions())
@@ -74,7 +60,7 @@ export function LayerDetail() {
     onSuccess: (_, { version }) => {
       void qc.invalidateQueries({ queryKey: lambdaKeys.layerVersions(layerName) })
       void qc.invalidateQueries({ queryKey: lambdaKeys.layers() })
-      setDeleteTarget(null)
+      setDeleteTarget(undefined)
       toast({ title: "Version deleted", description: `Version ${version} removed` })
     },
     onError: (err: Error) =>
@@ -103,63 +89,105 @@ export function LayerDetail() {
       {/* ── Versions table ─────────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
         <h2 className="font-mono text-sm font-semibold text-fg">Versions</h2>
-        {isLoading ? (
-          <div className="flex justify-center py-16">
-            <Spinner className="h-5 w-5" />
-          </div>
-        ) : versions.length === 0 ? (
-          <EmptyState
-            icon={null}
-            title="No versions"
-            description="Publish a version to get started."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Version</TableHead>
-                <TableHead>ARN</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Compatible runtimes</TableHead>
-                <TableHead>Extensions</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {versions.map((v) => (
-                <VersionRow
-                  key={v.Version}
-                  layerName={layerName}
-                  version={v}
-                  onDelete={() => setDeleteTarget(v.Version ?? 0)}
-                />
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <ResourceTable
+          variant="embedded"
+          columnToggle={false}
+          query={{ data: versions, isLoading }}
+          noun="versions"
+          emptyTitle="No versions"
+          emptyDescription="Publish a version to get started."
+          rowKey={(v) => String(v.Version ?? "")}
+          defaultSort={{ id: "version", desc: true }}
+          columns={[
+            {
+              id: "version",
+              header: "Version",
+              sortValue: (v) => v.Version ?? 0,
+              cell: (v) => <Badge variant="default">{v.Version}</Badge>,
+            },
+            { header: "ARN", cellClassName: "text-fg-muted", cell: (v) => v.LayerVersionArn },
+            { header: "Description", prose: true, cell: (v) => v.Description || "—" },
+            {
+              header: "Compatible runtimes",
+              cell: (v) =>
+                (v.CompatibleRuntimes?.length ?? 0) > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {v.CompatibleRuntimes!.map((rt) => (
+                      <Badge key={rt} variant="default">
+                        {rt}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  "—"
+                ),
+            },
+            {
+              header: "Extensions",
+              // A component, not inline JSX: the extension list comes from a
+              // per-version query, and `cell` is a render function that cannot
+              // hold hooks of its own.
+              cell: (v) => <VersionExtensions layerName={layerName} version={v.Version ?? 0} />,
+            },
+            {
+              header: "Created",
+              cellClassName: "text-fg-muted",
+              sortValue: (v) => v.CreatedDate,
+              cell: (v) => (v.CreatedDate ? new Date(v.CreatedDate).toLocaleString() : "—"),
+            },
+          ]}
+          onDelete={{
+            target: deleteTarget,
+            onRequest: setDeleteTarget,
+            onOpenChange: (open) => !open && setDeleteTarget(undefined),
+            mutation: {
+              mutate: (version) => deleteMut.mutate({ layerName, version: Number(version) }),
+              isPending: deleteMut.isPending,
+            },
+            getId: (v) => String(v.Version ?? 0),
+            label: (v) => `version ${v.Version}`,
+            noun: "version",
+            title: deleteTarget ? `Delete version ${deleteTarget.Version}?` : undefined,
+            description: (v) => (
+              <>
+                This will permanently delete version <strong>{v.Version}</strong> of layer{" "}
+                <strong>{layerName}</strong>. Functions still referencing this version will continue
+                to work until their configuration is updated.
+              </>
+            ),
+          }}
+        />
       </section>
 
       {/* ── Attached functions ─────────────────────────────────────────── */}
       <section className="flex flex-col gap-2">
         <h2 className="font-mono text-sm font-semibold text-fg">Functions using this layer</h2>
-        {attachedFunctions.length === 0 ? (
-          <p className="text-sm text-fg-muted">No functions are currently using this layer.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Function name</TableHead>
-                <TableHead>Layer version ARN</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {attachedFunctions.map((fn) => (
-                <AttachedFunctionRow key={fn.FunctionArn} fn={fn} layerName={layerName} />
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <ResourceTable
+          variant="embedded"
+          columnToggle={false}
+          query={{ data: attachedFunctions, isLoading: false }}
+          noun="functions"
+          emptyTitle="No functions are currently using this layer."
+          rowKey={(fn) => fn.FunctionArn ?? fn.FunctionName ?? ""}
+          onRowClick={(fn) =>
+            navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })
+          }
+          columns={[
+            {
+              header: "Function name",
+              cellClassName: "font-medium",
+              sortValue: (fn) => fn.FunctionName,
+              cell: (fn) => fn.FunctionName,
+            },
+            {
+              header: "Layer version ARN",
+              cellClassName: "text-fg-muted",
+              cell: (fn) =>
+                (fn.Layers ?? []).find((l) => (l.Arn ?? "").includes(`:layer:${layerName}:`))
+                  ?.Arn ?? "—",
+            },
+          ]}
+        />
       </section>
 
       {/* ── Dialogs ─────────────────────────────────────────────────────── */}
@@ -171,129 +199,36 @@ export function LayerDetail() {
           isPending={publishMut.isPending}
         />
       )}
-
-      {deleteTarget !== null && (
-        <Dialog open onOpenChange={(open) => !open && setDeleteTarget(null)}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>Delete version {deleteTarget}?</DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-fg-muted">
-              This will permanently delete version <strong>{deleteTarget}</strong> of layer{" "}
-              <strong>{layerName}</strong>. Functions still referencing this version will continue
-              to work until their configuration is updated.
-            </p>
-            <DialogFooter>
-              <Button variant="secondary" size="sm" onClick={() => setDeleteTarget(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={deleteMut.isPending}
-                onClick={() => deleteMut.mutate({ layerName, version: deleteTarget })}
-              >
-                {deleteMut.isPending ? <Spinner className="mr-2 h-3.5 w-3.5" /> : null}
-                Delete
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   )
 }
 
-// ─── Version row ──────────────────────────────────────────────────────────────
+// ─── Version extensions cell ──────────────────────────────────────────────────
 
-function VersionRow({
-  layerName,
-  version: v,
-  onDelete,
-}: {
-  layerName: string
-  version: LayerVersion
-  onDelete: () => void
-}) {
-  const versionNumber = v.Version ?? 0
+/**
+ * Whether a layer version ships a Lambda extension. Its own component because
+ * the answer comes from a per-version query, and a `ResourceTable` `cell` is a
+ * render function that cannot hold hooks.
+ */
+function VersionExtensions({ layerName, version }: { layerName: string; version: number }) {
   const {
     data: metadata,
-    isLoading: metadataLoading,
-    isError: metadataError,
-  } = useQuery(layerVersionMetadataQueryOptions(layerName, versionNumber))
+    isLoading,
+    isError,
+  } = useQuery(layerVersionMetadataQueryOptions(layerName, version))
+
+  if (isLoading) return <span className="text-sm text-fg-muted">Checking…</span>
+  if (isError) return <Badge variant="warning">Metadata unavailable</Badge>
+  if (!metadata?.hasExternalExtensions) return <span className="text-sm text-fg-muted">—</span>
 
   return (
-    <TableRow>
-      <TableCell>
-        <Badge variant="default">{v.Version}</Badge>
-      </TableCell>
-      <TableCell className="text-fg-muted">{v.LayerVersionArn}</TableCell>
-      <TableCellProse>{v.Description || "—"}</TableCellProse>
-      <TableCell>
-        {(v.CompatibleRuntimes?.length ?? 0) > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {v.CompatibleRuntimes!.map((rt) => (
-              <Badge key={rt} variant="default">
-                {rt}
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          "—"
-        )}
-      </TableCell>
-      <TableCell>
-        {metadataLoading ? (
-          <span className="text-sm text-fg-muted">Checking…</span>
-        ) : metadataError ? (
-          <Badge variant="warning">Metadata unavailable</Badge>
-        ) : metadata?.hasExternalExtensions ? (
-          <div className="flex flex-wrap gap-1">
-            <Badge variant="accent">Lambda extension</Badge>
-            {metadata.externalExtensions.map((name) => (
-              <Badge key={name} variant="outline" className="font-mono">
-                {name}
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <span className="text-sm text-fg-muted">—</span>
-        )}
-      </TableCell>
-      <TableCell className="text-fg-muted">
-        {v.CreatedDate ? new Date(v.CreatedDate).toLocaleString() : "—"}
-      </TableCell>
-      <TableCell>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-danger hover:text-danger"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </TableCell>
-    </TableRow>
-  )
-}
-
-// ─── Attached function row ────────────────────────────────────────────────────
-
-function AttachedFunctionRow({ fn, layerName }: { fn: LambdaFunction; layerName: string }) {
-  const navigate = useNavigate()
-  const matchingLayer = (fn.Layers ?? []).find((l) =>
-    (l.Arn ?? "").includes(`:layer:${layerName}:`),
-  )
-  return (
-    <TableRow
-      className="cursor-pointer"
-      onClick={() => navigate({ to: "/lambda/$name", params: { name: fn.FunctionName ?? "" } })}
-    >
-      <TableCell className="font-medium">{fn.FunctionName}</TableCell>
-      <TableCell className="text-fg-muted">{matchingLayer?.Arn ?? "—"}</TableCell>
-    </TableRow>
+    <div className="flex flex-wrap gap-1">
+      <Badge variant="accent">Lambda extension</Badge>
+      {metadata.externalExtensions.map((name) => (
+        <Badge key={name} variant="outline" className="font-mono">
+          {name}
+        </Badge>
+      ))}
+    </div>
   )
 }
