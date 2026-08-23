@@ -7,7 +7,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ResourceTable } from "@/components/ui/resource-table"
-import { Card, CardContent } from "@/components/ui/card"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { cn } from "@/lib/utils"
 
 interface Props {
@@ -45,33 +45,16 @@ export function ApplicationDetail({ applicationId }: Props) {
       />
 
       {/*
-       * Stays a hand-built grid, not a `ResourceTable`: this is the
-       * application's attribute list — one fixed row per field — not a list of
-       * resources, so it has nothing to sort, hide or page (CONTRIBUTING §
-       * Tables). It is not a `<Table>` either.
+       * A `DefinitionCard`, not a `ResourceTable`: this is the application's
+       * attribute list — one fixed pair per field — not a list of resources, so
+       * it has nothing to sort, hide or page (CONTRIBUTING § Tables).
        */}
-      <Card>
-        <CardContent className="flex flex-col gap-2 text-sm">
-          <div className="flex gap-2">
-            <span className="w-32 text-fg-muted">ID</span>
-            <span className="font-mono text-xs">{app.id}</span>
-          </div>
-          <div className="flex gap-2">
-            <span className="w-32 text-fg-muted">ARN</span>
-            <span className="font-mono text-xs">{app.arn}</span>
-          </div>
-          {app.description && (
-            <div className="flex gap-2">
-              <span className="w-32 text-fg-muted">Description</span>
-              <span>{app.description}</span>
-            </div>
-          )}
-          <div className="flex gap-2">
-            <span className="w-32 text-fg-muted">awsApplication</span>
-            <span className="font-mono text-xs">{app.applicationTag?.awsApplication ?? "—"}</span>
-          </div>
-        </CardContent>
-      </Card>
+      <DefinitionCard>
+        <Definition label="ID" value={app.id} copyable />
+        <Definition label="ARN" value={app.arn} copyable full />
+        <Definition label="Description" value={app.description} variant="prose" />
+        <Definition label="awsApplication" value={app.applicationTag?.awsApplication} />
+      </DefinitionCard>
 
       <h2 className="font-mono text-lg font-medium">Associated resources ({resources.length})</h2>
       <ResourceTable
