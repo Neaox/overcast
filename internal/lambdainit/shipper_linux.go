@@ -103,7 +103,7 @@ func newShipper(hostAddr string, backlogFrames, backlogBytes int, now func() tim
 }
 
 func frameSize(f initproto.Frame) int {
-	return len(f.Msg) + len(f.Req) + len(f.Src) + frameOverheadBytes
+	return len(f.Msg) + len(f.Req) + len(f.Src) + len(f.Rec.Type) + len(f.Rec.Status) + frameOverheadBytes
 }
 
 // publish assigns the next seq to a line and queues it. It never blocks on the
@@ -111,9 +111,24 @@ func frameSize(f initproto.Frame) int {
 func (s *shipper) publish(req, src, msg string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.enqueueLocked(initproto.Frame{Req: req, Src: src, Msg: msg})
+}
 
+// publishRecord queues one platform-telemetry record. It draws its seq from the
+// same counter the lines do, and that is the whole mechanism: where a record
+// sits relative to the output around it is decided once, here, by the process
+// that observed both.
+func (s *shipper) publishRecord(rec initproto.Record) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enqueueLocked(initproto.Frame{Rec: rec})
+}
+
+// enqueueLocked numbers one frame and queues it. Caller must hold mu.
+func (s *shipper) enqueueLocked(f initproto.Frame) uint64 {
 	s.seq++
-	f := initproto.Frame{Seq: s.seq, Req: req, Src: src, T: s.now().UnixMilli(), Msg: msg}
+	f.Seq = s.seq
+	f.T = s.now().UnixMilli()
 	s.backlog = append(s.backlog, f)
 	s.bytes += frameSize(f)
 	s.evict()

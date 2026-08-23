@@ -4,6 +4,7 @@ package lambdainit
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -259,10 +260,16 @@ func TestInitDrainsBeforeForwardingTheResponse(t *testing.T) {
 	assertContiguous(t, frames)
 
 	// The 64 KiB with no newline is one line, assembled across many reads, and
-	// it only becomes a frame when its newline arrives.
-	big := frames[0]
+	// it only becomes a frame when its newline arrives. It is the first line
+	// the runtime wrote, not the first frame on the stream: the INIT phase's
+	// platform records are ahead of it.
+	stdout := framesBySource(frames, initproto.SrcStdout)
+	if len(stdout) == 0 {
+		t.Fatalf("no stdout frames: %v", frameMessages(frames))
+	}
+	big := stdout[0]
 	if len(big.Msg) != bigLineBytes || strings.Trim(big.Msg, "x") != "" {
-		t.Fatalf("first frame is %d bytes of %q…, want %d bytes of x", len(big.Msg), truncate(big.Msg, 8), bigLineBytes)
+		t.Fatalf("first stdout frame is %d bytes of %q…, want %d bytes of x", len(big.Msg), truncate(big.Msg, 8), bigLineBytes)
 	}
 	final := findFrame(t, frames, "final-line")
 	if big.Req != "req-big" || final.Req != "req-big" {
@@ -446,4 +453,144 @@ func seqOf(t *testing.T, header string) uint64 {
 		t.Fatalf("%s = %q: %v", initproto.HeaderLogSeq, header, err)
 	}
 	return n
+}
+
+// ─── the INIT phase's platform records ───────────────────────────────────────
+
+// The init publishes the three platform-telemetry records that describe the
+// INIT phase, and it publishes them *on the frame stream*, which is what makes
+// their position exact rather than raced: platform.initStart before the
+// environment could have printed anything, platform.initRuntimeDone and
+// platform.initReport after all of it and before the GET /next whose
+// X-Overcast-Log-Seq the host waits for. The host therefore has every one of
+// them in hand before it writes the first invocation's START, with no
+// synchronisation beyond the sequence the log lines already rely on.
+func TestInitPublishesTheInitPhaseRecords(t *testing.T) {
+	h := newFakeHost(t)
+	h.enqueue(invocation{id: "req-1", payload: `{"n":1}`, before: func() { h.awaitMessage("init-line") }})
+	h.enqueue(invocation{id: "req-2", payload: `{"n":2}`, before: func() { h.awaitMessage("between-1") }})
+
+	res := runInit(t, h, options{
+		child:   childCmd(),
+		environ: childEnviron("runtime-attribution", ""),
+	})
+	if res.code != 0 {
+		t.Fatalf("exit code = %d, want 0\n%s", res.code, res.diag)
+	}
+
+	h.mustAwaitFrameCount(10) // 7 lines + 3 records
+	frames := h.snapshotFrames()
+	assertContiguous(t, frames)
+
+	records := recordFrames(frames)
+	if len(records) != 3 {
+		t.Fatalf("got %d records, want 3: %v", len(records), recordSummaries(records))
+	}
+	wantTypes := []string{initproto.RecInitStart, initproto.RecInitRuntimeDone, initproto.RecInitReport}
+	for i, want := range wantTypes {
+		if records[i].Rec.Type != want {
+			t.Fatalf("record %d is %q, want %q: %v", i, records[i].Rec.Type, want, recordSummaries(records))
+		}
+		if records[i].Msg != "" || records[i].Src != "" || records[i].Req != "" {
+			t.Errorf("record %d is not a bare record frame: %+v", i, records[i])
+		}
+		if records[i].T == 0 {
+			t.Errorf("record %d has no timestamp", i)
+		}
+	}
+	start, runtimeDone, report := records[0], records[1], records[2]
+
+	if got := runtimeDone.Rec.Status; got != initproto.StatusSuccess {
+		t.Errorf("initRuntimeDone status = %q, want %q", got, initproto.StatusSuccess)
+	}
+	if got := report.Rec.Status; got != initproto.StatusSuccess {
+		t.Errorf("initReport status = %q, want %q", got, initproto.StatusSuccess)
+	}
+	if report.Rec.DurationMs <= 0 {
+		t.Errorf("initReport durationMs = %v, want a positive measurement", report.Rec.DurationMs)
+	}
+	if runtimeDone.Rec.DurationMs != 0 {
+		t.Errorf("initRuntimeDone carries a duration (%v); only initReport does", runtimeDone.Rec.DurationMs)
+	}
+
+	// Position, which is the whole point of shipping these as frames.
+	initLine := findFrame(t, frames, "init-line")
+	firstInvocationLine := findFrame(t, frames, "inv-1-out")
+	if start.Seq >= initLine.Seq {
+		t.Errorf("initStart is seq %d and the INIT phase's own output seq %d — initStart must come first", start.Seq, initLine.Seq)
+	}
+	if runtimeDone.Seq <= initLine.Seq {
+		t.Errorf("initRuntimeDone is seq %d and the INIT phase's output seq %d — the phase closes after its output", runtimeDone.Seq, initLine.Seq)
+	}
+	if report.Seq >= firstInvocationLine.Seq {
+		t.Errorf("initReport is seq %d and the first invocation's output seq %d", report.Seq, firstInvocationLine.Seq)
+	}
+
+	// And the seq the host is told to wait for before it writes the first
+	// START covers all three of them.
+	nextSeqs := h.snapshotNextSeqs()
+	if len(nextSeqs) == 0 {
+		t.Fatal("the host never saw a GET /next")
+	}
+	if got := seqOf(t, nextSeqs[0]); got < report.Seq {
+		t.Errorf("the first /next carried seq %d, but initReport is seq %d — the host would write START before it", got, report.Seq)
+	}
+}
+
+// A runtime that dies before it ever asks for work never finished INIT, and
+// the init says exactly that: the phase is closed with an error status, after
+// whatever the runtime managed to print on its way out. Both records are WARN
+// at AWS's system-log-level mapping, so this is the one init-phase record a
+// default log stream shows.
+func TestInitReportsAFailedInitPhaseWhenTheRuntimeNeverPolls(t *testing.T) {
+	h := newFakeHost(t)
+	res := runInit(t, h, options{
+		child:   childCmd(),
+		environ: childEnviron("print-then-exit", "1"),
+	})
+	if res.code != 1 {
+		t.Fatalf("exit code = %d, want 1 (the child's own)\n%s", res.code, res.diag)
+	}
+
+	h.mustAwaitFrameCount(6) // 3 lines + 3 records
+	frames := h.snapshotFrames()
+	assertContiguous(t, frames)
+
+	records := recordFrames(frames)
+	if len(records) != 3 {
+		t.Fatalf("got %d records, want 3: %v", len(records), recordSummaries(records))
+	}
+	if records[0].Rec.Type != initproto.RecInitStart {
+		t.Fatalf("the first record is %q, want %q", records[0].Rec.Type, initproto.RecInitStart)
+	}
+	for _, f := range records[1:] {
+		if f.Rec.Status != initproto.StatusError {
+			t.Errorf("%s status = %q, want %q", f.Rec.Type, f.Rec.Status, initproto.StatusError)
+		}
+	}
+
+	// The failure is reported after the runtime's dying words, not before.
+	last := findFrame(t, frames, "err-one")
+	if records[1].Seq <= last.Seq {
+		t.Errorf("initRuntimeDone is seq %d and the runtime's last line seq %d", records[1].Seq, last.Seq)
+	}
+}
+
+// recordFrames returns the platform-record frames, in sequence order.
+func recordFrames(frames []initproto.Frame) []initproto.Frame {
+	var out []initproto.Frame
+	for _, f := range frames {
+		if f.Rec.Type != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func recordSummaries(frames []initproto.Frame) []string {
+	out := make([]string, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, fmt.Sprintf("%d:%s:%s:%.3fms", f.Seq, f.Rec.Type, f.Rec.Status, f.Rec.DurationMs))
+	}
+	return out
 }

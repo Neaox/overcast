@@ -3750,6 +3750,11 @@ export const DOCS_NAV = [
         "id": "json"
       },
       {
+        "depth": 4,
+        "text": "The init-phase records",
+        "id": "the-init-phase-records"
+      },
+      {
         "depth": 3,
         "text": "Filtering",
         "id": "filtering"

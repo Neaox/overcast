@@ -70,6 +70,7 @@ type supervisor struct {
 	reaper  *reaper
 	drainer *drainer
 	proxy   *proxy
+	phase   *initPhase
 
 	readerWG   sync.WaitGroup
 	readEnds   []*os.File
@@ -283,6 +284,14 @@ func (s *supervisor) finish() {
 	drainCtx, cancel := context.WithTimeout(context.Background(), drainMax)
 	s.drainer.drain(drainCtx)
 	cancel()
+
+	// A runtime that is gone without ever having polled for work never
+	// finished INIT. Closing the phase here — after the drain, so the records
+	// follow whatever it managed to print on its way out — is what turns a
+	// cold start that died into two WARN-level platform records instead of
+	// silence. It is a no-op on every ordinary exit, where the first /next
+	// closed the phase long ago.
+	s.phase.complete(initproto.StatusError)
 
 	s.stopExtensions()
 

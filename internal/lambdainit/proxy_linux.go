@@ -120,6 +120,14 @@ type proxy struct {
 	rp      *httputil.ReverseProxy
 	srv     *http.Server
 	ln      net.Listener
+
+	// initDone, when set, closes the INIT phase the first time the runtime
+	// polls for work, and reports the seq of the last record it published. It
+	// runs after the drain and before the request is stamped, so the closing
+	// records land at or below the number the host waits for before it writes
+	// the first START — see ServeHTTP. Nil in the proxy's own tests, which are
+	// about forwarding rather than telemetry.
+	initDone func() (uint64, bool)
 }
 
 func newProxy(hostAddr string, tracker *requestTracker, drain func(ctx context.Context) uint64, diag *diagLog) *proxy {
@@ -213,6 +221,16 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		seq := p.drain(ctx)
 		timedOut := ctx.Err() != nil
 		cancel()
+
+		// The first /next is also the end of the INIT phase. Its records are
+		// published here — after the drain, so they follow everything the
+		// phase printed, and before the stamp, so the host has waited for them
+		// by the time it writes the first START.
+		if p.initDone != nil {
+			if recSeq, closed := p.initDone(); closed && recSeq > seq {
+				seq = recSeq
+			}
+		}
 
 		r.Header.Set(initproto.HeaderLogSeq, strconv.FormatUint(seq, 10))
 		if timedOut {

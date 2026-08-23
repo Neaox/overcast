@@ -355,6 +355,17 @@ exports.handler = async () => ({ ok: true });
 			t.Errorf("INFO system level delivered the DEBUG-level platform.runtimeDone:\n%s",
 				strings.Join(messages, "\n"))
 		}
+		// The init-phase records are DEBUG too for an on-demand cold start —
+		// initStart because Overcast never sets runtimeVersion, initReport
+		// because the environment is on-demand — so a default log stream is
+		// complete without them, and lowering the level is what produces them
+		// (TestInvoke_jsonLogFormatInitPhaseRecords).
+		for _, eventType := range []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"} {
+			if containsMessage(messages, isPlatformEvent(eventType)) {
+				t.Errorf("INFO system level delivered the DEBUG-level %s:\n%s",
+					eventType, strings.Join(messages, "\n"))
+			}
+		}
 	})
 
 	t.Run("DEBUG delivers runtimeDone", func(t *testing.T) {

@@ -11,6 +11,9 @@
 // a single long-lived chunked POST to [LogsPath] as newline-delimited [Frame]s.
 // Because the init is the parent, a line is attributed to the invocation that
 // was in flight when the init read it — no clocks and no silence heuristics.
+// The same stream carries the init's platform-telemetry observations ([Record]
+// frames), so where a `platform.initStart` sits relative to the INIT phase's
+// output is a fact about the sequence rather than a race between two channels.
 // See docs/plans/lambda-in-container-init.md.
 package initproto
 
@@ -86,6 +89,65 @@ const (
 	SrcExtensionPrefix = "ext:"
 )
 
+// Platform-telemetry observations the init reports on the frame stream. The
+// names are AWS's Telemetry API event types with the "platform." prefix
+// removed; the host puts it back when it marshals the record, because the host
+// is the side that owns the AWS schema — see [Record].
+const (
+	// RecInitStart is the runtime child being spawned: the INIT phase has
+	// begun. It is published before the child can have written a byte, so it
+	// is the first thing in the stream.
+	RecInitStart = "initStart"
+
+	// RecInitRuntimeDone is the runtime's first GET /next: it has finished
+	// initialising and is asking for work. It is published before that request
+	// is forwarded, so its seq is at or below the one stamped on it — which is
+	// what puts it, and everything the INIT phase printed, ahead of the host's
+	// first START with no further synchronisation.
+	RecInitRuntimeDone = "initRuntimeDone"
+
+	// RecInitReport summarises the phase [RecInitRuntimeDone] closed, and is
+	// the only record that carries [Record.DurationMs]. It is published
+	// immediately after it, in that order, as AWS emits the pair.
+	RecInitReport = "initReport"
+)
+
+// Phase outcomes: the subset of the Telemetry API's Status enum the init can
+// report honestly. The host validates against its own set before marshalling.
+const (
+	// StatusSuccess — the runtime reached its first GET /next.
+	StatusSuccess = "success"
+	// StatusError — the runtime child exited before it ever polled for work,
+	// so the phase this record closes never completed.
+	StatusError = "error"
+)
+
+// Record is a platform-telemetry observation the init made, carried on the
+// frame stream so that it takes its place in the very same sequence as the
+// lines around it. Ordering between a record and the output either side of it
+// therefore needs no synchronisation at all: it is the [Frame.Seq] invariant
+// the log lines already rely on.
+//
+// It is deliberately *not* the AWS event. The init reports what it saw; the
+// host — which knows the function, its version and how the environment was
+// initialised — marshals the Telemetry API record from it. One owner for the
+// AWS schema, and no AWS field names inside the container.
+type Record struct {
+	// Type is which observation this is: [RecInitStart], [RecInitRuntimeDone]
+	// or [RecInitReport]. Empty on an ordinary line frame, which is what tells
+	// the two kinds apart.
+	Type string `json:"type"`
+
+	// Status is the phase's outcome, on the records that carry one:
+	// [StatusSuccess] or [StatusError].
+	Status string `json:"status,omitempty"`
+
+	// DurationMs is how long the phase took, in fractional milliseconds,
+	// measured inside the execution environment — the runtime child being
+	// spawned to its first GET /next. Set on [RecInitReport] only.
+	DurationMs float64 `json:"durationMs,omitempty"`
+}
+
 // ExtensionSrc returns the [Frame.Src] value for an external extension's
 // output.
 func ExtensionSrc(name string) string { return SrcExtensionPrefix + name }
@@ -136,6 +198,20 @@ type Frame struct {
 	// unbroken sequence and learns exactly how much it will never receive.
 	// Zero — and omitted — on every ordinary frame.
 	Gap uint64 `json:"gap,omitempty"`
+
+	// Rec makes this frame a platform-telemetry record rather than a line of
+	// output: [Record.Type] names the observation and Msg is empty. It is
+	// omitted entirely on a line frame, so a line looks on the wire exactly as
+	// it always did.
+	//
+	// Version skew is not something this field has to survive. The host and
+	// the init are compiled into one binary and shipped together — the init is
+	// embedded in the Overcast executable (internal/services/lambda/initbin) —
+	// so a host never meets a frame written by a different initproto than its
+	// own, and there is no compatibility machinery here for that reason. What
+	// the decoder does tolerate is the general case it always has: unknown
+	// members are ignored, absent ones take their zero value.
+	Rec Record `json:"rec,omitzero"`
 }
 
 // Encode writes f to w as one NDJSON line, terminating newline included.

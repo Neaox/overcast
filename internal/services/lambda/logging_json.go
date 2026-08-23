@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Neaox/overcast/internal/services/lambda/initproto"
 )
 
 // Log formats, as modeled by com.amazonaws.lambda#LogFormat.
@@ -49,14 +51,11 @@ const (
 // runs is served by.
 const functionVersionLatest = "$LATEST"
 
-// The init-phase records (platform.initStart, platform.initReport) are not
-// emitted yet. Both need a hook at the moment the runtime first polls /next,
-// which is where Overcast learns that init finished, and both are DEBUG at the
-// default system log level — so their absence is invisible to a caller who has
-// not asked for debug detail, and inventing timings to fill the gap would not
-// be.
-//
-// TODO(priority:P3): emit platform.initStart and platform.initReport records for Lambda cold starts under JSON log format.
+// initPhaseInit is the Telemetry API InitPhase value for an ordinary
+// initialization. The enum's other members describe things Overcast does not
+// do: "invoke" is AWS's suppressed init (initialization code re-run inside an
+// invocation after an error) and "snap-start" is SnapStart's restore.
+const initPhaseInit = "init"
 
 // logLevel is a Lambda log level. The zero value is deliberately the most
 // detailed level so that an unparsed level can never silently filter more than
@@ -134,6 +133,145 @@ type platformEvent struct {
 	Time   string         `json:"time"`
 	Type   string         `json:"type"`
 	Record platformRecord `json:"record"`
+}
+
+// The init-phase records. All three are sourced from the in-container init,
+// which is the only thing that can see either end of the phase honestly: it is
+// PID 1 in the execution environment and the proxy in front of the Runtime API,
+// so it observes the runtime being spawned and the runtime's first GET /next
+// without inferring either. They arrive as initproto.Records on the same
+// seq-ordered frame stream as the container's output — see platformInitRecord
+// and container_logs.go — which is what puts them in the right place in
+// CloudWatch without any synchronisation.
+//
+// Overcast populates the members it genuinely knows and omits the optional ones
+// it does not: runtimeVersion and runtimeVersionArn name a managed runtime
+// build and its regional ARN, neither of which is observable here (and neither
+// of which exists at all for a container-image function), and instanceId /
+// instanceMaxMemory describe an AWS execution environment's identity and
+// instance size. runtimeVersion being absent is also what makes initStart a
+// DEBUG record rather than an INFO one, per AWS's system-log-level event
+// mapping.
+
+// platformInitStartRecord reports that the INIT phase began.
+type platformInitStartRecord struct {
+	InitializationType string `json:"initializationType"`
+	Phase              string `json:"phase"`
+	FunctionName       string `json:"functionName"`
+	FunctionVersion    string `json:"functionVersion"`
+}
+
+func (platformInitStartRecord) eventType() string { return "platform.initStart" }
+
+// systemLogLevel is the "initStart / runtimeVersion is not set" row of AWS's
+// mapping table. Overcast never sets runtimeVersion, so this is never INFO.
+func (platformInitStartRecord) systemLogLevel() logLevel { return logLevelDebug }
+
+// platformInitRuntimeDoneRecord reports that the INIT phase finished — the
+// runtime asked for its first invocation, or died without ever asking.
+type platformInitRuntimeDoneRecord struct {
+	InitializationType string `json:"initializationType"`
+	Phase              string `json:"phase"`
+	Status             string `json:"status"`
+}
+
+func (platformInitRuntimeDoneRecord) eventType() string { return "platform.initRuntimeDone" }
+
+func (r platformInitRuntimeDoneRecord) systemLogLevel() logLevel {
+	if r.Status == invokeStatusSuccess {
+		return logLevelDebug
+	}
+	return logLevelWarn
+}
+
+// initReportMetrics is the Telemetry API InitReportMetrics object.
+type initReportMetrics struct {
+	DurationMs float64 `json:"durationMs"`
+}
+
+// platformInitReportRecord is the summary of the INIT phase.
+//
+// Its durationMs is measured inside the execution environment: from the init
+// starting the phase — before it spawns the extensions or the runtime — to the
+// runtime's first GET /next, as the init observes it. That is a different span
+// from the Init Duration on the text REPORT line and in platform.report's
+// metrics.initDurationMs, which the host measures from its own StartContainer
+// call returning to its own handling of that same /next. They differ by a few
+// milliseconds, usually with this one the larger, because the container is
+// already running by the time the Docker API answers.
+//
+// It is measured here rather than reused from the host's pair for two reasons:
+// a proactively initialized environment records no Init Duration at all (see
+// takeInitDuration) and would otherwise have nothing to report, and the record
+// arrives on a stream that races the host's own bookkeeping of the first /next,
+// so a value read at ingest would not be deterministic.
+type platformInitReportRecord struct {
+	InitializationType string            `json:"initializationType"`
+	Phase              string            `json:"phase"`
+	Status             string            `json:"status"`
+	Metrics            initReportMetrics `json:"metrics"`
+}
+
+func (platformInitReportRecord) eventType() string { return "platform.initReport" }
+
+// systemLogLevel is the three "initReport" rows of AWS's mapping table, in the
+// order they resolve: a failed phase is WARN whatever initialized it, a
+// provisioned environment's report is INFO, and an on-demand one's is DEBUG.
+func (r platformInitReportRecord) systemLogLevel() logLevel {
+	switch {
+	case r.Status != invokeStatusSuccess:
+		return logLevelWarn
+	case r.InitializationType != initTypeOnDemand:
+		return logLevelInfo
+	default:
+		return logLevelDebug
+	}
+}
+
+// platformInitRecord turns one observation the init reported into the Telemetry
+// API record for it, filling in what only the host knows: the function it is,
+// the version it serves and how its execution environment was initialized. It
+// reports false for a record type or status this build does not recognise,
+// which cannot happen — host and init are compiled together — but is not worth
+// answering with an invented record if it ever does.
+func platformInitRecord(rec initproto.Record, functionName, initType string) (platformRecord, bool) {
+	var status string
+	switch rec.Status {
+	case initproto.StatusSuccess:
+		status = invokeStatusSuccess
+	case initproto.StatusError:
+		status = invokeStatusError
+	}
+	switch rec.Type {
+	case initproto.RecInitStart:
+		return platformInitStartRecord{
+			InitializationType: initType,
+			Phase:              initPhaseInit,
+			FunctionName:       functionName,
+			FunctionVersion:    functionVersionLatest,
+		}, true
+	case initproto.RecInitRuntimeDone:
+		if status == "" {
+			return nil, false
+		}
+		return platformInitRuntimeDoneRecord{
+			InitializationType: initType,
+			Phase:              initPhaseInit,
+			Status:             status,
+		}, true
+	case initproto.RecInitReport:
+		if status == "" {
+			return nil, false
+		}
+		return platformInitReportRecord{
+			InitializationType: initType,
+			Phase:              initPhaseInit,
+			Status:             status,
+			Metrics:            initReportMetrics{DurationMs: rec.DurationMs},
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 // platformStartRecord reports that an invocation began. It replaces the plain
@@ -231,18 +369,33 @@ func renderPlatformEvent(now time.Time, rec platformRecord) string {
 // JSON mode. An empty textLine means the record has no plain-text counterpart
 // and is skipped entirely in Text mode.
 //
-// SystemLogLevel filters the CloudWatch and tail copies only; subscribers see
-// every record either way.
+// Telemetry/Logs API subscribers get the JSON event whichever format is
+// configured, and get it unfiltered: "the Telemetry API always emits platform
+// events such as START and REPORT in JSON format. Configuring the format of the
+// system logs Lambda sends to CloudWatch doesn't affect Lambda Telemetry API
+// behavior", and the same page says the same of the level. SystemLogLevel
+// therefore filters the CloudWatch and tail copies only.
 func (ci *containerInstance) emitPlatformRecord(requestID, textLine string, rec platformRecord) {
+	var event string
 	line, deliver := textLine, true
-	if ci.logFormat == logFormatJSON {
-		line = renderPlatformEvent(ci.clk.Now(), rec)
+	switch {
+	case ci.logFormat == logFormatJSON:
+		event = renderPlatformEvent(ci.clk.Now(), rec)
+		line = event
 		deliver = rec.systemLogLevel() >= ci.sysLogLevel
+	case ci.hasPlatformSubscribers():
+		// Text mode: CloudWatch gets the plain-text line, but a subscriber
+		// still gets the JSON event. Marshalled only when there is somebody to
+		// send it to, because this runs three times per invocation on the warm
+		// path and almost nothing subscribes.
+		event = renderPlatformEvent(ci.clk.Now(), rec)
+	}
+	if event != "" {
+		ci.publishPlatformRecord(event)
 	}
 	if line == "" {
 		return
 	}
-	ci.publishRuntimeLog("platform", line)
 	if deliver {
 		// Into the invocation's own buffer: the tail for a request is START,
 		// its lines, END, REPORT, and nothing else — which is only true because
