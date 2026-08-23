@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { cloudfrontMonitoringSubscriptionQueryOptions } from "@/features/cloudfront/data"
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 
@@ -20,21 +20,17 @@ export function MonitoringSubscriptionPanel({ distributionId }: { distributionId
   const status = data.realtimeMetricsSubscriptionStatus
   const isEnabled = status === "Enabled"
 
-  // ResourceTable didn't fit because there is no list here: GetMonitoringSubscription
-  // returns a single setting, and this renders it as one fixed label/value row.
+  // Neither table fits, because there is no list here: GetMonitoringSubscription
+  // returns a single setting, and this renders it as one fixed label/value pair.
   // Nothing to sort, hide, click or delete. See CONTRIBUTING § Tables.
   return (
-    <div className="rounded-md border border-border">
-      <Table>
-        <TableBody>
-          <TableRow>
-            <TableCell className="w-64 font-medium">Realtime Metrics Subscription</TableCell>
-            <TableCell>
-              <Badge variant={isEnabled ? "success" : "default"}>{status}</Badge>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    // Stacked rather than the default: the one label here is three words long,
+    // and a 7rem label column would wrap it beside a one-word badge.
+    <DefinitionList layout="stacked" className="rounded-md border border-border p-4">
+      <Definition
+        label="Realtime Metrics Subscription"
+        value={<Badge variant={isEnabled ? "success" : "default"}>{status}</Badge>}
+      />
+    </DefinitionList>
   )
 }

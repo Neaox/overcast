@@ -13,7 +13,7 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableCellProse, TableRow } from "@/components/ui/table"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ResourceTable } from "@/components/ui/resource-table"
 import {
   Dialog,
@@ -104,55 +104,36 @@ export function DistributionDetail() {
 
         {/* ── Config tab ── */}
         <TabPanel id="config">
-          {/* ResourceTable didn't fit because this is not a resource list: it is a
-              fixed label/value grid of one distribution's attributes, with no rows
-              to sort, hide or act on. See CONTRIBUTING § Tables. */}
-          <div className="rounded-md border border-border">
-            <Table>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="w-48 font-medium">Distribution ID</TableCell>
-                  <TableCell>{dist.id}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium">ARN</TableCell>
-                  <TableCell className="text-fg-muted">{dist.arn}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium">Domain Name</TableCell>
-                  <TableCell>{dist.domainName}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium">Comment</TableCell>
-                  <TableCellProse>{dist.comment || "—"}</TableCellProse>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium">Default Root Object</TableCell>
-                  <TableCell>{dist.defaultRootObject || "—"}</TableCell>
-                </TableRow>
-                {dist.aliases.length > 0 && (
-                  <TableRow>
-                    <TableCell className="font-medium">Aliases</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {dist.aliases.map((a) => (
-                          <Badge key={a} variant="default">
-                            {a}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
-                <TableRow>
-                  <TableCell className="font-medium">Last Modified</TableCell>
-                  <TableCell className="text-fg-muted">
-                    {dist.lastModifiedTime ? new Date(dist.lastModifiedTime).toLocaleString() : "—"}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
+          {/* Neither table fits because this is not a resource list: it is a fixed
+              label/value grid of one distribution's attributes, with no rows to
+              sort, hide or act on. See CONTRIBUTING § Tables. */}
+          <DefinitionList className="rounded-md border border-border p-4">
+            <Definition label="Distribution ID" value={dist.id} copyable />
+            <Definition label="Domain Name" value={dist.domainName} copyable />
+            <Definition
+              label="Last Modified"
+              value={
+                dist.lastModifiedTime ? new Date(dist.lastModifiedTime).toLocaleString() : undefined
+              }
+            />
+            <Definition label="Default Root Object" value={dist.defaultRootObject} />
+            <Definition
+              label="Aliases"
+              value={
+                dist.aliases.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {dist.aliases.map((a) => (
+                      <Badge key={a} variant="default">
+                        {a}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : undefined
+              }
+            />
+            <Definition label="Comment" value={dist.comment} variant="prose" />
+            <Definition label="ARN" value={dist.arn} copyable full />
+          </DefinitionList>
         </TabPanel>
 
         {/* ── Origins tab ── */}

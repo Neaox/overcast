@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ResourceTable } from "@/components/ui/resource-table"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { DockerBanner } from "@/components/docker-banner"
@@ -841,34 +842,25 @@ function ServiceDetailPanel({
       {primary && (
         <div>
           <h4 className={cn(fieldLabel, "mb-1.5 text-fg")}>Primary deployment</h4>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-            <div>
-              <dt className="text-xs text-fg-muted">Rollout</dt>
-              <dd>
-                {primary.rolloutState ? (
+          {/* Stacked, because four short counts read as a row of stats rather
+              than a run of label/value pairs. */}
+          <DefinitionList columns={4} layout="stacked" className="gap-y-1">
+            <Definition
+              label="Rollout"
+              value={
+                primary.rolloutState ? (
                   <RolloutStateBadge state={primary.rolloutState} />
-                ) : (
-                  <span className="text-fg-muted">—</span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-fg-muted">Running</dt>
-              <dd className="text-fg">
-                {primary.runningCount}/{primary.desiredCount}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-fg-muted">Pending</dt>
-              <dd className="text-fg">{primary.pendingCount}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-fg-muted">Failed tasks</dt>
-              <dd className={cn(primary.failedTasks ? "text-danger" : "text-fg")}>
-                {primary.failedTasks ?? 0}
-              </dd>
-            </div>
-          </dl>
+                ) : undefined
+              }
+            />
+            <Definition label="Running" value={`${primary.runningCount}/${primary.desiredCount}`} />
+            <Definition label="Pending" value={primary.pendingCount} />
+            <Definition
+              label="Failed tasks"
+              value={primary.failedTasks ?? 0}
+              valueClassName={cn(primary.failedTasks && "text-danger")}
+            />
+          </DefinitionList>
           {primary.rolloutStateReason && (
             <p className="mt-1.5 text-xs text-fg-muted">{primary.rolloutStateReason}</p>
           )}

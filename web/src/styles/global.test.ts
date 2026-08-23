@@ -303,15 +303,26 @@ describe("DRY-refactor ratchets (docs/plans/web-ui-dry-refactor.md §7)", () => 
     )
   })
 
-  it("does not grow the number of local DetailRow/InfoRow/MetaRow definitions", () => {
-    // Directly mirrors the classnames/no-local-detail-row eslint rule; kept
-    // here too because a ratchet names the exact remaining file, not just "a
-    // file somewhere".
+  it("has no local DetailRow/InfoRow/MetaRow definitions left", () => {
+    // Directly mirrors the classnames/no-local-detail-row rule; kept here too
+    // because a ratchet names the exact remaining file, not just "a file
+    // somewhere". P1 (#1101) took the last one — Cognito's — to zero, so this
+    // is a hard zero now rather than a ceiling.
     const hits = patternHits(/\bfunction\s+(?:DetailRow|InfoRow|MetaRow)\b/g, "src/features")
-    expect(
-      hits.length,
-      `local DetailRow/InfoRow/MetaRow definitions:\n${hits.join("\n")}`,
-    ).toBeLessThanOrEqual(1)
+    expect(hits.length, `local DetailRow/InfoRow/MetaRow definitions:\n${hits.join("\n")}`).toBe(0)
+  })
+
+  it("does not grow the number of hand-rolled definition lists in features/**", () => {
+    // The `no-local-detail-row` rule only matches three component *names*, so it
+    // never saw `waf/web-acl-detail`'s `Info` or `ecs/cluster-detail`'s inline
+    // `<dl>`. A `<dt>` written by hand is the shape-level tell, and after P1
+    // (#1101) exactly one is deliberate: `cloudformation/stack-diagnostics`'
+    // `FactsBody`, a max-content diagnostics dump rather than an attribute grid.
+    // Everything else renders through `components/ui/definition-card.tsx`.
+    // Tests are excluded: a page test asserting the shared component's markup
+    // legitimately names the element it expects.
+    const hits = patternHits(/<dt[\s>]/g, "src/features", (file) => file.includes(".test."))
+    expect(hits.length, `hand-rolled <dt> elements:\n${hits.join("\n")}`).toBeLessThanOrEqual(1)
   })
 
   it("does not grow the raw useMutation( count in features/**", () => {

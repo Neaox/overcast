@@ -61,16 +61,29 @@
 > paging), its Key Schema grid, and `rds/instance-detail`'s Events feed (needs a per-row tone
 > `ResourceTable` does not have) stay bespoke with the reason at the call site. None of the other scaffold
 > components exist yet —
-> no `detail-fields.tsx`, `status-badge.tsx`, `resource-detail-page.tsx`,
+> no `status-badge.tsx`, `resource-detail-page.tsx`,
 > `timestamp.tsx`, `resource-form-dialog.tsx`, `use-resource-filter.ts`, `SectionHeading`, or
-> `Tab asChild` — so P1–P2, P4–P6, P8, P10–P13 remain to do. **2026-08-23 (#1201):** the §6 dead-code
+> `Tab asChild` — so P2, P4–P6, P8, P10–P13 remain to do. **2026-08-23 (#1101, P1):** P1 is
+> substantially landed. Its component turned out to already exist as
+> `components/ui/definition-card.tsx` (`DefinitionCard`/`DefinitionList`/`Definition`, built in
+> #362), so P1 became adoption rather than construction: those names are P1 — no `DetailField`
+> alias — the component gained `copyable` over P7's clipboard kernel, and the five attribute grids
+> the #1327 waves had left bespoke (`applications/application-detail`,
+> `cloudfront/distribution-detail`'s Configuration tab, `cloudfront/monitoring-subscription-panel`,
+> `ecs/cluster-detail`'s primary-deployment `<dl>`, `waf/web-acl-detail`'s local `Info`) now render
+> through it, as does Cognito's — whose `DetailRow` was the last local detail-row definition in the
+> tree, and whose deletion takes that ratchet to a hard zero. See P1 for the decision, the
+> conversion list, and the grids deliberately left alone (API Gateway's stat tiles, Cognito's
+> editable attribute form, `stack-diagnostics`' facts dump, `https-section`'s `StatusRow`).
+> CONTRIBUTING § "Attribute grids" now states the rule alongside § Tables. Nothing on P1 is owed. **2026-08-23 (#1201):** the §6 dead-code
 > follow-ups from the #1200 waves are resolved — `Separator` (0 users) is deleted; `TableEmpty` and
 > the `Card` subcomponents turned out to have gained real callers since the original audit (see §6)
 > and are kept; `RowAction`'s `tone="neutral"` is confirmed to be the default rather than an explicit
 > literal anyone passes. All six §7 eslint guardrail rules
 > (`no-local-detail-row`, `prefer-button-busy`, `no-raw-spinner-in-content`, `prefer-shared-formatter`,
-> `prefer-use-resource-mutation`, `no-duplicate-class-cluster`) and all five `global.test.ts` count
-> ratchets (`<Spinner>`, `disabled={…isPending}`, local `DetailRow`, raw `useMutation(`, `<Loader2`)
+> `prefer-use-resource-mutation`, `no-duplicate-class-cluster`) and all five original `global.test.ts` count
+> ratchets (`<Spinner>`, `disabled={…isPending}`, local `DetailRow`, raw `useMutation(`, `<Loader2`,
+> and since #1101 hand-written `<dt>`)
 > are landed — see §7 for baselines. **2026-08-23 (#1202):** §4 items 1, 2, 4, 5, 6 (EC2 colours,
 > `RawStateLink`, detail-field typography, `SectionLabel`, copy confirmation) are decided — see each
 > item's **Decided** paragraph. Companion to
@@ -181,14 +194,15 @@ All 25 `features/**/*-detail.tsx`. The shape is remarkably uniform:
 | `flex w-full flex-col gap-4` root | 22 |
 | Hand-rolled `if (isLoading) return <div …><Spinner/></div>` | 15 |
 | Hand-rolled "not found" empty state | 7 |
-| A key/value grid (`grid-cols-2 gap-x-8 …` + local `DetailRow`) | 13 |
+| A key/value grid (`grid-cols-2 gap-x-8 …` + local `DetailRow`) | 13 at audit; **0 hand-rolled after P1** — every one renders through `Definition`, and no local `DetailRow`/`InfoRow`/`MetaRow` definition survives anywhere in `features/**` |
 | A tab strip | 13 |
 | One or more sub-tables | 20 |
 | `<ConfirmDialog>` for a destructive action | 12 |
 
 There is **no shared detail scaffold at all**, which is exactly why the two systemic defects live
 here: 205 `<Spinner>` sites across 88 files, and 14 hand-rolled `DetailRow`/`InfoRow`/`MetaRow`
-definitions.
+definitions. (The detail-row half is resolved by P1 — one local definition survives, and it is
+fenced behind an open PR.)
 
 **What legitimately varies:** the fields, the tabs, the sub-tables, the action cluster, whether the
 page is single-resource or a dashboard over several.
@@ -211,12 +225,12 @@ export function KmsKeyDetail({ keyId }: { keyId: string }) {
       actions={(k) => <><RefreshAction …/><KmsStateActions k={k} /></>}
     >
       {(k) => (
-        <DetailFields>
-          <DetailField label="Key ID" value={k.metadata?.KeyId} mono />
-          <DetailField label="ARN" value={<ArnText arn={k.metadata?.Arn} />} copyable />
-          <DetailField label="State" value={<StatusBadge status={k.metadata?.KeyState} />} />
-          <DetailField label="Created" value={<Timestamp value={k.metadata?.CreationDate} />} />
-        </DetailFields>
+        <DefinitionCard>
+          <Definition label="Key ID" value={k.metadata?.KeyId} copyable />
+          <Definition label="ARN" value={<ArnText arn={k.metadata?.Arn} />} copyable={k.metadata?.Arn} />
+          <Definition label="State" value={<StatusBadge status={k.metadata?.KeyState} />} />
+          <Definition label="Created" value={<Timestamp value={k.metadata?.CreationDate} />} />
+        </DefinitionCard>
       )}
     </ResourceDetailPage>
   )
@@ -331,7 +345,7 @@ judgement as the pin-to-bottom logic above, recorded in the effect's comment.
    AGENTS.md pattern). Do not abstract further.
 3. `features/<svc>/components/<svc>-list.tsx` — `<ResourceListPage>` + `<ResourceTable columns>`.
    **~45 lines.**
-4. `features/<svc>/components/<svc>-detail.tsx` — `<ResourceDetailPage>` + `<DetailFields>`.
+4. `features/<svc>/components/<svc>-detail.tsx` — `<ResourceDetailPage>` + `<DefinitionCard>`.
    **~60 lines.**
 5. `features/<svc>/components/create-<svc>-dialog.tsx` — `<ResourceFormDialog>` + a zod schema.
    **~30 lines.**
@@ -345,28 +359,93 @@ judgement as the pin-to-bottom logic above, recorded in the effect's comment.
 
 Ranked by (call sites collapsed × risk reduced) ÷ effort, with unblocking weighted up.
 
-### P1 — `DetailField` / `DetailFields` — **S** — unblocks B1, B2
+### P1 — the shared definition table — **S** — unblocks B1, B2 — **substantially landed 2026-08-23**
 
-- **Collapses:** 14 local component definitions and ~180 call sites.
-- **Files:** `cloudformation/stack-detail.tsx:570`, `cognito/cognito-pool-detail.tsx:2170`,
-  `ec2/instance-detail.tsx:490`, `ec2/vpc-detail.tsx:799`, `ecs/task-detail.tsx:178`,
-  `eventbridge/event-bus-detail.tsx:168`, `kms/kms-key-detail.tsx:181`, `rds/instance-detail.tsx:323`,
-  `secretsmanager/components/secret-detail.tsx:274`, `ssm/ssm-parameter-detail.tsx:274`,
-  `sts/sts-page.tsx:75`, plus two `MetaRow`s the wave-2 list missed
-  (`mail/message-detail.tsx:222`, `s3/components/object-preview-dialog.tsx:141`) and the inline
-  `<div className="flex flex-col gap-0.5">` blocks that bypass even the local component
-  (`kms-key-detail.tsx:134`, `ec2/instance-detail.tsx:136`).
-- **API:**
-  ```tsx
-  <DetailFields columns={2 | 3}>                       // owns grid-cols-2 gap-x-8 gap-y-3 md:grid-cols-3
-    <DetailField label="ARN" value={…} mono copyable /> // label = FieldLabel spec; value mono by default
-  </DetailFields>
-  ```
-- **Why first:** it is the smallest change with the widest reach, it makes the typography spec
-  inheritable (today the label is `text-xs text-fg-muted` in 12 places, never the `fieldLabel`
-  spec), and `ResourceDetailPage` (P2) wants it as a child.
-- **Note:** `FieldLabel` already exists in `primitives.tsx:14` with the right 9px/.14em spec and has
-  **zero** external users. `DetailField` should be built on it, not beside it.
+**The component is `components/ui/definition-card.tsx`, and its names are `DefinitionCard` /
+`DefinitionList` / `Definition`.** This section originally specified a `DetailFields`/`DetailField`
+pair "to be built on `FieldLabel`". It was already built, under a different name, in #362 — same
+contract, same reasons: the label in the `fieldLabel` spec from `lib/typography.ts` (so a
+detail-page label and a column header read alike), the value **mono by default** with
+`variant="prose"` as the marked exception, absence rendering as an em dash, and a container-query
+grid (1 → 2 → 3 columns at `@3xl`/`@5xl`) so the shape follows the card rather than the viewport.
+
+**Decision: adopt those names; do not alias.** Introducing `DetailFields`/`DetailField` as thin
+wrappers would create exactly the second name for one idea that this plan exists to remove, and
+would have to be threaded through 24 files that already import the originals. One component, one
+name. The plan's original API sketch is superseded by:
+
+```tsx
+<DefinitionCard>                                       {/* or <DefinitionList> when not in a card */}
+  <Definition label="ARN" value={…} copyable full />    {/* label = fieldLabel spec; value mono */}
+  <Definition label="Comment" value={…} variant="prose" />
+</DefinitionCard>
+```
+
+On `FieldLabel` (`primitives.tsx:14`, still zero users): the single source of truth is the
+`fieldLabel` *token*, which both `FieldLabel` and `Definition` consume. `Definition` cannot render
+`FieldLabel` itself — a definition list's label has to be a `<dt>`, and `FieldLabel` is a `<span>` —
+so the token, not the component, is what makes the spec inheritable. `FieldLabel`'s own fate stays a
+§6 dead-code question, not a P1 blocker.
+
+**Added in this change** (the one gap between the built component and this section's spec):
+`copyable`, on `Definition`. It puts the shared inline `CopyButton` (P7's kernel) beside the value
+and names it after the label, lowercasing every non-acronym word so the toast reads "Copied domain
+name" and "Copied ARN" rather than title case. `copyable={text}` supplies the clipboard text when
+the value is a node (an `<ArnText>`, a badge). An absent value never gets a control — the em dash is
+not the value.
+
+**Converted (this change):** `applications/application-detail` (attribute card, and the em-dashed
+Description row now stays visible when unset instead of vanishing), `cloudfront/distribution-detail`
+(the Configuration tab, off a two-column `<Table>`), `cloudfront/monitoring-subscription-panel`
+(likewise), `ecs/cluster-detail` (the primary-deployment `<dl>`, the last hand-rolled `<dt>` on a
+detail page), and `waf/web-acl-detail` (its local `Info` tile component — a 14th local detail-row
+definition that `no-local-detail-row` never saw, because the rule matches only the three names
+`DetailRow|InfoRow|MetaRow`; deleted here, and widening the rule is a §7 follow-up).
+
+**Already converted before this change**, by the #1200/#1327 waves and earlier: `cloudformation/
+stack-detail`, `dynamodb/table-detail`, `ec2/instance-detail`, `ec2/vpc-detail`, `ecs/task-detail`,
+`eventbridge/event-bus-detail`, `kms/kms-key-detail`, `lambda/configuration-tab`,
+`lambda/function-overview`, `mail/message-detail`, `pipes/pipe-detail`, `rds/instance-detail`,
+`s3/config-section`, `s3/object-preview-dialog`, `secretsmanager/secret-detail`,
+`secretsmanager/secret-rotation-card`, `sqs/queue-detail`, `ssm/ssm-parameter-detail`,
+`sts/sts-page`. Every `<div className="flex flex-col gap-0.5">` block this section named is gone;
+`grep '<dt' src` outside `definition-card.tsx` now returns one file (see below).
+
+**Second pass — done in the same change, once #1377 merged mid-flight:**
+`cognito/cognito-pool-detail`'s local `DetailRow` was `Definition` plus a hand-rolled copy button,
+so `copyable` made it redundant: 17 call sites became `Definition` and the wrapper is deleted. That
+is the **last** `no-local-detail-row` hit, and `global.test.ts`'s ratchet on those three names is now
+a hard `expect(0)` rather than a ceiling. API Gateway's two summary grids
+(`http-api-detail`, `rest-api-detail`) keep their tile layout — see below — but their eight labels
+now take the shared `fieldLabel` token instead of restating `font-mono text-xs text-fg-muted`.
+
+Nothing is owed on P1 after this. The remaining bespoke `<Table>`s in the wave PRs still open
+(#1380, #1381, #1388) are resource lists, which is #1327's scope, not this one's — no attribute grid
+is fenced behind them.
+
+**Deliberately not converted**, with reasons, so the next reader can tell a decision from an
+oversight:
+
+- API Gateway's four-up summary tiles on `http-api-detail` and `rest-api-detail`. They are **stat
+  tiles**, not an attribute grid: the resource and stage counts are drawn at `text-2xl`, which is the
+  point of the tile, and `Definition` would flatten them to a 12px mono value. Only the label token
+  moved. A shared stat tile is a separate extraction (`metrics/stat-pill` is the nearest existing
+  one) and belongs to whoever takes it, not to P1.
+- `cognito`'s user *attribute* grid — editable name/value rows, so it is a form, not a definition
+  list; #1327's wave notes reached the same conclusion for the same reason.
+- `cloudformation/stack-diagnostics`'s `FactsBody` — a `grid-cols-[max-content_1fr]` dump whose
+  labels legitimately repeat within one section. It is dense diagnostic output, not a detail page's
+  attribute grid, and its `max-content` label column is the point.
+- `settings/https-section`'s `StatusRow` — a `justify-between` row with the control right-aligned.
+  That is a settings affordance, not a label/value pair; `Definition` would pull the control back
+  against the label.
+- DynamoDB's Key Schema grid, which #1327's wave notes list here: it is a genuine three-column
+  table (attribute × key type × data type) over a list of key attributes, so it belongs to #1327,
+  not to P1.
+
+**Guardrail:** `distribution-detail.test.tsx` now asserts the Configuration tab renders `<dt>`s in
+the `fieldLabel` spec with mono `<dd>`s and named copy controls — a page-level test, so hand-rolling
+the grid back into the page fails CI rather than only lint-warning.
 
 ### P2 — `ResourceDetailPage` — **M** — depends on P1; unblocks P4
 
@@ -530,7 +609,8 @@ at all when Overcast was served over plain HTTP from anything other than `localh
   envelope is built by one `eventEnvelope()` helper shared with the expanded view, so what is
   copied is exactly what was on screen.
 - **Still unblocks** the wave-2 "copy-to-clipboard on identifiers" QoL item and P1's `copyable`
-  prop; `DetailField` and `ArnText` should use `<CopyButton>` when they land.
+  prop; `ArnText` should use `<CopyButton>` too. **Done for P1 (2026-08-23):** `Definition`'s
+  `copyable` renders `<CopyButton tone="inline">` and derives its noun from the label.
 
 ### P8 — Adopt `useResourceMutation` in the 21 files that bypass it — **M** — depends on nothing
 
@@ -633,7 +713,8 @@ touch the same glob.
 
 ```
 Wave 0 (all parallel — new files only, no call-site edits)
-  ├── A: create components/ui/detail-fields.tsx        (P1)   owns: components/ui/detail-fields.tsx
+  ├── A: DONE (#1101) — components/ui/definition-card.tsx already was P1; it gained
+  │      `copyable`, and the last five hand-rolled attribute grids were converted
   ├── B: DONE (#1200) — components/ui/resource-table.tsx (P3), plus a `description`
   │      passthrough on `ResourceListPage`
   ├── C: create components/ui/status-badge.tsx         (P6)   owns: components/ui/status-badge.tsx
@@ -730,7 +811,8 @@ Wave 4
    **Decided 2026-08-23:** mono by default, `variant="prose"` escape hatch — identical to
    `TableCell`/`TableCellProse`. Already `DefinitionCard`'s contract
    (`components/ui/definition-card.tsx`); P1's `DetailField` adopts the same spec (or `DefinitionCard`
-   *is* P1 — the implementer decides, one primitive survives). A detail page's values are machine
+   *is* P1 — the implementer decides, one primitive survives). **Settled 2026-08-23 by P1:
+   `DefinitionCard` *is* P1**; there is no `DetailField`. A detail page's values are machine
    output — ARNs, ids, timestamps, counts, sizes — which mono aligns and makes diffable, and the same
    value must read the same in the list cell and on the detail page. Prose (a description someone
    typed) is the marked exception; the ~30 description fields that flip take `variant="prose"` in the
@@ -799,7 +881,7 @@ Wave 4
   the local timestamp formatter from them (P10) and nothing else.**
 
 - **`sts/sts-page.tsx` (90 lines).** A single read-only identity card, no list, no table, no
-  mutation. It should adopt `DetailField` and stop there.
+  mutation. It should adopt `Definition` and stop there. **Done** — it has since.
 
 - **The per-service create *forms*.** P5 extracts the dialog frame and the submit/busy/keyboard
   contract. It must **not** try to generate the fields — `cognito/create-pool-dialog.tsx`,
@@ -829,7 +911,7 @@ build a parallel one.
 | Symbol | Location | External users |
 | --- | --- | --- |
 | ~~`Separator`~~ | ~~`ui/primitives.tsx:203`~~ | deleted (#1201) — 0 users, confirmed by grep across `src/` |
-| `FieldLabel` | `ui/primitives.tsx:14` | 0 — **but P1 should adopt it rather than delete it** |
+| `FieldLabel` | `ui/primitives.tsx:14` | 0 — still. **P1 (#1101) resolved this differently:** `Definition`'s label must be a `<dt>`, and `FieldLabel` is a `<span>`, so the *token* `fieldLabel` in `lib/typography.ts` is what both consume and what makes the spec inheritable. The wrapper component itself remains unused; deleting it is a separate call. |
 | `SectionLabel` | `ui/primitives.tsx:23` | 0 — see decision 5 |
 | `TableEmpty` | `ui/table.tsx:96` | **1 (#1201 re-check)** — `rds/components/instance-detail.tsx`. No longer dead; kept. |
 | `CardHeader`, `CardTitle`, `CardDescription`, `CardFooter` | `ui/card.tsx` | **3 files (#1201 re-check)** — `ui/definition-card.tsx`, `autoscaling/group-list.tsx`, `settings/settings-page.tsx`. No longer dead; kept. |
@@ -858,7 +940,13 @@ original six, which don't have one either:
 
 - **`no-local-detail-row`** — flags a local `function DetailRow|InfoRow|MetaRow` (function
   declaration or `const` arrow) in `src/features/**`. **1 real hit**: `cognito-pool-detail.tsx`'s
-  `DetailRow`.
+  `DetailRow`. **Zero after P1 (#1101)** — Cognito's was `Definition` plus a hand-rolled copy
+  button, which `copyable` made redundant, so it is deleted and the matching ratchet is a hard
+  `expect(0)`. **P1 also found the rule's blind spot:** it matches three component *names*, so
+  `waf/web-acl-detail`'s `Info` — the same pattern, a 14th local definition — never tripped it, and
+  neither does an inline `<dl>`. P1 covers the shape instead with a new `global.test.ts` ratchet on
+  hand-written `<dt>` elements (see below). Widening the rule's name list, or flipping it to
+  `error` now that it has no hits, is a cheap follow-up.
 - **`prefer-button-busy`** — flags a JSX `<Button>` whose `disabled` expression mentions `isPending`
   or whose children contain `<Spinner>`. **132 real hits.**
 - **`no-raw-spinner-in-content`** — flags `<Spinner>` not inside a `<Button>`, `<Badge>`, or a
@@ -909,6 +997,12 @@ numbers moved in both directions as #1200 landed and other work continued in par
   site, and P4 hasn't landed — this ceiling holds today's count and should drop to a true
   `expect(0)` once P4 does.
 
+**2026-08-23 (#1101, P1):** a sixth ratchet — hand-written `<dt>` elements in `src/features/**`
+≤ **1**. It is the shape-level counterpart to `no-local-detail-row`'s name-level check, and the one
+permitted hit is `cloudformation/stack-diagnostics`' `FactsBody`, named in the test's comment.
+Test files are excluded: a page test asserting the shared component's markup legitimately names the
+element it expects.
+
 A ratchet test is strictly better than a lint rule for the migration period: it permits the existing
 sites, forbids new ones, and its failure message names the file+line that grew the count.
 
@@ -917,7 +1011,7 @@ sites, forbids new ones, and its failure message names the file+line that grew t
 Add to `web/AGENTS.md`, under "Component conventions":
 
 > Before writing a page, check `components/ui/` for a scaffold. A list page is
-> `ResourceListPage` + `ResourceTable`; a detail page is `ResourceDetailPage` + `DetailFields`; a
+> `ResourceListPage` + `ResourceTable`; a detail page is `ResourceDetailPage` + `DefinitionCard`; a
 > create flow is `ResourceFormDialog`. If a scaffold nearly fits, extend the scaffold — do not fork
 > it into `features/`. A component defined inside a `features/` file must be specific to that
 > service; anything a second service would want belongs in `components/ui/`.

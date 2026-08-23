@@ -477,19 +477,19 @@ export function RestApiDetail({ apiId }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">API ID</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>API ID</div>
           <div className="mt-1 font-mono text-sm">{api.id}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Resources</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Resources</div>
           <div className="mt-1 text-2xl font-semibold">{resources.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Stages</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Stages</div>
           <div className="mt-1 text-2xl font-semibold">{stages.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Created</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Created</div>
           <div className="mt-1 text-sm">{formatDate(api.createdDate)}</div>
         </div>
       </div>

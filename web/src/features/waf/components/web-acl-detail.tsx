@@ -11,6 +11,7 @@ import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Definition, DefinitionCard } from "@/components/ui/definition-card"
 import { CodeBlock, EmptyState, PageHeader, Spinner } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
 
@@ -71,22 +72,12 @@ export function WebACLDetail({ scope, id, name }: { scope: WAFScope; id: string;
         }
       />
       <MetadataOnlyNotice />
-      <div className="grid gap-3 md:grid-cols-3">
-        <Info label="Scope">
-          <Badge variant="default">{data.scope}</Badge>
-        </Info>
-        <Info label="Stored rules">
-          <span>{data.rules.length}</span>
-        </Info>
-        <Info label="Lock token">
-          <span className="font-mono text-xs break-all">{data.lockToken}</span>
-        </Info>
-      </div>
-      {data.description && (
-        <Info label="Description">
-          <span>{data.description}</span>
-        </Info>
-      )}
+      <DefinitionCard>
+        <Definition label="Scope" value={<Badge variant="default">{data.scope}</Badge>} />
+        <Definition label="Stored rules" value={data.rules.length} />
+        <Definition label="Lock token" value={data.lockToken} copyable />
+        <Definition label="Description" value={data.description} variant="prose" full />
+      </DefinitionCard>
       <section className="rounded-lg border bg-bg-elevated p-4">
         <h2 className="mb-3 font-mono text-sm font-medium text-fg">Default action</h2>
         <CodeBlock>{JSON.stringify(data.defaultAction, null, 2)}</CodeBlock>
@@ -113,15 +104,6 @@ export function WebACLDetail({ scope, id, name }: { scope: WAFScope; id: string;
         isPending={deleteMutation.isPending}
         onConfirm={() => deleteMutation.mutate(data)}
       />
-    </div>
-  )
-}
-
-function Info({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-bg-elevated p-4">
-      <div className="font-mono text-xs text-fg-muted">{label}</div>
-      <div className="mt-1 text-sm text-fg">{children}</div>
     </div>
   )
 }

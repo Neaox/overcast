@@ -69,6 +69,79 @@ describe("Definition > empty values", () => {
   })
 })
 
+/**
+ * `render` calls `userEvent.setup()`, which installs its own
+ * `navigator.clipboard` — so the stub has to go in *after* render, the same
+ * ordering `copy-button.test.tsx` documents.
+ */
+function secureContext() {
+  const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  })
+  return writeText
+}
+
+describe("Definition > copyable", () => {
+  it("puts no copy control on a value that did not ask for one", () => {
+    render(
+      <DefinitionList>
+        <Definition label="Key ID" value="1234abcd" />
+      </DefinitionList>,
+    )
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("copies the value itself when the value is a string", async () => {
+    const { user } = render(
+      <DefinitionList>
+        <Definition label="Domain Name" value="d111.cloudfront.net" copyable />
+      </DefinitionList>,
+    )
+    const writeText = secureContext()
+
+    // The label supplies the noun, lowercased so it reads as English.
+    await user.click(screen.getByRole("button", { name: "Copy domain name" }))
+
+    expect(writeText).toHaveBeenCalledWith("d111.cloudfront.net")
+  })
+
+  it("copies the text a caller supplies when the value is a node", async () => {
+    const arn = "arn:aws:cloudfront::000000000000:distribution/E1"
+    const { user } = render(
+      <DefinitionList>
+        <Definition label="ARN" value={<code>{arn}</code>} copyable={arn} />
+      </DefinitionList>,
+    )
+    const writeText = secureContext()
+
+    // The acronym survives that lowercasing — "Copy ARN", not "Copy arn".
+    await user.click(screen.getByRole("button", { name: "Copy ARN" }))
+
+    expect(writeText).toHaveBeenCalledWith(arn)
+  })
+
+  it("offers no copy control for an absent value, because the em dash is not the value", () => {
+    render(
+      <DefinitionList>
+        <Definition label="Default Root Object" value={undefined} copyable />
+      </DefinitionList>,
+    )
+    expect(screen.getByText("—")).toBeInTheDocument()
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("keeps the value in mono when a copy control sits beside it", () => {
+    render(
+      <DefinitionList>
+        <Definition label="Distribution ID" value="E1FOO" copyable />
+      </DefinitionList>,
+    )
+    expect(screen.getByText("E1FOO").closest("dd")).toHaveClass("font-mono")
+  })
+})
+
 describe("Definition > semantics", () => {
   it("marks the label as a dt so the pair is a real definition list", () => {
     render(

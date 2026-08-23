@@ -242,21 +242,21 @@ export function HttpApiDetail({ apiId }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">API ID</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>API ID</div>
           <div className="mt-1 font-mono text-sm">{api.apiId}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Protocol</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Protocol</div>
           <div className="mt-1">
             <Badge variant="success">{api.protocolType}</Badge>
           </div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Routes</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Routes</div>
           <div className="mt-1 text-2xl font-semibold">{routes.length}</div>
         </div>
         <div className="rounded-lg border bg-bg-elevated p-4">
-          <div className="font-mono text-xs text-fg-muted">Created</div>
+          <div className={cn(fieldLabel, "text-fg-subtle")}>Created</div>
           <div className="mt-1 text-sm">{formatDate(api.createdDate)}</div>
         </div>
       </div>

@@ -4,6 +4,7 @@ import {
   cloudfrontInvalidationsQueryOptions,
 } from "@/features/cloudfront/data"
 import type { CloudFrontDistribution, CloudFrontInvalidation } from "@/types/cloudfront"
+import { fieldLabel } from "@/lib/typography"
 import { DistributionDetail } from "./distribution-detail"
 
 vi.mock("@tanstack/react-router", () => ({
@@ -95,12 +96,45 @@ describe("DistributionDetail", () => {
     expect(screen.getByText("/*")).toBeInTheDocument()
   })
 
-  // The configuration grid is deliberately still a bespoke <Table> — it is a
-  // label/value view of one resource, not a list. Guard that it still renders.
   it("keeps the configuration attribute grid", () => {
     renderWithData(<DistributionDetail />, seed())
 
     expect(screen.getByText("Distribution ID")).toBeInTheDocument()
     expect(screen.getByText("index.html")).toBeInTheDocument()
+  })
+})
+
+/**
+ * The Configuration tab is an attribute grid, not a list, so it renders through
+ * the shared `Definition` component — the term in the field-label spec, the
+ * definition in mono. Asserting the spec rather than only the text is what would
+ * catch someone hand-rolling the grid back into the page.
+ */
+describe("DistributionDetail > configuration typography", () => {
+  it("renders the attributes as a definition list in the shared label spec", () => {
+    renderWithData(<DistributionDetail />, seed())
+
+    const label = screen.getByText("Distribution ID")
+    expect(label.tagName).toBe("DT")
+    expect(label).toHaveClass(...fieldLabel.split(" "))
+    // The domain also appears in the page header, so read the value from its own
+    // pair rather than by text.
+    const value = label.parentElement?.querySelector("dd")
+    expect(value).toHaveClass("font-mono")
+  })
+
+  it("shows an em dash for an attribute the distribution does not set", () => {
+    renderWithData(<DistributionDetail />, seed())
+
+    // `aliases` is empty in the fixture, so the pair is present and
+    // absent-valued rather than silently dropped from the grid.
+    expect(screen.getByText("Aliases").parentElement).toHaveTextContent("—")
+  })
+
+  it("offers a copy control on the identifiers, named after the field", () => {
+    renderWithData(<DistributionDetail />, seed())
+
+    expect(screen.getByRole("button", { name: "Copy ARN" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Copy domain name" })).toBeInTheDocument()
   })
 })
