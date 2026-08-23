@@ -153,7 +153,9 @@ func run(ctx context.Context, opts options) int {
 		reaper:  newReaper(diag),
 		drainer: &drainer{},
 	}
+	s.phase = &initPhase{now: opts.now, publish: s.ship.publishRecord, diag: diag}
 	s.proxy = newProxy(opts.hostAddr, s.tracker, s.drainer.drain, diag)
+	s.proxy.initDone = func() (uint64, bool) { return s.phase.complete(initproto.StatusSuccess) }
 
 	s.reaper.start()
 	defer s.reaper.shutdown()
@@ -176,6 +178,12 @@ func run(ctx context.Context, opts options) int {
 			diag.printf("runtime API listener stopped: %v", err)
 		}
 	}()
+
+	// INIT has begun. Published before anything is spawned, so no line the
+	// environment produces can precede platform.initStart on the stream — the
+	// extensions start first on AWS too, and their output belongs inside the
+	// phase, not in front of it.
+	s.phase.begin()
 
 	env := childEnv(opts.environ, addr)
 	s.startExtensions(env)
