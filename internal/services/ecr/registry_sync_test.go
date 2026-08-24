@@ -180,8 +180,8 @@ func TestSyncRepoImages_recordsWhatTheRegistryServes(t *testing.T) {
 	s := syncService(t, reg.start(t))
 
 	// When: the repository is swept.
-	if err := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); err != nil {
-		t.Fatalf("sync: %v", err)
+	if got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); got != sweepSynced {
+		t.Fatalf("sweep = %v, want sweepSynced", got)
 	}
 
 	// Then: the push the emulator never saw is now on record.
@@ -199,8 +199,8 @@ func TestSyncRepoImages_dropsAnImageTheRegistryNoLongerHas(t *testing.T) {
 	seedImage(t, s, "sha256:gone", "asset-tag", true)
 
 	// When: the repository is swept.
-	if err := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); err != nil {
-		t.Fatalf("sync: %v", err)
+	if got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); got != sweepSynced {
+		t.Fatalf("sweep = %v, want sweepSynced", got)
 	}
 
 	// Then: the record goes with the bytes. Left in place it would tell CDK the
@@ -229,8 +229,8 @@ func TestSyncRepoImages_keepsAnUntaggedImageTheRegistryStillHas(t *testing.T) {
 	seedImage(t, s, "sha256:old", "asset-tag", true)
 
 	// When: the repository is swept.
-	if err := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); err != nil {
-		t.Fatalf("sync: %v", err)
+	if got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); got != sweepSynced {
+		t.Fatalf("sweep = %v, want sweepSynced", got)
 	}
 
 	// Then: both survive. Absence from the tag list is not absence from the
@@ -250,8 +250,8 @@ func TestSyncRepoImages_keepsARecordPutThroughTheAPI(t *testing.T) {
 	seedImage(t, s, "sha256:api", "v1", false)
 
 	// When: the repository is swept.
-	if err := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); err != nil {
-		t.Fatalf("sync: %v", err)
+	if got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); got != sweepSynced {
+		t.Fatalf("sweep = %v, want sweepSynced", got)
 	}
 
 	// Then: it survives. The registry is the authority only on records that
@@ -268,8 +268,8 @@ func TestSyncRepoImages_keepsEverythingWhenTheRegistryIsUnreachable(t *testing.T
 	seedImage(t, s, "sha256:aaa", "asset-tag", true)
 
 	// When: the repository is swept.
-	if err := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); err != nil {
-		t.Fatalf("sync: %v", err)
+	if got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo); got != sweepUnavailable {
+		t.Fatalf("sweep = %v, want sweepUnavailable", got)
 	}
 
 	// Then: nothing is deleted. Only a definite 404 is evidence of absence;

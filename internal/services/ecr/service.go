@@ -517,6 +517,9 @@ func (s *Service) errRepoNotEmpty(name string) *protocol.AWSError {
 // registry cannot be reached, so an unreachable registry falls back to what
 // the store knows rather than refusing every delete.
 func (s *Service) repoHoldsImages(ctx context.Context, region, name string) (bool, error) {
+	// The outcome is deliberately ignored here, where DescribeImages acts on
+	// it: the paragraph above is the reason. Refusing to delete whenever the
+	// registry is unreachable would be the stricter reading and the wrong one.
 	_ = s.syncRepoImagesFromRegistry(ctx, region, name)
 	keys, err := s.store.List(ctx, imageNamespace, serviceutil.RegionKey(region, name+"/"))
 	if err != nil {
@@ -791,6 +794,24 @@ func selectImages(images []Image, wanted []ImageIdentifier) ([]Image, *ImageIden
 //
 //	The image with imageId {imageDigest:'null', imageTag:'latest'} does not
 //	exist within the repository with name 'app' in the registry with id '…'
+//
+// errRegistryUnavailable is what a read path answers when the backing registry
+// could not be consulted, so an image's absence from the store proves nothing.
+//
+// ServerException is ECR's own code for a server-side failure, and the shape a
+// caller already handles: the AWS SDKs classify it retryable, where
+// ImageNotFoundException is a definitive answer they act on. cdk-assets acting
+// on the wrong one is a rebuild and a re-push per asset.
+func (s *Service) errRegistryUnavailable(repoName string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: "ServerException",
+		Message: fmt.Sprintf(
+			"The image registry backing repository '%s' could not be reached, so its contents are unknown. Retry the request.",
+			repoName),
+		HTTPStatus: http.StatusInternalServerError,
+	}
+}
+
 func (s *Service) errImageNotFound(repoName string, id ImageIdentifier) *protocol.AWSError {
 	quoted := func(v string) string {
 		if v == "" {
@@ -812,12 +833,43 @@ func digestForManifest(manifest string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoName string) error {
+// registrySweep is what a sweep established, so a caller can tell an empty
+// repository from a question that was never answered.
+//
+// repoRegistryState already draws this line for the delete path — "only the
+// first is grounds for deleting anything". This carries the same distinction
+// out to the read paths, which used to see one `error` that was always nil and
+// so could not tell an outage from an empty registry. Answering
+// ImageNotFoundException off an unanswered sweep is wrong twice over: real ECR
+// reports a server-side failure as ServerException, and cdk-assets reads a
+// missing image as "publish this again", so an unreachable registry silently
+// costs a Docker build and a layer upload per asset.
+type registrySweep int
+
+const (
+	// sweepNotApplicable: no registry is wired, so the store is the only
+	// authority there has ever been and an empty answer is the truth. This is
+	// every no-Docker deployment, and must never read as an outage.
+	sweepNotApplicable registrySweep = iota
+	// sweepSynced: the registry answered, and the store now reflects it.
+	sweepSynced
+	// sweepUnavailable: a registry is wired but could not be consulted, so the
+	// store is whatever the last successful sweep left and an absence proves
+	// nothing.
+	sweepUnavailable
+)
+
+func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoName string) registrySweep {
 	if s.docker == nil {
-		return nil
+		return sweepNotApplicable
 	}
+	// Each give-up below says which one it took. They used to be silent, which
+	// is why a CI failure here left no trace of the registry at all — see the
+	// investigation on issue #1444.
 	if err := s.ensureRegistry(ctx); err != nil {
-		return nil
+		s.log.Debug("ecr: registry sweep skipped, the registry could not be started",
+			zap.String("repository", repoName), zap.Error(err))
+		return sweepUnavailable
 	}
 
 	s.registryMu.Lock()
@@ -825,11 +877,15 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 	password := s.registryPassword
 	s.registryMu.Unlock()
 	if hostPort <= 0 || strings.TrimSpace(password) == "" {
-		return nil
+		s.log.Debug("ecr: registry sweep skipped, no registry address or credential yet",
+			zap.String("repository", repoName), zap.Int("hostPort", hostPort))
+		return sweepUnavailable
 	}
 	base := s.registryBaseURL(ctx, password)
 	if base == "" {
-		return nil
+		s.log.Debug("ecr: registry sweep skipped, no reachable registry base URL",
+			zap.String("repository", repoName))
+		return sweepUnavailable
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -837,7 +893,9 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 
 	tags, state := s.registryTags(ctx, client, base, repoPath, password)
 	if state == repoUnknown {
-		return nil
+		s.log.Debug("ecr: registry sweep inconclusive, the registry did not answer for this repository",
+			zap.String("repository", repoName))
+		return sweepUnavailable
 	}
 	if state == repoAbsent {
 		// The registry has no repository under this name, so it holds no
@@ -846,7 +904,7 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 		// individually. This is the restart case, and the whole point of
 		// answering it in one request rather than one per image.
 		s.forgetAllRegistryImages(ctx, region, repoName)
-		return nil
+		return sweepSynced
 	}
 
 	present := make(map[string]bool, len(tags))
@@ -899,7 +957,7 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 	}
 
 	s.forgetVanishedImages(ctx, client, base, repoPath, password, region, repoName, present)
-	return nil
+	return sweepSynced
 }
 
 // registryManifestTypes are the manifest media types the sweep will accept, so
@@ -1099,7 +1157,7 @@ func (s *Service) describeImages(w http.ResponseWriter, r *http.Request) {
 		s.errRepoNotFound(w, r, req.RepositoryName)
 		return
 	}
-	_ = s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
+	sweep := s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
 
 	prefix := serviceutil.RegionKey(region, req.RepositoryName+"/")
 	kvs, err := s.store.Scan(ctx, imageNamespace, prefix)
@@ -1119,6 +1177,12 @@ func (s *Service) describeImages(w http.ResponseWriter, r *http.Request) {
 
 	images, missing := selectImages(images, req.ImageIds)
 	if missing != nil {
+		// Same rule as describeImagesTyped: only a sweep can establish that an
+		// image is absent, so without one this is a ServerException.
+		if sweep == sweepUnavailable {
+			protocol.WriteJSONError(w, r, s.errRegistryUnavailable(req.RepositoryName))
+			return
+		}
 		protocol.WriteJSONError(w, r, s.errImageNotFound(req.RepositoryName, *missing))
 		return
 	}
@@ -1226,7 +1290,7 @@ func (s *Service) batchGetImage(w http.ResponseWriter, r *http.Request) {
 		s.errRepoNotFound(w, r, req.RepositoryName)
 		return
 	}
-	_ = s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
+	sweep := s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
 
 	prefix := serviceutil.RegionKey(region, req.RepositoryName+"/")
 	kvs, err := s.store.Scan(ctx, imageNamespace, prefix)
@@ -1268,6 +1332,12 @@ func (s *Service) batchGetImage(w http.ResponseWriter, r *http.Request) {
 				"failureReason": "Requested image not found",
 			})
 		}
+	}
+	// Same rule as batchGetImageTyped: "not found" about images no sweep could
+	// look for is not an answer this can give.
+	if len(failures) > 0 && sweep == sweepUnavailable {
+		protocol.WriteJSONError(w, r, s.errRegistryUnavailable(req.RepositoryName))
+		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"images":   images,

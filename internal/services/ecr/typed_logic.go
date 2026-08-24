@@ -496,6 +496,12 @@ func (s *Service) listImagesTyped(ctx context.Context, req *repoRefRequest) (*li
 	if !found {
 		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
 	}
+	// Deliberately not conditioned on the sweep's outcome, unlike DescribeImages
+	// and BatchGetImage. An empty list is a legitimate answer for a repository
+	// with no images, ListImages makes no claim about a specific image, and
+	// cdk-assets checks DescribeImages rather than this. Failing the call would
+	// take a working listing away from every caller whose registry is merely
+	// slow to start. The sweep logs the outcome either way.
 	_ = s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
 	prefix := serviceutil.RegionKey(region, req.RepositoryName+"/")
 	kvs, err := s.store.Scan(ctx, imageNamespace, prefix)
@@ -522,7 +528,7 @@ func (s *Service) describeImagesTyped(ctx context.Context, req *imageIDSetReques
 	if !found {
 		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
 	}
-	_ = s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
+	sweep := s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
 	prefix := serviceutil.RegionKey(region, req.RepositoryName+"/")
 	kvs, err := s.store.Scan(ctx, imageNamespace, prefix)
 	if err != nil {
@@ -538,6 +544,12 @@ func (s *Service) describeImagesTyped(ctx context.Context, req *imageIDSetReques
 	}
 	images, missing := selectImages(images, req.ImageIds)
 	if missing != nil {
+		// Only the registry can establish that an image is absent, because
+		// only a sweep puts a pushed image on record. Without one, this store
+		// looks identical to a repository nobody ever pushed to.
+		if sweep == sweepUnavailable {
+			return nil, s.errRegistryUnavailable(req.RepositoryName)
+		}
 		return nil, s.errImageNotFound(req.RepositoryName, *missing)
 	}
 	sort.Slice(images, func(i, j int) bool {
@@ -602,7 +614,7 @@ func (s *Service) batchGetImageTyped(ctx context.Context, req *imageIDSetRequest
 	if !found {
 		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
 	}
-	_ = s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
+	sweep := s.syncRepoImagesFromRegistry(ctx, region, req.RepositoryName)
 	prefix := serviceutil.RegionKey(region, req.RepositoryName+"/")
 	kvs, err := s.store.Scan(ctx, imageNamespace, prefix)
 	if err != nil {
@@ -639,6 +651,12 @@ func (s *Service) batchGetImageTyped(ctx context.Context, req *imageIDSetRequest
 				FailureReason: "Requested image not found",
 			})
 		}
+	}
+	// A failure list built without a sweep says "not found" about images whose
+	// absence was never established. One ServerException for the call is the
+	// honest answer, and the one an SDK will retry.
+	if len(failures) > 0 && sweep == sweepUnavailable {
+		return nil, s.errRegistryUnavailable(req.RepositoryName)
 	}
 	return &batchGetImageResponse{Images: images, Failures: failures}, nil
 }
