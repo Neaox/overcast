@@ -1,16 +1,21 @@
 /**
- * The search box, scope switch and sortable headers above the object listing.
+ * The controls around the object listing: the search box, the scope switch,
+ * the sortable headers, and the tick boxes and selection bar that a
+ * multi-object download is started from.
  *
  * Split out of `bucket-detail` because none of it needs the bucket, the queries
  * or the router — it is all props in, callbacks out, which is also what makes
  * it testable without standing up an S3 listing.
  */
 
-import { Search, X, Folder, ListTree } from "lucide-react"
+import { useEffect, useRef } from "react"
+import { Search, X, Folder, ListTree, Download } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/primitives"
 import { TableHead } from "@/components/ui/table"
 import { Tooltip } from "@/components/ui/tooltip"
+import { formatBytes, formatCount } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ListScope } from "@/features/s3/data"
 import type { NameSlice, ObjectSort, SortColumn } from "@/features/s3/object-browser"
@@ -175,7 +180,7 @@ function ScanSummary({
   if (!filtered && !isScanning && !capped) {
     return (
       <span className="font-mono text-[11px] whitespace-nowrap text-fg-subtle">
-        {scanned.toLocaleString()} {noun}
+        {formatCount(scanned)} {noun}
       </span>
     )
   }
@@ -185,11 +190,11 @@ function ScanSummary({
       {isScanning && <Spinner className="h-3 w-3" />}
       {filtered ? (
         <>
-          {matches.toLocaleString()} of {scanned.toLocaleString()} {noun}
+          {formatCount(matches)} of {formatCount(scanned)} {noun}
         </>
       ) : (
         <>
-          {scanned.toLocaleString()} {noun}
+          {formatCount(scanned)} {noun}
         </>
       )}
       {isScanning && <span className="text-fg-subtle">scanning…</span>}
@@ -260,5 +265,86 @@ export function HighlightedName({ slices }: { slices: NameSlice[] }) {
         ),
       )}
     </>
+  )
+}
+
+// ─── Selection ─────────────────────────────────────────────────────────────
+
+export interface RowCheckboxProps {
+  checked: boolean
+  /** Some but not all of what this box covers is ticked. */
+  indeterminate?: boolean
+  onChange: () => void
+  /** What the box ticks, for screen readers — every row's box looks alike. */
+  label: string
+}
+
+/**
+ * The tick box on a row, and the one in the header that covers them all.
+ *
+ * `indeterminate` is a property rather than an attribute, so it can only be
+ * set through the element — which is why this exists as a component instead of
+ * three copies of an `<input>`.
+ */
+export function RowCheckbox({ checked, indeterminate = false, onChange, label }: RowCheckboxProps) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate
+  }, [indeterminate])
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="h-4 w-4 cursor-pointer rounded accent-accent"
+      checked={checked}
+      aria-label={label}
+      onChange={onChange}
+      onClick={(e) => e.stopPropagation()}
+    />
+  )
+}
+
+export interface SelectionBarProps {
+  count: number
+  /** Total size of the selected rows on screen; see `selectionSummary`. */
+  bytes: number
+  /** Set when the selection cannot be downloaded, and why. */
+  blockedReason?: string
+  onDownload: () => void
+  onClear: () => void
+}
+
+/**
+ * What is ticked, and what can be done with it. Absent until something is.
+ *
+ * The size is shown next to the count because the download it offers is a
+ * single archive: how big that is going to be is the one thing the user cannot
+ * work out from the rows themselves.
+ */
+export function SelectionBar({
+  count,
+  bytes,
+  blockedReason,
+  onDownload,
+  onClear,
+}: SelectionBarProps) {
+  if (count === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent-muted px-3 py-2 text-sm">
+      <span className="font-medium">
+        {formatCount(count)} object{count === 1 ? "" : "s"} selected
+      </span>
+      <span className="font-mono text-[11px] text-fg-muted">{formatBytes(bytes)}</span>
+      <div className="ml-auto flex items-center gap-2">
+        {blockedReason && <span className="text-xs text-warning">{blockedReason}</span>}
+        <Button size="sm" onClick={onDownload} disabled={!!blockedReason}>
+          <Download className="h-3.5 w-3.5" /> Download .zip
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+    </div>
   )
 }

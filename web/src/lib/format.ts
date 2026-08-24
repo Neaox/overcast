@@ -6,6 +6,17 @@ export function formatBytes(bytes: number, decimals = 1): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`
 }
 
+/**
+ * A count for display, grouped by thousands: 20000 reads as 20,000.
+ *
+ * Here rather than inline at each call site so every count in the UI groups
+ * the same way — which is also what `classnames/prefer-shared-formatter`
+ * asks for when it flags a bare `toLocaleString`.
+ */
+export function formatCount(value: number): string {
+  return value.toLocaleString()
+}
+
 export function formatDate(date: string | Date | number | undefined): string {
   if (!date) return "—"
   try {

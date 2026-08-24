@@ -36,6 +36,22 @@ import type {
   S3LifecycleRule,
 } from "@/types"
 
+/** Base path of one bucket's object routes on the BFF. */
+const objectsPath = (bucket: string) =>
+  `${API_BASE}/s3/buckets/${encodeURIComponent(bucket)}/objects`
+
+/**
+ * The endpoint parameters a URL has to carry itself.
+ *
+ * Download links and form submissions are navigations the browser makes
+ * without the console's fetch wrapper, so the x-overcast-endpoint and
+ * x-overcast-region headers have nowhere to ride except the query string —
+ * which is where the BFF's resolveEndpointQP looks for them.
+ */
+function navigationEndpointParams(): URLSearchParams {
+  return new URLSearchParams(endpointHeaders(endpointResolver.get()))
+}
+
 /**
  * Parses S3's x-amz-expiration header, which the SDK surfaces as `Expiration`:
  *   expiry-date="Fri, 21 Dec 2012 00:00:00 GMT", rule-id="rule-1"
@@ -332,11 +348,20 @@ export const s3 = {
    * version, which is the bug this parameter exists to fix.
    */
   getObjectDownloadUrl: (bucket: string, key: string, versionId?: string): string => {
-    const endpoint = endpointResolver.get()
-    const params = new URLSearchParams(endpointHeaders(endpoint))
+    const params = navigationEndpointParams()
     if (versionId !== undefined) params.set("versionId", versionId)
-    return `${API_BASE}/s3/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(key)}/download?${params}`
+    return `${objectsPath(bucket)}/${encodeURIComponent(key)}/download?${params}`
   },
+
+  /**
+   * Returns the URL a multi-object download is posted to.
+   *
+   * An action rather than a fetch: the keys travel in the form body, where no
+   * URL length limit applies to a selection, and the response streams straight
+   * to disk as the BFF builds it. See features/s3/archive-download.ts.
+   */
+  getObjectsArchiveAction: (bucket: string): string =>
+    `${objectsPath(bucket)}/archive?${navigationEndpointParams()}`,
 
   getObjectText: async (
     bucket: string,
