@@ -97,7 +97,32 @@ describe("MonitorPanel", () => {
   it("shows the retention disclaimer text for the selected range", () => {
     const data: MonitorResponse = { enabled: true, range: "30d", periodSeconds: 3600, series: [] }
     render(<MonitorPanel {...baseProps()} range="30d" data={data} />)
-    expect(screen.getByText(/up to 30 days at 1-hour resolution/)).toBeInTheDocument()
+    expect(screen.getByText(/up to 30 days at 15-minute resolution/)).toBeInTheDocument()
+  })
+
+  it("renders the auto-refresh selector and reports interval changes", async () => {
+    const user = userEvent.setup()
+    const onRefreshIntervalChange = vi.fn()
+    const data: MonitorResponse = { enabled: true, range: "1h", periodSeconds: 60, series: [] }
+    render(
+      <MonitorPanel
+        {...baseProps()}
+        data={data}
+        refreshIntervalMs={30_000}
+        onRefreshIntervalChange={onRefreshIntervalChange}
+      />,
+    )
+    const select = screen.getByLabelText(/Auto-refresh/)
+    await user.selectOptions(select, "off")
+    expect(onRefreshIntervalChange).toHaveBeenCalledWith(false)
+    await user.selectOptions(select, "5m")
+    expect(onRefreshIntervalChange).toHaveBeenCalledWith(300_000)
+  })
+
+  it("shows the chart's bucket width next to the range picker", () => {
+    const data: MonitorResponse = { enabled: true, range: "30d", periodSeconds: 900, series: [] }
+    render(<MonitorPanel {...baseProps()} range="30d" data={data} />)
+    expect(screen.getByText("15m intervals")).toBeInTheDocument()
   })
 
   it("expands a card into an enlarged-chart dialog and closes it again", async () => {

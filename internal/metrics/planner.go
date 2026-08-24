@@ -31,8 +31,9 @@ func SelectResolution(now, start time.Time) int {
 	return resolutionTiers[len(resolutionTiers)-1].seconds
 }
 
-// chartRange is one of the plan's "coherent controls": "1h/1m, 6h/1m, 24h/5m,
-// 7d/5m, and 30d/1h". period here is the *display* granularity the UI shows,
+// chartRange is one of the plan's "coherent controls" (originally "1h/1m,
+// 6h/1m, 24h/5m, 7d/5m, and 30d/1h" — see the 30d note below for where that
+// moved). period here is the *display* granularity the UI shows,
 // which the query planner treats as a floor — QueryAuto never returns a finer
 // period than requested, but may fall back to a coarser one when the stored
 // resolution available for the request's age is coarser still.
@@ -41,12 +42,16 @@ type chartRange struct {
 	period time.Duration
 }
 
+// 30d shows 15-minute display buckets (not the plan's original 1h): the 300s
+// tier is retained for the full 30 days (resolutionTiers, #1307), so the
+// month view can regroup 5-minute buckets into 15-minute points — 2880 per
+// series, a finer trend line at a point count the chart renders comfortably.
 var chartRangesByToken = map[string]chartRange{
 	"1h":  {span: time.Hour, period: time.Minute},
 	"6h":  {span: 6 * time.Hour, period: time.Minute},
 	"24h": {span: 24 * time.Hour, period: 5 * time.Minute},
 	"7d":  {span: 7 * 24 * time.Hour, period: 5 * time.Minute},
-	"30d": {span: 30 * 24 * time.Hour, period: time.Hour},
+	"30d": {span: 30 * 24 * time.Hour, period: 15 * time.Minute},
 }
 
 // ParseChartRange resolves one of the plan's five range tokens ("1h", "6h",

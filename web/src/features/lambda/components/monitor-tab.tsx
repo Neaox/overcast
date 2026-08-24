@@ -49,8 +49,9 @@ export function MonitorTab({ fn }: { fn: LambdaFunction }) {
   const logGroup = fn.LoggingConfig?.LogGroup ?? ""
   const qc = useQueryClient()
   const [range, setRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
+  const [refreshMs, setRefreshMs] = useState<number | false>(30_000)
 
-  const metricsQuery = useQuery(lambdaMetricsQueryOptions(name, range))
+  const metricsQuery = useQuery(lambdaMetricsQueryOptions(name, range, refreshMs))
 
   // The footer promises a 5-second refresh, so the query keeps it. (It said so
   // for a long time without any interval actually configured.)
@@ -72,6 +73,8 @@ export function MonitorTab({ fn }: { fn: LambdaFunction }) {
         error={metricsQuery.error}
         data={metricsQuery.data}
         cards={LAMBDA_MONITOR_CARDS}
+        refreshIntervalMs={refreshMs}
+        onRefreshIntervalChange={setRefreshMs}
         onRefresh={() => void qc.invalidateQueries({ queryKey: lambdaKeys.metrics(name, range) })}
       />
 

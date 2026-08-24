@@ -143,6 +143,7 @@ export function TopicDetail({ topicName }: Props) {
   const [deleteSubTarget, setDeleteSubTarget] = useState<SNSSubscription>()
   const [activeTab, setActiveTab] = useState<"subscriptions" | "monitor">("subscriptions")
   const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
+  const [monitorRefreshMs, setMonitorRefreshMs] = useState<number | false>(30_000)
 
   // ─── Data ──────────────────────────────────────────────────────────────────
   const {
@@ -153,7 +154,7 @@ export function TopicDetail({ topicName }: Props) {
     error: subscriptionsError,
   } = useQuery(snsSubscriptionsQueryOptions(topicName))
 
-  const metricsQuery = useQuery(snsMetricsQueryOptions(topicName, monitorRange))
+  const metricsQuery = useQuery(snsMetricsQueryOptions(topicName, monitorRange, monitorRefreshMs))
 
   const { data: allTopics = [] } = useQuery(snsTopicsQueryOptions())
   const topic = allTopics.find((t) => t.TopicArn?.split(":").pop() === topicName)
@@ -366,6 +367,8 @@ export function TopicDetail({ topicName }: Props) {
           <MonitorPanel
             range={monitorRange}
             onRangeChange={setMonitorRange}
+            refreshIntervalMs={monitorRefreshMs}
+            onRefreshIntervalChange={setMonitorRefreshMs}
             isLoading={metricsQuery.isLoading}
             isFetching={metricsQuery.isFetching}
             error={metricsQuery.error}
@@ -405,13 +408,7 @@ export function TopicDetail({ topicName }: Props) {
                         onChange={(e) => {
                           field.handleChange(
                             e.target.value as
-                              | "sqs"
-                              | "sms"
-                              | "http"
-                              | "https"
-                              | "email"
-                              | "email-json"
-                              | "lambda",
+                              "sqs" | "sms" | "http" | "https" | "email" | "email-json" | "lambda",
                           )
                           // Clear the endpoint when the protocol changes.
                           subscribeForm.setFieldValue("endpoint", "")

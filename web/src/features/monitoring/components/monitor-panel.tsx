@@ -55,6 +55,29 @@ export interface MonitorPanelProps {
    * the same row rather than a floating element above/below the panel.
    */
   extraControls?: ReactNode
+  /**
+   * Auto-refresh cadence selection (false = off), owned by the caller
+   * because the caller owns the TanStack query it must feed into as
+   * `refetchInterval`. When both are passed the panel renders the interval
+   * selector in its toolbar; the caller should also freeze its interval
+   * while `false`.
+   */
+  refreshIntervalMs?: number | false
+  onRefreshIntervalChange?: (ms: number | false) => void
+}
+
+/** The auto-refresh cadences offered, mirroring the AWS console's picker. */
+const REFRESH_OPTIONS: { value: string; label: string; ms: number | false }[] = [
+  { value: "off", label: "Off", ms: false },
+  { value: "10s", label: "10s", ms: 10_000 },
+  { value: "30s", label: "30s", ms: 30_000 },
+  { value: "1m", label: "1m", ms: 60_000 },
+  { value: "5m", label: "5m", ms: 300_000 },
+]
+
+/** "60 → 1m", "900 → 15m", "3600 → 1h" — the chart's bucket width, for the toolbar chip. */
+function formatPeriod(seconds: number): string {
+  return seconds < 3600 ? `${Math.round(seconds / 60)}m` : `${Math.round(seconds / 3600)}h`
 }
 
 function retentionDisclaimer(range: ChartRangeToken): string {
@@ -66,7 +89,7 @@ function retentionDisclaimer(range: ChartRangeToken): string {
     case "7d":
       return "up to 7 days at 5-minute resolution"
     case "30d":
-      return "up to 30 days at 1-hour resolution"
+      return "up to 30 days at 15-minute resolution"
   }
 }
 
@@ -80,6 +103,8 @@ export function MonitorPanel({
   cards,
   onRefresh,
   extraControls,
+  refreshIntervalMs,
+  onRefreshIntervalChange,
 }: MonitorPanelProps) {
   // "Now" is component state (lazily initialized, refreshed on the same
   // cadence the metrics query itself polls at) rather than a bare Date.now()
@@ -87,10 +112,25 @@ export function MonitorPanel({
   // render — see web/src/features/map/lambda-invocations-drawer.tsx's
   // identical nowMs pattern.
   const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // Which card is open in the enlarged-chart dialog, by title (titles are the
+  // cards' render keys already). The dialog reuses the same memoized series,
+  // so it live-updates on the caller's poll cadence.
+  const [expandedTitle, setExpandedTitle] = useState<string | null>(null)
+
+  // The window only advances on the auto-refresh cadence, and holds still
+  // while auto-refresh is off (an advancing window with frozen data would
+  // slide points leftward and misread as traffic stopping) or while the
+  // expanded dialog is open (a zoom or hover must not be yanked out from
+  // under the cursor by a "now" tick). Undefined refreshIntervalMs — a caller
+  // predating the selector — keeps the old fixed 30s tick.
+  const tickMs = refreshIntervalMs === undefined ? 30_000 : refreshIntervalMs
+  const paused = tickMs === false || expandedTitle != null
   useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 30_000)
+    if (paused) return
+    const id = setInterval(() => setNowMs(Date.now()), tickMs)
     return () => clearInterval(id)
-  }, [])
+  }, [paused, tickMs])
 
   const rangeEndMs = nowMs
   const rangeStartMs = rangeEndMs - CHART_RANGE_SPAN_MS[range]
@@ -122,10 +162,6 @@ export function MonitorPanel({
     [cards, data],
   )
 
-  // Which card is open in the enlarged-chart dialog, by title (titles are the
-  // cards' render keys already). The dialog reuses the same memoized series,
-  // so it live-updates on the same 30s poll as the card behind it.
-  const [expandedTitle, setExpandedTitle] = useState<string | null>(null)
   const expanded = cardsWithSeries.find(({ card }) => card.title === expandedTitle)
 
   // The expanded view's drag-to-zoom window. Client-side only: the fetched
@@ -156,13 +192,47 @@ export function MonitorPanel({
             </Select>
           </label>
           {extraControls}
+          {data?.periodSeconds ? (
+            <span className="text-xs text-fg-subtle">
+              {formatPeriod(data.periodSeconds)} intervals
+            </span>
+          ) : null}
         </div>
-        {onRefresh && (
-          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={isFetching}>
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
-            Refresh
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {onRefreshIntervalChange && refreshIntervalMs !== undefined && (
+            <label className={cn(fieldLabel, "flex items-center gap-2 text-fg-muted")}>
+              Auto-refresh
+              <Select
+                value={REFRESH_OPTIONS.find((o) => o.ms === refreshIntervalMs)?.value ?? "30s"}
+                onChange={(e) =>
+                  onRefreshIntervalChange(
+                    REFRESH_OPTIONS.find((o) => o.value === e.target.value)?.ms ?? 30_000,
+                  )
+                }
+              >
+                {REFRESH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+          {onRefresh && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setNowMs(Date.now())
+                onRefresh()
+              }}
+              disabled={isFetching}
+            >
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
+              Refresh
+            </Button>
+          )}
+        </div>
       </div>
 
       <QueryListState

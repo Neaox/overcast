@@ -28,8 +28,11 @@ export function RestApiMonitorTab({ apiId, stages }: Props) {
   const [range, setRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
   // "" means "All stages" (no &stage= param — series aggregate across every stage).
   const [stage, setStage] = useState("")
+  const [refreshMs, setRefreshMs] = useState<number | false>(30_000)
 
-  const metricsQuery = useQuery(restApiMetricsQueryOptions(apiId, range, stage || undefined))
+  const metricsQuery = useQuery(
+    restApiMetricsQueryOptions(apiId, range, stage || undefined, refreshMs),
+  )
 
   return (
     <MonitorPanel
@@ -40,6 +43,8 @@ export function RestApiMonitorTab({ apiId, stages }: Props) {
       error={metricsQuery.error}
       data={metricsQuery.data}
       cards={REST_API_MONITOR_CARDS}
+      refreshIntervalMs={refreshMs}
+      onRefreshIntervalChange={setRefreshMs}
       onRefresh={() =>
         void qc.invalidateQueries({
           queryKey: apigwKeys.restMetrics(apiId, range, stage || undefined),

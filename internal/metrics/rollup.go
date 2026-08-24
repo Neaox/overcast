@@ -30,14 +30,18 @@ type resolutionTier struct {
 	retention time.Duration
 }
 
-// resolutionTiers is the plan's table: 60s/24h ("Last 1h, 6h, and 24h graphs;
-// current debugging"), 300s/7d ("24h and 7d graphs once minute buckets
-// expire"), 3600s/30d ("7d and 30d trend graphs"). The 24h/7d/30d figures are,
-// per the plan, "initial local-development budgets, not AWS retention
-// claims".
+// resolutionTiers extends the plan's original table (60s/24h, 300s/7d,
+// 3600s/30d — "initial local-development budgets, not AWS retention claims")
+// by retaining the 300s tier for the full 30 days (#1307): that lets month-
+// scale charts answer at sub-hourly periods (ParseChartRange's 30d row is
+// 15m) instead of falling back to the 3600s tier. Cost is bounded — at most
+// 8640 constant-size 300s buckets per active series instead of 2016. The
+// 3600s tier remains as the cheap final fallback should the 300s sweep ever
+// lag, and because removing a tier would orphan its already-persisted
+// buckets.
 var resolutionTiers = []resolutionTier{
 	{seconds: resolutionSeconds, retention: retention}, // 60s / 24h
-	{seconds: 300, retention: 7 * 24 * time.Hour},
+	{seconds: 300, retention: 30 * 24 * time.Hour},
 	{seconds: 3600, retention: 30 * 24 * time.Hour},
 }
 

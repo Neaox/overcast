@@ -404,10 +404,16 @@ immutable bucket aggregates (count/sum/min/max compose exactly):
 | 300 seconds       | 7 days    | 24h and 7d graphs once minute buckets expire.   |
 | 3600 seconds      | 30 days   | 7d and 30d trend graphs.                        |
 
+> **Revised by #1307:** the 300s tier is now retained for the full 30 days
+> (still ~8640 constant-size buckets per active series at most), so the 30d
+> view charts 15-minute display buckets instead of 1-hour ones; the 3600s
+> tier remains as the final fallback. The UI's coherent controls are
+> therefore 1h/1m, 6h/1m, 24h/5m, 7d/5m, and **30d/15m**.
+
 The query planner selects the finest resolution whose retention fully covers
 the requested interval, then uses a period that is a multiple of that
 resolution. The UI exposes only coherent controls: **1h/1m, 6h/1m, 24h/5m,
-7d/5m, and 30d/1h**. It asks for a complete half-open UTC interval and the
+7d/5m, and 30d/1h** (30d since revised — see the #1307 note above). It asks for a complete half-open UTC interval and the
 server returns chronologically sorted, bucket-aligned points with missing data
 omitted. Rendering may show gaps; it must not interpolate a metric value or
 mistake an absent service emission for zero. This corrects the present

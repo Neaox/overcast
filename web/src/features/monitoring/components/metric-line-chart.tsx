@@ -281,9 +281,10 @@ export function MetricLineChart({
         )}
         {/* Y-axis readout, rendered as HTML over the plot rather than as SVG
             <text> — the viewBox's non-uniform scale would stretch glyphs.
-            Three values (top of scale, midline, floor) are enough to read
-            magnitude at a glance without hovering. */}
-        {[0, 50, 100].map((pct) => (
+            Values sit exactly on the gridlines (plus the ceiling and floor)
+            so a line's height reads against a labeled reference, not an
+            unlabeled stripe. */}
+        {[0, 25, 50, 75, 100].map((pct) => (
           <span
             key={pct}
             className="pointer-events-none absolute left-1.5 z-[1] font-mono text-[9px] leading-none text-fg-subtle"
@@ -303,7 +304,8 @@ export function MetricLineChart({
           role="img"
           aria-label={`${series.map((s) => s.label).join(", ")} over time`}
         >
-          {/* Recessive gridlines — 25/50/75%. */}
+          {/* Recessive gridlines — horizontal at the labeled 25/50/75%
+              values, vertical at the quarter marks of the time window. */}
           {[25, 50, 75].map((pct) => (
             <line
               key={pct}
@@ -312,6 +314,18 @@ export function MetricLineChart({
               y1={pct}
               y2={pct}
               className="stroke-border"
+              strokeWidth={0.4}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {[25, 50, 75].map((pct) => (
+            <line
+              key={`x-${pct}`}
+              x1={pct}
+              x2={pct}
+              y1={0}
+              y2={CHART_HEIGHT}
+              className="stroke-border/60"
               strokeWidth={0.4}
               vectorEffect="non-scaling-stroke"
             />
@@ -383,6 +397,20 @@ export function MetricLineChart({
             ))}
           </div>
         )}
+      </div>
+
+      {/* X-axis readout: the window's start, quarter marks, and end. Kept
+          outside the plot so labels never sit under data; the middle three
+          line up with the vertical gridlines above. */}
+      <div className="flex justify-between font-mono text-[9px] leading-none text-fg-subtle">
+        {[0, 25, 50, 75, 100].map((pct) => (
+          <span key={pct}>
+            {formatTimestamp(
+              rangeStartMs + (pct / 100) * (rangeEndMs - rangeStartMs),
+              rangeEndMs - rangeStartMs,
+            )}
+          </span>
+        ))}
       </div>
 
       {/* The legend doubles as the at-a-glance readout: each entry carries its

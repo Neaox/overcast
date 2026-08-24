@@ -180,8 +180,10 @@ func TestSelectResolution(t *testing.T) {
 		{"exactly at 60s tier boundary", 24 * time.Hour, 60},
 		{"just past 60s tier", 24*time.Hour + time.Minute, 300},
 		{"within 300s tier", 5 * 24 * time.Hour, 300},
-		{"just past 300s tier", 7*24*time.Hour + time.Minute, 3600},
-		{"within 3600s tier", 20 * 24 * time.Hour, 3600},
+		// The 300s tier is retained 30 days (#1307), so a month-scale request
+		// still answers from it rather than dropping to hourly buckets.
+		{"past the old 7d 300s retention", 7*24*time.Hour + time.Minute, 300},
+		{"deep into 300s tier", 20 * 24 * time.Hour, 300},
 		{"older than every tier", 90 * 24 * time.Hour, 3600},
 	}
 	for _, tc := range cases {
@@ -208,7 +210,7 @@ func TestParseChartRange(t *testing.T) {
 		{"6h", 6 * time.Hour, time.Minute, true},
 		{"24h", 24 * time.Hour, 5 * time.Minute, true},
 		{"7d", 7 * 24 * time.Hour, 5 * time.Minute, true},
-		{"30d", 30 * 24 * time.Hour, time.Hour, true},
+		{"30d", 30 * 24 * time.Hour, 15 * time.Minute, true},
 		{"1w", 0, 0, false},
 		{"", 0, 0, false},
 	}

@@ -111,11 +111,16 @@ export function deploymentsQueryOptions(apiId: string) {
  * (docs/plans/service-metrics-platform.md phase 3 "Use polling initially").
  * `stage` is omitted to aggregate across every stage.
  */
-export function restApiMetricsQueryOptions(apiId: string, range: ChartRangeToken, stage?: string) {
+export function restApiMetricsQueryOptions(
+  apiId: string,
+  range: ChartRangeToken,
+  stage?: string,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: apigwKeys.restMetrics(apiId, range, stage),
     queryFn: () => apigateway.getRestApiMetrics(apiId, range, stage),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(apiId),
   })
 }
@@ -240,11 +245,16 @@ export function httpStagesQueryOptions(apiId: string) {
 }
 
 /** Monitor tab read-through for an HTTP (v2) API — see restApiMetricsQueryOptions. */
-export function httpApiMetricsQueryOptions(apiId: string, range: ChartRangeToken, stage?: string) {
+export function httpApiMetricsQueryOptions(
+  apiId: string,
+  range: ChartRangeToken,
+  stage?: string,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: apigwKeys.httpMetrics(apiId, range, stage),
     queryFn: () => apigateway.getHttpApiMetrics(apiId, range, stage),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(apiId),
   })
 }

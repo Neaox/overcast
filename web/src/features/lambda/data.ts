@@ -67,11 +67,15 @@ export function lambdaFunctionsQueryOptions() {
  * Polls while the tab is visible — the plan's "Use polling initially" —
  * rather than a manual-refresh-only chart.
  */
-export function lambdaMetricsQueryOptions(name: string, range: ChartRangeToken) {
+export function lambdaMetricsQueryOptions(
+  name: string,
+  range: ChartRangeToken,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: lambdaKeys.metrics(name, range),
     queryFn: () => lambda.getMetrics(name, range),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(name),
   })
 }

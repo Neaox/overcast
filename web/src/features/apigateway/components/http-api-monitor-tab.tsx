@@ -27,8 +27,11 @@ export function HttpApiMonitorTab({ apiId, stages }: Props) {
   const [range, setRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
   // "" means "All stages" (no &stage= param — series aggregate across every stage).
   const [stage, setStage] = useState("")
+  const [refreshMs, setRefreshMs] = useState<number | false>(30_000)
 
-  const metricsQuery = useQuery(httpApiMetricsQueryOptions(apiId, range, stage || undefined))
+  const metricsQuery = useQuery(
+    httpApiMetricsQueryOptions(apiId, range, stage || undefined, refreshMs),
+  )
 
   return (
     <MonitorPanel
@@ -39,6 +42,8 @@ export function HttpApiMonitorTab({ apiId, stages }: Props) {
       error={metricsQuery.error}
       data={metricsQuery.data}
       cards={HTTP_API_MONITOR_CARDS}
+      refreshIntervalMs={refreshMs}
+      onRefreshIntervalChange={setRefreshMs}
       onRefresh={() =>
         void qc.invalidateQueries({
           queryKey: apigwKeys.httpMetrics(apiId, range, stage || undefined),
