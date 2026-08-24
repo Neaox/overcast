@@ -856,7 +856,7 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 		if aerr != nil {
 			return nil, aerr
 		}
-		tasks = append(tasks, *task)
+		tasks = append(tasks, task.forWire())
 	}
 	return &runTaskResponse{Tasks: tasks, Failures: []any{}}, nil
 }
@@ -866,7 +866,7 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 	if aerr != nil {
 		return nil, aerr
 	}
-	return &stopTaskResponse{Task: *task}, nil
+	return &stopTaskResponse{Task: task.forWire()}, nil
 }
 
 func (h *Handler) describeTasksTyped(ctx context.Context, req *describeTasksRequest) (*describeTasksResponse, *protocol.AWSError) {
@@ -890,7 +890,7 @@ func (h *Handler) describeTasksTyped(ctx context.Context, req *describeTasksRequ
 			failures = append(failures, taskFailure{Arn: arn, Reason: "MISSING"})
 			continue
 		}
-		found = append(found, *task)
+		found = append(found, task.forWire())
 	}
 	return &describeTasksResponse{Tasks: found, Failures: failures}, nil
 }
@@ -1025,7 +1025,7 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSServiceCreated, Payload: events.ResourcePayload{Name: req.ServiceName}})
 	}
-	return &createServiceResponse{Service: *svc}, nil
+	return &createServiceResponse{Service: svc.forWire()}, nil
 }
 
 func (h *Handler) updateServiceTyped(ctx context.Context, req *updateServiceRequest) (*updateServiceResponse, *protocol.AWSError) {
@@ -1037,7 +1037,7 @@ func (h *Handler) updateServiceTyped(ctx context.Context, req *updateServiceRequ
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSServiceUpdated, Payload: events.ResourcePayload{Name: serviceName}})
 	}
-	return &updateServiceResponse{Service: *svc}, nil
+	return &updateServiceResponse{Service: svc.forWire()}, nil
 }
 
 func (h *Handler) deleteServiceTyped(ctx context.Context, req *deleteServiceRequest) (*deleteServiceResponse, *protocol.AWSError) {
@@ -1049,7 +1049,7 @@ func (h *Handler) deleteServiceTyped(ctx context.Context, req *deleteServiceRequ
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSServiceDeleted, Payload: events.ResourcePayload{Name: serviceName}})
 	}
-	return &deleteServiceResponse{Service: *svc}, nil
+	return &deleteServiceResponse{Service: svc.forWire()}, nil
 }
 
 func (h *Handler) describeServicesTyped(ctx context.Context, req *describeServicesRequest) (*describeServicesResponse, *protocol.AWSError) {
@@ -1071,7 +1071,7 @@ func (h *Handler) describeServicesTyped(ctx context.Context, req *describeServic
 			continue
 		}
 		h.refreshServiceCounts(ctx, clusterName, svc)
-		found = append(found, *svc)
+		found = append(found, svc.forWire())
 	}
 	return &describeServicesResponse{Services: found, Failures: failures}, nil
 }
@@ -1443,9 +1443,8 @@ func (h *Handler) registerContainerInstanceTyped(ctx context.Context, req *regis
 		Status:               "ACTIVE",
 		AgentConnected:       true,
 		RegisteredAt:         h.clk.Now().Unix(),
-		ClusterName:          clusterName,
 	}
-	if aerr := h.store.putContainerInstance(ctx, ci); aerr != nil {
+	if aerr := h.store.putContainerInstance(ctx, clusterName, ci); aerr != nil {
 		return nil, aerr
 	}
 	return &registerContainerInstanceResponse{ContainerInstance: *ci}, nil

@@ -325,16 +325,11 @@ func TestCreateService_tasksCarryServiceNetworkingAndDeploymentID(t *testing.T) 
 	helpers.AssertStatus(t, descResp, http.StatusOK)
 	var described struct {
 		Tasks []struct {
-			LaunchType           string `json:"launchType"`
-			PlatformVersion      string `json:"platformVersion"`
-			StartedBy            string `json:"startedBy"`
-			Group                string `json:"group"`
-			NetworkConfiguration *struct {
-				AwsvpcConfiguration *struct {
-					Subnets []string `json:"subnets"`
-				} `json:"awsvpcConfiguration"`
-			} `json:"networkConfiguration"`
-			Attachments []struct {
+			LaunchType      string `json:"launchType"`
+			PlatformVersion string `json:"platformVersion"`
+			StartedBy       string `json:"startedBy"`
+			Group           string `json:"group"`
+			Attachments     []struct {
 				Type    string `json:"type"`
 				Details []struct {
 					Name  string `json:"name"`
@@ -362,22 +357,26 @@ func TestCreateService_tasksCarryServiceNetworkingAndDeploymentID(t *testing.T) 
 	if task.StartedBy != deploymentID {
 		t.Errorf("expected startedBy=%q (the deployment ID), got %q", deploymentID, task.StartedBy)
 	}
-	if task.NetworkConfiguration == nil || task.NetworkConfiguration.AwsvpcConfiguration == nil ||
-		len(task.NetworkConfiguration.AwsvpcConfiguration.Subnets) != 1 ||
-		task.NetworkConfiguration.AwsvpcConfiguration.Subnets[0] != "subnet-abcdef12" {
-		t.Errorf("expected the service's networkConfiguration on the task, got %#v", task.NetworkConfiguration)
-	}
 	if len(task.Attachments) != 1 || task.Attachments[0].Type != "ElasticNetworkInterface" {
 		t.Fatalf("expected an ElasticNetworkInterface attachment, got %#v", task.Attachments)
 	}
-	var sawENI bool
+	// The service's networking reaches the task through its attachment, not a
+	// networkConfiguration member — AWS's Task shape has no such member; only
+	// Service, Deployment and TaskSet carry one.
+	var sawENI, sawSubnet bool
 	for _, d := range task.Attachments[0].Details {
 		if d.Name == "networkInterfaceId" && strings.HasPrefix(d.Value, "eni-") {
 			sawENI = true
 		}
+		if d.Name == "subnetId" && d.Value == "subnet-abcdef12" {
+			sawSubnet = true
+		}
 	}
 	if !sawENI {
 		t.Errorf("expected an eni- network interface ID, got %#v", task.Attachments[0].Details)
+	}
+	if !sawSubnet {
+		t.Errorf("expected the service's subnet on the task's attachment, got %#v", task.Attachments[0].Details)
 	}
 }
 
