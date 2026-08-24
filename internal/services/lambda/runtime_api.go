@@ -133,6 +133,20 @@ const (
 	maxExtensionEventQueue = 100
 	logsDeliveryWorkers    = 4
 	logsDeliveryQueueSize  = 1024
+	// extensionLogDeliveryAttempts is how many times the worker tries one
+	// delivery before it is dropped. Telemetry delivery is at-least-once: a
+	// transient transport failure — the extension's server briefly saturated
+	// on a loaded host — must not lose a record, because for the three
+	// init-phase platform records a single lost POST is observable as an
+	// extension that was never told its own INIT phase ended (issue #1437).
+	// Retrying inline on the one worker keeps per-destination order; the cost
+	// is head-of-line delay against an endpoint that is dead rather than
+	// slow, bounded by attempts x (timeout + backoff) per delivery and by the
+	// environment's lifetime overall.
+	extensionLogDeliveryAttempts = 3
+	// extensionLogDeliveryRetryDelay paces the attempts; the n-th retry waits
+	// n of these.
+	extensionLogDeliveryRetryDelay = 100 * time.Millisecond
 )
 
 // invokeResponse is sent back from the container via the Runtime API.
@@ -1232,11 +1246,18 @@ func (s *RuntimeAPIServer) deliverRetainedInitRecords(containerIP, uri string) {
 		if err != nil {
 			continue
 		}
+		// A bounded wait, not a drop-on-full: there are at most
+		// initPhaseRecordsRetained of these, they happen once per
+		// subscription, and they exist precisely so an extension is never
+		// missing its own INIT phase. This runs on the subscribe handler's
+		// goroutine, so the worst case is a briefly slower PUT /logs.
 		select {
 		case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
-		default:
-			s.logger.Debug("runtime api: dropping a retained init-phase record because the delivery queue is full",
+		case <-s.clk.After(time.Second):
+			s.logger.Warn("runtime api: dropping a retained init-phase record — the delivery queue stayed full",
 				zap.String("uri", uri))
+		case <-s.done:
+			return
 		}
 	}
 }
@@ -1299,22 +1320,52 @@ func (s *RuntimeAPIServer) logsDeliveryWorker() {
 	}
 }
 
+// deliverExtensionLog posts one delivery, retrying a transport failure so a
+// hiccup does not lose the record. Only the send is retried — a response, of
+// any status, means the destination received the bytes and the delivery is
+// done. An endpoint that stays dead costs its attempts and is then dropped at
+// Warn: that is the one remaining way to lose a record, and it is no longer
+// silent.
 func (s *RuntimeAPIServer) deliverExtensionLog(client *http.Client, delivery extensionLogDelivery) {
+	for attempt := 1; ; attempt++ {
+		err := s.postExtensionLog(client, delivery)
+		if err == nil {
+			return
+		}
+		if attempt == extensionLogDeliveryAttempts {
+			s.logger.Warn("runtime api: dropping a telemetry delivery — its destination failed every attempt",
+				zap.String("uri", delivery.URI),
+				zap.Int("attempts", attempt),
+				zap.Error(err),
+			)
+			return
+		}
+		s.logger.Debug("runtime api: telemetry delivery failed, retrying",
+			zap.String("uri", delivery.URI), zap.Int("attempt", attempt), zap.Error(err))
+		select {
+		case <-s.clk.After(time.Duration(attempt) * extensionLogDeliveryRetryDelay):
+		case <-s.done:
+			return
+		}
+	}
+}
+
+// postExtensionLog is one delivery attempt.
+func (s *RuntimeAPIServer) postExtensionLog(client *http.Client, delivery extensionLogDelivery) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.URI, bytes.NewReader(delivery.Body))
 	if err != nil {
-		s.logger.Debug("runtime api: build logs delivery request", zap.String("uri", delivery.URI), zap.Error(err))
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logger.Debug("runtime api: deliver logs", zap.String("uri", delivery.URI), zap.Error(err))
-		return
+		return err
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+	return nil
 }
 
 func (s *RuntimeAPIServer) writeExtensionEvent(w http.ResponseWriter, event extensionEvent) {
