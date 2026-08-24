@@ -316,7 +316,6 @@ func (h *Handler) getTrailStatus(w http.ResponseWriter, r *http.Request) {
 		"IsLogging":                 t.IsLogging,
 		"LatestDeliveryError":       "",
 		"LatestNotificationError":   "",
-		"LatestCloudWatchLogsError": "",
 		"LatestDigestDeliveryError": "",
 	})
 }
