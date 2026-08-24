@@ -19,6 +19,7 @@ package appsync
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -26,6 +27,13 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// epochSeconds renders a timestamp the way restJson1 binds one with no
+// timestampFormat trait: epoch seconds, with millisecond precision. The
+// Events API model declares created/lastModified as plain timestamps, and
+// strict deserializers (the AWS SDK for Go v2 among them) require a JSON
+// number there and reject ISO-8601 strings.
+func epochSeconds(t time.Time) float64 { return float64(t.UnixMilli()) / 1000.0 }
 
 // ─── CreateApi ───────────────────────────────────────────────────────────────
 
@@ -44,7 +52,7 @@ func (h *Handler) CreateApi(w http.ResponseWriter, r *http.Request) {
 	apiID := uuid.NewString()
 	api.ApiId = apiID
 	api.ApiArn = protocol.ARN(h.region(r), h.cfg.AccountID, "appsync", "apis/"+apiID)
-	api.Created = h.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	api.Created = epochSeconds(h.clk.Now())
 
 	// Generate synthetic DNS entries.
 	api.Dns = map[string]string{
@@ -194,7 +202,7 @@ func (h *Handler) CreateChannelNamespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	now := h.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	now := epochSeconds(h.clk.Now())
 	ns.ApiId = apiID
 	ns.ChannelNamespaceArn = protocol.ARN(h.region(r), h.cfg.AccountID, "appsync", "apis/"+apiID+"/channelNamespace/"+ns.Name)
 	ns.Created = now
@@ -270,7 +278,7 @@ func (h *Handler) UpdateChannelNamespace(w http.ResponseWriter, r *http.Request)
 	update.Name = existing.Name
 	update.ChannelNamespaceArn = existing.ChannelNamespaceArn
 	update.Created = existing.Created
-	update.LastModified = h.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	update.LastModified = epochSeconds(h.clk.Now())
 	if update.Tags == nil {
 		update.Tags = existing.Tags
 	}
