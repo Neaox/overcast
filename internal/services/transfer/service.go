@@ -7,12 +7,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -33,16 +31,14 @@ type Service struct {
 	cfg     *config.Config
 	store   state.Store
 	log     *serviceutil.ServiceLogger
-	clk     clock.Clock
 	typedOp map[string]op.Operation
 }
 
-func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
+func New(cfg *config.Config, st state.Store, logger *zap.Logger) *Service {
 	s := &Service{
 		cfg:   cfg,
 		store: st,
 		log:   serviceutil.NewServiceLogger(logger, serviceName),
-		clk:   clk,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -127,7 +123,6 @@ type transferServer struct {
 	EndpointType         string        `json:"EndpointType"`
 	IdentityProviderType string        `json:"IdentityProviderType"`
 	State                string        `json:"State"`
-	CreatedAt            string        `json:"CreatedAt"`
 	Tags                 []transferTag `json:"Tags,omitempty"`
 }
 
@@ -167,7 +162,6 @@ func (s *Service) createServer(w http.ResponseWriter, r *http.Request) {
 		EndpointType:         defaultString(in.EndpointType, "PUBLIC"),
 		IdentityProviderType: defaultString(in.IdentityProviderType, "SERVICE_MANAGED"),
 		State:                "ONLINE",
-		CreatedAt:            s.clk.Now().Format(time.RFC3339),
 		Tags:                 tags,
 	}
 	if aerr := s.putServer(r.Context(), &server); aerr != nil {

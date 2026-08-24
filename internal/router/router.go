@@ -386,7 +386,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: cloudtrail")
 	backupSvc := backup.New(cfg, store, logger, clk)
 	prof.mark("  new: backup")
-	transferSvc := transfer.New(cfg, store, logger, clk)
+	transferSvc := transfer.New(cfg, store, logger)
 	prof.mark("  new: transfer")
 	efsSvc := efs.New(cfg, store, logger, clk)
 	prof.mark("  new: efs")
