@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -305,7 +304,6 @@ func (s *Service) createServerTyped(ctx context.Context, req *createServerReques
 		EndpointType:         defaultString(req.EndpointType, "PUBLIC"),
 		IdentityProviderType: defaultString(req.IdentityProviderType, "SERVICE_MANAGED"),
 		State:                "ONLINE",
-		CreatedAt:            s.clk.Now().Format(time.RFC3339),
 		Tags:                 tags,
 	}
 	if aerr := s.putServer(ctx, &server); aerr != nil {
