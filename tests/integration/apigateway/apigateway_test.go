@@ -408,6 +408,20 @@ func TestCreateDeployment_basic(t *testing.T) {
 	if result["id"] == nil || result["id"] == "" {
 		t.Error("expected non-empty deployment id")
 	}
+
+	// AWS returns createdDate as epoch seconds, not milliseconds. The CLI
+	// hard-fails on a milliseconds value ("Unable to calculate correct
+	// timezone offset"), so assert the magnitude of the wire value.
+	created, ok := result["createdDate"].(float64)
+	if !ok {
+		t.Fatalf("createdDate should be a number, got %T (%v)", result["createdDate"], result["createdDate"])
+	}
+	if created > 1e11 {
+		t.Errorf("createdDate %.0f looks like milliseconds; AWS returns epoch seconds", created)
+	}
+	if created < 1e9 {
+		t.Errorf("createdDate %.0f is suspiciously small for an epoch-seconds value", created)
+	}
 }
 
 func TestCreateStage_basic(t *testing.T) {
