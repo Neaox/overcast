@@ -1792,10 +1792,8 @@ func (s *Service) getUser(w http.ResponseWriter, r *http.Request) {
 	}
 	uw := toUserWire(u)
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
-		"Username":             uw.Username,
-		"UserAttributes":       uw.Attributes,
-		"UserCreateDate":       uw.UserCreateDate,
-		"UserLastModifiedDate": uw.UserLastModifiedDate,
+		"Username":       uw.Username,
+		"UserAttributes": uw.Attributes,
 	})
 }
 

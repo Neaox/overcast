@@ -10,7 +10,7 @@ import (
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
-// ─── GetUser should return full user profile ──────────────────────────────────
+// ─── GetUser should return its modeled response shape ─────────────────────────
 
 func TestGetUser_returnsFullProfile(t *testing.T) {
 	// Given: an authenticated user with an email attribute
@@ -24,26 +24,24 @@ func TestGetUser_returnsFullProfile(t *testing.T) {
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
-	var result struct {
-		Username             string              `json:"Username"`
-		UserAttributes       []map[string]string `json:"UserAttributes"`
-		UserCreateDate       float64             `json:"UserCreateDate"`
-		UserLastModifiedDate float64             `json:"UserLastModifiedDate"`
-	}
+	var result map[string]any
 	helpers.DecodeJSON(t, resp, &result)
 
-	// Then: all profile fields are present
-	if result.Username != "profileuser" {
-		t.Errorf("Username: got %q, want %q", result.Username, "profileuser")
+	// Then: only the members modeled on GetUserResponse are present. AWS's
+	// GetUserResponse shape has no UserCreateDate/UserLastModifiedDate members
+	// (those belong to AdminGetUserResponse/UserType) — self-service GetUser
+	// must not fabricate them.
+	if result["Username"] != "profileuser" {
+		t.Errorf("Username: got %v, want %q", result["Username"], "profileuser")
 	}
-	if result.UserCreateDate == 0 {
-		t.Error("UserCreateDate should be non-zero")
-	}
-	if result.UserLastModifiedDate == 0 {
-		t.Error("UserLastModifiedDate should be non-zero")
-	}
-	if len(result.UserAttributes) == 0 {
+	if attrs, ok := result["UserAttributes"].([]any); !ok || len(attrs) == 0 {
 		t.Error("UserAttributes should not be empty")
+	}
+	if _, present := result["UserCreateDate"]; present {
+		t.Error("UserCreateDate should not be present on self-service GetUser (not a GetUserResponse member)")
+	}
+	if _, present := result["UserLastModifiedDate"]; present {
+		t.Error("UserLastModifiedDate should not be present on self-service GetUser (not a GetUserResponse member)")
 	}
 }
 
