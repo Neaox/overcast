@@ -24,8 +24,9 @@ func main() {
 	inventoryOutput := flag.String("inventory-output", "", "optional deterministic JSON inventory output")
 	baselineInventory := flag.String("baseline-inventory", "", "optional prior JSON inventory to compare")
 	summaryOutput := flag.String("summary-output", "", "optional Markdown change summary output")
+	changelogOutput := flag.String("changelog-output", "", "optional changelog fragment output, written only when the diff changes what a caller can observe")
 	versionFile := flag.String("version-file", "", "optional provenance VERSION file to update")
-	modelDate := flag.String("model-date", "", "upstream commit date used with -version-file")
+	modelDate := flag.String("model-date", "", "upstream commit date, read by -version-file and -changelog-output")
 	shapesOut := flag.String("shapes-out", "", "optional directory for the pruned Smithy shape snapshot")
 	shapesServices := flag.String("shapes-services", "", "reviewed in-scope service list required with -shapes-out")
 	flag.Parse()
@@ -37,8 +38,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "awsmodelgen: -baseline-inventory and -summary-output must be used together")
 		os.Exit(2)
 	}
-	if (*versionFile == "") != (*modelDate == "") {
-		fmt.Fprintln(os.Stderr, "awsmodelgen: -version-file and -model-date must be used together")
+	// -model-date has two consumers now, so it is no longer paired with
+	// -version-file alone: each consumer requires it, and it requires at least
+	// one of them, which keeps a date passed to nothing from being ignored.
+	if *versionFile != "" && *modelDate == "" {
+		fmt.Fprintln(os.Stderr, "awsmodelgen: -version-file requires -model-date")
+		os.Exit(2)
+	}
+	// The fragment is a diff against the previous corpus and dates itself from
+	// the upstream commit, so it needs both the baseline and -model-date.
+	if *changelogOutput != "" && (*baselineInventory == "" || *modelDate == "") {
+		fmt.Fprintln(os.Stderr, "awsmodelgen: -changelog-output requires -baseline-inventory and -model-date")
+		os.Exit(2)
+	}
+	if *modelDate != "" && *versionFile == "" && *changelogOutput == "" {
+		fmt.Fprintln(os.Stderr, "awsmodelgen: -model-date needs -version-file or -changelog-output to read it")
 		os.Exit(2)
 	}
 	if (*shapesOut == "") != (*shapesServices == "") {
@@ -111,6 +125,21 @@ func main() {
 			if err := writeInventorySummary(*summaryOutput, baseline, inventory); err != nil {
 				fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
 				os.Exit(1)
+			}
+			if *changelogOutput != "" {
+				// Printed either way: the caller waives the changelog gate on
+				// "inert", and a waiver nobody can trace back to a check is the
+				// reflex the gate exists to prevent.
+				written, err := writeChangelogFragment(*changelogOutput, diffInventories(baseline, inventory), *modelDate)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "awsmodelgen: %v\n", err)
+					os.Exit(1)
+				}
+				if written {
+					fmt.Printf("changelog: fragment written to %s\n", *changelogOutput)
+				} else {
+					fmt.Println("changelog: inert — no operation, protocol-trait, binding or collision change in this refresh")
+				}
 			}
 		}
 	}

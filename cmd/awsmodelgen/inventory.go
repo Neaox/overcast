@@ -198,41 +198,81 @@ func writeInventorySummary(path string, baseline, current modelInventory) error 
 	return nil
 }
 
-func summarizeInventoryChanges(baseline, current modelInventory) string {
-	baselineOperations := keyedOperations(baseline.Operations)
-	currentOperations := keyedOperations(current.Operations)
-	addedOperations, removedOperations := setDifference(currentOperations, baselineOperations), setDifference(baselineOperations, currentOperations)
+// inventoryDiff is one comparison of two model inventories, computed once and
+// read by both consumers: the Markdown summary that becomes the refresh PR's
+// body, and the changelog fragment that records what a caller can observe.
+// They must never disagree about what changed, which is why neither recomputes
+// it.
+type inventoryDiff struct {
+	Baseline, Current modelInventory
+
+	AddedServices, RemovedServices     []string
+	AddedOperations, RemovedOperations []string
+	TraitChanges, BindingChanges       []string
+	AddedCollisions, RemovedCollisions []string
+	NewGaps, ResolvedGaps              []string
+}
+
+func diffInventories(baseline, current modelInventory) inventoryDiff {
+	baselineOperations, currentOperations := keyedOperations(baseline.Operations), keyedOperations(current.Operations)
 	baselineServices, currentServices := serviceSet(baseline.Operations), serviceSet(current.Operations)
-	addedServices, removedServices := setDifference(currentServices, baselineServices), setDifference(baselineServices, currentServices)
-	traitChanges, bindingChanges := inventoryOperationChanges(baseline.Operations, current.Operations)
 	baselineCollisions, currentCollisions := keyedCollisions(baseline.Collisions), keyedCollisions(current.Collisions)
-	addedCollisions, removedCollisions := setDifference(currentCollisions, baselineCollisions), setDifference(baselineCollisions, currentCollisions)
+	traitChanges, bindingChanges := inventoryOperationChanges(baseline.Operations, current.Operations)
+	return inventoryDiff{
+		Baseline:          baseline,
+		Current:           current,
+		AddedServices:     setDifference(currentServices, baselineServices),
+		RemovedServices:   setDifference(baselineServices, currentServices),
+		AddedOperations:   setDifference(currentOperations, baselineOperations),
+		RemovedOperations: setDifference(baselineOperations, currentOperations),
+		TraitChanges:      traitChanges,
+		BindingChanges:    bindingChanges,
+		AddedCollisions:   setDifference(currentCollisions, baselineCollisions),
+		RemovedCollisions: setDifference(baselineCollisions, currentCollisions),
+		NewGaps:           setDifference(sliceSet(current.Coverage.Uncovered), sliceSet(baseline.Coverage.Uncovered)),
+		ResolvedGaps:      setDifference(sliceSet(baseline.Coverage.Uncovered), sliceSet(current.Coverage.Uncovered)),
+	}
+}
+
+// empty reports whether the two inventories describe the same corpus. The
+// coverage comparison is what catches a refresh that moved an operation
+// between the claimable and ambiguous tiers without adding or removing one.
+func (d inventoryDiff) empty() bool {
+	return len(d.AddedServices)+len(d.RemovedServices)+
+		len(d.AddedOperations)+len(d.RemovedOperations)+
+		len(d.TraitChanges)+len(d.BindingChanges)+
+		len(d.AddedCollisions)+len(d.RemovedCollisions) == 0 &&
+		coverageEqual(d.Baseline.Coverage, d.Current.Coverage)
+}
+
+func summarizeInventoryChanges(baseline, current modelInventory) string {
+	d := diffInventories(baseline, current)
 
 	var out bytes.Buffer
 	out.WriteString("## AWS API model refresh\n\n")
 	fmt.Fprintf(&out, "`%s` -> `%s`\n\n", baseline.Revision, current.Revision)
-	if len(addedServices)+len(removedServices)+len(addedOperations)+len(removedOperations)+len(traitChanges)+len(bindingChanges)+len(addedCollisions)+len(removedCollisions) == 0 && coverageEqual(baseline.Coverage, current.Coverage) {
+	if d.empty() {
 		out.WriteString("No model changes detected.\n")
 		return out.String()
 	}
-	fmt.Fprintf(&out, "- Services: **+%d / -%d**\n", len(addedServices), len(removedServices))
-	fmt.Fprintf(&out, "- Operations: **+%d / -%d**\n", len(addedOperations), len(removedOperations))
-	fmt.Fprintf(&out, "- Protocol trait changes: **%d**\n", len(traitChanges))
-	fmt.Fprintf(&out, "- HTTP/target binding changes: **%d**\n", len(bindingChanges))
-	fmt.Fprintf(&out, "- Collision changes: **+%d / -%d**\n", len(addedCollisions), len(removedCollisions))
+	fmt.Fprintf(&out, "- Services: **+%d / -%d**\n", len(d.AddedServices), len(d.RemovedServices))
+	fmt.Fprintf(&out, "- Operations: **+%d / -%d**\n", len(d.AddedOperations), len(d.RemovedOperations))
+	fmt.Fprintf(&out, "- Protocol trait changes: **%d**\n", len(d.TraitChanges))
+	fmt.Fprintf(&out, "- HTTP/target binding changes: **%d**\n", len(d.BindingChanges))
+	fmt.Fprintf(&out, "- Collision changes: **+%d / -%d**\n", len(d.AddedCollisions), len(d.RemovedCollisions))
 	fmt.Fprintf(&out, "- Fallback coverage: **%d claimable + %d ambiguous / %d total -> %d claimable + %d ambiguous / %d total non-S3 operations**\n",
 		baseline.Coverage.ClaimableOperations, baseline.Coverage.AmbiguousOperations, baseline.Coverage.NonS3Operations,
 		current.Coverage.ClaimableOperations, current.Coverage.AmbiguousOperations, current.Coverage.NonS3Operations)
-	appendSummaryList(&out, "Added services", addedServices)
-	appendSummaryList(&out, "Removed services", removedServices)
-	appendSummaryList(&out, "Added operations", addedOperations)
-	appendSummaryList(&out, "Removed operations", removedOperations)
-	appendSummaryList(&out, "Protocol trait changes", traitChanges)
-	appendSummaryList(&out, "HTTP/target binding changes", bindingChanges)
-	appendSummaryList(&out, "Added collisions", addedCollisions)
-	appendSummaryList(&out, "Removed collisions", removedCollisions)
-	appendSummaryList(&out, "New fallback coverage gaps", setDifference(sliceSet(current.Coverage.Uncovered), sliceSet(baseline.Coverage.Uncovered)))
-	appendSummaryList(&out, "Resolved fallback coverage gaps", setDifference(sliceSet(baseline.Coverage.Uncovered), sliceSet(current.Coverage.Uncovered)))
+	appendSummaryList(&out, "Added services", d.AddedServices)
+	appendSummaryList(&out, "Removed services", d.RemovedServices)
+	appendSummaryList(&out, "Added operations", d.AddedOperations)
+	appendSummaryList(&out, "Removed operations", d.RemovedOperations)
+	appendSummaryList(&out, "Protocol trait changes", d.TraitChanges)
+	appendSummaryList(&out, "HTTP/target binding changes", d.BindingChanges)
+	appendSummaryList(&out, "Added collisions", d.AddedCollisions)
+	appendSummaryList(&out, "Removed collisions", d.RemovedCollisions)
+	appendSummaryList(&out, "New fallback coverage gaps", d.NewGaps)
+	appendSummaryList(&out, "Resolved fallback coverage gaps", d.ResolvedGaps)
 	return out.String()
 }
 

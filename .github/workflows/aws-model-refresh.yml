@@ -192,6 +192,10 @@ jobs:
 
           git -C "$MODEL_CHECKOUT" checkout --detach "$LATEST_REVISION"
           model_date="$(git -C "$MODEL_CHECKOUT" show -s --format=%cs "$LATEST_REVISION")"
+          # Named from the upstream commit date and revision, not from today, so
+          # a re-run of the same refresh rewrites one fragment instead of
+          # leaving a second one behind under a new date.
+          fragment=".changelog/${model_date//-/}-aws-models-${LATEST_REVISION:0:12}.md"
           go run ./cmd/awsmodelgen \
             -models "$MODEL_CHECKOUT/models" \
             -output internal/awsapi/manifest.gen.go \
@@ -199,11 +203,29 @@ jobs:
             -inventory-output "$RUNNER_TEMP/current-inventory.json" \
             -baseline-inventory "$RUNNER_TEMP/baseline-inventory.json" \
             -summary-output "$RUNNER_TEMP/aws-model-summary.md" \
+            -changelog-output "$fragment" \
             -shapes-out models/aws/shapes \
             -shapes-services models/aws/shapes-services.txt \
             -version-file models/aws/VERSION \
             -model-date "$model_date"
           echo "model_date=$model_date" >> "$GITHUB_OUTPUT"
+          # awsmodelgen writes the fragment only when the diff moves a category
+          # a caller can observe, so its absence is the evidence the PR step
+          # waives the changelog gate on — not an assumption that a bot's PR
+          # never needs an entry.
+          if [[ -f "$fragment" ]]; then
+            echo "changelog_fragment=$fragment" >> "$GITHUB_OUTPUT"
+            {
+              echo
+              echo "### Changelog fragment"
+              echo
+              echo "\`$fragment\`"
+              echo
+              sed 's/^/> /' "$fragment"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changelog_fragment=" >> "$GITHUB_OUTPUT"
+          fi
           cat "$RUNNER_TEMP/aws-model-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated ownership and full regeneration
@@ -243,8 +265,12 @@ jobs:
           git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
           # The shape snapshot is regenerated in the same run and must land in
           # the same commit as the revision bump, or shapes-sha256 would already
-          # describe a snapshot that is not in the tree.
-          git add internal/awsapi/manifest.gen.go models/aws/VERSION models/aws/shapes
+          # describe a snapshot that is not in the tree. The changelog fragment
+          # is here for the same reason: it describes this revision's diff, so a
+          # commit carrying one without the other would misdescribe itself.
+          # .changelog/ is added as a directory because the fragment is written
+          # only for a refresh that warrants one.
+          git add internal/awsapi/manifest.gen.go models/aws/VERSION models/aws/shapes .changelog
           git commit -m "chore(aws-models): refresh pinned API models"
           if [[ -n "$EXPECTED_REVISION" ]]; then
             git push \
@@ -263,6 +289,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           LATEST_REVISION: ${{ steps.upstream.outputs.latest_revision }}
           MODEL_DATE: ${{ steps.generate.outputs.model_date }}
+          CHANGELOG_FRAGMENT: ${{ steps.generate.outputs.changelog_fragment }}
           VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
         run: |
           set -euo pipefail
@@ -351,4 +378,20 @@ jobs:
             gh pr edit "$pr_number" --add-label "$gate_label"
           else
             gh pr edit "$pr_number" --remove-label "$gate_label"
+          fi
+
+          # The changelog gate asks a question only the author can answer, and
+          # for this PR the author is awsmodelgen — which answered it by
+          # diffing the corpus. A fragment in the commit is one answer; this is
+          # the other, and it names what was checked so the waiver can be
+          # audited rather than taken on trust. Posting it is only safe because
+          # it is unconditional on the *absence* of a fragment, never on the
+          # PR being a bot's.
+          #
+          # A waiver posted after `Changelog entry` has already run is picked up
+          # by changelog-waiver.yml re-running it, so this does not race the
+          # check that the PR creation above started.
+          if [[ -z "$CHANGELOG_FRAGMENT" ]]; then
+            gh pr comment "$pr_number" --body \
+              "/no-changelog awsmodelgen diffed this revision against the previous corpus and found no operation added or removed, no protocol-trait or HTTP/target-binding change, and no collision change — the categories that move a request between the S3 fallback, a protocol-correct 501 and a scoped-credential error. Nothing a caller can observe moved, so there is no entry to write. A refresh that does move one of those carries a generated fragment in the commit instead."
           fi
