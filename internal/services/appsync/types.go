@@ -205,7 +205,7 @@ type EventApi struct {
 	Tags         map[string]string `json:"tags,omitempty"`
 	WafWebAclArn string            `json:"wafWebAclArn,omitempty"`
 	XrayEnabled  bool              `json:"xrayEnabled"`
-	Created      string            `json:"created,omitempty"`
+	Created      float64           `json:"created,omitempty"` // Epoch seconds, millisecond precision.
 
 	// EventConfig stored as raw JSON for zero-cost passthrough.
 	EventConfig json.RawMessage `json:"eventConfig,omitempty"`
@@ -220,8 +220,8 @@ type ChannelNamespace struct {
 	ChannelNamespaceArn string            `json:"channelNamespaceArn,omitempty"`
 	CodeHandlers        string            `json:"codeHandlers,omitempty"`
 	Tags                map[string]string `json:"tags,omitempty"`
-	Created             string            `json:"created,omitempty"`
-	LastModified        string            `json:"lastModified,omitempty"`
+	Created             float64           `json:"created,omitempty"`      // Epoch seconds, millisecond precision.
+	LastModified        float64           `json:"lastModified,omitempty"` // Epoch seconds, millisecond precision.
 
 	// Complex nested configs stored as raw JSON.
 	PublishAuthModes   json.RawMessage `json:"publishAuthModes,omitempty"`

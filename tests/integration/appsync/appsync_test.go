@@ -5998,18 +5998,25 @@ func TestCreateApi_EventsAPI_success(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	var eventResult struct {
 		Api struct {
-			ApiId   string            `json:"apiId"`
-			Name    string            `json:"name"`
-			ApiArn  string            `json:"apiArn"`
-			Dns     map[string]string `json:"dns"`
-			Tags    map[string]string `json:"tags"`
-			Created string            `json:"created"`
+			ApiId  string            `json:"apiId"`
+			Name   string            `json:"name"`
+			ApiArn string            `json:"apiArn"`
+			Dns    map[string]string `json:"dns"`
+			Tags   map[string]string `json:"tags"`
+			// created is a plain restJson1 timestamp (no timestampFormat
+			// trait): epoch seconds as a JSON number. Decoding into float64
+			// fails the test if the server ever emits a string again, and
+			// the magnitude check below catches an epoch-millis regression.
+			Created float64 `json:"created"`
 		} `json:"api"`
 	}
 	helpers.DecodeJSON(t, resp, &eventResult)
 	api := eventResult.Api
 	if api.ApiId == "" {
 		t.Error("expected apiId to be set")
+	}
+	if api.Created < 1e9 || api.Created >= 1e10 {
+		t.Errorf("expected created as epoch seconds (between 1e9 and 1e10), got %v", api.Created)
 	}
 	if api.Name != "test-event-api" {
 		t.Errorf("expected name=test-event-api, got %q", api.Name)
@@ -6126,15 +6133,25 @@ func TestCreateChannelNamespace_success(t *testing.T) {
 			Name                string `json:"name"`
 			ApiId               string `json:"apiId"`
 			ChannelNamespaceArn string `json:"channelNamespaceArn"`
-			Created             string `json:"created"`
-			LastModified        string `json:"lastModified"`
-			CodeHandlers        string `json:"codeHandlers"`
+			// created/lastModified are plain restJson1 timestamps: epoch
+			// seconds as JSON numbers. Decoding into float64 fails the test
+			// if the server ever emits strings again, and the magnitude
+			// checks below catch an epoch-millis regression.
+			Created      float64 `json:"created"`
+			LastModified float64 `json:"lastModified"`
+			CodeHandlers string  `json:"codeHandlers"`
 		} `json:"channelNamespace"`
 	}
 	helpers.DecodeJSON(t, resp, &nsCreateResult)
 	ns := nsCreateResult.ChannelNamespace
 	if ns.Name != "test-channel" {
 		t.Errorf("expected name=test-channel, got %q", ns.Name)
+	}
+	if ns.Created < 1e9 || ns.Created >= 1e10 {
+		t.Errorf("expected created as epoch seconds (between 1e9 and 1e10), got %v", ns.Created)
+	}
+	if ns.LastModified != ns.Created {
+		t.Errorf("expected lastModified=created on create, got created=%v lastModified=%v", ns.Created, ns.LastModified)
 	}
 	if ns.ApiId != apiID {
 		t.Errorf("expected apiId=%s, got %s", apiID, ns.ApiId)
