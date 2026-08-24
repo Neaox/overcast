@@ -1601,7 +1601,18 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	}
 
 	start := ci.clk.Now()
-	reqID, resultCh := ci.runtimeAPI.SubmitInvocation(ci.functionARN, event, deadline)
+	// Prepared, not yet released: the runtime must not be able to see this
+	// invocation until its START record is down. A warm runtime is already
+	// parked on GET /next, and the handler's first print can be read, framed
+	// and ingested within a millisecond of the hand-off — under load, sooner
+	// than this goroutine is rescheduled. Submitting first therefore let the
+	// handler's own lines beat START into the tail and CloudWatch (the third
+	// life of this defect: #1160 and #1325 each widened a wait in the old
+	// silence-based pipeline; the in-container init removed that mechanism,
+	// and this host-side ordering was the race it left behind). Preparing,
+	// writing START, then releasing removes the class: a frame cannot carry
+	// this request ID before the runtime has been handed the invocation.
+	reqID, resultCh := ci.runtimeAPI.PrepareInvocation(ci.functionARN, event, deadline)
 	// Overlap the memory sample with handler execution; REPORT waits on it
 	// only briefly (see reportMemoryMB).
 	memSample := ci.startMemorySample()
@@ -1618,7 +1629,10 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	// a warm one. The init stamped that boundary on its GET /next, so this is
 	// the same wait as the response-side one, at the other end of the
 	// invocation — and normally zero, because those frames were published long
-	// before the poll that named them.
+	// before the poll that named them. (With the release below, this wait now
+	// sits ahead of the hand-off, so a broken log channel costs its bound in
+	// invoke latency rather than in misordered output — the right side of that
+	// trade, and only a degraded environment ever pays it.)
 	ci.awaitIdleLog()
 
 	// Emit the start record that real Lambda writes before every invocation.
@@ -1645,6 +1659,10 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 			}
 		}()
 	}
+
+	// START is written and the exit watcher is armed — only now does the
+	// runtime get the invocation.
+	ci.runtimeAPI.ReleaseInvocation(reqID)
 
 	var resp invokeResponse
 	select {

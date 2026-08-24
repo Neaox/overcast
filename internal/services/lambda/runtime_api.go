@@ -824,9 +824,15 @@ func (s *RuntimeAPIServer) dropFromQueueLocked(inv *pendingInvocation) {
 	}
 }
 
-// SubmitInvocation enqueues an invocation for a container to pick up.
-// It returns the request ID and a channel that will receive the result.
-func (s *RuntimeAPIServer) SubmitInvocation(functionARN string, event []byte, deadline time.Time) (string, <-chan invokeResponse) {
+// PrepareInvocation registers an invocation — its ID, payload, deadline and
+// result channel — without offering it to any execution environment. Until
+// ReleaseInvocation, no GET /next can return it, so no log frame can carry its
+// request ID yet. That gap is the point: the invoke path writes the
+// invocation's START record between the two calls, which is what makes "the
+// tail opens with START" a structural property rather than a race the invoke
+// goroutine has to win — the handler cannot have printed a line for a request
+// the runtime has not been handed.
+func (s *RuntimeAPIServer) PrepareInvocation(functionARN string, event []byte, deadline time.Time) (string, <-chan invokeResponse) {
 	reqID := uuid.New().String()
 	ch := make(chan invokeResponse, 1)
 
@@ -841,23 +847,44 @@ func (s *RuntimeAPIServer) SubmitInvocation(functionARN string, event []byte, de
 
 	s.mu.Lock()
 	s.pending[reqID] = inv
+	s.mu.Unlock()
+	return reqID, ch
+}
+
+// ReleaseInvocation offers a prepared invocation to the function's execution
+// environments: straight to a parked runtime when one is waiting, queued for
+// the next GET /next otherwise. An invocation cancelled between the two calls
+// is already gone from pending, so releasing it is a no-op.
+func (s *RuntimeAPIServer) ReleaseInvocation(reqID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, ok := s.pending[reqID]
+	if !ok || inv.cancelled {
+		return
+	}
 
 	// If a container for this function is already waiting (long-polling /next),
 	// hand it straight over. The waiter is removed from the list as it is
 	// claimed, so two invocations arriving together go to two containers rather
 	// than both targeting the same one.
-	if waiters := s.waiting[functionARN]; len(waiters) > 0 {
+	if waiters := s.waiting[inv.FunctionARN]; len(waiters) > 0 {
 		waiter := waiters[0]
-		s.waiting[functionARN] = waiters[1:]
+		s.waiting[inv.FunctionARN] = waiters[1:]
 		waiter.ch <- inv // buffered, and this waiter is now claimed by us alone
-		s.mu.Unlock()
-		return reqID, ch
+		return
 	}
 
 	// No waiter — enqueue for later pickup.
-	s.funcQueues[functionARN] = append(s.funcQueues[functionARN], inv)
-	s.mu.Unlock()
+	s.funcQueues[inv.FunctionARN] = append(s.funcQueues[inv.FunctionARN], inv)
+}
 
+// SubmitInvocation prepares an invocation and releases it in one call. It is
+// the form for a caller with nothing to order in front of the hand-off; the
+// invoke path uses the Prepare/Release pair so the START record is in the tail
+// buffer before the runtime can start the handler — see PrepareInvocation.
+func (s *RuntimeAPIServer) SubmitInvocation(functionARN string, event []byte, deadline time.Time) (string, <-chan invokeResponse) {
+	reqID, ch := s.PrepareInvocation(functionARN, event, deadline)
+	s.ReleaseInvocation(reqID)
 	return reqID, ch
 }
 
