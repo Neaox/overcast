@@ -6,3 +6,4 @@
 * [web] a Monitor chart bucket with no adjacent data now renders as a visible dot; it previously painted nothing, leaving a chart that looked empty despite real data
 + [web] Monitor charts gained labeled X/Y axes with aligned gridlines, an AWS-console-style auto-refresh interval picker (Off/10s/30s/1m/5m), and a bucket-width chip; the time window holds still while auto-refresh is off or a chart is being inspected
 ~ [metrics] the 5-minute rollup tier is retained for 30 days (previously 7), and the 30-day Monitor view charts 15-minute buckets instead of 1-hour ones
+~ [web] log rendering converged on the shared virtualized viewer: its table mode gained level badges, click-to-expand rows, and hover-copy, and a new reusable LogPanel owns fetch + filter + auto-refresh for any log group or stream (declarative filter model with relative or fixed time windows); the Lambda Monitor tab now renders its logs through it, with a filter box and time-window picker
