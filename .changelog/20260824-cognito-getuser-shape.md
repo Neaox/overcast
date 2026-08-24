@@ -1,0 +1,2 @@
+*! [cognito] self-service GetUser no longer fabricates `UserCreateDate`/`UserLastModifiedDate`. AWS's GetUserResponse shape carries only Username, UserAttributes, MFAOptions, PreferredMfaSetting and UserMFASettingList — the two timestamp members belong to AdminGetUserResponse/UserType, which AdminGetUser and ListUsers keep returning unchanged.
+  migration: read a user's creation/modification timestamps from AdminGetUser instead of self-service GetUser, as on real AWS.

@@ -568,10 +568,8 @@ type ListUsersInGroupResp struct {
 }
 
 type GetUserResp struct {
-	Username             string          `json:"Username" cbor:"Username"`
-	UserAttributes       []UserAttribute `json:"UserAttributes" cbor:"UserAttributes"`
-	UserCreateDate       float64         `json:"UserCreateDate" cbor:"UserCreateDate"`
-	UserLastModifiedDate float64         `json:"UserLastModifiedDate" cbor:"UserLastModifiedDate"`
+	Username       string          `json:"Username" cbor:"Username"`
+	UserAttributes []UserAttribute `json:"UserAttributes" cbor:"UserAttributes"`
 }
 
 // ─── typed helpers ────────────────────────────────────────────────────────────
@@ -3295,10 +3293,8 @@ func (s *Service) GetUserTyped(ctx context.Context, req *AccessTokenReq) (*GetUs
 	}
 	uw := toUserWire(u)
 	return &GetUserResp{
-		Username:             uw.Username,
-		UserAttributes:       uw.Attributes,
-		UserCreateDate:       uw.UserCreateDate,
-		UserLastModifiedDate: uw.UserLastModifiedDate,
+		Username:       uw.Username,
+		UserAttributes: uw.Attributes,
 	}, nil
 }
 
