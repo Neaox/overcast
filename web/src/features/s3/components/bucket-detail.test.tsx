@@ -44,11 +44,19 @@ vi.mock("@tanstack/react-virtual", () => ({
   },
 }))
 
-// The component reads its bucket from the file route; the test mounts it on a
-// synthetic route instead.
-vi.mock("@/routes/s3/$bucket/index", () => ({
-  Route: { useParams: () => ({ bucket: "demo" }) },
-}))
+// The component reads its whole position — bucket, folder, open object, version
+// — from the file route. The test mounts it on a synthetic route of the same
+// shape and forwards to the real router hooks, so the URL is genuinely what
+// drives the view rather than a stubbed-out constant.
+vi.mock("@/routes/s3/$bucket/objects/$", async () => {
+  const { useParams, useSearch } = await import("@tanstack/react-router")
+  return {
+    Route: {
+      useParams: () => useParams({ strict: false }),
+      useSearch: () => useSearch({ strict: false }),
+    },
+  }
+})
 
 // The ownership banner's reverse-map query goes through the AWS SDK, which no
 // test interceptor reaches; it is not what is under test here.
@@ -76,11 +84,17 @@ const api = vi.hoisted(() => ({
   versioning: "",
   /** The `token` of every listObjects call, in order. */
   listTokens: [] as (string | undefined)[],
+  /** The `prefix` of every listObjects call, in order. */
+  listPrefixes: [] as string[],
+  /** Every HeadObject the inspector asked for, in order. */
+  metaCalls: [] as { key: string; versionId?: string }[],
   reset() {
     this.objectPages = []
     this.versionPages = []
     this.versioning = ""
     this.listTokens = []
+    this.listPrefixes = []
+    this.metaCalls = []
   },
 }))
 
@@ -90,8 +104,9 @@ vi.mock("@/services/api", async (importOriginal) => {
     ...actual,
     s3: {
       ...actual.s3,
-      listObjects: (_bucket: string, opts: { token?: string }) => {
+      listObjects: (_bucket: string, opts: { token?: string; prefix: string }) => {
         api.listTokens.push(opts.token)
+        api.listPrefixes.push(opts.prefix)
         // Tokens name the page that follows them: "page-2" fetches index 1.
         const index = opts.token ? Number(opts.token.replace("page-", "")) - 1 : 0
         return Promise.resolve(api.objectPages[index])
@@ -102,6 +117,17 @@ vi.mock("@/services/api", async (importOriginal) => {
       },
       getBucketVersioning: () => Promise.resolve(api.versioning),
       getBucketLifecycle: () => Promise.resolve(null),
+      getObjectMetadata: (_bucket: string, key: string, versionId?: string) => {
+        api.metaCalls.push({ key, versionId })
+        return Promise.resolve({
+          contentType: "text/plain",
+          contentLength: 12,
+          lastModified: "2026-01-01T00:00:00.000Z",
+          etag: "abc",
+          metadata: {},
+        })
+      },
+      getObjectText: () => Promise.resolve({ text: "hello", truncated: false }),
     },
   }
 })
@@ -139,8 +165,13 @@ function version(
   }
 }
 
-function renderBrowser() {
-  return renderWithRouter(BucketDetail, { path: "/s3/$bucket", initialEntry: "/s3/demo" })
+/**
+ * Mount the browser at a URL. The path after `objects/` is the browser's
+ * state: `""` is the bucket root, a trailing "/" is the folder to list, and
+ * anything else is the object to open the inspector on.
+ */
+function renderBrowser(initialEntry = "/s3/demo/objects") {
+  return renderWithRouter(BucketDetail, { path: "/s3/$bucket/objects/$", initialEntry })
 }
 
 describe("BucketDetail > row identity", () => {
@@ -305,5 +336,140 @@ describe("BucketDetail > selection", () => {
     // Two versions of one key cannot both be a file of the same name in one
     // archive, so the version view does not offer the choice.
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+  })
+})
+
+describe("BucketDetail > URL state", () => {
+  it("lists the folder the path names", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("logs/app.log")] }]
+    renderBrowser("/s3/demo/objects/logs/")
+
+    await waitFor(() => expect(screen.getByText("app.log")).toBeInTheDocument())
+    expect(api.listPrefixes).toEqual(["logs/"])
+  })
+
+  it("opens the inspector on the object the path names, over its own folder", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("logs/app.log")] }]
+    renderBrowser("/s3/demo/objects/logs/app.log")
+
+    // A link straight to an object is the whole point: the dialog is open on
+    // arrival, and behind it sits the folder the object lives in, so closing it
+    // leaves the user somewhere useful.
+    await waitFor(() => expect(api.metaCalls).toEqual([{ key: "logs/app.log" }]))
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+    expect(api.listPrefixes).toEqual(["logs/"])
+  })
+
+  it("reads the revision named in the query string", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    renderBrowser("/s3/demo/objects/a.txt?versionId=v2")
+
+    await waitFor(() => expect(api.metaCalls).toEqual([{ key: "a.txt", versionId: "v2" }]))
+  })
+
+  it("writes the folder into the path when one is opened", async () => {
+    api.objectPages = [{ prefixes: [{ prefix: "logs/" }], objects: [] }]
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("logs/"))
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects/logs/"))
+  })
+
+  it("writes the object into the path when one is inspected", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("report.csv")] }]
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("report.csv"))
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects/report.csv"))
+  })
+
+  it("writes the version id alongside the key when a version is inspected", async () => {
+    api.versioning = "Enabled"
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    api.versionPages = [
+      { prefixes: [], isTruncated: false, versions: [version("a.txt", "v2", { isLatest: true })] },
+    ]
+    const { user, router } = renderBrowser()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Show every version and delete marker" }),
+    )
+    await user.click(await screen.findByText("a.txt"))
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/s3/demo/objects/a.txt")
+      expect(router.state.location.search).toEqual({ versionId: "v2" })
+    })
+  })
+
+  it("closes the inspector when the user goes back", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("report.csv")] }]
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("report.csv"))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // Opening pushed an entry, so Back is the dismiss gesture the browser
+    // chrome already advertises.
+    router.history.back()
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    expect(router.state.location.pathname).toBe("/s3/demo/objects")
+  })
+
+  it("returns to the folder without stacking history when the inspector is dismissed", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("logs/app.log")] }]
+    const { user, router } = renderBrowser("/s3/demo/objects/logs/")
+
+    await user.click(await screen.findByText("app.log"))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // The dialog offers two: the footer button and the corner X.
+    await user.click(screen.getAllByRole("button", { name: "Close" })[0])
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects/logs/"))
+    // The close replaced the object's entry rather than pushing over it, so
+    // Back does not reopen what the user just dismissed.
+    router.history.back()
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects/logs/"))
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+})
+
+describe("BucketDetail > switching revisions", () => {
+  beforeEach(() => {
+    api.versioning = "Enabled"
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    api.versionPages = [
+      {
+        prefixes: [],
+        isTruncated: false,
+        versions: [version("a.txt", "v2", { isLatest: true }), version("a.txt", "v1")],
+      },
+    ]
+  })
+
+  it("names the revision in the URL, so the one on screen is linkable", async () => {
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("a.txt"))
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await user.click(await screen.findByText("v1"))
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ versionId: "v1" }))
+    expect(router.state.location.pathname).toBe("/s3/demo/objects/a.txt")
+  })
+
+  it("does not stack a history entry per revision read", async () => {
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("a.txt"))
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await user.click(await screen.findByText("v1"))
+    await waitFor(() => expect(router.state.location.search).toEqual({ versionId: "v1" }))
+
+    // The switcher is a control inside one open inspector, not a move to
+    // somewhere else: Back closes the inspector however many revisions were
+    // read in it, rather than walking back through them one click at a time.
+    router.history.back()
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects"))
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 })

@@ -29,6 +29,7 @@
 import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/react-query"
 import { s3 } from "@/services/api"
 import { endpointStore } from "@/services/endpoint-store"
+import type { S3ObjectVersion } from "@/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -56,6 +57,11 @@ export const s3Keys = {
   versions: () => [...s3Keys.all(), "versions"] as const,
   versionList: (bucket: string, prefix: string, scope: ListScope = "folder") =>
     [...s3Keys.versions(), bucket, prefix, scope] as const,
+  // One key's own history, which is a different question from versionList's
+  // prefix-wide listing. Nested under versions() so that deleting a version
+  // invalidates both.
+  objectHistory: (bucket: string, key: string) =>
+    [...s3Keys.versions(), "history", bucket, key] as const,
   versioning: () => [...s3Keys.all(), "versioning"] as const,
   bucketVersioning: (bucket: string) => [...s3Keys.versioning(), bucket] as const,
   meta: () => [...s3Keys.all(), "meta"] as const,
@@ -124,6 +130,50 @@ export function s3ObjectVersionsQueryOptions(
       lastPage.isTruncated && lastPage.nextKeyMarker
         ? { keyMarker: lastPage.nextKeyMarker, versionIdMarker: lastPage.nextVersionIdMarker }
         : undefined,
+  })
+}
+
+/** How much of one object's history is read in a single pass. */
+const HISTORY_PAGE_SIZE = 200
+
+/** Every stored revision of one key, newest first. */
+export interface ObjectHistory {
+  versions: S3ObjectVersion[]
+  /** This key has more revisions than were read. */
+  isTruncated: boolean
+}
+
+/**
+ * One object's own history — every version and delete marker stored under
+ * exactly this key.
+ *
+ * Distinct from {@link s3ObjectVersionsQueryOptions}, which answers "what is
+ * this bucket still storing beneath a prefix". This one answers "what happened
+ * to this object", which is the question a version list inside the inspector
+ * exists for.
+ */
+export function s3ObjectHistoryQueryOptions(bucket: string, key: string) {
+  return queryOptions({
+    queryKey: s3Keys.objectHistory(bucket, key),
+    queryFn: async (): Promise<ObjectHistory> => {
+      const res = await s3.listObjectVersions(bucket, {
+        prefix: key,
+        delimiter: "",
+        maxKeys: HISTORY_PAGE_SIZE,
+      })
+      // ListObjectVersions filters by prefix, not by key: asking for
+      // `logs/app.log` also answers with every version of `logs/app.log.bak`,
+      // and showing a neighbour's revisions as this object's history would be
+      // wrong in exactly the buckets where it matters.
+      const versions = res.versions.filter((v) => v.key === key)
+      return {
+        versions,
+        // Keys come back ascending, so this key's own versions lead the
+        // answer: a truncated page has cut into them only if it filled up
+        // before reaching the next key.
+        isTruncated: res.isTruncated && res.versions.at(-1)?.key === key,
+      }
+    },
   })
 }
 

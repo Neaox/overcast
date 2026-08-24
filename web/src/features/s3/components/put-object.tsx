@@ -217,7 +217,13 @@ export function PutObject() {
         title: `Uploaded ${rows.length} file${rows.length !== 1 ? "s" : ""}`,
         variant: "success",
       })
-      void navigate({ to: "/s3/$bucket", params: { bucket } })
+      // Back to the folder the files landed in, not the bucket root — the
+      // upload is only verifiable where it happened.
+      void navigate({
+        to: "/s3/$bucket/objects/$",
+        params: { bucket, _splat: prefix },
+        search: {},
+      })
     } else {
       toast({
         title: `${errorCount} file${errorCount !== 1 ? "s" : ""} failed to upload`,
@@ -496,7 +502,13 @@ export function PutObject() {
         <div className="flex gap-2">
           <Button
             variant="secondary"
-            onClick={() => navigate({ to: "/s3/$bucket", params: { bucket } })}
+            onClick={() =>
+              navigate({
+                to: "/s3/$bucket/objects/$",
+                params: { bucket, _splat: prefix },
+                search: {},
+              })
+            }
             disabled={uploading}
           >
             {allDone ? "Back to bucket" : "Cancel"}

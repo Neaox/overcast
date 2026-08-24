@@ -21,8 +21,8 @@ export function BucketTabs({ bucket, active }: BucketTabsProps) {
   return (
     <div className="flex gap-6 border-b border-border">
       <Link
-        to="/s3/$bucket"
-        params={{ bucket }}
+        to="/s3/$bucket/objects/$"
+        params={{ bucket, _splat: "" }}
         className={cn(tab, active === "objects" ? activeTab : inactiveTab)}
       >
         Objects
