@@ -69,27 +69,43 @@ func classify(method, path string) (observation, string) {
 // requestTracker holds the invocation currently in flight. Every line the init
 // reads is attributed to whatever this says at the moment of the read.
 type requestTracker struct {
-	mu    sync.RWMutex
-	id    string
-	lines uint64
+	// now is the clock, replaceable by a test; nil means time.Now.
+	now func() time.Time
+
+	mu      sync.RWMutex
+	id      string
+	lines   uint64
+	beganAt time.Time
+}
+
+func (t *requestTracker) clock() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
+	return time.Now()
 }
 
 func (t *requestTracker) begin(id string) {
 	t.mu.Lock()
 	t.id = id
 	t.lines = 0
+	t.beganAt = t.clock()
 	t.mu.Unlock()
 }
 
 // end clears the current request and reports how many lines were attributed to
-// it. Called once the pipes have been drained, so the count is final.
-func (t *requestTracker) end() uint64 {
+// it and when it began. Called once the pipes have been drained, so the count
+// is final; the caller measured the answer's arrival itself, before the drain,
+// so the drain's cost is not billed to the runtime.
+func (t *requestTracker) end() (uint64, time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	lines := t.lines
+	began := t.beganAt
 	t.id = ""
 	t.lines = 0
-	return lines
+	t.beganAt = time.Time{}
+	return lines, began
 }
 
 func (t *requestTracker) current() string {
@@ -128,6 +144,12 @@ type proxy struct {
 	// the first START — see ServeHTTP. Nil in the proxy's own tests, which are
 	// about forwarding rather than telemetry.
 	initDone func() (uint64, bool)
+
+	// invokeDone, when set, publishes the RecInvokeDone measurement for an
+	// answered invocation and reports its seq. Published before the answer is
+	// stamped and forwarded, so the host has ingested it by the time it
+	// writes END. Nil in the proxy's own tests.
+	invokeDone func(req string, durationMs float64, producedBytes *int64) uint64
 }
 
 func newProxy(hostAddr string, tracker *requestTracker, drain func(ctx context.Context) uint64, diag *diagLog) *proxy {
@@ -190,6 +212,10 @@ func (p *proxy) shutdown(ctx context.Context) { _ = p.srv.Shutdown(ctx) }
 func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch kind, id := classify(r.Method, r.URL.Path); kind {
 	case observeResponse, observeError:
+		// The runtime finished the moment this POST arrived; measured here,
+		// before the drain, so the drain's cost is not billed to it.
+		answeredAt := p.tracker.clock()
+
 		// Drain, then forward. By the time this request arrived, everything
 		// the runtime wrote for this invocation was already in the pipes —
 		// same process, program order — so waiting for each reader to reach
@@ -199,8 +225,24 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		timedOut := ctx.Err() != nil
 		cancel()
 
+		lines, began := p.tracker.end()
+		// The measurement rides the stream below the stamped seq, so the
+		// host's existing wait for the answer's frames covers it too. The
+		// payload size is the Content-Length the runtime declared; a chunked
+		// answer declares none, and nil lets the host fall back to the size
+		// it measures itself rather than shipping an invented zero.
+		if p.invokeDone != nil && !began.IsZero() {
+			var produced *int64
+			if r.ContentLength >= 0 {
+				n := r.ContentLength
+				produced = &n
+			}
+			if recSeq := p.invokeDone(id, float64(answeredAt.Sub(began).Microseconds())/1000.0, produced); recSeq > seq {
+				seq = recSeq
+			}
+		}
+
 		r.Header.Set(initproto.HeaderLogSeq, strconv.FormatUint(seq, 10))
-		lines := p.tracker.end()
 		if timedOut {
 			p.diag.printf("request %s end: drain timed out after %s at seq %d (%d lines)", id, drainMax, seq, lines)
 		} else {

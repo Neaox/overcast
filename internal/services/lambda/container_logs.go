@@ -300,6 +300,9 @@ func (s *logSink) idleSequence() uint64 {
 // subscribers are fed asynchronously through a queue, and the ordering promise
 // is about CloudWatch and the tail.
 func (s *logSink) frame(f initproto.Frame) bool {
+	if f.Rec.Type == initproto.RecInvokeDone {
+		return s.invokeDoneFrame(f)
+	}
 	if f.Rec.Type != "" {
 		return s.platformFrame(f)
 	}
@@ -434,6 +437,41 @@ func (s *logSink) platformFrame(f initproto.Frame) bool {
 		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
 	}
 	return batched
+}
+
+// invokeDoneFrame stores the init's measurement of an answered invocation. It
+// is a frame like any other — the seq advances and waiters wake, inside one
+// critical section, per this file's one ordering rule — but it is measurement,
+// not output: it enters no tail, no batch, and no subscription. It rides at or
+// below the seq stamped on the answer it describes, so the invoke path's
+// awaitRequestLog has always ingested it before emitInvocationEnd asks.
+func (s *logSink) invokeDoneFrame(f initproto.Frame) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f.Seq <= s.lastSeq {
+		return false
+	}
+	if f.Req != "" {
+		s.bufferFor(f.Req).invokeDone = &invokeDoneMetrics{
+			DurationMs:    f.Rec.DurationMs,
+			ProducedBytes: f.Rec.ProducedBytes,
+		}
+	}
+	s.lastSeq = f.Seq
+	s.notifyLocked()
+	return false
+}
+
+// invokeDoneFor reports what the init measured about a request's answer, or
+// false when it measured nothing — a crash, a timeout, or an init predating
+// the record.
+func (s *logSink) invokeDoneFor(reqID string) (invokeDoneMetrics, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if buf, ok := s.buffers[reqID]; ok && buf.invokeDone != nil {
+		return *buf.invokeDone, true
+	}
+	return invokeDoneMetrics{}, false
 }
 
 // advanceSeq moves the watermark for a frame that put nothing anywhere, and
@@ -645,6 +683,20 @@ func (s *logSink) dropLocked(reqID string) {
 // snapshot is always the most recent tailMaxBytes.
 type tailBuffer struct {
 	buf []byte
+	// invokeDone is the init's RecInvokeDone observation for this request,
+	// nil until it arrives. It rides the buffer because the two share a
+	// lifecycle exactly: written during the invocation, read as it answers,
+	// released with releaseRequestLog — and the eviction backstop that stops
+	// abandoned buffers accumulating covers these for free.
+	invokeDone *invokeDoneMetrics
+}
+
+// invokeDoneMetrics is what the init measured about one answered invocation:
+// how long the runtime held it, and the payload size it declared. See
+// initproto.RecInvokeDone.
+type invokeDoneMetrics struct {
+	DurationMs    float64
+	ProducedBytes *int64
 }
 
 func (b *tailBuffer) append(line string) {

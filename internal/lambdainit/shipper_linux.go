@@ -119,9 +119,15 @@ func (s *shipper) publish(req, src, msg string) uint64 {
 // sits relative to the output around it is decided once, here, by the process
 // that observed both.
 func (s *shipper) publishRecord(rec initproto.Record) uint64 {
+	return s.publishRequestRecord("", rec)
+}
+
+// publishRequestRecord queues a record that describes one invocation, which
+// travels in the frame's Req exactly as an attributed line's does.
+func (s *shipper) publishRequestRecord(req string, rec initproto.Record) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.enqueueLocked(initproto.Frame{Rec: rec})
+	return s.enqueueLocked(initproto.Frame{Req: req, Rec: rec})
 }
 
 // enqueueLocked numbers one frame and queues it. Caller must hold mu.

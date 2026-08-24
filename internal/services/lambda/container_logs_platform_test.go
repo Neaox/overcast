@@ -555,3 +555,117 @@ func TestLogSink_attachDoesNotLetALateRecordOvertakeHeldOnes(t *testing.T) {
 		}
 	}
 }
+
+// ─── the init's invocation measurement ───────────────────────────────────────
+
+// TestInvokeDoneFrame_measurementIsStoredAndNothingElse pins RecInvokeDone's
+// nature: it is measurement, not output. The seq advances (a waiter held to a
+// bound that includes it must be released), the metrics are readable for the
+// request it names, and it reaches no tail, no subscriber and no CloudWatch
+// batch.
+func TestInvokeDoneFrame_measurementIsStoredAndNothingElse(t *testing.T) {
+	s := newInitRecordSink(t, nil, logFormatText, logLevelInfo, initTypeOnDemand)
+
+	produced := int64(21)
+	batched := s.frame(initproto.Frame{Seq: 1, Req: "req-1", T: 1700000000000, Rec: initproto.Record{
+		Type:          initproto.RecInvokeDone,
+		DurationMs:    41.5,
+		ProducedBytes: &produced,
+	}})
+	if batched {
+		t.Error("an invokeDone frame was batched for CloudWatch")
+	}
+
+	got, ok := s.invokeDoneFor("req-1")
+	if !ok {
+		t.Fatal("the measurement was not stored")
+	}
+	if got.DurationMs != 41.5 || got.ProducedBytes == nil || *got.ProducedBytes != 21 {
+		t.Errorf("measurement = %+v, want durationMs 41.5 and producedBytes 21", got)
+	}
+	if _, ok := s.invokeDoneFor("req-2"); ok {
+		t.Error("a request the init never measured reports a measurement")
+	}
+	if tail := s.snapshot("req-1"); len(tail) != 0 {
+		t.Errorf("the measurement leaked into the tail: %q", tail)
+	}
+
+	// The seq moved: a waiter for it is released rather than held to its bound.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if !s.awaitLogSeq(ctx, 1) {
+		t.Error("awaitLogSeq(1) was not satisfied by the invokeDone frame")
+	}
+}
+
+// TestEmitInvocationEnd_prefersTheInitsMeasurement pins where runtimeDone's
+// metrics come from: the execution environment's own measurement when the
+// init reported one, the host's fallback when it did not — a crash or a
+// timeout, where the runtime never answered and there is nothing measured.
+func TestEmitInvocationEnd_prefersTheInitsMeasurement(t *testing.T) {
+	ci, addr := newRICBackedContainerInstance(t)
+	extID := registerExtension(t, http.DefaultClient, addr, "telemetry-extension")
+	received := make(chan []map[string]any, 8)
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var batch []map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- batch
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+	subscribeToLogs(t, addr, extID, dest.URL, "platform")
+
+	produced := int64(7)
+	ci.logSink.frame(initproto.Frame{Seq: 1, Req: "req-1", T: 1700000000000, Rec: initproto.Record{
+		Type:          initproto.RecInvokeDone,
+		DurationMs:    33.25,
+		ProducedBytes: &produced,
+	}})
+
+	ci.emitInvocationEnd("req-1", outcomeSuccess, 250*time.Millisecond, 128, 9999, "")
+
+	runtimeDone := awaitPlatformEvent(t, received, "platform.runtimeDone")
+	metrics, _ := runtimeDone["metrics"].(map[string]any)
+	if metrics == nil {
+		t.Fatalf("runtimeDone carries no metrics: %#v", runtimeDone)
+	}
+	if metrics["durationMs"] != 33.25 || metrics["producedBytes"] != float64(7) {
+		t.Errorf("metrics = %#v, want the init's measurement (33.25 ms, 7 bytes), not the host's (250 ms, 9999 bytes)", metrics)
+	}
+
+	// A request the init never measured — the crash and timeout paths — falls
+	// back to what the host knows.
+	ci.emitInvocationEnd("req-2", outcomeCrashed, 250*time.Millisecond, 128, 0, "")
+	runtimeDone = awaitPlatformEvent(t, received, "platform.runtimeDone")
+	metrics, _ = runtimeDone["metrics"].(map[string]any)
+	if metrics == nil || metrics["durationMs"] != float64(250) {
+		t.Errorf("fallback metrics = %#v, want the host's 250 ms", metrics)
+	}
+}
+
+// awaitPlatformEvent reads batches until one carries an event of the wanted
+// type, returning its record.
+func awaitPlatformEvent(t *testing.T, received chan []map[string]any, eventType string) map[string]any {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case batch := <-received:
+			for _, event := range batch {
+				if event["type"] == eventType {
+					record, _ := event["record"].(map[string]any)
+					if record == nil {
+						t.Fatalf("%s record is not an object: %#v", eventType, event)
+					}
+					return record
+				}
+			}
+		case <-deadline:
+			t.Fatalf("the subscriber never received a %s event", eventType)
+		}
+	}
+}

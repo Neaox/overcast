@@ -480,17 +480,34 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		initMetric = &ms
 	}
 
+	// runtimeDone's metrics prefer what the execution environment measured
+	// about itself: the init's RecInvokeDone span (the runtime being handed
+	// the event to its answer arriving back at the proxy) and the payload
+	// size the runtime declared. The host's own pair is the fallback, and
+	// the only source on the paths where the runtime never answered — a
+	// crash, a timeout. platform.report keeps the host's span throughout:
+	// AWS's runtimeDone and report durations are two different measurements
+	// of two different things, and so are these.
+	doneMetrics := &runtimeDoneMetrics{
+		DurationMs:    durationMillis(elapsed),
+		ProducedBytes: producedBytes,
+	}
+	if ci.logSink != nil {
+		if measured, ok := ci.logSink.invokeDoneFor(requestID); ok {
+			doneMetrics.DurationMs = measured.DurationMs
+			if measured.ProducedBytes != nil {
+				doneMetrics.ProducedBytes = int(*measured.ProducedBytes)
+			}
+		}
+	}
 	ci.emitPlatformRecord(
 		requestID,
 		"END RequestId: "+requestID,
 		platformRuntimeDoneRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
-			Metrics: &runtimeDoneMetrics{
-				DurationMs:    durationMillis(elapsed),
-				ProducedBytes: producedBytes,
-			},
-			Tracing: traceContextFor(traceID),
+			Metrics:   doneMetrics,
+			Tracing:   traceContextFor(traceID),
 		},
 	)
 	ci.emitPlatformRecord(

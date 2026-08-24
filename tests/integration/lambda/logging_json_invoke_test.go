@@ -579,3 +579,67 @@ func invokeLoggingEnv(t *testing.T, srv *helpers.TestServer, name, wantFormat, w
 			got.LogFormat, got.LogLevel, wantFormat, wantLevel)
 	}
 }
+
+// ─── CloudWatch ordering of the whole INIT-to-invoke arc ─────────────────────
+
+// TestInvoke_initPhaseRecordsAreOrderedInCloudWatch pins the order the log
+// stream tells the story in, under LogFormat JSON at SystemLogLevel DEBUG
+// (the init-phase records are DEBUG, so the default INFO hides them):
+//
+//	platform.initStart → the INIT phase's own output → platform.initRuntimeDone
+//	→ platform.initReport → platform.start → the handler's output
+//	→ platform.runtimeDone → platform.report
+//
+// The records ride the init's sequence-ordered frame stream and the invoke
+// path holds each synthesised record until the output it must follow has been
+// ingested, so this order is a guarantee, not a race that usually comes out
+// right.
+func TestInvoke_initPhaseRecordsAreOrderedInCloudWatch(t *testing.T) {
+	skipIfNoDocker(t)
+	requireLambdaInit(t)
+
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
+	code := makeZip(t, "index.js", `
+process.stdout.write("during-init\n");
+exports.handler = async () => {
+  process.stdout.write("during-invoke\n");
+  return { ok: true };
+};
+`)
+	createFunctionWithCodeAndLogging(t, srv, "ordered-fn", code, map[string]any{
+		"LogFormat":      "JSON",
+		"SystemLogLevel": "DEBUG",
+	})
+	waitForFunctionActive(t, srv, "ordered-fn")
+	resp := invokeFunction(t, srv, "ordered-fn", map[string]any{})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	messages := logEventsFor(t, srv, "/aws/lambda/ordered-fn", func(m []string) bool {
+		return indexOfLine(m, `"type":"platform.report"`) >= 0
+	})
+
+	// Every boundary of the arc, in the order the platform emits it.
+	arc := []string{
+		`"type":"platform.initStart"`,
+		"during-init",
+		`"type":"platform.initRuntimeDone"`,
+		`"type":"platform.initReport"`,
+		`"type":"platform.start"`,
+		"during-invoke",
+		`"type":"platform.runtimeDone"`,
+		`"type":"platform.report"`,
+	}
+	last := -1
+	for _, want := range arc {
+		at := indexOfLine(messages, want)
+		if at < 0 {
+			t.Fatalf("the log stream is missing %q:\n%s", want, strings.Join(messages, "\n"))
+		}
+		if at <= last {
+			t.Fatalf("%q is at %d, before its predecessor at %d — the arc is out of order:\n%s",
+				want, at, last, strings.Join(messages, "\n"))
+		}
+		last = at
+	}
+}
