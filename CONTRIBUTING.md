@@ -1243,13 +1243,15 @@ manifest, runs the model and routing gates, and creates or updates one PR from
 `automation/aws-api-models`. It resets and force-with-lease updates only that
 dedicated branch and never merges the PR.
 
-Maintainers should configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with
-contents and pull-request write access. The workflow falls back to
-[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token),
-but GitHub does not normally start new workflow runs for changes made with that
-token, so the PR's CI may then require manual approval. The repository's
+The workflow authenticates as the repository's release GitHub App
+(`RELEASE_APP_CLIENT_ID` / `RELEASE_APP_PRIVATE_KEY`), the same App that opens
+release PRs, and fails immediately if those secrets are missing. It cannot use
+[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token):
+GitHub refuses `createPullRequest` from Actions unless the repository's
 [Actions settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
-must also allow workflows to create pull requests.
+allow it, and even then a PR opened as `github-actions[bot]` starts no workflow
+runs — the PR would sit on required checks that never run. The App needs
+Contents: read & write and Pull requests: read & write, and nothing else.
 
 To regenerate locally, check out the revision recorded in
 `models/aws/VERSION`, then run:
