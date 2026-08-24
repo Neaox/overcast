@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -458,6 +459,99 @@ func TestInitPhaseRecordsReachAnExtensionThatSubscribesDuringInit(t *testing.T) 
 	for _, want := range []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"} {
 		if !got[want] {
 			t.Errorf("%s never reached the subscriber; got %v", want, got)
+		}
+	}
+}
+
+// ─── attach ordering ─────────────────────────────────────────────────────────
+
+// gatedPublisher records init-phase publishes in order, holding the very first
+// one until the test opens the gate — which is how the test parks attach's
+// drain mid-flight and proves a concurrently arriving record cannot overtake
+// the held ones.
+type gatedPublisher struct {
+	gate    chan struct{} // closed by the test to let the first publish finish
+	started chan struct{} // closed by the publisher once it is inside the first publish
+
+	mu     sync.Mutex
+	events []string
+	first  bool
+}
+
+func (p *gatedPublisher) PublishInitPhaseRecord(_ string, event string) {
+	p.mu.Lock()
+	hold := !p.first
+	p.first = true
+	p.mu.Unlock()
+	if hold {
+		close(p.started)
+		<-p.gate
+	}
+	p.mu.Lock()
+	p.events = append(p.events, event)
+	p.mu.Unlock()
+}
+
+func (p *gatedPublisher) PublishExtensionLog(string, string, string) {}
+
+// TestLogSink_attachDoesNotLetALateRecordOvertakeHeldOnes pins the order the
+// Runtime API sees init-phase records in when one arrives during attach's
+// drain. The Runtime API retains them in publish order and replays that order
+// to a subscription made later, so an inversion here is an extension told its
+// INIT phase happened backwards.
+func TestLogSink_attachDoesNotLetALateRecordOvertakeHeldOnes(t *testing.T) {
+	pub := &gatedPublisher{gate: make(chan struct{}), started: make(chan struct{})}
+	s := newLogSink(logSinkConfig{
+		logger:       zap.NewNop(),
+		clk:          clock.New(),
+		functionName: "fn",
+		initType:     initTypeOnDemand,
+		runtimeAPI:   pub,
+	})
+	t.Cleanup(s.close)
+
+	// Two records arrive before Docker has said where the container is.
+	s.frame(recordFrameOf(1, initproto.Record{Type: initproto.RecInitStart}))
+	s.frame(recordFrameOf(2, initproto.Record{Type: initproto.RecInitRuntimeDone, Status: initproto.StatusSuccess}))
+
+	// attach starts draining them, and the publisher parks it inside the
+	// first publish.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.attach("10.0.0.9", "cid")
+	}()
+	<-pub.started
+
+	// A third record arrives mid-drain. Before the fix it saw the address
+	// already set, published itself directly, and overtook the two held
+	// records the drain had not finished with.
+	s.frame(recordFrameOf(3, initproto.Record{
+		Type:       initproto.RecInitReport,
+		Status:     initproto.StatusSuccess,
+		DurationMs: 12,
+	}))
+
+	close(pub.gate)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("attach never finished draining")
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	var types []string
+	for _, event := range pub.events {
+		types = append(types, eventTypeOf(t, event))
+	}
+	want := []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"}
+	if len(types) != len(want) {
+		t.Fatalf("published %d records %v, want %v", len(types), types, want)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("records published as %v, want %v — a record arriving during attach overtook the held phase", types, want)
 		}
 	}
 }

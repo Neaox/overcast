@@ -82,7 +82,15 @@ type logSinkConfig struct {
 	logFormat    string
 	appLogLevel  logLevel
 	sysLogLevel  logLevel
-	runtimeAPI   *RuntimeAPIServer
+	runtimeAPI   telemetryPublisher
+}
+
+// telemetryPublisher is the slice of the Runtime API the sink publishes
+// through. An interface so a test can hold a publish mid-flight and prove the
+// ordering below without a real server.
+type telemetryPublisher interface {
+	PublishInitPhaseRecord(containerIP, event string)
+	PublishExtensionLog(containerIP, typ, record string)
 }
 
 // logSink is one container's log pipeline: the host end of the init's frame
@@ -191,20 +199,31 @@ func (s *logSink) ensureStream() {
 // platform record that arrived before this is published now, in order — the
 // INIT phase starts reporting itself well before Docker will say where the
 // container is.
+//
+// The address is set only after the held records have all been published.
+// Setting it first opened an ordering hole: a record arriving mid-drain
+// published itself directly, ahead of held records that predate it, and the
+// Runtime API retains init-phase records in publish order — so a subscription
+// made later replayed the phase inverted. With the address still empty, a
+// concurrent arrival joins the held queue instead, and the loop drains it in
+// sequence; publishing happens outside the lock (the Runtime API has its own),
+// which is why this loops rather than assuming one pass emptied the queue.
 func (s *logSink) attach(containerIP, containerID string) {
 	s.mu.Lock()
-	s.containerIP = containerIP
 	s.containerID = containerID
-	held := s.unaddressedRecords
-	s.unaddressedRecords = nil
+	if containerIP != "" && s.cfg.runtimeAPI != nil {
+		for len(s.unaddressedRecords) > 0 {
+			held := s.unaddressedRecords
+			s.unaddressedRecords = nil
+			s.mu.Unlock()
+			for _, event := range held {
+				s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
+			}
+			s.mu.Lock()
+		}
+	}
+	s.containerIP = containerIP
 	s.mu.Unlock()
-
-	if containerIP == "" || s.cfg.runtimeAPI == nil {
-		return
-	}
-	for _, event := range held {
-		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
-	}
 }
 
 // container is this sink's container, short, for a diagnostic. Empty until the
