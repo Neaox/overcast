@@ -112,7 +112,7 @@ func TestEveryTypedTemplateOperationChecksInlineSize(t *testing.T) {
 // access to be read.
 func typedRequestType(operation any) (reflect.Type, bool) {
 	v := reflect.TypeOf(operation)
-	for v != nil && v.Kind() == reflect.Ptr {
+	for v != nil && v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v == nil || v.Kind() != reflect.Struct {
@@ -123,7 +123,7 @@ func typedRequestType(operation any) (reflect.Type, bool) {
 		return nil, false
 	}
 	in := fn.Type.In(1)
-	if in.Kind() != reflect.Ptr || in.Elem().Kind() != reflect.Struct {
+	if in.Kind() != reflect.Pointer || in.Elem().Kind() != reflect.Struct {
 		return nil, false
 	}
 	return in.Elem(), true

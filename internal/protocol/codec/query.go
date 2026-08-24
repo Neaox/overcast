@@ -103,7 +103,7 @@ func decodeQueryForm(values url.Values, into any) *protocol.AWSError {
 		return nil
 	}
 	rv := reflect.ValueOf(into)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &protocol.AWSError{
 			Code: "InternalError", Message: "decodeQueryForm: into must be a non-nil pointer", HTTPStatus: http.StatusInternalServerError,
 		}
@@ -112,7 +112,7 @@ func decodeQueryForm(values url.Values, into any) *protocol.AWSError {
 }
 
 func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.AWSError {
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			rv.Set(reflect.New(rv.Type().Elem()))
 		}
@@ -160,7 +160,7 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			return false
 		}
 		fieldType := rv.Field(fieldIdx).Type()
-		return fieldType.Kind() == reflect.Slice || (fieldType.Kind() == reflect.Ptr && fieldType.Elem().Kind() == reflect.Slice)
+		return fieldType.Kind() == reflect.Slice || (fieldType.Kind() == reflect.Pointer && fieldType.Elem().Kind() == reflect.Slice)
 	}
 
 	for key, vals := range values {
@@ -245,7 +245,7 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			continue
 		}
 		field := rv.Field(fieldIdx)
-		if field.Kind() == reflect.Ptr && field.Type().Elem().Kind() == reflect.Slice {
+		if field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Slice {
 			if field.IsNil() {
 				field.Set(reflect.New(field.Type().Elem()))
 			}
@@ -286,7 +286,7 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 		for idx, mv := range merged {
 			elem := slice.Index(idx)
 			elemType := field.Type().Elem()
-			if elemType.Kind() == reflect.Ptr {
+			if elemType.Kind() == reflect.Pointer {
 				elem.Set(reflect.New(elemType.Elem()))
 			}
 			if err := decodeItem(elem, mv); err != nil {
@@ -342,7 +342,7 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 }
 
 func decodeItem(rv reflect.Value, values url.Values) error {
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			rv.Set(reflect.New(rv.Type().Elem()))
 		}
@@ -393,7 +393,7 @@ func decodeItem(rv reflect.Value, values url.Values) error {
 // UpdateRole needs it — Description="" clears the description, while an absent
 // Description leaves it alone.
 func setStructFieldValue(rv reflect.Value, field reflect.StructField, value string) error {
-	if value == "" && field.Tag.Get("queryEmpty") == "set" && rv.Kind() == reflect.Ptr && rv.Type().Elem().Kind() == reflect.String {
+	if value == "" && field.Tag.Get("queryEmpty") == "set" && rv.Kind() == reflect.Pointer && rv.Type().Elem().Kind() == reflect.String {
 		rv.Set(reflect.New(rv.Type().Elem()))
 		return nil
 	}
@@ -425,7 +425,7 @@ func setFieldValue(rv reflect.Value, s string) error {
 			return err
 		}
 		rv.SetFloat(f)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if s == "" {
 			if rv.Type().Elem().Kind() == reflect.Slice {
 				if rv.IsNil() {

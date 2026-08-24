@@ -204,7 +204,7 @@ func receiverTypeName(recv *ast.FieldList) string {
 // (stripping the pointer), matching what receiverTypeName reads from source.
 func handlerTypeName(handler resourceHandler) string {
 	rt := reflect.TypeOf(handler)
-	for rt.Kind() == reflect.Ptr {
+	for rt.Kind() == reflect.Pointer {
 		rt = rt.Elem()
 	}
 	return rt.Name()
