@@ -17,7 +17,7 @@ GOFLAGS   := -trimpath
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -w -s -X main.version=$(VERSION)
 # renovate: datasource=github-releases depName=rhysd/actionlint
-ACTIONLINT_VERSION := v1.7.7
+ACTIONLINT_VERSION := v1.7.12
 # golangci-lint v2.x — v2 config schema (.golangci.yml declares `version: "2"`).
 # v2.8.0 is the newest release that still builds with the Go 1.24 toolchain in
 # go.mod; v2.10.0+ requires Go 1.25, so a Renovate bump that fails Lint with
