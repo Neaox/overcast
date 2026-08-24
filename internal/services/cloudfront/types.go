@@ -570,11 +570,32 @@ type OriginRequestPolicy struct {
 
 // OriginRequestPolicyConfig holds the configuration for an origin request policy.
 type OriginRequestPolicyConfig struct {
-	Name               string      `xml:"Name" json:"name"`
-	Comment            string      `xml:"Comment,omitempty" json:"comment,omitempty"`
-	CookiesConfig      *StringList `xml:"CookiesConfig,omitempty" json:"cookies_config,omitempty"`
-	HeadersConfig      *StringList `xml:"HeadersConfig,omitempty" json:"headers_config,omitempty"`
-	QueryStringsConfig *StringList `xml:"QueryStringsConfig,omitempty" json:"query_strings_config,omitempty"`
+	Name               string                                `xml:"Name" json:"name"`
+	Comment            string                                `xml:"Comment,omitempty" json:"comment,omitempty"`
+	HeadersConfig      OriginRequestPolicyHeadersConfig      `xml:"HeadersConfig" json:"headers_config"`
+	CookiesConfig      OriginRequestPolicyCookiesConfig      `xml:"CookiesConfig" json:"cookies_config"`
+	QueryStringsConfig OriginRequestPolicyQueryStringsConfig `xml:"QueryStringsConfig" json:"query_strings_config"`
+}
+
+// OriginRequestPolicyCookiesConfig determines whether cookies in viewer requests
+// are included in requests that CloudFront sends to the origin.
+type OriginRequestPolicyCookiesConfig struct {
+	CookieBehavior string      `xml:"CookieBehavior" json:"cookie_behavior"` // none | whitelist | all | allExcept
+	Cookies        *StringList `xml:"Cookies,omitempty" json:"cookies,omitempty"`
+}
+
+// OriginRequestPolicyHeadersConfig determines whether HTTP headers in viewer requests
+// are included in requests that CloudFront sends to the origin.
+type OriginRequestPolicyHeadersConfig struct {
+	HeaderBehavior string      `xml:"HeaderBehavior" json:"header_behavior"` // none | whitelist | allViewer | allViewerAndWhitelistCloudFront | allExcept
+	Headers        *StringList `xml:"Headers,omitempty" json:"headers,omitempty"`
+}
+
+// OriginRequestPolicyQueryStringsConfig determines whether URL query strings in viewer
+// requests are included in requests that CloudFront sends to the origin.
+type OriginRequestPolicyQueryStringsConfig struct {
+	QueryStringBehavior string      `xml:"QueryStringBehavior" json:"query_string_behavior"` // none | whitelist | all | allExcept
+	QueryStrings        *StringList `xml:"QueryStrings,omitempty" json:"query_strings,omitempty"`
 }
 
 // OriginRequestPolicyList is the response envelope for ListOriginRequestPolicies.
@@ -976,7 +997,7 @@ type realtimeLogConfigXML struct {
 }
 
 type fieldList struct {
-	Items []string `xml:"member"`
+	Items []string `xml:"Field"`
 }
 
 type endPointList struct {
