@@ -389,13 +389,13 @@ the old and new revisions are real commits, and verifies that the mirror's
 `HEAD` is the revision returned by `ls-remote`. The cache is a performance
 optimization, not a trust decision.
 
-The workflow may use the repository `GITHUB_TOKEN`, but maintainers should
-configure `AWS_MODELS_PR_TOKEN` as a fine-grained PAT with contents and
-pull-request write access. GitHub suppresses ordinary workflow runs caused by
-`GITHUB_TOKEN`, so the dedicated token is what makes the automation PR's normal
-CI start without manual intervention. Repository Actions settings must also
-permit workflows to create pull requests. Regardless of token, branch
-protection and human review remain the merge gate.
+The workflow authenticates as the repository's release GitHub App
+(`RELEASE_APP_CLIENT_ID` / `RELEASE_APP_PRIVATE_KEY`) and fails immediately if
+those secrets are absent. `GITHUB_TOKEN` is not a fallback: GitHub refuses
+`createPullRequest` from Actions unless repository Actions settings permit it,
+and it suppresses ordinary workflow runs caused by that token, so a PR opened
+with it would wait on required checks that never start. Branch protection and
+human review remain the merge gate.
 
 Starting in A4, every normal PR runs a no-network `aws-models-check` target
 that validates the committed generator fixtures, immutable indexes, collision
