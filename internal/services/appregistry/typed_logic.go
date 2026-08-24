@@ -86,7 +86,7 @@ func (h *Handler) getApplicationTyped(ctx context.Context, req *getApplicationRe
 type listApplicationsRequest struct{}
 
 type listApplicationsResponse struct {
-	Applications []applicationResponse `json:"Applications" cbor:"Applications"`
+	Applications []applicationSummaryResponse `json:"Applications" cbor:"Applications"`
 }
 
 func (h *Handler) listApplicationsTyped(ctx context.Context, _ *listApplicationsRequest) (*listApplicationsResponse, *protocol.AWSError) {
@@ -94,9 +94,9 @@ func (h *Handler) listApplicationsTyped(ctx context.Context, _ *listApplications
 	if aerr != nil {
 		return nil, aerr
 	}
-	summaries := make([]applicationResponse, 0, len(apps))
+	summaries := make([]applicationSummaryResponse, 0, len(apps))
 	for i := range apps {
-		summaries = append(summaries, toResponse(&apps[i]))
+		summaries = append(summaries, toApplicationSummary(&apps[i]))
 	}
 	return &listApplicationsResponse{Applications: summaries}, nil
 }
@@ -106,7 +106,7 @@ type deleteApplicationRequest struct {
 }
 
 type deleteApplicationResponse struct {
-	Application applicationResponse `json:"Application" cbor:"Application"`
+	Application applicationSummaryResponse `json:"Application" cbor:"Application"`
 }
 
 func (h *Handler) deleteApplicationTyped(ctx context.Context, req *deleteApplicationRequest) (*deleteApplicationResponse, *protocol.AWSError) {
@@ -126,7 +126,7 @@ func (h *Handler) deleteApplicationTyped(ctx context.Context, req *deleteApplica
 	if aerr := h.store.deleteApplication(ctx, app.ID); aerr != nil {
 		return nil, aerr
 	}
-	return &deleteApplicationResponse{Application: toResponse(app)}, nil
+	return &deleteApplicationResponse{Application: toApplicationSummary(app)}, nil
 }
 
 type updateApplicationRequest struct {
@@ -252,7 +252,6 @@ func (h *Handler) listAssociatedResourcesTyped(ctx context.Context, req *listAss
 			Name:         a.ResourceARN,
 			ARN:          a.ResourceARN,
 			ResourceType: a.ResourceType,
-			CreationTime: a.CreationTime,
 		})
 	}
 	return &listAssociatedResourcesResponse{Resources: resources}, nil
@@ -284,7 +283,6 @@ func (h *Handler) getAssociatedResourceTyped(ctx context.Context, req *getAssoci
 		Name:         assoc.ResourceARN,
 		ARN:          assoc.ResourceARN,
 		ResourceType: assoc.ResourceType,
-		CreationTime: assoc.CreationTime,
 	}}, nil
 }
 
@@ -386,7 +384,7 @@ type createAttributeGroupRequest struct {
 }
 
 type createAttributeGroupResponse struct {
-	AttributeGroup attributeGroupResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
+	AttributeGroup attributeGroupCreateResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
 }
 
 func (h *Handler) createAttributeGroupTyped(ctx context.Context, req *createAttributeGroupRequest) (*createAttributeGroupResponse, *protocol.AWSError) {
@@ -418,7 +416,7 @@ func (h *Handler) createAttributeGroupTyped(ctx context.Context, req *createAttr
 	if aerr := h.store.putAttributeGroup(ctx, ag); aerr != nil {
 		return nil, aerr
 	}
-	return &createAttributeGroupResponse{AttributeGroup: toAttributeGroupResponse(ag)}, nil
+	return &createAttributeGroupResponse{AttributeGroup: toAttributeGroupCreateResponse(ag)}, nil
 }
 
 type getAttributeGroupRequest struct {
@@ -437,7 +435,7 @@ func (h *Handler) getAttributeGroupTyped(ctx context.Context, req *getAttributeG
 type listAttributeGroupsRequest struct{}
 
 type listAttributeGroupsResponse struct {
-	AttributeGroups []attributeGroupResponse `json:"AttributeGroups" cbor:"AttributeGroups"`
+	AttributeGroups []attributeGroupSummaryResponse `json:"AttributeGroups" cbor:"AttributeGroups"`
 }
 
 func (h *Handler) listAttributeGroupsTyped(ctx context.Context, _ *listAttributeGroupsRequest) (*listAttributeGroupsResponse, *protocol.AWSError) {
@@ -445,9 +443,9 @@ func (h *Handler) listAttributeGroupsTyped(ctx context.Context, _ *listAttribute
 	if aerr != nil {
 		return nil, aerr
 	}
-	out := make([]attributeGroupResponse, 0, len(ags))
+	out := make([]attributeGroupSummaryResponse, 0, len(ags))
 	for i := range ags {
-		out = append(out, toAttributeGroupResponse(&ags[i]))
+		out = append(out, toAttributeGroupSummaryResponse(&ags[i]))
 	}
 	return &listAttributeGroupsResponse{AttributeGroups: out}, nil
 }
@@ -460,7 +458,7 @@ type updateAttributeGroupRequest struct {
 }
 
 type updateAttributeGroupResponse struct {
-	AttributeGroup attributeGroupResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
+	AttributeGroup attributeGroupCreateResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
 }
 
 func (h *Handler) updateAttributeGroupTyped(ctx context.Context, req *updateAttributeGroupRequest) (*updateAttributeGroupResponse, *protocol.AWSError) {
@@ -484,7 +482,7 @@ func (h *Handler) updateAttributeGroupTyped(ctx context.Context, req *updateAttr
 	if aerr := h.store.putAttributeGroup(ctx, ag); aerr != nil {
 		return nil, aerr
 	}
-	return &updateAttributeGroupResponse{AttributeGroup: toAttributeGroupResponse(ag)}, nil
+	return &updateAttributeGroupResponse{AttributeGroup: toAttributeGroupCreateResponse(ag)}, nil
 }
 
 type deleteAttributeGroupRequest struct {
@@ -492,7 +490,7 @@ type deleteAttributeGroupRequest struct {
 }
 
 type deleteAttributeGroupResponse struct {
-	AttributeGroup attributeGroupResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
+	AttributeGroup attributeGroupSummaryResponse `json:"AttributeGroup" cbor:"AttributeGroup"`
 }
 
 func (h *Handler) deleteAttributeGroupTyped(ctx context.Context, req *deleteAttributeGroupRequest) (*deleteAttributeGroupResponse, *protocol.AWSError) {
@@ -503,5 +501,5 @@ func (h *Handler) deleteAttributeGroupTyped(ctx context.Context, req *deleteAttr
 	if aerr := h.store.deleteAttributeGroup(ctx, ag.ID); aerr != nil {
 		return nil, aerr
 	}
-	return &deleteAttributeGroupResponse{AttributeGroup: toAttributeGroupResponse(ag)}, nil
+	return &deleteAttributeGroupResponse{AttributeGroup: toAttributeGroupSummaryResponse(ag)}, nil
 }

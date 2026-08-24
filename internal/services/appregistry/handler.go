@@ -61,6 +61,30 @@ func toResponse(app *Application) applicationResponse {
 	}
 }
 
+// applicationSummaryResponse mirrors the AWS ApplicationSummary wire shape —
+// narrower than applicationResponse: no tags, no applicationTag. AWS binds
+// ListApplications items and DeleteApplication's `application` field to this
+// shape, not the full Application shape used by Create/Get/UpdateApplication.
+type applicationSummaryResponse struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Arn            string  `json:"arn"`
+	Description    string  `json:"description,omitempty"`
+	CreationTime   float64 `json:"creationTime"`
+	LastUpdateTime float64 `json:"lastUpdateTime"`
+}
+
+func toApplicationSummary(app *Application) applicationSummaryResponse {
+	return applicationSummaryResponse{
+		ID:             app.ID,
+		Name:           app.Name,
+		Arn:            app.ARN,
+		Description:    app.Description,
+		CreationTime:   app.CreationTime,
+		LastUpdateTime: app.LastUpdateTime,
+	}
+}
+
 // ─── CreateApplication ────────────────────────────────────────────────────
 
 func (h *Handler) CreateApplication(w http.ResponseWriter, r *http.Request) {
@@ -148,12 +172,12 @@ func (h *Handler) ListApplications(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	summaries := make([]applicationResponse, 0, len(apps))
+	summaries := make([]applicationSummaryResponse, 0, len(apps))
 	for i := range apps {
-		summaries = append(summaries, toResponse(&apps[i]))
+		summaries = append(summaries, toApplicationSummary(&apps[i]))
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		Applications []applicationResponse `json:"applications"`
+		Applications []applicationSummaryResponse `json:"applications"`
 	}{Applications: summaries})
 }
 
@@ -226,8 +250,8 @@ func (h *Handler) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		Application applicationResponse `json:"application"`
-	}{Application: toResponse(app)})
+		Application applicationSummaryResponse `json:"application"`
+	}{Application: toApplicationSummary(app)})
 }
 
 // ─── AssociateResource ────────────────────────────────────────────────────
@@ -298,11 +322,14 @@ func (h *Handler) DisassociateResource(w http.ResponseWriter, r *http.Request) {
 
 // ─── ListAssociatedResources ──────────────────────────────────────────────
 
+// resourceInfo mirrors the AWS ResourceInfo wire shape: name, arn,
+// resourceType, resourceDetails, options. It has no creationTime — the
+// association's creation time is a store-only field, not part of the wire
+// response (real AWS does not expose it here either).
 type resourceInfo struct {
-	Name         string  `json:"name"`
-	ARN          string  `json:"arn"`
-	ResourceType string  `json:"resourceType"`
-	CreationTime float64 `json:"creationTime,omitempty"`
+	Name         string `json:"name"`
+	ARN          string `json:"arn"`
+	ResourceType string `json:"resourceType"`
 }
 
 func (h *Handler) ListAssociatedResources(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +350,6 @@ func (h *Handler) ListAssociatedResources(w http.ResponseWriter, r *http.Request
 			Name:         a.ResourceARN,
 			ARN:          a.ResourceARN,
 			ResourceType: a.ResourceType,
-			CreationTime: a.CreationTime,
 		})
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
@@ -354,6 +380,5 @@ func (h *Handler) GetAssociatedResource(w http.ResponseWriter, r *http.Request) 
 		Name:         assoc.ResourceARN,
 		ARN:          assoc.ResourceARN,
 		ResourceType: assoc.ResourceType,
-		CreationTime: assoc.CreationTime,
 	}})
 }
