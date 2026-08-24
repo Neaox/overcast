@@ -1,6 +1,7 @@
 package lambda
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -372,5 +373,34 @@ func TestPlatformInitRecord(t *testing.T) {
 				t.Errorf("platformInitRecord() = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRenderPlatformEvent_tracing pins the TraceContext member on the three
+// invocation records: type and value exactly as the schema reference shapes
+// them, spanId absent because Overcast mints no spans, and the whole member
+// absent when the caller had no trace to report.
+func TestRenderPlatformEvent_tracing(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 34, 56, 789e6, time.UTC)
+	trace := "Root=1-62e900b2-710d76f009d6e7785905449a;Parent=0efbd19962d95b05;Sampled=0"
+
+	got := renderPlatformEvent(now, platformStartRecord{
+		RequestID: "req-1",
+		Version:   "$LATEST",
+		Tracing:   traceContextFor(trace),
+	})
+	want := `{"time":"2026-08-09T12:34:56.789Z","type":"platform.start","record":{"requestId":"req-1","version":"$LATEST","tracing":{"type":"X-Amzn-Trace-Id","value":"` + trace + `"}}}`
+	if got != want {
+		t.Errorf("start with tracing:\n got %s\nwant %s", got, want)
+	}
+
+	// No trace: the optional member is omitted, not emitted empty.
+	got = renderPlatformEvent(now, platformReportRecord{
+		RequestID: "req-1",
+		Status:    invokeStatusSuccess,
+		Tracing:   traceContextFor(""),
+	})
+	if strings.Contains(got, "tracing") {
+		t.Errorf("report without a trace still carries a tracing member: %s", got)
 	}
 }

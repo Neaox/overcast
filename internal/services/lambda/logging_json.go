@@ -276,9 +276,37 @@ func platformInitRecord(rec initproto.Record, functionName, initType string) (pl
 
 // platformStartRecord reports that an invocation began. It replaces the plain
 // text START line.
+// traceContext is the Telemetry API TraceContext object
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-schema-reference.html#TraceContext).
+// Its value is the X-Amzn-Trace-Id header exactly as this invocation's runtime
+// received it — Overcast mints one (unsampled) for every invocation, so the
+// record carries the real correlation key rather than an invented one. spanId
+// is optional and never set: Overcast does not mint spans. AWS's examples all
+// show tracing present; whether it omits the member for a function without
+// active tracing is not documented, so Overcast includes the header it
+// genuinely handed over.
+type traceContext struct {
+	SpanID string `json:"spanId,omitempty"`
+	Type   string `json:"type"`
+	Value  string `json:"value"`
+}
+
+// tracingTypeXAmzn is the one TracingType value AWS documents.
+const tracingTypeXAmzn = "X-Amzn-Trace-Id"
+
+// traceContextFor wraps a trace header for a record, or nil when there is
+// none to report.
+func traceContextFor(traceID string) *traceContext {
+	if traceID == "" {
+		return nil
+	}
+	return &traceContext{Type: tracingTypeXAmzn, Value: traceID}
+}
+
 type platformStartRecord struct {
-	RequestID string `json:"requestId"`
-	Version   string `json:"version,omitempty"`
+	RequestID string        `json:"requestId"`
+	Version   string        `json:"version,omitempty"`
+	Tracing   *traceContext `json:"tracing,omitempty"`
 }
 
 func (platformStartRecord) eventType() string        { return "platform.start" }
@@ -305,6 +333,7 @@ type platformRuntimeDoneRecord struct {
 	Status    string              `json:"status"`
 	ErrorType string              `json:"errorType,omitempty"`
 	Metrics   *runtimeDoneMetrics `json:"metrics,omitempty"`
+	Tracing   *traceContext       `json:"tracing,omitempty"`
 }
 
 func (platformRuntimeDoneRecord) eventType() string { return "platform.runtimeDone" }
@@ -332,6 +361,7 @@ type platformReportRecord struct {
 	Status    string        `json:"status"`
 	ErrorType string        `json:"errorType,omitempty"`
 	Metrics   reportMetrics `json:"metrics"`
+	Tracing   *traceContext `json:"tracing,omitempty"`
 }
 
 func (platformReportRecord) eventType() string { return "platform.report" }
@@ -405,12 +435,18 @@ func (ci *containerInstance) emitPlatformRecord(requestID, textLine string, rec 
 	}
 }
 
-// emitInvocationStart writes the record that opens an invocation.
-func (ci *containerInstance) emitInvocationStart(requestID string) {
+// emitInvocationStart writes the record that opens an invocation. traceID is
+// the X-Amzn-Trace-Id header the runtime is handed for it, "" when the caller
+// has none.
+func (ci *containerInstance) emitInvocationStart(requestID, traceID string) {
 	ci.emitPlatformRecord(
 		requestID,
 		"START RequestId: "+requestID+" Version: "+functionVersionLatest,
-		platformStartRecord{RequestID: requestID, Version: functionVersionLatest},
+		platformStartRecord{
+			RequestID: requestID,
+			Version:   functionVersionLatest,
+			Tracing:   traceContextFor(traceID),
+		},
 	)
 }
 
@@ -436,7 +472,7 @@ var (
 // runtime-done record (plain text END) and the report (plain text REPORT).
 // producedBytes is the size of the response the handler returned, zero when it
 // never produced one.
-func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutcome, elapsed time.Duration, maxMemoryMB, producedBytes int) {
+func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutcome, elapsed time.Duration, maxMemoryMB, producedBytes int, traceID string) {
 	initField, initMetric := "", (*float64)(nil)
 	if initDur, ok := ci.takeInitDuration(); ok {
 		ms := durationMillis(initDur)
@@ -444,16 +480,34 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		initMetric = &ms
 	}
 
+	// runtimeDone's metrics prefer what the execution environment measured
+	// about itself: the init's RecInvokeDone span (the runtime being handed
+	// the event to its answer arriving back at the proxy) and the payload
+	// size the runtime declared. The host's own pair is the fallback, and
+	// the only source on the paths where the runtime never answered — a
+	// crash, a timeout. platform.report keeps the host's span throughout:
+	// AWS's runtimeDone and report durations are two different measurements
+	// of two different things, and so are these.
+	doneMetrics := &runtimeDoneMetrics{
+		DurationMs:    durationMillis(elapsed),
+		ProducedBytes: producedBytes,
+	}
+	if ci.logSink != nil {
+		if measured, ok := ci.logSink.invokeDoneFor(requestID); ok {
+			doneMetrics.DurationMs = measured.DurationMs
+			if measured.ProducedBytes != nil {
+				doneMetrics.ProducedBytes = int(*measured.ProducedBytes)
+			}
+		}
+	}
 	ci.emitPlatformRecord(
 		requestID,
 		"END RequestId: "+requestID,
 		platformRuntimeDoneRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
-			Metrics: &runtimeDoneMetrics{
-				DurationMs:    durationMillis(elapsed),
-				ProducedBytes: producedBytes,
-			},
+			Metrics:   doneMetrics,
+			Tracing:   traceContextFor(traceID),
 		},
 	)
 	ci.emitPlatformRecord(
@@ -470,6 +524,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 				MaxMemoryUsedMB:  maxMemoryMB,
 				InitDurationMs:   initMetric,
 			},
+			Tracing: traceContextFor(traceID),
 		},
 	)
 }

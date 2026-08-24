@@ -106,10 +106,19 @@ const (
 	// first START with no further synchronisation.
 	RecInitRuntimeDone = "initRuntimeDone"
 
-	// RecInitReport summarises the phase [RecInitRuntimeDone] closed, and is
-	// the only record that carries [Record.DurationMs]. It is published
-	// immediately after it, in that order, as AWS emits the pair.
+	// RecInitReport summarises the phase [RecInitRuntimeDone] closed. It is
+	// published immediately after it, in that order, as AWS emits the pair.
 	RecInitReport = "initReport"
+
+	// RecInvokeDone is the runtime answering an invocation: its POST to
+	// /response or /error arriving at the proxy. It carries the metrics only
+	// the execution environment can measure — how long the runtime held the
+	// invocation, and the size of the payload it produced — and is published
+	// before the answer is forwarded, so it rides at or below the seq stamped
+	// on that answer and the host has ingested it by the time it writes END.
+	// The invocation it describes travels in [Frame.Req]. The host owns the
+	// record's status and everything else about platform.runtimeDone.
+	RecInvokeDone = "invokeDone"
 )
 
 // Phase outcomes: the subset of the Telemetry API's Status enum the init can
@@ -142,10 +151,19 @@ type Record struct {
 	// [StatusSuccess] or [StatusError].
 	Status string `json:"status,omitempty"`
 
-	// DurationMs is how long the phase took, in fractional milliseconds,
-	// measured inside the execution environment — the runtime child being
-	// spawned to its first GET /next. Set on [RecInitReport] only.
+	// DurationMs is a span measured inside the execution environment, in
+	// fractional milliseconds. On [RecInitReport]: the runtime child being
+	// spawned to its first GET /next. On [RecInvokeDone]: the invocation
+	// being handed to the runtime to its answer arriving back at the proxy.
 	DurationMs float64 `json:"durationMs,omitempty"`
+
+	// ProducedBytes is the size of the payload the runtime posted for the
+	// invocation [RecInvokeDone] describes — the declared Content-Length of
+	// its answer. Absent (nil) when the runtime streamed the answer without
+	// declaring a length, in which case the host falls back to the size it
+	// measures itself; zero is a real value (an empty error payload), which
+	// is why this is a pointer and not an omitempty int.
+	ProducedBytes *int64 `json:"producedBytes,omitempty"`
 }
 
 // ExtensionSrc returns the [Frame.Src] value for an external extension's

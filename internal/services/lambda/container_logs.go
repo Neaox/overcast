@@ -82,7 +82,15 @@ type logSinkConfig struct {
 	logFormat    string
 	appLogLevel  logLevel
 	sysLogLevel  logLevel
-	runtimeAPI   *RuntimeAPIServer
+	runtimeAPI   telemetryPublisher
+}
+
+// telemetryPublisher is the slice of the Runtime API the sink publishes
+// through. An interface so a test can hold a publish mid-flight and prove the
+// ordering below without a real server.
+type telemetryPublisher interface {
+	PublishInitPhaseRecord(containerIP, event string)
+	PublishExtensionLog(containerIP, typ, record string)
 }
 
 // logSink is one container's log pipeline: the host end of the init's frame
@@ -191,20 +199,31 @@ func (s *logSink) ensureStream() {
 // platform record that arrived before this is published now, in order — the
 // INIT phase starts reporting itself well before Docker will say where the
 // container is.
+//
+// The address is set only after the held records have all been published.
+// Setting it first opened an ordering hole: a record arriving mid-drain
+// published itself directly, ahead of held records that predate it, and the
+// Runtime API retains init-phase records in publish order — so a subscription
+// made later replayed the phase inverted. With the address still empty, a
+// concurrent arrival joins the held queue instead, and the loop drains it in
+// sequence; publishing happens outside the lock (the Runtime API has its own),
+// which is why this loops rather than assuming one pass emptied the queue.
 func (s *logSink) attach(containerIP, containerID string) {
 	s.mu.Lock()
-	s.containerIP = containerIP
 	s.containerID = containerID
-	held := s.unaddressedRecords
-	s.unaddressedRecords = nil
+	if containerIP != "" && s.cfg.runtimeAPI != nil {
+		for len(s.unaddressedRecords) > 0 {
+			held := s.unaddressedRecords
+			s.unaddressedRecords = nil
+			s.mu.Unlock()
+			for _, event := range held {
+				s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
+			}
+			s.mu.Lock()
+		}
+	}
+	s.containerIP = containerIP
 	s.mu.Unlock()
-
-	if containerIP == "" || s.cfg.runtimeAPI == nil {
-		return
-	}
-	for _, event := range held {
-		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
-	}
 }
 
 // container is this sink's container, short, for a diagnostic. Empty until the
@@ -281,6 +300,9 @@ func (s *logSink) idleSequence() uint64 {
 // subscribers are fed asynchronously through a queue, and the ordering promise
 // is about CloudWatch and the tail.
 func (s *logSink) frame(f initproto.Frame) bool {
+	if f.Rec.Type == initproto.RecInvokeDone {
+		return s.invokeDoneFrame(f)
+	}
 	if f.Rec.Type != "" {
 		return s.platformFrame(f)
 	}
@@ -415,6 +437,41 @@ func (s *logSink) platformFrame(f initproto.Frame) bool {
 		s.cfg.runtimeAPI.PublishInitPhaseRecord(containerIP, event)
 	}
 	return batched
+}
+
+// invokeDoneFrame stores the init's measurement of an answered invocation. It
+// is a frame like any other — the seq advances and waiters wake, inside one
+// critical section, per this file's one ordering rule — but it is measurement,
+// not output: it enters no tail, no batch, and no subscription. It rides at or
+// below the seq stamped on the answer it describes, so the invoke path's
+// awaitRequestLog has always ingested it before emitInvocationEnd asks.
+func (s *logSink) invokeDoneFrame(f initproto.Frame) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f.Seq <= s.lastSeq {
+		return false
+	}
+	if f.Req != "" {
+		s.bufferFor(f.Req).invokeDone = &invokeDoneMetrics{
+			DurationMs:    f.Rec.DurationMs,
+			ProducedBytes: f.Rec.ProducedBytes,
+		}
+	}
+	s.lastSeq = f.Seq
+	s.notifyLocked()
+	return false
+}
+
+// invokeDoneFor reports what the init measured about a request's answer, or
+// false when it measured nothing — a crash, a timeout, or an init predating
+// the record.
+func (s *logSink) invokeDoneFor(reqID string) (invokeDoneMetrics, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if buf, ok := s.buffers[reqID]; ok && buf.invokeDone != nil {
+		return *buf.invokeDone, true
+	}
+	return invokeDoneMetrics{}, false
 }
 
 // advanceSeq moves the watermark for a frame that put nothing anywhere, and
@@ -626,6 +683,20 @@ func (s *logSink) dropLocked(reqID string) {
 // snapshot is always the most recent tailMaxBytes.
 type tailBuffer struct {
 	buf []byte
+	// invokeDone is the init's RecInvokeDone observation for this request,
+	// nil until it arrives. It rides the buffer because the two share a
+	// lifecycle exactly: written during the invocation, read as it answers,
+	// released with releaseRequestLog — and the eviction backstop that stops
+	// abandoned buffers accumulating covers these for free.
+	invokeDone *invokeDoneMetrics
+}
+
+// invokeDoneMetrics is what the init measured about one answered invocation:
+// how long the runtime held it, and the payload size it declared. See
+// initproto.RecInvokeDone.
+type invokeDoneMetrics struct {
+	DurationMs    float64
+	ProducedBytes *int64
 }
 
 func (b *tailBuffer) append(line string) {

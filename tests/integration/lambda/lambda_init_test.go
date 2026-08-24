@@ -85,9 +85,13 @@ func buildLambdaInit() (string, error) {
 	}
 	for _, goarch := range []string{"amd64", "arm64"} {
 		out := filepath.Join(dist, "lambda-init-linux-"+goarch)
-		if info, err := os.Stat(out); err == nil && info.Size() > 0 {
-			continue
-		}
+		// Always rebuilt, never trusted from disk. The skip-if-present this
+		// used to do meant a dist left by an earlier session silently tested a
+		// stale init against current host code — a skew that shows up as
+		// telemetry records quietly missing, not as an error naming its cause
+		// (it cost the #1410 branch an hour of phantom debugging). Go's build
+		// cache makes the honest rebuild cost about a second when nothing
+		// changed.
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", out, "./cmd/lambda-init")
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+goarch)

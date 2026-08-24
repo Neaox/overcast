@@ -745,6 +745,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 				Handler:            fn.Handler,
 				ExpectedExtensions: expectedExtensions,
 				LogSink:            sink,
+				LogFormat:          resolveLogFormat(fn),
 			})
 			rapiListener.Attach(containerIP)
 			registeredIP = containerIP
@@ -832,6 +833,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			Handler:            fn.Handler,
 			ExpectedExtensions: expectedExtensions,
 			LogSink:            sink,
+			LogFormat:          resolveLogFormat(fn),
 		})
 		rapiListener.Attach(containerIP)
 		registeredIP = containerIP
@@ -1635,8 +1637,13 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	// trade, and only a degraded environment ever pays it.)
 	ci.awaitIdleLog()
 
+	// The trace header this invocation's runtime will receive; the records
+	// that open and close the invocation carry it so a subscriber can
+	// correlate them with the function's own traced calls.
+	traceID := ci.runtimeAPI.InvocationTraceID(reqID)
+
 	// Emit the start record that real Lambda writes before every invocation.
-	ci.emitInvocationStart(reqID)
+	ci.emitInvocationStart(reqID, traceID)
 
 	// Monitor container exit via the Docker event watcher (if wired) or fall
 	// back to a per-invocation WaitContainer goroutine. The watcher path
@@ -1690,7 +1697,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		// failure paths: all three mark the environment unhealthy, so it is
 		// closed moments later and the whole sink goes with it. What the
 		// buffer still holds until then is the evidence for what happened.
-		ci.emitInvocationEnd(reqID, outcomeCrashed, elapsed, ci.reportMemoryMB(memSample), 0)
+		ci.emitInvocationEnd(reqID, outcomeCrashed, elapsed, ci.reportMemoryMB(memSample), 0, traceID)
 		return nil, fmt.Errorf("lambda container exited unexpectedly (exit code %s) — check container logs for details", exitCode)
 	case <-ctx.Done():
 		if waitCancel != nil {
@@ -1716,7 +1723,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		if timedOut {
 			outcome = outcomeTimedOut
 		}
-		ci.emitInvocationEnd(reqID, outcome, elapsed, ci.reportMemoryMB(memSample), 0)
+		ci.emitInvocationEnd(reqID, outcome, elapsed, ci.reportMemoryMB(memSample), 0, traceID)
 		if timedOut {
 			return nil, &invokeTimeoutError{RequestID: reqID, Timeout: deadline.Sub(start), At: ci.clk.Now()}
 		}
@@ -1788,7 +1795,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	if result.FunctionError != "" {
 		outcome = outcomeHandlerError
 	}
-	ci.emitInvocationEnd(reqID, outcome, elapsed, memMB, len(result.Payload))
+	ci.emitInvocationEnd(reqID, outcome, elapsed, memMB, len(result.Payload), traceID)
 
 	// Per-invocation timing breakdown (Phase 0 of
 	// docs/plans/lambda-cold-start.md): what the emulator added around the

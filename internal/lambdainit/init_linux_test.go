@@ -478,13 +478,21 @@ func TestInitPublishesTheInitPhaseRecords(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0\n%s", res.code, res.diag)
 	}
 
-	h.mustAwaitFrameCount(10) // 7 lines + 3 records
+	h.mustAwaitFrameCount(12) // 7 lines + 3 init records + 2 invokeDone records
 	frames := h.snapshotFrames()
 	assertContiguous(t, frames)
 
-	records := recordFrames(frames)
+	all := recordFrames(frames)
+	var records, invokeDone []initproto.Frame
+	for _, f := range all {
+		if f.Rec.Type == initproto.RecInvokeDone {
+			invokeDone = append(invokeDone, f)
+			continue
+		}
+		records = append(records, f)
+	}
 	if len(records) != 3 {
-		t.Fatalf("got %d records, want 3: %v", len(records), recordSummaries(records))
+		t.Fatalf("got %d init records, want 3: %v", len(records), recordSummaries(records))
 	}
 	wantTypes := []string{initproto.RecInitStart, initproto.RecInitRuntimeDone, initproto.RecInitReport}
 	for i, want := range wantTypes {
@@ -496,6 +504,36 @@ func TestInitPublishesTheInitPhaseRecords(t *testing.T) {
 		}
 		if records[i].T == 0 {
 			t.Errorf("record %d has no timestamp", i)
+		}
+	}
+
+	// Each answered invocation is measured by exactly one invokeDone record:
+	// the request it belongs to travels in Req, the span is a real positive
+	// measurement, the payload size is the answer's declared Content-Length,
+	// and the record rides at or below the seq stamped on the answer — which
+	// is what lets the host trust it is in hand before END is written.
+	if len(invokeDone) != 2 {
+		t.Fatalf("got %d invokeDone records, want 2: %v", len(invokeDone), recordSummaries(invokeDone))
+	}
+	responseSeqs := map[string]uint64{}
+	for _, call := range h.snapshotCalls() {
+		responseSeqs[call.id] = seqOf(t, call.logSeq)
+	}
+	for i, want := range []string{"req-1", "req-2"} {
+		rec := invokeDone[i]
+		if rec.Req != want {
+			t.Errorf("invokeDone %d is for %q, want %q", i, rec.Req, want)
+		}
+		if rec.Rec.DurationMs <= 0 {
+			t.Errorf("invokeDone %d durationMs = %v, want a positive measurement", i, rec.Rec.DurationMs)
+		}
+		if rec.Rec.ProducedBytes == nil || *rec.Rec.ProducedBytes <= 0 {
+			t.Errorf("invokeDone %d producedBytes = %v, want the answer's declared length", i, rec.Rec.ProducedBytes)
+		}
+		if stamped, ok := responseSeqs[want]; !ok {
+			t.Errorf("no answer was recorded for %q", want)
+		} else if rec.Seq > stamped {
+			t.Errorf("invokeDone for %q is seq %d but its answer was stamped %d — the host would write END without it", want, rec.Seq, stamped)
 		}
 	}
 	start, runtimeDone, report := records[0], records[1], records[2]

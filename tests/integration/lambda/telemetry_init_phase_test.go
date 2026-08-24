@@ -90,11 +90,16 @@ function call(method, path, headers, body) {
   });
   await new Promise(resolve => server.listen(9999, "0.0.0.0", resolve));
 
+  // Subscribed via the Telemetry API — the endpoint AWS documents as
+  // superseding the Logs API and the one current observability extensions
+  // call — so this test drives the modern surface end to end; the Logs API
+  // path keeps its own coverage at the unit level.
   await call(
     "PUT",
-    "/2020-08-15/logs",
+    "/2022-07-01/telemetry",
     { "Lambda-Extension-Identifier": id, "Content-Type": "application/json" },
     JSON.stringify({
+      schemaVersion: "2022-12-13",
       types: ["platform"],
       buffering: { timeoutMs: 25, maxBytes: 262144, maxItems: 1000 },
       destination: { protocol: "HTTP", URI: "http://127.0.0.1:9999" },
