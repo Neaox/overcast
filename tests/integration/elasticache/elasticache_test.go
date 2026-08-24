@@ -572,7 +572,7 @@ func TestCreateServerlessCache_metadataFields(t *testing.T) {
 				SecurityGroupIds struct {
 					Items []string `xml:"member"`
 				} `xml:"SecurityGroupIds"`
-				SnapshotArnsToRestore struct {
+				SnapshotArnsToRestore *struct {
 					Items []string `xml:"member"`
 				} `xml:"SnapshotArnsToRestore"`
 				SnapshotRetentionLimit int    `xml:"SnapshotRetentionLimit"`
@@ -590,7 +590,11 @@ func TestCreateServerlessCache_metadataFields(t *testing.T) {
 	assert.Equal(t, 50000, cache.CacheUsageLimits.ECPUPerSecond.Maximum)
 	assert.Equal(t, []string{"subnet-a", "subnet-b"}, cache.SubnetIds.Items)
 	assert.Equal(t, []string{"sg-a"}, cache.SecurityGroupIds.Items)
-	assert.Equal(t, []string{"arn:aws:elasticache:us-east-1:000000000000:snapshot:seed"}, cache.SnapshotArnsToRestore.Items)
+	// SnapshotArnsToRestore is a CreateServerlessCacheRequest-only member on
+	// real AWS; it does not appear on the ServerlessCache response shape, so
+	// it must not round-trip onto the wire here even though the create call
+	// accepted it above.
+	assert.Nil(t, cache.SnapshotArnsToRestore, "SnapshotArnsToRestore must not be echoed on the ServerlessCache response")
 	assert.Equal(t, 10, cache.SnapshotRetentionLimit)
 	assert.Equal(t, "09:00", cache.DailySnapshotTime)
 	assert.Equal(t, "dual_stack", cache.NetworkType)
