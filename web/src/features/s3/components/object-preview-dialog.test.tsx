@@ -1,6 +1,25 @@
-import { render, screen } from "@/test/render"
+import { render, screen, userEvent, waitFor } from "@/test/render"
+// Type-only, so referencing it inside the hoisted vi.mock factory is legal.
+import type * as ApiModule from "@/services/api"
+import type { S3ObjectVersion } from "@/types"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
 import { formatPreviewText, isTextPreviewable } from "./object-preview-format"
+
+// Only the version listing is stubbed. `getObjectDownloadUrl` is the real one
+// throughout — the download-href assertions below are about what it builds.
+const api = vi.hoisted(() => ({ versions: [] as S3ObjectVersion[] }))
+
+vi.mock("@/services/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof ApiModule>()
+  return {
+    ...actual,
+    s3: {
+      ...actual.s3,
+      listObjectVersions: () =>
+        Promise.resolve({ versions: api.versions, prefixes: [], isTruncated: false }),
+    },
+  }
+})
 
 describe("formatPreviewText", () => {
   it("keeps self-closing XML tags at the current indentation level", () => {
@@ -167,6 +186,7 @@ describe("ObjectPreviewDialog > a named version", () => {
         versionId={versionId}
         metadata={metadata}
         loading={false}
+        onSelectVersion={() => {}}
         onClose={() => {}}
       />,
     )
@@ -198,6 +218,7 @@ describe("ObjectPreviewDialog > the current version", () => {
         objectKey="report.bin"
         metadata={metadata}
         loading={false}
+        onSelectVersion={() => {}}
         onClose={() => {}}
       />,
     )
@@ -224,6 +245,7 @@ describe("ObjectPreviewDialog > a version that cannot be read", () => {
         error={Object.assign(new Error("UnknownError"), {
           $metadata: { httpStatusCode: status },
         })}
+        onSelectVersion={() => {}}
         onClose={() => {}}
       />,
     )
@@ -241,5 +263,131 @@ describe("ObjectPreviewDialog > a version that cannot be read", () => {
   it("offers no download, there being nothing at that address to fetch", () => {
     renderError(404, "v2")
     expect(screen.queryByRole("link", { name: /download/i })).not.toBeInTheDocument()
+  })
+})
+
+describe("ObjectPreviewDialog > version history", () => {
+  function version(versionId: string, over: Partial<S3ObjectVersion> = {}): S3ObjectVersion {
+    return {
+      key: "report.bin",
+      versionId,
+      isLatest: false,
+      isDeleteMarker: false,
+      lastModified: "2026-08-10T00:00:00.000Z",
+      size: 12,
+      etag: "abc",
+      storageClass: "STANDARD",
+      ...over,
+    }
+  }
+
+  function renderInspector(props: {
+    isVersioned?: boolean
+    versionId?: string
+    error?: Error
+    onSelectVersion?: (versionId: string) => void
+  }) {
+    return render(
+      <ObjectPreviewDialog
+        bucket="my-bucket"
+        objectKey="report.bin"
+        versionId={props.versionId}
+        metadata={props.error ? undefined : metadata}
+        loading={false}
+        error={props.error}
+        isVersioned={props.isVersioned ?? true}
+        onSelectVersion={props.onSelectVersion ?? (() => {})}
+        onClose={() => {}}
+      />,
+    )
+  }
+
+  beforeEach(() => {
+    api.versions = [version("v2", { isLatest: true }), version("v1")]
+  })
+
+  it("offers no tab strip on a bucket that keeps no history", () => {
+    // One revision is not a choice, and a tab that never has anything behind it
+    // is a control that only costs a click to discover.
+    renderInspector({ isVersioned: false })
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument()
+    expect(screen.getByText("Content-Type")).toBeInTheDocument()
+  })
+
+  it("counts the revisions on the tab before it is opened", async () => {
+    renderInspector({})
+    expect(await screen.findByRole("tab", { name: /Versions · 2/ })).toBeInTheDocument()
+  })
+
+  it("drills into the revision the user picked rather than only ticking it", async () => {
+    // Clicking a row means "show me this one". Staying on the list would leave
+    // the user to discover for themselves that what they asked for is behind
+    // the other tab.
+    const onSelectVersion = vi.fn()
+    renderInspector({ onSelectVersion })
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await user.click(await screen.findByText("v1"))
+
+    expect(onSelectVersion).toHaveBeenCalledWith("v1")
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true")
+  })
+
+  it("says which revision the details describe, and how to reach the rest", async () => {
+    renderInspector({ versionId: "v1" })
+    expect(await screen.findByText(/Older revision/)).toBeInTheDocument()
+    // Counted oldest-first, so the newest of two revisions is "2 of 2" — the
+    // ordinal people mean when they say which revision something is.
+    expect(screen.getByText(/1 of 2/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument()
+  })
+
+  it("says nothing about revisions when the inspector is following the key", async () => {
+    // No version was asked for, so there is no "which one am I on" to answer —
+    // the tab count already says a history exists.
+    renderInspector({})
+    await screen.findByRole("tab", { name: /Versions · 2/ })
+    expect(screen.queryByText(/Older revision/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Current revision/)).not.toBeInTheDocument()
+  })
+
+  it("steps to the next revision without a trip back to the list", async () => {
+    const onSelectVersion = vi.fn()
+    renderInspector({ versionId: "v2", onSelectVersion })
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole("button", { name: "Older revision" }))
+    expect(onSelectVersion).toHaveBeenCalledWith("v1")
+  })
+
+  it("offers no step past either end of the history", async () => {
+    renderInspector({ versionId: "v2" })
+    // v2 is the newest, so there is nothing newer to step to.
+    expect(await screen.findByRole("button", { name: "Newer revision" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Older revision" })).toBeEnabled()
+  })
+
+  it("keeps the history reachable when the revision on screen cannot be read", async () => {
+    // A delete marker has no body, so the details pane is an explanation rather
+    // than an object — and the history is exactly where the user goes next.
+    api.versions = [version("v3", { isLatest: true, isDeleteMarker: true }), version("v2")]
+    renderInspector({
+      versionId: "v3",
+      error: Object.assign(new Error("UnknownError"), { $metadata: { httpStatusCode: 405 } }),
+    })
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/delete marker/i)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await waitFor(() => expect(screen.getByText("v2")).toBeInTheDocument())
+  })
+
+  it("goes back to the whole history on request", async () => {
+    renderInspector({ versionId: "v1" })
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole("button", { name: "All 2" }))
+    expect(screen.getByRole("tab", { name: /Versions/ })).toHaveAttribute("aria-selected", "true")
   })
 })

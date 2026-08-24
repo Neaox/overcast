@@ -302,6 +302,16 @@ export function BucketDetail() {
   // listing the user is already looking at, and Back from it would reopen the
   // object they just dismissed.
   const closeInspector = useCallback(() => goTo(prefix, { replace: true }), [goTo, prefix])
+  // Switching revisions replaces too. The URL still moves, so the revision on
+  // screen stays linkable and survives a reload — but the switcher is a control
+  // inside one open inspector rather than a move to somewhere else, and Back
+  // should close the inspector however many revisions were read in it.
+  const selectVersion = useCallback(
+    (nextVersionId: string) => {
+      if (objectKey) goTo(objectKey, { versionId: nextVersionId, replace: true })
+    },
+    [goTo, objectKey],
+  )
 
   const deleteMutation = useMutation({
     ...deleteObjectMutationOptions(bucket),
@@ -793,6 +803,8 @@ export function BucketDetail() {
         metadata={meta}
         loading={metaLoading}
         error={metaError}
+        isVersioned={isVersioned}
+        onSelectVersion={selectVersion}
         onClose={closeInspector}
       />
 

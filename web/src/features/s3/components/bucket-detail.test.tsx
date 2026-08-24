@@ -432,3 +432,44 @@ describe("BucketDetail > URL state", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 })
+
+describe("BucketDetail > switching revisions", () => {
+  beforeEach(() => {
+    api.versioning = "Enabled"
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    api.versionPages = [
+      {
+        prefixes: [],
+        isTruncated: false,
+        versions: [version("a.txt", "v2", { isLatest: true }), version("a.txt", "v1")],
+      },
+    ]
+  })
+
+  it("names the revision in the URL, so the one on screen is linkable", async () => {
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("a.txt"))
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await user.click(await screen.findByText("v1"))
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ versionId: "v1" }))
+    expect(router.state.location.pathname).toBe("/s3/demo/objects/a.txt")
+  })
+
+  it("does not stack a history entry per revision read", async () => {
+    const { user, router } = renderBrowser()
+
+    await user.click(await screen.findByText("a.txt"))
+    await user.click(await screen.findByRole("tab", { name: /Versions/ }))
+    await user.click(await screen.findByText("v1"))
+    await waitFor(() => expect(router.state.location.search).toEqual({ versionId: "v1" }))
+
+    // The switcher is a control inside one open inspector, not a move to
+    // somewhere else: Back closes the inspector however many revisions were
+    // read in it, rather than walking back through them one click at a time.
+    router.history.back()
+    await waitFor(() => expect(router.state.location.pathname).toBe("/s3/demo/objects"))
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+})
