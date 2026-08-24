@@ -29,7 +29,7 @@ import (
 func jsonFields(t *testing.T, v any) []string {
 	t.Helper()
 	rt := reflect.TypeOf(v)
-	if rt.Kind() == reflect.Ptr {
+	if rt.Kind() == reflect.Pointer {
 		rt = rt.Elem()
 	}
 	if rt.Kind() != reflect.Struct {

@@ -19,11 +19,12 @@ LDFLAGS   := -w -s -X main.version=$(VERSION)
 # renovate: datasource=github-releases depName=rhysd/actionlint
 ACTIONLINT_VERSION := v1.7.12
 # golangci-lint v2.x — v2 config schema (.golangci.yml declares `version: "2"`).
-# v2.8.0 is the newest release that still builds with the Go 1.24 toolchain in
-# go.mod; v2.10.0+ requires Go 1.25, so a Renovate bump that fails Lint with
-# "requires go >= 1.25" is waiting on go.mod, not wrong. The `# renovate:`
-# lines are read by the custom manager in .github/renovate.json5; CONTRIBUTING
-# points here rather than repeating the numbers.
+# The v2.10.0+ toolchain floor that used to hold this at v2.8.0 was cleared when
+# go.mod moved to Go 1.25 (#1213), so a bump that now fails Lint is reporting
+# real findings, not a toolchain mismatch — read them before assuming the bump
+# is premature. The `# renovate:` lines are read by the custom manager in
+# .github/renovate.json5; CONTRIBUTING points here rather than repeating the
+# numbers.
 # renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION := v2.8.0
 
