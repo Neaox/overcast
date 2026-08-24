@@ -17,7 +17,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -52,7 +51,6 @@ func (h *Handler) CreateRestApi(w http.ResponseWriter, r *http.Request) {
 
 	apiID := generateAPIID()
 	rootResourceID := generateShortID()
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	now := h.clk.Now().UnixMilli()
 
 	endpointCfg := req.EndpointConfig
@@ -104,14 +102,13 @@ func (h *Handler) CreateRestApi(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteJSON(w, r, http.StatusCreated, restAPIToResponse(api, region))
+	protocol.WriteJSON(w, r, http.StatusCreated, restAPIToResponse(api))
 }
 
 // ---- GetRestApi -----------------------------------------------------------
 
 func (h *Handler) GetRestApi(w http.ResponseWriter, r *http.Request) {
 	apiID := chi.URLParam(r, "restApiId")
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 
 	api, aerr := h.store.getRestAPI(r.Context(), apiID)
 	if aerr != nil {
@@ -119,7 +116,7 @@ func (h *Handler) GetRestApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, restAPIToResponse(api, region))
+	protocol.WriteJSON(w, r, http.StatusOK, restAPIToResponse(api))
 }
 
 // ---- GetRestApis ----------------------------------------------------------
@@ -130,7 +127,6 @@ type getRestAPIsResponse struct {
 }
 
 func (h *Handler) GetRestApis(w http.ResponseWriter, r *http.Request) {
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	apis, aerr := h.store.listRestAPIs(r.Context())
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -139,7 +135,7 @@ func (h *Handler) GetRestApis(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]restAPIResponse, 0, len(apis))
 	for _, api := range apis {
-		items = append(items, restAPIToResponse(api, region))
+		items = append(items, restAPIToResponse(api))
 	}
 
 	// TODO(priority:P2): implement pagination when list grows large
@@ -200,7 +196,6 @@ type patchOperation struct {
 
 func (h *Handler) UpdateRestApi(w http.ResponseWriter, r *http.Request) {
 	apiID := chi.URLParam(r, "restApiId")
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 
 	api, aerr := h.store.getRestAPI(r.Context(), apiID)
 	if aerr != nil {
@@ -234,7 +229,7 @@ func (h *Handler) UpdateRestApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, restAPIToResponse(api, region))
+	protocol.WriteJSON(w, r, http.StatusOK, restAPIToResponse(api))
 }
 
 // ---- CreateResource -------------------------------------------------------
@@ -1074,12 +1069,11 @@ type restAPIResponse struct {
 	BinaryMediaTypes  []string          `json:"binaryMediaTypes,omitempty"`
 	DisableExecuteAPI bool              `json:"disableExecuteApiEndpoint,omitempty"`
 	RootResourceID    string            `json:"rootResourceId"`
-	ARN               string            `json:"arn,omitempty"`
 }
 
 // restAPIToResponse converts a stored RestAPI to the AWS wire format.
 // AWS returns createdDate as epoch seconds (float), not milliseconds.
-func restAPIToResponse(api *RestAPI, region string) restAPIResponse {
+func restAPIToResponse(api *RestAPI) restAPIResponse {
 	return restAPIResponse{
 		ID:                api.ID,
 		Name:              api.Name,
@@ -1092,6 +1086,5 @@ func restAPIToResponse(api *RestAPI, region string) restAPIResponse {
 		BinaryMediaTypes:  api.BinaryMediaTypes,
 		DisableExecuteAPI: api.DisableExecuteAPI,
 		RootResourceID:    api.RootResourceID,
-		ARN:               protocol.RestAPIARN(region, api.ID),
 	}
 }

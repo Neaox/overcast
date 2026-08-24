@@ -235,7 +235,6 @@ type setRepositoryPolicyResponse struct {
 	RegistryId     string `json:"registryId" cbor:"registryId"`
 	RepositoryName string `json:"repositoryName" cbor:"repositoryName"`
 	PolicyText     string `json:"policyText" cbor:"policyText"`
-	RepositoryArn  string `json:"repositoryArn" cbor:"repositoryArn"`
 }
 
 type getRepositoryPolicyResponse struct {
@@ -745,7 +744,7 @@ func (s *Service) batchDeleteImageTyped(ctx context.Context, req *imageIDSetRequ
 
 func (s *Service) setRepositoryPolicyTyped(ctx context.Context, req *setRepositoryPolicyRequest) (*setRepositoryPolicyResponse, *protocol.AWSError) {
 	region := s.regionCtx(ctx)
-	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	_, found, err := s.getRepo(ctx, region, req.RepositoryName)
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -760,7 +759,6 @@ func (s *Service) setRepositoryPolicyTyped(ctx context.Context, req *setReposito
 		RegistryId:     s.accountID(),
 		RepositoryName: req.RepositoryName,
 		PolicyText:     req.PolicyText,
-		RepositoryArn:  repo.RepositoryArn,
 	}, nil
 }
 

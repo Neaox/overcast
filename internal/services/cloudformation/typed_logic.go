@@ -611,7 +611,6 @@ func (h *Handler) describeChangeSetTyped(ctx context.Context, req *describeChang
 			StackName:       cs.StackName,
 			Status:          cs.Status,
 			ExecutionStatus: cs.ExecutionStatus,
-			ChangeSetType:   cs.ChangeSetType,
 			CreatedAt:       cs.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			Changes:         changesXML,
 		},
