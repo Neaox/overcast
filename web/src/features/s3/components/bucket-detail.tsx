@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useNavigate } from "@tanstack/react-router"
+import { useLocation, useNavigate } from "@tanstack/react-router"
 import {
   Folder,
   File,
@@ -23,7 +23,8 @@ import {
   FileX,
   SearchX,
 } from "lucide-react"
-import { Route } from "@/routes/s3/$bucket/index"
+import { Route } from "@/routes/s3/$bucket/objects/$"
+import { browserSplat, parseBrowserPath } from "@/features/s3/object-location"
 import {
   s3ObjectsQueryOptions,
   s3ObjectVersionsQueryOptions,
@@ -119,20 +120,30 @@ const NO_LIFECYCLE_RULES: S3LifecycleRule[] = []
 
 export function BucketDetail() {
   "use no memo"
-  const { bucket } = Route.useParams()
+  const { bucket, _splat: splat } = Route.useParams()
+  // What the inspector is pointed at. A version row carries its own id so the
+  // dialog reads that revision; a current-object row leaves it undefined, which
+  // is distinct from the literal id "null" an unversioned write is stored under.
+  const { versionId } = Route.useSearch()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const endpoint = useEndpoint()
   const { toast } = useToast()
 
-  const [prefix, setPrefix] = useState("")
+  // The folder being listed and the object being inspected both come out of
+  // the path, so a reload, a shared link and the Back button all land on the
+  // same view the user was looking at. The pathname is read alongside the
+  // splat because only it still carries the trailing slash that tells a folder
+  // from an object of the same name — see browserSplat.
+  const { pathname } = useLocation()
+  const { prefix, objectKey } = useMemo(
+    () => parseBrowserPath(browserSplat(splat, pathname)),
+    [splat, pathname],
+  )
+
   const [search, setSearch] = useState("")
   const [scope, setScope] = useState<ListScope>("folder")
   const [sort, setSort] = useState<ObjectSort>(DEFAULT_SORT)
-  // What the inspector is pointed at. A version row carries its own id so the
-  // dialog reads that revision; a current-object row leaves it undefined, which
-  // is distinct from the literal id "null" an unversioned write is stored under.
-  const [metaTarget, setMetaTarget] = useState<{ key: string; versionId?: string }>()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [deletePrefixTarget, setDeletePrefixTarget] = useState<string>()
   const [isDragOver, setIsDragOver] = useState(false)
@@ -163,13 +174,31 @@ export function BucketDetail() {
     [prefix, bucket, navigate],
   )
 
+  // Every move within the bucket is a navigation, so each one is its own
+  // history entry and Back does what the browser chrome promises: leave the
+  // folder, or close the object that was opened on top of it.
+  const goTo = useCallback(
+    (target: string, opts: { versionId?: string; replace?: boolean } = {}) => {
+      void navigate({
+        to: "/s3/$bucket/objects/$",
+        params: { bucket, _splat: target },
+        search: { versionId: opts.versionId },
+        replace: opts.replace,
+      })
+    },
+    [bucket, navigate],
+  )
+
   // Moving folders drops the search with it. A filter carried into a folder the
   // user only reached by following a breadcrumb reads as an empty folder, and
   // the query that emptied it is two controls away from where they are looking.
-  const goToPrefix = useCallback((next: string) => {
-    setPrefix(next)
-    setSearch("")
-  }, [])
+  const goToPrefix = useCallback(
+    (next: string) => {
+      setSearch("")
+      goTo(next)
+    },
+    [goTo],
+  )
 
   const handleSort = useCallback((column: SortColumn) => {
     setSort((current) => nextSort(current, column))
@@ -246,8 +275,8 @@ export function BucketDetail() {
     isLoading: metaLoading,
     error: metaError,
   } = useQuery({
-    ...s3ObjectMetaQueryOptions(bucket, metaTarget?.key ?? "", metaTarget?.versionId),
-    enabled: !!metaTarget,
+    ...s3ObjectMetaQueryOptions(bucket, objectKey ?? "", versionId),
+    enabled: !!objectKey,
     // A version that has been deleted, or one that is a delete marker, answers
     // the same way however many times it is asked. Retrying only delays the
     // explanation.
@@ -264,11 +293,15 @@ export function BucketDetail() {
   // Stable callbacks for the memoized rows: each takes the row's own datum,
   // so one function serves every row without re-rendering any of them when
   // unrelated state (a dialog, a hover, the search box) changes.
-  const inspectObject = useCallback((key: string) => setMetaTarget({ key }), [])
+  const inspectObject = useCallback((key: string) => goTo(key), [goTo])
   const inspectVersion = useCallback(
-    (version: S3ObjectVersion) => setMetaTarget({ key: version.key, versionId: version.versionId }),
-    [],
+    (version: S3ObjectVersion) => goTo(version.key, { versionId: version.versionId }),
+    [goTo],
   )
+  // Closing replaces rather than pushes. The entry a push would add is the
+  // listing the user is already looking at, and Back from it would reopen the
+  // object they just dismissed.
+  const closeInspector = useCallback(() => goTo(prefix, { replace: true }), [goTo, prefix])
 
   const deleteMutation = useMutation({
     ...deleteObjectMutationOptions(bucket),
@@ -755,12 +788,12 @@ export function BucketDetail() {
 
       <ObjectPreviewDialog
         bucket={bucket}
-        objectKey={metaTarget?.key}
-        versionId={metaTarget?.versionId}
+        objectKey={objectKey}
+        versionId={versionId}
         metadata={meta}
         loading={metaLoading}
         error={metaError}
-        onClose={() => setMetaTarget(undefined)}
+        onClose={closeInspector}
       />
 
       {/* Delete confirmation */}

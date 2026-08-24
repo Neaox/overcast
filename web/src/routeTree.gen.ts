@@ -102,6 +102,7 @@ import { Route as ApigatewayHttpApiIdRouteImport } from './routes/apigateway/htt
 import { Route as CloudwatchLogsGroupNameIndexRouteImport } from './routes/cloudwatch/logs/$groupName/index'
 import { Route as WafScopeWebAclIdNameRouteImport } from './routes/waf/$scope/$webAclId/$name'
 import { Route as StepfunctionsExecutionNameExecutionRouteImport } from './routes/stepfunctions/execution.$name.$execution'
+import { Route as S3BucketObjectsSplatRouteImport } from './routes/s3/$bucket/objects/$'
 import { Route as EcsClusterTasksTaskIdRouteImport } from './routes/ecs/$cluster.tasks.$taskId'
 import { Route as CloudwatchLogsGroupNameStreamNameRouteImport } from './routes/cloudwatch/logs/$groupName/$streamName'
 
@@ -578,6 +579,11 @@ const StepfunctionsExecutionNameExecutionRoute =
     path: '/stepfunctions/execution/$name/$execution',
     getParentRoute: () => rootRouteImport,
   } as any)
+const S3BucketObjectsSplatRoute = S3BucketObjectsSplatRouteImport.update({
+  id: '/objects/$',
+  path: '/objects/$',
+  getParentRoute: () => S3BucketRoute,
+} as any)
 const EcsClusterTasksTaskIdRoute = EcsClusterTasksTaskIdRouteImport.update({
   id: '/tasks/$taskId',
   path: '/tasks/$taskId',
@@ -683,6 +689,7 @@ export interface FileRoutesByFullPath {
   '/sqs/$queue/': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/s3/$bucket/objects/$': typeof S3BucketObjectsSplatRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
@@ -773,6 +780,7 @@ export interface FileRoutesByTo {
   '/sqs/$queue': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/s3/$bucket/objects/$': typeof S3BucketObjectsSplatRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName': typeof CloudwatchLogsGroupNameIndexRoute
@@ -871,6 +879,7 @@ export interface FileRoutesById {
   '/sqs/$queue/': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/s3/$bucket/objects/$': typeof S3BucketObjectsSplatRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
@@ -970,6 +979,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue/'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/s3/$bucket/objects/$'
     | '/stepfunctions/execution/$name/$execution'
     | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName/'
@@ -1060,6 +1070,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/s3/$bucket/objects/$'
     | '/stepfunctions/execution/$name/$execution'
     | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName'
@@ -1157,6 +1168,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue/'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/s3/$bucket/objects/$'
     | '/stepfunctions/execution/$name/$execution'
     | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName/'
@@ -1901,6 +1913,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StepfunctionsExecutionNameExecutionRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/s3/$bucket/objects/$': {
+      id: '/s3/$bucket/objects/$'
+      path: '/objects/$'
+      fullPath: '/s3/$bucket/objects/$'
+      preLoaderRoute: typeof S3BucketObjectsSplatRouteImport
+      parentRoute: typeof S3BucketRoute
+    }
     '/ecs/$cluster/tasks/$taskId': {
       id: '/ecs/$cluster/tasks/$taskId'
       path: '/tasks/$taskId'
@@ -1988,12 +2007,14 @@ interface S3BucketRouteChildren {
   S3BucketConfigRoute: typeof S3BucketConfigRoute
   S3BucketUploadRoute: typeof S3BucketUploadRoute
   S3BucketIndexRoute: typeof S3BucketIndexRoute
+  S3BucketObjectsSplatRoute: typeof S3BucketObjectsSplatRoute
 }
 
 const S3BucketRouteChildren: S3BucketRouteChildren = {
   S3BucketConfigRoute: S3BucketConfigRoute,
   S3BucketUploadRoute: S3BucketUploadRoute,
   S3BucketIndexRoute: S3BucketIndexRoute,
+  S3BucketObjectsSplatRoute: S3BucketObjectsSplatRoute,
 }
 
 const S3BucketRouteWithChildren = S3BucketRoute._addFileChildren(
