@@ -227,3 +227,43 @@ func TestTelemetryAPI_recordShapeFollowsSchemaAndLogFormat(t *testing.T) {
 		})
 	}
 }
+
+// TestTelemetryAPI_lifecycleRecords pins the two records that tell the
+// environment's own extension story: platform.extension at registration
+// ({events, name, state}) and the subscription event at subscribe — named
+// platform.telemetrySubscription or platform.logsSubscription for the surface
+// it came through, per each API's documented example. The registration record
+// is retained with the init phase, so the subscriber that registered before
+// anything could listen still receives it.
+func TestTelemetryAPI_lifecycleRecords(t *testing.T) {
+	for _, tc := range []struct{ name, path, eventType string }{
+		{name: "telemetry api", path: "/2022-07-01/telemetry", eventType: "platform.telemetrySubscription"},
+		{name: "logs api", path: "/2020-08-15/logs", eventType: "platform.logsSubscription"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, addr := newTelemetryTestServer(t, logFormatText)
+			dest := newTelemetryDestination(t)
+			extID := registerExtension(t, http.DefaultClient, addr, "collector")
+
+			status, _ := subscribeVia(t, addr, tc.path, extID, map[string]any{
+				"types":       []string{"platform"},
+				"buffering":   map[string]any{"timeoutMs": 25},
+				"destination": map[string]string{"protocol": "HTTP", "URI": dest.URL},
+			})
+			if status != http.StatusOK {
+				t.Fatalf("subscribe = %d", status)
+			}
+
+			// Its own registration, replayed from the init-phase retention.
+			body := dest.received(t, func(b string) bool { return strings.Contains(b, "platform.extension") })
+			if !strings.Contains(body, `"name":"collector"`) || !strings.Contains(body, `"state":"Ready"`) {
+				t.Errorf("platform.extension = %s", body)
+			}
+			// Its own subscription, under the surface's documented name.
+			body = dest.received(t, func(b string) bool { return strings.Contains(b, tc.eventType) })
+			if !strings.Contains(body, `"state":"Subscribed"`) || !strings.Contains(body, `"platform"`) {
+				t.Errorf("%s = %s", tc.eventType, body)
+			}
+		})
+	}
+}

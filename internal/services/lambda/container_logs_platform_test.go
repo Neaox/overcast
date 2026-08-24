@@ -362,24 +362,12 @@ func TestEmitPlatformRecord_subscribersSeeTheJSONEventInTextMode(t *testing.T) {
 	}
 	ci.emitInvocationStart("req-1", "")
 
-	select {
-	case batch := <-received:
-		if len(batch) != 1 {
-			t.Fatalf("the subscriber got %d events, want one", len(batch))
-		}
-		event := batch[0]
-		if event["type"] != "platform.start" {
-			t.Errorf("event type = %v, want platform.start", event["type"])
-		}
-		record, ok := event["record"].(map[string]any)
-		if !ok {
-			t.Fatalf("event record = %#v, want a JSON object", event["record"])
-		}
-		if record["requestId"] != "req-1" || record["version"] != functionVersionLatest {
-			t.Errorf("platform.start record = %#v", record)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the subscriber never received the platform.start event")
+	// Scanned out of whatever batch carries it: the subscription's own
+	// lifecycle records (platform.extension, the subscription event) ride
+	// the same stream now, and how they batch is not this test's subject.
+	record := awaitPlatformEvent(t, received, "platform.start")
+	if record["requestId"] != "req-1" || record["version"] != functionVersionLatest {
+		t.Errorf("platform.start record = %#v", record)
 	}
 
 	// The tail is the plain-text line, unchanged.

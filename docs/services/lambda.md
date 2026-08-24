@@ -750,6 +750,12 @@ function's log line is embedded in its record as the JSON object it already
 is; older schemas, the Logs API, Text-format functions and lines that are not
 JSON objects receive the string, [as AWS
 documents](https://docs.aws.amazon.com/lambda/latest/dg/telemetry-schema-reference.html).
+Subscribers also receive the environment's own extension story:
+`platform.extension` at each registration (retained with the INIT phase, so a
+subscription made later still hears it) and, on subscribing,
+`platform.telemetrySubscription` or `platform.logsSubscription` — the record
+named for the surface the subscription came through, per each API's
+documented example. Neither is written to CloudWatch.
 Subscribers receive **every** record regardless of `ApplicationLogLevel` and
 `SystemLogLevel`, which only filter CloudWatch Logs and the invoke tail; see
 [Log format and log levels](#log-format-and-log-levels). Delivery is

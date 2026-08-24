@@ -1086,6 +1086,25 @@ func (s *RuntimeAPIServer) handleExtensionRegister(w http.ResponseWriter, r *htt
 	s.maybeMarkReadyLocked(containerIP)
 	s.mu.Unlock()
 
+	// The registration is itself a platform event — {events, name, state},
+	// per AWS's platform.extension example. Retained with the init-phase
+	// records rather than only published: registration happens during INIT,
+	// before anything can have subscribed, and the record is part of the
+	// phase's story a later subscription is replayed. (Whether AWS replays
+	// it is not documented; delivering it is the reading under which an
+	// extension can actually see it.)
+	if event, err := json.Marshal(map[string]any{
+		"time": s.clk.Now().UTC().Format(time.RFC3339Nano),
+		"type": "platform.extension",
+		"record": map[string]any{
+			"events": in.Events,
+			"name":   name,
+			"state":  "Ready",
+		},
+	}); err == nil {
+		s.PublishInitPhaseRecord(containerIP, string(event))
+	}
+
 	w.Header().Set("Lambda-Extension-Identifier", id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1297,6 +1316,27 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		// records are its business, so it gets them now.
 		s.deliverRetainedInitRecords(containerIP, replayTarget)
 	}
+	// The subscription is itself a platform event, named for the surface it
+	// came through: the Logs API documents platform.logsSubscription, the
+	// Telemetry API platform.telemetrySubscription — same {name, state,
+	// types} record either way. Published after the subscription is stored,
+	// so the subscriber that asked is among the recipients, which is the only
+	// way its own example record can ever be seen.
+	subscriptionEventType := "platform.telemetrySubscription"
+	if api == subscriptionAPILogs {
+		subscriptionEventType = "platform.logsSubscription"
+	}
+	if event, err := json.Marshal(map[string]any{
+		"time": s.clk.Now().UTC().Format(time.RFC3339Nano),
+		"type": subscriptionEventType,
+		"record": map[string]any{
+			"name":  ext.Name,
+			"state": "Subscribed",
+			"types": in.Types,
+		},
+	}); err == nil {
+		s.PublishPlatformRecord(containerIP, string(event))
+	}
 	if api == subscriptionAPITelemetry {
 		// The documented success body is the JSON string "OK".
 		w.Header().Set("Content-Type", "application/json")
@@ -1418,11 +1458,12 @@ func (s *RuntimeAPIServer) PublishPlatformRecord(containerIP, event string) {
 	s.publishTelemetryEvent(containerIP, "platform", json.RawMessage(event))
 }
 
-// initPhaseRecordsRetained bounds the per-container replay buffer. Three
-// records is the whole INIT phase; the headroom is for an environment that
-// somehow reported one twice, and it is what stops a container nothing ever
-// subscribes to from holding an unbounded amount.
-const initPhaseRecordsRetained = 8
+// initPhaseRecordsRetained bounds the per-container replay buffer: the three
+// INIT-phase records plus one platform.extension per registered extension.
+// Environments run a handful of extensions at most; one that somehow exceeds
+// the bound stops retaining rather than growing without limit, which also
+// covers a container nothing ever subscribes to.
+const initPhaseRecordsRetained = 16
 
 // PublishInitPhaseRecord publishes one of the three init-phase platform events
 // and remembers it for a subscription that has not been made yet — see
