@@ -149,7 +149,7 @@ type proxy struct {
 	// answered invocation and reports its seq. Published before the answer is
 	// stamped and forwarded, so the host has ingested it by the time it
 	// writes END. Nil in the proxy's own tests.
-	invokeDone func(req string, durationMs float64, producedBytes *int64) uint64
+	invokeDone func(req string, durationMs float64, producedBytes *int64, spans []initproto.RecSpan) uint64
 }
 
 func newProxy(hostAddr string, tracker *requestTracker, drain func(ctx context.Context) uint64, diag *diagLog) *proxy {
@@ -237,7 +237,20 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				n := r.ContentLength
 				produced = &n
 			}
-			if recSeq := p.invokeDone(id, float64(answeredAt.Sub(began).Microseconds())/1000.0, produced); recSeq > seq {
+			held := float64(answeredAt.Sub(began).Microseconds()) / 1000.0
+			// responseLatency is the one span this vantage point can measure
+			// whole before the answer is forwarded: the invocation being
+			// handed out to the runtime starting to send its answer — which
+			// is this POST arriving. responseDuration ends only when the
+			// body has finished streaming through, and runtimeOverhead only
+			// at the runtime's next poll; both are after the record must be
+			// on the stream, so neither is invented here.
+			spans := []initproto.RecSpan{{
+				Name:       "responseLatency",
+				StartMs:    began.UnixMilli(),
+				DurationMs: held,
+			}}
+			if recSeq := p.invokeDone(id, held, produced, spans); recSeq > seq {
 				seq = recSeq
 			}
 		}

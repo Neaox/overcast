@@ -318,21 +318,53 @@ type runtimeDoneMetrics struct {
 	ProducedBytes int     `json:"producedBytes"`
 }
 
+// platformSpan is the Telemetry API Span object
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-schema-reference.html#Span):
+// a named slice of the phase, when it began, how long it took. Overcast emits
+// the one span its in-container init can measure whole — responseLatency,
+// the invocation being handed to the runtime to the runtime starting to send
+// its answer. responseDuration ends only when the answer has finished
+// streaming through the init's unbuffered proxy, and runtimeOverhead only at
+// the runtime's next poll — both after platform.runtimeDone (which Overcast,
+// like its END line, writes when the answer arrives) is already on its way,
+// so neither is invented.
+type platformSpan struct {
+	Name       string  `json:"name"`
+	Start      string  `json:"start"`
+	DurationMs float64 `json:"durationMs"`
+}
+
+// platformSpansFor renders the init's measured spans, or nil when it
+// measured none.
+func platformSpansFor(measured []initproto.RecSpan) []platformSpan {
+	if len(measured) == 0 {
+		return nil
+	}
+	spans := make([]platformSpan, 0, len(measured))
+	for _, m := range measured {
+		spans = append(spans, platformSpan{
+			Name:       m.Name,
+			Start:      time.UnixMilli(m.StartMs).UTC().Format(platformEventTimeFormat),
+			DurationMs: m.DurationMs,
+		})
+	}
+	return spans
+}
+
 // platformRuntimeDoneRecord reports that the runtime finished the invocation.
 // It replaces the plain text END line, and carries the status and response size
 // that END has nowhere to put.
 //
-// ErrorType is modeled but never set. AWS puts one of its own error-type names
-// there (Runtime.ExitError, Sandbox.Timedout and so on); Overcast knows the
-// invocation failed but not which of those AWS would have chosen, and an
-// invented name is worse than an absent optional field.
-//
-// TODO(priority:P3): populate errorType on Lambda platform.runtimeDone and platform.report records for failed invocations.
+// ErrorType is set for the one outcome whose AWS name is documented — a
+// runtime that exited (Runtime.ExitError; see logOutcome). A handler error
+// and a timeout leave it absent, exactly as AWS's own runtimeDone examples
+// for those statuses do.
 type platformRuntimeDoneRecord struct {
 	RequestID string              `json:"requestId"`
 	Status    string              `json:"status"`
 	ErrorType string              `json:"errorType,omitempty"`
 	Metrics   *runtimeDoneMetrics `json:"metrics,omitempty"`
+	Spans     []platformSpan      `json:"spans,omitempty"`
 	Tracing   *traceContext       `json:"tracing,omitempty"`
 }
 
@@ -459,12 +491,22 @@ func (ci *containerInstance) emitInvocationStart(requestID, traceID string) {
 type logOutcome struct {
 	status     string
 	textStatus string
+	// errorType is the AWS error-type name for the outcome, on the one
+	// outcome whose name AWS actually documents: a runtime that exited is
+	// Runtime.ExitError — the platform fault log's own format is
+	// "Status: error<TAB>ErrorType: Runtime.ExitError"
+	// (https://docs.aws.amazon.com/lambda/latest/dg/runtimes-logs-api.html,
+	// the platform fault log). The others stay absent on the same page's
+	// evidence: AWS's runtimeDone examples for both failure and timeout
+	// carry no errorType at all, and inventing a name would be worse than
+	// omitting an optional member.
+	errorType string
 }
 
 var (
 	outcomeSuccess      = logOutcome{status: invokeStatusSuccess}
 	outcomeHandlerError = logOutcome{status: invokeStatusFailure}
-	outcomeCrashed      = logOutcome{status: invokeStatusError, textStatus: "\tStatus: error"}
+	outcomeCrashed      = logOutcome{status: invokeStatusError, textStatus: "\tStatus: error", errorType: "Runtime.ExitError"}
 	outcomeTimedOut     = logOutcome{status: invokeStatusTimeout, textStatus: "\tStatus: timeout"}
 )
 
@@ -492,12 +534,14 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		DurationMs:    durationMillis(elapsed),
 		ProducedBytes: producedBytes,
 	}
+	var doneSpans []platformSpan
 	if ci.logSink != nil {
 		if measured, ok := ci.logSink.invokeDoneFor(requestID); ok {
 			doneMetrics.DurationMs = measured.DurationMs
 			if measured.ProducedBytes != nil {
 				doneMetrics.ProducedBytes = int(*measured.ProducedBytes)
 			}
+			doneSpans = platformSpansFor(measured.Spans)
 		}
 	}
 	ci.emitPlatformRecord(
@@ -506,7 +550,9 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		platformRuntimeDoneRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
+			ErrorType: outcome.errorType,
 			Metrics:   doneMetrics,
+			Spans:     doneSpans,
 			Tracing:   traceContextFor(traceID),
 		},
 	)
@@ -517,6 +563,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		platformReportRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
+			ErrorType: outcome.errorType,
 			Metrics: reportMetrics{
 				DurationMs:       durationMillis(elapsed),
 				BilledDurationMs: billedDuration(elapsed),

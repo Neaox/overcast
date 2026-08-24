@@ -363,8 +363,11 @@ func TestRuntimeAPILogsAPI_deliversFunctionLogs(t *testing.T) {
 	// When: the extension subscribes to function logs and a function log is published.
 	subscribeBody, err := json.Marshal(map[string]any{
 		"types": []string{"function"},
+		// The documented minimum timeout: this test is about a function
+		// record reaching its subscriber, and batching now really honours
+		// timeoutMs, so a large value here would only be a sleep.
 		"buffering": map[string]any{
-			"timeoutMs": 1000,
+			"timeoutMs": 25,
 			"maxBytes":  262144,
 			"maxItems":  1000,
 		},

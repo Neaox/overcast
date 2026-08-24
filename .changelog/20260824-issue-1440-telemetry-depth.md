@@ -1,0 +1,5 @@
++ [lambda] `platform.runtimeDone` and `platform.report` carry `errorType: Runtime.ExitError` when the runtime exited; timeout and handler-error records stay nameless, as AWS's own examples do
++ [lambda] telemetry deliveries are batched per the subscription's buffering configuration — maxItems, maxBytes and timeoutMs with AWS's defaults and limits — instead of one POST per record
++ [lambda] a subscriber whose batch was lost is now told: the next batch opens with a `platform.logsDropped` event carrying the dropped counts, in AWS's documented shape
++ [lambda] `platform.runtimeDone` carries the `responseLatency` span, measured by the in-container init; `responseDuration` and `runtimeOverhead` stay documented-out — the first ends only after the answer has streamed through, the second exists only at the runtime's next poll
++ [lambda] extensions' own lifecycle is on the platform stream: `platform.extension` at registration (replayed to later subscribers) and `platform.telemetrySubscription` / `platform.logsSubscription` at subscribe, named for the API the subscription came through
