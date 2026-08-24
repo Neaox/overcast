@@ -99,7 +99,7 @@ type createTableRequest struct {
 }
 
 type createTableResponse struct {
-	TableDescription *Table `json:"TableDescription"`
+	TableDescription *TableDescription `json:"TableDescription"`
 }
 
 type describeTableRequest struct {
@@ -107,7 +107,7 @@ type describeTableRequest struct {
 }
 
 type describeTableResponse struct {
-	Table *Table `json:"Table"`
+	Table *TableDescription `json:"Table"`
 }
 
 type deleteTableRequest struct {
@@ -337,7 +337,7 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 			Payload: events.ResourcePayload{Name: req.TableName, ARN: table.TableARN},
 		})
 	}
-	return &createTableResponse{TableDescription: table}, nil
+	return &createTableResponse{TableDescription: table.description()}, nil
 }
 
 // ListTables handles the DynamoDB ListTables operation.
@@ -442,7 +442,7 @@ func (h *Handler) describeTableTyped(ctx context.Context, req *describeTableRequ
 		table.ItemCount = n
 	}
 
-	return &describeTableResponse{Table: table}, nil
+	return &describeTableResponse{Table: table.description()}, nil
 }
 
 // PutItem handles the DynamoDB PutItem operation.
@@ -979,7 +979,7 @@ func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest)
 	// CreateTable/DescribeTable/UpdateTable use — see API_DeleteTable's
 	// ResponseSyntax.
 	table.TableStatus = "DELETING"
-	return &createTableResponse{TableDescription: table}, nil
+	return &createTableResponse{TableDescription: table.description()}, nil
 }
 
 // Query handles the DynamoDB Query operation.
@@ -1419,7 +1419,7 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 		}
 	}
 
-	return &createTableResponse{TableDescription: table}, nil
+	return &createTableResponse{TableDescription: table.description()}, nil
 }
 
 // backfillIndex populates idx's index rows for every item already stored in

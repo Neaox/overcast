@@ -47,7 +47,12 @@ type ProvisionedThroughput struct {
 func (t *Table) GetTags() map[string]string     { return t.Tags }
 func (t *Table) SetTags(tags map[string]string) { t.Tags = tags }
 
-// Table represents a DynamoDB table definition.
+// Table represents a DynamoDB table definition as persisted in the store.
+// TTL and Tags are store-only: real AWS never returns either one through
+// TableDescription (CreateTable/DescribeTable/UpdateTable/DeleteTable) — TTL
+// is read back through DescribeTimeToLive, Tags through ListTagsOfResource —
+// so responses are built from the description() projection below, not from
+// this struct directly.
 type Table struct {
 	TableName              string                   `json:"TableName"`
 	KeySchema              []KeySchemaElement       `json:"KeySchema"`
@@ -67,6 +72,58 @@ type Table struct {
 	GlobalSecondaryIndexes []SecondaryIndex         `json:"GlobalSecondaryIndexes,omitempty"`
 	LocalSecondaryIndexes  []SecondaryIndex         `json:"LocalSecondaryIndexes,omitempty"`
 	Tags                   map[string]string        `json:"Tags,omitempty"`
+}
+
+// TableDescription is the wire shape of the TableDescription/Table member
+// that CreateTable, DescribeTable, UpdateTable, and DeleteTable all return
+// (see dynamodb-2012-08-10.json#TableDescription, 28 members). It mirrors
+// every field Table actually populates on the wire, except TTL and Tags:
+// real AWS never exposes those through TableDescription — TTL is
+// DescribeTimeToLive's member, Tags is ListTagsOfResource's — Table keeps
+// both only so they round-trip through the store (see Table's doc comment).
+type TableDescription struct {
+	TableName              string                 `json:"TableName"`
+	KeySchema              []KeySchemaElement     `json:"KeySchema"`
+	AttributeDefinitions   []AttributeDef         `json:"AttributeDefinitions"`
+	TableStatus            string                 `json:"TableStatus"`
+	BillingMode            string                 `json:"BillingMode,omitempty"`
+	BillingModeSummary     *BillingModeSummary    `json:"BillingModeSummary,omitempty"`
+	ProvisionedThroughput  *ProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
+	TableARN               string                 `json:"TableArn"`
+	TableId                string                 `json:"TableId,omitempty"`
+	CreationDateTime       float64                `json:"CreationDateTime"`
+	ItemCount              int64                  `json:"ItemCount"`
+	StreamSpecification    *StreamSpecification   `json:"StreamSpecification,omitempty"`
+	LatestStreamArn        string                 `json:"LatestStreamArn,omitempty"`
+	LatestStreamLabel      string                 `json:"LatestStreamLabel,omitempty"`
+	GlobalSecondaryIndexes []SecondaryIndex       `json:"GlobalSecondaryIndexes,omitempty"`
+	LocalSecondaryIndexes  []SecondaryIndex       `json:"LocalSecondaryIndexes,omitempty"`
+}
+
+// description projects t onto the wire TableDescription shape, dropping the
+// store-only TTL and Tags fields — see TableDescription's doc comment.
+func (t *Table) description() *TableDescription {
+	if t == nil {
+		return nil
+	}
+	return &TableDescription{
+		TableName:              t.TableName,
+		KeySchema:              t.KeySchema,
+		AttributeDefinitions:   t.AttributeDefinitions,
+		TableStatus:            t.TableStatus,
+		BillingMode:            t.BillingMode,
+		BillingModeSummary:     t.BillingModeSummary,
+		ProvisionedThroughput:  t.ProvisionedThroughput,
+		TableARN:               t.TableARN,
+		TableId:                t.TableId,
+		CreationDateTime:       t.CreationDateTime,
+		ItemCount:              t.ItemCount,
+		StreamSpecification:    t.StreamSpecification,
+		LatestStreamArn:        t.LatestStreamArn,
+		LatestStreamLabel:      t.LatestStreamLabel,
+		GlobalSecondaryIndexes: t.GlobalSecondaryIndexes,
+		LocalSecondaryIndexes:  t.LocalSecondaryIndexes,
+	}
 }
 
 // Projection describes which attributes are projected into a secondary index.
