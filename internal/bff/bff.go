@@ -176,6 +176,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 
 	// ── S3 routes ─────────────────────────────────────────────────────────
 	r.Get("/api/s3/buckets/{bucket}/objects/{key:.+}/download", handleS3Download)
+	r.Post("/api/s3/buckets/{bucket}/objects/archive", handleS3Archive)
 	r.Put("/api/s3/buckets/{bucket}/objects/{key:.+}", handleS3Upload)
 	r.Delete("/api/s3/buckets/{bucket}/objects-by-prefix", handleS3BulkDelete)
 

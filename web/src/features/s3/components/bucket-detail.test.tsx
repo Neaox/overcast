@@ -205,3 +205,105 @@ describe("BucketDetail > paging", () => {
     expect(screen.getByText("b.txt")).toBeInTheDocument()
   })
 })
+
+describe("BucketDetail > selection", () => {
+  /**
+   * The download is a form submission rather than a fetch — that is what lets
+   * the browser stream the archive to disk instead of buffering it — so the
+   * form is what a test can inspect. jsdom does not implement submit(), and
+   * the component removes the form straight after calling it, so the spy is
+   * also how the form is captured.
+   */
+  function captureArchiveSubmit() {
+    return vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {})
+  }
+
+  function fieldValues(form: HTMLFormElement, name: string): string[] {
+    return [...form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)].map((i) => i.value)
+  }
+
+  it("offers no selection until a row is ticked", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    renderBrowser()
+
+    await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument())
+    expect(screen.queryByRole("button", { name: /Download \.zip/ })).not.toBeInTheDocument()
+  })
+
+  it("counts and sizes what has been ticked", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt"), obj("b.txt")] }]
+    const { user } = renderBrowser()
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select a.txt" }))
+    expect(screen.getByText("1 object selected")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("checkbox", { name: "Select b.txt" }))
+    expect(screen.getByText("2 objects selected")).toBeInTheDocument()
+    // Both rows are 100 B in this fixture.
+    expect(screen.getByText("200 B")).toBeInTheDocument()
+  })
+
+  it("ticks and clears the whole listing from the header box", async () => {
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt"), obj("b.txt")] }]
+    const { user } = renderBrowser()
+
+    const all = await screen.findByRole("checkbox", { name: "Select every listed object" })
+    await user.click(all)
+    expect(screen.getByText("2 objects selected")).toBeInTheDocument()
+
+    await user.click(all)
+    expect(screen.queryByText(/objects selected/)).not.toBeInTheDocument()
+  })
+
+  it("posts the ticked keys, and the folder they were ticked in, to the archive endpoint", async () => {
+    const submit = captureArchiveSubmit()
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt"), obj("b.txt")] }]
+    const { user } = renderBrowser()
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select a.txt" }))
+    await user.click(screen.getByRole("button", { name: /Download \.zip/ }))
+
+    expect(submit).toHaveBeenCalledOnce()
+    const form = submit.mock.instances[0] as HTMLFormElement
+    expect(form.method).toBe("post")
+    expect(form.getAttribute("action")).toContain("/s3/buckets/demo/objects/archive")
+    expect(fieldValues(form, "key")).toEqual(["a.txt"])
+    expect(fieldValues(form, "prefix")).toEqual([""])
+    // The keys ride in the body: a selection has no length limit, a URL does.
+    expect(form.getAttribute("action")).not.toContain("a.txt")
+  })
+
+  it("drops the selection when the browser moves to another folder", async () => {
+    api.objectPages = [{ prefixes: [{ prefix: "logs/" }], objects: [obj("a.txt")] }]
+    const { user } = renderBrowser()
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select a.txt" }))
+    expect(screen.getByText("1 object selected")).toBeInTheDocument()
+
+    // A selection made here must not follow the user into a folder where its
+    // rows are not even listed.
+    await user.click(screen.getByText("logs/"))
+    await waitFor(() => expect(screen.queryByText(/object selected/)).not.toBeInTheDocument())
+  })
+
+  it("offers no tick boxes in the version listing", async () => {
+    api.versioning = "Enabled"
+    api.objectPages = [{ prefixes: [], objects: [obj("a.txt")] }]
+    api.versionPages = [
+      {
+        prefixes: [],
+        isTruncated: false,
+        versions: [version("a.txt", "v2", { isLatest: true }), version("a.txt", "v1")],
+      },
+    ]
+    const { user } = renderBrowser()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Show every version and delete marker" }),
+    )
+    await waitFor(() => expect(screen.getAllByText("a.txt").length).toBeGreaterThan(0))
+    // Two versions of one key cannot both be a file of the same name in one
+    // archive, so the version view does not offer the choice.
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+  })
+})

@@ -51,7 +51,23 @@ import {
   type SortColumn,
   type VersionRow as VersionRowData,
 } from "@/features/s3/object-browser"
-import { HighlightedName, ObjectSearchBar, SortHead } from "./object-controls"
+import {
+  HighlightedName,
+  ObjectSearchBar,
+  RowCheckbox,
+  SelectionBar,
+  SortHead,
+} from "./object-controls"
+import {
+  MAX_ARCHIVE_OBJECTS,
+  deselectKey,
+  selectAllState,
+  selectableKeys,
+  selectionSummary,
+  toggleAll,
+  toggleKey,
+} from "@/features/s3/object-selection"
+import { startArchiveDownload } from "@/features/s3/archive-download"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useLoadMoreAtEdge } from "@/hooks/use-load-more-at-edge"
 import { s3 } from "@/services/api"
@@ -73,7 +89,7 @@ import { CopyUrlButton } from "@/components/ui/copy-url-button"
 import { s3CopyFormats } from "@/features/s3/copy-formats"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
-import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
+import { formatBytes, formatCount, formatDate, formatStorageClass } from "@/lib/format"
 import {
   estimateExpiry,
   formatExpiryDistance,
@@ -123,6 +139,9 @@ export function BucketDetail() {
   const [showDeleteBucket, setShowDeleteBucket] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<S3ObjectVersion>()
+  // Ticked rows, by key. Keys rather than rows because the listing is rebuilt
+  // on every filter keystroke and every page that lands.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
   const dragCounterRef = useRef(0)
 
   const deleteBucketMutation = useMutation({
@@ -256,6 +275,9 @@ export function BucketDetail() {
     onSuccess: (_, key) => {
       void qc.invalidateQueries({ queryKey: s3Keys.objects() })
       setDeleteTarget(undefined)
+      // A key that no longer exists must stop being counted: the selection
+      // otherwise promises a download an archive cannot contain.
+      setSelected((s) => deselectKey(s, key))
       toast({ title: "Object deleted", description: key })
     },
     onError: (err: Error) =>
@@ -279,6 +301,8 @@ export function BucketDetail() {
     onSuccess: (res, prefix) => {
       void qc.invalidateQueries({ queryKey: s3Keys.objects() })
       setDeletePrefixTarget(undefined)
+      // The folder is gone, and with it any of its objects that were ticked.
+      setSelected(new Set())
       toast({
         title: "Folder deleted",
         description: `Deleted ${res.deleted} object(s) under ${prefix}`,
@@ -350,6 +374,49 @@ export function BucketDetail() {
   // Offset of the part of each row name the term applies to: the segment before
   // it came from the search's own prefix, which S3 matched exactly.
   const nameOffset = listPrefix.length - prefix.length
+
+  // ── Selection ────────────────────────────────────────────────────────────
+  //
+  // Only the current-objects view offers tick boxes. A folder is not an object,
+  // and in the version listing two versions of one key cannot both be a file of
+  // the same name inside one archive.
+  const selectable = !viewingVersions
+  // Name, size, modified, class/version, actions — plus the tick box when the
+  // view offers one. The virtualizer's spacer rows have to span all of them.
+  const columnCount = selectable ? 6 : 5
+  // Memoized for the same reason the rows are: both walk every loaded entry,
+  // which is thousands of them once a scan has run, and the virtualizer
+  // re-renders this component on every scroll frame.
+  const listedKeys = useMemo(() => selectableKeys(allItems), [allItems])
+  const headerState = useMemo(() => selectAllState(selected, listedKeys), [selected, listedKeys])
+  const summary = useMemo(() => selectionSummary(allItems, selected), [allItems, selected])
+
+  const toggleRow = useCallback((key: string) => setSelected((s) => toggleKey(s, key)), [])
+  const toggleListed = useCallback(() => setSelected((s) => toggleAll(s, listedKeys)), [listedKeys])
+  const clearSelection = useCallback(() => setSelected(new Set()), [])
+
+  const downloadSelected = useCallback(() => {
+    const keys = [...selected]
+    startArchiveDownload(document, {
+      action: s3.getObjectsArchiveAction(bucket),
+      prefix,
+      keys,
+    })
+    // The browser's own download UI takes it from here, but an archive of many
+    // objects is built before its first byte arrives — without this the click
+    // looks like it did nothing.
+    toast({
+      title: "Preparing archive",
+      description: `Building a .zip of ${formatCount(keys.length)} object(s) — your browser saves it as it arrives`,
+    })
+  }, [bucket, prefix, selected, toast])
+
+  // A selection belongs to the listing it was made in: moving to another
+  // folder, or into the version view, drops it rather than letting rows the
+  // user can no longer see ride along in a download.
+  useEffect(() => {
+    setSelected((s) => (s.size === 0 ? s : new Set()))
+  }, [bucket, prefix, viewingVersions])
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -509,6 +576,18 @@ export function BucketDetail() {
         noun={viewingVersions ? "versions" : "objects"}
       />
 
+      <SelectionBar
+        count={summary.count}
+        bytes={summary.bytes}
+        blockedReason={
+          summary.count > MAX_ARCHIVE_OBJECTS
+            ? `One archive holds ${formatCount(MAX_ARCHIVE_OBJECTS)} objects`
+            : undefined
+        }
+        onDownload={downloadSelected}
+        onClear={clearSelection}
+      />
+
       {/* Object list — virtual-scrolled for 1000s of items */}
       <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
         {isLoading ? (
@@ -555,6 +634,16 @@ export function BucketDetail() {
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-bg">
                 <tr className="border-b border-border">
+                  {selectable && (
+                    <TableHead className="w-[1%] pr-0">
+                      <RowCheckbox
+                        checked={headerState === "all"}
+                        indeterminate={headerState === "some"}
+                        onChange={toggleListed}
+                        label="Select every listed object"
+                      />
+                    </TableHead>
+                  )}
                   <SortHead
                     column="name"
                     label="Name"
@@ -585,7 +674,7 @@ export function BucketDetail() {
               <tbody>
                 {virtualItems.length > 0 && (
                   <tr>
-                    <td colSpan={5} style={{ height: virtualItems[0].start }} />
+                    <td colSpan={columnCount} style={{ height: virtualItems[0].start }} />
                   </tr>
                 )}
                 {/* Rows are memoized components fed primitives and stable
@@ -609,6 +698,7 @@ export function BucketDetail() {
                       nameOffset={nameOffset}
                       baseUrl={endpoint.baseUrl}
                       bucket={bucket}
+                      selectable={selectable}
                       onOpen={goToPrefix}
                       onDelete={setDeletePrefixTarget}
                     />
@@ -634,6 +724,9 @@ export function BucketDetail() {
                       baseUrl={endpoint.baseUrl}
                       bucket={bucket}
                       rules={lifecycleRules}
+                      selectable={selectable}
+                      selected={selected.has(item.key)}
+                      onToggle={toggleRow}
                       onInspect={inspectObject}
                       onDelete={setDeleteTarget}
                     />
@@ -642,7 +735,7 @@ export function BucketDetail() {
                 {virtualItems.length > 0 && (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={columnCount}
                       style={{
                         height: rowVirtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0),
                       }}
@@ -829,6 +922,7 @@ const FolderRow = memo(function FolderRow({
   nameOffset,
   baseUrl,
   bucket,
+  selectable,
   onOpen,
   onDelete,
 }: RowChrome & {
@@ -837,6 +931,8 @@ const FolderRow = memo(function FolderRow({
   nameOffset: number
   baseUrl: string
   bucket: string
+  /** The listing has a tick-box column; a folder is not something to tick. */
+  selectable: boolean
   onOpen: (prefix: string) => void
   onDelete: (prefix: string) => void
 }) {
@@ -854,6 +950,7 @@ const FolderRow = memo(function FolderRow({
       )}
       onClick={() => onOpen(row.prefix)}
     >
+      {selectable && <TableCell className="pr-0" />}
       <TableCell colSpan={3}>
         <div className="flex min-w-0 items-center gap-2">
           <Folder className="h-3.5 w-3.5 shrink-0 text-cat-3" />
@@ -897,6 +994,9 @@ const ObjectFileRow = memo(function ObjectFileRow({
   baseUrl,
   bucket,
   rules,
+  selectable,
+  selected,
+  onToggle,
   onInspect,
   onDelete,
 }: RowChrome & {
@@ -906,6 +1006,10 @@ const ObjectFileRow = memo(function ObjectFileRow({
   baseUrl: string
   bucket: string
   rules: S3LifecycleRule[]
+  /** The listing has a tick-box column; without it this row draws no cell. */
+  selectable: boolean
+  selected: boolean
+  onToggle: (key: string) => void
   onInspect: (key: string) => void
   onDelete: (key: string) => void
 }) {
@@ -913,8 +1017,21 @@ const ObjectFileRow = memo(function ObjectFileRow({
     <tr
       data-index={index}
       ref={measure}
-      className={cn("transition-colors", !isLastRow && "border-b border-border-muted")}
+      className={cn(
+        "transition-colors",
+        !isLastRow && "border-b border-border-muted",
+        selectable && selected && "bg-accent-muted",
+      )}
     >
+      {selectable && (
+        <TableCell className="pr-0">
+          <RowCheckbox
+            checked={selected}
+            onChange={() => onToggle(row.key)}
+            label={`Select ${row.name}`}
+          />
+        </TableCell>
+      )}
       <TableCell className="max-w-0">
         <div className="flex min-w-0 items-center gap-2">
           <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
