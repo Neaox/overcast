@@ -123,8 +123,9 @@ const (
 )
 
 type extensionLogsSubscription struct {
-	Types map[string]bool
-	URI   string
+	Types     map[string]bool
+	URI       string
+	Buffering bufferingConfig
 	// API is the surface the subscription came through, for the cross-API
 	// exclusivity rule above.
 	API subscriptionAPI
@@ -136,15 +137,51 @@ type extensionLogsSubscription struct {
 
 type extensionLogsSubscribeRequest struct {
 	// SchemaVersion is Telemetry API only; the Logs API predates it. Absent
-	// means the oldest behaviour. Buffering is accepted and not modelled:
-	// Overcast delivers each record as its own batch, which is a legal
-	// degenerate batch under every documented configuration.
+	// means the oldest behaviour.
 	SchemaVersion string   `json:"schemaVersion"`
 	Types         []string `json:"types"`
-	Destination   struct {
+	Buffering     *struct {
+		TimeoutMs int64 `json:"timeoutMs"`
+		MaxBytes  int64 `json:"maxBytes"`
+		MaxItems  int64 `json:"maxItems"`
+	} `json:"buffering"`
+	Destination struct {
 		Protocol string `json:"protocol"`
 		URI      string `json:"URI"`
 	} `json:"destination"`
+}
+
+// bufferingConfig is a subscription's resolved batching bounds. Values come
+// from the request, defaulted and clamped to the table AWS documents
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-api.html#telemetry-api-buffering);
+// whether AWS rejects an out-of-range value is not documented, so clamping is
+// the chosen behaviour and the docs say so.
+type bufferingConfig struct {
+	Timeout  time.Duration
+	MaxBytes int64
+	MaxItems int64
+}
+
+func resolveBuffering(in *extensionLogsSubscribeRequest) bufferingConfig {
+	cfg := bufferingConfig{Timeout: time.Second, MaxBytes: 262144, MaxItems: 10000}
+	if in.Buffering == nil {
+		return cfg
+	}
+	clamp := func(v, min, max, def int64) int64 {
+		switch {
+		case v == 0:
+			return def
+		case v < min:
+			return min
+		case v > max:
+			return max
+		}
+		return v
+	}
+	cfg.Timeout = time.Duration(clamp(in.Buffering.TimeoutMs, 25, 30000, 1000)) * time.Millisecond
+	cfg.MaxBytes = clamp(in.Buffering.MaxBytes, 262144, 1048576, 262144)
+	cfg.MaxItems = clamp(in.Buffering.MaxItems, 1000, 10000, 10000)
+	return cfg
 }
 
 // telemetrySchemaVersions is every schemaVersion the Telemetry API documents
@@ -167,6 +204,9 @@ type extensionEvent struct {
 type extensionLogDelivery struct {
 	URI  string
 	Body []byte
+	// Events is how many records the body carries, for the drop accounting
+	// when the delivery fails every attempt.
+	Events int64
 }
 
 const (
@@ -257,6 +297,8 @@ type RuntimeAPIServer struct {
 	done             chan struct{} // closed on Stop to unblock long-polling handlers
 	clk              clock.Clock
 	logsDeliveries   chan extensionLogDelivery
+	buffersMu        sync.Mutex
+	telemetryBuffers map[string]*telemetryBuffer
 
 	// OnFirstNext is called (in a goroutine) the first time a container's RIC
 	// issues GET /next — the moment that container's INIT phase ends. It is
@@ -328,6 +370,7 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 		done:             make(chan struct{}),
 		clk:              clk,
 		logsDeliveries:   make(chan extensionLogDelivery, logsDeliveryQueueSize),
+		telemetryBuffers: make(map[string]*telemetryBuffer),
 	}
 	for i := 0; i < logsDeliveryWorkers; i++ {
 		go s.logsDeliveryWorker()
@@ -1219,13 +1262,21 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 	s.mu.Lock()
 	ext, ok := s.extensions[id]
 	var containerIP, deliveryURI string
+	var replayTarget telemetryTarget
 	var existingAPI subscriptionAPI
 	if ok {
 		if ext.Logs != nil && ext.Logs.API != api {
 			existingAPI = ext.Logs.API
 		} else {
 			deliveryURI = normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
-			ext.Logs = &extensionLogsSubscription{Types: types, URI: deliveryURI, API: api, RecordObjects: recordObjects}
+			ext.Logs = &extensionLogsSubscription{
+				Types:         types,
+				URI:           deliveryURI,
+				Buffering:     resolveBuffering(&in),
+				API:           api,
+				RecordObjects: recordObjects,
+			}
+			replayTarget = telemetryTarget{uri: deliveryURI, recordObjects: recordObjects, buffering: ext.Logs.Buffering}
 			containerIP = ext.ContainerIP
 		}
 	}
@@ -1244,7 +1295,7 @@ func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		// The INIT phase this extension was started in has already reported
 		// itself, possibly before the extension's process existed. Those
 		// records are its business, so it gets them now.
-		s.deliverRetainedInitRecords(containerIP, deliveryURI)
+		s.deliverRetainedInitRecords(containerIP, replayTarget)
 	}
 	if api == subscriptionAPITelemetry {
 		// The documented success body is the JSON string "OK".
@@ -1296,29 +1347,29 @@ func (s *RuntimeAPIServer) PublishExtensionLog(containerIP, typ, record string) 
 	}
 	now := s.clk.Now().UTC().Format(time.RFC3339Nano)
 	asObject := jsonFormat && isJSONObjectLine(record)
-	var stringBody, objectBody []byte
+	var stringEvent, objectEvent []byte
 	for _, target := range targets {
-		var body []byte
+		var event []byte
 		var err error
 		if target.recordObjects && asObject {
-			if objectBody == nil {
-				objectBody, err = json.Marshal([]any{map[string]any{
+			if objectEvent == nil {
+				objectEvent, err = json.Marshal(map[string]any{
 					"time": now, "type": typ, "record": json.RawMessage(record),
-				}})
+				})
 			}
-			body = objectBody
+			event = objectEvent
 		} else {
-			if stringBody == nil {
-				stringBody, err = json.Marshal([]any{map[string]any{
+			if stringEvent == nil {
+				stringEvent, err = json.Marshal(map[string]any{
 					"time": now, "type": typ, "record": record,
-				}})
+				})
 			}
-			body = stringBody
+			event = stringEvent
 		}
 		if err != nil {
 			return
 		}
-		s.enqueueTelemetryDelivery(target.uri, body)
+		s.bufferTelemetryEvent(target, event)
 	}
 }
 
@@ -1329,10 +1380,12 @@ func isJSONObjectLine(line string) bool {
 	return strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed))
 }
 
-// telemetryTarget is one subscriber's delivery destination and record shape.
+// telemetryTarget is one subscriber's delivery destination, record shape and
+// batching bounds.
 type telemetryTarget struct {
 	uri           string
 	recordObjects bool
+	buffering     bufferingConfig
 }
 
 // telemetryTargets returns every subscriber to typ on this container, and
@@ -1346,7 +1399,7 @@ func (s *RuntimeAPIServer) telemetryTargets(containerIP, typ string) ([]telemetr
 		if ext.ContainerIP != containerIP || ext.Logs == nil || !ext.Logs.Types[typ] {
 			continue
 		}
-		targets = append(targets, telemetryTarget{uri: ext.Logs.URI, recordObjects: ext.Logs.RecordObjects})
+		targets = append(targets, telemetryTarget{uri: ext.Logs.URI, recordObjects: ext.Logs.RecordObjects, buffering: ext.Logs.Buffering})
 	}
 	return targets, s.containerConfigs[containerIP].LogFormat == logFormatJSON
 }
@@ -1390,28 +1443,17 @@ func (s *RuntimeAPIServer) PublishInitPhaseRecord(containerIP, event string) {
 // deliverRetainedInitRecords sends a fresh platform subscription the init-phase
 // events its container published before it existed, in the order they
 // happened. Called once, as the subscription is created.
-func (s *RuntimeAPIServer) deliverRetainedInitRecords(containerIP, uri string) {
+func (s *RuntimeAPIServer) deliverRetainedInitRecords(containerIP string, target telemetryTarget) {
 	s.mu.Lock()
 	held := append([]json.RawMessage(nil), s.initRecords[containerIP]...)
 	s.mu.Unlock()
+	// Through the subscription's own buffer, like every other record: they
+	// arrive as one batch (or open the first mixed one), in order, and a
+	// full delivery queue is absorbed by the batching rather than answered
+	// with a drop — if a cut batch is shed anyway, the drop accounting says
+	// so on the next one, which is the guarantee these records exist for.
 	for _, event := range held {
-		body, err := json.Marshal([]any{event})
-		if err != nil {
-			continue
-		}
-		// A bounded wait, not a drop-on-full: there are at most
-		// initPhaseRecordsRetained of these, they happen once per
-		// subscription, and they exist precisely so an extension is never
-		// missing its own INIT phase. This runs on the subscribe handler's
-		// goroutine, so the worst case is a briefly slower PUT /logs.
-		select {
-		case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
-		case <-s.clk.After(time.Second):
-			s.logger.Warn("runtime api: dropping a retained init-phase record — the delivery queue stayed full",
-				zap.String("uri", uri))
-		case <-s.done:
-			return
-		}
+		s.bufferTelemetryEvent(target, event)
 	}
 }
 
@@ -1440,23 +1482,160 @@ func (s *RuntimeAPIServer) publishTelemetryEvent(containerIP, typ string, event 
 	if len(targets) == 0 {
 		return
 	}
-	body, err := json.Marshal([]any{event})
+	body, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
 	for _, target := range targets {
-		s.enqueueTelemetryDelivery(target.uri, body)
+		s.bufferTelemetryEvent(target, body)
 	}
 }
 
-// enqueueTelemetryDelivery queues one body for the delivery workers, shedding
-// it when the queue is full — the load-shedding AWS also documents for a
-// subscriber that cannot keep up.
-func (s *RuntimeAPIServer) enqueueTelemetryDelivery(uri string, body []byte) {
+// telemetryBuffer batches one destination's events between deliveries, per
+// the subscription's buffering configuration: a batch is cut when it reaches
+// maxItems or maxBytes, or when the oldest event in it has waited timeoutMs —
+// the same three bounds AWS documents. Cut batches ride the existing delivery
+// queue and its retry, so batching changes when a POST happens, never whether
+// a record survives a hiccup.
+//
+// The buffer also owns the destination's drop accounting: a batch the queue
+// sheds or the workers exhaust is counted here, and the next batch cut for
+// this destination opens with one platform.logsDropped event carrying the
+// accumulated counts. Emitting at the cut is what makes the report unable to
+// amplify itself: a dropped batch containing a logsDropped event simply folds
+// back into the counters, and a destination that never recovers accumulates
+// numbers rather than events.
+type telemetryBuffer struct {
+	mu     sync.Mutex
+	uri    string
+	cfg    bufferingConfig
+	events []json.RawMessage
+	bytes  int64
+	timer  *clock.Timer
+
+	droppedRecords int64
+	droppedBytes   int64
+}
+
+// bufferFor returns the destination's buffer, creating or reconfiguring it.
+func (s *RuntimeAPIServer) telemetryBufferFor(target telemetryTarget) *telemetryBuffer {
+	s.buffersMu.Lock()
+	defer s.buffersMu.Unlock()
+	buf, ok := s.telemetryBuffers[target.uri]
+	if !ok {
+		buf = &telemetryBuffer{uri: target.uri, cfg: target.buffering}
+		s.telemetryBuffers[target.uri] = buf
+		return buf
+	}
+	buf.mu.Lock()
+	buf.cfg = target.buffering
+	buf.mu.Unlock()
+	return buf
+}
+
+// bufferTelemetryEvent adds one marshalled event to a destination's batch,
+// cutting it if a size bound is reached and arming the timeout for the first
+// event of a fresh batch.
+func (s *RuntimeAPIServer) bufferTelemetryEvent(target telemetryTarget, event []byte) {
+	buf := s.telemetryBufferFor(target)
+	buf.mu.Lock()
+	buf.events = append(buf.events, json.RawMessage(event))
+	buf.bytes += int64(len(event))
+	if int64(len(buf.events)) >= buf.cfg.MaxItems || buf.bytes >= buf.cfg.MaxBytes {
+		s.cutBatchLocked(buf)
+		buf.mu.Unlock()
+		return
+	}
+	if buf.timer == nil {
+		buf.timer = s.clk.AfterFunc(buf.cfg.Timeout, func() { s.flushTelemetryBuffer(buf) })
+	}
+	buf.mu.Unlock()
+}
+
+// flushTelemetryBuffer cuts whatever the destination's batch holds. The
+// timeout path, and the shutdown sweep.
+func (s *RuntimeAPIServer) flushTelemetryBuffer(buf *telemetryBuffer) {
+	buf.mu.Lock()
+	s.cutBatchLocked(buf)
+	buf.mu.Unlock()
+}
+
+// cutBatchLocked turns the buffered events into one delivery. Caller holds
+// buf.mu.
+func (s *RuntimeAPIServer) cutBatchLocked(buf *telemetryBuffer) {
+	if buf.timer != nil {
+		buf.timer.Stop()
+		buf.timer = nil
+	}
+	if len(buf.events) == 0 && buf.droppedRecords == 0 {
+		return
+	}
+	events := buf.events
+	if buf.droppedRecords > 0 {
+		// The destination is told what it missed before it gets what it
+		// didn't. Shape per AWS's own example (runtimes-logs-api.html,
+		// platform.logsDropped): reason, droppedRecords, droppedBytes.
+		dropped, err := json.Marshal(map[string]any{
+			"time": s.clk.Now().UTC().Format(time.RFC3339Nano),
+			"type": "platform.logsDropped",
+			"record": map[string]any{
+				"reason":         "Consumer seems to have fallen behind as it has not acknowledged receipt of logs.",
+				"droppedRecords": buf.droppedRecords,
+				"droppedBytes":   buf.droppedBytes,
+			},
+		})
+		if err == nil {
+			events = append([]json.RawMessage{json.RawMessage(dropped)}, events...)
+		}
+		buf.droppedRecords, buf.droppedBytes = 0, 0
+	}
+	buf.events = nil
+	buf.bytes = 0
+	body, err := json.Marshal(events)
+	if err != nil {
+		return
+	}
 	select {
-	case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
+	case s.logsDeliveries <- extensionLogDelivery{URI: buf.uri, Body: body, Events: int64(len(events))}:
 	default:
-		s.logger.Debug("runtime api: dropping extension log delivery because queue is full", zap.String("uri", uri))
+		// The queue itself is the backpressure of last resort — shed the
+		// batch and let the counters carry the news on the next cut.
+		s.noteDroppedLocked(buf, int64(len(events)), int64(len(body)))
+		s.logger.Debug("runtime api: shedding a telemetry batch because the delivery queue is full", zap.String("uri", buf.uri))
+	}
+}
+
+// noteDroppedLocked folds a lost delivery into the destination's counters.
+// Caller holds buf.mu.
+func (s *RuntimeAPIServer) noteDroppedLocked(buf *telemetryBuffer, records, bytes int64) {
+	buf.droppedRecords += records
+	buf.droppedBytes += bytes
+}
+
+// noteDeliveryDropped is the worker-side report: a batch failed every attempt.
+func (s *RuntimeAPIServer) noteDeliveryDropped(uri string, records, bytes int64) {
+	s.buffersMu.Lock()
+	buf, ok := s.telemetryBuffers[uri]
+	s.buffersMu.Unlock()
+	if !ok {
+		return
+	}
+	buf.mu.Lock()
+	s.noteDroppedLocked(buf, records, bytes)
+	buf.mu.Unlock()
+}
+
+// flushTelemetryBuffers cuts every destination's pending batch — the shutdown
+// sweep, mirroring AWS's flush when an input stream closes.
+func (s *RuntimeAPIServer) flushTelemetryBuffers() {
+	s.buffersMu.Lock()
+	buffers := make([]*telemetryBuffer, 0, len(s.telemetryBuffers))
+	for _, buf := range s.telemetryBuffers {
+		buffers = append(buffers, buf)
+	}
+	s.buffersMu.Unlock()
+	for _, buf := range buffers {
+		s.flushTelemetryBuffer(buf)
 	}
 }
 
@@ -1490,6 +1669,10 @@ func (s *RuntimeAPIServer) deliverExtensionLog(client *http.Client, delivery ext
 				zap.Int("attempts", attempt),
 				zap.Error(err),
 			)
+			// The destination's own stream carries the news: the counts fold
+			// into its buffer and the next cut batch opens with a
+			// platform.logsDropped event.
+			s.noteDeliveryDropped(delivery.URI, delivery.Events, int64(len(delivery.Body)))
 			return
 		}
 		s.logger.Debug("runtime api: telemetry delivery failed, retrying",
@@ -1930,6 +2113,10 @@ func (s *RuntimeAPIServer) Stop(ctx context.Context) error {
 	// in-flight requests that will never finish on their own. Once-guarded
 	// because Service.Stop, which drives this, is reachable more than once;
 	// http.Server.Shutdown is already idempotent.
+	// Pending batches are cut before the workers' stop signal, mirroring
+	// AWS's flush when an input stream closes; whatever the workers can
+	// still deliver, they do, and the rest is bounded by ctx.
+	s.flushTelemetryBuffers()
 	s.stopOnce.Do(func() { close(s.done) })
 	return s.server.Shutdown(ctx)
 }
