@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { HttpApiMonitorTab } from "@/features/apigateway/components/http-api-monitor-tab"
 import { useToast } from "@/components/ui/toast"
 import { formatDate } from "@/lib/format"
 import { fieldLabel } from "@/lib/typography"
@@ -42,7 +43,7 @@ interface Props {
   apiId: string
 }
 
-type Tab = "routes" | "integrations" | "stages" | "authorizers"
+type Tab = "routes" | "integrations" | "stages" | "authorizers" | "monitor"
 
 export function HttpApiDetail({ apiId }: Props) {
   const navigate = useNavigate()
@@ -284,7 +285,7 @@ export function HttpApiDetail({ apiId }: Props) {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b">
-        {(["routes", "integrations", "stages", "authorizers"] as Tab[]).map((t) => (
+        {(["routes", "integrations", "stages", "authorizers", "monitor"] as Tab[]).map((t) => (
           <button
             key={t}
             className={cn(
@@ -520,6 +521,9 @@ export function HttpApiDetail({ apiId }: Props) {
           />
         </div>
       )}
+
+      {/* Monitor tab */}
+      {tab === "monitor" && <HttpApiMonitorTab apiId={apiId} stages={stages} />}
 
       {/* Delete API confirmation */}
       <ConfirmDialog

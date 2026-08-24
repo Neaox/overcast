@@ -277,6 +277,10 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		stub.ServeHTTP(w, req)
 	})
 
+	// ---- Web Monitor tab BFF endpoints (#1307) -----------------------------
+	r.Get("/_overcast/apigateway/restapis/{apiId}/metrics", h.GetRestApiMetrics)
+	r.Get("/_overcast/apigateway/apis/{apiId}/metrics", h.GetApiMetrics)
+
 	// ---- Host-based invoke (execute-api Host header) ----------------------
 	// See handler_host_execute.go: middleware.HostDispatch rewrites
 	// {apiId}.execute-api.{region}.{base} requests onto this marker route.

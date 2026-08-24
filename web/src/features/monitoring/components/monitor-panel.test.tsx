@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
+import userEvent from "@testing-library/user-event"
 import { render, screen } from "@/test/render"
 import { MonitorPanel, type MonitorCardConfig } from "./monitor-panel"
 import type { MonitorResponse } from "@/types"
@@ -97,5 +98,36 @@ describe("MonitorPanel", () => {
     const data: MonitorResponse = { enabled: true, range: "30d", periodSeconds: 3600, series: [] }
     render(<MonitorPanel {...baseProps()} range="30d" data={data} />)
     expect(screen.getByText(/up to 30 days at 1-hour resolution/)).toBeInTheDocument()
+  })
+
+  it("expands a card into an enlarged-chart dialog and closes it again", async () => {
+    const user = userEvent.setup()
+    const now = new Date().toISOString()
+    const data: MonitorResponse = {
+      enabled: true,
+      range: "1h",
+      periodSeconds: 60,
+      series: [
+        {
+          metric: "Invocations",
+          statistic: "Sum",
+          unit: "Count",
+          points: [{ timestamp: now, value: 3 }],
+        },
+      ],
+    }
+    render(<MonitorPanel {...baseProps()} data={data} />)
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Expand Invocations & Errors" }))
+
+    const dialog = screen.getByRole("dialog")
+    expect(dialog).toBeInTheDocument()
+    // The dialog carries the card's title and its own copy of the chart.
+    expect(screen.getAllByText("Invocations & Errors").length).toBeGreaterThanOrEqual(2)
+    expect(dialog.querySelector("svg[role='img']")).not.toBeNull()
+
+    await user.keyboard("{Escape}")
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 })

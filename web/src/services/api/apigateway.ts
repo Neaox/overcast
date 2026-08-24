@@ -62,6 +62,7 @@ import {
   type AuthorizerType as V2AuthorizerType,
 } from "@aws-sdk/client-apigatewayv2"
 import { awsClients } from "../aws-clients"
+import { apiFetch } from "./base"
 import type {
   RestApi,
   ApiResource,
@@ -71,7 +72,9 @@ import type {
   HttpRoute,
   HttpIntegration,
   HttpStage,
+  MonitorResponse,
 } from "@/types"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Inline types for new resources ───────────────────────────────────────
 
@@ -719,5 +722,34 @@ export const apigateway = {
     await awsClients
       .apigatewayv2()
       .send(new DeleteV2AuthorizerCommand({ ApiId: apiId, AuthorizerId: authorizerId }))
+  },
+
+  // ─── Monitor tab (BFF) ──────────────────────────────────────────────────
+  // AWS's SDK has no CloudWatch-metrics operation to send here — like
+  // Lambda's getMetrics, these read through the emulator's own Monitor BFF
+  // endpoint (docs/plans/service-metrics-platform.md phase 3, extended to
+  // API Gateway by #1307). Omitting `stage` aggregates series across every
+  // stage; passing one scopes them to just that stage.
+
+  getRestApiMetrics: (
+    apiId: string,
+    range: ChartRangeToken,
+    stage?: string,
+  ): Promise<MonitorResponse> => {
+    const stageParam = stage ? `&stage=${encodeURIComponent(stage)}` : ""
+    return apiFetch<MonitorResponse>(
+      `/apigateway/restapis/${encodeURIComponent(apiId)}/metrics?range=${range}${stageParam}`,
+    )
+  },
+
+  getHttpApiMetrics: (
+    apiId: string,
+    range: ChartRangeToken,
+    stage?: string,
+  ): Promise<MonitorResponse> => {
+    const stageParam = stage ? `&stage=${encodeURIComponent(stage)}` : ""
+    return apiFetch<MonitorResponse>(
+      `/apigateway/apis/${encodeURIComponent(apiId)}/metrics?range=${range}${stageParam}`,
+    )
   },
 }

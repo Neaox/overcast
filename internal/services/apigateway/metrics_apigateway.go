@@ -12,16 +12,21 @@ package apigateway
 //
 // AWS reference: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-metrics-and-dimensions.html
 //
-// Both API types record only their most granular documented dimension
-// combination — ApiName+Stage+Method+Resource for REST,
-// ApiId+Stage+HttpMethod+RouteKey for HTTP — never the coarser
-// ApiName+Stage-only (or ApiId+Stage-only) aggregate AWS also documents.
-// This mirrors Lambda phase 1's own disclosed narrowing (FunctionName only,
-// no Resource/ExecutedVersion): the coarser series are computable by
-// aggregating the finer one later if a consumer needs them, whereas the
-// reverse is not true, and publishing every documented dimension
-// combination per request (as real AWS does internally) is real
-// per-request write amplification with no phase-2 consumer.
+// Both API types now record every documented dimension combination per
+// request (#1307, "API Gateway Monitor tab"): {ApiName}, {ApiName, Stage},
+// and {ApiName, Stage, Method, Resource} for REST; {ApiId}, {ApiId, Stage},
+// and {ApiId, Stage, HttpMethod, RouteKey} for HTTP. This supersedes phase
+// 2's disclosed narrowing to only the most granular combination — the
+// Monitor tab's per-API and per-stage views (phase 4) need the coarser
+// aggregate series to exist as their own recorded facts, not something the
+// query layer derives by summing across the finer series, so every service's
+// Monitor endpoint (metrics.BuildMonitorResponse, internal/metrics/monitor.go)
+// can keep querying exactly one dimension set per requested series. Real AWS
+// gates the detailed per-method/per-route combination behind a stage's
+// metricsEnabled (REST)/detailedMetricsEnabled (HTTP) setting; this emulator
+// deliberately does not model that toggle and always records the detailed
+// combination, since nothing here disables per-request metrics collection
+// short of OVERCAST_SERVICE_METRICS.
 //
 // Neither dispatcher had an existing per-request timer or status-capturing
 // response writer before this file (confirmed absent — see the plan's
@@ -39,11 +44,13 @@ import (
 )
 
 // metricsRecorder is the narrow interface API Gateway depends on to record
-// outcome facts — never internal/services/cloudwatch (plan acceptance
-// criteria: "no service imports internal/services/cloudwatch"). Satisfied by
-// *metrics.Service.
+// outcome facts and to read them back for the web Monitor tab's BFF
+// endpoints (handler_metrics.go, #1307) — never internal/services/cloudwatch
+// (plan acceptance criteria: "no service imports internal/services/cloudwatch").
+// Satisfied by *metrics.Service.
 type metricsRecorder interface {
 	Observe(ctx context.Context, o metrics.Observation) error
+	ChartQuery(ctx context.Context, namespace, name, statistic string, dims []metrics.Dimension, start, end time.Time, period time.Duration) ([]metrics.ChartPoint, int, error)
 }
 
 const apiGatewayMetricsNamespace = "AWS/ApiGateway"
@@ -109,6 +116,27 @@ func (h *Handler) observeAPIGatewayMetric(ctx context.Context, name string, dims
 	}
 }
 
+// emitAPIGatewayMetricSet writes the full Count/error/Latency/IntegrationLatency
+// set for one already-built dimension set — the part recordRestAPIOutcome and
+// recordV2APIOutcome triplicate across their three dimension combinations
+// (file doc comment). errorMetric4xx/errorMetric5xx let the two callers use
+// their own AWS-documented error metric names (REST: 4XXError/5XXError;
+// HTTP: 4xx/5xx — see recordV2APIOutcome's own comment) without duplicating
+// the status-to-metric-name branch.
+func (h *Handler) emitAPIGatewayMetricSet(ctx context.Context, dims []metrics.Dimension, status int, latency, integrationLatency time.Duration, errorMetric4xx, errorMetric5xx string) {
+	h.observeAPIGatewayMetric(ctx, "Count", dims, "Count", 1)
+	switch {
+	case status >= 500:
+		h.observeAPIGatewayMetric(ctx, errorMetric5xx, dims, "Count", 1)
+	case status >= 400:
+		h.observeAPIGatewayMetric(ctx, errorMetric4xx, dims, "Count", 1)
+	}
+	h.observeAPIGatewayMetric(ctx, "Latency", dims, "Milliseconds", float64(latency.Milliseconds()))
+	if integrationLatency > 0 {
+		h.observeAPIGatewayMetric(ctx, "IntegrationLatency", dims, "Milliseconds", float64(integrationLatency.Milliseconds()))
+	}
+}
+
 // recordRestAPIOutcome is ExecuteRestAPI's one outcome helper — called
 // exactly once per dispatched request, via a defer installed before any
 // early return, so every response path (auth rejection, missing
@@ -117,6 +145,14 @@ func (h *Handler) observeAPIGatewayMetric(ctx context.Context, name string, dims
 // that far (e.g. an unknown restApiId) — AWS itself never publishes a data
 // point it cannot dimension, so an empty apiName skips recording entirely
 // rather than inventing a placeholder dimension value.
+//
+// dims is built once, ordered ApiName, Stage, Method, Resource, and then
+// sliced by prefix into the three AWS-documented REST combinations
+// ({ApiName}, {ApiName, Stage}, {ApiName, Stage, Method, Resource}) — a
+// prefix slice shares dims' backing array rather than allocating, and
+// metrics.Service.Observe copies into its own canonical slice before
+// storing (canonicalizeDimensions, internal/metrics/series.go), so the
+// three combos never alias each other's stored identity.
 func (h *Handler) recordRestAPIOutcome(ctx context.Context, apiName, stageName, resourcePath, method string, status int, latency, integrationLatency time.Duration) {
 	if h.metrics == nil || apiName == "" {
 		return
@@ -127,16 +163,8 @@ func (h *Handler) recordRestAPIOutcome(ctx context.Context, apiName, stageName, 
 		{Name: "Method", Value: method},
 		{Name: "Resource", Value: resourcePath},
 	}
-	h.observeAPIGatewayMetric(ctx, "Count", dims, "Count", 1)
-	switch {
-	case status >= 500:
-		h.observeAPIGatewayMetric(ctx, "5XXError", dims, "Count", 1)
-	case status >= 400:
-		h.observeAPIGatewayMetric(ctx, "4XXError", dims, "Count", 1)
-	}
-	h.observeAPIGatewayMetric(ctx, "Latency", dims, "Milliseconds", float64(latency.Milliseconds()))
-	if integrationLatency > 0 {
-		h.observeAPIGatewayMetric(ctx, "IntegrationLatency", dims, "Milliseconds", float64(integrationLatency.Milliseconds()))
+	for _, combo := range [3][]metrics.Dimension{dims[:1], dims[:2], dims} {
+		h.emitAPIGatewayMetricSet(ctx, combo, status, latency, integrationLatency, "4XXError", "5XXError")
 	}
 }
 
@@ -144,7 +172,11 @@ func (h *Handler) recordRestAPIOutcome(ctx context.Context, apiName, stageName, 
 // shape as recordRestAPIOutcome, but HTTP APIs are dimensioned by ApiId and
 // RouteKey/HttpMethod rather than ApiName and Resource (see file doc
 // comment / AWS's documented dimension combinations, which genuinely
-// differ between REST and HTTP APIs).
+// differ between REST and HTTP APIs), and use AWS's HTTP API error metric
+// names — "4xx"/"5xx", lowercase and without the "Error" suffix REST uses.
+// The repo previously recorded these as "4XXError"/"5XXError" for HTTP APIs
+// too, which was a fidelity bug (#1307): CloudWatch's own AWS/ApiGateway
+// HTTP API metrics are genuinely named "4xx"/"5xx".
 func (h *Handler) recordV2APIOutcome(ctx context.Context, apiID, stageName, routeKey, httpMethod string, status int, latency, integrationLatency time.Duration) {
 	if h.metrics == nil || apiID == "" {
 		return
@@ -155,15 +187,7 @@ func (h *Handler) recordV2APIOutcome(ctx context.Context, apiID, stageName, rout
 		{Name: "HttpMethod", Value: httpMethod},
 		{Name: "RouteKey", Value: routeKey},
 	}
-	h.observeAPIGatewayMetric(ctx, "Count", dims, "Count", 1)
-	switch {
-	case status >= 500:
-		h.observeAPIGatewayMetric(ctx, "5XXError", dims, "Count", 1)
-	case status >= 400:
-		h.observeAPIGatewayMetric(ctx, "4XXError", dims, "Count", 1)
-	}
-	h.observeAPIGatewayMetric(ctx, "Latency", dims, "Milliseconds", float64(latency.Milliseconds()))
-	if integrationLatency > 0 {
-		h.observeAPIGatewayMetric(ctx, "IntegrationLatency", dims, "Milliseconds", float64(integrationLatency.Milliseconds()))
+	for _, combo := range [3][]metrics.Dimension{dims[:1], dims[:2], dims} {
+		h.emitAPIGatewayMetricSet(ctx, combo, status, latency, integrationLatency, "4xx", "5xx")
 	}
 }

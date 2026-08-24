@@ -52,6 +52,7 @@ import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { RestApiMonitorTab } from "@/features/apigateway/components/rest-api-monitor-tab"
 import { useToast } from "@/components/ui/toast"
 import { restInvokeUrl } from "@/features/apigateway/invoke-url"
 import { formatDate } from "@/lib/format"
@@ -66,7 +67,7 @@ interface Props {
   apiId: string
 }
 
-type Tab = "resources" | "stages" | "deployments" | "authorizers"
+type Tab = "resources" | "stages" | "deployments" | "authorizers" | "monitor"
 
 export function RestApiDetail({ apiId }: Props) {
   const navigate = useNavigate()
@@ -496,7 +497,7 @@ export function RestApiDetail({ apiId }: Props) {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b">
-        {(["resources", "stages", "deployments", "authorizers"] as Tab[]).map((t) => (
+        {(["resources", "stages", "deployments", "authorizers", "monitor"] as Tab[]).map((t) => (
           <button
             key={t}
             className={cn(
@@ -942,6 +943,9 @@ export function RestApiDetail({ apiId }: Props) {
           />
         </div>
       )}
+
+      {/* Monitor tab */}
+      {tab === "monitor" && <RestApiMonitorTab apiId={apiId} stages={stages} />}
 
       {/* Delete API confirmation */}
       <ConfirmDialog
