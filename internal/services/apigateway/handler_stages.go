@@ -151,7 +151,7 @@ func (h *Handler) CreateDeployment(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	protocol.WriteJSON(w, r, http.StatusCreated, dep)
+	protocol.WriteJSON(w, r, http.StatusCreated, toDeploymentResponse(dep))
 }
 
 // GetDeployments returns all deployments for a REST API.

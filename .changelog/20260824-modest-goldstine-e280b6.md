@@ -1,0 +1,1 @@
+* [apigateway] REST v1 create-deployment returned createdDate as epoch milliseconds; the AWS CLI and SDKs parse the field as epoch seconds, so the call errored client-side even though the deployment was created. The response now uses the same seconds conversion as get-deployments and the stage responses
