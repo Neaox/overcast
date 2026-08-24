@@ -1,1 +1,0 @@
-+ [config] `LOCALSTACK_HOST` is now accepted as a compatibility alias for `OVERCAST_HOSTNAME` (#1190) -- LocalStack's documented `hostname[:port]` format is parsed, a port part must match `OVERCAST_PORT`, and a `LOCALSTACK_HOST` that disagrees with an explicit `OVERCAST_HOSTNAME` fails startup naming both rather than silently preferring one

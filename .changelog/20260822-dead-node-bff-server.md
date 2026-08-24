@@ -1,2 +1,0 @@
--. [web/ci] the Node "BFF server" bundle (`pnpm run build:server`, `web/api/src/server.ts`) — a leftover from before the web console moved into the Go binary; CI built it on every push, but no image ever copied or started it
-* [docs] the web console section no longer describes a separate BFF server process that could fail to start — the console is served in-process by the Go binary, and `OVERCAST_UI_PORT=0` / `--ui-port 0` is how to turn it off

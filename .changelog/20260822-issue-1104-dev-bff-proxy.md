@@ -1,1 +1,0 @@
-* [lambda] layer version metadata endpoint (backing the Lambda layer detail page) was missing from the Go BFF entirely and 404d in every build, not only under `pnpm dev`; proxied like every other lambda route now

@@ -1,1 +1,0 @@
-* [lambda] a warm invocation's `X-Amz-Log-Result` tail no longer drops the handler's own output when Docker is slow to deliver it over an already-open log stream under contention; the tail wait now gives a live, already-connected reader a wider grace than a reconnect backoff, instead of timing its daemon round trip as the container having printed nothing

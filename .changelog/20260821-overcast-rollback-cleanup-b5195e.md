@@ -1,1 +1,0 @@
-* [cloudformation] `RetainExceptOnCreate` is honoured on `CreateStack`, `UpdateStack` and `ExecuteChangeSet`, not only on `RollbackStack` — a create rollback that asks for it now deletes the resources that create made, including ones the template marks `DeletionPolicy: Retain`, instead of orphaning them for the next deploy to collide with

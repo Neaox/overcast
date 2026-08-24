@@ -1,1 +1,0 @@
-* [ec2] `ownerId`/`OwnerId` was two different hardcoded literals depending on the operation (`123456789012` for `RunInstances`/`DescribeInstances`, `000000000000` for `DescribeSecurityGroups`), so a caller comparing owner IDs across operations saw an internally contradictory account. All four sites now read the emulator's configured account ID, so every EC2 response agrees.

@@ -1,3 +1,0 @@
-*! [cloudformation/athena] `AWS::Athena::WorkGroup` now reads the workgroup configuration from `WorkGroupConfiguration`, the real resource schema's property, instead of `Configuration` (the `CreateWorkGroup` API member it maps onto); a template's result location, bytes cutoff and the rest were silently dropped before
-  migration: rename `Configuration` to `WorkGroupConfiguration` in any template using this resource; a template still setting `Configuration` gets a workgroup with no configuration instead of a validation error, since Overcast has no per-property unrecognised-property diagnostic
-+ [athena] `CreateWorkGroup` persists `Configuration`, and `GetWorkGroup` returns it; it was previously discarded

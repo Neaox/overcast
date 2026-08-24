@@ -1,1 +1,0 @@
-* [ec2] `CreateVpc` mints a `dopt-` DHCP options ID but it was only echoed on the create response, never persisted — `DescribeVpcs` for the same VPC reported the field empty. The default VPC and typed `CreateVpc` are fixed the same way.

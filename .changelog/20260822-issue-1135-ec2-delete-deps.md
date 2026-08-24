@@ -1,2 +1,0 @@
-*! [ec2] DeleteSecurityGroup/DeleteSubnet/DeleteVpc now answer DependencyViolation while a dependent (instance, ENI, subnet, gateway, endpoint, peering connection) remains, matching AWS instead of deleting unconditionally; the VPC default security group answers CannotDelete
-  migration: clear dependents before deleting a security group, subnet, or VPC — a template or script that relied on the unconditional delete now sees the same refusal real AWS gives, surfaced by CloudFormation teardown as DELETE_FAILED instead of a silent dangling reference

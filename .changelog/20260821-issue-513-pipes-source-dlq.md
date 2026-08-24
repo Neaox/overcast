@@ -1,3 +1,0 @@
-* [pipes] a Kinesis source's `MaximumRetryAttempts` and `DeadLetterConfig` are honoured, matching the retry-then-dead-letter behaviour DynamoDB Streams sources already had (#582) — a batch that exhausts its retries now reaches the configured SQS queue or SNS topic instead of being retried on every poll tick forever (#513)
-*! [pipes] `CreatePipe`/`UpdatePipe` now refuses a stream source's `DeadLetterConfig` naming a destination that is not an SQS queue or an SNS topic, instead of storing it and only failing once a batch exhausts its retries (#513)
-  migration: point DeadLetterConfig.Arn at an SQS queue or SNS topic, or remove it
