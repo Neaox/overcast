@@ -1243,6 +1243,17 @@ manifest, runs the model and routing gates, and creates or updates one PR from
 `automation/aws-api-models`. It resets and force-with-lease updates only that
 dedicated branch and never merges the PR.
 
+A refresh is not inert at runtime — `restFallback` switches on whether the
+pinned corpus claims a request, so an added operation takes its path off the S3
+fallback, a protocol-trait change moves an operation's error envelope, and a
+binding becoming shared by several services drops the credential-scope check
+that an unshared one gets. `awsmodelgen -changelog-output` therefore writes a
+changelog fragment into the same commit as the revision bump whenever one of
+those categories moved, derived from the same inventory diff the PR body is
+built from. When none of them moved, no fragment is written and the workflow
+comments `/no-changelog` naming what it checked. Neither answer is a default:
+both are the generator's reading of the diff.
+
 The workflow authenticates as the repository's release GitHub App
 (`RELEASE_APP_CLIENT_ID` / `RELEASE_APP_PRIVATE_KEY`), the same App that opens
 release PRs, and fails immediately if those secrets are missing. It cannot use
