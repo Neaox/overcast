@@ -322,12 +322,10 @@ type runtimeDoneMetrics struct {
 // It replaces the plain text END line, and carries the status and response size
 // that END has nowhere to put.
 //
-// ErrorType is modeled but never set. AWS puts one of its own error-type names
-// there (Runtime.ExitError, Sandbox.Timedout and so on); Overcast knows the
-// invocation failed but not which of those AWS would have chosen, and an
-// invented name is worse than an absent optional field.
-//
-// TODO(priority:P3): populate errorType on Lambda platform.runtimeDone and platform.report records for failed invocations.
+// ErrorType is set for the one outcome whose AWS name is documented — a
+// runtime that exited (Runtime.ExitError; see logOutcome). A handler error
+// and a timeout leave it absent, exactly as AWS's own runtimeDone examples
+// for those statuses do.
 type platformRuntimeDoneRecord struct {
 	RequestID string              `json:"requestId"`
 	Status    string              `json:"status"`
@@ -459,12 +457,22 @@ func (ci *containerInstance) emitInvocationStart(requestID, traceID string) {
 type logOutcome struct {
 	status     string
 	textStatus string
+	// errorType is the AWS error-type name for the outcome, on the one
+	// outcome whose name AWS actually documents: a runtime that exited is
+	// Runtime.ExitError — the platform fault log's own format is
+	// "Status: error<TAB>ErrorType: Runtime.ExitError"
+	// (https://docs.aws.amazon.com/lambda/latest/dg/runtimes-logs-api.html,
+	// the platform fault log). The others stay absent on the same page's
+	// evidence: AWS's runtimeDone examples for both failure and timeout
+	// carry no errorType at all, and inventing a name would be worse than
+	// omitting an optional member.
+	errorType string
 }
 
 var (
 	outcomeSuccess      = logOutcome{status: invokeStatusSuccess}
 	outcomeHandlerError = logOutcome{status: invokeStatusFailure}
-	outcomeCrashed      = logOutcome{status: invokeStatusError, textStatus: "\tStatus: error"}
+	outcomeCrashed      = logOutcome{status: invokeStatusError, textStatus: "\tStatus: error", errorType: "Runtime.ExitError"}
 	outcomeTimedOut     = logOutcome{status: invokeStatusTimeout, textStatus: "\tStatus: timeout"}
 )
 
@@ -506,6 +514,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		platformRuntimeDoneRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
+			ErrorType: outcome.errorType,
 			Metrics:   doneMetrics,
 			Tracing:   traceContextFor(traceID),
 		},
@@ -517,6 +526,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		platformReportRecord{
 			RequestID: requestID,
 			Status:    outcome.status,
+			ErrorType: outcome.errorType,
 			Metrics: reportMetrics{
 				DurationMs:       durationMillis(elapsed),
 				BilledDurationMs: billedDuration(elapsed),

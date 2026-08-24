@@ -404,3 +404,39 @@ func TestRenderPlatformEvent_tracing(t *testing.T) {
 		t.Errorf("report without a trace still carries a tracing member: %s", got)
 	}
 }
+
+// TestRenderPlatformEvent_errorType pins where the errorType member appears:
+// on the one outcome whose AWS name is documented — a runtime that exited,
+// Runtime.ExitError, per the platform fault log's own format — and nowhere
+// else, exactly as AWS's runtimeDone examples for failure and timeout carry
+// none (https://docs.aws.amazon.com/lambda/latest/dg/runtimes-logs-api.html).
+func TestRenderPlatformEvent_errorType(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 34, 56, 789e6, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		outcome logOutcome
+		want    string
+	}{
+		{name: "a crashed runtime names Runtime.ExitError", outcome: outcomeCrashed, want: "Runtime.ExitError"},
+		{name: "a timeout stays nameless", outcome: outcomeTimedOut, want: ""},
+		{name: "a handler error stays nameless", outcome: outcomeHandlerError, want: ""},
+		{name: "success stays nameless", outcome: outcomeSuccess, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderPlatformEvent(now, platformRuntimeDoneRecord{
+				RequestID: "req-1",
+				Status:    tc.outcome.status,
+				ErrorType: tc.outcome.errorType,
+			})
+			if tc.want == "" {
+				if strings.Contains(got, "errorType") {
+					t.Errorf("%s carries an errorType: %s", tc.outcome.status, got)
+				}
+				return
+			}
+			if !strings.Contains(got, `"errorType":"`+tc.want+`"`) {
+				t.Errorf("%s = %s, want errorType %q", tc.outcome.status, got, tc.want)
+			}
+		})
+	}
+}
