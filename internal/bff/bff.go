@@ -783,7 +783,22 @@ func handleS3Download(w http.ResponseWriter, r *http.Request) {
 	// "/" to "%2F", but S3 path-style URLs use actual "/" as the key
 	// hierarchy delimiter.
 	realKey, _ := url.PathUnescape(key)
-	resp, err := doGet(r.Context(), fmt.Sprintf("%s/%s/%s", ep, bucket, escapeKeySegments(realKey)))
+	upstream := fmt.Sprintf("%s/%s/%s", ep, bucket, escapeKeySegments(realKey))
+
+	// A version-addressed read has to stay version-addressed across this hop.
+	// Without ?versionId= S3 answers with whatever is current, so the download
+	// link and the preview on an older version row would serve the newest
+	// bytes while the metadata beside them — read through HeadObject, which
+	// does carry the version — described the older one.
+	//
+	// The parameter is forwarded whenever the client sent it, "null" included:
+	// that is the real version id of every object written while the bucket was
+	// unversioned or suspended, not an absent value.
+	if q := r.URL.Query(); q.Has("versionId") {
+		upstream += "?versionId=" + url.QueryEscape(q.Get("versionId"))
+	}
+
+	resp, err := doGet(r.Context(), upstream)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

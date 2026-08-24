@@ -1,0 +1,1 @@
+* [web/s3] the console's object preview and Download link on a version-history row no longer serve the current object's bytes: the console's own proxy hop dropped the `versionId` the browser sent, so an older version was described by its real metadata (size, ETag — those come from a HeadObject that did carry the version) while the bytes beside them came from whatever was current
