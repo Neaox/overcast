@@ -26,7 +26,7 @@ ACTIONLINT_VERSION := v1.7.12
 # .github/renovate.json5; CONTRIBUTING points here rather than repeating the
 # numbers.
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION := v2.8.0
+GOLANGCI_LINT_VERSION := v2.12.2
 
 # Docker image names. The tag defaults to the sanitised current branch name so
 # that parallel worktrees do not build into one tag and silently run each
