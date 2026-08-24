@@ -57,9 +57,12 @@ type ApiKey struct {
 
 // DataSource represents a backend data source attached to a GraphQL API.
 type DataSource struct {
-	DataSourceArn  string `json:"dataSourceArn"`
-	Name           string `json:"name"`
-	ApiId          string `json:"apiId,omitempty"`
+	DataSourceArn string `json:"dataSourceArn"`
+	Name          string `json:"name"`
+	// ApiId scopes the record within the store (the API ID is already encoded
+	// in the store key — see dsKey in store.go). It is not a modeled member of
+	// DataSource and must never be marshaled onto the wire.
+	ApiId          string `json:"-"`
 	Type           string `json:"type"`
 	Description    string `json:"description,omitempty"`
 	ServiceRoleArn string `json:"serviceRoleArn,omitempty"`
@@ -79,10 +82,13 @@ type DataSource struct {
 
 // FunctionConfiguration represents a resolver function (used in pipeline resolvers).
 type FunctionConfiguration struct {
-	FunctionId              string `json:"functionId"`
-	FunctionArn             string `json:"functionArn"`
-	Name                    string `json:"name"`
-	ApiId                   string `json:"apiId,omitempty"`
+	FunctionId  string `json:"functionId"`
+	FunctionArn string `json:"functionArn"`
+	Name        string `json:"name"`
+	// ApiId scopes the record within the store (the API ID is already encoded
+	// in the store key — see fnKey in store.go). It is not a modeled member of
+	// FunctionConfiguration and must never be marshaled onto the wire.
+	ApiId                   string `json:"-"`
 	DataSourceName          string `json:"dataSourceName,omitempty"`
 	Description             string `json:"description,omitempty"`
 	RequestMappingTemplate  string `json:"requestMappingTemplate,omitempty"`
@@ -112,10 +118,13 @@ type TypeDefinition struct {
 
 // Resolver represents a GraphQL field resolver (UNIT or PIPELINE).
 type Resolver struct {
-	TypeName                string `json:"typeName"`
-	FieldName               string `json:"fieldName"`
-	ResolverArn             string `json:"resolverArn"`
-	ApiId                   string `json:"apiId,omitempty"`
+	TypeName    string `json:"typeName"`
+	FieldName   string `json:"fieldName"`
+	ResolverArn string `json:"resolverArn"`
+	// ApiId scopes the record within the store (the API ID is already encoded
+	// in the store key — see resolverKey in store.go). It is not a modeled
+	// member of Resolver and must never be marshaled onto the wire.
+	ApiId                   string `json:"-"`
 	DataSourceName          string `json:"dataSourceName,omitempty"`
 	RequestMappingTemplate  string `json:"requestMappingTemplate,omitempty"`
 	ResponseMappingTemplate string `json:"responseMappingTemplate,omitempty"`
@@ -164,7 +173,10 @@ type ApiAssociation struct {
 
 // ApiCacheConfig represents the caching configuration for a GraphQL API.
 type ApiCacheConfig struct {
-	ApiId                    string `json:"apiId,omitempty"`
+	// ApiId scopes the record within the store (the API ID is already encoded
+	// in the store key — see prefixCache usage in store.go). It is not a
+	// modeled member of ApiCache and must never be marshaled onto the wire.
+	ApiId                    string `json:"-"`
 	Type                     string `json:"type"`               // T2_SMALL, T2_MEDIUM, etc.
 	ApiCachingBehavior       string `json:"apiCachingBehavior"` // FULL_REQUEST_CACHING, PER_RESOLVER_CACHING.
 	TransitEncryptionEnabled bool   `json:"transitEncryptionEnabled"`

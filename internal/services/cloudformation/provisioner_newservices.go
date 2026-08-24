@@ -1338,7 +1338,6 @@ type appsyncApiAssociationResponse struct {
 
 type appsyncApiCacheResponse struct {
 	ApiCache struct {
-		ApiID              string `json:"apiId"`
 		Type               string `json:"type"`
 		ApiCachingBehavior string `json:"apiCachingBehavior"`
 		Status             string `json:"status"`
@@ -2232,7 +2231,7 @@ func (h *appsyncApiCacheHandler) Create(ctx context.Context, router http.Handler
 	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "CreateApiCache", appsyncApiCacheBody(props), &resp); err != nil {
 		return "", nil, err
 	}
-	return apiID, appsyncApiCacheAttrs(resp), nil
+	return apiID, appsyncApiCacheAttrs(apiID, resp), nil
 }
 
 func (h *appsyncApiCacheHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
@@ -2249,7 +2248,7 @@ func (h *appsyncApiCacheHandler) Update(ctx context.Context, router http.Handler
 	if err := appsyncRESTJSON(ctx, router, rCtx.Region, http.MethodPost, path, "UpdateApiCache", appsyncApiCacheBody(props), &resp); err != nil {
 		return "", nil, err
 	}
-	return physicalID, appsyncApiCacheAttrs(resp), nil
+	return physicalID, appsyncApiCacheAttrs(physicalID, resp), nil
 }
 
 func appsyncApiCacheBody(props map[string]any) map[string]any {
@@ -2263,9 +2262,9 @@ func appsyncApiCacheBody(props map[string]any) map[string]any {
 	return body
 }
 
-func appsyncApiCacheAttrs(resp appsyncApiCacheResponse) map[string]string {
+func appsyncApiCacheAttrs(apiID string, resp appsyncApiCacheResponse) map[string]string {
 	cache := resp.ApiCache
-	return map[string]string{"Ref": cache.ApiID, "ApiId": cache.ApiID, "Status": cache.Status, "Type": cache.Type, "ApiCachingBehavior": cache.ApiCachingBehavior}
+	return map[string]string{"Ref": apiID, "ApiId": apiID, "Status": cache.Status, "Type": cache.Type, "ApiCachingBehavior": cache.ApiCachingBehavior}
 }
 
 // ── AWS::AppSync::SourceApiAssociation ─────────────────────────────────────
