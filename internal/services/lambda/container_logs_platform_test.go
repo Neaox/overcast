@@ -360,7 +360,7 @@ func TestEmitPlatformRecord_subscribersSeeTheJSONEventInTextMode(t *testing.T) {
 	if ci.logFormat != logFormatText && ci.logFormat != "" {
 		t.Fatalf("this test is about Text mode, but the instance is %q", ci.logFormat)
 	}
-	ci.emitInvocationStart("req-1")
+	ci.emitInvocationStart("req-1", "")
 
 	select {
 	case batch := <-received:

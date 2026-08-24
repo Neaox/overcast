@@ -89,6 +89,11 @@ type runtimeContainerConfig struct {
 	// publishing INIT-phase frames the moment the container starts — long
 	// before the acquire that created it returns. See container_logs.go.
 	LogSink *logSink
+	// LogFormat is the function's resolved LoggingConfig format. The Telemetry
+	// API needs it at publish time: under a modern schemaVersion a JSON-format
+	// function's log line is embedded in the record as the object it already
+	// is, not as a string holding JSON — see publishTelemetryLine.
+	LogFormat string
 }
 
 type extensionRegistrationRequest struct {
@@ -106,17 +111,52 @@ type extensionState struct {
 	Logs        *extensionLogsSubscription
 }
 
+// subscriptionAPI names which of the two subscription surfaces created a
+// subscription. AWS: "After subscribing using one of these APIs, any attempt
+// to subscribe using the other API returns an error."
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-api.html)
+type subscriptionAPI string
+
+const (
+	subscriptionAPILogs      subscriptionAPI = "Logs API"
+	subscriptionAPITelemetry subscriptionAPI = "Telemetry API"
+)
+
 type extensionLogsSubscription struct {
 	Types map[string]bool
 	URI   string
+	// API is the surface the subscription came through, for the cross-API
+	// exclusivity rule above.
+	API subscriptionAPI
+	// RecordObjects is whether this subscriber's schemaVersion (2022-12-13 or
+	// later) embeds a JSON-format function's log line as an object rather
+	// than as a string containing JSON.
+	RecordObjects bool
 }
 
 type extensionLogsSubscribeRequest struct {
-	Types       []string `json:"types"`
-	Destination struct {
+	// SchemaVersion is Telemetry API only; the Logs API predates it. Absent
+	// means the oldest behaviour. Buffering is accepted and not modelled:
+	// Overcast delivers each record as its own batch, which is a legal
+	// degenerate batch under every documented configuration.
+	SchemaVersion string   `json:"schemaVersion"`
+	Types         []string `json:"types"`
+	Destination   struct {
 		Protocol string `json:"protocol"`
 		URI      string `json:"URI"`
 	} `json:"destination"`
+}
+
+// telemetrySchemaVersions is every schemaVersion the Telemetry API documents
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-api.html). The value
+// is whether that version embeds a JSON-format function's log record as an
+// object ("If the schema version you're using is older than the 2022-12-13
+// version, then the record is always rendered as a string" —
+// telemetry-schema-reference).
+var telemetrySchemaVersions = map[string]bool{
+	"2022-07-01": false,
+	"2022-12-13": true,
+	"2025-01-29": true,
 }
 
 type extensionEvent struct {
@@ -139,7 +179,7 @@ const (
 	// on a loaded host — must not lose a record, because for the three
 	// init-phase platform records a single lost POST is observable as an
 	// extension that was never told its own INIT phase ended (issue #1437).
-	// Retrying inline on the one worker keeps per-destination order; the cost
+	// Retrying inline keeps each worker's own deliveries in order; the cost
 	// is head-of-line delay against an endpoint that is dead rather than
 	// slow, bounded by attempts x (timeout + backoff) per delivery and by the
 	// environment's lifetime overall.
@@ -303,6 +343,10 @@ func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, 
 	mux.HandleFunc("/2020-01-01/extension/init/error", s.handleExtensionError)
 	mux.HandleFunc("/2020-01-01/extension/exit/error", s.handleExtensionError)
 	mux.HandleFunc("/2020-08-15/logs", s.handleExtensionLogsSubscribe)
+	mux.HandleFunc("/2022-07-01/telemetry", s.handleTelemetrySubscribe)
+	// AWS's own reference appends the version and "telemetry/", so the
+	// trailing-slash spelling is a request real extensions make.
+	mux.HandleFunc("/2022-07-01/telemetry/", s.handleTelemetrySubscribe)
 	// Not an AWS API: the emulator-internal log channel from the in-container
 	// init. It is on this mux because this is the listener a Lambda container
 	// can reach and the one that identifies it. See log_ingest.go.
@@ -1108,7 +1152,22 @@ func (s *RuntimeAPIServer) handleExtensionError(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleExtensionLogsSubscribe serves the Logs API's PUT /2020-08-15/logs.
 func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r *http.Request) {
+	s.handleSubscribe(w, r, subscriptionAPILogs)
+}
+
+// handleTelemetrySubscribe serves the Telemetry API's PUT /2022-07-01/telemetry
+// — the surface that superseded the Logs API and the one current observability
+// extensions call. Same subscription machinery; what differs is the
+// schemaVersion in the request, the "OK" body AWS documents for the response,
+// and how a modern schema renders a JSON-format function's log records.
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-api.html)
+func (s *RuntimeAPIServer) handleTelemetrySubscribe(w http.ResponseWriter, r *http.Request) {
+	s.handleSubscribe(w, r, subscriptionAPITelemetry)
+}
+
+func (s *RuntimeAPIServer) handleSubscribe(w http.ResponseWriter, r *http.Request, api subscriptionAPI) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1120,15 +1179,27 @@ func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r
 	}
 	var in extensionLogsSubscribeRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&in); err != nil {
-		http.Error(w, "invalid logs subscribe request", http.StatusBadRequest)
+		http.Error(w, "invalid subscribe request", http.StatusBadRequest)
 		return
 	}
+	recordObjects := false
+	if api == subscriptionAPITelemetry && in.SchemaVersion != "" {
+		// A version this build does not know is refused rather than
+		// half-honoured: an extension pinned to a future schema would
+		// otherwise get records in a shape it was written not to expect.
+		objects, known := telemetrySchemaVersions[in.SchemaVersion]
+		if !known {
+			http.Error(w, "unsupported schemaVersion", http.StatusBadRequest)
+			return
+		}
+		recordObjects = objects
+	}
 	if !strings.EqualFold(in.Destination.Protocol, "HTTP") || strings.TrimSpace(in.Destination.URI) == "" {
-		http.Error(w, "invalid logs destination", http.StatusBadRequest)
+		http.Error(w, "invalid destination", http.StatusBadRequest)
 		return
 	}
 	if _, err := url.ParseRequestURI(in.Destination.URI); err != nil {
-		http.Error(w, "invalid logs destination URI", http.StatusBadRequest)
+		http.Error(w, "invalid destination URI", http.StatusBadRequest)
 		return
 	}
 	types := make(map[string]bool, len(in.Types))
@@ -1148,14 +1219,25 @@ func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r
 	s.mu.Lock()
 	ext, ok := s.extensions[id]
 	var containerIP, deliveryURI string
+	var existingAPI subscriptionAPI
 	if ok {
-		deliveryURI = normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
-		ext.Logs = &extensionLogsSubscription{Types: types, URI: deliveryURI}
-		containerIP = ext.ContainerIP
+		if ext.Logs != nil && ext.Logs.API != api {
+			existingAPI = ext.Logs.API
+		} else {
+			deliveryURI = normalizeExtensionLogURI(in.Destination.URI, ext.ContainerIP)
+			ext.Logs = &extensionLogsSubscription{Types: types, URI: deliveryURI, API: api, RecordObjects: recordObjects}
+			containerIP = ext.ContainerIP
+		}
 	}
 	s.mu.Unlock()
 	if !ok {
 		http.Error(w, "invalid Lambda-Extension-Identifier", http.StatusForbidden)
+		return
+	}
+	if existingAPI != "" {
+		// AWS documents the refusal but not its shape; 400 with the other
+		// API's name is an inference, chosen to fail loudly and locally.
+		http.Error(w, "already subscribed via the "+string(existingAPI), http.StatusBadRequest)
 		return
 	}
 	if types["platform"] {
@@ -1163,6 +1245,13 @@ func (s *RuntimeAPIServer) handleExtensionLogsSubscribe(w http.ResponseWriter, r
 		// itself, possibly before the extension's process existed. Those
 		// records are its business, so it gets them now.
 		s.deliverRetainedInitRecords(containerIP, deliveryURI)
+	}
+	if api == subscriptionAPITelemetry {
+		// The documented success body is the JSON string "OK".
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`"OK"`))
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -1185,17 +1274,81 @@ func normalizeExtensionLogURI(rawURI, containerIP string) string {
 }
 
 // PublishExtensionLog publishes one log line — a "function" or "extension"
-// record — to the subscribers of that type on this container. The record is the
-// line itself, which is the shape AWS gives those two types.
+// record — to the subscribers of that type on this container.
+//
+// What the record *is* depends on the subscriber. The Logs API and the oldest
+// Telemetry schemaVersion embed the line as a string; from schemaVersion
+// 2022-12-13 a JSON-format function's line is embedded as the JSON object it
+// already is ("If the schema version you're using is older than the 2022-12-13
+// version, then the record is always rendered as a string even when your
+// function's logging format is configured as JSON" —
+// https://docs.aws.amazon.com/lambda/latest/dg/telemetry-schema-reference.html).
+// A Text-format function's line stays a string for everyone, as does a line
+// that is not itself a JSON object. Each shape is marshalled at most once,
+// however many subscribers want it.
 func (s *RuntimeAPIServer) PublishExtensionLog(containerIP, typ, record string) {
 	if record == "" {
 		return
 	}
-	s.publishTelemetryEvent(containerIP, typ, map[string]any{
-		"time":   s.clk.Now().UTC().Format(time.RFC3339Nano),
-		"type":   typ,
-		"record": record,
-	})
+	targets, jsonFormat := s.telemetryTargets(containerIP, typ)
+	if len(targets) == 0 {
+		return
+	}
+	now := s.clk.Now().UTC().Format(time.RFC3339Nano)
+	asObject := jsonFormat && isJSONObjectLine(record)
+	var stringBody, objectBody []byte
+	for _, target := range targets {
+		var body []byte
+		var err error
+		if target.recordObjects && asObject {
+			if objectBody == nil {
+				objectBody, err = json.Marshal([]any{map[string]any{
+					"time": now, "type": typ, "record": json.RawMessage(record),
+				}})
+			}
+			body = objectBody
+		} else {
+			if stringBody == nil {
+				stringBody, err = json.Marshal([]any{map[string]any{
+					"time": now, "type": typ, "record": record,
+				}})
+			}
+			body = stringBody
+		}
+		if err != nil {
+			return
+		}
+		s.enqueueTelemetryDelivery(target.uri, body)
+	}
+}
+
+// isJSONObjectLine reports whether a log line is one complete JSON object —
+// the only shape a modern-schema subscriber is handed as an object.
+func isJSONObjectLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed))
+}
+
+// telemetryTarget is one subscriber's delivery destination and record shape.
+type telemetryTarget struct {
+	uri           string
+	recordObjects bool
+}
+
+// telemetryTargets returns every subscriber to typ on this container, and
+// whether the container's function logs in JSON format — the two facts a
+// publisher needs to choose each subscriber's record shape.
+func (s *RuntimeAPIServer) telemetryTargets(containerIP, typ string) ([]telemetryTarget, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var targets []telemetryTarget
+	for _, ext := range s.extensions {
+		if ext.ContainerIP != containerIP || ext.Logs == nil || !ext.Logs.Types[typ] {
+			continue
+		}
+		targets = append(targets, telemetryTarget{uri: ext.Logs.URI, recordObjects: ext.Logs.RecordObjects})
+	}
+	return targets, s.containerConfigs[containerIP].LogFormat == logFormatJSON
 }
 
 // PublishPlatformRecord publishes one platform event to the subscribers of the
@@ -1283,28 +1436,27 @@ func (s *RuntimeAPIServer) hasTelemetrySubscribers(containerIP, typ string) bool
 // best-effort: a full queue drops the event rather than holding up whatever
 // produced it, which is on the invoke path.
 func (s *RuntimeAPIServer) publishTelemetryEvent(containerIP, typ string, event any) {
-	s.mu.Lock()
-	subs := make([]string, 0)
-	for _, ext := range s.extensions {
-		if ext.ContainerIP != containerIP || ext.Logs == nil || !ext.Logs.Types[typ] {
-			continue
-		}
-		subs = append(subs, ext.Logs.URI)
-	}
-	s.mu.Unlock()
-	if len(subs) == 0 {
+	targets, _ := s.telemetryTargets(containerIP, typ)
+	if len(targets) == 0 {
 		return
 	}
 	body, err := json.Marshal([]any{event})
 	if err != nil {
 		return
 	}
-	for _, uri := range subs {
-		select {
-		case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
-		default:
-			s.logger.Debug("runtime api: dropping extension log delivery because queue is full", zap.String("uri", uri))
-		}
+	for _, target := range targets {
+		s.enqueueTelemetryDelivery(target.uri, body)
+	}
+}
+
+// enqueueTelemetryDelivery queues one body for the delivery workers, shedding
+// it when the queue is full — the load-shedding AWS also documents for a
+// subscriber that cannot keep up.
+func (s *RuntimeAPIServer) enqueueTelemetryDelivery(uri string, body []byte) {
+	select {
+	case s.logsDeliveries <- extensionLogDelivery{URI: uri, Body: body}:
+	default:
+		s.logger.Debug("runtime api: dropping extension log delivery because queue is full", zap.String("uri", uri))
 	}
 }
 
@@ -1624,6 +1776,17 @@ func newXRayTraceID(now time.Time) string {
 	rootRand := hex.EncodeToString(buf[0:12])
 	parent := hex.EncodeToString(buf[12:20])
 	return fmt.Sprintf("Root=1-%08x-%s;Parent=%s;Sampled=0", uint32(now.Unix()), rootRand, parent)
+}
+
+// InvocationTraceID reports the X-Amzn-Trace-Id header a pending invocation's
+// runtime receives, or "" once the invocation is no longer pending.
+func (s *RuntimeAPIServer) InvocationTraceID(reqID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if inv, ok := s.pending[reqID]; ok {
+		return inv.TraceID
+	}
+	return ""
 }
 
 // handleInvocationAction routes POST .../invocation/{id}/response and .../invocation/{id}/error.
