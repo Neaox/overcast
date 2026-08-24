@@ -757,7 +757,6 @@ type xmlCreateSGResponse struct {
 	XMLName   xml.Name      `xml:"CreateSecurityGroupResponse"`
 	Xmlns     string        `xml:"xmlns,attr"`
 	RequestID string        `xml:"requestId"`
-	Return    bool          `xml:"return"`
 	GroupID   string        `xml:"groupId"`
 	TagSet    []typedTagXML `xml:"tagSet>item,omitempty"`
 }
@@ -808,7 +807,6 @@ func (h *Handler) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateSGResponse{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(r.Context()),
-		Return:    true,
 		GroupID:   groupID,
 		TagSet:    typedTagsOf(tags),
 	})

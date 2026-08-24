@@ -66,7 +66,7 @@ type xmlAssociateRouteTableResponse struct {
 	XMLName       xml.Name `xml:"AssociateRouteTableResponse"`
 	Xmlns         string   `xml:"xmlns,attr"`
 	RequestID     string   `xml:"requestId"`
-	AssociationID string   `xml:"newAssociationId"`
+	AssociationID string   `xml:"associationId"`
 }
 
 type xmlDisassociateRouteTableResponse struct {

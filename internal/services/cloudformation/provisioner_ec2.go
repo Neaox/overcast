@@ -114,7 +114,7 @@ type ec2CreateNatGatewayResponse struct {
 
 type ec2AssociateRouteTableResponse struct {
 	XMLName       xml.Name `xml:"AssociateRouteTableResponse"`
-	AssociationID string   `xml:"newAssociationId"`
+	AssociationID string   `xml:"associationId"`
 }
 
 // ── AWS::EC2::VPC ──────────────────────────────────────────────────────────

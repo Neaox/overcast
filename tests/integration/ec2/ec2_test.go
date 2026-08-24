@@ -1579,6 +1579,76 @@ func TestCreateRouteTable_success(t *testing.T) {
 	}
 }
 
+// ─── AssociateRouteTable ─────────────────────────────────────────────────────
+
+// TestAssociateRouteTable_wireElementName pins AssociateRouteTableResponse to
+// the modeled member name. AssociateRouteTableResult's only string member is
+// AssociationId, whose xmlName/ec2QueryName traits are both "associationId"
+// (per the Smithy model) — "newAssociationId" is a different operation's
+// element (ReplaceRouteTableAssociation/ReplaceNetworkAclAssociation) and
+// must never appear here.
+func TestAssociateRouteTable_wireElementName(t *testing.T) {
+	// Given: a VPC, a subnet, and a route table
+	srv := helpers.NewTestServer(t)
+	cr := ec2Query(t, srv, "CreateVpc", url.Values{"CidrBlock": []string{"10.0.0.0/16"}})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	var vpc struct {
+		Vpc struct {
+			VpcID string `xml:"vpcId"`
+		} `xml:"vpc"`
+	}
+	xml.Unmarshal(readBody(t, cr), &vpc) //nolint:errcheck
+
+	subResp := ec2Query(t, srv, "CreateSubnet", url.Values{
+		"VpcId":     []string{vpc.Vpc.VpcID},
+		"CidrBlock": []string{"10.0.1.0/24"},
+	})
+	defer subResp.Body.Close()
+	helpers.AssertStatus(t, subResp, http.StatusOK)
+	var subnet struct {
+		Subnet struct {
+			SubnetID string `xml:"subnetId"`
+		} `xml:"subnet"`
+	}
+	xml.Unmarshal(readBody(t, subResp), &subnet) //nolint:errcheck
+
+	rtResp := ec2Query(t, srv, "CreateRouteTable", url.Values{"VpcId": []string{vpc.Vpc.VpcID}})
+	defer rtResp.Body.Close()
+	helpers.AssertStatus(t, rtResp, http.StatusOK)
+	var rt struct {
+		RouteTable struct {
+			RouteTableID string `xml:"routeTableId"`
+		} `xml:"routeTable"`
+	}
+	xml.Unmarshal(readBody(t, rtResp), &rt) //nolint:errcheck
+
+	// When: AssociateRouteTable is called
+	resp := ec2Query(t, srv, "AssociateRouteTable", url.Values{
+		"RouteTableId": []string{rt.RouteTable.RouteTableID},
+		"SubnetId":     []string{subnet.Subnet.SubnetID},
+	})
+	defer resp.Body.Close()
+
+	// Then: 200 with an <associationId> element, never <newAssociationId>
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	b := readBody(t, resp)
+	body := string(b)
+	if strings.Contains(body, "newAssociationId") {
+		t.Errorf("expected no newAssociationId element (that belongs to ReplaceRouteTableAssociation), got: %s", body)
+	}
+	var result struct {
+		XMLName       xml.Name `xml:"AssociateRouteTableResponse"`
+		AssociationID string   `xml:"associationId"`
+	}
+	if err := xml.Unmarshal(b, &result); err != nil {
+		t.Fatalf("unmarshal: %v\nbody: %s", err, b)
+	}
+	if !strings.HasPrefix(result.AssociationID, "rtbassoc-") {
+		t.Errorf("expected associationId starting with 'rtbassoc-', got %q (body: %s)", result.AssociationID, body)
+	}
+}
+
 // ─── DescribeRouteTables ─────────────────────────────────────────────────────
 
 func TestDescribeRouteTables_success(t *testing.T) {
