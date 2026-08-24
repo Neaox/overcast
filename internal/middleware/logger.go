@@ -368,7 +368,8 @@ func isLambdaAPIVersionPrefix(path string) bool {
 		strings.HasPrefix(path, "/2021-11-15/"),
 		strings.HasPrefix(path, "/2024-08-31/"),
 		strings.HasPrefix(path, "/2025-11-30/"),
-		strings.HasPrefix(path, "/2025-12-01/"):
+		strings.HasPrefix(path, "/2025-12-01/"),
+		strings.HasPrefix(path, "/2026-07-09/"):
 		return true
 	}
 	return false
