@@ -624,6 +624,7 @@ func TestEmitInvocationEnd_prefersTheInitsMeasurement(t *testing.T) {
 		Type:          initproto.RecInvokeDone,
 		DurationMs:    33.25,
 		ProducedBytes: &produced,
+		Spans:         []initproto.RecSpan{{Name: "responseLatency", StartMs: 1700000000000, DurationMs: 33.25}},
 	}})
 
 	ci.emitInvocationEnd("req-1", outcomeSuccess, 250*time.Millisecond, 128, 9999, "")
@@ -636,6 +637,19 @@ func TestEmitInvocationEnd_prefersTheInitsMeasurement(t *testing.T) {
 	if metrics["durationMs"] != 33.25 || metrics["producedBytes"] != float64(7) {
 		t.Errorf("metrics = %#v, want the init's measurement (33.25 ms, 7 bytes), not the host's (250 ms, 9999 bytes)", metrics)
 	}
+	spans, _ := runtimeDone["spans"].([]any)
+	if len(spans) != 1 {
+		t.Fatalf("runtimeDone spans = %#v, want the init's responseLatency", runtimeDone["spans"])
+	}
+	span, _ := spans[0].(map[string]any)
+	if span["name"] != "responseLatency" || span["durationMs"] != 33.25 {
+		t.Errorf("span = %#v", span)
+	}
+	// The Span object's start is the documented ISO 8601 shape, rendered from
+	// the init's millisecond timestamp.
+	if span["start"] != "2023-11-14T22:13:20.000Z" {
+		t.Errorf("span start = %v, want 2023-11-14T22:13:20.000Z", span["start"])
+	}
 
 	// A request the init never measured — the crash and timeout paths — falls
 	// back to what the host knows.
@@ -644,6 +658,9 @@ func TestEmitInvocationEnd_prefersTheInitsMeasurement(t *testing.T) {
 	metrics, _ = runtimeDone["metrics"].(map[string]any)
 	if metrics == nil || metrics["durationMs"] != float64(250) {
 		t.Errorf("fallback metrics = %#v, want the host's 250 ms", metrics)
+	}
+	if _, present := runtimeDone["spans"]; present {
+		t.Errorf("a request the init never measured carries spans: %#v", runtimeDone["spans"])
 	}
 }
 

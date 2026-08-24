@@ -164,6 +164,20 @@ type Record struct {
 	// measures itself; zero is a real value (an empty error payload), which
 	// is why this is a pointer and not an omitempty int.
 	ProducedBytes *int64 `json:"producedBytes,omitempty"`
+
+	// Spans are the sub-measurements of the phase [RecInvokeDone] describes,
+	// as the init observed them. Times are the container's clock, which in
+	// Docker is the host's kernel clock.
+	Spans []RecSpan `json:"spans,omitempty"`
+}
+
+// RecSpan is one measured slice of an invocation, matching the Telemetry API
+// Span object the host renders it into: a name, when it started, how long it
+// took.
+type RecSpan struct {
+	Name       string  `json:"name"`
+	StartMs    int64   `json:"startMs"`
+	DurationMs float64 `json:"durationMs"`
 }
 
 // ExtensionSrc returns the [Frame.Src] value for an external extension's

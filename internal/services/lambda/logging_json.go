@@ -318,6 +318,39 @@ type runtimeDoneMetrics struct {
 	ProducedBytes int     `json:"producedBytes"`
 }
 
+// platformSpan is the Telemetry API Span object
+// (https://docs.aws.amazon.com/lambda/latest/dg/telemetry-schema-reference.html#Span):
+// a named slice of the phase, when it began, how long it took. Overcast emits
+// the one span its in-container init can measure whole — responseLatency,
+// the invocation being handed to the runtime to the runtime starting to send
+// its answer. responseDuration ends only when the answer has finished
+// streaming through the init's unbuffered proxy, and runtimeOverhead only at
+// the runtime's next poll — both after platform.runtimeDone (which Overcast,
+// like its END line, writes when the answer arrives) is already on its way,
+// so neither is invented.
+type platformSpan struct {
+	Name       string  `json:"name"`
+	Start      string  `json:"start"`
+	DurationMs float64 `json:"durationMs"`
+}
+
+// platformSpansFor renders the init's measured spans, or nil when it
+// measured none.
+func platformSpansFor(measured []initproto.RecSpan) []platformSpan {
+	if len(measured) == 0 {
+		return nil
+	}
+	spans := make([]platformSpan, 0, len(measured))
+	for _, m := range measured {
+		spans = append(spans, platformSpan{
+			Name:       m.Name,
+			Start:      time.UnixMilli(m.StartMs).UTC().Format(platformEventTimeFormat),
+			DurationMs: m.DurationMs,
+		})
+	}
+	return spans
+}
+
 // platformRuntimeDoneRecord reports that the runtime finished the invocation.
 // It replaces the plain text END line, and carries the status and response size
 // that END has nowhere to put.
@@ -331,6 +364,7 @@ type platformRuntimeDoneRecord struct {
 	Status    string              `json:"status"`
 	ErrorType string              `json:"errorType,omitempty"`
 	Metrics   *runtimeDoneMetrics `json:"metrics,omitempty"`
+	Spans     []platformSpan      `json:"spans,omitempty"`
 	Tracing   *traceContext       `json:"tracing,omitempty"`
 }
 
@@ -500,12 +534,14 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 		DurationMs:    durationMillis(elapsed),
 		ProducedBytes: producedBytes,
 	}
+	var doneSpans []platformSpan
 	if ci.logSink != nil {
 		if measured, ok := ci.logSink.invokeDoneFor(requestID); ok {
 			doneMetrics.DurationMs = measured.DurationMs
 			if measured.ProducedBytes != nil {
 				doneMetrics.ProducedBytes = int(*measured.ProducedBytes)
 			}
+			doneSpans = platformSpansFor(measured.Spans)
 		}
 	}
 	ci.emitPlatformRecord(
@@ -516,6 +552,7 @@ func (ci *containerInstance) emitInvocationEnd(requestID string, outcome logOutc
 			Status:    outcome.status,
 			ErrorType: outcome.errorType,
 			Metrics:   doneMetrics,
+			Spans:     doneSpans,
 			Tracing:   traceContextFor(traceID),
 		},
 	)

@@ -527,6 +527,20 @@ func TestInitPublishesTheInitPhaseRecords(t *testing.T) {
 		if rec.Rec.DurationMs <= 0 {
 			t.Errorf("invokeDone %d durationMs = %v, want a positive measurement", i, rec.Rec.DurationMs)
 		}
+		// The one span this vantage point measures whole: responseLatency,
+		// spanning the whole held duration, starting when the invocation was
+		// handed out.
+		if len(rec.Rec.Spans) != 1 || rec.Rec.Spans[0].Name != "responseLatency" {
+			t.Errorf("invokeDone %d spans = %+v, want exactly responseLatency", i, rec.Rec.Spans)
+		} else {
+			span := rec.Rec.Spans[0]
+			if span.DurationMs != rec.Rec.DurationMs {
+				t.Errorf("invokeDone %d responseLatency = %v, want the held duration %v", i, span.DurationMs, rec.Rec.DurationMs)
+			}
+			if span.StartMs <= 0 {
+				t.Errorf("invokeDone %d responseLatency start = %d, want a real timestamp", i, span.StartMs)
+			}
+		}
 		if rec.Rec.ProducedBytes == nil || *rec.Rec.ProducedBytes <= 0 {
 			t.Errorf("invokeDone %d producedBytes = %v, want the answer's declared length", i, rec.Rec.ProducedBytes)
 		}

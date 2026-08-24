@@ -156,11 +156,12 @@ func run(ctx context.Context, opts options) int {
 	s.phase = &initPhase{now: opts.now, publish: s.ship.publishRecord, diag: diag}
 	s.proxy = newProxy(opts.hostAddr, s.tracker, s.drainer.drain, diag)
 	s.proxy.initDone = func() (uint64, bool) { return s.phase.complete(initproto.StatusSuccess) }
-	s.proxy.invokeDone = func(req string, durationMs float64, producedBytes *int64) uint64 {
+	s.proxy.invokeDone = func(req string, durationMs float64, producedBytes *int64, spans []initproto.RecSpan) uint64 {
 		return s.ship.publishRequestRecord(req, initproto.Record{
 			Type:          initproto.RecInvokeDone,
 			DurationMs:    durationMs,
 			ProducedBytes: producedBytes,
+			Spans:         spans,
 		})
 	}
 

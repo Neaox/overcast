@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestFrameRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
-			if got != tc.frame {
+			if !reflect.DeepEqual(got, tc.frame) {
 				t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", got, tc.frame)
 			}
 		})
@@ -135,7 +136,7 @@ func TestDecodeToleratesUnknownFieldsAndBlankLines(t *testing.T) {
 		},
 		{
 			name: "a record with a member this decoder does not know keeps the rest",
-			in:   `{"seq":12,"t":1,"rec":{"type":"initReport","status":"success","durationMs":1.5,"spans":[]}}` + "\n",
+			in:   `{"seq":12,"t":1,"rec":{"type":"initReport","status":"success","durationMs":1.5,"futureMember":[]}}` + "\n",
 			want: initproto.Frame{Seq: 12, T: 1, Rec: initproto.Record{Type: initproto.RecInitReport, Status: initproto.StatusSuccess, DurationMs: 1.5}},
 		},
 	}
@@ -146,7 +147,7 @@ func TestDecodeToleratesUnknownFieldsAndBlankLines(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
 		})

@@ -455,6 +455,7 @@ func (s *logSink) invokeDoneFrame(f initproto.Frame) bool {
 		s.bufferFor(f.Req).invokeDone = &invokeDoneMetrics{
 			DurationMs:    f.Rec.DurationMs,
 			ProducedBytes: f.Rec.ProducedBytes,
+			Spans:         f.Rec.Spans,
 		}
 	}
 	s.lastSeq = f.Seq
@@ -692,11 +693,12 @@ type tailBuffer struct {
 }
 
 // invokeDoneMetrics is what the init measured about one answered invocation:
-// how long the runtime held it, and the payload size it declared. See
-// initproto.RecInvokeDone.
+// how long the runtime held it, the payload size it declared, and the spans
+// it could observe whole. See initproto.RecInvokeDone.
 type invokeDoneMetrics struct {
 	DurationMs    float64
 	ProducedBytes *int64
+	Spans         []initproto.RecSpan
 }
 
 func (b *tailBuffer) append(line string) {
