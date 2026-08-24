@@ -101,7 +101,6 @@ type getTrailStatusResponse struct {
 	IsLogging                 bool   `json:"IsLogging"`
 	LatestDeliveryError       string `json:"LatestDeliveryError"`
 	LatestNotificationError   string `json:"LatestNotificationError"`
-	LatestCloudWatchLogsError string `json:"LatestCloudWatchLogsError"`
 	LatestDigestDeliveryError string `json:"LatestDigestDeliveryError"`
 }
 
@@ -350,7 +349,6 @@ func (h *Handler) getTrailStatusTyped(ctx context.Context, req *getTrailStatusRe
 		IsLogging:                 t.IsLogging,
 		LatestDeliveryError:       "",
 		LatestNotificationError:   "",
-		LatestCloudWatchLogsError: "",
 		LatestDigestDeliveryError: "",
 	}, nil
 }

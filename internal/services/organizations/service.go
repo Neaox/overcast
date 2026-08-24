@@ -145,14 +145,22 @@ func (s *Service) accountID() string {
 	return "000000000000"
 }
 
+// masterAccountARN renders the ARN of the emulator's single management
+// account, following the same `arn:aws:organizations::{accountId}:...`
+// template as policyARN.
+func (s *Service) masterAccountARN() string {
+	return "arn:aws:organizations::" + s.accountID() + ":account/" + organizationID + "/" + s.accountID()
+}
+
 func (s *Service) describeOrganization(w http.ResponseWriter, r *http.Request) {
 	org := map[string]any{
 		"Organization": map[string]any{
-			"Id":              organizationID,
-			"Arn":             "arn:aws:organizations::000000000000:organization/" + organizationID,
-			"MasterAccountId": s.accountID(),
-			"MasterUserEmail": "admin@overcast.local",
-			"FeatureSet":      "ALL",
+			"Id":                 organizationID,
+			"Arn":                "arn:aws:organizations::000000000000:organization/" + organizationID,
+			"MasterAccountId":    s.accountID(),
+			"MasterAccountArn":   s.masterAccountARN(),
+			"MasterAccountEmail": "admin@overcast.local",
+			"FeatureSet":         "ALL",
 			"AvailablePolicyTypes": []map[string]any{
 				{"Type": "SERVICE_CONTROL_POLICY", "Status": "ENABLED"},
 			},

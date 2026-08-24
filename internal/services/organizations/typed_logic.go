@@ -16,7 +16,8 @@ type organizationDetails struct {
 	Id                   string                    `json:"Id" cbor:"Id"`
 	Arn                  string                    `json:"Arn" cbor:"Arn"`
 	MasterAccountId      string                    `json:"MasterAccountId" cbor:"MasterAccountId"`
-	MasterUserEmail      string                    `json:"MasterUserEmail" cbor:"MasterUserEmail"`
+	MasterAccountArn     string                    `json:"MasterAccountArn" cbor:"MasterAccountArn"`
+	MasterAccountEmail   string                    `json:"MasterAccountEmail" cbor:"MasterAccountEmail"`
 	FeatureSet           string                    `json:"FeatureSet" cbor:"FeatureSet"`
 	AvailablePolicyTypes []availablePolicyTypeItem `json:"AvailablePolicyTypes" cbor:"AvailablePolicyTypes"`
 }
@@ -29,11 +30,12 @@ type availablePolicyTypeItem struct {
 func (s *Service) describeOrganizationTyped(_ context.Context, _ *describeOrganizationRequest) (*describeOrganizationResponse, *protocol.AWSError) {
 	return &describeOrganizationResponse{
 		Organization: organizationDetails{
-			Id:              organizationID,
-			Arn:             "arn:aws:organizations::000000000000:organization/" + organizationID,
-			MasterAccountId: s.accountID(),
-			MasterUserEmail: "admin@overcast.local",
-			FeatureSet:      "ALL",
+			Id:                 organizationID,
+			Arn:                "arn:aws:organizations::000000000000:organization/" + organizationID,
+			MasterAccountId:    s.accountID(),
+			MasterAccountArn:   s.masterAccountARN(),
+			MasterAccountEmail: "admin@overcast.local",
+			FeatureSet:         "ALL",
 			AvailablePolicyTypes: []availablePolicyTypeItem{
 				{Type: "SERVICE_CONTROL_POLICY", Status: "ENABLED"},
 			},
