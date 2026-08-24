@@ -798,37 +798,66 @@ func handleS3Download(w http.ResponseWriter, r *http.Request) {
 		upstream += "?versionId=" + url.QueryEscape(q.Get("versionId"))
 	}
 
-	resp, err := doGet(r.Context(), upstream)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream, nil)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Range is the one request header this hop has a caller for. The object
+	// preview asks for the first megabyte instead of the whole object and
+	// reads the 206 back to decide whether to say the text was cut short;
+	// with the header dropped every preview pulled the entire object into the
+	// browser and then claimed to be complete.
+	//
+	// Nothing else is forwarded. GetObject also honours If-Match and
+	// If-None-Match, but no caller here sends them, and a conditional the
+	// browser attached from its own cache would come back as a bodyless 304 —
+	// an empty preview — instead of the bytes that were asked for.
+	if v := r.Header.Get("Range"); v != "" {
+		req.Header.Set("Range", v)
+	}
+
+	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.WriteHeader(resp.StatusCode)
-		if !copyResponseBody(w, resp.Body) {
-			return
-		}
-		return
-	}
+	// Whatever S3 answered reaches the browser as its own status: 206 for a
+	// served range, 416 for one past the end of the object, and the 404 / 405
+	// / 412 a version-addressed read can produce. Collapsing the success
+	// statuses to 200 is what made the preview's truncation notice dead code.
+	served := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent
 
-	filename := realKey
-	if i := strings.LastIndex(realKey, "/"); i >= 0 {
-		filename = realKey[i+1:]
-	}
-
-	copyHeader := func(dst, src string) {
-		if v := resp.Header.Get(src); v != "" {
-			w.Header().Set(dst, v)
+	copyHeader := func(name string) {
+		if v := resp.Header.Get(name); v != "" {
+			w.Header().Set(name, v)
 		}
 	}
-	copyHeader("Content-Type", "Content-Type")
-	copyHeader("Content-Length", "Content-Length")
-	copyHeader("ETag", "ETag")
-	copyHeader("Last-Modified", "Last-Modified")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	for _, h := range []string{
+		"Content-Type", "Content-Length", "ETag", "Last-Modified",
+		// The ranged pair. Content-Range carries the window served and the
+		// object's full size — a 416 sends it too, as "bytes */<size>", which
+		// is how a caller learns what it should have asked for — and
+		// Accept-Ranges advertises that ranges work here at all.
+		"Content-Range", "Accept-Ranges",
+	} {
+		copyHeader(h)
+	}
 
+	if served {
+		filename := realKey
+		if i := strings.LastIndex(realKey, "/"); i >= 0 {
+			filename = realKey[i+1:]
+		}
+		// A download filename describes bytes, so it is not attached to an
+		// emulator error body.
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	}
+
+	w.WriteHeader(resp.StatusCode)
 	if !copyResponseBody(w, resp.Body) {
 		return
 	}

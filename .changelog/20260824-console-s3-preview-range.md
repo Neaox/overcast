@@ -1,0 +1,1 @@
+* [web/s3] the console's object preview no longer pulls a whole object into the browser to show its first megabyte, and says so when it has only shown part of one: the `Range` the browser sent was dropped on the console's own proxy hop, so S3 answered 200 with the entire body and the "preview truncated" notice — which reads the 206 back — never appeared
