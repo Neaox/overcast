@@ -71,25 +71,24 @@ type xmlModifyServerlessCacheResult struct {
 }
 
 type xmlServerlessCache struct {
-	ServerlessCacheName   string               `xml:"ServerlessCacheName"`
-	Description           string               `xml:"Description"`
-	Status                string               `xml:"Status"`
-	Engine                string               `xml:"Engine"`
-	MajorEngineVersion    string               `xml:"MajorEngineVersion"`
-	FullEngineVersion     string               `xml:"FullEngineVersion"`
-	CacheUsageLimits      *xmlCacheUsageLimits `xml:"CacheUsageLimits,omitempty"`
-	SubnetIds             xmlStringSet         `xml:"SubnetIds,omitempty"`
-	SecurityGroupIds      xmlStringSet         `xml:"SecurityGroupIds,omitempty"`
-	SnapshotArnsToRestore xmlStringSet         `xml:"SnapshotArnsToRestore,omitempty"`
-	Endpoint              *xmlEndpoint         `xml:"Endpoint,omitempty"`
-	ReaderEndpoint        *xmlEndpoint         `xml:"ReaderEndpoint,omitempty"`
-	ARN                   string               `xml:"ARN"`
-	SnapshotRetention     int                  `xml:"SnapshotRetentionLimit"`
-	DailySnapshotTime     string               `xml:"DailySnapshotTime,omitempty"`
-	NetworkType           string               `xml:"NetworkType,omitempty"`
-	UserGroupId           string               `xml:"UserGroupId,omitempty"`
-	KmsKeyId              string               `xml:"KmsKeyId,omitempty"`
-	CreateTime            string               `xml:"CreateTime,omitempty"`
+	ServerlessCacheName string               `xml:"ServerlessCacheName"`
+	Description         string               `xml:"Description"`
+	Status              string               `xml:"Status"`
+	Engine              string               `xml:"Engine"`
+	MajorEngineVersion  string               `xml:"MajorEngineVersion"`
+	FullEngineVersion   string               `xml:"FullEngineVersion"`
+	CacheUsageLimits    *xmlCacheUsageLimits `xml:"CacheUsageLimits,omitempty"`
+	SubnetIds           xmlStringSet         `xml:"SubnetIds,omitempty"`
+	SecurityGroupIds    xmlStringSet         `xml:"SecurityGroupIds,omitempty"`
+	Endpoint            *xmlEndpoint         `xml:"Endpoint,omitempty"`
+	ReaderEndpoint      *xmlEndpoint         `xml:"ReaderEndpoint,omitempty"`
+	ARN                 string               `xml:"ARN"`
+	SnapshotRetention   int                  `xml:"SnapshotRetentionLimit"`
+	DailySnapshotTime   string               `xml:"DailySnapshotTime,omitempty"`
+	NetworkType         string               `xml:"NetworkType,omitempty"`
+	UserGroupId         string               `xml:"UserGroupId,omitempty"`
+	KmsKeyId            string               `xml:"KmsKeyId,omitempty"`
+	CreateTime          string               `xml:"CreateTime,omitempty"`
 }
 
 type xmlStringSet struct {
@@ -576,9 +575,6 @@ func toXMLServerlessCache(c *ServerlessCache) xmlServerlessCache {
 	}
 	if len(c.SecurityGroupIds) > 0 {
 		out.SecurityGroupIds = xmlStringSet{Items: c.SecurityGroupIds}
-	}
-	if len(c.SnapshotArnsToRestore) > 0 {
-		out.SnapshotArnsToRestore = xmlStringSet{Items: c.SnapshotArnsToRestore}
 	}
 	if c.Endpoint != nil {
 		out.Endpoint = &xmlEndpoint{Address: c.Endpoint.Address, Port: c.Endpoint.Port}
