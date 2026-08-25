@@ -52,6 +52,16 @@ type fakeRegistry struct {
 	// absent records whether the repository exists in the registry at all.
 	// A registry that has never been pushed to 404s the tag list.
 	absent bool
+	// stumbleTagsList is how many times /tags/list should answer inconclusively
+	// (a 503, exactly as a registry:2 still finishing its own startup work
+	// answers a request its listener already accepted) before serving the real
+	// list. It simulates the gap between "the container answers /v2/" and "the
+	// container can answer a question about a specific repository" — see the
+	// investigation on issue #1444.
+	stumbleTagsList atomic.Int32
+	// tagsListRequests counts every /tags/list request received, so a test can
+	// pin how many the sweep actually made rather than only its outcome.
+	tagsListRequests atomic.Int32
 	// manifestRequests counts every per-image question the sweep asked, so a
 	// test can hold the sweep to asking none when one request already settled
 	// the matter.
@@ -71,6 +81,17 @@ func (f *fakeRegistry) start(t *testing.T) string {
 		case r.URL.Path == "/v2/":
 			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == prefix+"/tags/list":
+			f.tagsListRequests.Add(1)
+			for {
+				remaining := f.stumbleTagsList.Load()
+				if remaining <= 0 {
+					break
+				}
+				if f.stumbleTagsList.CompareAndSwap(remaining, remaining-1) {
+					http.Error(w, `{"errors":[{"code":"UNAVAILABLE"}]}`, http.StatusServiceUnavailable)
+					return
+				}
+			}
 			if f.absent {
 				http.Error(w, `{"errors":[{"code":"NAME_UNKNOWN"}]}`, http.StatusNotFound)
 				return
@@ -258,6 +279,63 @@ func TestSyncRepoImages_keepsARecordPutThroughTheAPI(t *testing.T) {
 	// came from it; a caller's own PutImage is not the sweep's to revoke.
 	if got := storedTags(t, s); len(got) != 1 || got[0] != "v1@sha256:api" {
 		t.Fatalf("stored images = %v, want the PutImage record intact", got)
+	}
+}
+
+// TestSyncRepoImages_retriesOnceWhenTheFirstTagsListAnswerIsInconclusive pins
+// the retry investigated on issue #1444. awaitRegistryAnswering only proves
+// the registry answers /v2/ before a caller is let past waitRegistryReady;
+// it says nothing about a repository-scoped request like /tags/list, which a
+// registry can still stumble on the instant its listener starts accepting
+// connections. A sweep that gives up on one such answer is the reporting bug
+// #1446 fixed pointed straight at, one layer up: a registry that would have
+// answered a heartbeat later is reported exactly like one that is truly down.
+func TestSyncRepoImages_retriesOnceWhenTheFirstTagsListAnswerIsInconclusive(t *testing.T) {
+	// Given: a registry whose first answer to /tags/list is inconclusive — a
+	// 503, not a 404 — before it settles down and answers for real.
+	reg := &fakeRegistry{tags: map[string]string{"asset-tag": "sha256:aaa"}}
+	reg.stumbleTagsList.Store(1)
+	s := syncService(t, reg.start(t))
+
+	// When: the repository is swept.
+	got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo)
+
+	// Then: the retry recovers the answer rather than reporting the registry
+	// unavailable off a single inconclusive request.
+	if got != sweepSynced {
+		t.Fatalf("sweep = %v, want sweepSynced — one inconclusive answer must not be reported as sweepUnavailable", got)
+	}
+	if got := storedTags(t, s); len(got) != 1 || got[0] != "asset-tag@sha256:aaa" {
+		t.Fatalf("stored images = %v, want [asset-tag@sha256:aaa]", got)
+	}
+	// And: it took exactly the one retry, not a loop — this is tolerance for a
+	// registry mid-startup, not a general-purpose retry policy.
+	if got := reg.tagsListRequests.Load(); got != 2 {
+		t.Errorf("tags/list requests = %d, want 2 (the failed attempt and the one retry)", got)
+	}
+}
+
+// TestSyncRepoImages_reportsUnavailableWhenTagsListStaysInconclusive pins the
+// other half: the retry is bounded. A registry that is genuinely unreachable —
+// not merely slow to warm up — must still be reported sweepUnavailable rather
+// than the sweep looping or hanging on it.
+func TestSyncRepoImages_reportsUnavailableWhenTagsListStaysInconclusive(t *testing.T) {
+	reg := &fakeRegistry{tags: map[string]string{"asset-tag": "sha256:aaa"}}
+	// Enough consecutive stumbles to outlast a single retry.
+	reg.stumbleTagsList.Store(2)
+	s := syncService(t, reg.start(t))
+	seedImage(t, s, "sha256:live", "kept", true)
+
+	got := s.syncRepoImagesFromRegistry(context.Background(), syncRegion, syncRepo)
+
+	if got != sweepUnavailable {
+		t.Fatalf("sweep = %v, want sweepUnavailable when /tags/list stays inconclusive past the retry", got)
+	}
+	if got := storedTags(t, s); len(got) != 1 {
+		t.Errorf("stored images = %v, want the seeded record kept — the sweep never established anything", got)
+	}
+	if got := reg.tagsListRequests.Load(); got != 2 {
+		t.Errorf("tags/list requests = %d, want 2 (the original attempt and the one retry, then give up)", got)
 	}
 }
 
