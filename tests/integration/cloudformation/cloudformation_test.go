@@ -4037,9 +4037,8 @@ func TestCreateStack_APIGatewayApiKeyAndUsagePlan(t *testing.T) {
 	helpers.AssertStatus(t, plansResp, http.StatusOK)
 	var plans struct {
 		Item []struct {
-			ID        string   `json:"id"`
-			Name      string   `json:"name"`
-			KeyIDs    []string `json:"keyIds"`
+			ID        string `json:"id"`
+			Name      string `json:"name"`
 			APIStages []struct {
 				ApiID string `json:"apiId"`
 				Stage string `json:"stage"`
@@ -4049,27 +4048,44 @@ func TestCreateStack_APIGatewayApiKeyAndUsagePlan(t *testing.T) {
 	if err := json.NewDecoder(plansResp.Body).Decode(&plans); err != nil {
 		t.Fatalf("decode plans: %v", err)
 	}
-	var found bool
+	var planID string
 	for _, p := range plans.Item {
 		if p.Name != "cfn-test-plan" {
 			continue
 		}
-		found = true
+		planID = p.ID
 		if len(p.APIStages) != 1 || p.APIStages[0].Stage != "prod" {
 			t.Errorf("expected 1 apiStage with stage=prod, got %+v", p.APIStages)
 		}
-		hasKey := false
-		for _, k := range p.KeyIDs {
-			if k == keyID {
-				hasKey = true
-			}
-		}
-		if !hasKey {
-			t.Errorf("expected plan to contain key %s, got %+v", keyID, p.KeyIDs)
+	}
+	if planID == "" {
+		t.Fatalf("usage plan 'cfn-test-plan' not found in %+v", plans.Item)
+	}
+
+	// Key attachment is read through GetUsagePlanKeys — the modeled channel;
+	// the plan object itself carries no key list on real AWS.
+	planKeysResp, err := http.Get(srv.URL + "/usageplans/" + planID + "/keys")
+	if err != nil {
+		t.Fatalf("GetUsagePlanKeys: %v", err)
+	}
+	defer planKeysResp.Body.Close()
+	helpers.AssertStatus(t, planKeysResp, http.StatusOK)
+	var planKeys struct {
+		Item []struct {
+			ID string `json:"id"`
+		} `json:"item"`
+	}
+	if err := json.NewDecoder(planKeysResp.Body).Decode(&planKeys); err != nil {
+		t.Fatalf("decode plan keys: %v", err)
+	}
+	hasKey := false
+	for _, k := range planKeys.Item {
+		if k.ID == keyID {
+			hasKey = true
 		}
 	}
-	if !found {
-		t.Fatalf("usage plan 'cfn-test-plan' not found in %+v", plans.Item)
+	if !hasKey {
+		t.Errorf("expected plan %s to contain key %s, got %+v", planID, keyID, planKeys.Item)
 	}
 }
 
