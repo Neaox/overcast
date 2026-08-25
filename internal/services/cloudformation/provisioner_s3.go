@@ -36,7 +36,15 @@ var s3BucketSubresources = []struct {
 }
 
 type cfnS3BucketProperties struct {
-	BucketName                       string                               `json:"BucketName,omitempty"`
+	BucketName string `json:"BucketName,omitempty"`
+	// BucketNamespace and BucketNamePrefix are the two account-regional-
+	// namespace properties CloudFormation gained alongside AWS's account
+	// regional namespaces feature (issue #1471). Both are pointers (unlike
+	// BucketName's plain string) so decode-time validation can tell "absent"
+	// from "explicitly the zero value" — decodeS3BucketProperties and
+	// Update's replacement check both depend on that distinction.
+	BucketNamespace                  *string                              `json:"BucketNamespace,omitempty"`
+	BucketNamePrefix                 *string                              `json:"BucketNamePrefix,omitempty"`
 	LifecycleConfiguration           *cfnS3LifecycleConfiguration         `json:"LifecycleConfiguration,omitempty"`
 	VersioningConfiguration          *cfnS3VersioningConfiguration        `json:"VersioningConfiguration,omitempty"`
 	NotificationConfiguration        *cfnS3NotificationConfiguration      `json:"NotificationConfiguration,omitempty"`
@@ -323,11 +331,59 @@ func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, err
 			!cfnS3True(block.RestrictPublicBuckets)) {
 		return nil, fmt.Errorf("AWS::S3::Bucket PublicAccessBlockConfiguration is not supported unless all settings are true")
 	}
+	if decoded.BucketNamespace != nil {
+		switch *decoded.BucketNamespace {
+		case "global", "account-regional":
+		default:
+			return nil, fmt.Errorf("AWS::S3::Bucket BucketNamespace %q is not supported", *decoded.BucketNamespace)
+		}
+	}
+	// BucketNamePrefix is CFN's analogue of the account-regional API naming
+	// rule's customer-chosen prefix: it only means anything inside the
+	// account regional namespace (planS3BucketOperations never generates a
+	// suffix for the global namespace's random-name path), so it is rejected
+	// alongside an explicit non-account-regional BucketNamespace. Unverified
+	// against real AWS/CloudFormation: the exact validation text for both
+	// this and the BucketName+BucketNamePrefix conflict below — see issue
+	// #1471 "Needs AWS verification" item 4.
+	if decoded.BucketNamePrefix != nil {
+		if decoded.BucketName != "" {
+			return nil, fmt.Errorf("AWS::S3::Bucket BucketName and BucketNamePrefix are mutually exclusive")
+		}
+		if decoded.BucketNamespace != nil && *decoded.BucketNamespace != "account-regional" {
+			return nil, fmt.Errorf("AWS::S3::Bucket BucketNamePrefix requires BucketNamespace: account-regional")
+		}
+	}
 	return &decoded, nil
 }
 
 func cfnS3True(value *bool) bool {
 	return value != nil && *value
+}
+
+// s3BucketEffectiveNamespace resolves the x-amz-bucket-namespace value a
+// Create/Update dispatch should send, or "" to send no header at all (the
+// silent default every bucket with no namespace property took before this
+// property existed). BucketNamePrefix always implies account-regional — it
+// only makes sense there, the CFN-side analogue of the API requiring the
+// namespace header alongside a suffixed name.
+func s3BucketEffectiveNamespace(props *cfnS3BucketProperties) string {
+	if props.BucketNamePrefix != nil {
+		return "account-regional"
+	}
+	if props.BucketNamespace != nil {
+		return *props.BucketNamespace
+	}
+	return ""
+}
+
+// cfnS3OptionalStringChanged reports whether two optional CFN properties
+// differ, including either side being absent while the other is set.
+func cfnS3OptionalStringChanged(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return true
+	}
+	return a != nil && *a != *b
 }
 
 func planS3BucketOperations(props, oldProps *cfnS3BucketProperties) ([]s3BucketOperation, error) {

@@ -11,7 +11,8 @@
         {
           "operation": "CreateBucket",
           "category": "Buckets",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Account regional namespaces via x-amz-bucket-namespace: account-regional"
         },
         {
           "operation": "DeleteBucket",

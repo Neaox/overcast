@@ -115,15 +115,64 @@ func (h *Handler) initBucketRoutes() {
 // an error — see CreateBucket.
 const usEast1 = "us-east-1"
 
+// bucketNamespaceHeader is the AWS request header naming which S3 namespace
+// CreateBucket should create the bucket in.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html
+const bucketNamespaceHeader = "X-Amz-Bucket-Namespace"
+
+// bucketNamespaceGlobal and bucketNamespaceAccountRegional are the two
+// x-amz-bucket-namespace values AWS documents. bucketNamespaceGlobal also
+// names Bucket.Namespace's zero value (see store.go) — a bucket created in
+// the global namespace persists no namespace at all.
+const (
+	bucketNamespaceGlobal          = "global"
+	bucketNamespaceAccountRegional = "account-regional"
+)
+
 func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
-	if aerr := serviceutil.BucketName(bucket); aerr != nil {
-		// serviceutil returns "InvalidBucketName"; S3 historically uses
-		// "InvalidArgument" in some validation paths. Preserve the code
-		// expected by existing tests.
-		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(aerr.Message))
+	namespace := strings.TrimSpace(r.Header.Get(bucketNamespaceHeader))
+	switch namespace {
+	case "":
+		namespace = bucketNamespaceGlobal
+	case bucketNamespaceGlobal, bucketNamespaceAccountRegional:
+		// recognised values
+	default:
+		// Unverified against real AWS: the exact error code for an
+		// unrecognised x-amz-bucket-namespace value. InvalidArgument matches
+		// the shape this handler already uses for its other malformed-input
+		// rejections.
+		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(
+			"Invalid namespace type: "+namespace+". The value of x-amz-bucket-namespace must be global or account-regional."))
 		return
+	}
+
+	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
+
+	if namespace == bucketNamespaceAccountRegional {
+		if aerr := serviceutil.ValidateAccountRegionalBucketName(bucket, h.cfg.AccountID, region); aerr != nil {
+			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(aerr.Message))
+			return
+		}
+	} else {
+		if aerr := serviceutil.BucketName(bucket); aerr != nil {
+			// serviceutil returns "InvalidBucketName"; S3 historically uses
+			// "InvalidArgument" in some validation paths. Preserve the code
+			// expected by existing tests.
+			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(aerr.Message))
+			return
+		}
+		if serviceutil.HasAccountRegionalBucketSuffix(bucket) {
+			// AWS's 2026 naming-rules update reserves the "-an" suffix for
+			// account regional namespace buckets. Unverified against real
+			// AWS: the exact error code for a global-namespace CreateBucket
+			// that carries it; modeled the same as the other reserved-suffix
+			// rejections above.
+			protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument(
+				"The specified bucket name is not valid. Bucket names must not end with the suffix -an unless created in your account regional namespace."))
+			return
+		}
 	}
 
 	exists, aerr := h.store.bucketExists(r.Context(), bucket)
@@ -131,8 +180,15 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	if exists {
+		// Account-regional re-create is documented as a 409
+		// BucketAlreadyOwnedByYou "in every region including us-east-1" — the
+		// legacy 200-OK re-create behaviour below applies only to the global
+		// namespace, so this branches before it rather than joining it.
+		if namespace == bucketNamespaceAccountRegional {
+			protocol.WriteXMLError(w, r, errBucketAlreadyExists(bucket))
+			return
+		}
 		// S3 documents BucketAlreadyOwnedByYou as returned "in all AWS Regions
 		// except in the North Virginia Region. For legacy compatibility, if you
 		// re-create an existing bucket that you already own in the North
@@ -152,6 +208,9 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		Name:         bucket,
 		Region:       region,
 		CreationDate: h.clk.Now().UTC(),
+	}
+	if namespace == bucketNamespaceAccountRegional {
+		b.Namespace = bucketNamespaceAccountRegional
 	}
 	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)

@@ -122,6 +122,143 @@ func TestCreateBucket_nameTooShort(t *testing.T) {
 	helpers.AssertXMLError(t, resp, "InvalidArgument")
 }
 
+// ---- CreateBucket: account regional namespaces (issue #1471) --------------
+//
+// Default test server account is 000000000000, default region us-east-1
+// (see tests/helpers/server.go defaultTestConfig), so a well-formed
+// account-regional name here always ends "-000000000000-us-east-1-an".
+
+func TestCreateBucket_accountRegional_success(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp, err := http.DefaultClient.Do(put(srv, "/amzn-app-000000000000-us-east-1-an", nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "account-regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if loc := resp.Header.Get("Location"); loc != "/amzn-app-000000000000-us-east-1-an" {
+		t.Errorf("Location = %q, want /amzn-app-000000000000-us-east-1-an", loc)
+	}
+}
+
+func TestCreateBucket_accountRegional_reCreateConflictsEvenInUSEast1(t *testing.T) {
+	// Given: an account-regional bucket already created in us-east-1 — the
+	// region where a *global*-namespace re-create would be a legacy 200 OK.
+	srv := helpers.NewTestServer(t)
+	const name = "amzn-app-000000000000-us-east-1-an"
+	first, err := http.DefaultClient.Do(put(srv, "/"+name, nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "account-regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Body.Close()
+	helpers.AssertStatus(t, first, http.StatusOK)
+
+	// When: it is created again, still account-regional, still us-east-1
+	resp, err := http.DefaultClient.Do(put(srv, "/"+name, nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "account-regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: 409 BucketAlreadyOwnedByYou, unlike the global-namespace legacy
+	// us-east-1 200-OK re-create.
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+	helpers.AssertXMLError(t, resp, "BucketAlreadyOwnedByYou")
+}
+
+func TestCreateBucket_global_reservedANSuffixRejected(t *testing.T) {
+	// Given: no x-amz-bucket-namespace header (global namespace, the default)
+	srv := helpers.NewTestServer(t)
+
+	// When: the name carries the suffix AWS reserves for the account regional
+	// namespace
+	resp, err := http.DefaultClient.Do(put(srv, "/some-bucket-000000000000-us-east-1-an", nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Then: rejected, the same way as the other reserved suffixes
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
+func TestCreateBucket_global_explicitHeaderSameAsAbsent(t *testing.T) {
+	// x-amz-bucket-namespace: global must behave identically to omitting it —
+	// unverified against real AWS, see the header switch in CreateBucket.
+	srv := helpers.NewTestServer(t)
+
+	resp, err := http.DefaultClient.Do(put(srv, "/some-bucket-000000000000-us-east-1-an", nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "global",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
+func TestCreateBucket_accountRegional_wrongAccountRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// A suffix naming an account that is not cfg.AccountID emulates "another
+	// account used my suffix".
+	resp, err := http.DefaultClient.Do(put(srv, "/amzn-app-111122223333-us-east-1-an", nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "account-regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
+func TestCreateBucket_accountRegional_wrongRegionRejected(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// Suffix names eu-west-1 while the request itself targets us-east-1
+	// (the test server's default, since no region-scoped Authorization
+	// header is sent).
+	resp, err := http.DefaultClient.Do(put(srv, "/amzn-app-000000000000-eu-west-1-an", nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "account-regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
+func TestCreateBucket_namespaceHeader_invalidValueRejected(t *testing.T) {
+	// Exact error code is unverified against real AWS — see CreateBucket.
+	srv := helpers.NewTestServer(t)
+
+	resp, err := http.DefaultClient.Do(put(srv, "/some-bucket", nil, map[string]string{
+		"X-Amz-Bucket-Namespace": "regional",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+}
+
 // ---- HeadBucket ------------------------------------------------------------
 
 func TestHeadBucket_exists(t *testing.T) {

@@ -1550,5 +1550,57 @@ func buildIAMRequestContext(r *http.Request) map[string]string {
 		ctx["aws:requestedcontentlength"] = strconv.FormatInt(cl, 10)
 	}
 
+	if populate, ok := serviceConditionKeyPopulators[detectService(r)]; ok {
+		for k, v := range populate(r) {
+			ctx[k] = v
+		}
+	}
+
 	return ctx
+}
+
+// serviceConditionKeyPopulators is the extension point for condition-key
+// context that only makes sense for one service, keyed by detectService's
+// name for it. buildIAMRequestContext dispatches through this map rather than
+// branching on service name itself, so the next service-specific key
+// (an sqs:* key, another s3:* key, …) is a new map entry, not a growing
+// if/switch in the request-context builder.
+var serviceConditionKeyPopulators = map[string]func(*http.Request) map[string]string{
+	"s3": s3ConditionKeys,
+}
+
+// s3ConditionKeys populates s3:x-amz-bucket-namespace from the
+// X-Amz-Bucket-Namespace request header (see s3.CreateBucket).
+//
+// Unverified against real AWS: whether S3 truly resolves this key to
+// "global" in the IAM/SCP evaluation context when the header is absent, or
+// leaves the key absent from the context entirely. The literal absent-header
+// case is documented as *denied* by AWS's own published
+// Deny+StringNotEquals{"s3:x-amz-bucket-namespace":"account-regional"}
+// pattern — but this evaluator's condition operators follow the general AWS
+// rule that a StringNotEquals against a genuinely missing context key
+// evaluates to false (see evaluateConditions in internal/iampolicy), which
+// would make that Deny statement not match and so not deny. Always
+// populating the resolved value (defaulting absent to "global", matching
+// CreateBucket's own default) is what makes the documented pattern behave as
+// documented against this evaluator; if AWS turns out to leave the key
+// genuinely absent instead, only this default needs to change.
+func s3ConditionKeys(r *http.Request) map[string]string {
+	// Deliberately local literals, not an import of internal/services/s3: this
+	// is the middleware layer, imported by every service, so it cannot import
+	// down into one service's package without inverting that dependency. The
+	// values themselves (the header name AWS defines, and "global" as
+	// CreateBucket's documented default namespace) are wire constants, not
+	// implementation details — s3.CreateBucket carries the same two literals
+	// for the same reason.
+	const bucketNamespaceHeader = "X-Amz-Bucket-Namespace"
+	const bucketNamespaceGlobal = "global"
+
+	namespace := strings.TrimSpace(r.Header.Get(bucketNamespaceHeader))
+	if namespace == "" {
+		namespace = bucketNamespaceGlobal
+	}
+	return map[string]string{
+		"s3:x-amz-bucket-namespace": namespace,
+	}
 }

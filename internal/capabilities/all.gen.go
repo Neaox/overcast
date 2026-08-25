@@ -1218,7 +1218,7 @@ var AllCapabilities = []Capability{
 	{Service: "s3", Operation: "AbortMultipartUpload", Category: "Multipart uploads", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "s3", Operation: "CompleteMultipartUpload", Category: "Multipart uploads", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "s3", Operation: "CopyObject", Category: "Objects", Status: StatusSupported, Notes: "x-amz-copy-source may name a source versionId", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "s3", Operation: "CreateBucket", Category: "Buckets", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "s3", Operation: "CreateBucket", Category: "Buckets", Status: StatusSupported, Notes: "Account regional namespaces via x-amz-bucket-namespace: account-regional", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "s3", Operation: "CreateMultipartUpload", Category: "Multipart uploads", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "s3", Operation: "DeleteBucket", Category: "Buckets", Status: StatusSupported, Notes: "Bucket must be empty", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "s3", Operation: "DeleteBucketCors", Category: "CORS", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
