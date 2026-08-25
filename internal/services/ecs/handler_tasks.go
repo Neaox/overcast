@@ -295,7 +295,7 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
-		tasks = append(tasks, *task)
+		tasks = append(tasks, task.forWire())
 	}
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
@@ -1129,7 +1129,7 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task.forWire()}, "application/x-amz-json-1.1")
 }
 
 // stopTaskCore is what StopTask does, for both the JSON 1.1 handler above and
@@ -1245,7 +1245,7 @@ func (h *Handler) DescribeTasks(w http.ResponseWriter, r *http.Request) {
 			failures = append(failures, failure{Arn: arn, Reason: "MISSING"})
 			continue
 		}
-		found = append(found, *task)
+		found = append(found, task.forWire())
 	}
 
 	// Headers must be set before the body is written; late mutation only

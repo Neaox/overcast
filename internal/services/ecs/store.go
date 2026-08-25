@@ -300,28 +300,27 @@ type Attachment struct {
 
 // Task represents a running ECS task.
 type Task struct {
-	TaskArn              string                `json:"taskArn"`
-	TaskDefinitionArn    string                `json:"taskDefinitionArn"`
-	ClusterArn           string                `json:"clusterArn"`
-	LastStatus           string                `json:"lastStatus"`
-	DesiredStatus        string                `json:"desiredStatus"`
-	LaunchType           string                `json:"launchType"`
-	Cpu                  string                `json:"cpu,omitempty"`
-	Memory               string                `json:"memory,omitempty"`
-	PlatformVersion      string                `json:"platformVersion,omitempty"`
-	PlatformFamily       string                `json:"platformFamily,omitempty"`
-	StartedAt            *int64                `json:"startedAt,omitempty"`
-	StoppedAt            *int64                `json:"stoppedAt,omitempty"`
-	StoppingAt           *int64                `json:"stoppingAt,omitempty"`
-	StoppedReason        string                `json:"stoppedReason,omitempty"`
-	StopCode             string                `json:"stopCode,omitempty"`
-	CreatedAt            int64                 `json:"createdAt"`
-	Group                string                `json:"group,omitempty"`
-	StartedBy            string                `json:"startedBy,omitempty"`
-	Containers           []Container           `json:"containers"`
-	Overrides            *TaskOverride         `json:"overrides,omitempty"`
-	NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration,omitempty"`
-	Attachments          []Attachment          `json:"attachments,omitempty"`
+	TaskArn           string        `json:"taskArn"`
+	TaskDefinitionArn string        `json:"taskDefinitionArn"`
+	ClusterArn        string        `json:"clusterArn"`
+	LastStatus        string        `json:"lastStatus"`
+	DesiredStatus     string        `json:"desiredStatus"`
+	LaunchType        string        `json:"launchType"`
+	Cpu               string        `json:"cpu,omitempty"`
+	Memory            string        `json:"memory,omitempty"`
+	PlatformVersion   string        `json:"platformVersion,omitempty"`
+	PlatformFamily    string        `json:"platformFamily,omitempty"`
+	StartedAt         *int64        `json:"startedAt,omitempty"`
+	StoppedAt         *int64        `json:"stoppedAt,omitempty"`
+	StoppingAt        *int64        `json:"stoppingAt,omitempty"`
+	StoppedReason     string        `json:"stoppedReason,omitempty"`
+	StopCode          string        `json:"stopCode,omitempty"`
+	CreatedAt         int64         `json:"createdAt"`
+	Group             string        `json:"group,omitempty"`
+	StartedBy         string        `json:"startedBy,omitempty"`
+	Containers        []Container   `json:"containers"`
+	Overrides         *TaskOverride `json:"overrides,omitempty"`
+	Attachments       []Attachment  `json:"attachments,omitempty"`
 	// NetworkNamespaceID is the Docker container whose network namespace every
 	// container in an awsvpc task shares — Overcast's equivalent of the
 	// `~internal~ecs~pause` container the ECS agent runs, and empty for a task
@@ -329,7 +328,9 @@ type Task struct {
 	//
 	// Overcast-internal, like Container.DockerID: AWS has no counterpart to
 	// report, and the containers a task is made of are the ones the user
-	// declared.
+	// declared. It is persisted like any other field here — store round-trips
+	// go through Task directly — but must never reach a response: see
+	// Task.forWire.
 	NetworkNamespaceID string `json:"networkNamespaceId,omitempty"`
 }
 
@@ -342,7 +343,29 @@ type Container struct {
 	ExitCode     *int   `json:"exitCode,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	RuntimeId    string `json:"runtimeId,omitempty"`
-	DockerID     string `json:"dockerId,omitempty"` // Docker container ID when backed by Docker
+	// DockerID is the Docker container ID when backed by Docker.
+	// Overcast-internal, like Task.NetworkNamespaceID: persisted, but stripped
+	// from responses by Task.forWire before a task's containers reach the wire.
+	DockerID string `json:"dockerId,omitempty"`
+}
+
+// forWire returns a copy of t with the fields that have no AWS Task or
+// Container counterpart cleared, for building the value that actually goes
+// into an HTTP response — RunTask, StopTask and DescribeTasks all persist and
+// work with the full Task, but AWS's Task shape has no networkNamespaceId or
+// dockerId member (its awsvpc details live on Attachments instead), so a
+// response built from the record directly leaks Overcast's own bookkeeping.
+func (t Task) forWire() Task {
+	t.NetworkNamespaceID = ""
+	if len(t.Containers) > 0 {
+		containers := make([]Container, len(t.Containers))
+		for i, c := range t.Containers {
+			c.DockerID = ""
+			containers[i] = c
+		}
+		t.Containers = containers
+	}
+	return t
 }
 
 // TaskOverride holds overrides applied at RunTask time.
@@ -429,7 +452,21 @@ type ecsService struct {
 	CapacityProviderStrategy      []CapacityProviderStrategyItem `json:"capacityProviderStrategy,omitempty"`
 	PlatformVersion               string                         `json:"platformVersion,omitempty"`
 	PlatformFamily                string                         `json:"platformFamily,omitempty"`
-	TaskSets                      []string                       `json:"taskSets,omitempty"`
+	// TaskSets holds the ARNs of this service's task sets — Overcast's own
+	// index, appended to and filtered by CreateTaskSet/DeleteTaskSet. AWS's
+	// Service.taskSets member is a list of full TaskSet objects, not ARNs, so
+	// this is persisted but never put on the wire directly: see forWire.
+	TaskSets []string `json:"taskSets,omitempty"`
+}
+
+// forWire returns a copy of svc with the fields that have no direct AWS
+// Service wire representation cleared. TaskSets is Overcast's internal ARN
+// index; AWS's own taskSets member is a list of full TaskSet objects, which
+// Overcast does not fabricate, so the member is omitted rather than
+// misrepresented.
+func (svc ecsService) forWire() ecsService {
+	svc.TaskSets = nil
+	return svc
 }
 
 // ServiceRegistry links a service to a service-discovery registry (Cloud Map).
@@ -1048,7 +1085,10 @@ func (s *ecsStore) deleteAccountSetting(ctx context.Context, name string) *proto
 
 // ---- Container instance operations ------------------------------------------
 
-// ContainerInstance represents a registered ECS container instance.
+// ContainerInstance represents a registered ECS container instance. AWS's
+// ContainerInstance shape has no clusterName member — Overcast only ever
+// needed it to scope the store key, which putContainerInstance now takes as
+// an explicit parameter instead of carrying it on the wire type.
 type ContainerInstance struct {
 	ContainerInstanceArn string `json:"containerInstanceArn"`
 	Ec2InstanceId        string `json:"ec2InstanceId,omitempty"`
@@ -1057,15 +1097,14 @@ type ContainerInstance struct {
 	RunningTasksCount    int    `json:"runningTasksCount"`
 	PendingTasksCount    int    `json:"pendingTasksCount"`
 	RegisteredAt         int64  `json:"registeredAt"`
-	ClusterName          string `json:"clusterName"`
 }
 
-func (s *ecsStore) putContainerInstance(ctx context.Context, ci *ContainerInstance) *protocol.AWSError {
+func (s *ecsStore) putContainerInstance(ctx context.Context, clusterName string, ci *ContainerInstance) *protocol.AWSError {
 	raw, err := json.Marshal(ci)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	key := serviceutil.RegionKey(s.region(ctx), ci.ClusterName+"/"+ci.ContainerInstanceArn)
+	key := serviceutil.RegionKey(s.region(ctx), clusterName+"/"+ci.ContainerInstanceArn)
 	if err := s.store.Set(ctx, nsContainerInstances, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

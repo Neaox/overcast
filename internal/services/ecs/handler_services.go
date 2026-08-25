@@ -103,7 +103,7 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publish(r, events.ECSServiceUpdated, events.ResourcePayload{Name: extractServiceName(req.Service)})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc.forWire()}, "application/x-amz-json-1.1")
 }
 
 // updateServiceRecord applies an UpdateService to the stored service and then
@@ -259,7 +259,7 @@ func (h *Handler) DeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publish(r, events.ECSServiceDeleted, events.ResourcePayload{Name: extractServiceName(req.Service)})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc.forWire()}, "application/x-amz-json-1.1")
 }
 
 // drainServiceRecord puts a service into DRAINING at a desired count of zero
@@ -334,7 +334,7 @@ func (h *Handler) DescribeServices(w http.ResponseWriter, r *http.Request) {
 
 		// Recount from actual tasks for accuracy.
 		h.refreshServiceCounts(r.Context(), clusterName, svc)
-		found = append(found, *svc)
+		found = append(found, svc.forWire())
 	}
 
 	// Headers must be set before the body is written; late mutation only

@@ -1907,7 +1907,9 @@ func TestRunTask_awsvpc_attachments(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with attachments (synthetic ENI) and networkConfiguration stored
+	// Then: 200 with attachments (synthetic ENI) — AWS's Task shape carries
+	// awsvpc details on attachments only, not a networkConfiguration member,
+	// so the response is not expected to echo one back.
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		Tasks []struct {
@@ -1920,13 +1922,6 @@ func TestRunTask_awsvpc_attachments(t *testing.T) {
 					Value string `json:"value"`
 				} `json:"details"`
 			} `json:"attachments"`
-			NetworkConfiguration *struct {
-				AwsvpcConfiguration struct {
-					Subnets        []string `json:"subnets"`
-					SecurityGroups []string `json:"securityGroups"`
-					AssignPublicIp string   `json:"assignPublicIp"`
-				} `json:"awsvpcConfiguration"`
-			} `json:"networkConfiguration"`
 			PlatformVersion string `json:"platformVersion"`
 		} `json:"tasks"`
 	}
@@ -1940,13 +1935,6 @@ func TestRunTask_awsvpc_attachments(t *testing.T) {
 	}
 	if task.Attachments[0].Type != "ElasticNetworkInterface" {
 		t.Errorf("expected attachment type=ElasticNetworkInterface, got %q", task.Attachments[0].Type)
-	}
-	if task.NetworkConfiguration == nil {
-		t.Fatal("expected networkConfiguration to be set")
-	}
-	if len(task.NetworkConfiguration.AwsvpcConfiguration.Subnets) != 1 ||
-		task.NetworkConfiguration.AwsvpcConfiguration.Subnets[0] != "subnet-abc123" {
-		t.Errorf("unexpected subnets: %v", task.NetworkConfiguration.AwsvpcConfiguration.Subnets)
 	}
 	if task.PlatformVersion != "LATEST" {
 		t.Errorf("expected platformVersion=LATEST, got %q", task.PlatformVersion)

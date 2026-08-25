@@ -58,9 +58,8 @@ func (h *Handler) RegisterContainerInstance(w http.ResponseWriter, r *http.Reque
 		Status:               "ACTIVE",
 		AgentConnected:       true,
 		RegisteredAt:         h.clk.Now().Unix(),
-		ClusterName:          clusterName,
 	}
-	if aerr := h.store.putContainerInstance(r.Context(), ci); aerr != nil {
+	if aerr := h.store.putContainerInstance(r.Context(), clusterName, ci); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

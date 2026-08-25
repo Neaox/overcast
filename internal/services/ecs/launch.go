@@ -79,22 +79,21 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 	}
 
 	task := &Task{
-		TaskArn:              h.taskARN(ctx, spec.clusterName, taskID),
-		TaskDefinitionArn:    td.TaskDefinitionArn,
-		ClusterArn:           spec.clusterArn,
-		LastStatus:           "PROVISIONING",
-		DesiredStatus:        "RUNNING",
-		LaunchType:           spec.launchType,
-		Cpu:                  td.Cpu,
-		Memory:               td.Memory,
-		PlatformVersion:      spec.platformVersion,
-		CreatedAt:            h.clk.Now().Unix(),
-		Group:                spec.group,
-		StartedBy:            spec.startedBy,
-		Containers:           containers,
-		Overrides:            spec.overrides,
-		NetworkConfiguration: spec.netCfg,
-		Attachments:          h.awsvpcAttachment(ctx, spec, taskID),
+		TaskArn:           h.taskARN(ctx, spec.clusterName, taskID),
+		TaskDefinitionArn: td.TaskDefinitionArn,
+		ClusterArn:        spec.clusterArn,
+		LastStatus:        "PROVISIONING",
+		DesiredStatus:     "RUNNING",
+		LaunchType:        spec.launchType,
+		Cpu:               td.Cpu,
+		Memory:            td.Memory,
+		PlatformVersion:   spec.platformVersion,
+		CreatedAt:         h.clk.Now().Unix(),
+		Group:             spec.group,
+		StartedBy:         spec.startedBy,
+		Containers:        containers,
+		Overrides:         spec.overrides,
+		Attachments:       h.awsvpcAttachment(ctx, spec, taskID),
 	}
 
 	startErr := error(nil)
