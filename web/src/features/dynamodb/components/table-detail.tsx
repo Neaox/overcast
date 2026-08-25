@@ -163,6 +163,7 @@ export function TableDetail({ tableName }: Props) {
 
   const [activeTab, setActiveTab] = useState<"items" | "schema" | "monitor">("items")
   const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
+  const [monitorRefreshMs, setMonitorRefreshMs] = useState<number | false>(30_000)
   const [showPutItem, setShowPutItem] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DynamoItem>()
   const [expandedRow, setExpandedRow] = useState<number>()
@@ -197,7 +198,9 @@ export function TableDetail({ tableName }: Props) {
   } | null>(null)
 
   const { data: table, isLoading: tableLoading } = useQuery(dynamoTableQueryOptions(tableName))
-  const metricsQuery = useQuery(dynamoMetricsQueryOptions(tableName, monitorRange))
+  const metricsQuery = useQuery(
+    dynamoMetricsQueryOptions(tableName, monitorRange, monitorRefreshMs),
+  )
 
   const {
     data: scanPages,
@@ -921,6 +924,8 @@ export function TableDetail({ tableName }: Props) {
         <MonitorPanel
           range={monitorRange}
           onRangeChange={setMonitorRange}
+          refreshIntervalMs={monitorRefreshMs}
+          onRefreshIntervalChange={setMonitorRefreshMs}
           isLoading={metricsQuery.isLoading}
           isFetching={metricsQuery.isFetching}
           error={metricsQuery.error}

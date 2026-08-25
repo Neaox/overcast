@@ -9,12 +9,14 @@
  *   apigwKeys.stages(apiId)                  -> [..., "rest-api", apiId, "stages"]
  *   apigwKeys.deployments(apiId)             -> [..., "rest-api", apiId, "deployments"]
  *   apigwKeys.authorizers(apiId)             -> [..., "rest-api", apiId, "authorizers"]
+ *   apigwKeys.restMetrics(apiId, range, stage) -> [..., "rest-api", apiId, "metrics", range, stage]
  *   apigwKeys.httpApis()                     -> [..., "http-apis"]
  *   apigwKeys.httpApi(id)                    -> [..., "http-api", id]
  *   apigwKeys.routes(apiId)                  -> [..., "http-api", apiId, "routes"]
  *   apigwKeys.integrations(apiId)            -> [..., "http-api", apiId, "integrations"]
  *   apigwKeys.httpStages(apiId)              -> [..., "http-api", apiId, "stages"]
  *   apigwKeys.v2Authorizers(apiId)           -> [..., "http-api", apiId, "authorizers"]
+ *   apigwKeys.httpMetrics(apiId, range, stage) -> [..., "http-api", apiId, "metrics", range, stage]
  *   apigwKeys.apiKeys()                      -> [..., "api-keys"]
  *   apigwKeys.usagePlans()                   -> [..., "usage-plans"]
  *   apigwKeys.usagePlanKeys(planId)          -> [..., "usage-plan", planId, "keys"]
@@ -32,6 +34,7 @@ import type {
   AuthorizerV2,
 } from "@/services/api/apigateway"
 import { endpointStore } from "@/services/endpoint-store"
+import type { ChartRangeToken } from "@/features/monitoring/types"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -45,6 +48,8 @@ export const apigwKeys = {
   stages: (apiId: string) => [...apigwKeys.restApi(apiId), "stages"] as const,
   deployments: (apiId: string) => [...apigwKeys.restApi(apiId), "deployments"] as const,
   authorizers: (apiId: string) => [...apigwKeys.restApi(apiId), "authorizers"] as const,
+  restMetrics: (apiId: string, range: ChartRangeToken, stage?: string) =>
+    [...apigwKeys.restApi(apiId), "metrics", range, stage ?? "all"] as const,
 
   // HTTP API v2
   httpApis: () => [...apigwKeys.all(), "http-apis"] as const,
@@ -53,6 +58,8 @@ export const apigwKeys = {
   integrations: (apiId: string) => [...apigwKeys.httpApi(apiId), "integrations"] as const,
   httpStages: (apiId: string) => [...apigwKeys.httpApi(apiId), "stages"] as const,
   v2Authorizers: (apiId: string) => [...apigwKeys.httpApi(apiId), "authorizers"] as const,
+  httpMetrics: (apiId: string, range: ChartRangeToken, stage?: string) =>
+    [...apigwKeys.httpApi(apiId), "metrics", range, stage ?? "all"] as const,
 
   // Global resources
   apiKeys: () => [...apigwKeys.all(), "api-keys"] as const,
@@ -95,6 +102,26 @@ export function deploymentsQueryOptions(apiId: string) {
   return queryOptions({
     queryKey: apigwKeys.deployments(apiId),
     queryFn: () => apigateway.getDeployments(apiId),
+  })
+}
+
+/**
+ * Monitor tab read-through for a REST (v1) API (#1307). Polls while the tab
+ * is visible, matching every other service's Monitor tab
+ * (docs/plans/service-metrics-platform.md phase 3 "Use polling initially").
+ * `stage` is omitted to aggregate across every stage.
+ */
+export function restApiMetricsQueryOptions(
+  apiId: string,
+  range: ChartRangeToken,
+  stage?: string,
+  refetchIntervalMs: number | false = 30_000,
+) {
+  return queryOptions({
+    queryKey: apigwKeys.restMetrics(apiId, range, stage),
+    queryFn: () => apigateway.getRestApiMetrics(apiId, range, stage),
+    refetchInterval: refetchIntervalMs,
+    enabled: Boolean(apiId),
   })
 }
 
@@ -214,6 +241,21 @@ export function httpStagesQueryOptions(apiId: string) {
   return queryOptions({
     queryKey: apigwKeys.httpStages(apiId),
     queryFn: () => apigateway.getHttpStages(apiId),
+  })
+}
+
+/** Monitor tab read-through for an HTTP (v2) API — see restApiMetricsQueryOptions. */
+export function httpApiMetricsQueryOptions(
+  apiId: string,
+  range: ChartRangeToken,
+  stage?: string,
+  refetchIntervalMs: number | false = 30_000,
+) {
+  return queryOptions({
+    queryKey: apigwKeys.httpMetrics(apiId, range, stage),
+    queryFn: () => apigateway.getHttpApiMetrics(apiId, range, stage),
+    refetchInterval: refetchIntervalMs,
+    enabled: Boolean(apiId),
   })
 }
 

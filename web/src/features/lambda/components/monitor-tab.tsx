@@ -1,16 +1,14 @@
 import { useState } from "react"
 import { Link } from "@tanstack/react-router"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { LogViewer } from "@/components/logs/log-viewer"
-import { Spinner } from "@/components/ui/primitives"
-import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
+import { LogPanel } from "@/components/logs/log-panel"
 import { lambdaMetricsQueryOptions, lambdaKeys } from "@/features/lambda/data"
 import {
   MonitorPanel,
   type MonitorCardConfig,
 } from "@/features/monitoring/components/monitor-panel"
 import { DEFAULT_CHART_RANGE, type ChartRangeToken } from "@/features/monitoring/types"
-import type { FilteredLogEvent, LambdaFunction } from "@/types"
+import type { LambdaFunction } from "@/types"
 
 // The AWS/Lambda P0 pilot catalogue, grouped into cards the way AWS's own
 // Lambda Monitoring tab groups them (docs/plans/service-metrics-platform.md
@@ -49,17 +47,9 @@ export function MonitorTab({ fn }: { fn: LambdaFunction }) {
   const logGroup = fn.LoggingConfig?.LogGroup ?? ""
   const qc = useQueryClient()
   const [range, setRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
+  const [refreshMs, setRefreshMs] = useState<number | false>(30_000)
 
-  const metricsQuery = useQuery(lambdaMetricsQueryOptions(name, range))
-
-  // The footer promises a 5-second refresh, so the query keeps it. (It said so
-  // for a long time without any interval actually configured.)
-  const { data, isLoading, isError } = useQuery({
-    ...logsFilterQueryOptions(logGroup),
-    refetchInterval: 5_000,
-  })
-
-  const events: FilteredLogEvent[] = data?.events.slice(-100) ?? []
+  const metricsQuery = useQuery(lambdaMetricsQueryOptions(name, range, refreshMs))
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,6 +62,8 @@ export function MonitorTab({ fn }: { fn: LambdaFunction }) {
         error={metricsQuery.error}
         data={metricsQuery.data}
         cards={LAMBDA_MONITOR_CARDS}
+        refreshIntervalMs={refreshMs}
+        onRefreshIntervalChange={setRefreshMs}
         onRefresh={() => void qc.invalidateQueries({ queryKey: lambdaKeys.metrics(name, range) })}
       />
 
@@ -94,31 +86,10 @@ export function MonitorTab({ fn }: { fn: LambdaFunction }) {
 
         {!logGroup ? (
           <p className="text-sm text-fg-muted">No log group configured for this function.</p>
-        ) : isLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <Spinner className="h-5 w-5" />
-          </div>
-        ) : isError || events.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-bg-elevated py-16 text-center">
-            <p className="text-sm text-fg-muted">No log events yet.</p>
-            <p className="text-xs text-fg-muted">Invoke the function to generate logs.</p>
-          </div>
         ) : (
-          <div className="max-h-[60vh] rounded-md border border-border bg-bg-elevated p-3">
-            <LogViewer
-              events={events}
-              loading={false}
-              emptyMessage="No log events yet."
-              defaultMode="plain"
-            />
+          <div className="flex h-[60vh] flex-col rounded-md border border-border bg-bg-elevated p-3">
+            <LogPanel pinned={{ group: logGroup }} emptyMessage="No log events yet." />
           </div>
-        )}
-
-        {events.length > 0 && (
-          <p className="text-right text-xs text-fg-muted">
-            Showing last {events.length} event{events.length !== 1 ? "s" : ""} · auto-refreshes
-            every 5 s
-          </p>
         )}
       </div>
     </div>

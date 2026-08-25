@@ -57,11 +57,15 @@ export function snsQueueSubscriptionsQueryOptions(queueArn: string) {
  * Polls while the tab is visible, matching Lambda/SQS's own Monitor query
  * options.
  */
-export function snsMetricsQueryOptions(topicName: string, range: ChartRangeToken) {
+export function snsMetricsQueryOptions(
+  topicName: string,
+  range: ChartRangeToken,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: snsKeys.metrics(topicName, range),
     queryFn: () => sns.getMetrics(topicName, range),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(topicName),
   })
 }

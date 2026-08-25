@@ -153,6 +153,7 @@ export function QueueDetail({ queueName }: Props) {
   const [unsubscribeTarget, setUnsubscribeTarget] = useState<SNSSubscription>()
   const [activeTab, setActiveTab] = useState<"messages" | "subscriptions" | "monitor">("messages")
   const [monitorRange, setMonitorRange] = useState<ChartRangeToken>(DEFAULT_CHART_RANGE)
+  const [monitorRefreshMs, setMonitorRefreshMs] = useState<number | false>(30_000)
 
   // Track recently-removed messages: show them crossed-out for 30s before hiding.
   // A redrive leaves the DLQ via DeleteMessage too, so the reason is recorded
@@ -261,7 +262,7 @@ export function QueueDetail({ queueName }: Props) {
     refetch: refetchMessages,
   } = useQuery(sqsMessagesQueryOptions(queueName))
 
-  const metricsQuery = useQuery(sqsMetricsQueryOptions(queueName, monitorRange))
+  const metricsQuery = useQuery(sqsMetricsQueryOptions(queueName, monitorRange, monitorRefreshMs))
 
   // Whether redrive is offered at all follows AWS's own rule: StartMessageMoveTask
   // "is currently limited to supporting message redrive from queues that are
@@ -819,6 +820,8 @@ export function QueueDetail({ queueName }: Props) {
             <MonitorPanel
               range={monitorRange}
               onRangeChange={setMonitorRange}
+              refreshIntervalMs={monitorRefreshMs}
+              onRefreshIntervalChange={setMonitorRefreshMs}
               isLoading={metricsQuery.isLoading}
               isFetching={metricsQuery.isFetching}
               error={metricsQuery.error}

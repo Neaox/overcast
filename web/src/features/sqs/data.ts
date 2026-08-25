@@ -46,11 +46,15 @@ export function sqsQueuesQueryOptions() {
  * 3). Polls while the section is visible, mirroring Lambda's
  * lambdaMetricsQueryOptions.
  */
-export function sqsMetricsQueryOptions(name: string, range: ChartRangeToken) {
+export function sqsMetricsQueryOptions(
+  name: string,
+  range: ChartRangeToken,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: sqsKeys.metrics(name, range),
     queryFn: () => sqs.getMetrics(name, range),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(name),
   })
 }

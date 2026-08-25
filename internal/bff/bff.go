@@ -190,6 +190,10 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	// ── DynamoDB routes ───────────────────────────────────────────────────
 	r.Get("/api/dynamodb/tables/{name}/metrics", handleDynamoDBMetrics)
 
+	// ── API Gateway routes ────────────────────────────────────────────────
+	r.Get("/api/apigateway/restapis/{apiId}/metrics", handleAPIGatewayRestApiMetrics)
+	r.Get("/api/apigateway/apis/{apiId}/metrics", handleAPIGatewayApiMetrics)
+
 	// ── Docs ──────────────────────────────────────────────────────────────
 	r.Get("/api/docs/search", handleDocsSearch)
 	r.Get("/api/docs/page", handleDocsPage(docsFS))
@@ -1230,6 +1234,75 @@ func handleDynamoDBMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
 		fmt.Sprintf("%s/_overcast/dynamodb/tables/%s/metrics%s", ep, url.PathEscape(name), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// apiGatewayMetricsQueryString builds the forwarded query string for both
+// API Gateway Monitor proxies below — the one BFF metrics proxy pair that
+// forwards more than "range" (handleLambdaMetrics/handleSQSMetrics/
+// handleSNSMetrics/handleDynamoDBMetrics only ever forward "range"; API
+// Gateway's emulator-side endpoints also accept "stage" — see
+// internal/services/apigateway/handler_metrics.go, #1307).
+func apiGatewayMetricsQueryString(r *http.Request) string {
+	q := url.Values{}
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		q.Set("range", rng)
+	}
+	if stage := r.URL.Query().Get("stage"); stage != "" {
+		q.Set("stage", stage)
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
+}
+
+// handleAPIGatewayRestApiMetrics proxies
+// GET /_overcast/apigateway/restapis/{apiId}/metrics — the REST (v1) half of
+// the Monitor tab read-through (phase 4, #1307), mirroring
+// handleLambdaMetrics/handleSNSMetrics/handleDynamoDBMetrics.
+func handleAPIGatewayRestApiMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	apiID := chi.URLParam(r, "apiId")
+	qs := apiGatewayMetricsQueryString(r)
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/apigateway/restapis/%s/metrics%s", ep, url.PathEscape(apiID), qs), nil)
+	forwardRegion(req, r)
+	resp, err := bffHTTPClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// handleAPIGatewayApiMetrics proxies
+// GET /_overcast/apigateway/apis/{apiId}/metrics — the HTTP (v2) half of the
+// Monitor tab read-through (phase 4, #1307). "apis" matches API Gateway v2's
+// own resource naming (CreateApi/GetApis/...), distinct from the REST
+// endpoint's "restapis" above.
+func handleAPIGatewayApiMetrics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	apiID := chi.URLParam(r, "apiId")
+	qs := apiGatewayMetricsQueryString(r)
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/_overcast/apigateway/apis/%s/metrics%s", ep, url.PathEscape(apiID), qs), nil)
 	forwardRegion(req, r)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {

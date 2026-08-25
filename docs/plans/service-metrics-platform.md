@@ -54,9 +54,10 @@
 > billing math. DynamoDB `ThrottledRequests`/`ReadThrottleEvents`/
 > `WriteThrottleEvents` are not recorded because this emulator does not model
 > throttling at all — there is no underlying fact to observe. API Gateway
-> records only the most granular documented dimension combination per request
+> recorded only the most granular documented dimension combination per request
 > (never the coarser `ApiName+Stage`-only aggregate AWS also publishes),
-> mirroring Lambda phase 1's own `FunctionName`-only narrowing.
+> mirroring Lambda phase 1's own `FunctionName`-only narrowing — a narrowing
+> #1307 later lifted; see the phase 2 delivered-scope entry.
 >
 > **What phase 3 delivered** (see "Phase 3 delivered scope" below for the full
 > list): a Lambda **Monitor tab** and an SQS **Monitor section**, each reading
@@ -75,9 +76,13 @@
 > metrics now survive a restart on those configurations, closing the one gap
 > phases 1-3 all explicitly deferred; and SNS/DynamoDB Monitor tabs reusing
 > phase 3's `MonitorPanel`/`MetricLineChart` unchanged. **What remains**:
-> Lambda's ESM/P2 tiers and `Resource`/`ExecutedVersion` dimensions, and API
-> Gateway's Monitor tab (blocked on a coarse-aggregate-series design decision
-> phase 2 never made) — tracked as #1307, not phase 4 scope. Migrating
+> Lambda's ESM/P2 tiers and `Resource`/`ExecutedVersion` dimensions — tracked
+> as #1307, not phase 4 scope. #1307's other item, API Gateway's Monitor tab
+> (blocked on a coarse-aggregate-series design decision phase 2 never made),
+> has since shipped: the coarse `{ApiName}`/`{ApiName, Stage}` (REST) and
+> `{ApiId}`/`{ApiId, Stage}` (HTTP) series are now recorded per request and
+> both API detail pages gained a Monitor tab — see the phase 4 delivered-scope
+> entry. Migrating
 > `PutMetricData`'s own storage onto `internal/metrics` was evaluated and
 > **not done** — see "Phase 4 delivered scope" for why.
 >
@@ -399,10 +404,16 @@ immutable bucket aggregates (count/sum/min/max compose exactly):
 | 300 seconds       | 7 days    | 24h and 7d graphs once minute buckets expire.   |
 | 3600 seconds      | 30 days   | 7d and 30d trend graphs.                        |
 
+> **Revised by #1307:** the 300s tier is now retained for the full 30 days
+> (still ~8640 constant-size buckets per active series at most), so the 30d
+> view charts 15-minute display buckets instead of 1-hour ones; the 3600s
+> tier remains as the final fallback. The UI's coherent controls are
+> therefore 1h/1m, 6h/1m, 24h/5m, 7d/5m, and **30d/15m**.
+
 The query planner selects the finest resolution whose retention fully covers
 the requested interval, then uses a period that is a multiple of that
 resolution. The UI exposes only coherent controls: **1h/1m, 6h/1m, 24h/5m,
-7d/5m, and 30d/1h**. It asks for a complete half-open UTC interval and the
+7d/5m, and 30d/1h** (30d since revised — see the #1307 note above). It asks for a complete half-open UTC interval and the
 server returns chronologically sorted, bucket-aligned points with missing data
 omitted. Rendering may show gaps; it must not interpolate a metric value or
 mistake an absent service emission for zero. This corrects the present
@@ -768,22 +779,26 @@ Delivered:
   operation rather than Lambda's one function shared by several call sites,
   but still exactly the plan's "one per-service outcome helper" pattern.
 - **API Gateway** (`internal/services/apigateway/metrics_apigateway.go`),
-  `AWS/ApiGateway`: `Count`, `4XXError`/`5XXError`, `Latency`,
-  `IntegrationLatency`. REST (v1) and HTTP (v2) APIs do **not** share one
-  execution seam (`ExecuteRestAPI` and `ExecuteV2API` are independent
-  top-level dispatchers with different per-integration-type sub-functions),
-  so there are two outcome helpers — `recordRestAPIOutcome`
-  (`ApiName`+`Stage`+`Method`+`Resource`, matching AWS's REST dimension set)
-  and `recordV2APIOutcome` (`ApiId`+`Stage`+`HttpMethod`+`RouteKey`, matching
-  AWS's distinct HTTP API dimension set) — each installed once via a defer at
-  the top of its own dispatcher, over a new `statusCapturingResponseWriter`
-  (neither dispatcher had a status-capturing writer or a request timer
-  before this phase). Both skip the wrapper allocation and every clock read
-  entirely when collection is disabled (`h.metrics == nil`), matching the
-  plan's "disabled collection adds no allocations" acceptance criterion. An
-  unresolvable API (unknown restApiId/apiId) records nothing when no
-  dimension-able identity was ever resolved (REST) — AWS itself never
-  publishes a datapoint it cannot dimension.
+  `AWS/ApiGateway`: `Count`, `4XXError`/`5XXError` (REST) or `4xx`/`5xx`
+  (HTTP), `Latency`, `IntegrationLatency`. REST (v1) and HTTP (v2) APIs do
+  **not** share one execution seam (`ExecuteRestAPI` and `ExecuteV2API` are
+  independent top-level dispatchers with different per-integration-type
+  sub-functions), so there are two outcome helpers — `recordRestAPIOutcome`
+  and `recordV2APIOutcome` — each installed once via a defer at the top of
+  its own dispatcher, over a new `statusCapturingResponseWriter` (neither
+  dispatcher had a status-capturing writer or a request timer before this
+  phase). As of #1307, each helper records under all three AWS-documented
+  dimension combinations for its API type — REST: `ApiName`,
+  `ApiName`+`Stage`, `ApiName`+`Stage`+`Method`+`Resource`; HTTP: `ApiId`,
+  `ApiId`+`Stage`, `ApiId`+`Stage`+`HttpMethod`+`RouteKey` — rather than only
+  the most granular combination phase 2 originally shipped; see phase 4's
+  "API Gateway Monitor tab" entry below for why. Both skip the wrapper
+  allocation and every clock read entirely when collection is disabled
+  (`h.metrics == nil`), matching the plan's "disabled collection adds no
+  allocations" acceptance criterion. An unresolvable API (unknown
+  restApiId/apiId) records nothing when no dimension-able identity was ever
+  resolved (REST) — AWS itself never publishes a datapoint it cannot
+  dimension.
 - Router wiring (`internal/router/router.go`): `sqsSvc.InitMetrics`,
   `snsSvc.InitMetrics`, `ddbSvc.InitMetrics`, `apigwSvc.InitMetrics` added
   alongside phase 1's `lambdaSvc.InitMetrics`, all gated by the same
@@ -1039,18 +1054,29 @@ Delivered:
   catalogue — the first catalogue phase 3's original single-dims-for-the-whole-catalogue
   shape didn't already fit; Lambda/SNS/SQS all still pass no
   `ExtraDimensions` and are unaffected.
-- **API Gateway Monitor tab**: **not delivered**. Unlike SNS/DynamoDB,
-  API Gateway phase 2 (#1268) deliberately records only the most granular
-  documented dimension combination per request (REST:
-  `ApiName+Stage+Method+Resource`; HTTP: `ApiId+Stage+HttpMethod+RouteKey`),
-  never AWS's own coarser `ApiName+Stage`-only aggregate — so there is no
-  series a per-API dashboard could query without either charting one line per
-  route (a catalogue that grows with the API's own route count, unlike every
-  other service's small fixed catalogue) or building a genuinely new
-  capability this phase did not scope: either a second, coarser recorded
-  series, or cross-series aggregation in `internal/metrics`'s query layer
-  (`ChartQuery`/`QueryAuto` resolve one exact dimension set per call today).
-  Tracked as #1307 rather than built as an approximation.
+- **API Gateway Monitor tab**: **delivered as #1307**. Phase 2 (#1268)
+  deliberately recorded only the most granular documented dimension
+  combination per request (REST: `ApiName+Stage+Method+Resource`; HTTP:
+  `ApiId+Stage+HttpMethod+RouteKey`), never AWS's own coarser
+  `ApiName+Stage`-only (or `ApiId+Stage`-only) aggregate — so there was no
+  series a per-API dashboard could query without either charting one line
+  per route (a catalogue that grows with the API's own route count, unlike
+  every other service's small fixed catalogue) or building a genuinely new
+  capability: either a second, coarser recorded series, or cross-series
+  aggregation in `internal/metrics`'s query layer (`ChartQuery`/`QueryAuto`
+  resolve one exact dimension set per call). #1307 resolved this the first
+  way — `recordRestAPIOutcome`/`recordV2APIOutcome` now record every
+  AWS-documented combination at observe time (see the phase 2 entry above) —
+  so `GET /_overcast/apigateway/restapis/{apiId}/metrics` and
+  `GET /_overcast/apigateway/apis/{apiId}/metrics`
+  (`internal/services/apigateway/handler_metrics.go`) can each query exactly
+  one dimension set per catalogue entry through the same
+  `metrics.BuildMonitorResponse` every other service's Monitor endpoint
+  uses, with an optional `?stage=` query parameter selecting the
+  `{ApiName}`/`{ApiId}`-only series versus the `+Stage` series. HTTP APIs'
+  error metrics were also corrected from the previously-recorded (and
+  incorrect) `4XXError`/`5XXError` to AWS's real `4xx`/`5xx` names as part of
+  the same change.
 - **`PutMetricData` storage migration onto `internal/metrics`: evaluated,
   not done.** The plan's own text permits deferring this "once the
   read-through's operational cost (double query per API call) is measured

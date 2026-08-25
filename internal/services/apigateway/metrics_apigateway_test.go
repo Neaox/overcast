@@ -201,6 +201,125 @@ func TestExecuteV2API_RecordsCountWithApiIdAndRouteKey(t *testing.T) {
 	}
 }
 
+// TestExecuteRestAPI_RecordsAllThreeCoarseDimensionCombinations proves
+// recordRestAPIOutcome's #1307 change: one dispatched request now leaves a
+// Count=1 series under all three AWS-documented REST combinations, not only
+// the most granular one TestExecuteRestAPI_RecordsCountAndLatency already
+// pins.
+func TestExecuteRestAPI_RecordsAllThreeCoarseDimensionCombinations(t *testing.T) {
+	h, rec, mock := newMetricsAPIGatewayHandler(t)
+	h.invoker = &statusControlledInvoker{status: 200}
+	seedRestRoute(t, h, "api1", "/pets", "handler-fn")
+
+	rr := executeRest(t, h, "api1", "/pets")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	now := mock.Now().UTC()
+	combos := map[string][]metrics.Dimension{
+		"ApiName only":  {{Name: "ApiName", Value: "api1"}},
+		"ApiName+Stage": {{Name: "ApiName", Value: "api1"}, {Name: "Stage", Value: "dev"}},
+		"ApiName+Stage+Method+Resource": {
+			{Name: "ApiName", Value: "api1"}, {Name: "Stage", Value: "dev"},
+			{Name: "Method", Value: "GET"}, {Name: "Resource", Value: "/pets"},
+		},
+	}
+	for label, dims := range combos {
+		if got, want := agwSum(t, rec, "Count", dims, now), 1.0; got != want {
+			t.Errorf("%s: Count Sum = %v, want %v", label, got, want)
+		}
+	}
+}
+
+// TestExecuteV2API_RecordsAllThreeCoarseDimensionCombinations is
+// TestExecuteRestAPI_RecordsAllThreeCoarseDimensionCombinations' HTTP (v2)
+// equivalent.
+func TestExecuteV2API_RecordsAllThreeCoarseDimensionCombinations(t *testing.T) {
+	h, rec, mock := newMetricsAPIGatewayHandler(t)
+	h.invoker = &statusControlledInvoker{status: 200}
+	ctx := context.Background()
+	if aerr := h.store.putV2API(ctx, &APIV2{ApiID: "api2", Name: "http-api", ProtocolType: "HTTP"}); aerr != nil {
+		t.Fatalf("putV2API: %v", aerr)
+	}
+	if aerr := h.store.putV2Integration(ctx, "api2", &IntegrationV2{IntegrationID: "integ1", IntegrationType: "AWS_PROXY", IntegrationURI: lambdaIntegrationURI("handler-fn")}); aerr != nil {
+		t.Fatalf("putV2Integration: %v", aerr)
+	}
+	if aerr := h.store.putV2Route(ctx, "api2", &RouteV2{RouteID: "route1", RouteKey: "GET /pets", Target: "integrations/integ1"}); aerr != nil {
+		t.Fatalf("putV2Route: %v", aerr)
+	}
+
+	rr := httptest.NewRecorder()
+	req := execRequest(http.MethodGet, "/v2/apis/api2/stages/$default/pets", map[string]string{
+		"apiId":     "api2",
+		"stageName": "$default",
+		"*":         "pets",
+	})
+	h.ExecuteV2API(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	now := mock.Now().UTC()
+	combos := map[string][]metrics.Dimension{
+		"ApiId only":  {{Name: "ApiId", Value: "api2"}},
+		"ApiId+Stage": {{Name: "ApiId", Value: "api2"}, {Name: "Stage", Value: "$default"}},
+		"ApiId+Stage+HttpMethod+RouteKey": {
+			{Name: "ApiId", Value: "api2"}, {Name: "Stage", Value: "$default"},
+			{Name: "HttpMethod", Value: "GET"}, {Name: "RouteKey", Value: "GET /pets"},
+		},
+	}
+	for label, dims := range combos {
+		if got, want := agwSum(t, rec, "Count", dims, now), 1.0; got != want {
+			t.Errorf("%s: Count Sum = %v, want %v", label, got, want)
+		}
+	}
+}
+
+// TestExecuteV2API_5xxIntegrationResponse_RecordsLowercase5xx pins #1307's
+// HTTP API error-metric-name fix: a v2 5xx outcome is recorded as "5xx"
+// (AWS's real HTTP API metric name), never REST's "5XXError".
+func TestExecuteV2API_5xxIntegrationResponse_RecordsLowercase5xx(t *testing.T) {
+	h, rec, mock := newMetricsAPIGatewayHandler(t)
+	h.invoker = &statusControlledInvoker{status: 500}
+	ctx := context.Background()
+	if aerr := h.store.putV2API(ctx, &APIV2{ApiID: "api2", Name: "http-api", ProtocolType: "HTTP"}); aerr != nil {
+		t.Fatalf("putV2API: %v", aerr)
+	}
+	if aerr := h.store.putV2Integration(ctx, "api2", &IntegrationV2{IntegrationID: "integ1", IntegrationType: "AWS_PROXY", IntegrationURI: lambdaIntegrationURI("handler-fn")}); aerr != nil {
+		t.Fatalf("putV2Integration: %v", aerr)
+	}
+	if aerr := h.store.putV2Route(ctx, "api2", &RouteV2{RouteID: "route1", RouteKey: "GET /pets", Target: "integrations/integ1"}); aerr != nil {
+		t.Fatalf("putV2Route: %v", aerr)
+	}
+
+	rr := httptest.NewRecorder()
+	req := execRequest(http.MethodGet, "/v2/apis/api2/stages/$default/pets", map[string]string{
+		"apiId":     "api2",
+		"stageName": "$default",
+		"*":         "pets",
+	})
+	h.ExecuteV2API(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rr.Code, rr.Body.String())
+	}
+
+	now := mock.Now().UTC()
+	dims := []metrics.Dimension{
+		{Name: "ApiId", Value: "api2"}, {Name: "Stage", Value: "$default"},
+		{Name: "HttpMethod", Value: "GET"}, {Name: "RouteKey", Value: "GET /pets"},
+	}
+	if got, want := agwSum(t, rec, "5xx", dims, now), 1.0; got != want {
+		t.Fatalf("5xx Sum = %v, want %v", got, want)
+	}
+	if got := agwSum(t, rec, "5XXError", dims, now); got != 0 {
+		t.Fatalf("5XXError Sum on a v2 500 = %v, want 0 (HTTP APIs must not use the REST error name)", got)
+	}
+	if got := agwSum(t, rec, "4xx", dims, now); got != 0 {
+		t.Fatalf("4xx Sum on a 500 = %v, want 0", got)
+	}
+}
+
 func TestAPIGatewayMetrics_NilRecorderIsNoOp(t *testing.T) {
 	inv := &capturingLambdaInvoker{}
 	h := newHandler(

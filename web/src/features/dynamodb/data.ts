@@ -49,11 +49,15 @@ export function dynamoTableQueryOptions(name: string) {
  * Polls while the tab is visible, matching Lambda/SQS's own Monitor query
  * options.
  */
-export function dynamoMetricsQueryOptions(name: string, range: ChartRangeToken) {
+export function dynamoMetricsQueryOptions(
+  name: string,
+  range: ChartRangeToken,
+  refetchIntervalMs: number | false = 30_000,
+) {
   return queryOptions({
     queryKey: dynamoKeys.metrics(name, range),
     queryFn: () => dynamodb.getMetrics(name, range),
-    refetchInterval: 30_000,
+    refetchInterval: refetchIntervalMs,
     enabled: Boolean(name),
   })
 }

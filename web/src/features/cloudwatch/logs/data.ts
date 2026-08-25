@@ -13,6 +13,7 @@ import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/r
 import { logs } from "@/services/api"
 import type { CreateLogGroupInput } from "@/services/api/logs"
 import { endpointStore } from "@/services/endpoint-store"
+import { normalizeLogFilter, resolveLogFilter, type LogFilter } from "./log-filter"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
@@ -60,6 +61,32 @@ export function logsFilterQueryOptions(
   return queryOptions({
     queryKey: [...logsKeys.filter(groupName), opts] as const,
     queryFn: () => logs.filterEvents(groupName, opts),
+  })
+}
+
+/**
+ * `LogPanel`'s query: a single FilterLogEvents page for one declarative
+ * `LogFilter`.
+ *
+ * The key is the *normalized filter itself* — never a hand-assembled tuple of
+ * its fields — so two components that mean the same filter always share one
+ * cache entry, and adding a field to `LogFilter` later (a stream-name prefix,
+ * say) is a one-line change here rather than a new key-shape to thread
+ * through every call site. The millisecond resolution of a relative window
+ * happens inside `queryFn`, not in the key: `Date.now()` read there is what
+ * lets auto-refresh slide the window forward without the key itself changing
+ * (a key that moved every fetch would never be considered fresh, and every
+ * tick would look like a brand new query rather than a refetch of the same
+ * one).
+ */
+export function logPanelQueryOptions(filter: LogFilter) {
+  const normalized = normalizeLogFilter(filter)
+  return queryOptions({
+    queryKey: [...logsKeys.filter(normalized.group), "panel", normalized] as const,
+    queryFn: () => {
+      const { groupName, opts } = resolveLogFilter(normalized, Date.now())
+      return logs.filterEvents(groupName, opts)
+    },
   })
 }
 
@@ -151,9 +178,7 @@ export function logsFilterInfiniteQueryOptions(
         // consumed here, so the chunk lands whole and the infinite query's own
         // token walk stays the base window's alone.
         const events = []
-        let searchedLogStreams: Awaited<
-          ReturnType<typeof logs.filterEvents>
-        >["searchedLogStreams"]
+        let searchedLogStreams: Awaited<ReturnType<typeof logs.filterEvents>>["searchedLogStreams"]
         let token: string | undefined
         do {
           const page = await logs.filterEvents(groupName, {
