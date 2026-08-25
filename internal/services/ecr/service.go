@@ -893,7 +893,23 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 
 	tags, state := s.registryTags(ctx, client, base, repoPath, password)
 	if state == repoUnknown {
-		s.log.Debug("ecr: registry sweep inconclusive, the registry did not answer for this repository",
+		// waitRegistryReady only proves the registry answers /v2/ before letting
+		// a caller past it; it says nothing about a repository-scoped request
+		// like this one, which can still stumble the instant the container's
+		// listener starts accepting connections — the gap is the same one
+		// awaitRegistryAnswering's own comment names for container start versus
+		// process listening, one layer further in. One retry, after a short
+		// pause, tells a registry that was merely mid-startup apart from one
+		// that is truly unreachable, without widening the per-request timeout
+		// that bounds the latter. See the investigation on issue #1444.
+		select {
+		case <-ctx.Done():
+		case <-time.After(registryAnswerBackoff):
+		}
+		tags, state = s.registryTags(ctx, client, base, repoPath, password)
+	}
+	if state == repoUnknown {
+		s.log.Debug("ecr: registry sweep inconclusive, the registry did not answer for this repository after a retry",
 			zap.String("repository", repoName))
 		return sweepUnavailable
 	}
