@@ -1,0 +1,2 @@
+* [iam] negated condition operators (`StringNotEquals`, `StringNotEqualsIgnoreCase`, `StringNotLike`, `NumericNotEquals`, `DateNotEquals`, `ArnNotEquals`, `ArnNotLike`, `NotIpAddress`) match — so a `Deny` guarded by one applies — when their condition key is absent from the request, matching AWS instead of always evaluating unmet
+* [iam] `s3:x-amz-bucket-namespace` is populated only when the request carries the `X-Amz-Bucket-Namespace` header, instead of always defaulting an absent header to `global`
