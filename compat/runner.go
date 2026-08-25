@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // SuiteConfig describes a single test suite subprocess.
@@ -405,13 +406,39 @@ func (r *Runner) runSuite(ctx context.Context, s SuiteConfig, parallelSlots int)
 		if errMsg == "" {
 			errMsg = waitErr.Error()
 		}
-		// Cap error message length so the SSE event stays reasonable.
-		if len(errMsg) > 2000 {
-			errMsg = errMsg[len(errMsg)-2000:]
-		}
-		return sr, fmt.Errorf("suite %q: %s", s.Name, errMsg)
+		return sr, fmt.Errorf("suite %q: %s", s.Name, tailForError(errMsg, suiteErrTailLimit))
 	}
 	return sr, nil
+}
+
+// suiteErrTailLimit caps how much captured stderr rides inside a suite
+// infrastructure error (and hence the suite_error SSE event). The full stream
+// has already been forwarded to the runner's log writer; this tail is only the
+// summary that travels in the error itself.
+const suiteErrTailLimit = 4096
+
+// tailForError trims s to at most roughly maxBytes from its tail, cutting on a
+// line boundary and labeling what was dropped. A raw byte-offset slice here
+// used to shear through the middle of a line — buildkit echoes the failing
+// Dockerfile step into stderr, and the runner once reported the fragment
+// `n without silencing errors.` cut out of a Dockerfile comment.
+func tailForError(s string, maxBytes int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := s[len(s)-maxBytes:]
+	if i := strings.IndexByte(cut, '\n'); i >= 0 {
+		// Drop the partial first line so the tail starts at a real line.
+		cut = cut[i+1:]
+	} else {
+		// The final line alone exceeds the cap; keep the byte cut but back off
+		// to a rune boundary so the label is followed by valid UTF-8.
+		for len(cut) > 0 && !utf8.RuneStart(cut[0]) {
+			cut = cut[1:]
+		}
+	}
+	return fmt.Sprintf("[suite output truncated — showing last %d of %d bytes]\n%s", len(cut), len(s), cut)
 }
 
 // parseNDJSON reads NDJSON lines from r and builds a SuiteReport.

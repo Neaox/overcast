@@ -17,19 +17,30 @@ SRC_HASH=$(find "$SCRIPT_DIR/src" "$SCRIPT_DIR/pom.xml" "$CONTEXT_DIR/registry.j
 VERSIONED_IMAGE="${IMAGE}:${SRC_HASH}"
 
 # Retry docker build up to 3 times to handle transient TLS / registry timeouts.
+# The build runs with plain progress captured to a file — stdout must stay
+# clean (it is the runner's NDJSON channel), and buildkit's quiet mode used to
+# swallow the failing RUN's real output (run 32796853142: fifteen mvn failures,
+# and the job log only ever showed the generic "exit code: 1" step summary).
+# On failure the tail of the captured log is replayed to stderr, which the
+# runner forwards to its own log.
 docker_build_with_retry() {
   _attempts=3
   _delay=10
   _i=1
+  _log="${TMPDIR:-/tmp}/oc-java-sdk-build-$$.log"
   while [ $_i -le $_attempts ]; do
-    if DOCKER_BUILDKIT=1 docker build -q -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR"; then
+    if DOCKER_BUILDKIT=1 docker build --progress=plain -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR" >"$_log" 2>&1; then
+      rm -f "$_log"
       return 0
     fi
+    echo "[java-sdk] build failed (attempt $_i/$_attempts) — last 100 lines of build output:" >&2
+    tail -n 100 "$_log" >&2
     if [ $_i -eq $_attempts ]; then
       echo "[java-sdk] build failed after $_attempts attempts" >&2
+      rm -f "$_log"
       return 1
     fi
-    echo "[java-sdk] build failed (attempt $_i/$_attempts), retrying in ${_delay}s…" >&2
+    echo "[java-sdk] retrying in ${_delay}s…" >&2
     sleep $_delay
     _delay=$((_delay * 2))
     _i=$((_i + 1))
