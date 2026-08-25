@@ -151,6 +151,92 @@ func TestCreateTable_tableIdStableAcrossDescribeUpdateDelete(t *testing.T) {
 	}
 }
 
+// TestTableDescription_excludesTTLAndTags verifies that CreateTable,
+// DescribeTable, UpdateTable, and DeleteTable never surface a "TTL" or
+// "Tags" member on the table description, even for a table that has both
+// configured. Real AWS's TableDescription shape has no such members — TTL is
+// read back through DescribeTimeToLive and Tags through ListTagsOfResource
+// (dynamodb-2012-08-10.json#TableDescription) — so a raw-JSON consumer that
+// reads TTL/Tags directly off a table description was always reading a
+// value AWS never sends (issue: fabricated wire members, see changelog).
+func TestTableDescription_excludesTTLAndTags(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	// Given: a table created with inline Tags and TTL subsequently enabled.
+	createResp := ddbCall(t, srv, "CreateTable", map[string]any{
+		"TableName": "wire-shape-table",
+		"AttributeDefinitions": []map[string]any{
+			{"AttributeName": "id", "AttributeType": "S"},
+		},
+		"KeySchema": []map[string]any{
+			{"AttributeName": "id", "KeyType": "HASH"},
+		},
+		"BillingMode": "PAY_PER_REQUEST",
+		"Tags": []map[string]any{
+			{"Key": "env", "Value": "test"},
+		},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	assertNoTTLOrTagsMember(t, createResp, "TableDescription")
+
+	ttlResp := ddbCall(t, srv, "UpdateTimeToLive", map[string]any{
+		"TableName": "wire-shape-table",
+		"TimeToLiveSpecification": map[string]any{
+			"Enabled":       true,
+			"AttributeName": "expiresAt",
+		},
+	})
+	defer ttlResp.Body.Close()
+	helpers.AssertStatus(t, ttlResp, http.StatusOK)
+
+	describeResp := ddbCall(t, srv, "DescribeTable", map[string]any{"TableName": "wire-shape-table"})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	assertNoTTLOrTagsMember(t, describeResp, "Table")
+
+	updateResp := ddbCall(t, srv, "UpdateTable", map[string]any{
+		"TableName":   "wire-shape-table",
+		"BillingMode": "PROVISIONED",
+		"ProvisionedThroughput": map[string]any{
+			"ReadCapacityUnits": 5, "WriteCapacityUnits": 5,
+		},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	assertNoTTLOrTagsMember(t, updateResp, "TableDescription")
+
+	deleteResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "wire-shape-table"})
+	defer deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusOK)
+	assertNoTTLOrTagsMember(t, deleteResp, "TableDescription")
+}
+
+// assertNoTTLOrTagsMember decodes resp's body as generic JSON and fails the
+// test if the object under member carries a "TTL" or "Tags" key.
+func assertNoTTLOrTagsMember(t *testing.T, resp *http.Response, member string) {
+	t.Helper()
+	body := helpers.ReadBody(t, resp)
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("decode response body: %v (body: %s)", err, body)
+	}
+	raw, ok := decoded[member]
+	if !ok {
+		t.Fatalf("response has no %q member (body: %s)", member, body)
+	}
+	var table map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatalf("decode %q member: %v (body: %s)", member, err, body)
+	}
+	if _, ok := table["TTL"]; ok {
+		t.Errorf("%s carries a fabricated TTL member (body: %s)", member, body)
+	}
+	if _, ok := table["Tags"]; ok {
+		t.Errorf("%s carries a fabricated Tags member (body: %s)", member, body)
+	}
+}
+
 func TestCreateTable_duplicate(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createTable(t, srv, "users")
