@@ -3,12 +3,14 @@ package compat
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // crashArgv returns a platform-appropriate command that prints
@@ -50,6 +52,111 @@ func TestRunSuite_crashBeforeResultsReturnsInfrastructureError(t *testing.T) {
 	}
 	if sr == nil || sr.Total() != 0 {
 		t.Fatalf("runSuite() SuiteReport total = %v, want zero-result report", sr)
+	}
+}
+
+// spamArgv returns a platform-appropriate command that prints 300 numbered
+// lines to stderr and exits 7 — a suite whose failure output exceeds the
+// error-message cap, like a failed docker build streaming buildkit output.
+func spamArgv() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "(for /L %i in (1,1,300) do @echo stderr-spam-line-%i-padding-padding-padding 1>&2) & exit 7"}
+	}
+	return []string{"sh", "-c", `i=1; while [ $i -le 300 ]; do echo "stderr-spam-line-$i-padding-padding-padding" >&2; i=$((i+1)); done; exit 7`}
+}
+
+func TestTailForError(t *testing.T) {
+	t.Run("short input passes through unchanged", func(t *testing.T) {
+		in := "line one\nline two"
+		if got := tailForError(in, 100); got != in {
+			t.Fatalf("tailForError() = %q, want input unchanged", got)
+		}
+	})
+
+	t.Run("long input is cut on a line boundary and labeled", func(t *testing.T) {
+		// Given: 100 numbered lines, far more than the cap admits.
+		var b strings.Builder
+		for i := 1; i <= 100; i++ {
+			fmt.Fprintf(&b, "numbered-line-%03d some padding to give each line width\n", i)
+		}
+		in := strings.TrimSpace(b.String())
+
+		got := tailForError(in, 500)
+
+		// Then: the result is labeled, keeps the final line, and every kept
+		// line is whole — the first kept line is a full "numbered-line-NNN…",
+		// not a sheared fragment like the `n without silencing errors.` the
+		// old byte-offset slice produced.
+		label, body, ok := strings.Cut(got, "\n")
+		if !ok || !strings.HasPrefix(label, "[suite output truncated — showing last ") {
+			t.Fatalf("tailForError() = %q, want a truncation label on the first line", got)
+		}
+		if !strings.HasSuffix(body, "numbered-line-100 some padding to give each line width") {
+			t.Errorf("tailForError() body = %q, want the final line preserved", body)
+		}
+		firstKept, _, _ := strings.Cut(body, "\n")
+		if !strings.HasPrefix(firstKept, "numbered-line-") {
+			t.Errorf("tailForError() first kept line = %q, want a whole line", firstKept)
+		}
+		if len(body) > 500 {
+			t.Errorf("tailForError() body is %d bytes, want ≤ cap of 500", len(body))
+		}
+	})
+
+	t.Run("single oversized line is cut on a rune boundary", func(t *testing.T) {
+		// Given: one line of two-byte runes and a cap that lands mid-rune.
+		in := strings.Repeat("é", 3000)
+
+		got := tailForError(in, 4095)
+
+		if !utf8.ValidString(got) {
+			t.Fatalf("tailForError() produced invalid UTF-8: %q", got[:80])
+		}
+		if !strings.Contains(got, "[suite output truncated") {
+			t.Errorf("tailForError() = %q…, want a truncation label", got[:80])
+		}
+	})
+}
+
+func TestRunSuite_longStderrIsTruncatedOnLineBoundary(t *testing.T) {
+	// Given: a suite subprocess that floods stderr past the error cap and dies
+	// without emitting results — the shape of a failed docker image build.
+	r := &Runner{
+		cfg: RunConfig{
+			Endpoint: "http://localhost:4566",
+			Region:   "us-east-1",
+			RunID:    "oc-test",
+		},
+		logWriter: &bytes.Buffer{},
+	}
+	suite := SuiteConfig{
+		Name: "spammy-suite",
+		Argv: spamArgv(),
+	}
+
+	// When: the runner executes the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := r.runSuite(ctx, suite, 1)
+
+	// Then: the error carries a labeled tail whose lines are whole.
+	if err == nil {
+		t.Fatal("runSuite() error = nil, want infrastructure error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "[suite output truncated") {
+		t.Fatalf("runSuite() error = %q…, want a truncation label", msg[:min(120, len(msg))])
+	}
+	if !strings.Contains(msg, "stderr-spam-line-300") {
+		t.Errorf("runSuite() error lost the tail of stderr:\n%s", msg)
+	}
+	if strings.Contains(msg, "stderr-spam-line-1-padding") {
+		t.Errorf("runSuite() error kept the head of stderr past the cap:\n%s", msg)
+	}
+	_, body, _ := strings.Cut(msg, "]\n")
+	firstKept, _, _ := strings.Cut(body, "\n")
+	if !strings.HasPrefix(firstKept, "stderr-spam-line-") {
+		t.Errorf("runSuite() first kept line = %q, want a whole line after the label", firstKept)
 	}
 }
 

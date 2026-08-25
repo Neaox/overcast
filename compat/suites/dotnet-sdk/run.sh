@@ -11,19 +11,27 @@ REGISTRY_HASH=$(md5sum "$CONTEXT_DIR/registry.json" | cut -c1-12)
 VERSIONED_IMAGE="${IMAGE}:${SRC_HASH}-${REGISTRY_HASH}"
 
 # Retry docker build up to 3 times to handle transient TLS / registry timeouts.
+# Plain progress, captured to a file: stdout must stay clean (the runner's
+# NDJSON channel), and quiet mode swallows the failing RUN's real output. On
+# failure the tail of the log is replayed to stderr for the runner to forward.
 docker_build_with_retry() {
   _attempts=3
   _delay=10
   _i=1
+  _log="${TMPDIR:-/tmp}/oc-dotnet-sdk-build-$$.log"
   while [ $_i -le $_attempts ]; do
-    if DOCKER_BUILDKIT=1 docker build -q -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR"; then
+    if DOCKER_BUILDKIT=1 docker build --progress=plain -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR" >"$_log" 2>&1; then
+      rm -f "$_log"
       return 0
     fi
+    echo "[dotnet-sdk] build failed (attempt $_i/$_attempts) — last 100 lines of build output:" >&2
+    tail -n 100 "$_log" >&2
     if [ $_i -eq $_attempts ]; then
       echo "[dotnet-sdk] build failed after $_attempts attempts" >&2
+      rm -f "$_log"
       return 1
     fi
-    echo "[dotnet-sdk] build failed (attempt $_i/$_attempts), retrying in ${_delay}s…" >&2
+    echo "[dotnet-sdk] retrying in ${_delay}s…" >&2
     sleep $_delay
     _delay=$((_delay * 2))
     _i=$((_i + 1))

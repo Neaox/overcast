@@ -28,18 +28,26 @@ if ! docker image inspect "$VERSIONED_IMAGE" > /dev/null 2>&1; then
     docker tag "${REMOTE_IMAGE}:${TAG}" "$VERSIONED_IMAGE"
   else
     echo "[rust-sdk] building image (hash ${TAG})..." >&2
+    # Plain progress, captured to a file: stdout must stay clean (the runner's
+    # NDJSON channel), and quiet mode swallows the failing RUN's real output.
+    # On failure the tail of the log is replayed to stderr for the runner.
     _rust_attempts=3
     _rust_delay=10
     _rust_i=1
+    _rust_log="${TMPDIR:-/tmp}/oc-rust-sdk-build-$$.log"
     while [ $_rust_i -le $_rust_attempts ]; do
-      if DOCKER_BUILDKIT=1 docker build -q -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR"; then
+      if DOCKER_BUILDKIT=1 docker build --progress=plain -f "$SCRIPT_DIR/Dockerfile" -t "$VERSIONED_IMAGE" "$CONTEXT_DIR" >"$_rust_log" 2>&1; then
+        rm -f "$_rust_log"
         break
       fi
+      echo "[rust-sdk] build failed (attempt $_rust_i/$_rust_attempts) — last 100 lines of build output:" >&2
+      tail -n 100 "$_rust_log" >&2
       if [ $_rust_i -eq $_rust_attempts ]; then
         echo "[rust-sdk] build failed after $_rust_attempts attempts" >&2
+        rm -f "$_rust_log"
         exit 1
       fi
-      echo "[rust-sdk] build failed (attempt $_rust_i/$_rust_attempts), retrying in ${_rust_delay}s…" >&2
+      echo "[rust-sdk] retrying in ${_rust_delay}s…" >&2
       sleep $_rust_delay
       _rust_delay=$((_rust_delay * 2))
       _rust_i=$((_rust_i + 1))
