@@ -19,7 +19,11 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
+	"strings"
 	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -57,11 +61,32 @@ func TestDescribeImages_withDocker_pushedImageSurvivesARestart(t *testing.T) {
 	// is fresh, so the repository is re-created exactly as `cdk bootstrap`
 	// would; only the registry's own storage carries anything over.
 	first.Shutdown()
+	// The second server's logs are captured and dumped on failure, at Debug,
+	// because that is where the answer to a failure here lives. This test went
+	// red in CI once with the registry-sweep give-up path unrecorded (issue
+	// #1444): NewTestServer's default logger is a Nop, so the sweep's Debug
+	// lines naming which give-up path fired — the whole point of the logging
+	// added for that issue — were discarded, and the failure was undiagnosable
+	// after the fact. Filtered to registry-related messages so a dump is the
+	// registry's story, not the server's whole startup.
+	core, capturedLogs := observer.New(zap.DebugLevel)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, entry := range capturedLogs.All() {
+			if !strings.Contains(entry.Message, "registry") {
+				continue
+			}
+			t.Logf("second server: %s %s %v", entry.Level, entry.Message, entry.ContextMap())
+		}
+	})
 	second := helpers.NewTestServer(t,
 		helpers.WithLambdaDocker(),
 		helpers.WithRegion("us-east-1"),
 		helpers.WithAccountID("000000000000"),
 		helpers.WithECRRegistryPort(port),
+		helpers.WithLogger(zap.New(core)),
 	)
 	ecrCall(t, second, "CreateRepository", map[string]any{"repositoryName": repoName}).Body.Close()
 
