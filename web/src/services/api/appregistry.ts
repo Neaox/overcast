@@ -25,7 +25,6 @@ export interface AssociatedResource {
   name: string
   arn: string
   resourceType: string
-  creationTime: number
 }
 
 async function arFetch<T>(path: string, init?: RequestInit): Promise<T> {
