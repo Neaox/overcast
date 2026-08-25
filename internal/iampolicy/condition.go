@@ -43,6 +43,12 @@ func (r *conditionReport) addUnsupported(msg string) {
 // report and the condition is reported unmet, leaving the caller to decide
 // (the simulator raises AWS's PolicyEvaluation error, enforcement fails
 // closed).
+//
+// A missing context key is *not* uniformly "not matched": AWS's negated
+// operators (StringNotEquals and friends — see isNegatedOperator) evaluate
+// to matched when the key the condition names is absent from the request.
+// See the per-branch comment below and isNegatedOperator's doc for the AWS
+// reference.
 func evaluateConditions(cond map[string]map[string][]string, ctx map[string]string, rep *conditionReport) bool {
 	if len(cond) == 0 {
 		return true
@@ -71,7 +77,21 @@ func evaluateConditions(cond map[string]map[string][]string, ctx map[string]stri
 
 			if !present {
 				rep.addMissing(key)
-				met = false
+				// AWS: a missing context key makes a *positive* condition
+				// operator (StringEquals, NumericLessThan, …) evaluate to
+				// "not matched" — but makes a *negated* one (StringNotEquals,
+				// StringNotEqualsIgnoreCase, StringNotLike, ArnNotEquals,
+				// ArnNotLike, NotIpAddress, NumericNotEquals, DateNotEquals)
+				// evaluate to "matched". This is the general rule, not a
+				// per-operator exception list: "This logic applies to all
+				// condition operators except [...IfExists] and [Null
+				// check]." — both of which are already handled above this
+				// branch. See "IAM JSON policy elements: Condition
+				// operators" (Important box):
+				// https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html
+				if !isNegatedOperator(effectiveOperator) {
+					met = false
+				}
 				continue
 			}
 
@@ -87,6 +107,35 @@ func evaluateConditions(cond map[string]map[string][]string, ctx map[string]stri
 		}
 	}
 	return met
+}
+
+// isNegatedOperator reports whether operator is one of the "Not" family that
+// AWS defines as matching when the condition key it references is absent
+// from the request context — StringNotEquals, StringNotEqualsIgnoreCase,
+// StringNotLike, ArnNotEquals, ArnNotLike, NotIpAddress, NumericNotEquals,
+// DateNotEquals, in this evaluator's supported operator set (the switch in
+// applyConditionOperator below).
+//
+// The check is structural (does the name contain "Not") rather than an
+// explicit list, so a negated operator added to applyConditionOperator later
+// is classified correctly for free instead of needing a second list kept in
+// sync. Every operator in that switch which contains "Not" is genuinely a
+// negated-matching operator and every one that doesn't is a positive one —
+// there is no false positive/negative in the operators currently
+// implemented. The caller has already handled ...IfExists and Null before
+// reaching this check, so this never needs to special-case either of them
+// (Null itself doesn't contain "Not", but the explicit exclusion documents
+// the AWS rule precisely — see reference below — and guards against a
+// future "...Not...Null..." operator name being misclassified).
+//
+// AWS reference ("IAM JSON policy elements: Condition operators", Important
+// box): "If the policy condition requires that the key is not matched, such
+// as StringNotLike or ArnNotLike, and the right key is not present, the
+// condition is true. This logic applies to all condition operators except
+// [...IfExists] and [Null check]."
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html
+func isNegatedOperator(operator string) bool {
+	return operator != "Null" && strings.Contains(operator, "Not")
 }
 
 // applyConditionOperator tests a single condition key value against the

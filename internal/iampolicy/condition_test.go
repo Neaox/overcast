@@ -313,6 +313,84 @@ func TestEvaluateConditions_numericNotEquals_noMatch(t *testing.T) {
 	}
 }
 
+// ─── Negated operator + missing context key tests (#1475) ────────────────────
+//
+// AWS's condition-operator reference states this as the general rule (not a
+// per-operator carve-out): "If the key that you specify in a policy
+// condition is not present in the request context, the values do not match
+// and the condition is false. If the policy condition requires that the key
+// is not matched, such as StringNotLike or ArnNotLike, and the right key is
+// not present, the condition is true. This logic applies to all condition
+// operators except [...IfExists] and [Null check]."
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html
+//
+// The next test reproduces the defect directly: a Deny+StringNotEquals guard
+// against an absent context key must deny. Before the fix in
+// internal/iampolicy/condition.go, evaluateConditions treated every operator
+// alike on a missing key ("condition not met"), so this Deny's condition
+// never matched and the request was allowed.
+
+func TestEvaluateConditions_denyStringNotEquals_missingKey_conditionMet(t *testing.T) {
+	cond := map[string]map[string][]string{
+		"StringNotEquals": {"s3:x-amz-bucket-namespace": {"account-regional"}},
+	}
+	// The bucket-namespace key is absent from the request context entirely —
+	// the request carried no X-Amz-Bucket-Namespace header.
+	met, unknown := evaluateConditionsLegacy(cond, map[string]string{"aws:requestedregion": "us-east-1"})
+	if !met || unknown {
+		t.Fatalf("expected (true, false) — AWS denies a missing key against StringNotEquals — got (%v, %v)", met, unknown)
+	}
+}
+
+// negatedOperatorCase drives the present-and-equal / present-and-different /
+// absent table for one negated operator per class (string, string
+// ignore-case, string wildcard, ARN exact, ARN wildcard, numeric, date, IP).
+type negatedOperatorCase struct {
+	class      string
+	operator   string
+	contextKey string
+	policyVal  string
+	equalVal   string // matches policyVal under the operator's comparison
+	diffVal    string // does not match policyVal
+}
+
+func TestEvaluateConditions_negatedOperators_table(t *testing.T) {
+	cases := []negatedOperatorCase{
+		{"string", "StringNotEquals", "aws:requestedregion", "us-east-1", "us-east-1", "eu-west-1"},
+		{"stringIgnoreCase", "StringNotEqualsIgnoreCase", "aws:requestedregion", "US-EAST-1", "us-east-1", "eu-west-1"},
+		{"stringLike", "StringNotLike", "aws:requestedregion", "us-*", "us-east-1", "eu-west-1"},
+		{"arn", "ArnNotEquals", "aws:sourcearn", "arn:aws:s3:::my-bucket", "arn:aws:s3:::my-bucket", "arn:aws:s3:::other-bucket"},
+		{"arnLike", "ArnNotLike", "aws:sourcearn", "arn:aws:s3:::my-bucket*", "arn:aws:s3:::my-bucket-1", "arn:aws:s3:::other-bucket"},
+		{"numeric", "NumericNotEquals", "aws:requestedcontentlength", "100", "100", "200"},
+		{"date", "DateNotEquals", "aws:currenttime", "2026-04-24T00:00:00Z", "2026-04-24T00:00:00Z", "2026-04-25T00:00:00Z"},
+		{"ip", "NotIpAddress", "aws:sourceip", "10.0.0.0/8", "10.1.2.3", "192.168.1.1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.class+"/present_matchesSet_conditionNotMet", func(t *testing.T) {
+			cond := map[string]map[string][]string{tc.operator: {tc.contextKey: {tc.policyVal}}}
+			met, unknown := evaluateConditionsLegacy(cond, map[string]string{tc.contextKey: tc.equalVal})
+			if met || unknown {
+				t.Fatalf("%s: expected (false, false) when the value matches the negated set, got (%v, %v)", tc.operator, met, unknown)
+			}
+		})
+		t.Run(tc.class+"/present_differsFromSet_conditionMet", func(t *testing.T) {
+			cond := map[string]map[string][]string{tc.operator: {tc.contextKey: {tc.policyVal}}}
+			met, unknown := evaluateConditionsLegacy(cond, map[string]string{tc.contextKey: tc.diffVal})
+			if !met || unknown {
+				t.Fatalf("%s: expected (true, false) when the value differs from the negated set, got (%v, %v)", tc.operator, met, unknown)
+			}
+		})
+		t.Run(tc.class+"/absentKey_conditionMet", func(t *testing.T) {
+			cond := map[string]map[string][]string{tc.operator: {tc.contextKey: {tc.policyVal}}}
+			met, unknown := evaluateConditionsLegacy(cond, map[string]string{"unrelated:key": "value"})
+			if !met || unknown {
+				t.Fatalf("%s: expected (true, false) when the context key is absent (AWS: negated operators match on a missing key), got (%v, %v)", tc.operator, met, unknown)
+			}
+		})
+	}
+}
+
 // ─── Policy variable expansion unit tests ─────────────────────────────────────
 
 func TestExpandPolicyVariables_substitutesUsername(t *testing.T) {

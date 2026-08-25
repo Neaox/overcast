@@ -154,13 +154,26 @@ func TestIAMEnforce_condition_denyWithRegion_allowsOtherRegion(t *testing.T) {
 	}
 }
 
-// ─── s3:x-amz-bucket-namespace condition key (issue #1471) ────────────────
+// ─── s3:x-amz-bucket-namespace condition key (issues #1471, #1475) ────────
 //
 // AWS's published enforcement pattern for account regional namespaces is a
 // Deny with StringNotEquals against s3:x-amz-bucket-namespace, which denies
-// both an absent header and any value other than "account-regional". These
-// two tests are that pattern's two branches, driven through the same
+// both an absent header and any value other than "account-regional". The
+// first two tests are that pattern's two branches, driven through the same
 // PUT-a-bucket-name shape restoperation_test.go pins to CreateBucket.
+//
+// Until #1475, s3ConditionKeys always populated the key — defaulting an
+// absent header to "global" — solely to compensate for the condition
+// evaluator treating a missing key as "not matched" for every operator,
+// including negated ones. With evaluateConditions fixed to match AWS's
+// documented negated-operator-on-missing-key semantics
+// (internal/iampolicy/condition.go), the Deny below denies a header-less
+// request because the key is genuinely absent and StringNotEquals matches on
+// absence — not because a default value stood in for it. The third test
+// below pins the divergence that default used to cause: a StringEquals
+// against a header-less request must NOT match "global", because on AWS the
+// key isn't present in the context at all when the request never carried
+// the header.
 
 func denyNonAccountRegionalBucketNamespacePolicy() string {
 	return `{"Version":"2012-10-17","Statement":[` +
@@ -177,8 +190,10 @@ func TestIAMEnforce_condition_bucketNamespace_absentHeaderDenied(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// No X-Amz-Bucket-Namespace header at all — StringNotEquals treats a
-	// missing key as not equal, so AWS's published pattern denies this too.
+	// No X-Amz-Bucket-Namespace header at all, so s3:x-amz-bucket-namespace
+	// is genuinely absent from the condition context — StringNotEquals
+	// matches on a missing key (AWS's negated-operator rule), so AWS's
+	// published pattern denies this.
 	req := httptest.NewRequest(http.MethodPut, "/my-bucket", nil)
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
 	req.Header.Set("X-Amz-Date", "20260423T000000Z")
@@ -214,6 +229,34 @@ func TestIAMEnforce_condition_bucketNamespace_accountRegionalAllowed(t *testing.
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+}
+
+func TestIAMEnforce_condition_bucketNamespace_absentHeader_stringEqualsGlobalDoesNotMatch(t *testing.T) {
+	st := state.NewMemoryStore()
+	// Allow only when the namespace is explicitly "global" — the value
+	// s3ConditionKeys used to default a missing header to.
+	seedIAMUserWithPolicies(t, st, "test", []string{
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:CreateBucket","Resource":"*","Condition":{"StringEquals":{"s3:x-amz-bucket-namespace":"global"}}}]}`,
+	}, nil)
+
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// No X-Amz-Bucket-Namespace header — the key is absent from the context,
+	// so StringEquals must not match "global" (positive operators keep
+	// "missing key → not matched"). Before #1475 this request was allowed,
+	// because the key was always defaulted to "global".
+	req := httptest.NewRequest(http.MethodPut, "/my-bucket", nil)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+	req.Header.Set("X-Amz-Date", "20260423T000000Z")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected %d, got %d", http.StatusForbidden, rec.Code)
 	}
 }
 

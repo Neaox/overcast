@@ -1570,35 +1570,44 @@ var serviceConditionKeyPopulators = map[string]func(*http.Request) map[string]st
 }
 
 // s3ConditionKeys populates s3:x-amz-bucket-namespace from the
-// X-Amz-Bucket-Namespace request header (see s3.CreateBucket).
+// X-Amz-Bucket-Namespace request header (see s3.CreateBucket), but only when
+// the header is present — a header-less request leaves the key genuinely
+// absent from the IAM condition context, matching how AWS scopes a
+// service-specific condition key to the requests that actually carry it
+// (compare aws:SourceArn, documented the same way: "The aws:SourceArn key is
+// present in the request context only if a resource triggers a service to
+// call another service...").
 //
-// Unverified against real AWS: whether S3 truly resolves this key to
-// "global" in the IAM/SCP evaluation context when the header is absent, or
-// leaves the key absent from the context entirely. The literal absent-header
-// case is documented as *denied* by AWS's own published
-// Deny+StringNotEquals{"s3:x-amz-bucket-namespace":"account-regional"}
-// pattern — but this evaluator's condition operators follow the general AWS
-// rule that a StringNotEquals against a genuinely missing context key
-// evaluates to false (see evaluateConditions in internal/iampolicy), which
-// would make that Deny statement not match and so not deny. Always
-// populating the resolved value (defaulting absent to "global", matching
-// CreateBucket's own default) is what makes the documented pattern behave as
-// documented against this evaluator; if AWS turns out to leave the key
-// genuinely absent instead, only this default needs to change.
+// This key previously defaulted a missing header to "global" (CreateBucket's
+// own default) purely to compensate for a since-fixed bug: the condition
+// evaluator treated a missing context key as "not matched" for every
+// operator, including negated ones, so AWS's own published guard —
+// Deny+StringNotEquals{"s3:x-amz-bucket-namespace":"account-regional"} —
+// never matched a header-less request and the Deny silently failed to apply
+// (#1475). Per "IAM JSON policy elements: Condition operators", a negated
+// operator like StringNotEquals evaluates to *matched* when its key is
+// absent:
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html
+// so with evaluateConditions fixed (internal/iampolicy/condition.go), the
+// Deny pattern denies a header-less request without any default here.
+//
+// The default also produced its own divergence from AWS: with the key
+// always present, StringEquals{"s3:x-amz-bucket-namespace":"global"} matched
+// every header-less S3 request in Overcast, where on AWS a StringEquals
+// against a key the request never carried does not match at all. Not
+// populating the key when the header is absent removes that divergence too.
 func s3ConditionKeys(r *http.Request) map[string]string {
-	// Deliberately local literals, not an import of internal/services/s3: this
-	// is the middleware layer, imported by every service, so it cannot import
-	// down into one service's package without inverting that dependency. The
-	// values themselves (the header name AWS defines, and "global" as
-	// CreateBucket's documented default namespace) are wire constants, not
-	// implementation details — s3.CreateBucket carries the same two literals
-	// for the same reason.
+	// Deliberately a local literal, not an import of internal/services/s3:
+	// this is the middleware layer, imported by every service, so it cannot
+	// import down into one service's package without inverting that
+	// dependency. The header name itself (which AWS defines) is a wire
+	// constant, not an implementation detail — s3.CreateBucket carries the
+	// same literal for the same reason.
 	const bucketNamespaceHeader = "X-Amz-Bucket-Namespace"
-	const bucketNamespaceGlobal = "global"
 
 	namespace := strings.TrimSpace(r.Header.Get(bucketNamespaceHeader))
 	if namespace == "" {
-		namespace = bucketNamespaceGlobal
+		return nil
 	}
 	return map[string]string{
 		"s3:x-amz-bucket-namespace": namespace,
