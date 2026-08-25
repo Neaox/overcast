@@ -41,6 +41,13 @@ func TestGetObject_success(t *testing.T) {
 }
 ```
 
+`http.DefaultClient` is the right client here, and closing without reading the
+body is fine: importing `tests/helpers` retunes the default client for test
+binaries (drain-on-close plus a wide connection pool — see
+`tests/helpers/httpclient.go`). Don't hand-roll a `&http.Client{...}` per test
+or per request; on Windows the connection churn exhausts the 16k-port dynamic
+range and fails whole packages with `connectex` dial errors.
+
 ### Naming convention
 
 Test function names follow this pattern:
