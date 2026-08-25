@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import { describeLogEvent, formatLogTime, logLevelRowClass } from "@/lib/log-format"
 import { nearViewport, useScrollSettled } from "@/hooks/use-scroll-settled"
 import { CopyButton } from "@/components/ui/copy-button"
-import { LevelBadge, LogMessage } from "./log-message"
+import { LogMessage } from "./log-message"
 
 export interface LogViewerEvent {
   timestamp?: number
@@ -353,6 +353,12 @@ const TableRow = memo(function TableRow({
     [onToggle],
   )
 
+  // The badge renders INLINE at the head of the message, by the shared
+  // pipeline itself (no `hideLevel`) — exactly how the flagship stream
+  // table does it. A dedicated badge column was tried first and is a trap:
+  // any fixed width either overflows "ERROR" into the message or pads
+  // every badge-less row (START/END/REPORT) with dead space, and the
+  // message column's start stops lining up across rows either way.
   const body = (
     <LogMessage
       message={String(event.message ?? "")}
@@ -362,7 +368,6 @@ const TableRow = memo(function TableRow({
       wrapLines
       filterMatcher={filterMatcher}
       level={meta.level}
-      hideLevel
       collapsed={collapsed}
       defer={defer}
       sizeClassName="text-[10px]"
@@ -378,16 +383,12 @@ const TableRow = memo(function TableRow({
         meta.level && logLevelRowClass[meta.level],
       )}
     >
-      <div className="w-20 shrink-0 py-1 pr-1 font-mono text-[10px] text-fg-muted tabular-nums">
+      {/* px-1 on both sides: the left edge is the level-tint border, and
+          text flush against a 2px colored bar reads as a glyph. */}
+      <div className="w-20 shrink-0 px-1 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
         {formatLogTime(event.timestamp)}
       </div>
-      <div className="flex w-5 shrink-0 items-start justify-center pt-1">
-        {meta.level && <LevelBadge level={meta.level} />}
-      </div>
-      <div className="min-w-0 flex-1 py-1 pr-2">{body}</div>
-      <div className="w-20 shrink-0 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
-        {formatLogTime(event.ingestionTime)}
-      </div>
+      <div className="min-w-0 flex-1 px-1 py-1">{body}</div>
       <RowCopyAction plain={meta.plain} defer={defer} />
     </div>
   )
