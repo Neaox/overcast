@@ -189,7 +189,7 @@ func (h *Handler) DisassociateSourceGraphqlApi(w http.ResponseWriter, r *http.Re
 	// Re-merge remaining sources.
 	h.reMergeAllSources(r.Context(), mergedApiID)
 
-	writeJSON(w, r, http.StatusOK, map[string]any{"sourceApiAssociation": assoc})
+	writeJSON(w, r, http.StatusOK, map[string]any{"sourceApiAssociationStatus": assoc.SourceApiAssociationStatus})
 }
 
 // ─── DisassociateMergedGraphqlApi ────────────────────────────────────────────
@@ -218,7 +218,7 @@ func (h *Handler) DisassociateMergedGraphqlApi(w http.ResponseWriter, r *http.Re
 				return
 			}
 			h.reMergeAllSources(r.Context(), api.ApiId)
-			writeJSON(w, r, http.StatusOK, map[string]any{"sourceApiAssociation": assoc})
+			writeJSON(w, r, http.StatusOK, map[string]any{"sourceApiAssociationStatus": assoc.SourceApiAssociationStatus})
 			return
 		}
 	}
