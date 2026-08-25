@@ -196,15 +196,41 @@ fi
 # saturate every core for the duration. Honour the same two knobs the Docker
 # entry points use, so a machine that wants the bound can ask for it.
 #
-# Unset means uncapped — the behaviour every other machine has today. This only
-# ever does something when someone opts in, so it changes nobody's gate by
-# default. "0" is the explicit no-cap spelling, matching lib/go-cpu-bound.sh.
+# On Windows the -p cap on the scoped test *run* is correctness, not
+# scheduling. Unbounded, that step executes NumCPU test binaries at once (24 on
+# a 5900X), and the network-heavy packages between them churn through more
+# sockets than the default ~16k-port Windows ephemeral range holds — listeners
+# plus client conns per test, times 24 binaries, with TIME_WAIT holding each
+# port for minutes. The losers fail with ADDRINUSE, so the gate fails on a tree
+# that is green: the identical tree passes every time at `-p 2`. That is
+# deterministic parallelism-induced overload, not test flake — re-running does
+# not help, capping does. So on a Windows-flavoured host (Git Bash/MSYS/Cygwin
+# by `uname -s`, or WSL by the Microsoft kernel in `uname -r`, where interop
+# can make `go` the Windows toolchain) an unset OVERCAST_GO_TEST_P defaults the
+# test run to -p 2. The tag-matrix pass stays uncapped: it starts no test
+# binary and binds no socket, and since -p bounds build actions too, capping it
+# would multiply the gate's longest step for no protection. Elsewhere —
+# including Linux CI, which never runs this script — unset still means
+# uncapped everywhere. An explicit value keeps its old meaning (both steps),
+# and "0" is the explicit no-cap spelling on every platform, matching
+# lib/go-cpu-bound.sh.
+_windows_flavoured() {
+  case "$(uname -sr 2>/dev/null)" in
+  *MINGW* | *MSYS* | *CYGWIN* | *[Mm]icrosoft*) return 0 ;;
+  esac
+  return 1
+}
+
 go_test_p=""
 if [ -n "${OVERCAST_GO_CPUS:-}" ] && [ "${OVERCAST_GO_CPUS}" != "0" ]; then
   export GOMAXPROCS="$OVERCAST_GO_CPUS"
 fi
 if [ -n "${OVERCAST_GO_TEST_P:-}" ] && [ "${OVERCAST_GO_TEST_P}" != "0" ]; then
   go_test_p="-p $OVERCAST_GO_TEST_P"
+fi
+go_run_p="$go_test_p"
+if [ -z "${OVERCAST_GO_TEST_P:-}" ] && _windows_flavoured; then
+  go_run_p="-p 2"
 fi
 
 base=$(git merge-base HEAD origin/main 2>/dev/null) || base=""
@@ -314,8 +340,8 @@ if [ -n "$go_changed" ]; then
     # tags at all, which makes `-tags slim` a no-op there rather than a
     # different build.
     if command -v go >/dev/null 2>&1; then
-      # shellcheck disable=SC2086 # $go_test_p is a whole flag pair or empty
-      go -C "$mod" test -count=1 $go_test_p -tags slim ./... || failed="$failed test-run($label)"
+      # shellcheck disable=SC2086 # $go_run_p is a whole flag pair or empty
+      go -C "$mod" test -count=1 $go_run_p -tags slim ./... || failed="$failed test-run($label)"
     elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
       scripts/docker-go.sh -C "$mod" test -count=1 -tags slim ./... || failed="$failed test-run($label)"
     else
