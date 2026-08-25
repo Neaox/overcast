@@ -604,7 +604,6 @@ type v2APIResponse struct {
 	Version                  string            `json:"version,omitempty"`
 	DisableExecuteAPI        bool              `json:"disableExecuteApiEndpoint,omitempty"`
 	ApiEndpoint              string            `json:"apiEndpoint,omitempty"`
-	ARN                      string            `json:"arn,omitempty"`
 }
 
 // v2APIToResponse renders an HTTP API. ApiEndpoint is minted through the shared
@@ -633,6 +632,5 @@ func (h *Handler) v2APIToResponse(r *http.Request, api *APIV2, region string) v2
 		Tags:                     api.Tags,
 		Version:                  api.Version,
 		DisableExecuteAPI:        api.DisableExecuteAPI,
-		ARN:                      protocol.APIV2ARN(region, api.ApiID),
 	}
 }

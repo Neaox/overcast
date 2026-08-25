@@ -235,8 +235,11 @@ type UsagePlan struct {
 	Quota       *QuotaSettings    `json:"quota,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	// KeyIDs lists the API key IDs attached to this plan via UsagePlanKey.
-	// AWS exposes these via the /usageplans/{id}/keys endpoint; SDK clients
-	// ignore unknown fields so leaking this in plan responses is harmless.
+	// It is persisted alongside the plan (it backs the plan/key
+	// association) but is not part of the modeled UsagePlan shape, so
+	// handler_apikeys.go projects it out of plan responses via
+	// usagePlanWire; GetUsagePlanKeys is the modeled channel for reading
+	// it back.
 	KeyIDs []string `json:"keyIds,omitempty"`
 	// TODO(priority:P3): add productCode
 }

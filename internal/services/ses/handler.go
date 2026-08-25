@@ -573,7 +573,6 @@ func (h *Handler) V2GetEmailIdentity(w http.ResponseWriter, r *http.Request) {
 		"IdentityType":             iType,
 		"VerifiedForSendingStatus": true,
 		"VerificationStatus":       "SUCCESS",
-		"IdentityName":             v.Identity,
 		"Tags":                     sortedSESTags(v.Tags),
 	})
 }

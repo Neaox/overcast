@@ -852,7 +852,6 @@ func (h *Handler) DescribeChangeSet(w http.ResponseWriter, r *http.Request) {
 		StackName:       cs.StackName,
 		Status:          cs.Status,
 		ExecutionStatus: cs.ExecutionStatus,
-		ChangeSetType:   cs.ChangeSetType,
 		CreatedAt:       cs.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		Changes:         changesXML,
 	}
@@ -1661,7 +1660,6 @@ type describeChangeSetResult struct {
 	StackName       string      `xml:"StackName"`
 	Status          string      `xml:"Status"`
 	ExecutionStatus string      `xml:"ExecutionStatus"`
-	ChangeSetType   string      `xml:"ChangeSetType"`
 	CreatedAt       string      `xml:"CreationTime"`
 	Changes         []changeXML `xml:"Changes>member,omitempty"`
 }

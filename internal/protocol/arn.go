@@ -94,19 +94,6 @@ func LogStreamARN(region, accountID, groupName, streamName string) string {
 	return fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:log-stream:%s", region, accountID, groupName, streamName)
 }
 
-// RestAPIARN builds an API Gateway REST API ARN.
-// API Gateway ARNs omit the account ID — this is an AWS quirk.
-// Format: arn:aws:apigateway:{region}::/restapis/{apiId}.
-func RestAPIARN(region, apiID string) string {
-	return fmt.Sprintf("arn:aws:apigateway:%s::/restapis/%s", region, apiID)
-}
-
-// APIV2ARN builds an API Gateway v2 (HTTP/WebSocket) API ARN.
-// Format: arn:aws:apigateway:{region}::/apis/{apiId}.
-func APIV2ARN(region, apiID string) string {
-	return fmt.Sprintf("arn:aws:apigateway:%s::/apis/%s", region, apiID)
-}
-
 // DistributionARN builds a CloudFront distribution ARN.
 // CloudFront ARNs omit the region — this is an AWS quirk.
 // Format: arn:aws:cloudfront::{accountID}:distribution/{distributionID}.

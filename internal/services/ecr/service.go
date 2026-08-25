@@ -1584,7 +1584,7 @@ func (s *Service) setRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 
 	region := s.region(r)
 	ctx := r.Context()
-	repo, found, err := s.getRepo(ctx, region, req.RepositoryName)
+	_, found, err := s.getRepo(ctx, region, req.RepositoryName)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -1603,7 +1603,6 @@ func (s *Service) setRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 		"registryId":     s.accountID(),
 		"repositoryName": req.RepositoryName,
 		"policyText":     req.PolicyText,
-		"repositoryArn":  repo.RepositoryArn,
 	})
 }
 

@@ -276,6 +276,34 @@ type createUsagePlanRequest struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
+// usagePlanWire is the wire-visible projection of a UsagePlan. The modeled
+// UsagePlan shape is [id, name, description, apiStages, throttle, quota,
+// productCode, tags] — it has no keyIds member, so KeyIDs (stored on
+// UsagePlan to back the plan/key association) is deliberately left out
+// here. GetUsagePlanKeys is the modeled channel for reading key
+// associations back.
+type usagePlanWire struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	APIStages   []UsagePlanStage  `json:"apiStages,omitempty"`
+	Throttle    *ThrottleSettings `json:"throttle,omitempty"`
+	Quota       *QuotaSettings    `json:"quota,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+}
+
+func newUsagePlanWire(p *UsagePlan) usagePlanWire {
+	return usagePlanWire{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		APIStages:   p.APIStages,
+		Throttle:    p.Throttle,
+		Quota:       p.Quota,
+		Tags:        p.Tags,
+	}
+}
+
 // CreateUsagePlan handles POST /usageplans.
 //
 // Per the AWS API Gateway REST API reference, `name` is optional on
@@ -316,7 +344,7 @@ func (h *Handler) CreateUsagePlan(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("usage plan created", zap.String("plan_id", plan.ID), zap.String("name", plan.Name))
 
-	protocol.WriteJSON(w, r, http.StatusCreated, plan)
+	protocol.WriteJSON(w, r, http.StatusCreated, newUsagePlanWire(plan))
 }
 
 // GetUsagePlan handles GET /usageplans/{usagePlanId}.
@@ -329,7 +357,7 @@ func (h *Handler) GetUsagePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, plan)
+	protocol.WriteJSON(w, r, http.StatusOK, newUsagePlanWire(plan))
 }
 
 // GetUsagePlans handles GET /usageplans.
@@ -340,8 +368,13 @@ func (h *Handler) GetUsagePlans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	items := make([]usagePlanWire, 0, len(plans))
+	for _, plan := range plans {
+		items = append(items, newUsagePlanWire(plan))
+	}
+
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"item": plans,
+		"item": items,
 	})
 }
 
