@@ -42,6 +42,55 @@ func toAttributeGroupResponse(ag *AttributeGroup) attributeGroupResponse {
 	}
 }
 
+// attributeGroupCreateResponse mirrors the AWS AttributeGroup wire shape —
+// used by CreateAttributeGroup/UpdateAttributeGroup's `attributeGroup` field.
+// Narrower than attributeGroupResponse (the flat GetAttributeGroupResponse
+// shape): carries tags, but no attributes.
+type attributeGroupCreateResponse struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Arn            string            `json:"arn"`
+	Description    string            `json:"description,omitempty"`
+	Tags           map[string]string `json:"tags,omitempty"`
+	CreationTime   float64           `json:"creationTime"`
+	LastUpdateTime float64           `json:"lastUpdateTime"`
+}
+
+func toAttributeGroupCreateResponse(ag *AttributeGroup) attributeGroupCreateResponse {
+	return attributeGroupCreateResponse{
+		ID:             ag.ID,
+		Name:           ag.Name,
+		Arn:            ag.ARN,
+		Description:    ag.Description,
+		Tags:           ag.Tags,
+		CreationTime:   ag.CreationTime,
+		LastUpdateTime: ag.LastUpdateTime,
+	}
+}
+
+// attributeGroupSummaryResponse mirrors the AWS AttributeGroupSummary wire
+// shape — used by ListAttributeGroups items and DeleteAttributeGroup's
+// `attributeGroup` field. No tags, no attributes.
+type attributeGroupSummaryResponse struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Arn            string  `json:"arn"`
+	Description    string  `json:"description,omitempty"`
+	CreationTime   float64 `json:"creationTime"`
+	LastUpdateTime float64 `json:"lastUpdateTime"`
+}
+
+func toAttributeGroupSummaryResponse(ag *AttributeGroup) attributeGroupSummaryResponse {
+	return attributeGroupSummaryResponse{
+		ID:             ag.ID,
+		Name:           ag.Name,
+		Arn:            ag.ARN,
+		Description:    ag.Description,
+		CreationTime:   ag.CreationTime,
+		LastUpdateTime: ag.LastUpdateTime,
+	}
+}
+
 // decodeAttributes accepts either a JSON string or a JSON object for the
 // `attributes` field — the SDK may send either depending on client version.
 func decodeAttributes(raw json.RawMessage) string {
@@ -102,8 +151,8 @@ func (h *Handler) CreateAttributeGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		AttributeGroup attributeGroupResponse `json:"attributeGroup"`
-	}{AttributeGroup: toAttributeGroupResponse(ag)})
+		AttributeGroup attributeGroupCreateResponse `json:"attributeGroup"`
+	}{AttributeGroup: toAttributeGroupCreateResponse(ag)})
 }
 
 func (h *Handler) GetAttributeGroup(w http.ResponseWriter, r *http.Request) {
@@ -122,12 +171,12 @@ func (h *Handler) ListAttributeGroups(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	out := make([]attributeGroupResponse, 0, len(ags))
+	out := make([]attributeGroupSummaryResponse, 0, len(ags))
 	for i := range ags {
-		out = append(out, toAttributeGroupResponse(&ags[i]))
+		out = append(out, toAttributeGroupSummaryResponse(&ags[i]))
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		AttributeGroups []attributeGroupResponse `json:"attributeGroups"`
+		AttributeGroups []attributeGroupSummaryResponse `json:"attributeGroups"`
 	}{AttributeGroups: out})
 }
 
@@ -168,8 +217,8 @@ func (h *Handler) UpdateAttributeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		AttributeGroup attributeGroupResponse `json:"attributeGroup"`
-	}{AttributeGroup: toAttributeGroupResponse(ag)})
+		AttributeGroup attributeGroupCreateResponse `json:"attributeGroup"`
+	}{AttributeGroup: toAttributeGroupCreateResponse(ag)})
 }
 
 func (h *Handler) DeleteAttributeGroup(w http.ResponseWriter, r *http.Request) {
@@ -185,8 +234,8 @@ func (h *Handler) DeleteAttributeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, struct {
-		AttributeGroup attributeGroupResponse `json:"attributeGroup"`
-	}{AttributeGroup: toAttributeGroupResponse(ag)})
+		AttributeGroup attributeGroupSummaryResponse `json:"attributeGroup"`
+	}{AttributeGroup: toAttributeGroupSummaryResponse(ag)})
 }
 
 func (h *Handler) AssociateAttributeGroup(w http.ResponseWriter, r *http.Request) {
