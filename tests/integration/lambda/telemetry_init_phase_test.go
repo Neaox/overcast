@@ -21,8 +21,15 @@ import (
 	"strings"
 	"testing"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
 	"github.com/Neaox/overcast/tests/helpers"
 )
+
+// initPhaseRecordTypes are the three records AWS reports for an execution
+// environment's INIT phase, in the order they happen.
+var initPhaseRecordTypes = []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"}
 
 func TestInvoke_extensionSubscribedToTelemetryReceivesTheInitPhaseRecords(t *testing.T) {
 	skipIfNoDocker(t)
@@ -114,7 +121,22 @@ function call(method, path, headers, body) {
 `,
 	})
 
-	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker())
+	// The emulator's own warnings are the only place a delivery it gave up on
+	// is reported — a subscriber cannot tell a record it never received from
+	// one that was never sent. Kept and printed only when this test fails, so a
+	// CI occurrence says which of the two happened instead of leaving it to be
+	// guessed at (#1437).
+	core, observed := observer.New(zap.WarnLevel)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, entry := range observed.All() {
+			t.Logf("server %s: %s %v", entry.Level, entry.Message, entry.ContextMap())
+		}
+	})
+
+	srv := helpers.NewTestServer(t, helpers.WithLambdaDocker(), helpers.WithLogger(zap.New(core)))
 	createImageFunction(t, srv, "telemetry-init-fn", image, nil)
 	waitForFunctionActive(t, srv, "telemetry-init-fn")
 
@@ -132,15 +154,24 @@ function call(method, path, headers, body) {
 		}
 	}
 
+	// Wait for all three, not for the last of them. A batch keeps its own
+	// records in order, but the phase does not arrive as one batch — the
+	// replay a subscription is opened with and the pair the first GET /next
+	// publishes are separate deliveries, and separate deliveries are posted by
+	// a pool of workers that share no ordering. So "initReport has arrived"
+	// says nothing about the records published before it, and waiting on one
+	// of the three to then assert the other two were already there is a race —
+	// the one this test lost in #1437. Waiting for all three is also what
+	// separates late from lost: a record the emulator gave up on is still
+	// missing when the budget runs out, and the dump names what did arrive.
 	messages := logEventsFor(t, srv, "/aws/lambda/telemetry-init-fn", func(m []string) bool {
-		return indexOfLine(m, "TELEMETRY platform.initReport") >= 0
-	})
-
-	for _, eventType := range []string{"platform.initStart", "platform.initRuntimeDone", "platform.initReport"} {
-		if indexOfLine(messages, "TELEMETRY "+eventType+" ") < 0 {
-			t.Errorf("the extension never received a %s record:\n%s", eventType, strings.Join(messages, "\n"))
+		for _, eventType := range initPhaseRecordTypes {
+			if indexOfLine(m, "TELEMETRY "+eventType+" ") < 0 {
+				return false
+			}
 		}
-	}
+		return true
+	})
 
 	// The records the extension was handed are the AWS shapes, not strings of
 	// them: it parsed each event's `record` as an object to print it.
