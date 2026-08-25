@@ -1553,6 +1553,52 @@ type parsedOriginRequestPolicy struct {
 	ID      string   `xml:"Id"`
 }
 
+// originRequestPolicyConfigWithBehaviorsXML returns an OriginRequestPolicyConfig
+// body that exercises the real wire shape: each of HeadersConfig, CookiesConfig,
+// and QueryStringsConfig carries a required *Behavior member alongside its list.
+func originRequestPolicyConfigWithBehaviorsXML(name string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<OriginRequestPolicyConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <Name>%s</Name>
+  <Comment>full origin request policy</Comment>
+  <HeadersConfig>
+    <HeaderBehavior>whitelist</HeaderBehavior>
+    <Headers><Quantity>1</Quantity><Items><Item>X-Custom-Header</Item></Items></Headers>
+  </HeadersConfig>
+  <CookiesConfig>
+    <CookieBehavior>whitelist</CookieBehavior>
+    <Cookies><Quantity>1</Quantity><Items><Item>session-id</Item></Items></Cookies>
+  </CookiesConfig>
+  <QueryStringsConfig>
+    <QueryStringBehavior>whitelist</QueryStringBehavior>
+    <QueryStrings><Quantity>1</Quantity><Items><Item>utm_source</Item></Items></QueryStrings>
+  </QueryStringsConfig>
+</OriginRequestPolicyConfig>`, name)
+}
+
+// parsedOriginRequestPolicyFull captures the modeled response shape for an
+// OriginRequestPolicy, including the behavior members that a bare StringList
+// would silently drop.
+type parsedOriginRequestPolicyFull struct {
+	XMLName xml.Name `xml:"OriginRequestPolicy"`
+	ID      string   `xml:"Id"`
+	Config  struct {
+		Name          string `xml:"Name"`
+		HeadersConfig struct {
+			HeaderBehavior string   `xml:"HeaderBehavior"`
+			Headers        []string `xml:"Headers>Items>Item"`
+		} `xml:"HeadersConfig"`
+		CookiesConfig struct {
+			CookieBehavior string   `xml:"CookieBehavior"`
+			Cookies        []string `xml:"Cookies>Items>Item"`
+		} `xml:"CookiesConfig"`
+		QueryStringsConfig struct {
+			QueryStringBehavior string   `xml:"QueryStringBehavior"`
+			QueryStrings        []string `xml:"QueryStrings>Items>Item"`
+		} `xml:"QueryStringsConfig"`
+	} `xml:"OriginRequestPolicyConfig"`
+}
+
 func cfCreateOriginRequestPolicy(t *testing.T, srv *helpers.TestServer, name string) (parsedOriginRequestPolicy, string) {
 	t.Helper()
 	body := originRequestPolicyConfigXML(name)
@@ -1685,6 +1731,76 @@ func TestListOriginRequestPolicies_success(t *testing.T) {
 	}
 	if result.Quantity != 2 {
 		t.Errorf("expected Quantity=2, got %d", result.Quantity)
+	}
+}
+
+// TestCreateOriginRequestPolicy_behaviorsAndLists round-trips an origin request
+// policy whose HeadersConfig/CookiesConfig/QueryStringsConfig carry the modeled
+// *Behavior member alongside their lists. Overcast used to model these as bare
+// StringList{Quantity,Items}, which silently dropped the behavior and mismatched
+// the real OriginRequestPolicyHeadersConfig/CookiesConfig/QueryStringsConfig shapes.
+func TestCreateOriginRequestPolicy_behaviorsAndLists(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	body := originRequestPolicyConfigWithBehaviorsXML("orp-behaviors-1")
+	req, _ := http.NewRequest(http.MethodPost,
+		srv.URL+"/2020-05-31/origin-request-policy",
+		bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/xml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("CreateOriginRequestPolicy: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	b := readBody(t, resp)
+
+	// The response XML must use the modeled element names: a HeaderBehavior /
+	// CookieBehavior / QueryStringBehavior member, not a bare Quantity+Items list.
+	for _, want := range []string{
+		"<HeaderBehavior>whitelist</HeaderBehavior>",
+		"<CookieBehavior>whitelist</CookieBehavior>",
+		"<QueryStringBehavior>whitelist</QueryStringBehavior>",
+	} {
+		if !bytes.Contains(b, []byte(want)) {
+			t.Errorf("expected response XML to contain %q\nbody: %s", want, b)
+		}
+	}
+
+	var p parsedOriginRequestPolicyFull
+	if err := xml.Unmarshal(b, &p); err != nil {
+		t.Fatalf("unmarshal OriginRequestPolicy: %v\nbody: %s", err, b)
+	}
+	if p.Config.HeadersConfig.HeaderBehavior != "whitelist" {
+		t.Errorf("expected HeaderBehavior=whitelist, got %q", p.Config.HeadersConfig.HeaderBehavior)
+	}
+	if got := p.Config.HeadersConfig.Headers; len(got) != 1 || got[0] != "X-Custom-Header" {
+		t.Errorf("expected Headers=[X-Custom-Header], got %v", got)
+	}
+	if p.Config.CookiesConfig.CookieBehavior != "whitelist" {
+		t.Errorf("expected CookieBehavior=whitelist, got %q", p.Config.CookiesConfig.CookieBehavior)
+	}
+	if got := p.Config.CookiesConfig.Cookies; len(got) != 1 || got[0] != "session-id" {
+		t.Errorf("expected Cookies=[session-id], got %v", got)
+	}
+	if p.Config.QueryStringsConfig.QueryStringBehavior != "whitelist" {
+		t.Errorf("expected QueryStringBehavior=whitelist, got %q", p.Config.QueryStringsConfig.QueryStringBehavior)
+	}
+	if got := p.Config.QueryStringsConfig.QueryStrings; len(got) != 1 || got[0] != "utm_source" {
+		t.Errorf("expected QueryStrings=[utm_source], got %v", got)
+	}
+
+	// GetOriginRequestPolicyConfig must round-trip the same shape.
+	getReq, _ := http.NewRequest(http.MethodGet,
+		srv.URL+"/2020-05-31/origin-request-policy/"+p.ID+"/config", nil)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("GetOriginRequestPolicyConfig: %v", err)
+	}
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	getBody := readBody(t, getResp)
+	if !bytes.Contains(getBody, []byte("<HeaderBehavior>whitelist</HeaderBehavior>")) {
+		t.Errorf("expected config XML to contain HeaderBehavior\nbody: %s", getBody)
 	}
 }
 
@@ -3213,6 +3329,8 @@ type parsedRealtimeLogConfig struct {
 	ARN          string   `xml:"ARN"`
 	Name         string   `xml:"Name"`
 	SamplingRate int64    `xml:"SamplingRate"`
+	// Fields uses the modeled FieldList element name (<Fields><Field>...).
+	Fields []string `xml:"Fields>Field"`
 }
 
 type parsedCreateRealtimeLogConfigResult struct {
@@ -3252,6 +3370,40 @@ func TestCreateRealtimeLogConfig_success(t *testing.T) {
 	}
 	if rlc.SamplingRate != 100 {
 		t.Errorf("expected SamplingRate=100, got %d", rlc.SamplingRate)
+	}
+	if got := rlc.Fields; len(got) != 2 || got[0] != "timestamp" || got[1] != "c-ip" {
+		t.Errorf("expected Fields=[timestamp c-ip], got %v", got)
+	}
+}
+
+// TestCreateRealtimeLogConfig_fieldElementNames asserts that Fields uses the
+// modeled FieldList element name (<Field>), matching the request shape a real
+// client sends, not the generic <member> that a bare Quantity/Items list would emit.
+func TestCreateRealtimeLogConfig_fieldElementNames(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	body := realtimeLogConfigXMLBody("rlc-field-names-1", 100)
+	req, _ := http.NewRequest(http.MethodPost,
+		srv.URL+"/2020-05-31/realtime-log-config",
+		bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/xml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("CreateRealtimeLogConfig: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	b := readBody(t, resp)
+
+	if !bytes.Contains(b, []byte("<Field>timestamp</Field>")) {
+		t.Errorf("expected response XML to contain <Field>timestamp</Field>\nbody: %s", b)
+	}
+	if !bytes.Contains(b, []byte("<Field>c-ip</Field>")) {
+		t.Errorf("expected response XML to contain <Field>c-ip</Field>\nbody: %s", b)
+	}
+	// EndPoints legitimately uses <member> (EndPointList has no xmlName override);
+	// only Fields must have moved off it.
+	if bytes.Contains(b, []byte("<Fields><member>")) {
+		t.Errorf("expected Fields not to use <member>\nbody: %s", b)
 	}
 }
 
