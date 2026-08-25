@@ -46,17 +46,27 @@ type QueryExecution struct {
 	} `json:"ResultConfiguration,omitempty"`
 }
 
-func (wg *WorkGroup) GetTags() map[string]string  { return wg.Tags }
-func (wg *WorkGroup) SetTags(t map[string]string) { wg.Tags = t }
-
-// WorkGroup represents an Athena workgroup.
+// WorkGroup represents an Athena workgroup. This is the wire shape — the AWS
+// model's WorkGroup carries no Tags member, so tags must never be embedded
+// here. See workGroupRecord for how tags are persisted.
 type WorkGroup struct {
-	Name          string            `json:"Name"`
-	State         string            `json:"State"`
-	Description   string            `json:"Description,omitempty"`
-	Configuration map[string]any    `json:"Configuration,omitempty"`
-	Tags          map[string]string `json:"Tags,omitempty"`
+	Name          string         `json:"Name"`
+	State         string         `json:"State"`
+	Description   string         `json:"Description,omitempty"`
+	Configuration map[string]any `json:"Configuration,omitempty"`
 }
+
+// workGroupRecord is a WorkGroup as persisted: the wire shape plus its tags.
+// Tags are kept off GetWorkGroup/ListWorkGroups (the model keeps them off
+// WorkGroup) and exposed only through TagResource, UntagResource and
+// ListTagsForResource.
+type workGroupRecord struct {
+	WorkGroup
+	Tags map[string]string `json:"overcastTags,omitempty"`
+}
+
+func (wg *workGroupRecord) GetTags() map[string]string  { return wg.Tags }
+func (wg *workGroupRecord) SetTags(t map[string]string) { wg.Tags = t }
 
 // ─── Store ────────────────────────────────────────────────────
 
@@ -110,7 +120,7 @@ func (s *athenaStore) listQueries(ctx context.Context) ([]*QueryExecution, error
 	return out, nil
 }
 
-func (s *athenaStore) putWorkGroup(ctx context.Context, wg *WorkGroup) error {
+func (s *athenaStore) putWorkGroup(ctx context.Context, wg *workGroupRecord) error {
 	raw, err := json.Marshal(wg)
 	if err != nil {
 		return fmt.Errorf("athena: marshal workgroup: %w", err)
@@ -118,26 +128,26 @@ func (s *athenaStore) putWorkGroup(ctx context.Context, wg *WorkGroup) error {
 	return s.store.Set(ctx, nsWorkGroups, wg.Name, string(raw))
 }
 
-func (s *athenaStore) getWorkGroup(ctx context.Context, name string) (*WorkGroup, bool) {
+func (s *athenaStore) getWorkGroup(ctx context.Context, name string) (*workGroupRecord, bool) {
 	raw, found, err := s.store.Get(ctx, nsWorkGroups, name)
 	if err != nil || !found {
 		return nil, false
 	}
-	var wg WorkGroup
+	var wg workGroupRecord
 	if json.Unmarshal([]byte(raw), &wg) != nil {
 		return nil, false
 	}
 	return &wg, true
 }
 
-func (s *athenaStore) listWorkGroups(ctx context.Context) ([]*WorkGroup, error) {
+func (s *athenaStore) listWorkGroups(ctx context.Context) ([]*workGroupRecord, error) {
 	pairs, err := s.store.Scan(ctx, nsWorkGroups, "")
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*WorkGroup, 0, len(pairs))
+	out := make([]*workGroupRecord, 0, len(pairs))
 	for _, kv := range pairs {
-		var wg WorkGroup
+		var wg workGroupRecord
 		if json.Unmarshal([]byte(kv.Value), &wg) == nil {
 			out = append(out, &wg)
 		}
@@ -348,7 +358,7 @@ func (s *Service) getWorkGroup(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"WorkGroup": wg})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"WorkGroup": &wg.WorkGroup})
 }
 
 func (s *Service) listWorkGroups(w http.ResponseWriter, r *http.Request) {

@@ -47,16 +47,17 @@ type subscriptionWire struct {
 	StartTime               float64 `json:"StartTime"`
 	TimeCommitmentInSeconds int     `json:"TimeCommitmentInSeconds"`
 	AutoRenew               string  `json:"AutoRenew"`
-	SubscriptionState       string  `json:"SubscriptionState"`
 }
 
+// SubscriptionState is a member of GetSubscriptionStateResponse only, not of
+// Subscription / DescribeSubscriptionResponse — Overcast does not implement
+// GetSubscriptionState.
 func (h *Handler) describeSubscriptionTyped(ctx context.Context, req *struct{}) (*describeSubscriptionResponse, *protocol.AWSError) {
 	return &describeSubscriptionResponse{
 		Subscription: subscriptionWire{
 			StartTime:               1000000000.0,
 			TimeCommitmentInSeconds: 31536000,
 			AutoRenew:               "ENABLED",
-			SubscriptionState:       "ACTIVE",
 		},
 	}, nil
 }
@@ -69,11 +70,11 @@ func (h *Handler) createProtectionTyped(ctx context.Context, req *createProtecti
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	p := &Protection{
+	p := &protectionRecord{Protection: Protection{
 		ID:          uuid.NewString(),
 		Name:        req.Name,
 		ResourceArn: req.ResourceArn,
-	}
+	}}
 	if err := h.store.putProtection(ctx, p); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -81,9 +82,13 @@ func (h *Handler) createProtectionTyped(ctx context.Context, req *createProtecti
 }
 
 func (h *Handler) listProtectionsTyped(ctx context.Context, req *listProtectionsRequest) (*listProtectionsResponse, *protocol.AWSError) {
-	protections, err := h.store.listProtections(ctx)
+	records, err := h.store.listProtections(ctx)
 	if err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	protections := make([]*Protection, 0, len(records))
+	for _, rec := range records {
+		protections = append(protections, &rec.Protection)
 	}
 	return &listProtectionsResponse{Protections: protections}, nil
 }
@@ -119,7 +124,7 @@ func (h *Handler) describeProtectionTyped(ctx context.Context, req *describeProt
 				HTTPStatus: http.StatusNotFound,
 			}
 		}
-		return &describeProtectionResponse{Protection: p}, nil
+		return &describeProtectionResponse{Protection: &p.Protection}, nil
 	}
 	if req.ResourceArn != "" {
 		all, err := h.store.listProtections(ctx)
@@ -128,7 +133,7 @@ func (h *Handler) describeProtectionTyped(ctx context.Context, req *describeProt
 		}
 		for _, p := range all {
 			if p.ResourceArn == req.ResourceArn {
-				return &describeProtectionResponse{Protection: p}, nil
+				return &describeProtectionResponse{Protection: &p.Protection}, nil
 			}
 		}
 	}

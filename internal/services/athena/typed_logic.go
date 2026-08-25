@@ -139,7 +139,10 @@ func (s *Service) createWorkGroupTyped(ctx context.Context, req *createWorkGroup
 	if aerr := serviceutil.ValidateTags(athenaTagCfg, tags); aerr != nil {
 		return nil, aerr
 	}
-	wg := &WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description, Configuration: req.Configuration, Tags: tags}
+	wg := &workGroupRecord{
+		WorkGroup: WorkGroup{Name: req.Name, State: "ENABLED", Description: req.Description, Configuration: req.Configuration},
+		Tags:      tags,
+	}
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -153,7 +156,7 @@ func (s *Service) getWorkGroupTyped(ctx context.Context, req *workGroupNameReq) 
 			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", req.WorkGroup), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &getWorkGroupResp{WorkGroup: *wg}, nil
+	return &getWorkGroupResp{WorkGroup: wg.WorkGroup}, nil
 }
 
 func (s *Service) listWorkGroupsTyped(ctx context.Context, _ *struct{}) (*listWorkGroupsResp, *protocol.AWSError) {
