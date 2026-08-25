@@ -46,10 +46,7 @@ class Repo:
 		self.work.mkdir()
 
 		for name in ("golangci-lint", "pnpm"):
-			stub = self.bin / name
-			with stub.open("w", encoding="utf-8", newline="") as fh:
-				fh.write(STUB % (name, name))
-			stub.chmod(0o755)
+			self.install_stub(name)
 
 		self.git("init", "-q", "-b", "main")
 		self.git("config", "user.email", "test@example.com")
@@ -73,6 +70,20 @@ class Repo:
 		# Gitignored, but has to exist for the web branch to run at all.
 		(self.work / "web" / "node_modules").mkdir()
 
+	def install_stub(self, name: str) -> None:
+		stub = self.bin / name
+		with stub.open("w", encoding="utf-8", newline="") as fh:
+			fh.write(STUB % (name, name))
+		stub.chmod(0o755)
+
+	def fake_uname(self, sysname_release: str) -> None:
+		"""Answer `uname -sr` with a canned string, so the script's platform
+		sniff is deterministic regardless of the host running the tests."""
+		stub = self.bin / "uname"
+		with stub.open("w", encoding="utf-8", newline="") as fh:
+			fh.write('#!/bin/sh\necho "%s"\n' % sysname_release)
+		stub.chmod(0o755)
+
 	def git(self, *args: str) -> str:
 		return subprocess.run(
 			["git", *args], cwd=self.work, check=True, capture_output=True, text=True
@@ -89,16 +100,41 @@ class Repo:
 		self.git("add", "-A")
 		self.git("commit", "-q", "-m", message)
 
-	def run(self, *args: str, golangci_exit: int = 0, pnpm_exit: int = 0):
-		"""Run the script; returns (exit code, list of stub invocations since last run)."""
+	def run(self, *args: str, golangci_exit: int = 0, pnpm_exit: int = 0, script_env: dict | None = None):
+		"""Run the script; returns (exit code, list of stub invocations since last run).
+
+		The script is launched through a wrapper file rather than `bash -c` or
+		subprocess env: a WSL bash drops environment variables WSLENV does not
+		name, appends the (translated) Windows PATH *after* the Linux one so
+		/usr/bin shadows same-named stubs, and the System32 launcher mangles
+		quoted -c payloads. A file sidesteps all three — the wrapper prepends
+		stub-bin inside bash, where it wins on every host, and script_env
+		entries become assignments in the same file.
+		"""
 		self.log.write_text("", encoding="utf-8")
 		(self.bin / "exit-golangci-lint").write_text(f"{golangci_exit}\n", encoding="utf-8")
 		(self.bin / "exit-pnpm").write_text(f"{pnpm_exit}\n", encoding="utf-8")
+		(self.bin / "exit-go").write_text("0\n", encoding="utf-8")
+		wrapper_lines = [
+			"#!/bin/sh",
+			'PATH="$PWD/../stub-bin:$PATH"',
+			"export PATH",
+			# A dev box may export the parallelism knobs; the tests set them
+			# via script_env when they are the thing under test.
+			"unset OVERCAST_GO_TEST_P OVERCAST_GO_CPUS",
+		]
+		for name, value in (script_env or {}).items():
+			wrapper_lines += [f'{name}="{value}"', f"export {name}"]
+		wrapper_lines.append('exec bash scripts/verify-changed.sh "$@"')
+		wrapper = self.root / "run-wrapper.sh"
+		with wrapper.open("w", encoding="utf-8", newline="") as fh:
+			fh.write("\n".join(wrapper_lines) + "\n")
 		env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"}
 		proc = subprocess.run(
-			["bash", "scripts/verify-changed.sh", *args],
+			["bash", "../run-wrapper.sh", *args],
 			cwd=self.work,
 			env=env,
+			stdin=subprocess.DEVNULL,
 			capture_output=True,
 			text=True,
 		)
@@ -224,6 +260,64 @@ class VerifyChangedTest(unittest.TestCase):
 	def test_cache_lives_outside_the_worktree(self) -> None:
 		self.repo.run()
 		self.assertEqual("", self.repo.git("status", "--porcelain").strip())
+
+	# ---- go test parallelism ------------------------------------------------
+	# On a Windows-flavoured host the scoped test run must default to `-p 2`:
+	# uncapped it starts NumCPU test binaries at once and the network-heavy
+	# tests deterministically exhaust the ephemeral-port range (ADDRINUSE on a
+	# green tree). The compile-only tag pass must stay uncapped — it binds no
+	# sockets, and -p bounds build actions, so a cap there only slows it down.
+
+	def go_test_calls(self, calls: list[str]) -> list[str]:
+		return [c for c in calls if "/go " in c and " test " in c]
+
+	def test_windows_flavoured_host_caps_the_scoped_test_run(self) -> None:
+		self.repo.install_stub("go")
+		for kernel in (
+			"MINGW64_NT-10.0-26100 3.6.4.x86_64",
+			"MSYS_NT-10.0-26100 3.6.4.x86_64",
+			"CYGWIN_NT-10.0-26100 3.6.4-390.x86_64",
+			"Linux 5.15.167.4-microsoft-standard-WSL2",
+		):
+			with self.subTest(kernel=kernel):
+				self.repo.fake_uname(kernel)
+				code, calls = self.repo.run("--force")
+				self.assertEqual(0, code)
+				scoped = [c for c in calls if " -C . test " in c]
+				compiles = [c for c in calls if " test -run=^$ " in c]
+				self.assertEqual(1, len(scoped))
+				self.assertEqual(3, len(compiles), "one compile per CI build-tag set")
+				self.assertIn(" -p 2 ", scoped[0])
+				for c in compiles:
+					self.assertNotIn(" -p ", c)
+
+	def test_non_windows_host_stays_uncapped(self) -> None:
+		self.repo.install_stub("go")
+		self.repo.fake_uname("Linux 6.8.0-45-generic")
+		code, calls = self.repo.run()
+		self.assertEqual(0, code)
+		go_tests = self.go_test_calls(calls)
+		self.assertEqual(4, len(go_tests))
+		for c in go_tests:
+			self.assertNotIn(" -p ", c)
+
+	def test_explicit_parallelism_beats_the_windows_default(self) -> None:
+		self.repo.install_stub("go")
+		self.repo.fake_uname("MINGW64_NT-10.0-26100 3.6.4.x86_64")
+
+		# An explicit value keeps its old meaning: both the compiles and the run.
+		_, calls = self.repo.run(script_env={"OVERCAST_GO_TEST_P": "5"})
+		go_tests = self.go_test_calls(calls)
+		self.assertEqual(4, len(go_tests))
+		for c in go_tests:
+			self.assertIn(" -p 5 ", c)
+
+		# "0" is the explicit no-cap spelling, even on Windows.
+		_, calls = self.repo.run("--force", script_env={"OVERCAST_GO_TEST_P": "0"})
+		go_tests = self.go_test_calls(calls)
+		self.assertEqual(4, len(go_tests))
+		for c in go_tests:
+			self.assertNotIn(" -p ", c)
 
 
 if __name__ == "__main__":
