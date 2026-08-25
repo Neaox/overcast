@@ -151,15 +151,17 @@ func TestCreateTable_tableIdStableAcrossDescribeUpdateDelete(t *testing.T) {
 	}
 }
 
-// TestTableDescription_excludesTTLAndTags verifies that CreateTable,
-// DescribeTable, UpdateTable, and DeleteTable never surface a "TTL" or
-// "Tags" member on the table description, even for a table that has both
-// configured. Real AWS's TableDescription shape has no such members — TTL is
-// read back through DescribeTimeToLive and Tags through ListTagsOfResource
-// (dynamodb-2012-08-10.json#TableDescription) — so a raw-JSON consumer that
-// reads TTL/Tags directly off a table description was always reading a
-// value AWS never sends (issue: fabricated wire members, see changelog).
-func TestTableDescription_excludesTTLAndTags(t *testing.T) {
+// TestTableDescription_excludesStoreOnlyMembers verifies that CreateTable,
+// DescribeTable, UpdateTable, and DeleteTable never surface a "TTL", "Tags",
+// or top-level "BillingMode" member on the table description, even for a
+// table that has all three configured. Real AWS's TableDescription shape has
+// no such members — TTL is read back through DescribeTimeToLive, Tags
+// through ListTagsOfResource, and the billing mode only through the nested
+// BillingModeSummary (dynamodb-2012-08-10.json#TableDescription) — so a
+// raw-JSON consumer that reads any of them directly off a table description
+// was always reading a value AWS never sends (issue: fabricated wire
+// members, see changelog).
+func TestTableDescription_excludesStoreOnlyMembers(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// Given: a table created with inline Tags and TTL subsequently enabled.
@@ -178,7 +180,7 @@ func TestTableDescription_excludesTTLAndTags(t *testing.T) {
 	})
 	defer createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
-	assertNoTTLOrTagsMember(t, createResp, "TableDescription")
+	assertNoStoreOnlyTableMembers(t, createResp, "TableDescription")
 
 	ttlResp := ddbCall(t, srv, "UpdateTimeToLive", map[string]any{
 		"TableName": "wire-shape-table",
@@ -193,7 +195,7 @@ func TestTableDescription_excludesTTLAndTags(t *testing.T) {
 	describeResp := ddbCall(t, srv, "DescribeTable", map[string]any{"TableName": "wire-shape-table"})
 	defer describeResp.Body.Close()
 	helpers.AssertStatus(t, describeResp, http.StatusOK)
-	assertNoTTLOrTagsMember(t, describeResp, "Table")
+	assertNoStoreOnlyTableMembers(t, describeResp, "Table")
 
 	updateResp := ddbCall(t, srv, "UpdateTable", map[string]any{
 		"TableName":   "wire-shape-table",
@@ -204,17 +206,19 @@ func TestTableDescription_excludesTTLAndTags(t *testing.T) {
 	})
 	defer updateResp.Body.Close()
 	helpers.AssertStatus(t, updateResp, http.StatusOK)
-	assertNoTTLOrTagsMember(t, updateResp, "TableDescription")
+	assertNoStoreOnlyTableMembers(t, updateResp, "TableDescription")
 
 	deleteResp := ddbCall(t, srv, "DeleteTable", map[string]any{"TableName": "wire-shape-table"})
 	defer deleteResp.Body.Close()
 	helpers.AssertStatus(t, deleteResp, http.StatusOK)
-	assertNoTTLOrTagsMember(t, deleteResp, "TableDescription")
+	assertNoStoreOnlyTableMembers(t, deleteResp, "TableDescription")
 }
 
-// assertNoTTLOrTagsMember decodes resp's body as generic JSON and fails the
-// test if the object under member carries a "TTL" or "Tags" key.
-func assertNoTTLOrTagsMember(t *testing.T, resp *http.Response, member string) {
+// assertNoStoreOnlyTableMembers decodes resp's body as generic JSON and fails the
+// test if the object under member carries a "TTL", "Tags", or top-level
+// "BillingMode" key (the modeled channel for the billing mode is the nested
+// BillingModeSummary.BillingMode, asserted by TestUpdateTable_BillingMode).
+func assertNoStoreOnlyTableMembers(t *testing.T, resp *http.Response, member string) {
 	t.Helper()
 	body := helpers.ReadBody(t, resp)
 	var decoded map[string]json.RawMessage
@@ -234,6 +238,9 @@ func assertNoTTLOrTagsMember(t *testing.T, resp *http.Response, member string) {
 	}
 	if _, ok := table["Tags"]; ok {
 		t.Errorf("%s carries a fabricated Tags member (body: %s)", member, body)
+	}
+	if _, ok := table["BillingMode"]; ok {
+		t.Errorf("%s carries a fabricated top-level BillingMode member (body: %s)", member, body)
 	}
 }
 

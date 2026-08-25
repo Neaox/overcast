@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.0"
   },
-  "body": "{\"TableDescription\":{\"TableName\":\"golden-table\",\"KeySchema\":[{\"AttributeName\":\"id\",\"KeyType\":\"HASH\"}],\"AttributeDefinitions\":[{\"AttributeName\":\"id\",\"AttributeType\":\"S\"}],\"TableStatus\":\"ACTIVE\",\"BillingMode\":\"PAY_PER_REQUEST\",\"BillingModeSummary\":{\"BillingMode\":\"PAY_PER_REQUEST\"},\"TableArn\":\"arn:aws:dynamodb:us-east-1:000000000000:table/golden-table\",\"TableId\":\"00000000-0000-0000-0000-000000000000\",\"CreationDateTime\":0,\"ItemCount\":0}}"
+  "body": "{\"TableDescription\":{\"TableName\":\"golden-table\",\"KeySchema\":[{\"AttributeName\":\"id\",\"KeyType\":\"HASH\"}],\"AttributeDefinitions\":[{\"AttributeName\":\"id\",\"AttributeType\":\"S\"}],\"TableStatus\":\"ACTIVE\",\"BillingModeSummary\":{\"BillingMode\":\"PAY_PER_REQUEST\"},\"TableArn\":\"arn:aws:dynamodb:us-east-1:000000000000:table/golden-table\",\"TableId\":\"00000000-0000-0000-0000-000000000000\",\"CreationDateTime\":0,\"ItemCount\":0}}"
 }
