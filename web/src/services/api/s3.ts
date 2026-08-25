@@ -18,6 +18,7 @@ import {
   GetBucketWebsiteCommand,
   type Event as S3Event,
   type BucketLocationConstraint,
+  type BucketNamespace,
   type FilterRuleName,
   type LifecycleRule,
   type LifecycleRuleFilter,
@@ -135,7 +136,13 @@ export const s3 = {
     })) as S3Bucket[]
   },
 
-  createBucket: async (name: string, region?: string) => {
+  /**
+   * `namespace` carries `x-amz-bucket-namespace` when set — the SDK
+   * serializes the header itself, so `account-regional` is the only value
+   * this ever needs to pass; global is the request's silent default, both
+   * on AWS and in Overcast (internal/services/s3/handler_bucket.go).
+   */
+  createBucket: async (name: string, region?: string, namespace?: BucketNamespace) => {
     const ep = endpointResolver.get()
     const resolvedRegion = region ?? ep.region
     await awsClients.s3().send(
@@ -146,6 +153,7 @@ export const s3 = {
             LocationConstraint: resolvedRegion as BucketLocationConstraint,
           },
         }),
+        ...(namespace && { BucketNamespace: namespace }),
       }),
     )
     return { ok: true }
