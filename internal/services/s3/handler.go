@@ -100,22 +100,55 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 // ---- Bucket dispatchers ---------------------------------------------------
 
 // BucketGet dispatches GET /{bucket} by sub-resource query param.
+// Guarded by x-amz-expected-bucket-owner (see expected_owner.go) — every
+// sub-resource here, and the ListObjectsV1 fallback, targets an existing
+// bucket.
 func (h *Handler) BucketGet(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.bucketGetRoutes, h.ListObjectsV1)
 }
 
 // BucketPut dispatches PUT /{bucket} by sub-resource query param.
+//
+// CreateBucket — the fallback when no sub-resource query param matches — is
+// deliberately NOT guarded by x-amz-expected-bucket-owner: AWS documents
+// CreateBucket as one of the operations that ignores the header, since there
+// is no existing bucket yet to compare an owner against. Every sub-resource
+// PUT in bucketPutRoutes targets an existing bucket, so those are guarded
+// like any other bucket/object operation. This is why BucketPut cannot use
+// the same "guard once, then dispatchByQuery" shape as the other dispatchers
+// below — the guard has to sit inside the loop, not in front of it.
 func (h *Handler) BucketPut(w http.ResponseWriter, r *http.Request) {
-	dispatchByQuery(w, r, h.bucketPutRoutes, h.CreateBucket)
+	for _, rt := range h.bucketPutRoutes {
+		if serviceutil.HasQueryParam(r, rt.param) {
+			if !h.checkExpectedBucketOwner(w, r) {
+				return
+			}
+			rt.fn(w, r)
+			return
+		}
+	}
+	h.CreateBucket(w, r)
 }
 
 // BucketDelete dispatches DELETE /{bucket} by sub-resource query param.
+// Guarded by x-amz-expected-bucket-owner — the DeleteBucket fallback and
+// every sub-resource here target an existing bucket.
 func (h *Handler) BucketDelete(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.bucketDeleteRoutes, h.DeleteBucket)
 }
 
 // BucketPost dispatches POST /{bucket} by sub-resource query param.
+// Guarded by x-amz-expected-bucket-owner.
 func (h *Handler) BucketPost(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.bucketPostRoutes, protocol.NotImplementedXML)
 }
 
@@ -132,12 +165,20 @@ func (h *Handler) ListObjectsV2OrLocation(w http.ResponseWriter, r *http.Request
 // ---- Object handlers -------------------------------------------------------
 
 // ObjectGet dispatches GET /{bucket}/{key} by sub-resource query param.
+// Guarded by x-amz-expected-bucket-owner.
 func (h *Handler) ObjectGet(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.objectGetRoutes, h.GetObject)
 }
 
 // ObjectDelete dispatches DELETE /{bucket}/{key} by sub-resource query param.
+// Guarded by x-amz-expected-bucket-owner.
 func (h *Handler) ObjectDelete(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.objectDeleteRoutes, h.DeleteObject)
 }
 
@@ -147,16 +188,34 @@ func (h *Handler) ObjectDelete(w http.ResponseWriter, r *http.Request) {
 // operation, so the fallback is MethodNotAllowed rather than NotImplemented:
 // the latter would claim a gap in this emulator for a request real S3 refuses
 // too, sending a caller after a workaround that does not exist.
+// Guarded by x-amz-expected-bucket-owner.
 func (h *Handler) ObjectPost(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	dispatchByQuery(w, r, h.objectPostRoutes, protocol.MethodNotAllowedXML)
 }
 
 // PutObjectOrCopy dispatches PUT /{bucket}/{key}.
 // partNumber is checked first because it requires a secondary header discriminant
 // that the route table can't express. All other sub-resources use the table.
+//
+// Guarded by x-amz-expected-bucket-owner (destination bucket, always) and, on
+// a copy (x-amz-copy-source present — CopyObject or UploadPartCopy), by
+// x-amz-source-expected-bucket-owner (source bucket) as well. Both checks
+// happen up front, before any branch below runs, so a denial never reaches
+// PutObject/CopyObject/UploadPart/UploadPartCopy.
 func (h *Handler) PutObjectOrCopy(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
+	copySource := r.Header.Get("x-amz-copy-source")
+	if copySource != "" && !h.checkExpectedSourceBucketOwner(w, r, copySource) {
+		return
+	}
+
 	if serviceutil.HasQueryParam(r, "partNumber") {
-		if r.Header.Get("x-amz-copy-source") != "" {
+		if copySource != "" {
 			h.UploadPartCopy(w, r)
 		} else {
 			h.UploadPart(w, r)
@@ -164,7 +223,7 @@ func (h *Handler) PutObjectOrCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dispatchByQuery(w, r, h.objectPutRoutes, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-amz-copy-source") != "" {
+		if copySource != "" {
 			h.CopyObject(w, r)
 		} else {
 			h.PutObject(w, r)
@@ -175,6 +234,10 @@ func (h *Handler) PutObjectOrCopy(w http.ResponseWriter, r *http.Request) {
 // ---- Root-level dispatcher -------------------------------------------------
 
 // RootGet dispatches GET / — either ListBuckets or ListDirectoryBuckets.
+// Deliberately NOT guarded by x-amz-expected-bucket-owner: AWS documents
+// ListBuckets as ignoring the header (there is no single target bucket to
+// compare an owner against), and ListDirectoryBuckets is the same shape of
+// operation. See expected_owner.go.
 func (h *Handler) RootGet(w http.ResponseWriter, r *http.Request) {
 	if serviceutil.HasQueryParam(r, "directory-buckets") {
 		h.ListDirectoryBuckets(w, r)
