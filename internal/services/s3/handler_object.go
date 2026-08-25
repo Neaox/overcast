@@ -440,7 +440,13 @@ func etagMatches(objectETag, headerVal string) bool {
 // HeadObject handles HEAD /{bucket}/{key}
 // Returns the same headers as GetObject but no body.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+// Guarded by x-amz-expected-bucket-owner (see expected_owner.go) — HeadObject
+// is registered directly on the chi router rather than reached through
+// ObjectGet's dispatch table, so it carries its own guard call.
 func (h *Handler) HeadObject(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	bucket := chi.URLParam(r, "bucket")
 	key := objectKey(r)
 

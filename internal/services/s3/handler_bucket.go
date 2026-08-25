@@ -186,7 +186,13 @@ func (h *Handler) CreateBucket(w http.ResponseWriter, r *http.Request) {
 
 // HeadBucket handles HEAD /{bucket}
 // Returns 200 if the bucket exists, 404 if not.
+// Guarded by x-amz-expected-bucket-owner (see expected_owner.go) — HeadBucket
+// is registered directly on the chi router rather than reached through
+// BucketGet's dispatch table, so it carries its own guard call.
 func (h *Handler) HeadBucket(w http.ResponseWriter, r *http.Request) {
+	if !h.checkExpectedBucketOwner(w, r) {
+		return
+	}
 	bucket := chi.URLParam(r, "bucket")
 
 	exists, aerr := h.store.bucketExists(r.Context(), bucket)
