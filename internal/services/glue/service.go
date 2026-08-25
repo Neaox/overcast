@@ -29,29 +29,45 @@ const serviceName = "glue"
 
 // ─── Types ────────────────────────────────────────────────────
 
-func (d *Database) GetTags() map[string]string  { return d.Tags }
-func (d *Database) SetTags(t map[string]string) { d.Tags = t }
-
-// Database represents a Glue database.
+// Database represents a Glue database. This is the wire shape — the AWS
+// model's Database carries no Tags member, so tags must never be embedded
+// here. See databaseRecord for how tags are persisted; GetTags is the real
+// channel for reading them back.
 type Database struct {
-	Name        string            `json:"Name"`
-	Description string            `json:"Description,omitempty"`
-	CatalogId   string            `json:"CatalogId,omitempty"`
-	Tags        map[string]string `json:"Tags,omitempty"`
+	Name        string `json:"Name"`
+	Description string `json:"Description,omitempty"`
+	CatalogId   string `json:"CatalogId,omitempty"`
 }
 
-func (t *Table) GetTags() map[string]string     { return t.Tags }
-func (t *Table) SetTags(tags map[string]string) { t.Tags = tags }
+// databaseRecord is a Database as persisted: the wire shape plus its tags.
+type databaseRecord struct {
+	Database
+	Tags map[string]string `json:"overcastTags,omitempty"`
+}
 
-// Table represents a Glue table.
+func (d *databaseRecord) GetTags() map[string]string  { return d.Tags }
+func (d *databaseRecord) SetTags(t map[string]string) { d.Tags = t }
+
+// Table represents a Glue table. This is the wire shape — the AWS model's
+// Table carries no Tags member, so tags must never be embedded here. See
+// tableRecord for how tags are persisted; GetTags is the real channel for
+// reading them back.
 type Table struct {
-	Name         string            `json:"Name"`
-	DatabaseName string            `json:"DatabaseName"`
-	Description  string            `json:"Description,omitempty"`
-	TableType    string            `json:"TableType,omitempty"`
-	CatalogId    string            `json:"CatalogId,omitempty"`
-	Tags         map[string]string `json:"Tags,omitempty"`
+	Name         string `json:"Name"`
+	DatabaseName string `json:"DatabaseName"`
+	Description  string `json:"Description,omitempty"`
+	TableType    string `json:"TableType,omitempty"`
+	CatalogId    string `json:"CatalogId,omitempty"`
 }
+
+// tableRecord is a Table as persisted: the wire shape plus its tags.
+type tableRecord struct {
+	Table
+	Tags map[string]string `json:"overcastTags,omitempty"`
+}
+
+func (t *tableRecord) GetTags() map[string]string     { return t.Tags }
+func (t *tableRecord) SetTags(tags map[string]string) { t.Tags = tags }
 
 // ─── Store ────────────────────────────────────────────────────
 
@@ -69,7 +85,7 @@ const (
 	nsTables    = "glue:tables"
 )
 
-func (s *glueStore) putDatabase(ctx context.Context, db *Database) error {
+func (s *glueStore) putDatabase(ctx context.Context, db *databaseRecord) error {
 	raw, err := json.Marshal(db)
 	if err != nil {
 		return fmt.Errorf("glue: marshal database: %w", err)
@@ -77,26 +93,26 @@ func (s *glueStore) putDatabase(ctx context.Context, db *Database) error {
 	return s.store.Set(ctx, nsDatabases, db.Name, string(raw))
 }
 
-func (s *glueStore) getDatabase(ctx context.Context, name string) (*Database, bool) {
+func (s *glueStore) getDatabase(ctx context.Context, name string) (*databaseRecord, bool) {
 	raw, found, err := s.store.Get(ctx, nsDatabases, name)
 	if err != nil || !found {
 		return nil, false
 	}
-	var db Database
+	var db databaseRecord
 	if json.Unmarshal([]byte(raw), &db) != nil {
 		return nil, false
 	}
 	return &db, true
 }
 
-func (s *glueStore) listDatabases(ctx context.Context) ([]*Database, error) {
+func (s *glueStore) listDatabases(ctx context.Context) ([]*databaseRecord, error) {
 	pairs, err := s.store.Scan(ctx, nsDatabases, "")
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*Database, 0, len(pairs))
+	out := make([]*databaseRecord, 0, len(pairs))
 	for _, kv := range pairs {
-		var db Database
+		var db databaseRecord
 		if json.Unmarshal([]byte(kv.Value), &db) == nil {
 			out = append(out, &db)
 		}
@@ -110,7 +126,7 @@ func (s *glueStore) deleteDatabase(ctx context.Context, name string) error {
 
 func tableKey(dbName, tableName string) string { return dbName + "/" + tableName }
 
-func (s *glueStore) putTable(ctx context.Context, t *Table) error {
+func (s *glueStore) putTable(ctx context.Context, t *tableRecord) error {
 	raw, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("glue: marshal table: %w", err)
@@ -118,26 +134,26 @@ func (s *glueStore) putTable(ctx context.Context, t *Table) error {
 	return s.store.Set(ctx, nsTables, tableKey(t.DatabaseName, t.Name), string(raw))
 }
 
-func (s *glueStore) getTable(ctx context.Context, dbName, tableName string) (*Table, bool) {
+func (s *glueStore) getTable(ctx context.Context, dbName, tableName string) (*tableRecord, bool) {
 	raw, found, err := s.store.Get(ctx, nsTables, tableKey(dbName, tableName))
 	if err != nil || !found {
 		return nil, false
 	}
-	var t Table
+	var t tableRecord
 	if json.Unmarshal([]byte(raw), &t) != nil {
 		return nil, false
 	}
 	return &t, true
 }
 
-func (s *glueStore) listTables(ctx context.Context, dbName string) ([]*Table, error) {
+func (s *glueStore) listTables(ctx context.Context, dbName string) ([]*tableRecord, error) {
 	pairs, err := s.store.Scan(ctx, nsTables, "")
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*Table, 0, len(pairs))
+	out := make([]*tableRecord, 0, len(pairs))
 	for _, kv := range pairs {
-		var t Table
+		var t tableRecord
 		if json.Unmarshal([]byte(kv.Value), &t) == nil && t.DatabaseName == dbName {
 			out = append(out, &t)
 		}
@@ -246,7 +262,7 @@ func (s *Service) createDatabase(w http.ResponseWriter, r *http.Request) {
 	if db.CatalogId == "" {
 		db.CatalogId = s.cfg.AccountID
 	}
-	if err := s.store.putDatabase(r.Context(), db); err != nil {
+	if err := s.store.putDatabase(r.Context(), &databaseRecord{Database: *db}); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
@@ -269,14 +285,18 @@ func (s *Service) getDatabase(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Database": db})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Database": &db.Database})
 }
 
 func (s *Service) getDatabases(w http.ResponseWriter, r *http.Request) {
-	dbs, err := s.store.listDatabases(r.Context())
+	records, err := s.store.listDatabases(r.Context())
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
+	}
+	dbs := make([]*Database, 0, len(records))
+	for _, rec := range records {
+		dbs = append(dbs, &rec.Database)
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"DatabaseList": dbs})
 }
@@ -323,7 +343,7 @@ func (s *Service) createTable(w http.ResponseWriter, r *http.Request) {
 	if t.CatalogId == "" {
 		t.CatalogId = s.cfg.AccountID
 	}
-	if err := s.store.putTable(r.Context(), t); err != nil {
+	if err := s.store.putTable(r.Context(), &tableRecord{Table: *t}); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
@@ -347,7 +367,7 @@ func (s *Service) getTable(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Table": t})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Table": &t.Table})
 }
 
 func (s *Service) getTables(w http.ResponseWriter, r *http.Request) {
@@ -357,10 +377,14 @@ func (s *Service) getTables(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	tables, err := s.store.listTables(r.Context(), req.DatabaseName)
+	records, err := s.store.listTables(r.Context(), req.DatabaseName)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
+	}
+	tables := make([]*Table, 0, len(records))
+	for _, rec := range records {
+		tables = append(tables, &rec.Table)
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"TableList": tables})
 }
@@ -428,14 +452,14 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		if aerr := serviceutil.ApplyInlineTags(r.Context(), dbName+"/"+tableName, req.TagsToAdd, glueTagCfg,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
 				}
 				return t, nil
 			},
-			func(ctx context.Context, t *Table) *protocol.AWSError {
+			func(ctx context.Context, t *tableRecord) *protocol.AWSError {
 				if err := s.store.putTable(ctx, t); err != nil {
 					return protocol.ErrInternalError
 				}
@@ -456,14 +480,14 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := serviceutil.ApplyInlineTags(r.Context(), dbName, req.TagsToAdd, glueTagCfg,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
 			}
 			return db, nil
 		},
-		func(ctx context.Context, db *Database) *protocol.AWSError {
+		func(ctx context.Context, db *databaseRecord) *protocol.AWSError {
 			if err := s.store.putDatabase(ctx, db); err != nil {
 				return protocol.ErrInternalError
 			}
@@ -487,14 +511,14 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		if aerr := serviceutil.RemoveInlineTags(r.Context(), dbName+"/"+tableName, req.TagsToRemove,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
 				}
 				return t, nil
 			},
-			func(ctx context.Context, t *Table) *protocol.AWSError {
+			func(ctx context.Context, t *tableRecord) *protocol.AWSError {
 				if err := s.store.putTable(ctx, t); err != nil {
 					return protocol.ErrInternalError
 				}
@@ -515,14 +539,14 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := serviceutil.RemoveInlineTags(r.Context(), dbName, req.TagsToRemove,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
 			}
 			return db, nil
 		},
-		func(ctx context.Context, db *Database) *protocol.AWSError {
+		func(ctx context.Context, db *databaseRecord) *protocol.AWSError {
 			if err := s.store.putDatabase(ctx, db); err != nil {
 				return protocol.ErrInternalError
 			}
@@ -545,7 +569,7 @@ func (s *Service) getTags(w http.ResponseWriter, r *http.Request) {
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		tags, aerr := serviceutil.ListInlineTags(r.Context(), dbName+"/"+tableName,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
@@ -568,7 +592,7 @@ func (s *Service) getTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tags, aerr := serviceutil.ListInlineTags(r.Context(), dbName,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}

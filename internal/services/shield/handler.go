@@ -41,12 +41,14 @@ func (h *Handler) initOps() {
 }
 
 func (h *Handler) describeSubscription(w http.ResponseWriter, r *http.Request) {
+	// SubscriptionState is a member of GetSubscriptionStateResponse only,
+	// not of Subscription / DescribeSubscriptionResponse — Overcast does
+	// not implement GetSubscriptionState.
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"Subscription": map[string]any{
 			"StartTime":               1000000000.0,
 			"TimeCommitmentInSeconds": 31536000,
 			"AutoRenew":               "ENABLED",
-			"SubscriptionState":       "ACTIVE",
 		},
 	})
 }
@@ -67,11 +69,11 @@ func (h *Handler) createProtection(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	p := &Protection{
+	p := &protectionRecord{Protection: Protection{
 		ID:          uuid.NewString(),
 		Name:        req.Name,
 		ResourceArn: req.ResourceArn,
-	}
+	}}
 	if err := h.store.putProtection(r.Context(), p); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -82,10 +84,14 @@ func (h *Handler) createProtection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listProtections(w http.ResponseWriter, r *http.Request) {
-	protections, err := h.store.listProtections(r.Context())
+	records, err := h.store.listProtections(r.Context())
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
+	}
+	protections := make([]*Protection, 0, len(records))
+	for _, rec := range records {
+		protections = append(protections, &rec.Protection)
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"Protections": protections,
@@ -140,7 +146,7 @@ func (h *Handler) describeProtection(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Protection": p})
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Protection": &p.Protection})
 		return
 	}
 	if req.ResourceArn != "" {
@@ -151,7 +157,7 @@ func (h *Handler) describeProtection(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, p := range all {
 			if p.ResourceArn == req.ResourceArn {
-				protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Protection": p})
+				protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Protection": &p.Protection})
 				return
 			}
 		}

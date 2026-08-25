@@ -68,7 +68,7 @@ func (s *Service) createDatabaseTyped(ctx context.Context, req *createDatabaseRe
 	if db.CatalogId == "" {
 		db.CatalogId = s.cfg.AccountID
 	}
-	if err := s.store.putDatabase(ctx, db); err != nil {
+	if err := s.store.putDatabase(ctx, &databaseRecord{Database: *db}); err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil
@@ -83,13 +83,17 @@ func (s *Service) getDatabaseTyped(ctx context.Context, req *getDatabaseReq) (*g
 			HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &getDatabaseResp{Database: db}, nil
+	return &getDatabaseResp{Database: &db.Database}, nil
 }
 
 func (s *Service) getDatabasesTyped(ctx context.Context, _ *struct{}) (*getDatabasesResp, *protocol.AWSError) {
-	dbs, err := s.store.listDatabases(ctx)
+	records, err := s.store.listDatabases(ctx)
 	if err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	dbs := make([]*Database, 0, len(records))
+	for _, rec := range records {
+		dbs = append(dbs, &rec.Database)
 	}
 	return &getDatabasesResp{DatabaseList: dbs}, nil
 }
@@ -120,7 +124,7 @@ func (s *Service) createTableTyped(ctx context.Context, req *createTableReq) (*s
 	if t.CatalogId == "" {
 		t.CatalogId = s.cfg.AccountID
 	}
-	if err := s.store.putTable(ctx, t); err != nil {
+	if err := s.store.putTable(ctx, &tableRecord{Table: *t}); err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil
@@ -135,13 +139,17 @@ func (s *Service) getTableTyped(ctx context.Context, req *getTableReq) (*getTabl
 			HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &getTableResp{Table: t}, nil
+	return &getTableResp{Table: &t.Table}, nil
 }
 
 func (s *Service) getTablesTyped(ctx context.Context, req *getTablesReq) (*getTablesResp, *protocol.AWSError) {
-	tables, err := s.store.listTables(ctx, req.DatabaseName)
+	records, err := s.store.listTables(ctx, req.DatabaseName)
 	if err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	tables := make([]*Table, 0, len(records))
+	for _, rec := range records {
+		tables = append(tables, &rec.Table)
 	}
 	return &getTablesResp{TableList: tables}, nil
 }
@@ -184,14 +192,14 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *glueTagResourceReq)
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		if aerr := serviceutil.ApplyInlineTags(ctx, dbName+"/"+tableName, req.TagsToAdd, glueTagCfg,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
 				}
 				return t, nil
 			},
-			func(ctx context.Context, t *Table) *protocol.AWSError {
+			func(ctx context.Context, t *tableRecord) *protocol.AWSError {
 				if err := s.store.putTable(ctx, t); err != nil {
 					return protocol.ErrInternalError
 				}
@@ -209,14 +217,14 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *glueTagResourceReq)
 		}
 	}
 	if aerr := serviceutil.ApplyInlineTags(ctx, dbName, req.TagsToAdd, glueTagCfg,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
 			}
 			return db, nil
 		},
-		func(ctx context.Context, db *Database) *protocol.AWSError {
+		func(ctx context.Context, db *databaseRecord) *protocol.AWSError {
 			if err := s.store.putDatabase(ctx, db); err != nil {
 				return protocol.ErrInternalError
 			}
@@ -232,14 +240,14 @@ func (s *Service) untagResourceTyped(ctx context.Context, req *glueUntagResource
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		if aerr := serviceutil.RemoveInlineTags(ctx, dbName+"/"+tableName, req.TagsToRemove,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
 				}
 				return t, nil
 			},
-			func(ctx context.Context, t *Table) *protocol.AWSError {
+			func(ctx context.Context, t *tableRecord) *protocol.AWSError {
 				if err := s.store.putTable(ctx, t); err != nil {
 					return protocol.ErrInternalError
 				}
@@ -257,14 +265,14 @@ func (s *Service) untagResourceTyped(ctx context.Context, req *glueUntagResource
 		}
 	}
 	if aerr := serviceutil.RemoveInlineTags(ctx, dbName, req.TagsToRemove,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
 			}
 			return db, nil
 		},
-		func(ctx context.Context, db *Database) *protocol.AWSError {
+		func(ctx context.Context, db *databaseRecord) *protocol.AWSError {
 			if err := s.store.putDatabase(ctx, db); err != nil {
 				return protocol.ErrInternalError
 			}
@@ -280,7 +288,7 @@ func (s *Service) listTagsForResourceTyped(ctx context.Context, req *glueListTag
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
 		tags, aerr := serviceutil.ListInlineTags(ctx, dbName+"/"+tableName,
-			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+			func(ctx context.Context, key string) (*tableRecord, *protocol.AWSError) {
 				t, found := s.store.getTable(ctx, dbName, tableName)
 				if !found {
 					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
@@ -300,7 +308,7 @@ func (s *Service) listTagsForResourceTyped(ctx context.Context, req *glueListTag
 		}
 	}
 	tags, aerr := serviceutil.ListInlineTags(ctx, dbName,
-		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+		func(ctx context.Context, key string) (*databaseRecord, *protocol.AWSError) {
 			db, found := s.store.getDatabase(ctx, dbName)
 			if !found {
 				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
