@@ -99,6 +99,14 @@ type Bucket struct {
 	Policy           string                 `json:"policy,omitempty"`
 	EncryptionRules  []BucketEncryptionRule `json:"encryption_rules,omitempty"`
 
+	// Namespace is the S3 namespace this bucket was created in:
+	// "account-regional", or "" for the global namespace (also the decode of
+	// every bucket record persisted before this field existed — no migration
+	// needed). Store-only state: no CreateBucket/ListBuckets/GetBucketLocation
+	// response carries a namespace member, so this never round-trips onto the
+	// wire (wire purity — see issue #1471).
+	Namespace string `json:"namespace,omitempty"`
+
 	// VersionHistoryReady records that every object already in this bucket has
 	// been given a place in s3:versions. See ensureVersionHistory in
 	// version.go — it is the completion flag for that backfill, not a feature

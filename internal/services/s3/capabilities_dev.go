@@ -8,7 +8,7 @@ func init() {
 	capabilities.Default.Register(
 		// Buckets
 		capabilities.Capability{Service: "s3", Operation: "CreateBucket", Category: "Buckets",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusSupported, Notes: "Account regional namespaces via x-amz-bucket-namespace: account-regional"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucket", Category: "Buckets",
 			Status: capabilities.StatusSupported, Notes: "Bucket must be empty"},
 		capabilities.Capability{Service: "s3", Operation: "HeadBucket", Category: "Buckets",

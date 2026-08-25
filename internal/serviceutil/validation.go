@@ -137,6 +137,59 @@ func BucketName(name string) *protocol.AWSError {
 	return nil
 }
 
+// accountRegionalBucketSuffixMarker is the reserved trailing segment AWS's
+// 2026 naming-rules update carved out for account regional namespace bucket
+// names: a name may only end this way when it is being created inside that
+// namespace. https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html#account-regional-naming-rules
+const accountRegionalBucketSuffixMarker = "-an"
+
+// AccountRegionalBucketSuffix returns the suffix an account regional
+// namespace bucket name must end with: "-<accountId>-<region>-an". It is the
+// single place that knows this grammar: CreateBucket's full-name validation
+// (ValidateAccountRegionalBucketName) and CloudFormation's BucketNamePrefix
+// property both build on it, so the format cannot drift between the two
+// callers.
+func AccountRegionalBucketSuffix(accountID, region string) string {
+	return "-" + accountID + "-" + region + accountRegionalBucketSuffixMarker
+}
+
+// HasAccountRegionalBucketSuffix reports whether name carries the reserved
+// "-an" suffix, regardless of which account or region it names. A
+// global-namespace CreateBucket uses this cheap check — a single
+// strings.HasSuffix, no regex, no allocation — to reject a name AWS reserves
+// for the account regional namespace when the caller did not ask for that
+// namespace.
+func HasAccountRegionalBucketSuffix(name string) bool {
+	return strings.HasSuffix(name, accountRegionalBucketSuffixMarker)
+}
+
+// ValidateAccountRegionalBucketName validates a full account-regional S3
+// bucket name: the base bucket-naming rules (BucketName), plus AWS's
+// account-regional naming rule that the name end with exactly
+// "-<accountID>-<region>-an". A name with no non-empty prefix ahead of that
+// suffix is already rejected by BucketName's "must begin with a letter or
+// number" rule, since the suffix itself begins with a hyphen — so no separate
+// empty-prefix check is needed here.
+//
+// The exact error CODE for a name that does carry a suffix but names the
+// wrong account or region is unverified against real AWS (see CreateBucket);
+// modeled here as the same InvalidBucketName shape the base naming rules use,
+// via a single-pass suffix comparison rather than parsing the name apart.
+func ValidateAccountRegionalBucketName(name, accountID, region string) *protocol.AWSError {
+	if aerr := BucketName(name); aerr != nil {
+		return aerr
+	}
+	suffix := AccountRegionalBucketSuffix(accountID, region)
+	if !strings.HasSuffix(name, suffix) {
+		return &protocol.AWSError{
+			Code:       "InvalidBucketName",
+			Message:    "The specified bucket name is not valid. Account regional namespace bucket names must end with " + suffix + ".",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
+}
+
 // ---- SQS validation --------------------------------------------------------
 
 // QueueName validates an SQS queue name.

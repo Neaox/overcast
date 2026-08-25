@@ -3924,8 +3924,17 @@ func (h *s3BucketHandler) Update(ctx context.Context, router http.Handler, cfg *
 	if err != nil {
 		return "", nil, failUpdate(err)
 	}
-	// BucketName is immutable.
+	// BucketName is immutable, and so are BucketNamespace and
+	// BucketNamePrefix — AWS documents both as update:Replacement, the same
+	// as BucketName itself, since either one changes what bucket the
+	// resource names.
 	if decoded.BucketName != oldDecoded.BucketName {
+		return "", nil, errReplacementRequired
+	}
+	if cfnS3OptionalStringChanged(decoded.BucketNamespace, oldDecoded.BucketNamespace) {
+		return "", nil, errReplacementRequired
+	}
+	if cfnS3OptionalStringChanged(decoded.BucketNamePrefix, oldDecoded.BucketNamePrefix) {
 		return "", nil, errReplacementRequired
 	}
 	operations, err := planS3BucketOperations(decoded, oldDecoded)
@@ -3954,11 +3963,24 @@ func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, cfg *
 		return "", nil, err
 	}
 	bucketName := decoded.BucketName
-	if bucketName == "" {
+	switch {
+	case decoded.BucketNamePrefix != nil:
+		// CFN's analogue of the console auto-appending the account-regional
+		// suffix: the API itself requires the full name, but BucketNamePrefix
+		// lets a template supply only the customer-chosen part.
+		bucketName = *decoded.BucketNamePrefix + serviceutil.AccountRegionalBucketSuffix(rCtx.AccountID, rCtx.Region)
+	case bucketName == "":
 		bucketName = strings.ToLower(rCtx.generatedName())
 	}
 
-	_, err = internalS3Request(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
+	var extraHeaders []http.Header
+	if namespace := s3BucketEffectiveNamespace(decoded); namespace != "" {
+		header := http.Header{}
+		header.Set("X-Amz-Bucket-Namespace", namespace)
+		extraHeaders = append(extraHeaders, header)
+	}
+
+	_, err = internalS3Request(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil, extraHeaders...)
 	if err != nil {
 		return "", nil, fmt.Errorf("s3 CreateBucket: %w", err)
 	}
