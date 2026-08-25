@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
@@ -10,8 +10,11 @@ import {
   createBucketMutationOptions,
   deleteBucketMutationOptions,
 } from "@/features/s3/data"
+import { stsCallerIdentityQueryOptions } from "@/features/sts/data"
+import { accountRegionalBucketName, isAccountRegionalBucketName } from "@/features/s3/namespace"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormField, fieldError } from "@/components/ui/form"
@@ -32,6 +35,7 @@ import {
 } from "@/components/ui/resource-list-page"
 import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-table"
 import { formatDate } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
@@ -115,7 +119,22 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
             id: "name",
             header: "Name",
             sortValue: (b) => b.name,
-            cell: (b) => <ResourceName icon={HardDrive} name={b.name} />,
+            cell: (b) => (
+              <ResourceName icon={HardDrive} name={b.name}>
+                {/* Overcast-side enhancement, not AWS parity: ListBuckets carries no
+                    field naming a bucket's namespace, and the AWS console shows
+                    nothing for an existing bucket either. This is inferred purely
+                    from the name's reserved suffix — see features/s3/namespace.ts. */}
+                {isAccountRegionalBucketName(b.name) && (
+                  <Badge
+                    variant="info"
+                    title="Inferred from the name — AWS reports no namespace for an existing bucket"
+                  >
+                    Account regional
+                  </Badge>
+                )}
+              </ResourceName>
+            ),
           },
           {
             // The row navigates on click and `ResourceTable` stops propagation
@@ -169,7 +188,7 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
         open={showCreate}
         defaultRegion={endpoint.region}
         onClose={() => setShowCreate(false)}
-        onSubmit={(name, region) => createMutation.mutate({ name, region })}
+        onSubmit={(name, region, namespace) => createMutation.mutate({ name, region, namespace })}
         loading={createMutation.isPending}
       />
     </ResourceListPage>
@@ -177,22 +196,84 @@ export function BucketList({ sort, onSortChange }: BucketListProps = {}) {
 }
 
 // ─── Create bucket dialog ──────────────────────────────────────────────────
-const bucketSchema = z.object({
-  name: z
-    .string()
-    .min(1, "Name is required")
-    .regex(
-      /^[a-z0-9][a-z0-9\-.]{1,61}[a-z0-9]$/,
-      "Must be 3–63 lowercase chars, numbers, hyphens or dots",
-    ),
-  region: z.string(),
-})
+
+/** The base bucket-naming rule S3 applies regardless of namespace: 3–63
+ * lowercase letters, digits, hyphens or dots, beginning and ending
+ * alphanumeric (internal/serviceutil/validation.go's BucketName). In
+ * account-regional mode this is checked against the *full* name — prefix
+ * plus the reserved suffix — so the 63-char ceiling counts the suffix too. */
+const BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9\-.]{1,61}[a-z0-9]$/
+
+/** default_account_id in *config.Config — what an unconfigured Overcast
+ * reports for GetCallerIdentity, and what the preview falls back to before
+ * that request resolves. */
+const DEFAULT_ACCOUNT_ID = "000000000000"
+
+type BucketNamespaceChoice = "global" | "account-regional"
+
+const NAMESPACE_CHOICES: { value: BucketNamespaceChoice; label: string; detail: string }[] = [
+  {
+    value: "global",
+    label: "Global",
+    detail: "The classic S3 namespace — names must be unique across all of AWS.",
+  },
+  {
+    value: "account-regional",
+    label: "Account regional",
+    detail:
+      "Names only need to be unique within your account and this region. The account id, " +
+      "region, and reserved -an suffix are appended to your prefix automatically.",
+  },
+]
+
+/**
+ * Builds the create-bucket form schema. A function rather than a module-level
+ * constant because the account-regional full-name check needs the caller's
+ * account id, which is only known once GetCallerIdentity resolves — see
+ * CreateBucketDialog's `useMemo`.
+ */
+function createBucketSchema(accountId: string) {
+  return z
+    .object({
+      namespace: z.enum(["global", "account-regional"]),
+      // The full bucket name in global mode; just the prefix ahead of the
+      // reserved suffix in account-regional mode — validated below, since
+      // which one applies (and thus what "3–63 chars" is measured against)
+      // depends on `namespace`.
+      name: z.string(),
+      region: z.string(),
+    })
+    .superRefine((val, ctx) => {
+      if (val.name.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["name"],
+          message: val.namespace === "account-regional" ? "Prefix is required" : "Name is required",
+        })
+        return
+      }
+      const fullName =
+        val.namespace === "account-regional"
+          ? accountRegionalBucketName(val.name, accountId, val.region)
+          : val.name
+      if (!BUCKET_NAME_PATTERN.test(fullName)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["name"],
+          message:
+            val.namespace === "account-regional"
+              ? `Prefix + suffix ("${fullName}") must be 3–63 lowercase chars, numbers, hyphens or dots`
+              : "Must be 3–63 lowercase chars, numbers, hyphens or dots",
+        })
+      }
+    })
+}
 
 interface CreateBucketDialogProps {
   open: boolean
   defaultRegion: string
   onClose: () => void
-  onSubmit: (name: string, region: string) => void
+  onSubmit: (name: string, region: string, namespace?: "account-regional") => void
   loading: boolean
 }
 
@@ -203,10 +284,31 @@ function CreateBucketDialog({
   onSubmit,
   loading,
 }: CreateBucketDialogProps) {
+  // Only fetched while the dialog can show it — the preview and the
+  // full-name validation both need the real account id, but nothing here
+  // needs it before the user opens the dialog.
+  const { data: callerIdentity } = useQuery({
+    ...stsCallerIdentityQueryOptions(),
+    enabled: open,
+  })
+  const accountId = callerIdentity?.Account ?? DEFAULT_ACCOUNT_ID
+  const bucketSchema = useMemo(() => createBucketSchema(accountId), [accountId])
+
   const form = useForm({
     validators: { onChange: bucketSchema },
-    defaultValues: { name: "", region: defaultRegion },
-    onSubmit: ({ value }) => onSubmit(value.name, value.region),
+    defaultValues: {
+      namespace: "global" as BucketNamespaceChoice,
+      name: "",
+      region: defaultRegion,
+    },
+    onSubmit: ({ value }) =>
+      value.namespace === "account-regional"
+        ? onSubmit(
+            accountRegionalBucketName(value.name, accountId, value.region),
+            value.region,
+            "account-regional",
+          )
+        : onSubmit(value.name, value.region),
   })
 
   function handleClose() {
@@ -228,25 +330,70 @@ function CreateBucketDialog({
             void form.handleSubmit()
           }}
         >
-          <form.Field name="name" validators={{ onChange: bucketSchema.shape.name }}>
+          <form.Field name="namespace">
             {(field) => (
-              <FormField
-                label="Bucket name"
-                htmlFor="bname"
-                required
-                error={fieldError(field.state.meta.errors, field.state.meta.isTouched)}
-              >
-                <Input
-                  id="bname"
-                  value={field.state.value}
-                  onChange={(e) => field.handleChange(e.target.value.toLowerCase())}
-                  onBlur={field.handleBlur}
-                  placeholder="my-bucket"
-                  spellCheck={false}
-                />
+              <FormField label="S3 Bucket Namespace" htmlFor="bnamespace">
+                <div className="flex flex-col gap-2" id="bnamespace">
+                  {NAMESPACE_CHOICES.map((c) => (
+                    <label
+                      key={c.value}
+                      className={cn(
+                        "flex cursor-pointer gap-2 rounded-lg border p-3 text-sm",
+                        field.state.value === c.value
+                          ? "border-accent bg-accent/10"
+                          : "border-border hover:bg-bg-muted",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="bucket-namespace"
+                        className="mt-1 self-start accent-accent"
+                        value={c.value}
+                        checked={field.state.value === c.value}
+                        onChange={() => field.handleChange(c.value)}
+                      />
+                      <span className="flex flex-col gap-1">
+                        <span className="font-medium text-fg">{c.label}</span>
+                        <span className="text-xs text-fg-muted">{c.detail}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </FormField>
             )}
           </form.Field>
+          <form.Subscribe selector={(s) => s.values.namespace}>
+            {(namespace) => (
+              <form.Field name="name">
+                {(field) => (
+                  <FormField
+                    label={namespace === "account-regional" ? "Bucket name prefix" : "Bucket name"}
+                    htmlFor="bname"
+                    required
+                    error={fieldError(field.state.meta.errors, field.state.meta.isTouched)}
+                  >
+                    <Input
+                      id="bname"
+                      value={field.state.value}
+                      onChange={(e) => field.handleChange(e.target.value.toLowerCase())}
+                      onBlur={field.handleBlur}
+                      placeholder={namespace === "account-regional" ? "logs" : "my-bucket"}
+                      spellCheck={false}
+                    />
+                    {namespace === "account-regional" && (
+                      <form.Subscribe selector={(s) => [s.values.name, s.values.region] as const}>
+                        {([name, region]) => (
+                          <p className="truncate font-mono text-xs text-fg-muted">
+                            {accountRegionalBucketName(name || "<prefix>", accountId, region)}
+                          </p>
+                        )}
+                      </form.Subscribe>
+                    )}
+                  </FormField>
+                )}
+              </form.Field>
+            )}
+          </form.Subscribe>
           <form.Field name="region">
             {(field) => (
               <FormField label="Region" htmlFor="bregion">

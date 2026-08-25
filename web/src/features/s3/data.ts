@@ -254,8 +254,16 @@ export function s3BucketExistsQueryOptions(bucket: string) {
 export function createBucketMutationOptions() {
   return mutationOptions({
     mutationKey: [...s3Keys.buckets(), "create"] as const,
-    mutationFn: ({ name, region }: { name: string; region?: string }) =>
-      s3.createBucket(name, region),
+    mutationFn: ({
+      name,
+      region,
+      namespace,
+    }: {
+      name: string
+      region?: string
+      /** Set only for an account-regional namespace bucket — see s3.createBucket. */
+      namespace?: "account-regional"
+    }) => s3.createBucket(name, region, namespace),
   })
 }
 
