@@ -510,7 +510,6 @@ type createSGResp struct {
 	XMLName   struct{}      `xml:"CreateSecurityGroupResponse"`
 	Xmlns     string        `xml:"xmlns,attr"`
 	RequestID string        `xml:"requestId"`
-	Return    bool          `xml:"return"`
 	GroupID   string        `xml:"groupId"`
 	TagSet    []typedTagXML `xml:"tagSet>item,omitempty"`
 }
@@ -653,7 +652,7 @@ type associateRouteTableResp struct {
 	XMLName       struct{} `xml:"AssociateRouteTableResponse"`
 	Xmlns         string   `xml:"xmlns,attr"`
 	RequestID     string   `xml:"requestId"`
-	AssociationID string   `xml:"newAssociationId"`
+	AssociationID string   `xml:"associationId"`
 }
 
 type disassociateRouteTableResp struct {
@@ -777,7 +776,6 @@ type associateAddressResp struct {
 	XMLName       struct{} `xml:"AssociateAddressResponse"`
 	Xmlns         string   `xml:"xmlns,attr"`
 	RequestID     string   `xml:"requestId"`
-	Return        bool     `xml:"return"`
 	AssociationID string   `xml:"associationId"`
 }
 
@@ -934,7 +932,6 @@ type deleteVpcEndpointsResp struct {
 	XMLName   struct{} `xml:"DeleteVpcEndpointsResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
-	Return    bool     `xml:"return"`
 }
 
 // ── Typed handler functions ────────────────────────────────────────
@@ -1141,7 +1138,6 @@ func (h *Handler) createSecurityGroupTyped(ctx context.Context, req *createSecur
 	return &createSGResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
-		Return:    true,
 		GroupID:   groupID,
 		TagSet:    typedTagsOf(tags),
 	}, nil
@@ -2091,7 +2087,6 @@ func (h *Handler) associateAddressTyped(ctx context.Context, req *associateAddre
 	return &associateAddressResp{
 		Xmlns:         ec2XMLNS,
 		RequestID:     protocol.RequestIDFromContext(ctx),
-		Return:        true,
 		AssociationID: assocID,
 	}, nil
 }
@@ -2555,7 +2550,6 @@ func (h *Handler) deleteVpcEndpointsTyped(ctx context.Context, req *deleteVpcEnd
 	return &deleteVpcEndpointsResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
-		Return:    true,
 	}, nil
 }
 

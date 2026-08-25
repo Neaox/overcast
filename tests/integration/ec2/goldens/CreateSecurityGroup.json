@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "text/xml"
   },
-  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CreateSecurityGroupResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>00000000-0000-0000-0000-000000000000</requestId><return>true</return><groupId>sg-00000000</groupId><tagSet></tagSet></CreateSecurityGroupResponse>"
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CreateSecurityGroupResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>00000000-0000-0000-0000-000000000000</requestId><groupId>sg-00000000</groupId><tagSet></tagSet></CreateSecurityGroupResponse>"
 }
