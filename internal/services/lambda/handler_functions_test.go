@@ -395,6 +395,162 @@ func TestUpdateFunctionConfiguration_runtimeDeprecationPhasesFollowAWS(t *testin
 	}
 }
 
+const reservedEnvKeysMessagePrefix = "Lambda was unable to configure your environment variables because the environment variables you have provided contains reserved keys that are currently not supported for modification. Reserved keys used in this request: "
+
+func TestCreateFunction_reservedEnvironmentKeys(t *testing.T) {
+	tests := []struct {
+		name         string
+		variables    map[string]string
+		wantReserved string // "" means the create must succeed
+	}{
+		{
+			name:         "single reserved key",
+			variables:    map[string]string{"AWS_REGION": "eu-west-1"},
+			wantReserved: "AWS_REGION",
+		},
+		{
+			name: "multiple reserved keys listed sorted",
+			variables: map[string]string{
+				"AWS_LAMBDA_FUNCTION_NAME": "impostor",
+				"_HANDLER":                 "evil.handler",
+				"AWS_ACCESS_KEY_ID":        "AKIA",
+			},
+			wantReserved: "AWS_ACCESS_KEY_ID, AWS_LAMBDA_FUNCTION_NAME, _HANDLER",
+		},
+		{
+			name: "unreserved runtime keys are allowed",
+			variables: map[string]string{
+				"PATH":            "/opt/bin:/usr/bin",
+				"LANG":            "en_AU.UTF-8",
+				"LD_LIBRARY_PATH": "/opt/lib",
+				"NODE_PATH":       "/opt/nodejs/node_modules",
+				"NODE_OPTIONS":    "--enable-source-maps",
+				"PYTHONPATH":      "/opt/python",
+				"GEM_PATH":        "/opt/ruby/gems",
+				"TZ":              ":UTC",
+				// Runtime-managed but absent from AWS's documented reserved
+				// list, so accepted; the container runtime overrides them.
+				"AWS_LAMBDA_LOG_FORMAT": "JSON",
+				"AWS_LAMBDA_LOG_LEVEL":  "DEBUG",
+				"APP_SETTING":           "value",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := clock.NewMock()
+			ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
+			h := &Handler{
+				cfg: &config.Config{Region: "us-east-1", AccountID: "000000000000"},
+				log: serviceutil.NewServiceLogger(zap.NewNop(), "lambda"),
+				clk: clk,
+				ls:  ls,
+			}
+			body, _ := json.Marshal(map[string]any{
+				"FunctionName": "env-fn",
+				"Runtime":      "nodejs22.x",
+				"Handler":      "index.handler",
+				"Role":         "arn:aws:iam::000000000000:role/lambda-role",
+				"Code":         map[string]any{"ZipFile": []byte("code")},
+				"Environment":  map[string]any{"Variables": tc.variables},
+			})
+			rec := httptest.NewRecorder()
+			h.CreateFunction(rec, httptest.NewRequest(http.MethodPost, "/2015-03-31/functions", bytes.NewReader(body)))
+
+			stored, aerr := ls.getFunction(context.Background(), "env-fn")
+			if aerr != nil {
+				t.Fatalf("getFunction: %v", aerr)
+			}
+			if tc.wantReserved == "" {
+				if rec.Code != http.StatusCreated {
+					t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+				}
+				if stored == nil {
+					t.Fatal("function not persisted")
+				}
+				for k, v := range tc.variables {
+					if stored.Environment[k] != v {
+						t.Errorf("Environment[%q] = %q, want %q", k, stored.Environment[k], v)
+					}
+				}
+				return
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			want := reservedEnvKeysMessagePrefix + tc.wantReserved
+			if got["__type"] != "InvalidParameterValueException" || got["message"] != want {
+				t.Fatalf("response = %#v, want InvalidParameterValueException with message %q", got, want)
+			}
+			if stored != nil {
+				t.Fatalf("rejected function persisted: %v", stored)
+			}
+		})
+	}
+}
+
+func TestUpdateFunctionConfiguration_reservedEnvironmentKeys(t *testing.T) {
+	t.Run("reserved key rejected without mutation", func(t *testing.T) {
+		h, _ := lifecycleTestHandler(t)
+		seedLifecycleFunction(t, h, map[string]string{"KEEP": "original"})
+		rec := updateFunctionConfiguration(t, h, "lifecycle-fn", map[string]any{
+			"Description": "updated",
+			"Environment": map[string]any{"Variables": map[string]string{
+				"KEEP":                  "changed",
+				"AWS_SECRET_ACCESS_KEY": "shhh",
+			}},
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		want := reservedEnvKeysMessagePrefix + "AWS_SECRET_ACCESS_KEY"
+		if got["__type"] != "InvalidParameterValueException" || got["message"] != want {
+			t.Fatalf("response = %#v, want InvalidParameterValueException with message %q", got, want)
+		}
+		stored, aerr := h.ls.getFunction(context.Background(), "lifecycle-fn")
+		if aerr != nil || stored == nil {
+			t.Fatalf("get function: fn=%v err=%v", stored, aerr)
+		}
+		if stored.Environment["KEEP"] != "original" || stored.Description != "" {
+			t.Fatalf("rejected update mutated function: env=%v description=%q", stored.Environment, stored.Description)
+		}
+	})
+
+	t.Run("unreserved runtime keys applied", func(t *testing.T) {
+		h, _ := lifecycleTestHandler(t)
+		seedLifecycleFunction(t, h, nil)
+		vars := map[string]string{
+			"PATH":       "/opt/bin:/usr/bin",
+			"PYTHONPATH": "/opt/python",
+			"NODE_PATH":  "/opt/nodejs/node_modules",
+			"LANG":       "en_AU.UTF-8",
+		}
+		rec := updateFunctionConfiguration(t, h, "lifecycle-fn", map[string]any{
+			"Environment": map[string]any{"Variables": vars},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		stored, aerr := h.ls.getFunction(context.Background(), "lifecycle-fn")
+		if aerr != nil || stored == nil {
+			t.Fatalf("get function: fn=%v err=%v", stored, aerr)
+		}
+		for k, v := range vars {
+			if stored.Environment[k] != v {
+				t.Errorf("Environment[%q] = %q, want %q", k, stored.Environment[k], v)
+			}
+		}
+	})
+}
+
 func TestCreateFunction_prewarmerPublishedDuringCreate(t *testing.T) {
 	// Given: CreateFunction is already in flight but blocked on its initial
 	// existence read while Docker initialization publishes the prewarmer.

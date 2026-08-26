@@ -476,6 +476,62 @@ func validateArchitectures(architectures []string) *protocol.AWSError {
 	return nil
 }
 
+// lambdaReservedEnvKeys is AWS's "Reserved environment variables" list: keys
+// the runtime sets itself and that CreateFunction/UpdateFunctionConfiguration
+// refuse in a function's Environment. Verified 2026-08-26 against
+// https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime
+//
+// AWS's *unreserved* runtime keys (PATH, LANG, LD_LIBRARY_PATH, NODE_PATH,
+// NODE_OPTIONS, PYTHONPATH, GEM_PATH, TZ, AWS_XRAY_*, ...) stay settable.
+// AWS_LAMBDA_LOG_FORMAT and AWS_LAMBDA_LOG_LEVEL are runtime-managed too
+// (delivered from LoggingConfig — see container_runtime.go) but are absent
+// from the documented reserved list, so they are not refused here.
+var lambdaReservedEnvKeys = map[string]struct{}{
+	"_HANDLER":                        {},
+	"_X_AMZN_TRACE_ID":                {},
+	"AWS_DEFAULT_REGION":              {},
+	"AWS_REGION":                      {},
+	"AWS_EXECUTION_ENV":               {},
+	"AWS_LAMBDA_FUNCTION_NAME":        {},
+	"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": {},
+	"AWS_LAMBDA_FUNCTION_VERSION":     {},
+	"AWS_LAMBDA_INITIALIZATION_TYPE":  {},
+	"AWS_LAMBDA_LOG_GROUP_NAME":       {},
+	"AWS_LAMBDA_LOG_STREAM_NAME":      {},
+	"AWS_ACCESS_KEY":                  {},
+	"AWS_ACCESS_KEY_ID":               {},
+	"AWS_SECRET_ACCESS_KEY":           {},
+	"AWS_SESSION_TOKEN":               {},
+	"AWS_LAMBDA_RUNTIME_API":          {},
+	"LAMBDA_TASK_ROOT":                {},
+	"LAMBDA_RUNTIME_DIR":              {},
+	"AWS_LAMBDA_MAX_CONCURRENCY":      {},
+	"AWS_LAMBDA_METADATA_API":         {},
+	"AWS_LAMBDA_METADATA_TOKEN":       {},
+}
+
+// validateEnvironment rejects reserved environment variable keys the way real
+// Lambda does. The offending keys are sorted for a deterministic message; AWS
+// does not document an ordering for the live API's rendering of the list.
+func validateEnvironment(env *envVariables) *protocol.AWSError {
+	if env == nil {
+		return nil
+	}
+	var reserved []string
+	for key := range env.Variables {
+		if _, ok := lambdaReservedEnvKeys[key]; ok {
+			reserved = append(reserved, key)
+		}
+	}
+	if len(reserved) == 0 {
+		return nil
+	}
+	sort.Strings(reserved)
+	return lambdaInvalidParameter(
+		"Lambda was unable to configure your environment variables because the environment variables you have provided contains reserved keys that are currently not supported for modification. Reserved keys used in this request: " +
+			strings.Join(reserved, ", "))
+}
+
 // ─── advanced configuration: tracing, ephemeral storage, KMS key, DLQ ────────
 //
 // DeadLetterConfig is stored, echoed *and* acted on: a failed asynchronous
@@ -968,6 +1024,10 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := validateEnvironment(req.Environment); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -1817,6 +1877,10 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := validateEnvironment(req.Environment); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
