@@ -1644,6 +1644,9 @@ interface LambdaInstanceEventPayload {
   triggerEvent?: unknown
   lastInvocationStatus?: "succeeded" | "failed"
   lastInvocationError?: string
+  initOrigin?: LambdaInstance["initOrigin"]
+  /** Only present on the `lambda:InstanceEvicted` payload. */
+  evictedReason?: LambdaInstance["evictedReason"]
 }
 
 function normalizeTriggerEvent(value: unknown): string | undefined {
@@ -1782,6 +1785,30 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
   }, [liveInstances, ghostInstances])
   const instanceSummary = useMemo(() => summarizeInstances(liveInstances), [liveInstances])
 
+  // Eviction reasons only ride the `lambda:InstanceEvicted` SSE event, not the
+  // instance list, so they're captured here (keyed by instanceId) and handed
+  // to each ghost card as a prop. Pruned below once an instanceId is neither
+  // live nor a ghost any more, so this can't grow without bound.
+  const evictedReasonsRef = useRef<Map<string, LambdaInstance["evictedReason"]>>(new Map())
+  const [evictedReasons, setEvictedReasons] = useState<
+    Map<string, LambdaInstance["evictedReason"]>
+  >(new Map())
+
+  useEffect(() => {
+    const keep = new Set<string>([
+      ...liveInstances.map((i) => i.instanceId),
+      ...ghostInstances.keys(),
+    ])
+    let changed = false
+    for (const key of evictedReasonsRef.current.keys()) {
+      if (!keep.has(key)) {
+        evictedReasonsRef.current.delete(key)
+        changed = true
+      }
+    }
+    if (changed) setEvictedReasons(new Map(evictedReasonsRef.current))
+  }, [liveInstances, ghostInstances])
+
   const eventCursorRef = useRef(0)
   const activeByInstanceRef = useRef<Map<string, string[]>>(new Map())
   const invocationsRef = useRef<Map<string, Invocation>>(new Map())
@@ -1805,17 +1832,28 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
   useEffect(() => {
     if (lambdaEvents.length < eventCursorRef.current) eventCursorRef.current = 0
 
+    let sawEviction = false
+
     for (let i = eventCursorRef.current; i < lambdaEvents.length; i++) {
       const ev = lambdaEvents[i]
       if (
         ev.type !== EventType.lambda.InstanceAcquired &&
-        ev.type !== EventType.lambda.InstanceReleased
+        ev.type !== EventType.lambda.InstanceReleased &&
+        ev.type !== EventType.lambda.InstanceEvicted
       ) {
         continue
       }
 
       const payload = ev.payload as LambdaInstanceEventPayload | undefined
       if (!payload || payload.functionName !== label) continue
+
+      if (ev.type === EventType.lambda.InstanceEvicted) {
+        if (payload.evictedReason) {
+          evictedReasonsRef.current.set(payload.instanceId, payload.evictedReason)
+          sawEviction = true
+        }
+        continue
+      }
 
       const t = Date.parse(ev.time)
       if (!Number.isFinite(t)) continue
@@ -1859,6 +1897,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
       (a, b) => Date.parse(b.acquiredAt) - Date.parse(a.acquiredAt),
     )
     setInvocations(next)
+    if (sawEviction) setEvictedReasons(new Map(evictedReasonsRef.current))
   }, [lambdaEvents, label])
 
   return (
@@ -1941,6 +1980,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
             isGhost={isGhost}
             deletedAt={deletedAt}
             onPeek={isGhost ? undefined : onPeek}
+            evictedReason={isGhost ? evictedReasons.get(instance.instanceId) : undefined}
           />
         ))}
       </div>

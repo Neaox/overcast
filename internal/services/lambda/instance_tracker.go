@@ -13,7 +13,8 @@ package lambda
 //     (so a cold start is visible while it happens); Bind then attaches it to
 //     the instance that actually served it, merging into the existing record
 //     when a warm instance was reused.
-//   - By provisioned concurrency, via InstanceWarmed — no invocation involved.
+//   - Outside an invocation, via InstanceWarmed — proactive initialization or
+//     provisioned concurrency pre-warming.
 //
 // The pool reports destroyed environments through InstanceLost, so a record
 // never outlives its container.
@@ -45,6 +46,38 @@ const (
 	invocationFailed           = "failed"
 )
 
+// initOrigin values for LambdaInstancePayload.InitOrigin — how an execution
+// environment came to exist. AWS itself gives an application no way to tell:
+// AWS_LAMBDA_INITIALIZATION_TYPE reads "on-demand" for a proactively
+// initialized environment exactly as it does for a real cold start, and the
+// only outward difference AWS documents is that the first REPORT line omits
+// Init Duration (see ContainerRuntime.AcquireProactive). initOrigin exists so
+// Overcast's own UI — the instances panel, the system map — can explain what
+// created an environment; it is emulator-side telemetry only and must never
+// be written to a CloudWatch log or otherwise reach the wire.
+const (
+	instanceOriginOnDemand    = "on-demand"
+	instanceOriginProactive   = "proactive"
+	instanceOriginProvisioned = "provisioned"
+)
+
+// evictedReason values for LambdaInstancePayload.EvictedReason — why an
+// execution environment was removed. Every InstanceLost/eviction call site
+// picks one of these so the UI can explain a vanished instance instead of
+// just noting that it vanished. Left empty on records this tracker evicts
+// itself without a caller-supplied cause (e.g. a provisional invocation
+// record abandoned before any environment existed to be lost).
+const (
+	evictReasonIdleTTL         = "idle-ttl"
+	evictReasonConfigChange    = "config-change"
+	evictReasonFunctionDeleted = "function-deleted"
+	evictReasonContainerDied   = "container-died"
+	evictReasonUnhealthy       = "unhealthy"
+	evictReasonSurplus         = "surplus"
+	evictReasonMemoryPressure  = "memory-pressure"
+	evictReasonShutdown        = "shutdown"
+)
+
 // trackerEntry is the in-memory record for one Lambda execution environment.
 type trackerEntry struct {
 	instanceID           string
@@ -71,6 +104,12 @@ type trackerEntry struct {
 	// provisioned marks an environment held open by a provisioned concurrency
 	// reservation. Exempt from the idle sweep.
 	provisioned bool
+	// initOrigin records how this environment came to exist — see the
+	// initOrigin* constants. Set once, at creation, and never mutated
+	// afterwards: a warm reuse (Bind's warm branch) must not overwrite a
+	// proactively or provisioned-created environment's origin just because an
+	// on-demand invocation went on to use it.
+	initOrigin string
 	// retire is set by Invalidate when the function's code or configuration
 	// changed while this instance was mid-invocation. Finish evicts the record
 	// instead of marking it idle.
@@ -92,6 +131,7 @@ func (e *trackerEntry) toPayload() events.LambdaInstancePayload {
 		LastInvocationError:  e.lastInvocationError,
 		TriggerEvent:         e.triggerEvent,
 		Provisioned:          e.provisioned,
+		InitOrigin:           e.initOrigin,
 		MemoryUsedMB:         e.memUsedMB,
 		CPUPercent:           e.cpuPercent,
 	}
@@ -201,6 +241,11 @@ func (t *instanceTracker) Begin(functionName string, payload []byte) *trackedInv
 		lastUsed:     now,
 		status:       instanceStatusStarting,
 		triggerEvent: payload,
+		// An invocation always begins a record for an environment serving that
+		// invocation, whether it turns out to be a cold start or a warm reuse
+		// (see Bind). "on-demand" is only ever displaced by carrying forward an
+		// existing warm entry's origin — never assigned here.
+		initOrigin: instanceOriginOnDemand,
 	}
 
 	t.mu.Lock()
@@ -244,6 +289,9 @@ func (i *trackedInvocation) Bind(inst RuntimeInstance) {
 	case warm:
 		// Warm reuse: carry this invocation's trigger event onto the record
 		// that already represents the container, and discard the provisional.
+		// existing.initOrigin is deliberately left untouched — a proactively
+		// or provisioned-created environment keeps reporting how it was
+		// actually initialized even once an on-demand invocation reuses it.
 		existing.status = instanceStatusRunning
 		existing.lastUsed = t.clk.Now()
 		existing.containerID = inst.ContainerID()
@@ -359,6 +407,10 @@ func (i *trackedInvocation) Finish(success bool, failureReason string) {
 
 	t.publish(events.LambdaInstanceReleased, snap)
 	if retire {
+		// retire is only ever set by Invalidate (a code/configuration update),
+		// so the deferred eviction it causes here carries the same reason as
+		// the idle instances Invalidate evicts immediately.
+		snap.EvictedReason = evictReasonConfigChange
 		t.publish(events.LambdaInstanceEvicted, snap)
 	}
 }
@@ -414,9 +466,12 @@ func invocationOutcome(err error, result *InvokeResult) (bool, string) {
 // ─── Pool-driven lifecycle ───────────────────────────────────────────────────
 
 // InstanceWarmed records an execution environment created outside an
-// invocation — today, only provisioned concurrency pre-warming. Idempotent.
-// containerID may be empty for runtimes that are not container-backed.
-func (t *instanceTracker) InstanceWarmed(functionName, instanceID, containerID string, provisioned bool) {
+// invocation — proactive initialization or provisioned concurrency
+// pre-warming. Idempotent. containerID may be empty for runtimes that are not
+// container-backed. origin is one of the instanceOrigin* constants and is
+// stored as the record's initOrigin; provisioned is derived from it so the
+// two can never disagree about whether this environment holds a reservation.
+func (t *instanceTracker) InstanceWarmed(functionName, instanceID, containerID, origin string) {
 	if t == nil || instanceID == "" {
 		return
 	}
@@ -439,7 +494,8 @@ func (t *instanceTracker) InstanceWarmed(functionName, instanceID, containerID s
 	if containerID != "" {
 		entry.containerID = containerID
 	}
-	entry.provisioned = provisioned
+	entry.initOrigin = origin
+	entry.provisioned = origin == instanceOriginProvisioned
 	entry.lastUsed = now
 	snap := entry.toPayload()
 	t.mu.Unlock()
@@ -452,8 +508,9 @@ func (t *instanceTracker) InstanceWarmed(functionName, instanceID, containerID s
 // InstanceLost records that an execution environment no longer exists. Called
 // by the pool for every container it destroys, whatever the reason: idle sweep,
 // reclaimed for capacity, retired after an update, died in Docker, or the
-// function was deleted.
-func (t *instanceTracker) InstanceLost(functionName, instanceID string) {
+// function was deleted. reason is one of the evictReason* constants and is
+// published on the LambdaInstanceEvicted event as-is.
+func (t *instanceTracker) InstanceLost(functionName, instanceID, reason string) {
 	if t == nil || instanceID == "" {
 		return
 	}
@@ -468,6 +525,7 @@ func (t *instanceTracker) InstanceLost(functionName, instanceID string) {
 	}
 	snap := entry.toPayload()
 	snap.Status = instanceStatusIdle // already removed
+	snap.EvictedReason = reason
 	t.publish(events.LambdaInstanceEvicted, snap)
 }
 
@@ -490,7 +548,9 @@ func (t *instanceTracker) Invalidate(functionName string) {
 			continue
 		}
 		delete(t.entries, key)
-		evicted = append(evicted, entry.toPayload())
+		snap := entry.toPayload()
+		snap.EvictedReason = evictReasonConfigChange
+		evicted = append(evicted, snap)
 	}
 	t.mu.Unlock()
 
@@ -513,6 +573,7 @@ func (t *instanceTracker) Evict(functionName string) {
 		delete(t.entries, key)
 		snap := entry.toPayload()
 		snap.Status = instanceStatusIdle // already removed
+		snap.EvictedReason = evictReasonFunctionDeleted
 		evicted = append(evicted, snap)
 	}
 	t.mu.Unlock()
@@ -677,6 +738,8 @@ func (t *instanceTracker) sweep() {
 			zap.String("function", e.functionName),
 			zap.String("instance", e.instanceID),
 		)
-		t.publish(events.LambdaInstanceEvicted, e.toPayload())
+		snap := e.toPayload()
+		snap.EvictedReason = evictReasonIdleTTL
+		t.publish(events.LambdaInstanceEvicted, snap)
 	}
 }

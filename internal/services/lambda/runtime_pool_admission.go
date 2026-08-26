@@ -241,7 +241,14 @@ func (p *InstancePool) admitContainer(ctx context.Context, fn *Function) error {
 				zap.Bool("memory_bound", overMemory),
 				zap.Int("max_instances", p.maxInstances),
 			)
-			p.closeInstance(victim, reclaimed, "close reclaimed instance failed")
+			// Mirrors the message/level split above: a reclaim forced by the
+			// memory budget reads to the UI as memory pressure, one forced by
+			// the instance-count cap as ordinary surplus reclamation.
+			reason := evictReasonSurplus
+			if overMemory {
+				reason = evictReasonMemoryPressure
+			}
+			p.closeInstance(victim, reclaimed, "close reclaimed instance failed", reason)
 			p.signalSlotFreed()
 			continue
 		}

@@ -370,6 +370,16 @@ entry per execution environment, so a function serving five concurrent
 invocations shows five instances. A retired environment stops being listed at
 the moment it is retired rather than lingering until the idle timeout.
 
+Every instance payload — the list endpoint and the `lambda:Instance*` SSE
+events — also carries `initOrigin`, one of `on-demand`, `proactive`, or
+`provisioned`, recording how the environment was created; it is fixed for the
+environment's lifetime, so a proactive environment that later serves invokes
+still reports `proactive`. The `lambda:InstanceEvicted` event additionally
+carries `evictedReason` — one of `idle-ttl`, `config-change`,
+`function-deleted`, `container-died`, `unhealthy`, `surplus`,
+`memory-pressure`, or `shutdown` — naming why that environment was retired;
+it is not present on the list endpoint or on any other instance event.
+
 ### CPU is shared with the init, and small functions feel it in bursts
 
 Every execution environment runs an Overcast init process as PID 1 — the parent
@@ -1088,6 +1098,13 @@ carries no `Init Duration`, exactly like a proactively initialized
 environment on AWS. Creation only proceeds when capacity is idle: it never
 queues ahead of a real invocation, respects the instance and memory budgets,
 and the environment ages out through the normal idle sweep.
+
+The web UI's system map badges these environments "proactive" (via
+`initOrigin`, see [Concurrency and execution
+environments](#concurrency-and-execution-environments)) so you can tell them
+apart from an on-demand cold start at a glance. This badge is emulator-side
+telemetry only — it has no bearing on `AWS_LAMBDA_INITIALIZATION_TYPE`, which
+deliberately still reads `on-demand` exactly as it does on real AWS.
 
 ---
 

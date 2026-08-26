@@ -394,6 +394,26 @@ const (
 	initTypeProvisioned = "provisioned-concurrency"
 )
 
+// lambdaInitOrigin classifies why acquireContainer was called, for the
+// init_origin field on the "lambda container started" log line and the
+// instance tracker's InitOrigin. This is strictly emulator-side telemetry:
+// AWS gives an application no way to distinguish a proactively initialized
+// environment from a real cold start — AWS_LAMBDA_INITIALIZATION_TYPE reads
+// "on-demand" either way, and the only outward difference AWS documents is
+// that a proactive environment's first REPORT line omits Init Duration (see
+// AcquireProactive) — so origin must never be derived from, or leak into,
+// anything an invocation can observe.
+func lambdaInitOrigin(initType string, proactive bool) string {
+	switch {
+	case proactive:
+		return instanceOriginProactive
+	case initType == initTypeProvisioned:
+		return instanceOriginProvisioned
+	default:
+		return instanceOriginOnDemand
+	}
+}
+
 // Acquire creates and starts a Docker container for fn, then returns a
 // containerInstance that can invoke the function via the Runtime API.
 func (cr *ContainerRuntime) Acquire(ctx context.Context, fn *Function) (RuntimeInstance, error) {
@@ -851,6 +871,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			zap.String("container_ip", containerIP),
 			zap.String("runtime_api", rapiListener.Addr()),
 			zap.String("log_stream", logStream),
+			zap.String("init_origin", lambdaInitOrigin(initType, proactive)),
 			zap.Duration("acquire_total", cr.clk.Now().Sub(acquireStart)),
 		}, phases...)...,
 	)
