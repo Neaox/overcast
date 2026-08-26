@@ -99,6 +99,26 @@ export interface LambdaInstance {
    * TTL, so `expiresAt` is 0 for them.
    */
   provisioned?: boolean
+  /**
+   * How this environment was created. Present on every instance payload and
+   * preserved for the environment's lifetime — a "proactive" environment
+   * that later serves invokes keeps reporting "proactive".
+   */
+  initOrigin?: "on-demand" | "proactive" | "provisioned"
+  /**
+   * Why this environment was retired. Present ONLY on the
+   * `lambda:InstanceEvicted` SSE event payload — never on the
+   * `GET /_overcast/lambda/instances` list or other instance events.
+   */
+  evictedReason?:
+    | "idle-ttl"
+    | "config-change"
+    | "function-deleted"
+    | "container-died"
+    | "unhealthy"
+    | "surplus"
+    | "memory-pressure"
+    | "shutdown"
 }
 
 export interface LambdaLayerVersionMetadata {

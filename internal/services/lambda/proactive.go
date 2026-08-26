@@ -215,7 +215,7 @@ func (pi *proactiveIniter) attempt(name string, self *pendingInit) {
 
 	switch pool.ProactiveInit(fn) {
 	case proactiveStarted:
-		pi.log.Debug("lambda proactive init: environment creation started",
+		pi.log.Info("lambda proactive init: environment creation started",
 			zap.String("function", name))
 	case proactiveBusy:
 		// Capacity was contended; try again later rather than ever queueing

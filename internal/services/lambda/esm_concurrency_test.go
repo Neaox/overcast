@@ -378,5 +378,5 @@ func TestInstanceTracker_warmReuseKeepsTheSameInstanceID(t *testing.T) {
 // care about lost instances.
 type observerFunc func(functionName string)
 
-func (f observerFunc) InstanceWarmed(string, string, string, bool) {}
-func (f observerFunc) InstanceLost(functionName, _ string)         { f(functionName) }
+func (f observerFunc) InstanceWarmed(string, string, string, string) {}
+func (f observerFunc) InstanceLost(functionName, _ string, _ string) { f(functionName) }

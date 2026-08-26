@@ -841,6 +841,22 @@ type LambdaInstancePayload struct {
 	// provisioned concurrency reservation rather than created on demand.
 	// Provisioned environments are exempt from the idle TTL.
 	Provisioned bool `json:"provisioned,omitempty"`
+	// InitOrigin reports how this execution environment came to exist:
+	// "on-demand" (created to serve an invocation), "proactive" (created ahead
+	// of traffic once a deploy settled, mirroring AWS's documented proactive
+	// initialization), or "provisioned" (created for a provisioned concurrency
+	// reservation). AWS itself exposes no equivalent signal — an environment's
+	// own AWS_LAMBDA_INITIALIZATION_TYPE reads "on-demand" even when it was
+	// proactively initialized, the only outward difference being that its
+	// first REPORT line omits Init Duration — so this is emulator-side
+	// telemetry only, surfaced for the instances panel and system map, and
+	// must never leak into CloudWatch logs or the wire.
+	InitOrigin string `json:"initOrigin,omitempty"`
+	// EvictedReason reports why this execution environment was removed:
+	// "idle-ttl", "config-change", "function-deleted", "container-died",
+	// "unhealthy", "surplus", "memory-pressure", or "shutdown". Populated only
+	// on the LambdaInstanceEvicted event; empty on every other event.
+	EvictedReason string `json:"evictedReason,omitempty"`
 	// MemoryUsedMB and CPUPercent are reserved for future real metrics collection.
 	MemoryUsedMB int     `json:"memoryUsedMB"`
 	CPUPercent   float64 `json:"cpuPercent"`

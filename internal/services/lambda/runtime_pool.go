@@ -66,14 +66,18 @@ const (
 // Implemented by instanceTracker.
 type InstanceObserver interface {
 	// InstanceWarmed reports an environment created without an invocation —
-	// today, only provisioned concurrency pre-warming. containerID identifies
-	// the backing Docker container ("" when not container-backed) so the
-	// tracker can sample its resource usage.
-	InstanceWarmed(functionName, instanceID, containerID string, provisioned bool)
+	// proactive initialization or provisioned concurrency pre-warming.
+	// containerID identifies the backing Docker container ("" when not
+	// container-backed) so the tracker can sample its resource usage. origin
+	// is one of the instanceOrigin* constants and records why the environment
+	// was created, for the instances panel's origin badge.
+	InstanceWarmed(functionName, instanceID, containerID, origin string)
 	// InstanceLost reports an environment that no longer exists, for any
 	// reason: idle sweep, reclaimed for capacity, retired after an update,
-	// died in Docker, or its function was deleted.
-	InstanceLost(functionName, instanceID string)
+	// died in Docker, or its function was deleted. reason is one of the
+	// evictReason* constants and records why, for the instances panel's
+	// removal-reason display.
+	InstanceLost(functionName, instanceID, reason string)
 }
 
 // poolEntry holds one idle RuntimeInstance.
@@ -381,7 +385,7 @@ func (p *InstancePool) takeWarm(fn *Function) RuntimeInstance {
 
 	for _, inst := range stale {
 		p.log.Debug("lambda pool: evicting stale instance", zap.String("function", fn.Name))
-		p.closeInstance(fn.Name, inst, "close stale instance failed")
+		p.closeInstance(fn.Name, inst, "close stale instance failed", evictReasonConfigChange)
 	}
 	if chosen != nil {
 		p.log.Debug("lambda pool: warm start", zap.String("function", fn.Name))
@@ -520,6 +524,20 @@ var releaseLog = map[releaseDisposition]string{
 	closeMemoryPressure: "lambda pool: memory budget near exhaustion — closing instead of keeping warm",
 }
 
+// releaseReason maps a disposition to the evictedReason the observer sees.
+// closeRetired reports "config-change" for both switch cases that produce it
+// below — a stale identity and a function deleted mid-invocation — since
+// either way the instance is being destroyed because what Release compared it
+// against moved out from under it, which reads to the UI as a configuration
+// change either way.
+var releaseReason = map[releaseDisposition]string{
+	closeUnhealthy:      evictReasonUnhealthy,
+	closeAfterStop:      evictReasonShutdown,
+	closeRetired:        evictReasonConfigChange,
+	closeSurplus:        evictReasonSurplus,
+	closeMemoryPressure: evictReasonMemoryPressure,
+}
+
 // Release returns inst to the warm set after an invocation. The instance is
 // destroyed instead when it is unhealthy, when the function was updated while
 // the invocation was in flight, or when the warm set is already full.
@@ -626,7 +644,7 @@ func (p *InstancePool) Release(_ context.Context, inst RuntimeInstance, healthy 
 		return
 	}
 	p.log.Debug(releaseLog[disposition], zap.String("function", name))
-	p.closeInstance(name, inst, "close on release failed")
+	p.closeInstance(name, inst, "close on release failed", releaseReason[disposition])
 	// An environment lost while the reservation still stands must be rebuilt;
 	// one closed because the pool is stopping or already full must not be.
 	if disposition == closeUnhealthy || disposition == closeRetired {
@@ -648,8 +666,10 @@ func (p *InstancePool) warmCapacityLocked(name string) int {
 
 // closeInstance destroys inst and tells the observer the environment is gone.
 // Every path that gets rid of a container goes through here so the tracker and
-// the pool can never disagree about what exists.
-func (p *InstancePool) closeInstance(name string, inst RuntimeInstance, msg string) {
+// the pool can never disagree about what exists. reason is one of the
+// evictReason* constants, forwarded to the observer verbatim so the instances
+// panel can explain why the environment disappeared.
+func (p *InstancePool) closeInstance(name string, inst RuntimeInstance, msg, reason string) {
 	p.mu.Lock()
 	if ids := p.provisionedInstances[name]; ids != nil {
 		delete(ids, inst.InstanceID())
@@ -669,7 +689,7 @@ func (p *InstancePool) closeInstance(name string, inst RuntimeInstance, msg stri
 		)
 	}
 	if p.observer != nil {
-		p.observer.InstanceLost(name, inst.InstanceID())
+		p.observer.InstanceLost(name, inst.InstanceID(), reason)
 	}
 }
 
@@ -750,7 +770,7 @@ func (p *InstancePool) abandonColdStart(name string, inst RuntimeInstance, memMB
 	p.unreservePendingMem(memMB)
 	p.releaseSlot(name)
 	if inst != nil {
-		p.closeInstance(name, inst, "close environment created for a deleted function failed")
+		p.closeInstance(name, inst, "close environment created for a deleted function failed", evictReasonFunctionDeleted)
 	}
 }
 
@@ -787,7 +807,7 @@ func (p *InstancePool) EvictFunction(name string) {
 		cs.cancel()
 	}
 	for _, entry := range warm {
-		p.closeInstance(name, entry.inst, "evict close failed")
+		p.closeInstance(name, entry.inst, "evict close failed", evictReasonFunctionDeleted)
 	}
 }
 
@@ -844,7 +864,7 @@ func (p *InstancePool) InvalidateFunction(fn *Function) int {
 	for _, inst := range retire {
 		p.log.Debug("lambda pool: retiring idle instance after configuration change",
 			zap.String("function", name))
-		p.closeInstance(name, inst, "close retired instance failed")
+		p.closeInstance(name, inst, "close retired instance failed", evictReasonConfigChange)
 	}
 	if reprovision {
 		p.replenishProvisioned(name)
@@ -898,7 +918,7 @@ func (p *InstancePool) handleContainerDied(_ context.Context, e events.Event) {
 		zap.String("function", name),
 		zap.String("container", shortContainerID(payload.ContainerID)),
 	)
-	p.closeInstance(name, dead, "close dead instance failed")
+	p.closeInstance(name, dead, "close dead instance failed", evictReasonContainerDied)
 	p.replenishProvisioned(name)
 }
 
@@ -1060,7 +1080,7 @@ func (p *InstancePool) replenishProvisioned(name string) {
 				// filled. Destroy whatever came up and stop replenishing a
 				// target that no longer exists.
 				if inst != nil {
-					p.closeInstance(fn.Name, inst, "close environment created for a deleted function failed")
+					p.closeInstance(fn.Name, inst, "close environment created for a deleted function failed", evictReasonFunctionDeleted)
 				}
 				break
 			}
@@ -1082,7 +1102,7 @@ func (p *InstancePool) replenishProvisioned(name string) {
 			if p.observer != nil {
 				// Announce before pooling: if Release decides to close this
 				// instance instead, closeInstance's InstanceLost retracts it.
-				p.observer.InstanceWarmed(fn.Name, inst.InstanceID(), inst.ContainerID(), true)
+				p.observer.InstanceWarmed(fn.Name, inst.InstanceID(), inst.ContainerID(), instanceOriginProvisioned)
 			}
 			// Release decrements the in-flight count, so borrow a slot first to
 			// keep the books level — this environment was never checked out.
@@ -1198,7 +1218,7 @@ func (p *InstancePool) ProactiveInit(fn *Function) proactiveOutcome {
 		}
 		p.commitPendingMem(inst.InstanceID(), memMB)
 		if p.observer != nil {
-			p.observer.InstanceWarmed(name, inst.InstanceID(), inst.ContainerID(), false)
+			p.observer.InstanceWarmed(name, inst.InstanceID(), inst.ContainerID(), instanceOriginProactive)
 		}
 		// Release decrements the slot reserved above and pools the instance.
 		p.Release(context.Background(), inst, true)
@@ -1241,7 +1261,7 @@ func (p *InstancePool) stop() {
 	p.mu.Unlock()
 	for name, warm := range entries {
 		for _, entry := range warm {
-			p.closeInstance(name, entry.inst, "stop close failed")
+			p.closeInstance(name, entry.inst, "stop close failed", evictReasonShutdown)
 		}
 	}
 }
@@ -1293,6 +1313,6 @@ func (p *InstancePool) sweep() {
 		// schedule, not because of a specific invoke) — TRACE per the
 		// trace-vs-debug policy (CONTRIBUTING.md § Log levels).
 		p.log.Log(logging.TraceLevel, "lambda pool: evicting idle instance", zap.String("function", s.name))
-		p.closeInstance(s.name, s.inst, "sweep close failed")
+		p.closeInstance(s.name, s.inst, "sweep close failed", evictReasonIdleTTL)
 	}
 }

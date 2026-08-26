@@ -31,6 +31,8 @@ export interface LambdaInstanceCardProps {
   isGhost?: boolean
   /** Epoch ms when this instance was last seen live — drives the ghost fade. */
   deletedAt?: number
+  /** Why this (now-ghosted) instance was evicted, if known — from `lambda:InstanceEvicted`. */
+  evictedReason?: LambdaInstance["evictedReason"]
 }
 
 interface LambdaInstanceEventPayload {
@@ -42,6 +44,20 @@ interface LambdaInstanceEventPayload {
   expiresAt: number
   lastInvocationStatus?: "succeeded" | "failed"
   lastInvocationError?: string
+  initOrigin?: LambdaInstance["initOrigin"]
+  evictedReason?: LambdaInstance["evictedReason"]
+}
+
+/** Short human labels for `lambda:InstanceEvicted`'s `evictedReason`. */
+const EVICTED_REASON_LABELS: Record<NonNullable<LambdaInstance["evictedReason"]>, string> = {
+  "idle-ttl": "idle timeout",
+  "config-change": "config changed",
+  "function-deleted": "function deleted",
+  "container-died": "container died",
+  unhealthy: "unhealthy",
+  surplus: "surplus",
+  "memory-pressure": "memory pressure",
+  shutdown: "shutdown",
 }
 
 interface TriggerInfo {
@@ -223,8 +239,10 @@ function areLambdaInstanceCardPropsEqual(
     pi.expiresAt === ni.expiresAt &&
     pi.functionName === ni.functionName &&
     pi.provisioned === ni.provisioned &&
+    pi.initOrigin === ni.initOrigin &&
     prev.isGhost === next.isGhost &&
     prev.deletedAt === next.deletedAt &&
+    prev.evictedReason === next.evictedReason &&
     prev.onPeek === next.onPeek
   )
 }
@@ -244,6 +262,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
   onPeek,
   isGhost = false,
   deletedAt = 0,
+  evictedReason,
 }: LambdaInstanceCardProps) {
   const { events: lambdaEvents } = useEventStream({ source: "lambda" })
   const eventCursorRef = useRef(0)
@@ -376,14 +395,31 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
               prov
             </span>
           )}
-          <span
-            className={cn(
-              "rounded px-1 py-0.5 font-mono text-[9px] font-semibold uppercase",
-              statusBadgeClass,
-            )}
-          >
-            {instance.status}
-          </span>
+          {instance.initOrigin === "proactive" && (
+            <span
+              className="rounded bg-cat-5/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-cat-5 uppercase"
+              title="Proactively initialized after a deploy settled — created ahead of traffic, mirroring AWS proactive initialization"
+            >
+              proactive
+            </span>
+          )}
+          {isGhost && evictedReason ? (
+            <span
+              className="rounded bg-fg-muted/15 px-1 py-0.5 font-mono text-[9px] font-semibold text-fg-muted uppercase"
+              title={`Evicted — ${EVICTED_REASON_LABELS[evictedReason]}`}
+            >
+              {EVICTED_REASON_LABELS[evictedReason]}
+            </span>
+          ) : (
+            <span
+              className={cn(
+                "rounded px-1 py-0.5 font-mono text-[9px] font-semibold uppercase",
+                statusBadgeClass,
+              )}
+            >
+              {instance.status}
+            </span>
+          )}
           {hasLogs && onPeek && (
             <button
               type="button"
