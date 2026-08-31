@@ -22,6 +22,7 @@ see the [root README](../README.md).
 - [Local VPCs for CDK](./cdk/local-vpc.md) — stable local VPC bootstrap, CDK context cache behavior, VPC provider pattern
 - [Networking and host-based addressing](./networking.md) — path-style vs. Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS setup
 - [The inner loop](./local-dev.md) — edit a file and see it take effect: `cdk watch`, Lambda and ECS hot reload, and a Laravel-on-Fargate walkthrough
+- [Testcontainers](./testcontainers.md) — start Overcast from integration tests with the Go module; options, port-mapping caveats
 - [Migrating from LocalStack](./migration-from-localstack.md) — drop-in replacement guide
 
 ### Reference
