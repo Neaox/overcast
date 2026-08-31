@@ -230,6 +230,17 @@
       automerge: true,
     },
     {
+      // The inverse of the hazard above: a linter release whose own floor
+      // outruns the module's. golangci-lint v2.13.0 raised its minimum to
+      // Go 1.26 while go.mod says 1.25.0, and the Lint job runs the tool
+      // with `go run` under GOTOOLCHAIN=local — so a v2.13.x bump refuses
+      // to even start and the PR can only ever arrive red (#1487). Hold
+      // the pin below 2.13 until the go.mod floor reaches 1.26, then
+      // delete this rule.
+      matchPackageNames: ['golangci/golangci-lint'],
+      allowedVersions: '<2.13.0',
+    },
+    {
       // Routine digest advances (the job Dependabot used to do): one PR, one
       // CI run. Content-free to review — the version is unchanged by
       // definition — so it automerges once every required check is green.
