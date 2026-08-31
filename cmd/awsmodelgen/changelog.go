@@ -19,9 +19,12 @@ import (
 //
 // Every category this file reports moves requests across that switch:
 //
-//   - An added operation takes its path off the S3 fallback, so a caller that
-//     was getting a bucket-or-object answer starts getting a 501 naming the
-//     operation.
+//   - An added operation takes its path off the S3 fallback, so a signed
+//     caller that was getting a bucket-or-object answer starts getting the
+//     protocol-correct 501 — a fixed template marked x-emulator-unsupported;
+//     it does not name the operation (established by alpha.38's RC
+//     verification), and unsigned traffic without a bearer token stays S3's
+//     by restFallback's design.
 //   - A removed one hands the path back.
 //   - A protocol trait change moves the operation's ErrorProfile, which is what
 //     both writeNotImplemented and writeScopeMismatch pick the error envelope
@@ -54,7 +57,7 @@ func changelogFragment(d inventoryDiff, modelDate string) string {
 
 	var out bytes.Buffer
 	if len(d.AddedOperations) > 0 {
-		fmt.Fprintf(&out, "+ [router] %s newly modeled by AWS are recognised%s. A request to one reaches a protocol-correct `501` naming the operation, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer\n",
+		fmt.Fprintf(&out, "+ [router] %s newly modeled by AWS are recognised%s. A signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer\n",
 			countLabel(len(d.AddedOperations), "operation", "operations"),
 			addedServicesClause(d.AddedServices))
 	}
