@@ -45,13 +45,17 @@ type autoStateSignals struct {
 	// Docker named volume or bind mount. See isMountpoint.
 	Mountpoint bool
 
-	// DataDirExplicit is true when OVERCAST_DATA_DIR was set by something
+	// DataDirExplicit is true when the data directory was set by something
 	// other than the Docker image's own baked-in ENV default. The image sets
 	// both OVERCAST_DATA_DIR=/data and OVERCAST_DATA_DIR_SOURCE=image; a
 	// user (native, or Docker with OVERCAST_DATA_DIR overridden and
-	// OVERCAST_DATA_DIR_SOURCE cleared) is the only other way this env var is
+	// OVERCAST_DATA_DIR_SOURCE cleared) is the only other way that env var is
 	// non-empty, so its presence there is treated as deliberate intent to
-	// persist to that directory.
+	// persist to that directory. The DATA_DIR alias (#1190) also sets this,
+	// even inside the image: an alias value always comes from the user (the
+	// image bakes no LocalStack variables), and it overrides the image-baked
+	// OVERCAST_DATA_DIR rather than conflicting — see Load's data-directory
+	// resolution.
 	DataDirExplicit bool
 
 	// ExistingDatabase is true when an overcast.db (or overcast.wal) file
@@ -112,10 +116,13 @@ func resolveAutoState(sig autoStateSignals) (backend StateBackend, signal string
 // dataDirSource is the literal value of OVERCAST_DATA_DIR_SOURCE — both read
 // by the caller (Load) before defaulting, since defaulting itself would
 // erase the "was this actually set" information this function needs.
-func detectAutoStateSignals(dataDir, dataDirEnvRaw, dataDirSource string) autoStateSignals {
+// dataDirAliasSource is non-empty ("DATA_DIR") when the LocalStack alias
+// supplied or confirmed the value (#1190) — that is always user intent, even
+// under the image marker, since the image bakes no LocalStack variables.
+func detectAutoStateSignals(dataDir, dataDirEnvRaw, dataDirSource, dataDirAliasSource string) autoStateSignals {
 	return autoStateSignals{
 		Mountpoint:       isMountpoint(dataDir),
-		DataDirExplicit:  dataDirEnvRaw != "" && !isDockerImage(dataDirSource),
+		DataDirExplicit:  dataDirAliasSource != "" || (dataDirEnvRaw != "" && !isDockerImage(dataDirSource)),
 		ExistingDatabase: HasExistingDatabase(dataDir),
 		SQLiteAvailable:  sqliteBuildSupported,
 	}

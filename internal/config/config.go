@@ -1370,7 +1370,9 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_DATA_DIR_SOURCE           (empty) internal provenance marker — the Docker image sets this
 //	                                           to "image" alongside its baked-in OVERCAST_DATA_DIR=/data,
 //	                                           so the auto-state resolver doesn't mistake the image
-//	                                           default for user intent. Not for end users to set.
+//	                                           default for user intent, and the DATA_DIR alias overrides
+//	                                           the baked value instead of conflicting with it. Not for
+//	                                           end users to set.
 //	OVERCAST_HYBRID_FLUSH_INTERVAL     5s
 //	OVERCAST_HYBRID_SYNC                interval (always | interval | never)
 //	OVERCAST_HYBRID_SYNC_INTERVAL       100ms
@@ -1608,9 +1610,26 @@ func Load() (*Config, error) {
 	// read twice. LocalStack's DATA_DIR (#1190) is accepted as an alias —
 	// setting it counts as "explicitly configured" for the auto-state
 	// detection below exactly as OVERCAST_DATA_DIR would.
-	dataDirEnvRaw, dataDirAliasSource, err := resolveStringAlias(dataDirAlias, os.Getenv("OVERCAST_DATA_DIR"), "OVERCAST_DATA_DIR")
+	//
+	// The Docker image bakes OVERCAST_DATA_DIR=/data as its own default,
+	// marked by OVERCAST_DATA_DIR_SOURCE=image (see the ENV block in
+	// Dockerfile). For the alias conflict rule that baked value is a default,
+	// not user intent, so DATA_DIR overrides it rather than disagreeing with
+	// it — `docker run -e DATA_DIR=/persist` against the image's own ENV must
+	// not fail startup (the drop-in migration promise, #1190). Only when the
+	// alias supplies nothing does the baked value carry through unchanged.
+	dataDirNativeRaw := os.Getenv("OVERCAST_DATA_DIR")
+	imageBakedDataDir := ""
+	if isDockerImage(dataDirSource) {
+		imageBakedDataDir = dataDirNativeRaw
+		dataDirNativeRaw = ""
+	}
+	dataDirEnvRaw, dataDirAliasSource, err := resolveStringAlias(dataDirAlias, dataDirNativeRaw, "OVERCAST_DATA_DIR")
 	if err != nil {
 		return nil, err
+	}
+	if dataDirEnvRaw == "" {
+		dataDirEnvRaw = imageBakedDataDir
 	}
 	cfg.DataDir = orDefault(dataDirEnvRaw, defaultDataDir())
 	if dataDirAliasSource != "" {
@@ -1642,7 +1661,7 @@ func Load() (*Config, error) {
 	}
 	if cfg.StateConfigured == "auto" {
 		cfg.StateSource = StateSourceAuto
-		sig := detectAutoStateSignals(cfg.DataDir, dataDirEnvRaw, dataDirSource)
+		sig := detectAutoStateSignals(cfg.DataDir, dataDirEnvRaw, dataDirSource, dataDirAliasSource)
 		backend, signal, reason := resolveAutoState(sig)
 		cfg.State = backend
 		cfg.StateAutoSignal = signal

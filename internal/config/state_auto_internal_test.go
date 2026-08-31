@@ -93,7 +93,7 @@ func TestResolveAutoState_sqliteUnavailableOverridesEveryEvidenceSignal(t *testi
 // silently force every auto resolution to memory — the bug this whole gate
 // exists to prevent would reappear in the opposite direction).
 func TestDetectAutoStateSignals_sqliteAvailableMatchesBuild(t *testing.T) {
-	sig := detectAutoStateSignals(t.TempDir(), "", "")
+	sig := detectAutoStateSignals(t.TempDir(), "", "", "")
 	if sig.SQLiteAvailable != sqliteBuildSupported {
 		t.Errorf("SQLiteAvailable = %v, want %v (sqliteBuildSupported)", sig.SQLiteAvailable, sqliteBuildSupported)
 	}
@@ -101,25 +101,30 @@ func TestDetectAutoStateSignals_sqliteAvailableMatchesBuild(t *testing.T) {
 
 // TestDetectAutoStateSignals_dataDirExplicit covers the OVERCAST_DATA_DIR_SOURCE
 // "image" carve-out: the env var being present is only evidence of explicit
-// user intent when it wasn't set by the Docker image's own baked-in default.
+// user intent when it wasn't set by the Docker image's own baked-in default —
+// unless the DATA_DIR alias supplied the value, which is always user intent
+// (the image bakes no LocalStack variables), image marker or not.
 func TestDetectAutoStateSignals_dataDirExplicit(t *testing.T) {
 	dir := t.TempDir()
 
 	tests := []struct {
-		name          string
-		dataDirEnvRaw string
-		dataDirSource string
-		want          bool
+		name               string
+		dataDirEnvRaw      string
+		dataDirSource      string
+		dataDirAliasSource string
+		want               bool
 	}{
-		{"unset", "", "", false},
-		{"set, no source marker (native)", dir, "", true},
-		{"set, source=image (Docker default)", dir, "image", false},
-		{"set, source=something else", dir, "user", true},
+		{"unset", "", "", "", false},
+		{"set, no source marker (native)", dir, "", "", true},
+		{"set, source=image (Docker default)", dir, "image", "", false},
+		{"set, source=something else", dir, "user", "", true},
+		{"set via DATA_DIR alias (native)", dir, "", "DATA_DIR", true},
+		{"set via DATA_DIR alias, source=image (Docker run -e DATA_DIR)", dir, "image", "DATA_DIR", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sig := detectAutoStateSignals(dir, tt.dataDirEnvRaw, tt.dataDirSource)
+			sig := detectAutoStateSignals(dir, tt.dataDirEnvRaw, tt.dataDirSource, tt.dataDirAliasSource)
 			if sig.DataDirExplicit != tt.want {
 				t.Errorf("DataDirExplicit = %v, want %v", sig.DataDirExplicit, tt.want)
 			}
@@ -135,7 +140,7 @@ func TestDetectAutoStateSignals_dataDirExplicit(t *testing.T) {
 func TestDetectAutoStateSignals_existingDatabase(t *testing.T) {
 	t.Run("no database", func(t *testing.T) {
 		dir := t.TempDir()
-		sig := detectAutoStateSignals(dir, "", "")
+		sig := detectAutoStateSignals(dir, "", "", "")
 		if sig.ExistingDatabase {
 			t.Error("ExistingDatabase: expected false for an empty directory")
 		}
@@ -146,7 +151,7 @@ func TestDetectAutoStateSignals_existingDatabase(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "overcast.db"), []byte{}, 0o644); err != nil {
 			t.Fatalf("write overcast.db: %v", err)
 		}
-		sig := detectAutoStateSignals(dir, "", "")
+		sig := detectAutoStateSignals(dir, "", "", "")
 		if !sig.ExistingDatabase {
 			t.Error("ExistingDatabase: expected true when overcast.db exists")
 		}
@@ -157,7 +162,7 @@ func TestDetectAutoStateSignals_existingDatabase(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "overcast.wal"), []byte{}, 0o644); err != nil {
 			t.Fatalf("write overcast.wal: %v", err)
 		}
-		sig := detectAutoStateSignals(dir, "", "")
+		sig := detectAutoStateSignals(dir, "", "", "")
 		if !sig.ExistingDatabase {
 			t.Error("ExistingDatabase: expected true when overcast.wal exists")
 		}
@@ -165,7 +170,7 @@ func TestDetectAutoStateSignals_existingDatabase(t *testing.T) {
 
 	t.Run("nonexistent directory", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "does-not-exist")
-		sig := detectAutoStateSignals(dir, "", "")
+		sig := detectAutoStateSignals(dir, "", "", "")
 		if sig.ExistingDatabase {
 			t.Error("ExistingDatabase: expected false when the directory doesn't exist")
 		}
