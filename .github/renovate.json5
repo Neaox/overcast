@@ -216,10 +216,14 @@
       // Where the Go toolchain actually advances. go.mod's bare `go 1.24`
       // directive is a floor, not a pin — Renovate's go-mod-directive
       // versioning reads it as ">= 1.24", already satisfied, and correctly
-      // never bumps it (confirmed in the adoption dry run). The Dockerfile's
-      // golang base is the pin that decides what compiles the shipped binary,
-      // so its bumps get their own group name rather than disappearing into a
-      // generic image PR. Automerged under the Go 1 compatibility promise,
+      // never bumps it (confirmed in the adoption dry run). Two pins move
+      // here instead, in one group so they stay in step: the Dockerfile's
+      // golang base, which decides what compiles the shipped binary, and
+      // go.mod's `toolchain` directive (depName `go`), which decides what CI
+      // runs — setup-go's go-version-file reads it in preference to the
+      // floor. Keeping them grouped is what stops the lint/test toolchain
+      // trailing the shipped one, the drift behind #1487's permanently red
+      // golangci-lint bump. Automerged under the Go 1 compatibility promise,
       // and not blindly: both required Docker-build jobs compile the whole
       // module with the new toolchain before the merge, and a toolchain the
       // pinned golangci-lint cannot parse fails the required Lint check and
@@ -228,17 +232,6 @@
       matchDatasources: ['docker', 'golang-version'],
       matchPackageNames: ['golang', 'go'],
       automerge: true,
-    },
-    {
-      // The inverse of the hazard above: a linter release whose own floor
-      // outruns the module's. golangci-lint v2.13.0 raised its minimum to
-      // Go 1.26 while go.mod says 1.25.0, and the Lint job runs the tool
-      // with `go run` under GOTOOLCHAIN=local — so a v2.13.x bump refuses
-      // to even start and the PR can only ever arrive red (#1487). Hold
-      // the pin below 2.13 until the go.mod floor reaches 1.26, then
-      // delete this rule.
-      matchPackageNames: ['golangci/golangci-lint'],
-      allowedVersions: '<2.13.0',
     },
     {
       // Routine digest advances (the job Dependabot used to do): one PR, one
