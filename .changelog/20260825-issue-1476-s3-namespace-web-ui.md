@@ -1,2 +1,0 @@
-+ [web/s3] the create-bucket dialog gains an S3 Bucket Namespace choice — global (default) or account regional, which turns the name field into a prefix and shows a live `<prefix>-<accountId>-<region>-an` preview before submitting
-+ [web/s3] the bucket list badges a bucket "Account regional" when its name matches the reserved namespace suffix — inferred from the name, since neither ListBuckets nor the AWS console reports a namespace for an existing bucket

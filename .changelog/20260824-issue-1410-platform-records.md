@@ -1,4 +1,0 @@
-* [lambda] an extension subscribing to platform records mid-startup could be replayed its INIT phase out of order when a record arrived while the container's address was being attached
-+ [lambda] the Telemetry API subscription endpoint (`PUT /2022-07-01/telemetry`) — the surface modern observability extensions call, with schemaVersion validation, the documented cross-API exclusivity with the Logs API, and JSON-format function log records embedded as objects from schemaVersion 2022-12-13
-+ [lambda] `platform.start`, `platform.runtimeDone` and `platform.report` records now carry the `tracing` member with the X-Amzn-Trace-Id actually handed to the runtime
-+ [lambda] `platform.runtimeDone` metrics are measured by the in-container init — the runtime being handed the event to its answer arriving back, with `producedBytes` from the length the runtime declared — with the host's own measurement as the fallback when the runtime never answered
