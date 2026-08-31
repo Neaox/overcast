@@ -1012,7 +1012,7 @@ jobs:
       # this builds and pushes in one step instead of tagging the local image.
       # The native build above still runs, and is what the slim smoke test
       # exercises; the amd64 half of this build reuses its layers from cache.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         if: needs.release-gate.outputs.rc == 'true'
       - name: Log in to GHCR
         if: needs.release-gate.outputs.rc == 'true'
