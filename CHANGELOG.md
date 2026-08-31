@@ -66,6 +66,168 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.38] - 2026-08-31
+
+### Added
+
+- [apigateway/web] Monitor tab on the REST and HTTP API detail pages, charting requests, 4XX/5XX errors, and latency per API or per stage
+
+- [cloudformation/s3] `AWS::S3::Bucket` gains `BucketNamespace` and `BucketNamePrefix`, both Replacement on update; `BucketNamePrefix` appends the account/region suffix the way the console does
+
+- [iam] the `s3:x-amz-bucket-namespace` condition key is populated from the request header, so AWS's published `Deny`+`StringNotEquals` account-regional enforcement pattern works
+
+- [lambda] the Telemetry API subscription endpoint (`PUT /2022-07-01/telemetry`) — the surface modern observability extensions call, with schemaVersion validation, the documented cross-API exclusivity with the Logs API, and JSON-format function log records embedded as objects from schemaVersion 2022-12-13
+
+- [lambda] `platform.start`, `platform.runtimeDone` and `platform.report` records now carry the `tracing` member with the X-Amzn-Trace-Id actually handed to the runtime
+
+- [lambda] `platform.runtimeDone` metrics are measured by the in-container init — the runtime being handed the event to its answer arriving back, with `producedBytes` from the length the runtime declared — with the host's own measurement as the fallback when the runtime never answered
+
+- [lambda] `platform.runtimeDone` and `platform.report` carry `errorType: Runtime.ExitError` when the runtime exited; timeout and handler-error records stay nameless, as AWS's own examples do
+
+- [lambda] telemetry deliveries are batched per the subscription's buffering configuration — maxItems, maxBytes and timeoutMs with AWS's defaults and limits — instead of one POST per record
+
+- [lambda] a subscriber whose batch was lost is now told: the next batch opens with a `platform.logsDropped` event carrying the dropped counts, in AWS's documented shape
+
+- [lambda] `platform.runtimeDone` carries the `responseLatency` span, measured by the in-container init; `responseDuration` and `runtimeOverhead` stay documented-out — the first ends only after the answer has streamed through, the second exists only at the runtime's next poll
+
+- [lambda] extensions' own lifecycle is on the platform stream: `platform.extension` at registration (replayed to later subscribers) and `platform.telemetrySubscription` / `platform.logsSubscription` at subscribe, named for the API the subscription came through
+
+- [lambda/web] execution environments report how they were initialized (on-demand, proactive after a settled deploy, or provisioned) and why they were removed (idle TTL, configuration change, container died, ...) — an origin badge and removal reason on the instances panel and system map, initOrigin/evictedReason on the instance SSE events, and an init_origin field on the cold-start server log line
+
+- [router] 292 operations newly modeled by AWS are recognised, spanning 4 services new to the corpus (`account-access`, `agent-registry`, `agent-registry-control`, `pricing-plan-manager`). A request to one reaches a protocol-correct `501` naming the operation, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer
+
+- [s3] `CreateBucket` supports account regional namespaces: `x-amz-bucket-namespace: account-regional` with a `<prefix>-<accountId>-<region>-an` name creates the bucket in the account's per-region namespace instead of the global one, and re-creating it returns `BucketAlreadyOwnedByYou` in every region, including us-east-1
+
+- [web] Monitor charts: expand any card into a full-width dialog with drag-to-zoom into a time window, a y-axis scale, and per-series whole-range summaries in the legend
+
+- [web] Monitor charts gained labeled X/Y axes with aligned gridlines, an AWS-console-style auto-refresh interval picker (Off/10s/30s/1m/5m), and a bucket-width chip; the time window holds still while auto-refresh is off or a chart is being inspected
+
+- [web/s3] tick boxes on the bucket's object listing, with a header box for everything currently listed, and a Download .zip button that fetches the whole selection as one archive — entries named relative to the folder they were ticked in, so a selection made in `logs/2026/` unpacks as `q1.csv` rather than rebuilding the key path around it The archive is built and sent object by object rather than assembled first, and the console asks for it with a form submission so the browser streams it to disk: a multi-gigabyte selection costs neither the server nor the tab multi-gigabyte memory. An object that disappears between the listing and the download is named in a `_download-errors.txt` inside the archive, since a download that has already begun has no status code left to spend
+
+- [web] S3 folders and objects are addressable: the object browser keeps its place in the URL, so an object is linkable and reload, Back and Forward all work
+
+- [web] the S3 object inspector has a Versions tab: one object's own history, with the details and preview of whichever revision you pick
+
+- [web/s3] the create-bucket dialog gains an S3 Bucket Namespace choice — global (default) or account regional, which turns the name field into a prefix and shows a live `<prefix>-<accountId>-<region>-an` preview before submitting
+
+- [web/s3] the bucket list badges a bucket "Account regional" when its name matches the reserved namespace suffix — inferred from the name, since neither ListBuckets nor the AWS console reports a namespace for an existing bucket
+
+### Changed
+
+- [apigateway] request metrics are recorded under every AWS-documented dimension combination — `ApiName` and `ApiName`+`Stage` (REST), `ApiId` and `ApiId`+`Stage` (HTTP) alongside the detailed per-route set — so CloudWatch queries at the API or stage level now return data
+
+- **BREAKING** [apigateway] HTTP (v2) API error metrics are recorded under AWS's real metric names, `4xx` and `5xx`
+  migration: CloudWatch queries or alarms watching `4XXError`/`5XXError` on an HTTP API must switch to `4xx`/`5xx`; REST API metric names are unchanged
+
+- [metrics] the 5-minute rollup tier is retained for 30 days (previously 7), and the 30-day Monitor view charts 15-minute buckets instead of 1-hour ones
+
+- [router] the pinned AWS API models moved to 2026-08-21: 37 operations changed protocol traits, 5 changed an HTTP or target binding and 37 path bindings changed which services share them. A protocol-trait change moves that operation's error envelope; a binding change moves which request shape reaches the operation at all; a binding shared by several services is answered without the credential-scope check an unshared one gets, because the models no longer name a single owner for it
+
+- **BREAKING** [s3] `CreateBucket` now rejects a global-namespace bucket name ending in the reserved `-an` suffix
+  migration: rename a bucket ending in `-an`, or create it with `x-amz-bucket-namespace: account-regional` instead
+
+- [web] log rendering converged on the shared virtualized viewer: its table mode gained level badges, click-to-expand rows, and hover-copy, and a new reusable LogPanel owns fetch + filter + auto-refresh for any log group or stream (declarative filter model with relative or fixed time windows); the Lambda Monitor tab now renders its logs through it, with a filter box and time-window picker
+
+### Fixed
+
+- [apigateway] REST v1 create-deployment returned createdDate as epoch milliseconds; the AWS CLI and SDKs parse the field as epoch seconds, so the call errored client-side even though the deployment was created. The response now uses the same seconds conversion as get-deployments and the stage responses
+
+- **BREAKING** [apigateway] Usage plan responses (`CreateUsagePlan`, `GetUsagePlan`, `GetUsagePlans`) no longer return a `keyIds` member — the API Gateway `UsagePlan` shape has no such member; the underlying key associations are unaffected and remain fully readable
+  migration: stop reading `keyIds` from usage plan responses; the AWS SDKs never surfaced the member there, so SDK-based clients are unaffected — use `GetUsagePlanKeys` (the modeled channel) to read a plan's attached API key IDs
+
+- **BREAKING** [apigateway] `RestApi` responses (`CreateRestApi`, `GetRestApi`, `GetRestApis`, `UpdateRestApi`) no longer return an `arn` member, and HTTP `Api` responses (`CreateApi`, `GetApi`, `GetApis`) no longer return one either — neither the REST (v1) `RestApi` model nor the v2 `Api` model has an `arn` member anywhere
+  migration: stop reading `arn` from REST API or HTTP API responses; the AWS SDKs never surfaced the member on either shape, so SDK-based clients are unaffected
+
+- **BREAKING** [appregistry] `ListApplications` and `DeleteApplication` no longer leak `tags`/`applicationTag`, `CreateAttributeGroup`/`UpdateAttributeGroup` no longer leak `attributes`, `ListAttributeGroups`/`DeleteAttributeGroup` no longer leak `tags`/`attributes`, and associated-resource entries no longer carry a `creationTime` — the AppRegistry model binds these operations to `ApplicationSummary`, `AttributeGroup`, `AttributeGroupSummary` and `ResourceInfo` respectively, narrower shapes than the ones the emulator was reusing verbatim from Create/Get/Update
+  migration: stop reading `tags`, `applicationTag`, or `attributes` off list/delete responses and `creationTime` off associated-resource entries — real AWS never sent them there either; the fields remain on Create/Get/UpdateApplication and Create/Get/UpdateAttributeGroup, where the model defines them
+
+- **BREAKING** [appsync] ApiCache, DataSource, FunctionConfiguration and Resolver no longer echo an apiId member, and DisassociateSourceGraphqlApi/DisassociateMergedGraphqlApi now return only sourceApiAssociationStatus instead of the full sourceApiAssociation — matching the AppSync model, which never declares apiId on those four shapes and only sourceApiAssociationStatus on either Disassociate response
+  migration: a raw-JSON consumer should stop reading apiId off cache/data-source/function/resolver response objects (the caller already supplied it as the request path parameter) and read sourceApiAssociationStatus directly instead of sourceApiAssociation.sourceApiAssociationStatus on the two Disassociate responses
+
+- **BREAKING** [appsync] The Events API management operations (CreateApi/GetApi/ListApis/UpdateApi and the ChannelNamespace equivalents) emitted `created` and `lastModified` as ISO-8601 strings. The AppSync model declares these members as plain restJson1 timestamps — epoch seconds on the wire — and strict deserializers such as the AWS SDK for Go v2 fail on the string form ("expected Timestamp to be a JSON Number"), while boto3 and the CLI happened to tolerate it. The fields are now JSON numbers carrying epoch seconds with millisecond precision, verified end-to-end against the Go SDK v2 appsync client.
+  migration: Event APIs and channel namespaces persisted by earlier versions store the old string timestamps and fail to load after upgrading; delete and recreate them, or start from fresh state.
+
+- **BREAKING** [athena] `GetWorkGroup` no longer echoes a `Tags` member on `WorkGroup` — the Athena model's `WorkGroup` shape has no `Tags` member; it was leaking straight out of the persisted record
+  migration: read tags via `ListTagsForResource` instead of `WorkGroup.Tags`
+
+- **BREAKING** [cloudformation] `DescribeChangeSet` no longer returns a `ChangeSetType` member — `ChangeSetType` is an input-only member of `CreateChangeSet`; `DescribeChangeSetOutput` does not have it. The value is still recorded internally and used to drive change-set behavior
+  migration: stop reading `ChangeSetType` from `DescribeChangeSet` responses; the AWS SDKs never surfaced the member there, so SDK-based clients are unaffected — the value you set on `CreateChangeSet` is already known to the caller
+
+- **BREAKING** [cloudfront] OriginRequestPolicyConfig's CookiesConfig, HeadersConfig, and QueryStringsConfig now round-trip the modeled CookieBehavior/HeaderBehavior/QueryStringBehavior member alongside their lists, instead of a bare Quantity/Items list that silently dropped the behavior
+  migration: stored origin request policies created before this change lose their persisted cookie/header/query-string lists on next read, because the old JSON shape (`{"quantity":N,"items":[...]}`) does not populate the new `{"cookie_behavior":...,"cookies":{...}}` shape; recreate any pre-existing OriginRequestPolicy records after upgrading. SDK clients are unaffected going forward, since they already send the modeled, required *Behavior member and now get it back on Get/List responses instead of a bare list.
+
+- **BREAKING** [cloudfront] RealtimeLogConfig's Fields list now uses `<Field>` child elements, matching the FieldList shape's xmlName trait, instead of the generic `<member>` element used by other lists
+  migration: SDK and CLI clients are unaffected, since they already send and expect `<Field>`. Anything hand-parsing the previous, incorrect `<member>` wire shape needs to switch to `<Field>`.
+
+- **BREAKING** [cloudtrail] GetTrailStatus emitted a fabricated `LatestCloudWatchLogsError` member, always empty. The real optional member is `LatestCloudWatchLogsDeliveryError`, which real AWS omits from the response while empty; overcast never populates it, so the field is dropped entirely rather than emitted empty.
+  migration: `LatestCloudWatchLogsError` is gone; the real member is `LatestCloudWatchLogsDeliveryError`, omitted from the response while empty.
+
+- **BREAKING** [cognito] self-service GetUser no longer fabricates `UserCreateDate`/`UserLastModifiedDate`. AWS's GetUserResponse shape carries only Username, UserAttributes, MFAOptions, PreferredMfaSetting and UserMFASettingList — the two timestamp members belong to AdminGetUserResponse/UserType, which AdminGetUser and ListUsers keep returning unchanged.
+  migration: read a user's creation/modification timestamps from AdminGetUser instead of self-service GetUser, as on real AWS.
+
+- **BREAKING** [dynamodb] table descriptions no longer carry a fabricated top-level `BillingMode` member on CreateTable/DescribeTable/UpdateTable/DeleteTable responses
+  migration: raw-JSON consumers reading `BillingMode` off a table description must read `BillingModeSummary.BillingMode` instead (absent for a table left on the default `PROVISIONED` mode, matching AWS); SDK clients are unaffected
+
+- **BREAKING** [dynamodb] table descriptions no longer carry fabricated `TTL` and `Tags` members on CreateTable/DescribeTable/UpdateTable/DeleteTable responses
+  migration: raw-JSON consumers reading TTL or Tags off a table description must switch to the modeled channels, `DescribeTimeToLive` and `ListTagsOfResource` (already supported); SDK clients are unaffected
+
+- **BREAKING** [ec2] CreateSecurityGroup, AssociateAddress and DeleteVpcEndpoints stopped emitting a `<return>` element the AWS model never defines for their results (`CreateSecurityGroupResult`, `AssociateAddressResult` and `DeleteVpcEndpointsResult` declare no such member — verified against the Smithy EC2 model), and AssociateRouteTable now names its association ID `<associationId>`, matching `AssociateRouteTableResult`'s xmlName/ec2QueryName trait, instead of `<newAssociationId>`, which belongs to a different pair of operations (ReplaceRouteTableAssociation/ReplaceNetworkAclAssociation). Strict deserializers such as the AWS SDK for Go v2 decode by the modeled name, so AssociateRouteTable previously handed every SDK caller back an empty AssociationId; it now comes back populated.
+  migration: raw-XML or regex-based consumers of AssociateRouteTableResponse must read `associationId`, not `newAssociationId`. Callers going through an AWS SDK are unaffected by the removed `return` fields (SDK output types never exposed them) and gain a correctly populated AssociateRouteTable AssociationId.
+
+- [ecr] `DescribeImages` and `BatchGetImage` answer `ServerException` when the backing image registry could not be reached, instead of `ImageNotFoundException`. An image record exists only because a sweep of the registry container put it there, so a registry that was merely unreachable — one still starting after a restart, say — left a store indistinguishable from a repository nobody had ever pushed to, and the emulator reported the image as absent. That is a fact it had not established: `cdk-assets` reads a missing image as "publish this again", so every `cdk deploy` against an unreachable registry rebuilt and re-uploaded container assets that were already there. The sweep's give-up paths also log which one they took, where previously all five were silent
+
+- **BREAKING** [ecr] `SetRepositoryPolicy` no longer returns a `repositoryArn` member — the AWS ECR API models that response as `[registryId, repositoryName, policyText]` only, matching its sibling `GetRepositoryPolicy`/`DeleteRepositoryPolicy` operations
+  migration: stop reading `repositoryArn` from `SetRepositoryPolicy` responses; the AWS SDKs never surfaced the member, so SDK-based clients are unaffected — use `DescribeRepositories` to read a repository's ARN
+
+- [ecr] the image sweep behind `DescribeImages` and `BatchGetImage` retries its `/tags/list` request once, after a short pause, when the first attempt is inconclusive. `waitRegistryReady` only proves the registry container answers `/v2/` before letting a caller past it; it says nothing about a repository-scoped question, which can still stumble the instant the container's listener starts accepting connections — the same gap `awaitRegistryAnswering`'s own comment already names for container start versus process listening, one layer further in. Without the retry, that single inconclusive answer was reported exactly like a registry that is truly unreachable
+
+- **BREAKING** [ecs] RegisterContainerInstance/DeregisterContainerInstance/DescribeContainerInstances, RunTask/StopTask/DescribeTasks and CreateService/UpdateService/DeleteService/DescribeServices no longer emit `clusterName` on a container instance, `networkConfiguration`/`networkNamespaceId` on a task, `dockerId` on a task's containers, or `taskSets` on a service — none of these are members of AWS's ContainerInstance, Task or Service shapes. A task's awsvpc details were always available on `attachments` as well, which is where AWS puts them; `networkConfiguration` only really exists on Service, Deployment and TaskSet, and Overcast keeps emitting it there
+  migration: raw-JSON callers reading these fields directly lose them; the AWS SDKs never modeled them, so SDK-based clients are unaffected
+
+- **BREAKING** [elasticache] Serverless cache responses (CreateServerlessCache/DescribeServerlessCaches/ModifyServerlessCache/DeleteServerlessCache) echoed a `SnapshotArnsToRestore` member on the `ServerlessCache` shape. The ElastiCache model declares `SnapshotArnsToRestore` only on `CreateServerlessCacheRequest`; the `ServerlessCache` output shape has no such member. The field is no longer emitted on the wire, matching real AWS; the create call still accepts it as input.
+  migration: SDK clients are unaffected — they never modeled a `SnapshotArnsToRestore` field on the `ServerlessCache` response shape, so nothing to change there. Callers that were parsing it off raw XML/JSON responses should stop relying on it.
+
+- **BREAKING** [glue] `GetDatabase`/`GetDatabases`/`GetTable`/`GetTables` no longer echo a `Tags` member on `Database`/`Table` — the Glue model's `Database` and `Table` shapes have no `Tags` member; it was leaking straight out of the persisted record
+  migration: read tags via `GetTags` instead of `Database.Tags`/`Table.Tags`
+
+- [iam] negated condition operators (`StringNotEquals`, `StringNotEqualsIgnoreCase`, `StringNotLike`, `NumericNotEquals`, `DateNotEquals`, `ArnNotEquals`, `ArnNotLike`, `NotIpAddress`) match — so a `Deny` guarded by one applies — when their condition key is absent from the request, matching AWS instead of always evaluating unmet
+
+- [iam] `s3:x-amz-bucket-namespace` is populated only when the request carries the `X-Amz-Bucket-Namespace` header, instead of always defaulting an absent header to `global`
+
+- [lambda] an extension subscribing to platform records mid-startup could be replayed its INIT phase out of order when a record arrived while the container's address was being attached
+
+- [lambda] an invocation log could open with the handler's first lines in front of START — in the X-Amz-Log-Result tail and CloudWatch both — when the host was loaded; START is now written before the runtime is handed the invocation, so the order no longer depends on scheduling
+
+- [lambda] a Telemetry API record could be lost to one failed POST — an extension subscribed to platform records could miss platform.initRuntimeDone on a loaded host; deliveries are retried and a genuinely dead destination is now reported at Warn instead of silently dropped
+
+- [lambda] requests under `/2026-07-09/` — the dated prefix AWS moved `GetResourcePolicy`, `PutResourcePolicy` and `DeleteResourcePolicy` onto — are recognised as Lambda's rather than falling through to the S3 fallback. Service detection runs ahead of the credential scope and its answer is what IAM enforcement builds its action from, so an unsigned `PUT /2026-07-09/resource-policy/{arn}` was read as an object write into a bucket named `2026-07-09`
+
+- **BREAKING** [lambda] CreateFunction and UpdateFunctionConfiguration reject function environment variables that use Lambda's reserved runtime keys (`AWS_REGION`, `AWS_LAMBDA_FUNCTION_NAME`, `_HANDLER`, `AWS_ACCESS_KEY_ID`, `AWS_LAMBDA_RUNTIME_API`, `LAMBDA_TASK_ROOT`, …) with real Lambda's `InvalidParameterValueException` ("… contains reserved keys that are currently not supported for modification"), instead of accepting them and silently overriding the values at container start. The list is AWS's documented reserved set; the unreserved runtime keys (`PATH`, `LANG`, `LD_LIBRARY_PATH`, `NODE_PATH`, `NODE_OPTIONS`, `PYTHONPATH`, `GEM_PATH`, `TZ`, …) stay settable, as on AWS
+  migration: remove reserved keys from a function's `Environment.Variables` — real AWS never accepted them, and the runtime always provided its own values for them inside the container, so deleting them changes nothing the function observes
+
+- **BREAKING** [organizations] DescribeOrganization emitted a fabricated `MasterUserEmail` member on the Organization shape; the real API has no such member. It now emits the modeled trio `MasterAccountId`, `MasterAccountArn`, and `MasterAccountEmail`, verified against the Organizations Smithy model.
+  migration: Callers reading `MasterUserEmail` from DescribeOrganization must switch to `MasterAccountEmail` for the email address, and can now also read `MasterAccountId` and `MasterAccountArn`; `MasterUserEmail` is gone — it never existed in the AWS API.
+
+- [s3] x-amz-expected-bucket-owner (and the CopyObject/UploadPartCopy source variant) is honoured: a mismatched account ID returns 403 AccessDenied instead of silently proceeding
+
+- **BREAKING** [ses] V2 `GetEmailIdentity` no longer returns an `IdentityName` member — the SESv2 API models that response without one; `IdentityName` belongs only to `ListEmailIdentities`' `IdentityInfo` items, which are unaffected
+  migration: stop reading `IdentityName` from `GetEmailIdentity` responses; the AWS SDKs never surfaced the member there, so SDK-based clients are unaffected — the identity name is already known to the caller (it's the request's `EmailIdentity`) or is available from `ListEmailIdentities`
+
+- **BREAKING** [shield] `ListProtections`/`DescribeProtection` no longer echo a `Tags` member on `Protection` — the Shield model's `Protection` shape has no `Tags` member; it was leaking straight out of the persisted record
+  migration: read tags via `ListTagsForResource` instead of `Protection.Tags`
+
+- **BREAKING** [shield] `DescribeSubscription` drops the hardcoded `SubscriptionState` member — that field belongs only to `GetSubscriptionStateResponse`, a separate operation Overcast does not implement, and was never part of `Subscription`
+  migration: none available; `GetSubscriptionState` is not implemented
+
+- **BREAKING** [transfer] `DescribeServer` no longer returns a `CreatedAt` member on the described server — the AWS Transfer Family API has no server creation timestamp anywhere in its model, so the emulator was inventing wire data
+  migration: stop reading `Server.CreatedAt` from raw DescribeServer responses; the AWS SDKs never surfaced the member, so SDK-based clients are unaffected
+
+- [web/s3] the console's object preview no longer pulls a whole object into the browser to show its first megabyte, and says so when it has only shown part of one: the `Range` the browser sent was dropped on the console's own proxy hop, so S3 answered 200 with the entire body and the "preview truncated" notice — which reads the 206 back — never appeared
+
+- [web/s3] the console's object preview and Download link on a version-history row no longer serve the current object's bytes: the console's own proxy hop dropped the `versionId` the browser sent, so an older version was described by its real metadata (size, ETag — those come from a HeadObject that did carry the version) while the bytes beside them came from whatever was current
+
+- [web] a Monitor chart bucket with no adjacent data now renders as a visible dot; it previously painted nothing, leaving a chart that looked empty despite real data
+
 ## [0.0.1-alpha.37] - 2026-08-23
 
 ### Added
@@ -2195,7 +2357,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.37...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.38...HEAD
+[0.0.1-alpha.38]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.37...v0.0.1-alpha.38
 [0.0.1-alpha.37]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.36...v0.0.1-alpha.37
 [0.0.1-alpha.36]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.35...v0.0.1-alpha.36
 [0.0.1-alpha.35]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.34...v0.0.1-alpha.35
