@@ -2,6 +2,8 @@ module github.com/Neaox/overcast
 
 go 1.25.0
 
+toolchain go1.27.0
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/aws/aws-sdk-go-v2 v1.43.7
