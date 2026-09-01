@@ -47,6 +47,9 @@ overcast aws sqs list-queues
 Migrating from LocalStack? `alias awslocal='overcast aws'` gives you the
 familiar name.
 
+(For the rest of the `overcast` CLI — starting background instances, `logs`,
+`reset`, `services`, and more — see the [CLI reference](./cli.md).)
+
 For every other tool, `overcast env` prints the same variables as exports for
 your shell (sh, PowerShell, and fish output are supported — auto-detected,
 override with `--shell`). The output also unsets every other `AWS_*` variable

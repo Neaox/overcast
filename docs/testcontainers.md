@@ -50,7 +50,7 @@ import (
 func TestWithOvercast(t *testing.T) {
     ctx := context.Background()
 
-    ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
+    ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
     testcontainers.CleanupContainer(t, ctr)
     if err != nil {
         t.Fatal(err)
@@ -73,14 +73,14 @@ func TestWithOvercast(t *testing.T) {
 
 ### Which image
 
-- `ghcr.io/overcast-sh/overcast-slim:alpha` — API only, smallest and fastest to
+- `ghcr.io/overcast-sh/overcast-slim:latest` — API only, smallest and fastest to
   start. The right default for tests.
-- `ghcr.io/overcast-sh/overcast:alpha` — adds the web console (handy when debugging
+- `ghcr.io/overcast-sh/overcast:latest` — adds the web console (handy when debugging
   a failing test interactively; pair with `WithConsole`).
 
 Pin an exact version tag (e.g. `ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.25`)
-in CI — Docker never re-pulls a moving tag it already has, so `:alpha` can go
-stale on long-lived runners.
+in CI — Docker never re-pulls a moving tag it already has, so `:latest` (or
+`:alpha`) can go stale on long-lived runners.
 
 ### Options
 
@@ -94,7 +94,7 @@ mount options, …). The module adds two of its own:
 | `WithConsole`      | Also exposes the web console port (4567); reach it with `ConsoleEndpoint`. Full image only.                                                                          |
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast:alpha",
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast:latest",
     overcast.WithDockerSocket(),
     overcast.WithConsole(),
     testcontainers.WithEnv(map[string]string{
@@ -147,7 +147,7 @@ Then point the SDK at the mapped port with region `us-east-1` and credentials
 ```typescript
 import { GenericContainer, Wait } from "testcontainers";
 
-const container = await new GenericContainer("ghcr.io/overcast-sh/overcast-slim:alpha")
+const container = await new GenericContainer("ghcr.io/overcast-sh/overcast-slim:latest")
   .withExposedPorts(4566)
   .withWaitStrategy(Wait.forHttp("/_overcast/health", 4566))
   .start();
@@ -158,7 +158,7 @@ const endpoint = `http://${container.getHost()}:${container.getMappedPort(4566)}
 ### Java
 
 ```java
-GenericContainer<?> overcast = new GenericContainer<>("ghcr.io/overcast-sh/overcast-slim:alpha")
+GenericContainer<?> overcast = new GenericContainer<>("ghcr.io/overcast-sh/overcast-slim:latest")
     .withExposedPorts(4566)
     .waitingFor(Wait.forHttp("/_overcast/health").forPort(4566));
 overcast.start();
@@ -177,7 +177,7 @@ from testcontainers.core.waiting_utils import wait_container_is_ready
 def wait_for_health(endpoint: str) -> None:
     requests.get(f"{endpoint}/_overcast/health", timeout=2).raise_for_status()
 
-with DockerContainer("ghcr.io/overcast-sh/overcast-slim:alpha").with_exposed_ports(4566) as overcast:
+with DockerContainer("ghcr.io/overcast-sh/overcast-slim:latest").with_exposed_ports(4566) as overcast:
     endpoint = f"http://{overcast.get_container_host_ip()}:{overcast.get_exposed_port(4566)}"
     wait_for_health(endpoint)
 ```
@@ -186,7 +186,7 @@ with DockerContainer("ghcr.io/overcast-sh/overcast-slim:alpha").with_exposed_por
 
 ```csharp
 var overcast = new ContainerBuilder()
-    .WithImage("ghcr.io/overcast-sh/overcast-slim:alpha")
+    .WithImage("ghcr.io/overcast-sh/overcast-slim:latest")
     .WithPortBinding(4566, assignRandomHostPort: true)
     .WithWaitStrategy(Wait.ForUnixContainer()
         .UntilHttpRequestIsSucceeded(r => r.ForPort(4566).ForPath("/_overcast/health")))

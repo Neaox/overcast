@@ -122,7 +122,7 @@ So a persistent slim container needs the volume **and** the backend:
 docker run --rm -p 4566:4566 \
   -v overcast-data:/data \
   -e OVERCAST_STATE=wal \
-  ghcr.io/overcast-sh/overcast-slim:alpha
+  ghcr.io/overcast-sh/overcast-slim:latest
 ```
 
 If you specifically want `hybrid` or `persistent`, use the full `ghcr.io/overcast-sh/overcast`

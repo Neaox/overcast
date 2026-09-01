@@ -44,7 +44,7 @@ services:
 # After
 services:
   overcast:
-    image: ghcr.io/overcast-sh/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:latest
     ports: ["4566:4566"]
     environment:
       OVERCAST_LOG_LEVEL: debug
@@ -169,7 +169,7 @@ in a `boot.d` hook or use a custom Dockerfile layer.
 ```yaml
 services:
   overcast:
-    image: ghcr.io/overcast-sh/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:latest
     ports: ["4566:4566"]
     volumes:
       - "./init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
