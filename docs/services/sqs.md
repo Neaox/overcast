@@ -1,6 +1,6 @@
 ---
 title: "SQS — Simple Queue Service"
-description: "SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query requests share the root endpoint; the action is identified by the Action query parameter or the..."
+description: "Standard and FIFO queues with long polling, visibility timeouts, dead-letter redrive and CloudWatch metrics. Queue URLs are minted per request, on the origin you called."
 section: "Service Reference"
 tags:
   - docs
@@ -13,58 +13,69 @@ tags:
 
 # SQS — Simple Queue Service
 
-SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query
-requests share the root endpoint; the action is identified by the `Action`
-query parameter or the `X-Amz-Target` header in SDK requests. RPC v2 CBOR
-requests use `/service/AmazonSQS/operation/<Operation>` with
-`Smithy-Protocol: rpc-v2-cbor`.
+Standard and FIFO queues with long polling, visibility timeouts and
+dead-letter redrive. Queue URLs are minted on whichever origin you called.
 
-Queue URLs are returned in the form `http://localhost:4566/<account-id>/<queue-name>`.
-For local use, `<account-id>` defaults to `000000000000`.
+**Status:** ✅ Supported
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+Q=$(aws sqs create-queue --queue-name orders --query QueueUrl --output text)
+aws sqs send-message --queue-url "$Q" --message-body '{"id":1}'
+aws sqs receive-message --queue-url "$Q" --wait-time-seconds 5
+```
+
+## What works
+
+| Area               | Behaviour                                                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Queues             | Idempotent `CreateQueue`, FIFO queues via the `.fifo` suffix, inline tags, all standard attributes                            |
+| Sending            | `SendMessage` and `SendMessageBatch` (10 per call) with `DelaySeconds` and message attributes                                 |
+| Receiving          | `MaxNumberOfMessages`, per-call and queue-default long polling, per-call `VisibilityTimeout`, FIFO `ReceiveRequestAttemptId`  |
+| Visibility         | `ChangeMessageVisibility` and its batch form on in-flight messages                                                           |
+| Dead-letter queues | `RedrivePolicy`, `ListDeadLetterSourceQueues`, and `StartMessageMoveTask` to redrive back to the source                       |
+| Metrics            | `AWS/SQS` CloudWatch metrics, including depth gauges sampled every minute whether or not the queue has traffic                |
 
 ## Queue URLs and endpoint resolution
 
-AWS SDKs resolve the SQS endpoint from the `QueueUrl`, not from the endpoint you
-configured. The JS v3 client's `queueUrlMiddleware` replaces the resolved
-endpoint with the queue URL's origin whenever the two differ, and .NET and Java
-v1 use the queue URL as the request URI outright — a leftover from the Query
-protocol, where a queue was addressed by its URL.
+AWS SDKs resolve the SQS endpoint from the `QueueUrl`, not from the endpoint
+you configured. The JS v3 client's `queueUrlMiddleware` replaces the resolved
+endpoint with the queue URL's origin whenever the two differ, and .NET and
+Java v1 use the queue URL as the request URI outright.
 
-**`AWS_ENDPOINT_URL` does not protect against this.** It is resolved through the
-endpoint ruleset's `Endpoint` parameter and never becomes the client's
-`endpoint` config field, which is what the middleware checks. Only an endpoint
-passed explicitly to the client suppresses the override:
+> [!IMPORTANT]
+> `AWS_ENDPOINT_URL` does not protect against this — it never becomes the
+> client's `endpoint` config field, which is what the middleware checks. Only
+> an endpoint passed explicitly to the client suppresses the override:
+>
+> ```js
+> new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
+> new SQSClient({ useQueueUrlAsEndpoint: false });
+> ```
 
-```js
-// Both of these keep the client pinned to Overcast:
-new SQSClient({ endpoint: process.env.AWS_ENDPOINT_URL });
-new SQSClient({ useQueueUrlAsEndpoint: false });
-```
-
-The practical consequence is that a queue URL is only usable by a caller that
-can dial its origin. Overcast therefore mints queue URLs **per request**, on the
-origin the caller reached it on: a host CLI hitting `localhost:4566` gets
-`localhost:4566` URLs, and a Lambda container calling in on Overcast's container
-address gets that address. `OVERCAST_HOSTNAME` is the fallback for callers with
-no usable origin, not an override.
+So a queue URL is only usable by a caller that can dial its origin. Overcast
+mints them **per request**, on the origin the caller reached it on: a host CLI
+hitting `localhost:4566` gets `localhost:4566` URLs, and a Lambda container
+calling in on Overcast's container address gets that address.
+`OVERCAST_HOSTNAME` is the fallback for callers with no usable origin, not an
+override.
 
 Queue URLs minted elsewhere are always accepted — only the queue name is read
-from the URL, so a queue created on one origin can be addressed from another.
-
-For URLs that cross the boundary out-of-band — a CDK deploy run on the host
-baking `queue.queueUrl` into a function's environment — see
+out of the URL. For a URL that crosses the boundary out of band, such as a CDK
+deploy baking `queue.queueUrl` into a function's environment, see
 [Lambda: reaching Overcast from function code](lambda.md#reaching-overcast-from-function-code).
 
----
+## Differences from AWS
 
----
-
-## Known limitations
-
-- Visibility timeout clocks are wall-clock based. They may drift slightly under
-  high load in the in-memory backend.
-- Message attribute data types `Binary` and `Number` are stored but not validated.
-- SQS → Lambda event source mapping requires the Lambda service; see `lambda.md`.
+| Behaviour                            | On AWS                                        | Here                                                    |
+| ------------------------------------ | --------------------------------------------- | --------------------------------------------------------- |
+| `AddPermission` / `RemovePermission` | Manage a queue's access policy                | Not implemented — `501 Not Implemented`                    |
+| `redrivePermission`                  | Restricts which queues may redrive from a DLQ | Accepted, validated and round-tripped, but not enforced    |
+| Message attribute types              | `Binary` and `Number` values are validated    | Stored as given; the `DataType` is not checked             |
+| Queue URL host                       | A fixed regional endpoint                     | The origin of the request that minted it                   |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -78,5 +89,7 @@ Per-operation status, notes and AWS API links: [SQS operations](sqs/operations.m
 ## Related
 
 - [AWS API reference](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)
+- [Lambda](lambda.md) — event source mappings poll these queues
+- [SNS](sns.md) — `sqs` subscriptions deliver into them
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

@@ -40,11 +40,39 @@ every fragment here and fails if `[Unreleased]` gained content.
   out for a change with no natural area.
 - **Prose** — the bullet text, in the house style (see "Changelog Management" in
   [.agents/skills/pull-request/SKILL.md](../.agents/skills/pull-request/SKILL.md)).
-  An indented line continues the entry above it, which is how the long ones are
-  written.
+  The first line is a standalone summary sentence, capped at 160 chars (see
+  "Leading with a summary" below); an indented line adds detail beneath it,
+  which is how the long ones are written.
 
 File name: `.changelog/YYYYMMDD-<slug>.md`, UTC date and a lowercase slug —
 `changelog.py new` derives it from the branch.
+
+## Leading with a summary
+
+Release notes are scanned, not read start to finish, so the first line of
+every entry has to work alone: a **standalone summary sentence**, a soft cap
+of 160 chars (`[area]`/`**BREAKING**` counted — they occupy width in the
+rendered bullet too). `changelog.py check` fails a line over the cap with
+where to put the rest.
+
+Detail beyond the summary goes on **indented continuation lines**, one per
+line, exactly the mechanism a breaking entry already uses for `migration:`
+(see below) — each renders as its own indented line under the same bullet,
+never merged into the summary. Nothing is lost, it just moves down:
+
+```
++ [sqs] long polling on `ReceiveMessage` honours `WaitTimeSeconds`.
+  requests capped at 20s to avoid tying up daemon workers indefinitely.
+```
+
+versus a first line that makes a reader hunt for the point:
+
+```
++ [sqs] long polling on `ReceiveMessage` now honours `WaitTimeSeconds`, capped at 20s to avoid tying up daemon workers indefinitely so a slow poller cannot starve the connection pool the rest of the service shares
+```
+
+The PR number stays the pointer to full detail; the summary and its
+continuation lines are what release notes actually show.
 
 ## Breaking changes
 
@@ -292,9 +320,17 @@ python3 scripts/changelog.py assemble <version>
 ```
 
 which prints a draft `## [<version>]` section — entries grouped by category,
-then area, with breaking ones flagged `**BREAKING**` and their migration notes
-attached. Curate that draft into `CHANGELOG.md` per the house style — merge
-same-area entries into single bullets, tighten prose — then `git rm` every
-fragment file (everything here except this README).
+then area, breaking entries first within each so a scanner hits
+`**BREAKING**` on the first bullet rather than buried further down, with
+their migration notes attached. Curate that draft into `CHANGELOG.md` per the
+house style — merge same-area entries into single bullets, tighten prose —
+then `git rm` every fragment file (everything here except this README).
 `scripts/check-release-changelog.py` fails the release while any fragment
 remains.
+
+`assemble` and `fold` both parse fragments the same way `check` does, so a
+summary over the cap fails release prep too, not only the PR-time check — the
+lint runs wherever a fragment is read, whether that is a push to a PR or
+release prep folding it into `## [<version>]`. It never runs against
+`CHANGELOG.md` itself: a summary that shipped before this convention, or
+whose wording was tightened by hand during curation, is not re-checked.

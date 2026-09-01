@@ -16,7 +16,7 @@ locally without an internet connection, a cloud account, or a bill.
 
 Every change is tested against **eight official AWS clients** — the AWS CLI,
 the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
-[compatibility suite](./docs/dev/compatibility/).
+[compatibility suite](https://github.com/overcast-sh/overcast/tree/main/docs/dev/compatibility).
 
 ---
 
@@ -52,13 +52,8 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
   - [Installation](#installation)
   - [Commands](#commands)
   - [overcast serve](#overcast-serve)
-  - [overcast bridge](#overcast-bridge)
-  - [overcast status](#overcast-status)
-  - [overcast trust](#overcast-trust)
-  - [Platform notes](#platform-notes)
-    - [macOS](#macos)
-    - [Linux](#linux)
-    - [Windows](#windows)
+  - [Browser-trusted HTTPS](#browser-trusted-https)
+  - [Reaching it by name](#reaching-it-by-name)
 - [Supported services](#supported-services)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -193,7 +188,7 @@ docker compose up
 ### Testcontainers
 
 Integration tests can start Overcast per-test with the
-[Testcontainers module for Go](./testcontainers/go):
+[Testcontainers module for Go](https://github.com/overcast-sh/overcast/tree/main/testcontainers/go):
 
 ```go
 ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
@@ -311,193 +306,47 @@ All subcommands are available in both `overcast` and `overcastd` (the web UI is 
 | `overcast https`              | One-shot browser-trusted HTTPS setup (CA + trust store + certificate)    |
 | `overcast trust`              | Manage the local trust store for self-signed TLS certificates            |
 
-Storage is the other place the two binaries differ. The released `overcastd` is
-built without SQLite, so `OVERCAST_STATE=hybrid` and `OVERCAST_STATE=persistent` refuse to
-start and `auto` always resolves to `memory`. Use `OVERCAST_STATE=wal` if you need
-`overcastd` to persist, or use the full `overcast` binary. See
-[storage.md § Builds without SQLite](./docs/storage.md#builds-without-sqlite).
-
 ### overcast serve
 
-Starts the emulator on port 4566 (configurable). All configuration is via environment variables.
+Starts the emulator on port 4566. All emulator configuration is environment
+variables — the [configuration reference](./docs/configuration.md) has every one:
 
 ```bash
 overcast serve
 
-# Common overrides
-OVERCAST_PORT=4566 \
-OVERCAST_STATE=hybrid \
-OVERCAST_LOG_LEVEL=debug \
-  overcast serve
+OVERCAST_PORT=4566 OVERCAST_STATE=hybrid OVERCAST_LOG_LEVEL=debug   overcast serve
 ```
 
-**Key flags / env vars:**
+The web console (full binary only) is served on port 4567 and loads lazily on
+first request. `--ui-port 0` disables it.
 
-| Flag / Env var                   | Default     | Description                                                                                  |
-| -------------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `--ui-port` / `OVERCAST_UI_PORT` | `4567`      | Web console port. `0` disables the UI. Falls back to a free ephemeral port if 4567 is taken. |
-| `--bridge` / —                   | off         | Also run the mDNS bridge and port-80 proxy (see `overcast bridge`).                          |
-| `--bridge-bind-ip`               | `127.0.0.1` | IP advertised in mDNS when `--bridge` is set.                                                |
-| `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
-| `OVERCAST_LISTEN`                | `0.0.0.0` containerised, `127.0.0.1` native | Interface to bind. Comma-separate to bind several, e.g. `127.0.0.1,172.17.0.1`. An explicit value always wins over the default, in either direction. Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup |
-| `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. `hybrid`/`persistent` need SQLite, which `overcastd` and the slim image do not have — see [Builds without SQLite](./docs/storage.md#builds-without-sqlite). |
+Storage is the other place the two binaries differ: the released `overcastd` is
+built without SQLite, so `OVERCAST_STATE=hybrid` and `persistent` refuse to start
+and `auto` always resolves to `memory`. Use `OVERCAST_STATE=wal`, or the full
+`overcast` binary — see
+[Builds without SQLite](./docs/storage.md#builds-without-sqlite).
 
-See the [configuration reference](./docs/configuration.md) for the full list.
+### Browser-trusted HTTPS
 
-The web console (`overcast` full binary only) is served on port 4567 and loads lazily on first request — no warm-up needed. Point a browser at `http://localhost:4567` after starting the server.
-
-### overcast bridge
-
-Connects to a running `overcast serve` instance and:
-
-- Publishes `overcast.local` (emulator API) and `overcast-app.local` (web console) on the host mDNS responder so you can reach them from any browser or tool without editing `/etc/hosts`.
-- Watches the emulator's domain registry and advertises every registered API Gateway custom domain on the same responder.
-- Starts an HTTP reverse proxy on port 80 that routes requests by `Host` header — no port number needed when accessing via `.local` names.
-
-> [!NOTE]
-> **Port 80 conflicts.** Port 80 is commonly held by local web servers (nginx, Apache, IIS) or
-> requires elevated privileges to bind. If the port is busy or the bind fails, `overcast bridge`
-> logs a warning with platform-specific instructions and continues — mDNS still works, you just
-> need the port number in the URL (e.g. `http://overcast.local:4566`).
->
-> To avoid the conflict entirely, use `--http-port 0` (mDNS-only, no proxy) or pick a free
-> high port with `--http-port 8080`. See [Platform notes](#platform-notes) for privilege setup.
+Serving the API and console over TLS unlocks browser HTTP/2, which is what keeps
+the console responsive under load:
 
 ```bash
-# In a second terminal, while overcast serve is running
-overcast bridge
-
-# Point to a non-default instance
-overcast bridge --endpoint http://localhost:4566
-
-# Custom bind IP (if your machine has multiple interfaces)
-overcast bridge --bind-ip 192.168.1.100
-
-# mDNS only — no port-80 proxy (.local names resolve but need a port in the URL)
-overcast bridge --http-port 0
-
-# Use a non-privileged port (http://overcast.local:8080 etc.)
-overcast bridge --http-port 8080
-
-# Run bridge inline with the server (--bridge flag on serve)
-overcast serve --bridge
+overcast https enable            # once per machine; approve the OS prompt
+OVERCAST_TLS=auto overcast serve # → https://localhost.overcast.sh:4567
 ```
 
-After `overcast bridge` is running:
+Docker, WSL, bringing your own certificate, and installing the CA by hand are all
+in [docs/https.md](./docs/https.md). The lower-level `overcast trust` subcommands
+are there too.
 
-| URL                         | Routed to                            |
-| --------------------------- | ------------------------------------ |
-| `http://overcast.local`     | Emulator API (port 4566)             |
-| `http://overcast-app.local` | Web console (port 4567)              |
-| `http://api.myapp.local`    | Emulator (API Gateway custom domain) |
+### Reaching it by name
 
-### overcast status
+`overcast bridge` publishes `overcast.local` and `overcast-app.local` over mDNS
+and proxies port 80 by `Host` header, so `.local` names work with no hosts-file
+edits and no port numbers. Flags and the per-platform mDNS/port-80 setup are in
+the [CLI reference](./docs/cli.md#overcast-bridge).
 
-Checks that a daemon is reachable (via `GET /_overcast/health`) and prints a one-line summary with its version and active state backend.
-
-```bash
-overcast status
-overcast status --endpoint http://localhost:4566
-```
-
-### overcast https
-
-One-shot HTTPS setup: creates the local overcast CA if missing, installs it
-into the system trust store (approve the OS prompt — that's the only manual
-step), and mints the server certificate. Serving both the API and the web UI
-over TLS unlocks browser HTTP/2, which keeps the web console responsive under
-load. See [docs/https.md](./docs/https.md).
-
-```bash
-overcast https enable            # once per machine
-OVERCAST_TLS=auto overcast serve # HTTPS + HTTP/2 on both listeners
-# → https://localhost.overcast.sh:4567
-
-overcast https status            # report the setup state
-overcast https disable           # remove the CA from the trust store
-```
-
-Daemon running in Docker? Trust it without a shared volume — the daemon
-serves its CA certificate at `/_overcast/ca.pem` and the CLI fetches it:
-
-```bash
-overcast https enable --endpoint https://localhost:4566
-```
-
-(Loopback endpoints only, unless you acknowledge the trust decision with
-`--trust-remote`. The same `--endpoint` works on `status`/`disable` and on
-the `trust` subcommands.)
-
-### overcast trust
-
-Lower-level management of the overcast CA in the system trust store (the
-`https` subcommands build on it). Useful with `OVERCAST_TLS=auto`, or when
-scripting the pieces separately.
-
-```bash
-# Install the CA certificate into the system trust store
-overcast trust install
-
-# Report whether it is installed
-overcast trust status
-
-# Remove it (the CA key material on disk is kept)
-overcast trust uninstall
-```
-
-> [!NOTE]
-> On Windows the CA goes into the current user's certificate store (a
-> confirmation dialog appears); on macOS into the login keychain (an
-> authorisation prompt appears); on Linux into the system CA bundle, which
-> requires root (`sudo overcast trust install`). Firefox/Chromium on Linux
-> read their own NSS store — see [docs/https.md](./docs/https.md).
-
-### Platform notes
-
-#### macOS
-
-- All four subcommands work out of the box.
-- `overcast bridge` uses the built-in `dns-sd` tool (part of Bonjour). No additional software needed.
-- Binding the port-80 proxy requires `sudo`:
-  ```bash
-  sudo overcast bridge
-  # or run on a high port and use a local redirect:
-  overcast bridge --http-port 8080
-  ```
-
-#### Linux
-
-- All four subcommands work out of the box.
-- `overcast bridge` requires **avahi** for mDNS. Install it with your package manager:
-  ```bash
-  # Debian / Ubuntu
-  sudo apt install avahi-daemon avahi-utils
-  # Fedora / RHEL
-  sudo dnf install avahi avahi-tools
-  ```
-- Binding port 80 without running as root requires the `cap_net_bind_service` capability:
-  ```bash
-  sudo setcap cap_net_bind_service+ep $(which overcast)
-  overcast bridge          # now binds :80 as a normal user
-  ```
-  Alternatively, run `sudo overcast bridge` or use `--http-port` to pick a high port.
-- **ARM64 (Raspberry Pi, AWS Graviton):** pre-built `linux-arm64` binaries are published for every release.
-
-#### Windows
-
-- All four subcommands are supported. Binaries are console `.exe` files — no installer, no service.
-- `overcast bridge` uses the Windows DNS-SD service (built into Windows 10 1803+ and Windows Server 2019+). If the service is not running, start it:
-  ```powershell
-  Start-Service "DNS Client"
-  ```
-- Binding port 80 requires a URL reservation (run once in an elevated shell):
-  ```powershell
-  netsh http add urlacl url=http://+:80/ user=%USERNAME%
-  overcast bridge          # now binds :80 as a normal user
-  ```
-  Or use `--http-port` to pick a port above 1024.
-- Init hooks (`OVERCAST_INIT_DIRS`) run via `cmd.exe /c` on Windows; `.sh` scripts require WSL or Git Bash.
-- `overcast trust` modifies the Windows Certificate Store and will prompt for UAC elevation.
 
 ---
 
@@ -543,29 +392,29 @@ coverage tables, or browse the generated summary in [STATUS.md](./STATUS.md#serv
 
 Full documentation lives in [`docs/`](./docs/README.md):
 
-| Guide                                                               | Description                                                              |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Using AWS SDKs and CLI](./docs/sdk-cli.md)                         | Configure the AWS CLI, Node.js, Python, Go, Java, .NET, Rust, Terraform  |
-| [CLI reference](./docs/cli.md)                                      | Every `overcast` subcommand: background instances, introspection, AWS helpers, networking/TLS |
-| [Using AWS CDK](./docs/cdk.md)                                      | `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting |
-| [Networking and host-based addressing](./docs/networking.md)        | Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS |
-| [Service reference](./docs/services/)                               | Per-service endpoint coverage matrices                                   |
-| [Configuration reference](./docs/configuration.md)                  | All environment variables                                                |
-| [Persistence](./docs/persistence.md)                                | Storage backends: memory, hybrid, persistent, WAL                        |
-| [HTTPS / TLS](./docs/https.md)                                      | Self-signed certs for local HTTPS                                        |
-| [Event pipelines](./docs/README.md#event-pipelines)                 | SNS→SQS, SQS→Lambda, DynamoDB Streams                                    |
-| [Web management console](./docs/README.md#web-management-console)   | Built-in dashboard on port 4567                                          |
-| [Debug endpoints](./docs/debug-endpoints.md)                        | Health, metrics, state dump, pprof                                       |
-| [Troubleshooting](./docs/troubleshooting.md)                        | Startup preflight warnings and what they mean                            |
-| [Migrating from LocalStack](./docs/migration-from-localstack.md)    | Drop-in replacement guide                                                |
-| [Development setup](./docs/dev/development-setup.md)                | Building from source                                                     |
+| Guide | What it covers |
+| --- | --- |
+| [Documentation index](./docs/README.md) | Every guide, routed by what you are trying to do |
+| [Using AWS SDKs and CLI](./docs/sdk-cli.md) | The AWS CLI, Node.js, Python, Go, Java, .NET, Rust, Terraform |
+| [CLI reference](./docs/cli.md) | Every `overcast` subcommand and flag |
+| [Using AWS CDK](./docs/cdk.md) | `cdk bootstrap`, `cdk deploy`, supported resource types |
+| [Networking and host-based addressing](./docs/networking.md) | Host-routed endpoints, wildcard DNS, sibling containers, VPCs |
+| [Service reference](./docs/services/) | Per-service endpoint coverage |
+| [Configuration reference](./docs/configuration.md) | Every environment variable |
+| [Storage and persistence](./docs/storage.md) | Backends, and what survives a restart |
+| [HTTPS and HTTP/2](./docs/https.md) | Browser-trusted TLS in two commands |
+| [The inner loop](./docs/local-dev.md) | Hot reload for Lambda and ECS, `cdk watch` |
+| [Testcontainers](./docs/testcontainers.md) | Starting Overcast from integration tests |
+| [Debug endpoints](./docs/debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
+| [Troubleshooting](./docs/troubleshooting.md) | A symptom, and where its answer lives |
+| [Migrating from LocalStack](./docs/migration-from-localstack.md) | Drop-in replacement guide |
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for coding standards and workflow, and
-[docs/dev/development-setup.md](./docs/dev/development-setup.md) for building from source.
+See [CONTRIBUTING.md](https://github.com/overcast-sh/overcast/blob/main/CONTRIBUTING.md) for coding standards, workflow, and how
+to build from source.
 
 ## Disclaimer
 

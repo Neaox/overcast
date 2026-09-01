@@ -1,19 +1,34 @@
 ---
 title: "Networking and host-based addressing"
-description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline."
+description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, reaching Overcast from sibling containers, and how VPCs isolate emulated compute."
 section: "Networking"
 tags:
   - docs
   - guide
   - networking
   - dns
+  - docker
+  - compose
+  - vpc
 ---
 
 # Networking and host-based addressing
 
-Overcast listens on a single port (default `4566`) and dispatches every
-request — regardless of service — to the same emulator process. Real AWS
-services are split two ways depending on how a client addresses a resource:
+Overcast listens on a single port (default `4566`) and dispatches every request
+to the same process, whichever service it is for. Everything below follows from
+one question: **what name does a caller use, and does that name resolve for
+them?**
+
+| If you are here about                                          | Go to                                                                       |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| An API Gateway / Lambda URL / AppSync / S3 hostname            | [What works today](#what-works-today)                                       |
+| A subdomain that will not resolve, on Windows or offline       | [The `*.localhost.overcast.sh` wildcard DNS option](#the-localhost-overcast-sh-wildcard-dns-option) |
+| A URL that works from your shell but not from a container      | [Docker Compose and sibling containers](#docker-compose-and-sibling-containers) |
+| A port that differs depending on who asks                      | [Which host and port a URL carries](#which-host-and-port-a-url-carries-and-why) |
+| An RDS or ElastiCache endpoint that will not connect           | [Data-plane endpoints](#data-plane-endpoints-rds-and-anything-else-that-is-a-container) |
+| A Lambda that cannot reach a database                          | [Lambda, ECS and VPCs](#lambda-ecs-and-vpcs)                                 |
+
+Real AWS splits addressing two ways, and Overcast supports both:
 
 - **Path-style**: the resource ID is in the URL path
   (`http://localhost:4566/restapis/{apiId}/{stage}/_user_request_/...`).
@@ -25,9 +40,6 @@ services are split two ways depending on how a client addresses a resource:
   `{apiId}.execute-api.{region}.amazonaws.com/{stage}/...`. Some AWS
   features are *only* reachable this way on real AWS (Lambda function URLs
   have no path-style equivalent at all).
-
-Overcast supports both. This page covers the Host-routed side: what's
-implemented, the DNS story that makes it work locally, and the tradeoffs.
 
 ---
 
@@ -144,8 +156,8 @@ the real API paths (`/2021-10-31/functions/{name}/url[s]`). The returned
 http://<url-id>.lambda-url.<region>.<host>:<port>/
 ```
 
-A few things are intentionally simplified relative to real AWS, consistent
-with Overcast [not being a security boundary](../AGENTS.md#non-goals--decision-guide-for-agents):
+A few things are intentionally simplified relative to real AWS, because
+Overcast is a development tool and not a security boundary:
 
 - **`AuthType` (`NONE` / `AWS_IAM`) is stored and returned but never
   enforced.** Every Host-routed invocation runs as if `AuthType` were
@@ -210,7 +222,19 @@ convenience vs. offline-friendliness:
 >   macOS. A hosts-file entry (option 3) is the fallback that works
 >   everywhere, including Windows and behind DNS filtering.
 
-### Example: `docker compose` with a wildcard-DNS hostname
+---
+
+## Docker Compose and sibling containers
+
+Running Overcast in Compose alongside your own containers changes one thing:
+client-facing URLs (SQS queue URLs, SNS unsubscribe links, RDS endpoints)
+default to `localhost`, and inside a sibling container `localhost` is that
+container. Set `OVERCAST_HOSTNAME` to a name both sides resolve.
+
+**Best: a wildcard-DNS hostname.** It resolves to `127.0.0.1` from the host and
+is remapped to Overcast inside every container Overcast starts, so one URL works
+everywhere — and Host-routed addressing (function URLs, virtual-hosted S3) keeps
+working too.
 
 ```yaml
 services:
@@ -221,13 +245,49 @@ services:
       - "4567:4567" # web management console
     environment:
       OVERCAST_HOSTNAME: localhost.overcast.sh
+
+  app:
+    build: .
+    environment:
+      AWS_ENDPOINT_URL: http://localhost.overcast.sh:4566
+    depends_on:
+      - overcast
 ```
 
-With this configuration, `CreateFunctionUrlConfig` returns URLs like
-`http://a1b2c3....lambda-url.us-east-1.localhost.overcast.sh:4566/`, which
-resolve via public DNS to `127.0.0.1` and route straight back into this same
-container — see [performance.md](./performance.md#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop)
-for the matching `docker compose` pattern for the `/data` volume.
+`CreateFunctionUrlConfig` then returns
+`http://a1b2c3….lambda-url.us-east-1.localhost.overcast.sh:4566/`, which resolves
+via public DNS to `127.0.0.1` and routes straight back into this same container.
+
+**Offline, or behind DNS filtering: the Compose service name.** Use the service
+name Compose already resolves for you:
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/overcast-sh/overcast:latest
+    environment:
+      OVERCAST_HOSTNAME: overcast # SQS QueueUrl → http://overcast:4566/...
+    ports:
+      - "4566:4566"
+
+  app:
+    build: .
+    environment:
+      AWS_ENDPOINT_URL: http://overcast:4566
+    depends_on:
+      - overcast
+```
+
+> [!WARNING]
+> A Compose service name resolves *only* on the Compose network. URLs Overcast
+> hands out then do not work from your own shell, from `cdk deploy`, or from a
+> browser — including the web console's links. Add the name to your hosts file
+> pointing at `127.0.0.1` if you need both, or prefer the wildcard-DNS option
+> above.
+
+Use `OVERCAST_SPLIT_HORIZON_HOSTS` to have additional hostnames remapped to
+Overcast inside the containers it starts, on top of the built-in
+`localhost.overcast.sh`, `localhost.localstack.cloud` and `localhost.floci.io`.
 
 ---
 

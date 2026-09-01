@@ -1,6 +1,6 @@
 ---
 title: "Overcast Operation Manifest"
-description: "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)"
+description: "Typed-dispatch operation registrations, per service, plus the services routed by path and method instead. A dispatch-mechanism inventory, not a coverage metric — the service index answers that."
 section: "Reference"
 tags:
   - docs
@@ -13,7 +13,7 @@ tags:
 
 This manifest counts **typed-dispatch operation registrations** — one row per `op.NewTyped`/`op.NewRaw`/`op.NewTypedAny` call in a service's `typed_ops.go` — not Overcast's overall implementation coverage. That is a different metric from the "Ops" column in [docs/README.md](./README.md)'s service index and from [docs/generated/service-support.json](./generated/service-support.json), which both count capability-registry entries (implemented operations plus explicit stubs) for every service, including the ones below that have no typed dispatch at all. The two kinds of counts are expected to disagree with each other; neither is wrong, they are answering different questions.
 
-## acm — 10 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR
+## acm — 10 ops, modeled: 40, protocols: JSON10, JSON11, RPCv2CBOR
   - AddTagsToCertificate (addTagsToCertificateRequest → struct{})
   - DeleteCertificate (deleteCertificateRequest → struct{})
   - DescribeCertificate (describeCertificateRequest → describeCertificateResponse)
@@ -25,7 +25,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - TagResource (tagResourceRequest → struct{})
   - UntagResource (untagResourceRequest → struct{})
 
-## appregistry — 17 ops, modeled: 24, protocols: JSON10, JSON11, RPCv2CBOR
+## appregistry — 17 ops, modeled: 24
   - AssociateAttributeGroup (associateAttributeGroupRequest → associateAttributeGroupResponse)
   - AssociateResource (associateResourceRequest → associateResourceResponse)
   - CreateApplication (createApplicationRequest → createApplicationResponse)
@@ -135,7 +135,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - TagResource (tagResourceRequest → emptyResponse)
   - UntagResource (untagResourceRequest → emptyResponse)
 
-## cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR
+## cloudwatch-logs — 17 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateLogGroup (createLogGroupRequest → struct{})
   - CreateLogStream (createLogStreamRequest → struct{})
   - DeleteLogGroup (deleteLogGroupRequest → struct{})
@@ -145,13 +145,16 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - DescribeLogStreams (describeLogStreamsRequest → describeLogStreamsResponse)
   - FilterLogEvents (filterLogEventsRequest → filterLogEventsResponse)
   - GetLogEvents (getLogEventsRequest → getLogEventsResponse)
+  - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - ListTagsLogGroup (listTagsLogGroupRequest → listTagsLogGroupResponse)
   - PutLogEvents (putLogEventsRequest → putLogEventsResponse)
   - PutRetentionPolicy (putRetentionPolicyRequest → struct{})
   - TagLogGroup (tagLogGroupRequest → struct{})
+  - TagResource (tagResourceRequest → struct{})
   - UntagLogGroup (untagLogGroupRequest → struct{})
+  - UntagResource (untagResourceRequest → struct{})
 
-## cognito — 70 ops, modeled: 129, protocols: JSON10, JSON11, RPCv2CBOR
+## cognito — 70 ops, modeled: 132, protocols: JSON10, JSON11, RPCv2CBOR
   - AdminAddUserToGroup (PoolAndUserGroupReq → struct{})
   - AdminConfirmSignUp (PoolAndUserReq → struct{})
   - AdminCreateUser (AdminCreateUserReq → AdminCreateUserResp)
@@ -223,12 +226,12 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - VerifySoftwareToken (VerifySoftwareTokenReq → VerifySoftwareTokenResp)
   - VerifyUserAttribute (VerifyUserAttributeReq → struct{})
 
-## dynamodb — 20 ops, modeled: 57, protocols: JSON10, JSON11, RPCv2CBOR
+## dynamodb — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchGetItem (batchGetItemRequest → batchGetItemResponse)
   - BatchWriteItem (batchWriteItemRequest → batchWriteItemResponse)
   - CreateTable (createTableRequest → createTableResponse)
   - DeleteItem (deleteItemRequest → deleteItemResponse)
-  - DeleteTable (deleteTableRequest → describeTableResponse)
+  - DeleteTable (deleteTableRequest → createTableResponse)
   - DescribeTable (describeTableRequest → describeTableResponse)
   - DescribeTimeToLive (describeTimeToLiveRequest → describeTimeToLiveResponse)
   - GetItem (getItemRequest → getItemResponse)
@@ -251,7 +254,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - GetShardIterator (getShardIteratorRequest → getShardIteratorResponse)
   - ListStreams (listStreamsRequest → listStreamsResponse)
 
-## ec2 — 69 ops, modeled: 772, protocols: QueryXML
+## ec2 — 69 ops, modeled: 801, protocols: QueryXML
   - AcceptVpcPeeringConnection (acceptVPCPeeringReq → acceptVPCPeeringResp)
   - AllocateAddress (allocateAddressReq → allocateAddressResp)
   - AssociateAddress (associateAddressReq → associateAddressResp)
@@ -286,27 +289,27 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - DeleteVpcEndpoints (deleteVpcEndpointsReq → deleteVpcEndpointsResp)
   - DeleteVpcPeeringConnection (deleteVPCPeeringReq → deleteVPCPeeringResp)
   - DeleteVpnGateway (deleteVpnGatewayReq → deleteVpnGatewayResp)
-  - DescribeAccountAttributes (describeAccountAttributesReq → describeAccountAttributesResp)
-  - DescribeAddresses (describeAddressesReq → describeAddressesResp)
-  - DescribeAvailabilityZones (describeAzsReq → describeAzsResp)
-  - DescribeDhcpOptions (describeDhcpOptionsReq → describeDhcpOptionsResp)
-  - DescribeImages (describeImagesReq → describeImagesResp)
-  - DescribeInstanceTypes (describeInstanceTypesReq → describeInstanceTypesResp)
-  - DescribeInstances (describeInstancesReq → describeInstancesResp)
-  - DescribeInternetGateways (describeIGWsReq → describeIGWsResp)
-  - DescribeKeyPairs (describeKeyPairsReq → describeKeyPairsResp)
-  - DescribeNatGateways (describeNatGatewaysReq → describeNatGatewaysResp)
-  - DescribeNetworkInterfaces (describeNetworkInterfacesReq → describeNetworkInterfacesResp)
-  - DescribeRegions (describeRegionsReq → describeRegionsResp)
-  - DescribeRouteTables (describeRouteTablesReq → describeRouteTablesResp)
-  - DescribeSecurityGroups (describeSecurityGroupsReq → describeSGsResp)
-  - DescribeSubnets (describeSubnetsReq → describeSubnetsResp)
-  - DescribeTags (describeTagsReq → describeTagsResp)
-  - DescribeVpcAttribute (describeVpcAttributeReq → describeVpcAttributeResp)
-  - DescribeVpcEndpoints (describeVpcEndpointsReq → describeVpcEndpointsResp)
-  - DescribeVpcPeeringConnections (describeVPCPeeringsReq → describeVPCPeeringsResp)
-  - DescribeVpcs (describeVpcsReq → describeVpcsResp)
-  - DescribeVpnGateways (describeVpnGatewaysReq → describeVpnGatewaysResp)
+  - DescribeAccountAttributes (? → ?)
+  - DescribeAddresses (? → ?)
+  - DescribeAvailabilityZones (? → ?)
+  - DescribeDhcpOptions (? → ?)
+  - DescribeImages (? → ?)
+  - DescribeInstanceTypes (? → ?)
+  - DescribeInstances (? → ?)
+  - DescribeInternetGateways (? → ?)
+  - DescribeKeyPairs (? → ?)
+  - DescribeNatGateways (? → ?)
+  - DescribeNetworkInterfaces (? → ?)
+  - DescribeRegions (? → ?)
+  - DescribeRouteTables (? → ?)
+  - DescribeSecurityGroups (? → ?)
+  - DescribeSubnets (? → ?)
+  - DescribeTags (? → ?)
+  - DescribeVpcAttribute (? → ?)
+  - DescribeVpcEndpoints (? → ?)
+  - DescribeVpcPeeringConnections (? → ?)
+  - DescribeVpcs (? → ?)
+  - DescribeVpnGateways (? → ?)
   - DetachInternetGateway (detachIGWReq → detachIGWResp)
   - DetachVpnGateway (detachVpnGatewayReq → detachVpnGatewayResp)
   - DisassociateAddress (disassociateAddressReq → disassociateAddressResp)
@@ -322,7 +325,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - StopInstances (stopInstancesReq → stopInstancesResp)
   - TerminateInstances (terminateInstancesReq → terminateInstancesResp)
 
-## ecr — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR
+## ecr — 22 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR
   - BatchDeleteImage (imageIDSetRequest → batchDeleteImageResponse)
   - BatchGetImage (imageIDSetRequest → batchGetImageResponse)
   - CreateRepository (createRepositoryRequest → createRepositoryResponse)
@@ -339,6 +342,8 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - ListImages (repoRefRequest → listImagesResponse)
   - ListTagsForResource (listTagsForResourceRequest → listTagsForResourceResponse)
   - PutImage (putImageRequest → putImageResponse)
+  - PutImageScanningConfiguration (putImageScanningConfigurationRequest → putImageScanningConfigurationResponse)
+  - PutImageTagMutability (putImageTagMutabilityRequest → putImageTagMutabilityResponse)
   - PutLifecyclePolicy (putLifecyclePolicyRequest → putLifecyclePolicyResponse)
   - SetRepositoryPolicy (setRepositoryPolicyRequest → setRepositoryPolicyResponse)
   - TagResource (tagResourceRequest → tagResourceResponse)
@@ -394,7 +399,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - UpdateServicePrimaryTaskSet (updateServicePrimaryTaskSetRequest → updateServicePrimaryTaskSetResponse)
   - UpdateTaskSet (updateTaskSetRequest → updateTaskSetResponse)
 
-## efs — 28 ops, modeled: 31, protocols: JSON10, JSON11, RPCv2CBOR
+## efs — 28 ops, modeled: 31
   - CreateAccessPoint (createAccessPointRequest → AccessPointDescription)
   - CreateFileSystem (createFileSystemRequest → FileSystemDescription)
   - CreateMountTarget (createMountTargetRequest → MountTargetDescription)
@@ -424,7 +429,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - UpdateFileSystem (updateFileSystemRequest → FileSystemDescription)
   - UpdateFileSystemProtection (updateFileSystemProtectionRequest → FileSystemProtectionDescription)
 
-## eks — 50 ops, modeled: 65, protocols: JSON10, JSON11, RPCv2CBOR
+## eks — 50 ops, modeled: 70
   - AssociateAccessPolicy (associateAccessPolicyRequest → associateAccessPolicyResponse)
   - AssociateIdentityProviderConfig (associateIdentityProviderConfigRequest → associateIdentityProviderConfigResponse)
   - CreateAccessEntry (createAccessEntryRequest → createAccessEntryResponse)
@@ -502,7 +507,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - RebootCacheCluster (? → ?)
   - RemoveTagsFromResource (? → ?)
 
-## elbv2 — 15 ops, modeled: 51, protocols: QueryXML
+## elbv2 — 18 ops, modeled: 51, protocols: QueryXML
   - AddTags (? → ?)
   - CreateListener (? → ?)
   - CreateLoadBalancer (? → ?)
@@ -514,12 +519,15 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - DescribeListeners (? → ?)
   - DescribeLoadBalancers (? → ?)
   - DescribeTags (? → ?)
+  - DescribeTargetGroupAttributes (? → ?)
   - DescribeTargetGroups (? → ?)
   - DescribeTargetHealth (? → ?)
+  - ModifyTargetGroup (? → ?)
+  - ModifyTargetGroupAttributes (? → ?)
   - RegisterTargets (? → ?)
   - RemoveTags (? → ?)
 
-## eventbridge — 17 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR
+## eventbridge — 18 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateEventBus (createEventBusRequest → createEventBusResponse)
   - DeleteEventBus (deleteEventBusRequest → struct{})
   - DeleteRule (deleteRuleRequest → struct{})
@@ -536,6 +544,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - PutTargets (putTargetsRequest → targetsMutationResponse)
   - RemoveTargets (removeTargetsRequest → targetsMutationResponse)
   - TagResource (tagResourceRequest → struct{})
+  - TestEventPattern (testEventPatternRequest → testEventPatternResponse)
   - UntagResource (untagResourceRequest → struct{})
 
 ## firehose — 9 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR
@@ -549,7 +558,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - TagDeliveryStream (tagDeliveryStreamReq → struct{})
   - UntagDeliveryStream (untagDeliveryStreamReq → struct{})
 
-## glue — 11 ops, modeled: 297, protocols: JSON10, JSON11, RPCv2CBOR
+## glue — 11 ops, modeled: 299, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateDatabase (createDatabaseReq → struct{})
   - CreateTable (createTableReq → struct{})
   - DeleteDatabase (deleteDatabaseReq → struct{})
@@ -562,7 +571,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - TagResource (glueTagResourceReq → struct{})
   - UntagResource (glueUntagResourceReq → struct{})
 
-## iam — 74 ops, modeled: 176, protocols: QueryXML
+## iam — 74 ops, modeled: 180, protocols: QueryXML
   - AddRoleToInstanceProfile (? → ?)
   - AddUserToGroup (? → ?)
   - AttachGroupPolicy (? → ?)
@@ -638,7 +647,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - UpdateRole (? → ?)
   - UpdateUser (? → ?)
 
-## kinesis — 20 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR
+## kinesis — 23 ops, modeled: 44, protocols: JSON10, JSON11, RPCv2CBOR
   - AddTagsToStream (addTagsToStreamRequest → struct{})
   - CreateStream (createStreamRequest → struct{})
   - DecreaseStreamRetentionPeriod (retentionPeriodRequest → struct{})
@@ -657,8 +666,11 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - PutRecords (putRecordsRequest → putRecordsResponse)
   - RemoveTagsFromStream (removeTagsFromStreamRequest → struct{})
   - SplitShard (splitShardRequest → struct{})
+  - StartStreamEncryption (streamEncryptionRequest → struct{})
+  - StopStreamEncryption (streamEncryptionRequest → struct{})
   - TagResource (tagResourceRequest → struct{})
   - UntagResource (untagResourceRequest → struct{})
+  - UpdateStreamMode (updateStreamModeRequest → struct{})
 
 ## kms — 33 ops, modeled: 54, protocols: JSON10, JSON11, RPCv2CBOR
   - CancelKeyDeletion (keyIDRequest → cancelKeyDeletionResponse)
@@ -742,7 +754,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - ListHostedZones (r53ListHostedZonesReq → r53ListHostedZonesResp)
   - ListResourceRecordSets (r53ListResourceRecordSetsReq → r53ListResourceRecordSetsResp)
 
-## scheduler — 12 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR
+## scheduler — 12 ops, modeled: 12
   - CreateSchedule (createScheduleRequest → createScheduleResponse)
   - CreateScheduleGroup (createScheduleGroupRequest → createScheduleGroupResponse)
   - DeleteSchedule (deleteScheduleRequest → ?)
@@ -866,7 +878,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - PutParameter (putParameterRequest → putParameterResponse)
   - RemoveTagsFromResource (removeTagsFromResourceRequest → struct{})
 
-## stepfunctions — 14 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR
+## stepfunctions — 15 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR
   - CreateStateMachine (createStateMachineRequest → createStateMachineResponse)
   - DeleteStateMachine (deleteStateMachineRequest → struct{})
   - DescribeExecution (describeExecutionRequest → describeExecutionResponse)
@@ -881,6 +893,7 @@ This manifest counts **typed-dispatch operation registrations** — one row per 
   - StopExecution (stopExecutionRequest → stopExecutionResponse)
   - TagResource (tagResourceRequest → struct{})
   - UntagResource (untagResourceRequest → struct{})
+  - UpdateStateMachine (updateStateMachineRequest → updateStateMachineResponse)
 
 ## sts — 5 ops, modeled: 11, protocols: QueryXML
   - AssumeRole (assumeRoleReq → assumeRoleResp)
@@ -923,14 +936,14 @@ The 12 service(s) below implement operations through the REST router or a not-ye
 | appconfig | 56 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | appconfigdata | 2 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | appsync | 74 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
-| backup | 109 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| backup | 115 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | bedrock | 119 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | cloudfront | 167 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
-| lambda | 85 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
-| msk | 59 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| lambda | 88 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
+| msk | 64 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | opensearch | 96 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | pipes | 10 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 | s3 | 112 | REST-routed (chi router, path/method dispatch), not target-header typed dispatch |
 
 ---
-Model corpus: 18850 operations across 422 services; typed registrations: 824 across 38 services (12 services outside typed dispatch, listed above)
+Model corpus: 19176 operations across 427 services; typed registrations: 837 across 38 services (12 services outside typed dispatch, listed above)

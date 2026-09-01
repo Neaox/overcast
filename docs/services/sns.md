@@ -1,6 +1,6 @@
 ---
 title: "SNS — Simple Notification Service"
-description: "SNS uses a query-string or JSON API. Topics are identified by ARN: arn:aws:sns:us-east-1:000000000000:\u003ctopic-name\u003e"
+description: "Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and subscription dead-letter queues. Subscriptions confirm themselves; FIFO ordering is not emulated."
 section: "Service Reference"
 tags:
   - docs
@@ -13,64 +13,62 @@ tags:
 
 # SNS — Simple Notification Service
 
-SNS uses a query-string or JSON API. Topics are identified by ARN:
-`arn:aws:sns:us-east-1:000000000000:<topic-name>`
+Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and
+per-subscription dead-letter queues. Delivery is asynchronous, as on AWS.
 
-Subscription delivery is asynchronous — the HTTP response is returned before delivery
-completes to subscribers, matching the behaviour of real SNS.
+**Status:** ⚠️ Partial
 
----
+## Quick start
 
-## Known limitations
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-- Subscription confirmation (`ConfirmSubscription` token flow) is simplified:
-  the emulator auto-confirms all subscriptions without requiring a token round-trip.
-- HTTP/HTTPS subscriptions require a reachable URL inside the Docker network.
-- `email` and `email-json` subscriptions are captured in the Inbox (`/_overcast/ses/inbox`),
-  viewable in the web UI.
-- `sms` subscriptions are captured in the same Inbox with `kind=sms`, viewable
-  in the web UI. No real SMS is sent. The endpoint must be a phone number in
-  E.164 format (e.g. `+12125551234`).
-- Mobile push (`application` protocol) and Kinesis Firehose (`firehose` protocol)
-  are not supported and return `400 InvalidParameter` on `Subscribe`.
-- `lambda` subscriptions invoke the function asynchronously with AWS's SNS event —
-  `Records[0].EventSource` is `aws:sns` and the notification sits under
-  `Records[0].Sns`. As on AWS, `RawMessageDelivery` has no effect on a `lambda`
-  subscription: the function always receives the full event.
-- Delivery to `lambda` means Lambda *accepted* the event, exactly as an
-  `InvocationType=Event` invoke returns `202` before the handler runs. A function
-  that is throttled — including one reserved to zero concurrency — is retried
-  inside Lambda and is not a delivery failure, matching AWS. Whether the handler
-  then succeeded is reported against the function, not the subscription.
-- A delivery that fails is not silently discarded. It is logged, published on the
-  event stream as `sns:DeliveryFailed`, and — when the subscription's
-  `RedrivePolicy` names a `deadLetterTargetArn` — written to that SQS queue. For
-  `lambda` that covers a function that does not exist, one that is not in an
-  invokable state, a missing layer version, and a runtime the emulator cannot
-  execute.
-- CloudFormation applies `AWS::SNS::Topic` attributes through SNS on both create
-  and update, and applies standalone `AWS::SNS::Subscription` attributes through
-  SNS after subscribing. The topic's inline `Subscription` list creates the
-  listed SNS subscriptions during creation. Updating that list or removing a
-  previously configured SNS attribute fails the stack update rather than leaving
-  stale SNS configuration. Cross-region `AWS::SNS::Subscription` `Region` is not
-  implemented and fails the stack rather than being ignored. FIFO topic
-  attributes round-trip, and `Publish` validates the FIFO-only
-  `MessageGroupId`/`MessageDeduplicationId` parameters against a topic name
-  ending in `.fifo`, but actual FIFO ordering, deduplication, and
-  `SequenceNumber` generation remain unimplemented (#183).
-- `Publish` accepts exactly one of `TopicArn`, `PhoneNumber`, or `TargetArn` as
-  the destination, matching AWS. `PhoneNumber` delivers directly to the Inbox
-  as `kind=sms` with no topic involved. `TargetArn` (publishing to a mobile
-  platform endpoint) returns `400 InvalidParameter` — Overcast has no
-  `CreatePlatformEndpoint`, so no `TargetArn` is ever a real endpoint.
-- `Publish` and `PublishBatch` validate `Message` (≤ 256 KB, except SMS) and
-  `Subject` (< 100 characters, no line breaks or control characters), and
-  support `MessageStructure=json`: the `Message` value must be a JSON object
-  with a string `default` key, and each subscriber receives the entry keyed by
-  its own protocol name (falling back to `default`) — including under
-  `RawMessageDelivery`, which strips the notification envelope but not the
-  per-protocol selection underneath it.
+TOPIC=$(aws sns create-topic --name orders --query TopicArn --output text)
+QUEUE=$(aws sqs create-queue --queue-name orders-q --query QueueUrl --output text)
+ARN=$(aws sqs get-queue-attributes --queue-url "$QUEUE" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text)
+
+aws sns subscribe --topic-arn "$TOPIC" --protocol sqs --notification-endpoint "$ARN"
+aws sns publish --topic-arn "$TOPIC" --message '{"id":1}'
+aws sqs receive-message --queue-url "$QUEUE"
+```
+
+## What works
+
+| Area                  | Behaviour                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| Protocols             | `sqs`, `lambda`, `email`, `email-json`, `sms`, `http`, `https`                                  |
+| Publishing            | `Publish` and `PublishBatch` (10 per call), with `Message` and `Subject` validated as on AWS    |
+| Destination selection | Exactly one of `TopicArn`, `PhoneNumber` or `TargetArn`, as on AWS                              |
+| Per-protocol payloads | `MessageStructure=json` picks the entry keyed by each subscriber's protocol, falling back to `default` |
+| Filter policies       | `FilterPolicy` on `SetSubscriptionAttributes`, matching string and number attributes            |
+| Dead-letter queues    | A failed delivery goes to the SQS queue named by the subscription's `RedrivePolicy`             |
+| Failure visibility    | A failed delivery is logged and published on the event stream as `sns:DeliveryFailed` — never silently dropped |
+| Tags and attributes   | Topic tags, topic attributes, subscription attributes                                           |
+
+Email, SMS and webhook deliveries all land in the console's
+[Inbox](http://localhost:4567/inbox), threaded by publish. `Publish
+--phone-number` delivers straight there with no topic involved.
+
+## Differences from AWS
+
+| Behaviour                | On AWS                                        | Here                                                          |
+| ------------------------ | --------------------------------------------- | --------------------------------------------------------------- |
+| `ConfirmSubscription`    | A token round-trip before delivery starts     | Auto-confirmed; any token is accepted                           |
+| FIFO topics              | Ordered, deduplicated, with a `SequenceNumber` | Parameters are validated, but ordering and dedup are not emulated ([#183](https://github.com/overcast-sh/overcast/issues/183)) |
+| Mobile push              | `application` protocol and platform endpoints  | `Subscribe` returns `400 InvalidParameter`; `Publish --target-arn` likewise |
+| Kinesis Data Firehose    | `firehose` protocol                            | `Subscribe` returns `400 InvalidParameter`                      |
+| `http`/`https` delivery  | POSTed to the endpoint                         | Captured in the Inbox; nothing is dialled                       |
+
+The full list, including CloudFormation and Lambda delivery semantics, is in
+[Limitations](sns/limitations.md).
+
+## Gotchas
+
+> [!WARNING]
+> `RawMessageDelivery` never applies to a `lambda` subscription — the function
+> always receives the full `Records[].Sns` event. That matches AWS, and it
+> catches people who set the attribute and expect a bare body.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -83,6 +81,8 @@ Per-operation status, notes and AWS API links: [SNS operations](sns/operations.m
 
 ## Related
 
+- [SNS limitations](sns/limitations.md)
 - [AWS API reference](https://docs.aws.amazon.com/sns/latest/api/welcome.html)
+- [SQS](sqs.md) · [Lambda](lambda.md) · [SES](ses.md) — the delivery targets
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
