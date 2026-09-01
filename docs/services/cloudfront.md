@@ -1,6 +1,6 @@
 ---
 title: "CloudFront — Amazon CloudFront"
-description: "Distributions are real: a request through one is matched against the cache behaviours, proxied to the origin, cached, and passed through any CloudFront Function attached to it."
+description: "Quick start, the three ways to reach a distribution, what the origin proxy caches and executes, and the security features that are stored but never enforced."
 section: "Service Reference"
 tags:
   - amazon

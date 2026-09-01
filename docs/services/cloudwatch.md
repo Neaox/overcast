@@ -1,6 +1,6 @@
 ---
 title: "CloudWatch — Amazon CloudWatch"
-description: "Alarms are evaluated automatically against published metrics, fire their SNS actions and publish state-change events. Metric datapoints are kept for about an hour."
+description: "Quick start, what the alarm evaluator reads and fires, the one-hour metric window, and the alarm shapes that are created but never evaluated."
 section: "Service Reference"
 tags:
   - alarms

@@ -1,6 +1,6 @@
 ---
 title: "ELBv2 — Elastic Load Balancing v2 (ALB/NLB)"
-description: "A load balancer really forwards: a request addressed to its DNS name is proxied round-robin to a registered target, which is what makes a service deployed behind one reachable."
+description: "Quick start, how to reach a load balancer without DNS, what actually forwards to a target, and the listener features that are stored or refused."
 section: "Service Reference"
 tags:
   - alb

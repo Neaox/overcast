@@ -1,6 +1,6 @@
 ---
 title: "Route 53 — Amazon Route 53"
-description: "Hosted zone records really answer DNS queries: Overcast's own resolver is authoritative for every zone in the store. Routing policies are stored but not evaluated, and health checks never probe."
+description: "Quick start, the record types the built-in resolver answers, and the routing, health-check and VPC-scoping behaviour that is stored but never acted on."
 section: "Service Reference"
 tags:
   - amazon

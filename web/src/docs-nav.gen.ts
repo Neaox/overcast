@@ -1417,7 +1417,7 @@ export const DOCS_NAV = [
     "path": "docs/services/README.md",
     "href": "services/README.md",
     "title": "Service Reference",
-    "description": "One page per AWS service Overcast emulates: what works, how it differs from AWS, and the full per-operation table.",
+    "description": "Index of every AWS service Overcast emulates, grouped by what you are building, with the coverage tiers and status tokens the service pages use.",
     "section": "Services",
     "tags": [
       "coverage",
@@ -1534,7 +1534,7 @@ export const DOCS_NAV = [
     "path": "docs/services/apigateway.md",
     "href": "services/apigateway.md",
     "title": "API Gateway — Amazon API Gateway",
-    "description": "REST (v1) and HTTP (v2) APIs are deployed and invoked for real: requests route through methods and integrations to Lambda, an HTTP backend or a mock response.",
+    "description": "Quick start, invoke URLs for REST v1 and HTTP v2, the integrations and authorizers that execute, and how usage plan throttling and quotas are measured.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -1930,7 +1930,7 @@ export const DOCS_NAV = [
     "path": "docs/services/appsync.md",
     "href": "services/appsync.md",
     "title": "AppSync — AWS AppSync",
-    "description": "GraphQL APIs execute for real: schemas are parsed, resolvers run VTL or APPSYNC_JS against DynamoDB, Lambda, HTTP and NONE data sources, and mutations fan out to WebSocket subscribers.",
+    "description": "Quick start, the GraphQL and realtime endpoint URLs, the data sources and authorization modes that execute for real, and the ones that are only stored.",
     "section": "Service Reference",
     "tags": [
       "appsync",
@@ -2230,7 +2230,7 @@ export const DOCS_NAV = [
     "path": "docs/services/autoscaling.md",
     "href": "services/autoscaling.md",
     "title": "Auto Scaling — AWS Auto Scaling",
-    "description": "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances to match desired capacity, runs the lifecycle state machine, and executes scaling policies driven by CloudWatch alarms.",
+    "description": "Quick start, how a group converges on desired capacity, which scaling policies and lifecycle hooks run for real, and the configurations refused with 501.",
     "section": "Service Reference",
     "tags": [
       "auto",
@@ -2754,7 +2754,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudfront.md",
     "href": "services/cloudfront.md",
     "title": "CloudFront — Amazon CloudFront",
-    "description": "Distributions are real: a request through one is matched against the cache behaviours, proxied to the origin, cached, and passed through any CloudFront Function attached to it.",
+    "description": "Quick start, the three ways to reach a distribution, what the origin proxy caches and executes, and the security features that are stored but never enforced.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2944,7 +2944,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudtrail.md",
     "href": "services/cloudtrail.md",
     "title": "CloudTrail — AWS CloudTrail",
-    "description": "Trail metadata and logging state, so a stack that declares a trail deploys. No events are recorded and LookupEvents always returns an empty list.",
+    "description": "Quick start, the trail metadata and CloudFormation support that unblock a stack, and why nothing is ever audited.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -3024,7 +3024,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch-logs.md",
     "href": "services/cloudwatch-logs.md",
     "title": "CloudWatch Logs",
-    "description": "Log groups, streams and events are stored and queryable, retention is enforced by a background sweep, and Lambda writes its own logs here under /aws/lambda/\u003cfunction\u003e.",
+    "description": "Quick start, filter patterns and retention enforcement, the input rules applied before anything is written, and the four operations that return 501.",
     "section": "Service Reference",
     "tags": [
       "cloudwatch",
@@ -3135,7 +3135,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch.md",
     "href": "services/cloudwatch.md",
     "title": "CloudWatch — Amazon CloudWatch",
-    "description": "Alarms are evaluated automatically against published metrics, fire their SNS actions and publish state-change events. Metric datapoints are kept for about an hour.",
+    "description": "Quick start, what the alarm evaluator reads and fires, the one-hour metric window, and the alarm shapes that are created but never evaluated.",
     "section": "Service Reference",
     "tags": [
       "alarms",
@@ -3609,7 +3609,7 @@ export const DOCS_NAV = [
     "path": "docs/services/ec2.md",
     "href": "services/ec2.md",
     "title": "EC2 — Elastic Compute Cloud",
-    "description": "VPCs are real Docker networks, so containers launched into one can reach each other. Instances, security group rules and route tables are metadata.",
+    "description": "Quick start, the VPC behaviour CDK and SDK workflows depend on, and where the emulation stops: overlapping-CIDR strategies, strict filter matching, and what stays metadata.",
     "section": "Service Reference",
     "tags": [
       "cloud",
@@ -4341,7 +4341,7 @@ export const DOCS_NAV = [
     "path": "docs/services/elb.md",
     "href": "services/elb.md",
     "title": "ELBv2 — Elastic Load Balancing v2 (ALB/NLB)",
-    "description": "A load balancer really forwards: a request addressed to its DNS name is proxied round-robin to a registered target, which is what makes a service deployed behind one reachable.",
+    "description": "Quick start, how to reach a load balancer without DNS, what actually forwards to a target, and the listener features that are stored or refused.",
     "section": "Service Reference",
     "tags": [
       "alb",
@@ -5902,7 +5902,7 @@ export const DOCS_NAV = [
     "path": "docs/services/route53.md",
     "href": "services/route53.md",
     "title": "Route 53 — Amazon Route 53",
-    "description": "Hosted zone records really answer DNS queries: Overcast's own resolver is authoritative for every zone in the store. Routing policies are stored but not evaluated, and health checks never probe.",
+    "description": "Quick start, the record types the built-in resolver answers, and the routing, health-check and VPC-scoping behaviour that is stored but never acted on.",
     "section": "Service Reference",
     "tags": [
       "amazon",

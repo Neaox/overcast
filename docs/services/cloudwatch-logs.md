@@ -1,6 +1,6 @@
 ---
 title: "CloudWatch Logs"
-description: "Log groups, streams and events are stored and queryable, retention is enforced by a background sweep, and Lambda writes its own logs here under /aws/lambda/<function>."
+description: "Quick start, filter patterns and retention enforcement, the input rules applied before anything is written, and the four operations that return 501."
 section: "Service Reference"
 tags:
   - cloudwatch

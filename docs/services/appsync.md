@@ -1,6 +1,6 @@
 ---
 title: "AppSync — AWS AppSync"
-description: "GraphQL APIs execute for real: schemas are parsed, resolvers run VTL or APPSYNC_JS against DynamoDB, Lambda, HTTP and NONE data sources, and mutations fan out to WebSocket subscribers."
+description: "Quick start, the GraphQL and realtime endpoint URLs, the data sources and authorization modes that execute for real, and the ones that are only stored."
 section: "Service Reference"
 tags:
   - appsync

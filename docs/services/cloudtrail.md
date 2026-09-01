@@ -1,6 +1,6 @@
 ---
 title: "CloudTrail — AWS CloudTrail"
-description: "Trail metadata and logging state, so a stack that declares a trail deploys. No events are recorded and LookupEvents always returns an empty list."
+description: "Quick start, the trail metadata and CloudFormation support that unblock a stack, and why nothing is ever audited."
 section: "Service Reference"
 tags:
   - aws

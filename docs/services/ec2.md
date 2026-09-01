@@ -1,6 +1,6 @@
 ---
 title: "EC2 — Elastic Compute Cloud"
-description: "VPCs are real Docker networks, so containers launched into one can reach each other. Instances, security group rules and route tables are metadata."
+description: "Quick start, the VPC behaviour CDK and SDK workflows depend on, and where the emulation stops: overlapping-CIDR strategies, strict filter matching, and what stays metadata."
 section: "Service Reference"
 tags:
   - cloud

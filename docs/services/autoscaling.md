@@ -1,6 +1,6 @@
 ---
 title: "Auto Scaling — AWS Auto Scaling"
-description: "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances to match desired capacity, runs the lifecycle state machine, and executes scaling policies driven by CloudWatch alarms."
+description: "Quick start, how a group converges on desired capacity, which scaling policies and lifecycle hooks run for real, and the configurations refused with 501."
 section: "Service Reference"
 tags:
   - auto

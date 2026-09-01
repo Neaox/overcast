@@ -1,6 +1,6 @@
 ---
 title: "API Gateway — Amazon API Gateway"
-description: "REST (v1) and HTTP (v2) APIs are deployed and invoked for real: requests route through methods and integrations to Lambda, an HTTP backend or a mock response."
+description: "Quick start, invoke URLs for REST v1 and HTTP v2, the integrations and authorizers that execute, and how usage plan throttling and quotas are measured."
 section: "Service Reference"
 tags:
   - amazon

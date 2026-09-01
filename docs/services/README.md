@@ -1,6 +1,6 @@
 ---
 title: "Service Reference"
-description: "One page per AWS service Overcast emulates: what works, how it differs from AWS, and the full per-operation table."
+description: "Index of every AWS service Overcast emulates, grouped by what you are building, with the coverage tiers and status tokens the service pages use."
 section: "Services"
 tags:
   - coverage
@@ -34,13 +34,13 @@ aws sqs create-queue --queue-name orders
 
 **Compute and containers** — [Lambda](./lambda.md) · [ECS](./ecs.md) ·
 [ECR](./ecr.md) · [EC2 / VPC](./ec2.md) · [Auto Scaling](./autoscaling.md) ·
-[EKS](./eks.md) · [Batch-style stubs: MSK](./msk.md)
+[EKS](./eks.md)
 
 **Storage and data** — [S3](./s3.md) · [DynamoDB](./dynamodb.md) ·
 [DynamoDB Streams](./dynamodbstreams.md) · [RDS](./rds.md) ·
 [ElastiCache](./elasticache.md) · [EFS](./efs.md) · [Kinesis](./kinesis.md) ·
-[Firehose](./firehose.md) · [Athena](./athena.md) · [Glue](./glue.md) ·
-[OpenSearch](./opensearch.md) · [Backup](./backup.md) ·
+[Firehose](./firehose.md) · [MSK](./msk.md) · [Athena](./athena.md) ·
+[Glue](./glue.md) · [OpenSearch](./opensearch.md) · [Backup](./backup.md) ·
 [Transfer Family](./transfer.md)
 
 **Messaging and events** — [SQS](./sqs.md) · [SNS](./sns.md) ·
