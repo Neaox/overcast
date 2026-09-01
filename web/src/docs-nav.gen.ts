@@ -1973,7 +1973,7 @@ export const DOCS_NAV = [
     "path": "docs/services/athena.md",
     "href": "services/athena.md",
     "title": "Athena — Amazon Athena",
-    "description": "Amazon Athena uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AmazonAthena..",
+    "description": "Athena's control plane — workgroups, query executions and tags. Queries are recorded and reported SUCCEEDED without running, so every result set comes back empty.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -1989,8 +1989,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 1,
+        "text": "Status.State is already SUCCEEDED",
+        "id": "status-state-is-already-succeeded"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -2150,7 +2170,7 @@ export const DOCS_NAV = [
     "path": "docs/services/backup.md",
     "href": "services/backup.md",
     "title": "Backup — AWS Backup",
-    "description": "Metadata-only AWS Backup implementation.",
+    "description": "Backup vaults and plans as control-plane records, with tagging. No backup or restore job ever runs, so a vault holds no recovery points.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -2166,13 +2186,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -3265,7 +3290,7 @@ export const DOCS_NAV = [
     "path": "docs/services/dynamodb.md",
     "href": "services/dynamodb.md",
     "title": "DynamoDB",
-    "description": "DynamoDB accepts AWS JSON 1.0 and Smithy RPC v2 CBOR. JSON operations are identified by the X-Amz-Target header (e.g. DynamoDB_20120810.PutItem); CBOR operations use...",
+    "description": "Tables, items, expressions, indexes and transactions, stored in DynamoDB's own wire format. Tables are region-scoped, GSIs are immediately consistent, and PartiQL is out of scope.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -3280,13 +3305,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Tables are region-scoped",
-        "id": "tables-are-region-scoped"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -3369,7 +3404,7 @@ export const DOCS_NAV = [
     "path": "docs/services/dynamodbstreams.md",
     "href": "services/dynamodbstreams.md",
     "title": "DynamoDB Streams",
-    "description": "DynamoDB Streams accepts the AWS JSON 1.0 API over the shared root endpoint with X-Amz-Target: DynamoDBStreams_20120810.\u003cOperation\u003e. It also accepts Smithy RPC v2 CBOR at...",
+    "description": "Change records for DynamoDB tables, read through shard iterators. One shard per stream, records are never trimmed, and a stream belongs to its table's region.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -3386,8 +3421,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Streams are region-scoped",
-        "id": "streams-are-region-scoped"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -3881,7 +3926,7 @@ export const DOCS_NAV = [
     "path": "docs/services/efs.md",
     "href": "services/efs.md",
     "title": "EFS — Amazon Elastic File System",
-    "description": "Control-plane emulation of EFS: file systems, mount targets, access points, policies, lifecycle and backup configuration, and tagging.",
+    "description": "File systems, mount targets and access points, each file system backed by a real Docker volume that Lambda functions and ECS tasks mount and genuinely share.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -3901,18 +3946,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Behavior notes",
-        "id": "behavior-notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Mounting over NFS",
-        "id": "mounting-over-nfs"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "CloudFormation",
-        "id": "cloudformation"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Modes",
+        "id": "modes"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -3923,6 +3978,52 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/efs/examples.md",
+    "href": "services/efs/examples.md",
+    "title": "EFS examples",
+    "description": "Sharing an EFS file system between a Lambda function and an ECS task, and mounting one over NFS with OVERCAST_EFS_NFS.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "efs",
+      "examples",
+      "services",
+      "storage"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EFS examples",
+        "id": "efs-examples"
+      },
+      {
+        "depth": 2,
+        "text": "Sharing a file system with Lambda and ECS",
+        "id": "sharing-a-file-system-with-lambda-and-ecs"
+      },
+      {
+        "depth": 2,
+        "text": "Mounting over NFS",
+        "id": "mounting-over-nfs"
+      },
+      {
+        "depth": 3,
+        "text": "Where to mount from",
+        "id": "where-to-mount-from"
+      },
+      {
+        "depth": 3,
+        "text": "Pseudo-paths",
+        "id": "pseudo-paths"
+      },
+      {
+        "depth": 3,
+        "text": "Readiness",
+        "id": "readiness"
       }
     ]
   },
@@ -4108,7 +4209,7 @@ export const DOCS_NAV = [
     "path": "docs/services/elasticache.md",
     "href": "services/elasticache.md",
     "title": "ElastiCache — Managed In-Memory Cache",
-    "description": "ElastiCache uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2015-02-02.",
+    "description": "Cache clusters, replication groups and serverless caches backed by real Redis, Valkey or Memcached containers, promoted to available only once the engine answers.",
     "section": "Service Reference",
     "tags": [
       "cache",
@@ -4126,13 +4227,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "VPC placement",
-        "id": "vpc-placement"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 1,
+        "text": "once \"available\": [\"127.0.0.1\", 63790] on the host",
+        "id": "once-available-127-0-0-1-63790-on-the-host"
       },
       {
         "depth": 2,
-        "text": "CloudFormation",
-        "id": "cloudformation"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4391,7 +4507,7 @@ export const DOCS_NAV = [
     "path": "docs/services/firehose.md",
     "href": "services/firehose.md",
     "title": "Firehose — Amazon Data Firehose",
-    "description": "Amazon Data Firehose uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix Firehose_20150804..",
+    "description": "Delivery streams as control-plane records. Records are accepted and acknowledged with real record ids, then discarded — nothing is delivered to S3 or any other destination.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -4408,8 +4524,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 1,
+        "text": "→ { \"RecordId\": \"…\", \"Encrypted\": false }",
+        "id": "recordid-encrypted-false"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4472,7 +4608,7 @@ export const DOCS_NAV = [
     "path": "docs/services/glue.md",
     "href": "services/glue.md",
     "title": "Glue — AWS Glue Data Catalog",
-    "description": "AWS Glue Data Catalog uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSGlue..",
+    "description": "The Glue Data Catalog — databases, tables and their tags, stored as metadata. ETL jobs, crawlers, triggers, workflows and partitions are not emulated.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -4490,8 +4626,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4816,7 +4967,7 @@ export const DOCS_NAV = [
     "path": "docs/services/kinesis.md",
     "href": "services/kinesis.md",
     "title": "Kinesis — Amazon Kinesis Data Streams",
-    "description": "Kinesis Data Streams accepts the AWS JSON 1.1 protocol on the shared POST / endpoint with X-Amz-Target: Kinesis_20131202.\u003cOperationName\u003e. It also accepts Smithy RPC v2 CBOR at...",
+    "description": "Kinesis Data Streams with real record storage, partition-key routing, shard iterators and shard split/merge. Retention is recorded but never trims, so records live for the life of the stream.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -4831,6 +4982,26 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "Kinesis — Amazon Kinesis Data Streams",
         "id": "kinesis-amazon-kinesis-data-streams"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -5314,7 +5485,7 @@ export const DOCS_NAV = [
     "path": "docs/services/msk.md",
     "href": "services/msk.md",
     "title": "MSK — Managed Streaming for Kafka",
-    "description": "MSK uses the REST JSON protocol. The v1 endpoints are under /v1/ and the v2 cluster API under /api/v2/.",
+    "description": "MSK clusters backed by a real Redpanda broker per cluster, promoted to ACTIVE only once it answers Kafka's ApiVersions. Broker scaling, SCRAM and VPC connections are not implemented.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -5329,6 +5500,31 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "MSK — Managed Streaming for Kafka",
         "id": "msk-managed-streaming-for-kafka"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 1,
+        "text": "→ { \"BootstrapBrokerString\": \"127.0.0.1:49092\" }",
+        "id": "bootstrapbrokerstring-127-0-0-1-49092"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -5396,7 +5592,7 @@ export const DOCS_NAV = [
     "path": "docs/services/opensearch.md",
     "href": "services/opensearch.md",
     "title": "OpenSearch — Amazon OpenSearch Service",
-    "description": "Amazon OpenSearch Service uses the REST JSON protocol, served under the /2021-01-01/ API version prefix.",
+    "description": "OpenSearch domain records and their tags, served at AWS's own /2021-01-01/ bindings. No cluster is provisioned, so a domain's endpoint serves nothing.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -5413,8 +5609,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -5644,7 +5855,7 @@ export const DOCS_NAV = [
     "path": "docs/services/rds.md",
     "href": "services/rds.md",
     "title": "RDS — Relational Database Service",
-    "description": "RDS uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2014-10-31.",
+    "description": "DB instances and Aurora clusters backed by real MySQL, PostgreSQL and MariaDB containers. An instance reports available only once its engine accepts connections.",
     "section": "Service Reference",
     "tags": [
       "database",
@@ -5661,94 +5872,29 @@ export const DOCS_NAV = [
         "id": "rds-relational-database-service"
       },
       {
-        "depth": 3,
-        "text": "Instance status is what actually happened",
-        "id": "instance-status-is-what-actually-happened"
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
-        "depth": 3,
-        "text": "CloudFormation and CDK wait for the database",
-        "id": "cloudformation-and-cdk-wait-for-the-database"
-      },
-      {
-        "depth": 3,
-        "text": "Modes — `OVERCAST_RDS_MODE",
-        "id": "modes-overcast-rds-mode"
-      },
-      {
-        "depth": 3,
-        "text": "Master account and initial database",
-        "id": "master-account-and-initial-database"
-      },
-      {
-        "depth": 3,
-        "text": "Changing the master password — `ModifyDBInstance` and `ModifyDBCluster",
-        "id": "changing-the-master-password-modifydbinstance-and-modifydbcluster"
-      },
-      {
-        "depth": 3,
-        "text": "Reachability — `PubliclyAccessible",
-        "id": "reachability-publiclyaccessible"
-      },
-      {
-        "depth": 3,
-        "text": "What an Aurora member instance inherits",
-        "id": "what-an-aurora-member-instance-inherits"
-      },
-      {
-        "depth": 3,
-        "text": "What a cluster records and what it enforces",
-        "id": "what-a-cluster-records-and-what-it-enforces"
-      },
-      {
-        "depth": 3,
-        "text": "Finding out why an instance failed — `DescribeEvents",
-        "id": "finding-out-why-an-instance-failed-describeevents"
-      },
-      {
-        "depth": 3,
-        "text": "Instance logs — `GET /_overcast/rds/instances/{id}/logs",
-        "id": "instance-logs-get-overcast-rds-instances-id-logs"
+        "depth": 1,
+        "text": "→ { \"Address\": \"127.0.0.1\", \"Port\": 33060 }  on the host",
+        "id": "address-127-0-0-1-port-33060-on-the-host"
       },
       {
         "depth": 2,
-        "text": "Engine support",
-        "id": "engine-support"
+        "text": "What works",
+        "id": "what-works"
       },
       {
-        "depth": 3,
-        "text": "Supported engines",
-        "id": "supported-engines"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
-        "depth": 3,
-        "text": "Connecting to an instance",
-        "id": "connecting-to-an-instance"
-      },
-      {
-        "depth": 3,
-        "text": "Connecting to a cluster",
-        "id": "connecting-to-a-cluster"
-      },
-      {
-        "depth": 3,
-        "text": "Aurora emulation",
-        "id": "aurora-emulation"
-      },
-      {
-        "depth": 3,
-        "text": "SQL Server — not yet implemented",
-        "id": "sql-server-not-yet-implemented"
-      },
-      {
-        "depth": 3,
-        "text": "Oracle — not feasible",
-        "id": "oracle-not-feasible"
-      },
-      {
-        "depth": 3,
-        "text": "IBM Db2 — not yet implemented",
-        "id": "ibm-db2-not-yet-implemented"
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -5759,6 +5905,72 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/rds/limitations.md",
+    "href": "services/rds/limitations.md",
+    "title": "RDS limitations",
+    "description": "Which RDS engines Overcast runs and which it cannot, what an Aurora member inherits from its cluster, which cluster settings are enforced, and where the master account's privileges stop.",
+    "section": "Service Reference",
+    "tags": [
+      "database",
+      "docs",
+      "limitations",
+      "rds",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "RDS limitations",
+        "id": "rds-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Engines",
+        "id": "engines"
+      },
+      {
+        "depth": 3,
+        "text": "Engines that are not emulated",
+        "id": "engines-that-are-not-emulated"
+      },
+      {
+        "depth": 2,
+        "text": "What an Aurora member inherits",
+        "id": "what-an-aurora-member-inherits"
+      },
+      {
+        "depth": 2,
+        "text": "What a cluster records and what it enforces",
+        "id": "what-a-cluster-records-and-what-it-enforces"
+      },
+      {
+        "depth": 2,
+        "text": "Reachability defaults",
+        "id": "reachability-defaults"
+      },
+      {
+        "depth": 2,
+        "text": "Master account boundaries",
+        "id": "master-account-boundaries"
+      },
+      {
+        "depth": 2,
+        "text": "Password rules",
+        "id": "password-rules"
+      },
+      {
+        "depth": 2,
+        "text": "Changing a password on a live engine",
+        "id": "changing-a-password-on-a-live-engine"
+      },
+      {
+        "depth": 2,
+        "text": "Cluster endpoint names",
+        "id": "cluster-endpoint-names"
       }
     ]
   },
@@ -5824,6 +6036,67 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "General",
         "id": "general"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/rds/troubleshooting.md",
+    "href": "services/rds/troubleshooting.md",
+    "title": "RDS troubleshooting",
+    "description": "Symptoms and fixes for RDS: an instance stuck creating or in failed, a refused connection, a rejected password change, and a slow cdk deploy.",
+    "section": "Service Reference",
+    "tags": [
+      "database",
+      "docs",
+      "rds",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "RDS troubleshooting",
+        "id": "rds-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "The instance sits in `creating` for ~30 seconds",
+        "id": "the-instance-sits-in-creating-for-30-seconds"
+      },
+      {
+        "depth": 2,
+        "text": "The instance went to `failed` and `DescribeDBInstances` does not say why",
+        "id": "the-instance-went-to-failed-and-describedbinstances-does-not-say-why"
+      },
+      {
+        "depth": 2,
+        "text": "A connection that used to work is refused",
+        "id": "a-connection-that-used-to-work-is-refused"
+      },
+      {
+        "depth": 2,
+        "text": "The endpoint resolves but nothing answers",
+        "id": "the-endpoint-resolves-but-nothing-answers"
+      },
+      {
+        "depth": 2,
+        "text": "ModifyDBInstance` refuses the new password",
+        "id": "modifydbinstance-refuses-the-new-password"
+      },
+      {
+        "depth": 2,
+        "text": "Start` reports success but the database is gone",
+        "id": "start-reports-success-but-the-database-is-gone"
+      },
+      {
+        "depth": 2,
+        "text": "Orphaned containers pile up",
+        "id": "orphaned-containers-pile-up"
+      },
+      {
+        "depth": 2,
+        "text": "cdk deploy` blocks for a long time on the database",
+        "id": "cdk-deploy-blocks-for-a-long-time-on-the-database"
       }
     ]
   },
@@ -5942,7 +6215,7 @@ export const DOCS_NAV = [
     "path": "docs/services/s3.md",
     "href": "services/s3.md",
     "title": "S3 — Simple Storage Service",
-    "description": "S3 uses a REST-style XML API. Requests are routed by virtual-hosted-style (bucket.s3.localhost:4566) or path-style (localhost:4566/bucket) depending on the S3_ADDRESSING_STYLE...",
+    "description": "Buckets, objects, multipart uploads, versioning with delete markers, lifecycle rules and event notifications. Addressing style is detected from the request Host, with no variable to set.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -5960,38 +6233,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Bucket configuration behaviour",
-        "id": "bucket-configuration-behaviour"
+        "text": "What works",
+        "id": "what-works"
       },
       {
-        "depth": 3,
-        "text": "Versioning: version ids, delete markers and suspended buckets",
-        "id": "versioning-version-ids-delete-markers-and-suspended-buckets"
+        "depth": 2,
+        "text": "Addressing",
+        "id": "addressing"
       },
       {
-        "depth": 3,
-        "text": "Lifecycle: version-aware actions",
-        "id": "lifecycle-version-aware-actions"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
-        "depth": 3,
-        "text": "Lifecycle: default minimum transition size",
-        "id": "lifecycle-default-minimum-transition-size"
-      },
-      {
-        "depth": 3,
-        "text": "Website: redirects and routing rules",
-        "id": "website-redirects-and-routing-rules"
-      },
-      {
-        "depth": 3,
-        "text": "Notifications: EventBridge",
-        "id": "notifications-eventbridge"
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -6002,6 +6265,57 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/s3/limitations.md",
+    "href": "services/s3/limitations.md",
+    "title": "S3 limitations",
+    "description": "How S3 versioning, lifecycle rules, website configuration and event notifications diverge from AWS in Overcast, in full.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "limitations",
+      "s3",
+      "services",
+      "storage"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "S3 limitations",
+        "id": "s3-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Versioning: version ids, delete markers and suspended buckets",
+        "id": "versioning-version-ids-delete-markers-and-suspended-buckets"
+      },
+      {
+        "depth": 2,
+        "text": "Lifecycle: version-aware actions",
+        "id": "lifecycle-version-aware-actions"
+      },
+      {
+        "depth": 2,
+        "text": "Lifecycle: default minimum transition size",
+        "id": "lifecycle-default-minimum-transition-size"
+      },
+      {
+        "depth": 2,
+        "text": "Website: stored faithfully, served by nothing",
+        "id": "website-stored-faithfully-served-by-nothing"
+      },
+      {
+        "depth": 2,
+        "text": "Notifications: EventBridge",
+        "id": "notifications-eventbridge"
+      },
+      {
+        "depth": 2,
+        "text": "Encryption",
+        "id": "encryption"
       }
     ]
   },
@@ -7013,7 +7327,7 @@ export const DOCS_NAV = [
     "path": "docs/services/transfer.md",
     "href": "services/transfer.md",
     "title": "Transfer Family — AWS Transfer Family",
-    "description": "Metadata-only AWS Transfer Family implementation.",
+    "description": "Transfer Family servers and users as control-plane records. No SFTP, FTPS or FTP daemon is started, so nothing can connect to a server this creates.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -7030,13 +7344,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
