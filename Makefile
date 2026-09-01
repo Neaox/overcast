@@ -85,11 +85,6 @@ build: lambda-init
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/overcast
 
-## build-mcp: compile the workspace MCP server binary
-build-mcp:
-	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/overcast-mcp ./cmd/overcast-mcp
-
 ## build-web: build the web UI (run before build if assets are stale)
 build-web:
 	cd web && VITE_BUNDLED=true pnpm run build

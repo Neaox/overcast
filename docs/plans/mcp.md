@@ -8,7 +8,10 @@ still intentionally left for later.
 
 The two servers are:
 
-- the workspace MCP server, started from `cmd/overcast-mcp`
+- the workspace MCP server, started via `overcast mcp` (a subcommand of the
+  unified `overcast` binary, built from `cmd/overcast/cmd_mcp.go`; formerly
+  the standalone `cmd/overcast-mcp` binary — folded in so Overcast ships one
+  binary, not two)
 - the runtime MCP server, exposed by a running Overcast instance at `/_overcast/mcp`
 
 They share one protocol core in `internal/mcp`, but they are different
@@ -100,9 +103,15 @@ Shared core:
 
 Separate ownership:
 
-- `cmd/overcast-mcp` builds the standalone workspace server.
+- `cmd/overcast/cmd_mcp.go` wires the `overcast mcp` subcommand to the
+  workspace server. It is a thin cobra shim only — the server logic lives in
+  `internal/mcp` and `internal/mcp/providers`, same as before the fold-in.
+  Excluded from slim builds (`cmd_mcp_slim.go` registers a stub instead) —
+  slim already excludes this package tree from the daemon's runtime MCP for
+  the same reason, and an unconditional import here would undo that.
 - `internal/router/mcp_routes.go` mounts the runtime server into Overcast.
-- The workspace binary must not ship runtime `/_overcast/mcp` HTTP handlers.
+- The `overcast mcp` subcommand must not ship runtime `/_overcast/mcp` HTTP
+  handlers.
 - The runtime server must remain attached to the running Overcast instance and
   its state store.
 
@@ -119,9 +128,11 @@ Operational boundary:
 
 - Primary transport: stdio
 - Secondary transport: local HTTP for debugging or non-editor clients
-- Typical entrypoint: `go build -o ./bin/overcast-mcp ./cmd/overcast-mcp`
+- Typical entrypoint: `go build -o ./bin/overcast ./cmd/overcast && ./bin/overcast mcp --stdio`
 - Typical editor startup: `.vscode/mcp.json` launches it automatically over
   stdio
+- Not available in slim builds (`-tags slim`) — `overcast mcp` explains why
+  rather than failing with "unknown command"
 
 ### Runtime MCP transport
 
@@ -458,7 +469,8 @@ If both are available, the recommended order is:
 
 Workspace server:
 
-- `cmd/overcast-mcp/main.go`
+- `cmd/overcast/cmd_mcp.go` (subcommand wiring; `cmd_mcp_slim.go` is the
+  slim-build stub)
 - `internal/mcp/providers/repo_provider.go`
 
 Runtime server:

@@ -6,7 +6,7 @@
 package capabilities
 
 // AllCapabilities is the static snapshot of all declared service capabilities.
-// Used by tools (e.g. overcast-mcp) that need capability data without importing
+// Used by tools (e.g. overcast mcp) that need capability data without importing
 // all service packages. Only included in dev builds.
 var AllCapabilities = []Capability{
 	{Service: "acm", Operation: "AddTagsToCertificate", Category: "Tags", Status: StatusSupported, Notes: "Adds tags to a certificate", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

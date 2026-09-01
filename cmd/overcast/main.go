@@ -12,6 +12,7 @@
 //   - overcast services     — list enabled services and emulation tiers
 //   - overcast env          — print AWS environment exports for the daemon
 //   - overcast aws          — run the host AWS CLI against the daemon
+//   - overcast mcp          — run the workspace MCP server (not in slim builds)
 //
 // The Docker image uses `overcast serve` as its entrypoint. Host-only
 // commands (bridge, trust) require host-network access and are not useful
@@ -48,6 +49,7 @@ func main() {
 	root.AddCommand(newAWSCmd())
 	root.AddCommand(newWaitCmd())
 	root.AddCommand(newServicesCmd())
+	root.AddCommand(newMCPCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "overcast:", err)

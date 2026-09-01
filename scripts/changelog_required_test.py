@@ -122,7 +122,7 @@ class ExemptTest(unittest.TestCase):
 		for path in (
 			"internal/services/sqs/handlers.go",
 			"cmd/overcast/main.go",
-			"cmd/overcast-mcp/main.go",
+			"cmd/overcast/cmd_mcp.go",
 			"web/src/routes/buckets.tsx",
 			"docs/services/sqs.md",
 			"docs/README.md",
