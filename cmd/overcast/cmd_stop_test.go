@@ -130,6 +130,15 @@ func TestStopInstance_TerminatesRunningProcess(t *testing.T) {
 		t.Fatalf("spawn sleeping helper: %v", err)
 	}
 	t.Cleanup(func() { _ = child.Process.Kill() })
+	// Reap the child as soon as it dies. Unlike production — where the
+	// daemon was reparented to init (its `overcast start` parent exited
+	// long ago) and init reaps it — this helper is OUR child, and an
+	// unreaped dead child on unix is a zombie whose pid still answers
+	// Signal(0), so processAlive would read it as alive forever and stop's
+	// two 10s exit-waits would both time out (exactly how this test failed
+	// on Linux CI while passing on Windows, which has no zombie state).
+	// Wait in the background so the pid is reaped the moment stop kills it.
+	go func() { _ = child.Wait() }()
 
 	rec := instanceRecord{Name: "running", Backend: "native", PID: child.Process.Pid}
 	if err := saveInstance(rec); err != nil {
