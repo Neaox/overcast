@@ -135,7 +135,7 @@
             "command": "sh",
             "args": [
               "-c",
-              "mkdir -p ${containerWorkspaceFolder}/.overcast && exec 2>>${containerWorkspaceFolder}/.overcast/mcp-workspace.log && go build -o ${containerWorkspaceFolder}/bin/overcast ./cmd/overcast && exec ${containerWorkspaceFolder}/bin/overcast mcp --workspace ${containerWorkspaceFolder} --stdio"
+              "mkdir -p ${containerWorkspaceFolder}/.overcast && exec 2>>${containerWorkspaceFolder}/.overcast/mcp-workspace.log && exec go run ${containerWorkspaceFolder}/cmd/overcast-mcp --workspace ${containerWorkspaceFolder} --stdio"
             ]
           }
         }

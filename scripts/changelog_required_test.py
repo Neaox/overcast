@@ -96,6 +96,7 @@ class ExemptTest(unittest.TestCase):
 			"web/src/components/layout/sidebar/sidebar.test.tsx",
 			"web/src/lib/format.spec.ts",
 			"cmd/compat/main.go",
+			"cmd/overcast-mcp/main.go",
 			"docs/plans/compat-coverage-modelgen.md",
 			"docs/dev/manual-testing.md",
 			".agents/skills/pull-request/SKILL.md",
@@ -122,7 +123,6 @@ class ExemptTest(unittest.TestCase):
 		for path in (
 			"internal/services/sqs/handlers.go",
 			"cmd/overcast/main.go",
-			"cmd/overcast/cmd_mcp.go",
 			"web/src/routes/buckets.tsx",
 			"docs/services/sqs.md",
 			"docs/README.md",

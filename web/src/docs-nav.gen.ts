@@ -498,16 +498,6 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "overcast trust install|uninstall|status",
         "id": "overcast-trust-install-uninstall-status"
-      },
-      {
-        "depth": 2,
-        "text": "Development tooling",
-        "id": "development-tooling"
-      },
-      {
-        "depth": 3,
-        "text": "overcast mcp",
-        "id": "overcast-mcp"
       }
     ]
   },

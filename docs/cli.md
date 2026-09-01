@@ -15,7 +15,7 @@ tags:
 The `overcast` binary is both the emulator daemon and the host-side tooling
 around it — starting and stopping background instances, checking on a running
 daemon, and configuring your shell to talk to it. `overcastd` (the slim
-binary) exposes the same subcommands, minus `mcp` and the web console.
+binary) exposes the same subcommands, minus the web console.
 
 Every command accepts `--endpoint` (default `http://localhost:4566`); run
 `overcast --help` for the exhaustive flag list. For AWS SDK/CLI configuration
@@ -322,28 +322,4 @@ separately.
 overcast trust install
 overcast trust status
 overcast trust uninstall
-```
-
----
-
-## Development tooling
-
-### `overcast mcp`
-
-Runs the **workspace** MCP server: repo-aware tools for agents and editors
-(service files, doc/test coverage, symbols, conventions), backed by the
-files on disk — not by a running daemon. This is a different server from the
-one a running `overcast serve` exposes at `/_overcast/mcp`, which answers
-questions about the live emulator instead. Not included in slim builds
-(`overcastd`), where it errors explaining why.
-
-| Flag          | Default              | Description                                  |
-| ------------- | ---------------------- | ------------------------------------------------- |
-| `--workspace` | `.`                    | Workspace root path.                              |
-| `--listen`    | `127.0.0.1:7778`       | Listen address for the HTTP transport.            |
-| `--stdio`     | `false`                | Serve over stdio instead of HTTP (editor-launched mode). |
-
-```bash
-overcast mcp --stdio
-overcast mcp --listen 127.0.0.1:7778
 ```
