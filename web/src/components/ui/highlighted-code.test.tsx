@@ -62,7 +62,7 @@ describe("HighlightedCode under the markup presentation", () => {
 
   it("escapes rather than highlights a language with no registered grammar", () => {
     const { container } = render(
-      <HighlightedCode text="SELECT <b> FROM t" language="sql" className="font-mono" />,
+      <HighlightedCode text="SELECT <b> FROM t" language="fortran" className="font-mono" />,
     )
     expect(tokenCount(container)).toBe(0)
     expect(container.textContent).toBe("SELECT <b> FROM t")

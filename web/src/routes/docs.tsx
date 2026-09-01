@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
 import { DOCS_NAV } from "@/docs-nav.gen"
 import { CodeTabsGroup, CodeTabsPanel } from "@/features/docs/code-tabs"
+import { MarkdownCodeBlock } from "@/features/docs/markdown-code"
 import remarkCodeTabs from "@/lib/remark-code-tabs"
 import { slug } from "@/lib/slug"
 import { cn } from "@/lib/utils"
@@ -213,6 +214,7 @@ function DocsPage() {
                       {children}
                     </td>
                   ),
+                  pre: MarkdownCodeBlock,
                 }}
               >
                 {stripLeadingH1(data, currentDoc.title)}

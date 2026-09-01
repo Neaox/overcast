@@ -10,46 +10,23 @@
  * plugin code runs, causing "Prism is not defined".
  *
  * Fix: import the default export (which triggers the lazy factory), set the
- * global explicitly, then register the JSON grammar inline — no side-effect
- * import needed.
+ * global explicitly, then register every grammar inline — no side-effect
+ * import needed. The grammars themselves live in
+ * [prism-grammars.ts](./prism-grammars.ts); registering them here, in the
+ * one module that imports "prismjs", is what guarantees every consumer —
+ * main thread and highlight worker alike — sees the same registry.
  */
 // Order matters: the config module must run before prismjs's body, which
 // reads the flag it sets — see prism-global-config.ts for the worker story.
 import "./prism-global-config"
 import Prism from "prismjs"
+import { registerGrammars } from "./prism-grammars"
 
 // Ensure Prism is on the global scope (redundant in dev, required in prod).
 if (typeof window !== "undefined") {
   ;(window as unknown as Record<string, unknown>).Prism = Prism
 }
 
-// Register JSON grammar (source: prismjs/components/prism-json, MIT license).
-// Copied here to avoid the side-effect import that relies on the global.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- json may not be registered yet at runtime
-Prism.languages.json ??= {
-  property: {
-    pattern: /(^|[^\\])"(?:\\.|[^\\"\r\n])*"(?=\s*:)/,
-    lookbehind: true,
-    greedy: true,
-  },
-  string: {
-    pattern: /(^|[^\\])"(?:\\.|[^\\"\r\n])*"(?!\s*:)/,
-    lookbehind: true,
-    greedy: true,
-  },
-  comment: {
-    pattern: /\/\/.*|\/\*[\s\S]*?(?:\*\/|$)/,
-    greedy: true,
-  },
-  number: /-?\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/i,
-  punctuation: /[{}[\],]/,
-  operator: /:/,
-  boolean: /\b(?:false|true)\b/,
-  null: {
-    pattern: /\bnull\b/,
-    alias: "keyword",
-  },
-}
-Prism.languages.webmanifest = Prism.languages.json
+registerGrammars(Prism)
 
 export default Prism

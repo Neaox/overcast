@@ -41,7 +41,7 @@ describe("handleHighlightRequest", () => {
   })
 
   it("answers an unknown language with an empty tokenization, not an error", () => {
-    const response = handleHighlightRequest({ id: 1, text: "SELECT 1", language: "sql" })
+    const response = handleHighlightRequest({ id: 1, text: "SELECT 1", language: "fortran" })
     expect(response.packed.length).toBe(0)
     expect(unpackTokenRanges(response)).toEqual([])
   })

@@ -8,6 +8,7 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
+import { MarkdownCodeBlock } from "@/features/docs/markdown-code"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -173,16 +174,10 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                       {children}
                     </td>
                   ),
-                  code: ({ node: _n, children, className, ...props }) => {
-                    // Fenced code block
-                    const isBlock = className?.startsWith("language-")
-                    if (isBlock) {
-                      return (
-                        <pre className="overflow-auto rounded-md border border-border bg-bg-muted p-3 font-mono text-xs text-fg">
-                          <code {...props}>{children}</code>
-                        </pre>
-                      )
-                    }
+                  // Fenced blocks render (highlighted) through the shared
+                  // pre component; code here only ever shows inline.
+                  pre: MarkdownCodeBlock,
+                  code: ({ node: _n, children, ...props }) => {
                     // Inline code: detect `something.md` and render as an inter-doc link
                     const text = typeof children === "string" ? children : ""
                     const internal = text.match(/^[\w-]+\.md$/i) ? serviceDocHref(text) : null

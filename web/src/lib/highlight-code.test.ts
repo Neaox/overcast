@@ -15,7 +15,7 @@ describe("highlightCode", () => {
   it("falls back to escaped plain text for a grammar that is not loaded", () => {
     // Callers derive the language from content types and file extensions; an
     // exotic one must degrade to text, not throw inside a row render.
-    expect(highlightCode("SELECT <b> FROM t", "sql")).toBe("SELECT &lt;b&gt; FROM t")
+    expect(highlightCode("SELECT <b> FROM t", "fortran")).toBe("SELECT &lt;b&gt; FROM t")
   })
 
   it("returns the identical string for a repeated (text, language) pair", () => {
