@@ -1,6 +1,6 @@
 ---
 title: "Service Reference"
-description: "Start here for Overcast service coverage, support tiers, and links to per-service endpoint compatibility tables."
+description: "One page per AWS service Overcast emulates: what works, how it differs from AWS, and the full per-operation table."
 section: "Services"
 tags:
   - coverage
@@ -11,32 +11,86 @@ tags:
 
 # Service Reference
 
-Overcast implements the most common local-development workflows across AWS service APIs. Each service page lists supported, partial, work-in-progress, and unsupported operations with notes about emulator-specific limitations.
+One page per AWS service: a quick start, what works, and how it differs from
+AWS. Point any SDK or CLI at `http://localhost:4566` and pick your service
+below.
 
-## Start Here
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+aws sqs create-queue --queue-name orders
+```
 
-- [S3](./s3.md), [SQS](./sqs.md), [DynamoDB](./dynamodb.md), [Lambda](./lambda.md), [API Gateway](./apigateway.md), and [EC2 / VPC](./ec2.md) have the broadest workflow coverage.
-- [CloudFormation](./cloudformation.md) is the main entry point for CDK and IaC-driven deployments.
-- [IAM](./iam.md) stores roles, policies, users, groups, and instance profiles, but is intentionally not a security boundary.
-- Unsupported operations return AWS-shaped `501 Not Implemented` responses with `x-emulator-unsupported: true`.
+## Where to start
 
-## Common Workflows
+| If you're… | Start with |
+| --- | --- |
+| Deploying a CDK or CloudFormation app | [CloudFormation](./cloudformation.md), then [Using AWS CDK](../cdk.md) |
+| Building a serverless API | [Lambda](./lambda.md), [API Gateway](./apigateway.md), [DynamoDB](./dynamodb.md) |
+| Wiring messaging and events | [SQS](./sqs.md), [SNS](./sns.md), [EventBridge](./eventbridge.md) |
+| Running containers | [ECS](./ecs.md), [ECR](./ecr.md), [ELBv2](./elb.md) |
+| Storing objects or data | [S3](./s3.md), [DynamoDB](./dynamodb.md), [RDS](./rds.md) |
 
-| Workflow | Relevant Docs |
-| -------- | ------------- |
-| CDK deployments | [CloudFormation](./cloudformation.md), [EC2 / VPC](./ec2.md), [IAM](./iam.md), [Lambda](./lambda.md), [ECS](./ecs.md) |
-| Messaging and events | [SQS](./sqs.md), [SNS](./sns.md), [EventBridge](./eventbridge.md), [Scheduler](./scheduler.md), [Pipes](./pipes.md) |
-| Serverless APIs | [Lambda](./lambda.md), [API Gateway](./apigateway.md), [DynamoDB](./dynamodb.md), [CloudWatch Logs](./cloudwatch-logs.md) |
-| Containers and registries | [ECS](./ecs.md), [ECR](./ecr.md), [EC2 / VPC](./ec2.md), [CloudWatch Logs](./cloudwatch-logs.md) |
-| Storage and data | [S3](./s3.md), [DynamoDB](./dynamodb.md), [RDS](./rds.md), [ElastiCache](./elasticache.md), [Kinesis](./kinesis.md) |
+## Services
 
-## Support Levels
+**Compute and containers** — [Lambda](./lambda.md) · [ECS](./ecs.md) ·
+[ECR](./ecr.md) · [EC2 / VPC](./ec2.md) · [Auto Scaling](./autoscaling.md) ·
+[EKS](./eks.md) · [Batch-style stubs: MSK](./msk.md)
+
+**Storage and data** — [S3](./s3.md) · [DynamoDB](./dynamodb.md) ·
+[DynamoDB Streams](./dynamodbstreams.md) · [RDS](./rds.md) ·
+[ElastiCache](./elasticache.md) · [EFS](./efs.md) · [Kinesis](./kinesis.md) ·
+[Firehose](./firehose.md) · [Athena](./athena.md) · [Glue](./glue.md) ·
+[OpenSearch](./opensearch.md) · [Backup](./backup.md) ·
+[Transfer Family](./transfer.md)
+
+**Messaging and events** — [SQS](./sqs.md) · [SNS](./sns.md) ·
+[EventBridge](./eventbridge.md) · [Scheduler](./scheduler.md) ·
+[Pipes](./pipes.md) · [Step Functions](./stepfunctions.md) · [SES](./ses.md)
+
+**APIs and delivery** — [API Gateway](./apigateway.md) ·
+[AppSync](./appsync.md) · [CloudFront](./cloudfront.md) · [ELBv2](./elb.md) ·
+[Route 53](./route53.md) · [ACM](./acm.md)
+
+**Identity and security** — [IAM](./iam.md) · [STS](./sts.md) ·
+[Cognito](./cognito.md) · [KMS](./kms.md) ·
+[Secrets Manager](./secretsmanager.md) · [SSM](./ssm.md) · [WAF v2](./waf.md) ·
+[Shield](./shield.md) · [Organizations](./organizations.md)
+
+**Observability** — [CloudWatch](./cloudwatch.md) ·
+[CloudWatch Logs](./cloudwatch-logs.md) · [CloudTrail](./cloudtrail.md)
+
+**Provisioning and config** — [CloudFormation](./cloudformation.md) ·
+[AppConfig](./appconfig.md) · [AppConfigData](./appconfigdata.md) ·
+[AppRegistry](./appregistry.md) · [Bedrock](./bedrock.md)
+
+## Coverage tiers
+
+Each service has an overall tier; each operation carries its own status token.
+The full generated table, with operation counts and tiers, is on
+[Documentation § Services](../README.md#services).
+
+| Tier | Meaning |
+| --- | --- |
+| Comprehensive | Real SDK clients use it end to end. |
+| Core CRUD | Resources are created, stored and returned; common workflows work. |
+| Minimal | A targeted subset — enough for one or two workflows. |
+| Stub | Registered so discovery and IaC work; most operations return `501`. |
 
 | Status | Meaning |
-| ------ | ------- |
-| Supported | Implemented for normal SDK/CLI use. |
-| Partial | Implemented with documented caveats or missing edge cases. |
-| WIP | Present but still under active development. |
-| Unsupported | Not implemented; returns a modeled unsupported response. |
+| --- | --- |
+| ✅ Supported | Works for normal SDK and CLI use. |
+| ⚠️ Partial | Works with documented caveats or missing edge cases. |
+| 🧊 Inert | Accepted and answered correctly, but nothing happens as a result. |
+| 🚧 WIP | Present, still moving. |
+| ❌ Unsupported | Modelled but not implemented. |
 
-For the full generated service table, see [Documentation § Services](../README.md#services).
+> [!NOTE]
+> An unsupported operation returns an AWS-shaped `501 Not Implemented` with
+> `x-emulator-unsupported: true`, so an SDK raises a clear error instead of
+> hanging or failing to connect.
+
+## Related
+
+- [Using AWS SDKs and CLI](../sdk-cli.md) — endpoint configuration per language
+- [Configuration reference](../configuration.md) — environment variables and service names
+- [Networking and host-based addressing](../networking.md) — path-style vs. host-routed endpoints

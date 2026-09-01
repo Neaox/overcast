@@ -102,7 +102,7 @@ func init() {
 
 		// Proxy
 		capabilities.Capability{Service: "cloudfront", Operation: "ProxyRequest", Category: "Proxy",
-			Status: capabilities.StatusSupported, Notes: "Emulator extension: forwards to configured origins with path matching"},
+			Status: capabilities.StatusSupported, Notes: "Emulator extension: path-pattern matching, origin forwarding (dialled locally when Overcast answers for the origin), GET response caching, CloudFront Functions, origin-group failover, geo restriction and custom error responses"},
 
 		// Functions
 		capabilities.Capability{Service: "cloudfront", Operation: "CreateFunction", Category: "Functions",
@@ -118,7 +118,7 @@ func init() {
 		capabilities.Capability{Service: "cloudfront", Operation: "ListFunctions", Category: "Functions",
 			Status: capabilities.StatusSupported, Notes: "Filters by Stage query param; MaxItems pagination"},
 		capabilities.Capability{Service: "cloudfront", Operation: "TestFunction", Category: "Functions",
-			Status: capabilities.StatusSupported, Notes: "Returns mock success result (no JS execution)"},
+			Status: capabilities.StatusSupported, Notes: "Returns a fixed success result without running the code; a function attached to a behaviour does execute on requests through the distribution"},
 		capabilities.Capability{Service: "cloudfront", Operation: "PublishFunction", Category: "Functions",
 			Status: capabilities.StatusSupported, Notes: "Promotes DEVELOPMENT → LIVE stage"},
 

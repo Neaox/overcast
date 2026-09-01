@@ -114,12 +114,12 @@ var SubPages = []string{"operations.md", "limitations.md", "troubleshooting.md",
 // Keys are doc file stems (docs/services/<stem>.md), not capability service
 // keys — "elb", not "elbv2".
 var RestructurePending = []string{
-	"acm", "apigateway", "appconfig", "appconfigdata", "appregistry", "appsync",
-	"athena", "autoscaling", "backup", "bedrock", "cloudformation", "cloudfront",
-	"cloudtrail", "cloudwatch", "cloudwatch-logs", "cognito", "dynamodb",
-	"dynamodbstreams", "ec2", "ecr", "ecs", "efs", "eks", "elasticache", "elb",
+	"acm", "appconfig", "appconfigdata", "appregistry",
+	"athena", "backup", "bedrock", "cloudformation",
+	"cognito", "dynamodb",
+	"dynamodbstreams", "ecr", "ecs", "efs", "eks", "elasticache",
 	"eventbridge", "firehose", "glue", "iam", "kinesis", "kms", "lambda", "msk",
-	"opensearch", "organizations", "pipes", "rds", "route53", "s3", "scheduler",
+	"opensearch", "organizations", "pipes", "rds", "s3", "scheduler",
 	"secretsmanager", "ses", "shield", "sns", "sqs", "ssm", "stepfunctions",
 	"sts", "transfer", "waf",
 }

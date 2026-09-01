@@ -1,6 +1,6 @@
 ---
 title: "CloudTrail — AWS CloudTrail"
-description: "Metadata-only CloudTrail implementation for local development and CDK/Terraform compatibility."
+description: "Trail metadata and logging state, so a stack that declares a trail deploys. No events are recorded and LookupEvents always returns an empty list."
 section: "Service Reference"
 tags:
   - aws
@@ -11,17 +11,46 @@ tags:
 
 # CloudTrail — AWS CloudTrail
 
-Metadata-only CloudTrail implementation for local development and CDK/Terraform compatibility.
+Trail metadata and logging state exist so a stack that declares a trail
+deploys. Nothing is ever audited: no events are recorded and none are
+delivered.
+
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+aws s3 mb s3://audit
+aws cloudtrail create-trail --name main --s3-bucket-name audit
+aws cloudtrail start-logging --name main
+aws cloudtrail get-trail-status --name main
+```
 
 ## What works
-Supports trail metadata CRUD and logging state toggles. `LookupEvents` is inert and always returns an empty result set.
 
-## Behavior Notes
+| Area | Behaviour |
+| --- | --- |
+| Trails | Create, describe, list, update and delete, with tags applied inline at creation |
+| Logging state | `StartLogging` and `StopLogging` toggle the flag `GetTrailStatus` reports |
+| Tagging | `AddTags`, `RemoveTags` and `ListTags` on trail ARNs |
+| CloudFormation | `AWS::CloudTrail::Trail` provisions, updates, deletes and syncs tags |
+| Protocols | AWS JSON 1.0 and Smithy RPC v2 CBOR |
 
-- No event ingestion or delivery pipeline is implemented.
-- No S3 log file delivery is performed.
-- `LookupEvents` always returns an empty `Events` list.
-- Designed to unblock stacks that require CloudTrail control-plane calls.
+## Differences from AWS
+
+| Area | Overcast |
+| --- | --- |
+| Event ingestion | None. No API call is recorded anywhere |
+| `LookupEvents` | Always returns an empty `Events` list, whatever the filters |
+| S3 delivery | No log file is ever written to the trail's bucket |
+| Event data stores, channels, Insights | Not emulated. Tagging operations accept trail ARNs only |
+| Region scoping | Trails are global to the emulator; `HomeRegion` always reports the configured default region |
+
+> [!NOTE]
+> Every CloudTrail operation is 🧊 Inert: the call is accepted and answered
+> correctly, and nothing happens as a result. The point is to unblock stacks
+> that require CloudTrail control-plane calls, not to audit anything.
 
 <!-- BEGIN overcast:capabilities -->
 
