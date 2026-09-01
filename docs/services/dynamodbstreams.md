@@ -12,8 +12,6 @@ tags:
 
 # DynamoDB Streams
 
-> AWS docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations_Amazon_DynamoDB_Streams.html
-
 DynamoDB Streams accepts the AWS JSON 1.0 API over the shared root endpoint
 with `X-Amz-Target: DynamoDBStreams_20120810.<Operation>`. It also accepts
 Smithy RPC v2 CBOR at `/service/DynamoDBStreams/operation/<Operation>` with
@@ -48,23 +46,15 @@ writes to a same-named table in another region.
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| General  | 4            |
-
----
-
-## Endpoints
-
-### General
-
-| Operation          | Status       | Notes                                                                                             | AWS Docs                                                                                         |
-| ------------------ | ------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `DescribeStream`   | ✅ Supported | A stream ARN from another region is a `ResourceNotFoundException`, as on AWS's regional endpoints | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeStream.html)   |
-| `GetRecords`       | ✅ Supported | Reads the stream in the region its shard iterator names; each record carries `awsRegion`          | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetRecords.html)       |
-| `GetShardIterator` | ✅ Supported |                                                                                                   | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetShardIterator.html) |
-| `ListStreams`      | ✅ Supported | Region-scoped — reports only streams for tables in the request's region                           | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListStreams.html)      |
+All 4 listed operations are implemented.
+Per-operation status, notes and AWS API links: [DynamoDB Streams operations](dynamodbstreams/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations_Amazon_DynamoDB_Streams.html)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

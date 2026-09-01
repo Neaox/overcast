@@ -29,13 +29,13 @@ All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent g
 | Assumption | How to verify |
 | ---------- | ------------- |
 | "I know what AWS returns for this operation" | **Use the escalation strategy below.** Start with AWS docs, then existing Overcast tests, then other emulators. Real AWS is a last resort that **requires user permission.** Never guess. |
-| "I know the AWS API version / protocol for this service" | Check `docs/services/<service>.md`, the real AWS API reference, and the service's existing codec/dispatch pattern. Protocol (Query, JSON 1.1, REST JSON, REST XML) determines the codec, dispatch, error helpers, and CF internal handler. |
+| "I know the AWS API version / protocol for this service" | Check `docs/services/<service>.md` and its `operations.md`, the real AWS API reference, and the service's existing codec/dispatch pattern. Protocol (Query, JSON 1.1, REST JSON, REST XML) determines the codec, dispatch, error helpers, and CF internal handler. |
 | "This library/utility is available" | Search imports in sibling services. Check `go.mod` for Go, `package.json` for TypeScript. Never add a dependency without confirming it's not already available under a different import path. |
 | "This is how existing services implement this pattern" | Read the actual code of the nearest siblings (ECR for JSON-target new services, SSM for REST-path, SQS for typed dispatch + legacy coexistence). Copy the pattern, don't recall it from memory. |
 | "The state.Store interface supports what I need" | Read `internal/state/store.go`. Both `MemoryStore` and `SQLiteStore` must be updated for any interface change. |
 | "The web UI already has an SDK client for this service" | Check `web/src/services/aws-clients.ts`. If it exists, use it. If not, add a factory. Never write ad-hoc `fetch` calls for AWS endpoints. |
 | "CloudFormation handler is already registered" | Search `resourceHandlers` in `internal/services/cloudformation/provisioner.go` for the exact resource type string (`AWS::<Service>::<Resource>`). |
-| "The doc has sentinel markers" | Verify `<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->` are present in `docs/services/<service>.md`. Without them, `make docs` silently does nothing. |
+| "The doc has sentinel markers" | `make docs` appends them if a landing page has none, but check they sit above `## Related` — that is where `make docs-check` expects the generated block. |
 | "This route won't fallthrough to S3" | For REST-path services: confirm the route is in `RegisterRoutes` AND the path prefix is in `detectService` (`internal/middleware/logger.go`). Test with a real request — don't assume routing works. |
 | "I know the latest version of this dependency / tool" | Check `go.mod`, `package.json`, npm registry, or the official source. Don't recommend APIs, CLI flags, or patterns from outdated versions. |
 
@@ -535,29 +535,38 @@ var Capabilities = []*capabilities.Capability{
 
 ```bash
 make generate-caps   # regenerates internal/capabilities/all.gen.go
-make docs            # rewrites capability tables in docs/services/<service>.md
+make docs            # writes docs/services/<service>/operations.md + the landing stub
 make check-caps      # verifies dispatcher entries have matching capabilities
 ```
 
 ### Step 4.3 — Create Service Doc (new services only)
 
-Create `docs/services/<n>.md` using the template:
+Create `docs/services/<n>.md` following `docs/dev/service-doc-template.md`:
 
 ```markdown
-# <Service Name>
+# <Service Name> — <AWS product name>
 
-> Supported by Overcast.
+<One sentence.>
+
+**Status:** ✅ Supported
+
+## Quick start
+
+<The smallest working command.>
 
 <!-- BEGIN overcast:capabilities -->
 <!-- END overcast:capabilities -->
 
-## Notes
+## Related
 
-- Behaviour notes, caveats, divergences from real AWS
-- All prose lives OUTSIDE the sentinel markers
+- <Links out.>
 ```
 
-Run `make docs` to populate the table. **Never edit between the markers.**
+Run `make docs`: it fills the `## Operations` stub between the markers and
+writes the per-operation tables to `docs/services/<n>/operations.md`. **Never
+edit either by hand.** `make docs-check` fails on a landing page that is
+missing `## Quick start`, `## Operations` or `## Related`, or that puts them
+out of order.
 
 ### Step 4.4 — Add a changelog fragment
 

@@ -1,58 +1,18 @@
+import { useState } from "react"
 import { useLocation, useNavigate } from "@tanstack/react-router"
 import { useQuery, queryOptions } from "@tanstack/react-query"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkGithubAlerts from "remark-github-alerts"
 import remarkRemoveComments from "remark-remove-comments"
-import { BookOpen, ExternalLink } from "lucide-react"
+import { BookOpen, ChevronLeft, ExternalLink } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
 import { MarkdownCodeBlock } from "@/features/docs/markdown-code"
+import { classifyDocLink, docTitle, landingPath } from "@/features/docs/service-doc-links"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
-
-// ─── Service name → UI route map ─────────────────────────────────────────────
-// Matches the docs/services/{name}.md filenames to their app routes.
-const SERVICE_ROUTES: Record<string, string> = {
-  s3: "/s3",
-  sqs: "/sqs",
-  dynamodb: "/dynamodb",
-  sns: "/sns",
-  ses: "/ses",
-  secretsmanager: "/secretsmanager",
-  lambda: "/lambda",
-  kinesis: "/kinesis",
-  pipes: "/pipes",
-  iam: "/iam",
-  cloudformation: "/cloudformation",
-  ec2: "/ec2",
-  ecs: "/ecs",
-  cognito: "/cognito",
-  appsync: "/appsync",
-  apigateway: "/apigateway",
-  cloudfront: "/cloudfront",
-  rds: "/rds",
-  stepfunctions: "/stepfunctions",
-  waf: "/waf",
-  shield: "/shield",
-  kms: "/kms",
-  ssm: "/ssm",
-  sts: "/sts",
-  cloudwatch: "/cloudwatch",
-  "cloudwatch-logs": "/cloudwatch",
-  appregistry: "/applications",
-}
-
-/**
- * Convert a *.md href (e.g. "lambda.md" or "../services/lambda.md") to the
- * corresponding in-app route with #docs hash.  Returns null if not a service doc link.
- */
-function serviceDocHref(href: string): string | null {
-  const stem = href.replace(/^.*[\\/]/, "").replace(/\.md$/i, "")
-  const route = SERVICE_ROUTES[stem]
-  return route ? `${route}#docs` : null
-}
 
 /** Strip a trailing .md from a string (used for link labels). */
 function stripMd(s: string): string {
@@ -61,8 +21,11 @@ function stripMd(s: string): string {
 
 // ─── API helper ─────────────────────────────────────────────────────────────
 
-async function fetchServiceDocs(service: string): Promise<string> {
-  const res = await fetch(`/api/docs/${encodeURIComponent(service)}`)
+// One endpoint for every page the modal shows. /api/docs/page serves any
+// published doc by path, which is what a sub-page needs; the older
+// /api/docs/{service} route stays for external callers.
+async function fetchDoc(path: string): Promise<string> {
+  const res = await fetch(`/api/docs/page?path=${encodeURIComponent(path)}`)
   if (res.status === 404) throw new Error("not-found")
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.text()
@@ -80,19 +43,40 @@ interface ServiceDocsModalProps {
 }
 
 export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsModalProps) {
+  // Which page the modal is showing. It starts on the service's landing page
+  // and follows links down into docs/services/<key>/*.md in place: the
+  // per-operation table is a sub-page now, and bouncing the reader out to a
+  // browser tab for it would be a worse answer than the single scrolling page
+  // the split replaced.
+  const home = landingPath(service)
+  const [path, setPath] = useState(home)
+
+  // Reopening the modal, or opening it on a different service, starts at that
+  // service's landing page rather than wherever it was last left. Adjusted
+  // during render rather than in an effect: there is no external system to
+  // synchronise with, and an effect would render the stale page first.
+  const session = `${home}:${open}`
+  const [lastSession, setLastSession] = useState(session)
+  if (session !== lastSession) {
+    setLastSession(session)
+    setPath(home)
+  }
+
   const {
     data: markdown,
     isLoading,
     isError,
   } = useQuery(
     queryOptions({
-      queryKey: ["service-docs", service],
-      queryFn: () => fetchServiceDocs(service),
+      queryKey: ["service-docs", path],
+      queryFn: () => fetchDoc(path),
       enabled: open,
       staleTime: Infinity, // docs don't change during a session
       retry: false,
     }),
   )
+
+  const onSubPage = path !== home
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -100,9 +84,19 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-fg-muted" />
-            {label} — Service Docs
+            {onSubPage ? docTitle(path, label) : `${label} — Service Docs`}
           </DialogTitle>
         </DialogHeader>
+        {onSubPage && (
+          <button
+            type="button"
+            onClick={() => setPath(home)}
+            className="-mb-1 flex items-center gap-0.5 self-start text-xs text-fg-muted hover:text-fg"
+          >
+            <ChevronLeft className="h-3 w-3" />
+            {label}
+          </button>
+        )}
         <div className="mt-2 max-h-[70vh] min-h-0 overflow-y-auto">
           {isLoading && (
             <div className="flex items-center justify-center py-16">
@@ -118,34 +112,47 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
             <div className="prose prose-sm max-w-none px-1 pb-4 prose-invert">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkGithubAlerts, remarkRemoveComments]}
-                urlTransform={(url) => serviceDocHref(url) ?? url}
+                urlTransform={(url) => url}
                 components={{
-                  // Open links in a new tab; inter-doc *.md links open in the same app
+                  // A link into another service's page hands off to that
+                  // service's console route; a link to a sub-page (or to a
+                  // service with no console route) loads here; everything else
+                  // opens in a new tab.
                   a: ({ node: _n, children, href, ...props }) => {
-                    const internal = href ? serviceDocHref(href) : null
-                    const resolvedHref = internal ?? href
+                    const target = classifyDocLink(path, href ?? "")
                     // Strip .md from string children used as label
-                    const label = typeof children === "string" ? stripMd(children) : children
-                    if (internal) {
+                    const text = typeof children === "string" ? stripMd(children) : children
+                    if (target.kind === "route") {
                       return (
                         <a
-                          href={resolvedHref}
+                          href={target.href}
                           className="text-accent underline underline-offset-2"
                           {...props}
                         >
-                          {label}
+                          {text}
                         </a>
+                      )
+                    }
+                    if (target.kind === "doc") {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setPath(target.path)}
+                          className="text-accent underline underline-offset-2"
+                        >
+                          {text}
+                        </button>
                       )
                     }
                     return (
                       <a
-                        href={resolvedHref}
+                        href={href}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-0.5 text-accent underline underline-offset-2"
                         {...props}
                       >
-                        {label}
+                        {text}
                         <ExternalLink className="inline h-3 w-3 opacity-60" />
                       </a>
                     )
@@ -178,17 +185,31 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                   // pre component; code here only ever shows inline.
                   pre: MarkdownCodeBlock,
                   code: ({ node: _n, children, ...props }) => {
-                    // Inline code: detect `something.md` and render as an inter-doc link
+                    // Inline code: `something.md` or `service/page.md` reads as
+                    // an inter-doc reference, so render it as one.
                     const text = typeof children === "string" ? children : ""
-                    const internal = text.match(/^[\w-]+\.md$/i) ? serviceDocHref(text) : null
-                    if (internal) {
+                    const target = /^[\w-]+(\/[\w-]+)?\.md$/i.test(text)
+                      ? classifyDocLink(path, text)
+                      : { kind: "external" as const }
+                    if (target.kind === "route") {
                       return (
                         <a
-                          href={internal}
+                          href={target.href}
                           className="rounded bg-bg-muted px-1 py-0.5 font-mono text-xs text-accent underline underline-offset-2"
                         >
                           {stripMd(text)}
                         </a>
+                      )
+                    }
+                    if (target.kind === "doc") {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setPath(target.path)}
+                          className="rounded bg-bg-muted px-1 py-0.5 font-mono text-xs text-accent underline underline-offset-2"
+                        >
+                          {stripMd(text)}
+                        </button>
                       )
                     }
                     return (

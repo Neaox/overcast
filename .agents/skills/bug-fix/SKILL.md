@@ -157,7 +157,7 @@ Before writing any code, understand the bug:
    | SQS, SNS, DynamoDB, Lambda | JSON   | `protocol.WriteJSONError(w, r, aerr)`   |
    | Unimplemented              | —      | `protocol.NotImplementedXML/JSON(w, r)` |
 
-4. **Check the docs.** Look at `docs/services/<service>.md` — is the affected endpoint marked as supported? If it's marked ❌, the "bug" may be an unimplemented endpoint returning 501, which is correct behaviour.
+4. **Check the docs.** Look at `docs/services/<service>/operations.md` — is the affected endpoint marked as supported? If it's marked ❌, the "bug" may be an unimplemented endpoint returning 501, which is correct behaviour.
 5. **For compatibility bugs, check compatibility tracking.** Read `docs/dev/compatibility/README.md`, `docs/dev/compatibility/matrix.yaml`, and `docs/dev/compatibility/services/<service>.yaml`. Identify the affected operation and scenario, including documented resource configuration variants. If no scenario exists yet, add it before finishing.
 6. **Check real AWS behaviour only with permission.** If docs and cheaper sources are insufficient, ask the user before using real AWS. Guessing leads to drift. The wire format is the compatibility contract — every status code, header, field name, casing, default value, and error code must match the authoritative source.
 
@@ -279,10 +279,10 @@ Documentation MUST stay in sync with behaviour. Skipping this creates drift that
 1. **`capabilities_dev.go`:** If the fix changes the implementation status of any operation (e.g., a stubbed handler is now implemented), update the `Status` field. Then regenerate:
    ```bash
    make generate-caps   # regenerates internal/capabilities/all.gen.go
-   make docs            # rewrites capability tables in docs/services/<service>.md
+   make docs            # rewrites docs/services/<service>/operations.md and the landing stub
    make check-caps      # verifies dispatcher entries have matching capabilities
    ```
-2. **Service docs prose:** If there are behaviour notes or caveats outside the `<!-- BEGIN/END overcast:capabilities -->` sentinel markers in `docs/services/<service>.md`, update them. Never edit anything between the sentinel markers — those are auto-generated.
+2. **Service docs prose:** If there are behaviour notes or caveats on the landing page `docs/services/<service>.md`, update them, keeping the section order in `docs/dev/service-doc-template.md`. Never edit `docs/services/<service>/operations.md` or anything between the sentinel markers — those are auto-generated.
 3. **Compatibility tracker:** If the bug was an AWS compatibility issue, update `docs/dev/compatibility/services/<service>.yaml` with scenarios, evidence, tests, gaps, and handoff. Update `docs/dev/compatibility/matrix.yaml` if the service-level next action or status changed.
 4. **Changelog fragment:** Add one under `.changelog/` (never edit `CHANGELOG.md`'s `[Unreleased]` — see `.changelog/README.md`):
 

@@ -176,7 +176,7 @@ tests/
   AGENTS.md                  <- test conventions (GWT, mocks, helpers)
   helpers/                   <- TestServer, assertions, MockStore
   integration/               <- HTTP-level tests per service
-docs/services/               <- per-service endpoint support matrices
+docs/services/               <- per-service landing pages; <key>/operations.md holds the generated support matrix
 ```
 
 ---
@@ -251,6 +251,14 @@ agents trip on most, from a 2026-08 content audit of the live site:
 - **A table cell is not a paragraph.** A cell over ~25 words or with a
   nested clause belongs in prose below the table with its own heading, not
   crammed into the row.
+
+Editing anything under `docs/services/` means following
+[docs/dev/service-doc-template.md](./docs/dev/service-doc-template.md) as well:
+a fixed section order, the generated capability block last, and the
+per-operation tables on their own `docs/services/<key>/operations.md` page
+rather than at the bottom of the landing page. `internal/docslint` fails `make
+docs-check` on the structure; the template says what belongs in each section
+and which of the page's three readers it is for.
 
 ---
 

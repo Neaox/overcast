@@ -56,7 +56,7 @@ This is an ordinary CDK stack, deployed by `cdk deploy` like any other. It uses 
 
 Because the VPC is created rather than imported, CDK also emits the subnet metadata it later relies on: each subnet is tagged `aws-cdk:subnet-type` and `aws-cdk:subnet-name`, public subnets get a `0.0.0.0/0` route to the internet gateway, and private subnets get one to the NAT gateway. Constructs that default to private subnets — scheduled Fargate tasks, VPC-attached Lambda functions — find a private-with-egress subnet group without any extra tagging work.
 
-> Overcast stores NAT gateways and route tables as metadata. They are enough for CDK's subnet classification, but they do not imply real NAT data-plane routing. See [EC2 limitations](../services/ec2.md#limitations-and-divergences-from-aws).
+> Overcast stores NAT gateways and route tables as metadata. They are enough for CDK's subnet classification, but they do not imply real NAT data-plane routing. See [EC2 limitations](../services/ec2.md#differences-from-aws).
 
 ## Wiring It Up In The Stage
 

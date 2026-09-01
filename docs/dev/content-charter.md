@@ -37,7 +37,13 @@ mechanically enforces the two rules that are checkable (3 and, partially, 2).
    written for someone reading start to finish once. Reference is written
    for someone who will Ctrl+F it forever and never read it top to bottom.
    Don't write a reference table like a story or a guide like a spec.
-7. **A diagram is warranted when** the doc describes a topology, a request
+7. **A service page follows the service page template.** Everything under
+   `docs/services/` has a fixed shape — an answer for the first-hour reader
+   above the fold, the deep reference on its own sub-page — because a service
+   page is read by three people with different questions and only one of them
+   scrolls. [service-doc-template.md](./service-doc-template.md) is the shape;
+   `internal/docslint` enforces it in `make docs-check`.
+8. **A diagram is warranted when** the doc describes a topology, a request
    path across three or more components, or a before/after config diff — and
    prose would need the reader to hold three or more spatial relationships
    in their head to follow it. Not warranted for a single API call, a single
@@ -52,6 +58,10 @@ mechanically enforces the two rules that are checkable (3 and, partially, 2).
   characters (a proxy for rule 2 — a long description is a reliable tell
   that the opening paragraph is doing too much before the first actionable
   thing).
+- The same check runs `internal/docslint` over `docs/services/`: required
+  sections, template section order, the generated capability block last, the
+  fixed set of sub-page names, and rule 2 counted literally on a landing
+  page's intro (rule 7).
 - Everything else here is a review-time judgment call, not a mechanical
   check — a linter that grows into a style-bible-as-code stops getting
   maintained the moment it produces its first annoying false positive.

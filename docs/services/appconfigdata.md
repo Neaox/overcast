@@ -14,8 +14,6 @@ tags:
 
 # AppConfigData — AWS AppConfig Data Plane
 
-> AWS docs: https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/
-
 AWS AppConfigData is the **runtime data plane** for AppConfig. Applications use
 it to retrieve the latest deployed configuration content via a poll-based
 session model.
@@ -82,21 +80,15 @@ are by default).
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| Sessions | 2            |
-
----
-
-## Endpoints
-
-### Sessions
-
-| Operation                   | Status       | Notes                                                                                                                                                                                               | AWS Docs                                                                                                               |
-| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `StartConfigurationSession` | ✅ Supported | Starts a polling session; returns `InitialConfigurationToken`; honours `RequiredMinimumPollIntervalInSeconds`                                                                                       | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html) |
-| `GetLatestConfiguration`    | ✅ Supported | Takes the token as the `configuration_token` query parameter; returns the configuration as the response payload with the session state in headers; empty payload when unchanged since the last poll | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)    |
+All 2 listed operations are implemented.
+Per-operation status, notes and AWS API links: [AppConfigData operations](appconfigdata/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

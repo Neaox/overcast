@@ -1475,6 +1475,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/acm/operations.md",
+    "href": "services/acm/operations.md",
+    "title": "ACM operations",
+    "description": "Every ACM operation Overcast declares — 10 of 10 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "acm",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ACM operations",
+        "id": "acm-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -1529,6 +1559,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Invoke URLs",
         "id": "invoke-urls"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/apigateway/operations.md",
+    "href": "services/apigateway/operations.md",
+    "title": "API Gateway operations",
+    "description": "Every API Gateway operation Overcast declares — 104 of 106 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "apigateway",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "API Gateway operations",
+        "id": "api-gateway-operations"
       },
       {
         "depth": 2,
@@ -1599,6 +1659,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/appconfig/operations.md",
+    "href": "services/appconfig/operations.md",
+    "title": "AppConfig operations",
+    "description": "Every AppConfig operation Overcast declares — 20 of 20 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "appconfig",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "AppConfig operations",
+        "id": "appconfig-operations"
       },
       {
         "depth": 2,
@@ -1680,6 +1770,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/appconfigdata/operations.md",
+    "href": "services/appconfigdata/operations.md",
+    "title": "AppConfigData operations",
+    "description": "Every AppConfigData operation Overcast declares — 2 of 2 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "appconfigdata",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "AppConfigData operations",
+        "id": "appconfigdata-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -1718,6 +1838,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "CloudFormation integration",
         "id": "cloudformation-integration"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/appregistry/operations.md",
+    "href": "services/appregistry/operations.md",
+    "title": "AppRegistry operations",
+    "description": "Every AppRegistry operation Overcast declares — 22 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "appregistry",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "AppRegistry operations",
+        "id": "appregistry-operations"
       },
       {
         "depth": 2,
@@ -1784,6 +1934,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Endpoint URLs",
         "id": "endpoint-urls"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/appsync/operations.md",
+    "href": "services/appsync/operations.md",
+    "title": "AppSync operations",
+    "description": "Every AppSync operation Overcast declares — 82 of 82 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "appsync",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "AppSync operations",
+        "id": "appsync-operations"
       },
       {
         "depth": 2,
@@ -1907,6 +2087,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/athena/operations.md",
+    "href": "services/athena/operations.md",
+    "title": "Athena operations",
+    "description": "Every Athena operation Overcast declares — 11 of 11 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "athena",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Athena operations",
+        "id": "athena-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -1954,8 +2164,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What's covered",
-        "id": "what-s-covered"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
@@ -1979,8 +2189,38 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known divergences",
-        "id": "known-divergences"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/autoscaling/operations.md",
+    "href": "services/autoscaling/operations.md",
+    "title": "Auto Scaling operations",
+    "description": "Every Auto Scaling operation Overcast declares — 25 of 25 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "autoscaling",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Auto Scaling operations",
+        "id": "auto-scaling-operations"
       },
       {
         "depth": 2,
@@ -2019,13 +2259,43 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What's covered",
-        "id": "what-s-covered"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Behavior Notes",
         "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/backup/operations.md",
+    "href": "services/backup/operations.md",
+    "title": "Backup operations",
+    "description": "Every Backup operation Overcast declares — 12 of 12 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "backup",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Backup operations",
+        "id": "backup-operations"
       },
       {
         "depth": 2,
@@ -2067,6 +2337,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/bedrock/operations.md",
+    "href": "services/bedrock/operations.md",
+    "title": "Bedrock operations",
+    "description": "Every Bedrock operation Overcast declares — 2 of 2 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "bedrock",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Bedrock operations",
+        "id": "bedrock-operations"
       },
       {
         "depth": 2,
@@ -2286,6 +2586,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudformation/operations.md",
+    "href": "services/cloudformation/operations.md",
+    "title": "CloudFormation operations",
+    "description": "Every CloudFormation operation Overcast declares — 24 of 52 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudformation",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudFormation operations",
+        "id": "cloudformation-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -2302,7 +2632,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Change sets",
-        "id": "change-sets-2"
+        "id": "change-sets"
       },
       {
         "depth": 3,
@@ -2322,12 +2652,12 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Intrinsic functions",
-        "id": "intrinsic-functions-2"
+        "id": "intrinsic-functions"
       },
       {
         "depth": 3,
         "text": "Dynamic references",
-        "id": "dynamic-references-2"
+        "id": "dynamic-references"
       },
       {
         "depth": 3,
@@ -2441,6 +2771,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudfront/operations.md",
+    "href": "services/cloudfront/operations.md",
+    "title": "CloudFront operations",
+    "description": "Every CloudFront operation Overcast declares — 89 of 89 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudfront",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudFront operations",
+        "id": "cloudfront-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -2526,13 +2886,43 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What's covered",
-        "id": "what-s-covered"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Behavior Notes",
         "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudtrail/operations.md",
+    "href": "services/cloudtrail/operations.md",
+    "title": "CloudTrail operations",
+    "description": "Every CloudTrail operation Overcast declares — 12 of 12 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudtrail",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudTrail operations",
+        "id": "cloudtrail-operations"
       },
       {
         "depth": 2,
@@ -2568,6 +2958,37 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "CloudWatch Logs",
         "id": "cloudwatch-logs"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudwatch-logs/operations.md",
+    "href": "services/cloudwatch-logs/operations.md",
+    "title": "CloudWatch Logs operations",
+    "description": "Every CloudWatch Logs operation Overcast declares — 18 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudwatch",
+      "docs",
+      "logs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudWatch Logs operations",
+        "id": "cloudwatch-logs-operations"
       },
       {
         "depth": 2,
@@ -2668,6 +3089,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Tagging",
         "id": "tagging"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudwatch/operations.md",
+    "href": "services/cloudwatch/operations.md",
+    "title": "CloudWatch operations",
+    "description": "Every CloudWatch operation Overcast declares — 15 of 17 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudwatch",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudWatch operations",
+        "id": "cloudwatch-operations"
       },
       {
         "depth": 2,
@@ -2773,6 +3224,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cognito/operations.md",
+    "href": "services/cognito/operations.md",
+    "title": "Cognito operations",
+    "description": "Every Cognito operation Overcast declares — 70 of 70 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "cognito",
+      "docs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Cognito operations",
+        "id": "cognito-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -2784,32 +3265,32 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "User Pool operations",
-        "id": "user-pool-operations-2"
+        "id": "user-pool-operations"
       },
       {
         "depth": 3,
         "text": "User Pool Client operations",
-        "id": "user-pool-client-operations-2"
+        "id": "user-pool-client-operations"
       },
       {
         "depth": 3,
         "text": "User operations",
-        "id": "user-operations-2"
+        "id": "user-operations"
       },
       {
         "depth": 3,
         "text": "Auth / Token operations",
-        "id": "auth-token-operations-2"
+        "id": "auth-token-operations"
       },
       {
         "depth": 3,
         "text": "Group operations",
-        "id": "group-operations-2"
+        "id": "group-operations"
       },
       {
         "depth": 3,
         "text": "User Pool Domain operations",
-        "id": "user-pool-domain-operations-2"
+        "id": "user-pool-domain-operations"
       },
       {
         "depth": 3,
@@ -2844,6 +3325,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Known limitations",
         "id": "known-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/dynamodb/operations.md",
+    "href": "services/dynamodb/operations.md",
+    "title": "DynamoDB operations",
+    "description": "Every DynamoDB operation Overcast declares — 21 of 28 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "dynamodb",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "DynamoDB operations",
+        "id": "dynamodb-operations"
       },
       {
         "depth": 2,
@@ -2918,6 +3429,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/dynamodbstreams/operations.md",
+    "href": "services/dynamodbstreams/operations.md",
+    "title": "DynamoDB Streams operations",
+    "description": "Every DynamoDB Streams operation Overcast declares — 4 of 4 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "dynamodbstreams",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "DynamoDB Streams operations",
+        "id": "dynamodb-streams-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -2965,8 +3506,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Limitations and divergences from AWS",
-        "id": "limitations-and-divergences-from-aws"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 3,
@@ -3050,6 +3591,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ec2/operations.md",
+    "href": "services/ec2/operations.md",
+    "title": "EC2 / VPC operations",
+    "description": "Every EC2 / VPC operation Overcast declares — 72 of 72 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ec2",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EC2 / VPC operations",
+        "id": "ec2-vpc-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3061,7 +3632,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "General",
-        "id": "general-2"
+        "id": "general"
       },
       {
         "depth": 3,
@@ -3129,6 +3700,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Reclaiming the storage volume",
         "id": "reclaiming-the-storage-volume"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecr/operations.md",
+    "href": "services/ecr/operations.md",
+    "title": "ECR operations",
+    "description": "Every ECR operation Overcast declares — 22 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecr",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECR operations",
+        "id": "ecr-operations"
       },
       {
         "depth": 2,
@@ -3269,6 +3870,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecs/operations.md",
+    "href": "services/ecs/operations.md",
+    "title": "ECS operations",
+    "description": "Every ECS operation Overcast declares — 40 of 48 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECS operations",
+        "id": "ecs-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3320,6 +3951,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "CloudFormation",
         "id": "cloudformation"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/efs/operations.md",
+    "href": "services/efs/operations.md",
+    "title": "EFS operations",
+    "description": "Every EFS operation Overcast declares — 28 of 31 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "efs",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EFS operations",
+        "id": "efs-operations"
       },
       {
         "depth": 2,
@@ -3411,6 +4072,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/eks/operations.md",
+    "href": "services/eks/operations.md",
+    "title": "EKS operations",
+    "description": "Every EKS operation Overcast declares — 50 of 50 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "eks",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EKS operations",
+        "id": "eks-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3483,6 +4174,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/elasticache/operations.md",
+    "href": "services/elasticache/operations.md",
+    "title": "ElastiCache operations",
+    "description": "Every ElastiCache operation Overcast declares — 22 of 24 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "elasticache",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ElastiCache operations",
+        "id": "elasticache-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3525,6 +4246,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Behavior Notes",
         "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/elb/operations.md",
+    "href": "services/elb/operations.md",
+    "title": "ELBv2 operations",
+    "description": "Every ELBv2 operation Overcast declares — 18 of 21 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "elb",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ELBv2 operations",
+        "id": "elbv2-operations"
       },
       {
         "depth": 2,
@@ -3591,6 +4342,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/eventbridge/operations.md",
+    "href": "services/eventbridge/operations.md",
+    "title": "EventBridge operations",
+    "description": "Every EventBridge operation Overcast declares — 18 of 29 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "eventbridge",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EventBridge operations",
+        "id": "eventbridge-operations"
       },
       {
         "depth": 2,
@@ -3670,6 +4451,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/firehose/operations.md",
+    "href": "services/firehose/operations.md",
+    "title": "Firehose operations",
+    "description": "Every Firehose operation Overcast declares — 9 of 9 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "firehose",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Firehose operations",
+        "id": "firehose-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3719,6 +4530,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/glue/operations.md",
+    "href": "services/glue/operations.md",
+    "title": "Glue operations",
+    "description": "Every Glue operation Overcast declares — 11 of 11 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "glue",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Glue operations",
+        "id": "glue-operations"
       },
       {
         "depth": 2,
@@ -3794,6 +4635,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/iam/operations.md",
+    "href": "services/iam/operations.md",
+    "title": "IAM operations",
+    "description": "Every IAM operation Overcast declares — 74 of 74 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "iam",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "IAM operations",
+        "id": "iam-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -3825,7 +4696,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Permissions boundaries",
-        "id": "permissions-boundaries-2"
+        "id": "permissions-boundaries"
       },
       {
         "depth": 3,
@@ -3890,7 +4761,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Policy simulation",
-        "id": "policy-simulation-2"
+        "id": "policy-simulation"
       },
       {
         "depth": 3,
@@ -3918,6 +4789,36 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "Kinesis — Amazon Kinesis Data Streams",
         "id": "kinesis-amazon-kinesis-data-streams"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/kinesis/operations.md",
+    "href": "services/kinesis/operations.md",
+    "title": "Kinesis operations",
+    "description": "Every Kinesis operation Overcast declares — 23 of 23 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "kinesis",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Kinesis operations",
+        "id": "kinesis-operations"
       },
       {
         "depth": 2,
@@ -3955,6 +4856,36 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "KMS — Key Management Service",
         "id": "kms-key-management-service"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/kms/operations.md",
+    "href": "services/kms/operations.md",
+    "title": "KMS operations",
+    "description": "Every KMS operation Overcast declares — 33 of 33 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "kms",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "KMS operations",
+        "id": "kms-operations"
       },
       {
         "depth": 2,
@@ -4227,6 +5158,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/lambda/operations.md",
+    "href": "services/lambda/operations.md",
+    "title": "Lambda operations",
+    "description": "Every Lambda operation Overcast declares — 57 of 59 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "lambda",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Lambda operations",
+        "id": "lambda-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4314,6 +5275,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/msk/operations.md",
+    "href": "services/msk/operations.md",
+    "title": "MSK operations",
+    "description": "Every MSK operation Overcast declares — 17 of 30 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "msk",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "MSK operations",
+        "id": "msk-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4370,6 +5361,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/opensearch/operations.md",
+    "href": "services/opensearch/operations.md",
+    "title": "OpenSearch operations",
+    "description": "Every OpenSearch operation Overcast declares — 8 of 8 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "opensearch",
+      "operations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "OpenSearch operations",
+        "id": "opensearch-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4410,13 +5431,43 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What's covered",
-        "id": "what-s-covered"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Behavior Notes",
         "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/organizations/operations.md",
+    "href": "services/organizations/operations.md",
+    "title": "Organizations operations",
+    "description": "Every Organizations operation Overcast declares — 9 of 9 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "organizations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Organizations operations",
+        "id": "organizations-operations"
       },
       {
         "depth": 2,
@@ -4474,6 +5525,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/pipes/operations.md",
+    "href": "services/pipes/operations.md",
+    "title": "Pipes operations",
+    "description": "Every Pipes operation Overcast declares — 8 of 8 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "pipes",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Pipes operations",
+        "id": "pipes-operations"
       },
       {
         "depth": 2,
@@ -4609,6 +5690,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/rds/operations.md",
+    "href": "services/rds/operations.md",
+    "title": "RDS operations",
+    "description": "Every RDS operation Overcast declares — 24 of 34 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "rds",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "RDS operations",
+        "id": "rds-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4687,6 +5798,36 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Known divergences",
         "id": "known-divergences"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/route53/operations.md",
+    "href": "services/route53/operations.md",
+    "title": "Route 53 operations",
+    "description": "Every Route 53 operation Overcast declares — 19 of 25 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "route53",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Route 53 operations",
+        "id": "route-53-operations"
       },
       {
         "depth": 2,
@@ -4792,6 +5933,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/s3/operations.md",
+    "href": "services/s3/operations.md",
+    "title": "S3 operations",
+    "description": "Every S3 operation Overcast declares — 45 of 53 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "s3",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "S3 operations",
+        "id": "s3-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4878,6 +6049,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/scheduler/operations.md",
+    "href": "services/scheduler/operations.md",
+    "title": "Scheduler operations",
+    "description": "Every Scheduler operation Overcast declares — 12 of 12 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "scheduler",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Scheduler operations",
+        "id": "scheduler-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4956,6 +6157,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/secretsmanager/operations.md",
+    "href": "services/secretsmanager/operations.md",
+    "title": "Secrets Manager operations",
+    "description": "Every Secrets Manager operation Overcast declares — 19 of 22 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "secretsmanager",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Secrets Manager operations",
+        "id": "secrets-manager-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -4972,7 +6203,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Rotation",
-        "id": "rotation-2"
+        "id": "rotation"
       },
       {
         "depth": 3,
@@ -5020,6 +6251,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Web console",
         "id": "web-console"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ses/operations.md",
+    "href": "services/ses/operations.md",
+    "title": "SES operations",
+    "description": "Every SES operation Overcast declares — 27 of 45 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "ses"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SES operations",
+        "id": "ses-operations"
       },
       {
         "depth": 2,
@@ -5098,6 +6359,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/shield/operations.md",
+    "href": "services/shield/operations.md",
+    "title": "Shield operations",
+    "description": "Every Shield operation Overcast declares — 8 of 8 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "shield"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Shield operations",
+        "id": "shield-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -5147,6 +6438,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Known limitations",
         "id": "known-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/sns/operations.md",
+    "href": "services/sns/operations.md",
+    "title": "SNS operations",
+    "description": "Every SNS operation Overcast declares — 22 of 30 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "sns"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SNS operations",
+        "id": "sns-operations"
       },
       {
         "depth": 2,
@@ -5214,6 +6535,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Known limitations",
         "id": "known-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/sqs/operations.md",
+    "href": "services/sqs/operations.md",
+    "title": "SQS operations",
+    "description": "Every SQS operation Overcast declares — 19 of 21 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "sqs"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SQS operations",
+        "id": "sqs-operations"
       },
       {
         "depth": 2,
@@ -5290,6 +6641,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ssm/operations.md",
+    "href": "services/ssm/operations.md",
+    "title": "SSM operations",
+    "description": "Every SSM operation Overcast declares — 11 of 18 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "ssm"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SSM operations",
+        "id": "ssm-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -5350,6 +6731,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/stepfunctions/operations.md",
+    "href": "services/stepfunctions/operations.md",
+    "title": "Step Functions operations",
+    "description": "Every Step Functions operation Overcast declares — 15 of 15 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "stepfunctions"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Step Functions operations",
+        "id": "step-functions-operations"
       },
       {
         "depth": 2,
@@ -5414,6 +6825,36 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/sts/operations.md",
+    "href": "services/sts/operations.md",
+    "title": "STS operations",
+    "description": "Every STS operation Overcast declares — 5 of 11 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "sts"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "STS operations",
+        "id": "sts-operations"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
@@ -5455,13 +6896,43 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What's covered",
-        "id": "what-s-covered"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Behavior Notes",
         "id": "behavior-notes"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/transfer/operations.md",
+    "href": "services/transfer/operations.md",
+    "title": "Transfer Family operations",
+    "description": "Every Transfer Family operation Overcast declares — 13 of 13 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "transfer"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Transfer Family operations",
+        "id": "transfer-family-operations"
       },
       {
         "depth": 2,
@@ -5507,6 +6978,36 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Web UI and system map",
         "id": "web-ui-and-system-map"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/waf/operations.md",
+    "href": "services/waf/operations.md",
+    "title": "WAF v2 operations",
+    "description": "Every WAF v2 operation Overcast declares — 7 of 7 implemented — with status, behaviour notes and a link to the AWS API reference for each.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "operations",
+      "services",
+      "waf"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "WAF v2 operations",
+        "id": "waf-v2-operations"
       },
       {
         "depth": 2,

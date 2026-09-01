@@ -12,8 +12,6 @@ tags:
 
 # Bedrock — Amazon Bedrock Runtime
 
-> AWS docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/
-
 Amazon Bedrock Runtime uses the REST JSON protocol, served at the paths AWS
 binds it to: `POST /model/{modelId}/invoke` and `POST /model/{modelId}/converse`.
 No model is invoked — both answer from a canned response.
@@ -41,21 +39,15 @@ No model is invoked — both answer from a canned response.
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category  | 🧊 Inert |
-| --------- | -------- |
-| Inference | 2        |
-
----
-
-## Endpoints
-
-### Inference
-
-| Operation     | Status   | Notes                                                                                                                                                                                                                                                                                                | AWS Docs                                                                                     |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `InvokeModel` | 🧊 Inert | POST /model/{modelId}/invoke — accepted and answered 200; the required payload is not parsed and no model runs. The response body is an opaque blob whose format belongs to the model, which Overcast does not emulate, so it returns one self-describing field rather than any model family's shape | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html) |
-| `Converse`    | 🧊 Inert | POST /model/{modelId}/converse — accepted and answered with a complete ConverseResponse, every @required member present; no inference runs, so the assistant text is canned and the token counts and latency are zero                                                                                | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)    |
+All 2 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Bedrock operations](bedrock/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/bedrock/latest/APIReference/)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

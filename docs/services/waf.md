@@ -11,8 +11,6 @@ tags:
 
 # WAF — AWS WAF v2
 
-> AWS docs: https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html
-
 AWS WAF v2 (Web Application Firewall) uses the `application/x-amz-json-1.1`
 protocol. Operations are identified by the `X-Amz-Target` header with the
 prefix `AWSWAF_20190729.`.
@@ -48,26 +46,15 @@ traffic.
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| Web ACLs | 7            |
-
----
-
-## Endpoints
-
-### Web ACLs
-
-| Operation             | Status       | Notes                                 | AWS Docs                                                                                 |
-| --------------------- | ------------ | ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `CreateWebACL`        | ✅ Supported | Returns Summary with Id/LockToken     | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_CreateWebACL.html)        |
-| `GetWebACL`           | ✅ Supported |                                       | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_GetWebACL.html)           |
-| `ListWebACLs`         | ✅ Supported |                                       | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListWebACLs.html)         |
-| `DeleteWebACL`        | ✅ Supported | LockToken accepted but not checked    | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_DeleteWebACL.html)        |
-| `TagResource`         | ✅ Supported | Adds/merges tags by WebACL ARN        | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes tags by key from a WebACL ARN | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Returns tags for a WebACL ARN         | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListTagsForResource.html) |
+All 7 listed operations are implemented.
+Per-operation status, notes and AWS API links: [WAF v2 operations](waf/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)
