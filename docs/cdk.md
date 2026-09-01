@@ -225,10 +225,10 @@ Two consequences worth knowing:
   `OVERCAST_ECR_REGISTRY_PERSIST=false`, re-pushes — a few seconds, not a
   failure.
 
-Details: [ECR § Repository URI](./services/ecr.md#repository-uri),
-[§ Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published),
-[§ Running an image from here](./services/ecr.md#running-an-image-from-here) and
-[§ Persistence](./services/ecr.md#persistence).
+Details: [ECR § The repository URI](./services/ecr/limitations.md#the-repository-uri),
+[§ Asking whether an image is published](./services/ecr/limitations.md#asking-whether-an-image-is-published)
+and [§ Persistence](./services/ecr/limitations.md#persistence). What runs the
+image is [ECS § Images published to the emulated ECR](./services/ecs/examples.md#images-published-to-the-emulated-ecr).
 
 ### Nested stack TemplateURL must be reachable
 

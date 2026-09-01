@@ -114,10 +114,8 @@ var SubPages = []string{"operations.md", "limitations.md", "troubleshooting.md",
 // Keys are doc file stems (docs/services/<stem>.md), not capability service
 // keys — "elb", not "elbv2".
 var RestructurePending = []string{
-	"apigateway", "appconfig", "appconfigdata", "appregistry", "appsync",
-	"autoscaling", "cloudformation", "cloudfront", "cloudtrail", "cloudwatch",
-	"cloudwatch-logs", "ec2", "ecr", "ecs", "eks", "elb", "eventbridge",
-	"lambda", "pipes", "route53", "scheduler", "stepfunctions",
+	"apigateway", "appsync", "autoscaling", "cloudfront", "cloudtrail",
+	"cloudwatch", "cloudwatch-logs", "ec2", "elb", "route53",
 }
 
 // maxIntroSentences is the content charter's intro budget (rule 2), applied to
