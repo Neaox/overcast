@@ -5286,6 +5286,31 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Other languages: the generic-container pattern",
+        "id": "other-languages-the-generic-container-pattern"
+      },
+      {
+        "depth": 3,
+        "text": "Node.js",
+        "id": "node-js"
+      },
+      {
+        "depth": 3,
+        "text": "Java",
+        "id": "java"
+      },
+      {
+        "depth": 3,
+        "text": "Python",
+        "id": "python"
+      },
+      {
+        "depth": 3,
+        "text": ".NET",
+        "id": "net"
+      },
+      {
+        "depth": 2,
         "text": "Using LocalStack's Testcontainers modules",
         "id": "using-localstack-s-testcontainers-modules"
       }

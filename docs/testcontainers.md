@@ -129,13 +129,84 @@ alias), the module sets `OVERCAST_HOSTNAME` to the Docker daemon's host, so
 returned URLs are dialable from the test process even against a remote
 daemon.
 
+## Other languages: the generic-container pattern
+
+Dedicated modules for other languages are planned
+([#1495](https://github.com/Neaox/overcast/issues/1495)), but nothing about
+Overcast requires one — every Testcontainers implementation can run it as a
+generic container today. The recipe is always the same three lines of intent:
+the image, expose port `4566`, and wait for HTTP 200 on `/_overcast/health`.
+Then point the SDK at the mapped port with region `us-east-1` and credentials
+`test`/`test` (or read the effective region and account from
+`GET /_overcast/info`).
+
+### Node.js
+
+```typescript
+import { GenericContainer, Wait } from "testcontainers";
+
+const container = await new GenericContainer("ghcr.io/neaox/overcast-slim:alpha")
+  .withExposedPorts(4566)
+  .withWaitStrategy(Wait.forHttp("/_overcast/health", 4566))
+  .start();
+
+const endpoint = `http://${container.getHost()}:${container.getMappedPort(4566)}`;
+```
+
+### Java
+
+```java
+GenericContainer<?> overcast = new GenericContainer<>("ghcr.io/neaox/overcast-slim:alpha")
+    .withExposedPorts(4566)
+    .waitingFor(Wait.forHttp("/_overcast/health").forPort(4566));
+overcast.start();
+
+String endpoint = "http://" + overcast.getHost() + ":" + overcast.getMappedPort(4566);
+```
+
+### Python
+
+```python
+import requests
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_container_is_ready
+
+@wait_container_is_ready(requests.ConnectionError, requests.HTTPError)
+def wait_for_health(endpoint: str) -> None:
+    requests.get(f"{endpoint}/_overcast/health", timeout=2).raise_for_status()
+
+with DockerContainer("ghcr.io/neaox/overcast-slim:alpha").with_exposed_ports(4566) as overcast:
+    endpoint = f"http://{overcast.get_container_host_ip()}:{overcast.get_exposed_port(4566)}"
+    wait_for_health(endpoint)
+```
+
+### .NET
+
+```csharp
+var overcast = new ContainerBuilder()
+    .WithImage("ghcr.io/neaox/overcast-slim:alpha")
+    .WithPortBinding(4566, assignRandomHostPort: true)
+    .WithWaitStrategy(Wait.ForUnixContainer()
+        .UntilHttpRequestIsSucceeded(r => r.ForPort(4566).ForPath("/_overcast/health")))
+    .Build();
+await overcast.StartAsync();
+
+var endpoint = $"http://{overcast.Hostname}:{overcast.GetMappedPublicPort(4566)}";
+```
+
+For container-backed services (Lambda invokes, ECS tasks, RDS engines, …) add
+your implementation's bind-mount option for `/var/run/docker.sock` — see the
+[Docker socket note](../README.md#running-with-docker). Everything else in
+this guide (image choice, port-mapping caveats, configuration env vars)
+applies unchanged.
+
 ## Using LocalStack's Testcontainers modules
 
 Pointing an existing LocalStack Testcontainers module at the Overcast image
 (e.g. Java's `asCompatibleSubstituteFor`) is **not supported**: those modules
 parse the image tag as a LocalStack version to pick legacy behaviours, and
-wait for a log line Overcast does not emit. Use this module — or plain
-`testcontainers` generic containers with the
-`/_overcast/health` wait target — instead. The
-[migration guide](./migration-from-localstack.md) covers the rest of a
-LocalStack switch-over.
+wait for a log line Overcast does not emit. Use the
+[Go module](#go) or the
+[generic-container pattern](#other-languages-the-generic-container-pattern)
+instead. The [migration guide](./migration-from-localstack.md) covers the
+rest of a LocalStack switch-over.
