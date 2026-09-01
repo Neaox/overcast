@@ -372,8 +372,9 @@ provider "aws" {
 ### Credentials
 
 Overcast accepts any credentials. Use `test`/`test` or any non-empty strings.
-SigV4 signatures are accepted but not validated (unless `OVERCAST_SIGV4_VALIDATE`
-is enabled in a future version).
+SigV4 signatures are accepted but not verified unless you opt in with
+`OVERCAST_SIGV4_VALIDATE=true`, which rejects an invalid or expired signature
+with `403 InvalidSignatureException`.
 
 ### Single endpoint
 

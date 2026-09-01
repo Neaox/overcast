@@ -20,7 +20,9 @@ look up.
 
 | Endpoint                    | Method | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |
-| `/_overcast/health`                  | GET    | Basic health check (always enabled)                   |
+| `/_overcast/health`                  | GET    | Health, service tiers, resolved storage backend (always enabled) |
+| `/_overcast/info`                    | GET    | Effective region, account ID and accepted credentials (always enabled) |
+| `/_overcast/init`                    | GET    | Init-hook results, all stages or one at `/_overcast/init/{stage}` (always enabled) |
 | `/_overcast/events`                  | GET    | SSE stream of internal events (always enabled)        |
 | `/_overcast/events/request/{requestId}` | GET | Every internal event tied to one request ID, as a JSON list rather than a stream (always enabled) |
 | `/_overcast/metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |

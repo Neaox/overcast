@@ -15,11 +15,10 @@ Overcast supports `cdk deploy` and `cdk destroy` for stacks that use
 [supported resource types](#supported-resource-types). This page explains how to
 configure CDK to target Overcast and what to expect.
 
-For local VPC workflows, see [Local VPCs for CDK](./cdk/local-vpc.md). That page
-covers letting a local resources stack create the VPC, keeping local-specific
-logic out of application stacks, and CDK context cache churn.
-
----
+> [!TIP]
+> Deploying anything with a VPC? Read
+> [Local VPCs for CDK](./cdk/local-vpc.md) first — local VPCs get new IDs on
+> every teardown, and `Vpc.fromLookup` cannot track them.
 
 ## Quick start
 
@@ -209,39 +208,27 @@ degrades gracefully to a stub physical ID so the stack can still deploy.
 ### Container assets are served from Overcast's own registry
 
 A `DockerImageAsset` — an ECS `ContainerImage.fromAsset`, a Lambda
-`DockerImageFunction`, or any construct that builds an image — is published to
-the ECR repository `cdk bootstrap` created, which is a `registry:2` container
-Overcast starts and authenticates. CDK then writes the image into the template
-as `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, built from
-`AWS::AccountId` and `AWS::Region` rather than read back from the repository.
-Overcast recognises that address as its own and pulls from the registry it
-serves, so the task or function runs the image the deploy published. See
-[ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
+`DockerImageFunction`, or any construct that builds an image — is pushed to a
+`registry:2` container Overcast starts on port `4510`, and the task or function
+that needs it pulls from there. It works out of the box on native Linux and
+Docker Desktop; only a remote Docker daemon needs an `insecure-registries` entry,
+which Overcast checks at registry startup and logs remediation for.
 
-Before building anything, cdk-assets asks ECR whether the asset's tag is
-already published and skips the push if it is, so that answer has to be right
-or the deploy publishes nothing and fails at pull time instead. Overcast
-answers it from the registry rather than from memory of an earlier run — see
-[ECR § Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published).
-The registry's storage is a named Docker volume, so a restarted Overcast still
-has the assets the last deploy pushed and the next one skips rebuilding them —
-see [ECR § Persistence](./services/ecr.md#persistence). Two cases still re-push:
-a registry that fell back to an ephemeral port, and one started with
-`OVERCAST_ECR_REGISTRY_PERSIST=false`. That is a rebuild of a few seconds, not a
-failure.
+Two consequences worth knowing:
 
-The registry publishes on a fixed port (`4510` by default, see
-[ECR § Repository URI](./services/ecr.md#repository-uri)) reachable at
-`localhost` from the Docker daemon's own vantage — which is the vantage that
-matters, because `docker push` and every image pull are performed by the
-daemon, not by the client that asked. `repositoryUri` names `localhost` even
-when `OVERCAST_HOSTNAME` is set to something else, because that is the address
-startup proved the daemon can reach — and because Docker trusts plain HTTP to
-`localhost` and bypasses proxies for it, neither of which it does for an
-ordinary domain that merely resolves to loopback. This works out of the box on
-native Linux and on Docker Desktop; only a remote daemon needs an
-`insecure-registries` entry, and Overcast verifies the path at registry startup
-and logs the remediation if it is broken.
+- **`repositoryUri` names `localhost`** even when `OVERCAST_HOSTNAME` is set to
+  something else, because the Docker daemon — not your API client — is what dials
+  it, and Docker trusts plain HTTP to `localhost` and bypasses proxies for it.
+- **Assets survive a restart.** The registry's storage is a named Docker volume,
+  so the next deploy skips rebuilding what the last one pushed. A registry that
+  fell back to an ephemeral port, or one started with
+  `OVERCAST_ECR_REGISTRY_PERSIST=false`, re-pushes — a few seconds, not a
+  failure.
+
+Details: [ECR § Repository URI](./services/ecr.md#repository-uri),
+[§ Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published),
+[§ Running an image from here](./services/ecr.md#running-an-image-from-here) and
+[§ Persistence](./services/ecr.md#persistence).
 
 ### Nested stack TemplateURL must be reachable
 
