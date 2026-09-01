@@ -1,6 +1,6 @@
 ---
 title: "ElastiCache — Managed In-Memory Cache"
-description: "ElastiCache uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2015-02-02."
+description: "Cache clusters, replication groups and serverless caches backed by real Redis, Valkey or Memcached containers, promoted to available only once the engine answers."
 section: "Service Reference"
 tags:
   - cache
@@ -13,88 +13,67 @@ tags:
 
 # ElastiCache — Managed In-Memory Cache
 
-ElastiCache uses the AWS Query protocol (form-encoded POST, XML responses). Operations are
-identified by the `Action` parameter with API version `2015-02-02`.
+Creating a cache starts a real Redis, Valkey or Memcached container; without
+Docker the same calls are metadata only.
 
-When Docker is available, `CreateCacheCluster`, `CreateReplicationGroup`, and
-`CreateServerlessCache` start real containers with automatic port allocation from
-`ELASTICACHE_PORT_BASE` (default 63790).
-A readiness check polls the engine's own protocol before transitioning to "available" —
-`PING` for Redis and Valkey, `version` for Memcached. A dial is not enough: Docker's published
-port accepts connections as soon as the port proxy is up, before the engine has bound anything.
-An engine that never answers is not left claiming progress. A cache cluster settles in
-`incompatible-network` and a replication group or serverless cache in `create-failed`, which are
-the terminal statuses AWS documents for each of those three shapes, with the reason recorded on
-the record.
-When Docker is unavailable, operations are metadata-only and status transitions immediately.
+**Status:** ⚠️ Partial
 
-One Overcast does not manage another's cache. A cache cluster ID, replication
-group ID and serverless cache name are all names you choose, so two Overcasts
-sharing a Docker daemon can each hold one called `sessions`, and the container
-labels that name — startup reconciliation and the Docker event stream match on
-the creating instance's identity as well, rather than marking a cache stopped
-that the other one is still serving. The container name is derived from the
-resource name and Docker requires it to be unique per daemon, so the second
-Overcast to start a cache of that name fails it with a reason saying so instead
-of quietly sharing the first one's. Give them different names, or a Docker
-daemon each.
+## Quick start
 
-Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:7`, `valkey/valkey:8`),
-**memcached** (`memcached:1.5`, `memcached:1.6`).
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-> [!NOTE]
-> Replication groups start a single primary container only — no multi-node replication is
-> wired up between replicas.
+aws elasticache create-cache-cluster \
+  --cache-cluster-id sessions \
+  --engine redis --cache-node-type cache.t3.micro --num-cache-nodes 1
 
-## VPC placement
+aws elasticache describe-cache-clusters --cache-cluster-id sessions \
+  --query 'CacheClusters[0].[CacheClusterStatus,ConfigurationEndpoint]'
+# once "available": ["127.0.0.1", 63790] on the host
+redis-cli -p 63790 ping
+```
 
-A cache cluster or replication group created with a `CacheSubnetGroupName`
-lands on that subnet group's VPC network and nothing else, so a Lambda or ECS
-task outside the VPC cannot reach it — as on AWS, where ElastiCache is never
-publicly accessible and has no `PubliclyAccessible` escape hatch. Put the caller
-in the same VPC.
+## What works
 
-`CreateCacheCluster`, `CreateReplicationGroup` and the CloudFormation resources
-for both accept the field. A serverless cache carries subnet IDs directly
-instead, and resolves its VPC from the first one that names it.
+| Area | Behaviour |
+| --- | --- |
+| Real engines | `CreateCacheCluster`, `CreateReplicationGroup` and `CreateServerlessCache` each start a container, ports allocated from `ELASTICACHE_PORT_BASE` (default 63790) |
+| Honest readiness | The status moves to `available` only after the engine answers its own protocol — `PING` for Redis and Valkey, `version` for Memcached. A published port that merely accepts a connection is not enough |
+| Failure is terminal | An engine that never answers settles in the status AWS documents for that shape — `incompatible-network` for a cache cluster, `create-failed` for a replication group or serverless cache — with the reason recorded |
+| VPC placement | A `CacheSubnetGroupName` puts the cache on that subnet group's VPC network and nothing else |
+| Per-caller endpoints | `ConfigurationEndpoint` answers with the container's address and the engine's own port for a sibling container, and `127.0.0.1` with the published port for the host |
+| CloudFormation | `AWS::ElastiCache::CacheCluster` and `AWS::ElastiCache::ReplicationGroup`; `Fn::GetAtt` gives `RedisEndpoint.Address`/`.Port` for Redis and Valkey and `ConfigurationEndpoint.Address`/`.Port` for Memcached, the pair each engine has on AWS |
+| Without Docker | Every operation still works as metadata, and statuses settle immediately |
 
-Create either without a subnet group and it stays on the default plane, which is
-where AWS puts a cache that names no subnet group too — its default VPC. That is
-not "reachable from everywhere": a caller that named a VPC of its own has given
-up the default plane, so it still cannot reach the cache. Put both in the same
-VPC, or leave both out of one.
+Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
+(`valkey/valkey:7`, `valkey/valkey:8`), **memcached** (`memcached:1.5`,
+`memcached:1.6`).
 
-`CacheSubnetGroupName` is a create-only parameter: AWS does not return it on the
-`ReplicationGroup` shape, so neither does Overcast.
+## Differences from AWS
 
-See [Networking § Lambda, ECS and VPCs](../networking.md) for the full picture
-and for what a refused connection looks like.
+| Difference | Detail |
+| --- | --- |
+| One node, always | A replication group starts a single primary container — no replicas, no cluster mode, no failover |
+| Endpoints cannot be told apart | A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry the same endpoint, because there is nothing to distinguish cluster-mode-enabled from disabled |
+| No parameter groups applied | Parameter and security group names are recorded, never pushed into the engine |
+| No snapshots | Snapshot, backup and restore operations are not implemented |
+| No scaling | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers |
+| Create-only subnet group | `CacheSubnetGroupName` is not returned on the `ReplicationGroup` shape, because AWS does not return it either |
+| CloudFormation names differ | `AWS::ElastiCache::CacheCluster` takes `ClusterName`, not `CacheClusterId`; omit it and the name is generated from the stack, the logical id and a suffix, lowercased and capped at 50 characters |
 
-## CloudFormation
+## Gotchas
 
-`AWS::ElastiCache::CacheCluster` names its cluster with `ClusterName` — the
-resource has no `CacheClusterId` property, whatever the API calls the parameter.
-Leave it out and CloudFormation generates the name from the stack, the logical
-ID and a random suffix, lowercased and capped at the 50 characters ElastiCache
-allows in a cluster ID.
+> [!IMPORTANT]
+> A cache in a VPC is reachable only from that VPC, as on AWS — ElastiCache has
+> no `PubliclyAccessible` escape hatch. Create both the cache and its caller
+> with the same subnet group, or leave both out of one. See
+> [Networking § Lambda, ECS and VPCs](../networking.md).
 
-A cache cluster's endpoint reaches a template through `Fn::GetAtt`, under the
-attribute pair its engine has — `RedisEndpoint.Address`/`.Port` for Redis and
-Valkey, `ConfigurationEndpoint.Address`/`.Port` for Memcached, as AWS populates
-them. The pair the engine does not have resolves to the empty string, so a
-template that reads the wrong one for its engine gets the same nothing here that
-it would get on AWS, rather than a value that works only locally.
-
-A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry
-the endpoint. AWS populates the first only for a cluster-mode-disabled group and
-the second only for a cluster-mode-enabled one; Overcast starts a single primary
-and models neither node groups nor replicas, so it cannot yet tell the two
-apart.
-
-These are data-plane hostnames — the VPC placement above decides who can
-resolve one.
-
----
+> [!WARNING]
+> Container names derive from the cache id you choose, and Docker requires them
+> to be unique per daemon. Two Overcasts sharing a daemon can each hold a cache
+> called `sessions` only if they are given different names — the second to start
+> one fails it with a reason saying so, rather than quietly sharing the first's.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -107,6 +86,8 @@ Per-operation status, notes and AWS API links: [ElastiCache operations](elastica
 
 ## Related
 
+- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [RDS](rds.md) — the same Docker-backed lifecycle for databases
 - [AWS API reference](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
