@@ -101,7 +101,15 @@ for the CDK-specific case.
 
 ---
 
-## Node.js (AWS SDK v3)
+## SDK examples
+
+The pattern is the same in every language: point the client at
+`http://localhost:4566`, pass any static credentials, and (for S3) enable
+path-style addressing.
+
+<!-- BEGIN overcast:code-tabs -->
+
+### Node.js (AWS SDK v3)
 
 ```typescript
 import { S3Client, CreateBucketCommand } from "@aws-sdk/client-s3";
@@ -136,7 +144,7 @@ const sqs = new SQSClient({
 });
 ```
 
-### Using `AWS_ENDPOINT_URL`
+#### Using `AWS_ENDPOINT_URL`
 
 AWS SDK v3 (v3.451.0+) respects the `AWS_ENDPOINT_URL` environment variable.
 Set it once and skip per-client endpoint configuration:
@@ -154,7 +162,7 @@ const s3 = new S3Client({ region: "us-east-1", forcePathStyle: true });
 
 ---
 
-## Python (boto3)
+### Python (boto3)
 
 ```python
 import boto3
@@ -186,7 +194,7 @@ s3 = boto3.client('s3', region_name='us-east-1')
 
 ---
 
-## Go (AWS SDK v2)
+### Go (AWS SDK v2)
 
 ```go
 package main
@@ -223,7 +231,7 @@ func main() {
 
 ---
 
-## Java (AWS SDK v2)
+### Java (AWS SDK v2)
 
 ```java
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -248,7 +256,7 @@ s3.createBucket(b -> b.bucket("my-bucket"));
 
 ---
 
-## .NET (AWS SDK)
+### .NET (AWS SDK)
 
 ```csharp
 using Amazon.S3;
@@ -268,7 +276,7 @@ await client.PutBucketAsync("my-bucket");
 
 ---
 
-## Rust (AWS SDK)
+### Rust (AWS SDK)
 
 ```rust
 use aws_config::BehaviorVersion;
@@ -285,6 +293,8 @@ let config = aws_config::defaults(BehaviorVersion::latest())
 let s3 = aws_sdk_s3::Client::new(&config);
 s3.create_bucket().bucket("my-bucket").send().await.unwrap();
 ```
+
+<!-- END overcast:code-tabs -->
 
 ---
 

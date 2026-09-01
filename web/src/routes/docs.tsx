@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useQuery, queryOptions } from "@tanstack/react-query"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkGithubAlerts from "remark-github-alerts"
 import remarkRemoveComments from "remark-remove-comments"
@@ -9,7 +9,19 @@ import { BookOpen, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
 import { DOCS_NAV } from "@/docs-nav.gen"
+import { CodeTabsGroup, CodeTabsPanel } from "@/features/docs/code-tabs"
+import remarkCodeTabs from "@/lib/remark-code-tabs"
+import { slug } from "@/lib/slug"
 import { cn } from "@/lib/utils"
+
+export { slug }
+
+// The custom element names remark-code-tabs emits; Components is keyed by
+// intrinsic tag names only, hence the cast.
+const codeTabsComponents = {
+  "code-tabs-group": CodeTabsGroup,
+  "code-tabs-panel": CodeTabsPanel,
+} as unknown as Components
 
 interface DocsSearchParams {
   path?: string
@@ -135,8 +147,16 @@ function DocsPage() {
           {data && (
             <div className="prose prose-sm max-w-none">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkGithubAlerts, remarkRemoveComments]}
+                // remarkCodeTabs must run before remarkRemoveComments, which
+                // strips the sentinel comments it keys on.
+                remarkPlugins={[
+                  remarkGfm,
+                  remarkGithubAlerts,
+                  remarkCodeTabs,
+                  remarkRemoveComments,
+                ]}
                 components={{
+                  ...codeTabsComponents,
                   h2: ({ node: _node, children, ...props }) => (
                     <h2 id={slug(String(children))} {...props}>
                       {children}
@@ -241,11 +261,4 @@ function resolveDocsHref(currentPath: string, href: string): string {
   if (href.includes("/")) return href
   const dir = currentPath.split("/").slice(0, -1).join("/")
   return dir ? `${dir}/${href}` : href
-}
-
-export function slug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
 }

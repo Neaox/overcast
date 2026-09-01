@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest"
+// The implementation lives in @/lib/slug; importing through the route keeps
+// this test pinned to the function the docs viewer actually renders ids with.
 import { slug } from "./docs"
 
 /**
