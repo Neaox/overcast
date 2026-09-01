@@ -116,7 +116,7 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go /home/vscode/.local/share/pnpm ${containerWorkspaceFolder}/web/node_modules && git config --global --add safe.directory ${containerWorkspaceFolder} && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build-mcp && mkcert -install && cd web && pnpm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/go /home/vscode/.local/share/pnpm ${containerWorkspaceFolder}/web/node_modules && git config --global --add safe.directory ${containerWorkspaceFolder} && go mod download && go install golang.org/x/tools/gopls@v0.17.1 && go install github.com/go-delve/delve/cmd/dlv@v1.24.2 && make build && mkcert -install && cd web && pnpm install && cd .. && pip3 install --break-system-packages --quiet -r compat/suites/python-sdk/requirements.txt && go run ./scripts/check-tools.go",
 
   // Fix Docker socket group on every container start.
   // The docker-outside-of-docker feature proxies the host socket via socat,
@@ -135,7 +135,7 @@
             "command": "sh",
             "args": [
               "-c",
-              "mkdir -p ${containerWorkspaceFolder}/.overcast && exec 2>>${containerWorkspaceFolder}/.overcast/mcp-workspace.log && go build -o ${containerWorkspaceFolder}/bin/overcast-mcp ./cmd/overcast-mcp && exec ${containerWorkspaceFolder}/bin/overcast-mcp --workspace ${containerWorkspaceFolder} --stdio"
+              "mkdir -p ${containerWorkspaceFolder}/.overcast && exec 2>>${containerWorkspaceFolder}/.overcast/mcp-workspace.log && go build -o ${containerWorkspaceFolder}/bin/overcast ./cmd/overcast && exec ${containerWorkspaceFolder}/bin/overcast mcp --workspace ${containerWorkspaceFolder} --stdio"
             ]
           }
         }

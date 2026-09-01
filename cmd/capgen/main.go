@@ -1516,7 +1516,7 @@ func generateAllGenGo(root string, caps []CapabilityDecl) error {
 	buf.WriteString("// Regenerate with: make generate-caps\n\n")
 	buf.WriteString("package capabilities\n\n")
 	buf.WriteString("// AllCapabilities is the static snapshot of all declared service capabilities.\n")
-	buf.WriteString("// Used by tools (e.g. overcast-mcp) that need capability data without importing\n")
+	buf.WriteString("// Used by tools (e.g. overcast mcp) that need capability data without importing\n")
 	buf.WriteString("// all service packages. Only included in dev builds.\n")
 	buf.WriteString("var AllCapabilities = []Capability{\n")
 	for _, c := range sorted {
