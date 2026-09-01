@@ -275,7 +275,7 @@ All subcommands are available in both `overcast` and `overcastd` (the web UI is 
 | ----------------- | ----------------------------------------------------------------------- |
 | `overcast serve`  | Start the AWS service emulator                                          |
 | `overcast bridge` | Publish `.local` domains via mDNS and start a port-80 reverse proxy     |
-| `overcast status` | Inspect a running daemon (version, uptime, state backend, service list) |
+| `overcast status` | Check a running daemon is reachable (version, state backend) |
 | `overcast trust`  | Manage the local trust store for self-signed TLS certificates           |
 
 Storage is the other place the two binaries differ. The released `overcastd` is
@@ -360,7 +360,7 @@ After `overcast bridge` is running:
 
 ### overcast status
 
-Prints the current state of a running daemon — version, uptime, active state backend, enabled services, and listener address.
+Checks that a daemon is reachable (via `GET /_overcast/health`) and prints a one-line summary with its version and active state backend.
 
 ```bash
 overcast status
