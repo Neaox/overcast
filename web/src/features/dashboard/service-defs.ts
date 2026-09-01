@@ -8,6 +8,10 @@ export interface ServiceCardDef {
   label: string
   to: FileRouteTypes["to"]
   icon: LucideIcon
+  /** Categorical-ramp slot, e.g. "text-cat-2" — see ServiceIconTile. */
+  color: string
+  bg: string
+  border: string
   description: string
   /** Filename stem in docs/services/{docKey}.md. Omit if no docs exist. */
   docKey?: string
@@ -29,6 +33,9 @@ export const ALL_SERVICES: ServiceCardDef[] = Object.entries(
     label: e.dashboardLabel ?? e.label,
     to: e.to as FileRouteTypes["to"],
     icon: e.icon,
+    color: e.color,
+    bg: e.bg,
+    border: e.border,
     description: e.dashboardDescription ?? e.description ?? "",
     ...(e.docKey ? { docKey: e.docKey } : {}),
   }))

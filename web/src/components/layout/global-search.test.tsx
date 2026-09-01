@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FavouritesProvider } from "@/hooks/use-favourites"
+import { ServiceIconColorProvider } from "@/hooks/use-service-icon-color"
 import { createTestQueryClient, renderWithRouter, screen, waitFor, within } from "@/test/render"
 import type { HealthResponse } from "@/types/common"
 import { GlobalSearch } from "./global-search"
@@ -24,9 +25,11 @@ const FAVOURITES_KEY = "overcast-favourites"
 function SearchDialog() {
   return (
     <TooltipProvider>
-      <FavouritesProvider>
-        <GlobalSearch open onOpenChange={() => {}} />
-      </FavouritesProvider>
+      <ServiceIconColorProvider>
+        <FavouritesProvider>
+          <GlobalSearch open onOpenChange={() => {}} />
+        </FavouritesProvider>
+      </ServiceIconColorProvider>
     </TooltipProvider>
   )
 }

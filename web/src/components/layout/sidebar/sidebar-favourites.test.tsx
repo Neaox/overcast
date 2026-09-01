@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { FavouritesProvider } from "@/hooks/use-favourites"
+import { ServiceIconColorProvider } from "@/hooks/use-service-icon-color"
 import { createEvent, fireEvent, renderWithRouter, screen, waitFor } from "@/test/render"
 import { SidebarFavourites } from "./sidebar-favourites"
 
@@ -10,14 +11,16 @@ const DND_KIT_CLICK_TEARDOWN_MS = 50
 
 function PinnedSidebar() {
   return (
-    <FavouritesProvider>
-      <SidebarFavourites
-        collapsed={false}
-        pathname="/"
-        isExpanded={() => false}
-        onToggleExpand={() => {}}
-      />
-    </FavouritesProvider>
+    <ServiceIconColorProvider>
+      <FavouritesProvider>
+        <SidebarFavourites
+          collapsed={false}
+          pathname="/"
+          isExpanded={() => false}
+          onToggleExpand={() => {}}
+        />
+      </FavouritesProvider>
+    </ServiceIconColorProvider>
   )
 }
 

@@ -1,8 +1,9 @@
 import type { ComponentType } from "react"
-import { Lock, Server } from "lucide-react"
+import { Lock, Palette, Server } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { PageHeader } from "@/components/ui/primitives"
+import { AppearanceSection } from "./components/appearance-section"
 import { ConnectionSection } from "./components/connection-section"
 import { HttpsSection } from "./components/https-section"
 
@@ -23,6 +24,13 @@ interface SettingsSectionDef {
 }
 
 const SECTIONS: SettingsSectionDef[] = [
+  {
+    id: "appearance",
+    title: "Appearance",
+    description: "How the console looks.",
+    icon: Palette,
+    Component: AppearanceSection,
+  },
   {
     id: "connection",
     title: "Connection",

@@ -41,6 +41,8 @@ export interface ServiceDefinition {
   label: string
   icon: LucideIcon
   color: string
+  bg: string
+  border: string
   category: ServiceCategory
   description: string
   children?: SubNavChild[]
@@ -73,6 +75,8 @@ export const ALL_SERVICES: ServiceDefinition[] = Object.values(
       label: e.label,
       icon: e.icon,
       color: e.color,
+      bg: e.bg,
+      border: e.border,
       category: e.category,
       description: e.description ?? "",
     }

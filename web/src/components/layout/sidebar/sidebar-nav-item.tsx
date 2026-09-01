@@ -4,6 +4,7 @@ import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import type { SubNavChild } from "@/lib/nav-services"
+import { useServiceIconColor } from "@/hooks/use-service-icon-color"
 import { flatChildren } from "./nav-children"
 import { SidebarBadge } from "./sidebar-badge"
 import { SidebarSubNav } from "./sidebar-sub-nav"
@@ -13,6 +14,13 @@ export interface SidebarNavEntry {
   to: string
   label: string
   icon: LucideIcon
+  /**
+   * Categorical-ramp text colour class (e.g. "text-cat-2"), applied to the
+   * icon glyph when the row is not the active route and the service-icon-
+   * colour preference is on. Rows without an identity (e.g. the dashboard
+   * link) pass "text-fg-muted" and get no visible change either way.
+   */
+  color?: string
   children?: SubNavChild[]
   exact?: boolean
 }
@@ -74,14 +82,18 @@ export function SidebarNavItem({
   badge,
   sortable,
 }: SidebarNavItemProps) {
-  const { to, label, icon: Icon, children, exact } = item
+  const { to, label, icon: Icon, color, children, exact } = item
   const active = exact
     ? pathname === to
     : to === "/"
       ? pathname === "/"
       : pathname.startsWith(to)
   const rowCls = rowVariants({ collapsed, active, tone })
-  const iconCls = collapsed ? "h-[17px] w-[17px] shrink-0" : "h-4 w-4 shrink-0"
+  const { enabled: colorEnabled } = useServiceIconColor()
+  // Active rows keep the accent state colour — the "you are here" signal —
+  // rather than the service's own hue, so tinting only applies at rest.
+  const tint = colorEnabled && color && !active ? color : undefined
+  const iconCls = cn("shrink-0", collapsed ? "h-[17px] w-[17px]" : "h-4 w-4", tint)
   const badgeNode = badge && badge.count > 0 && (
     <SidebarBadge count={badge.count} collapsed={collapsed} label={badge.label} />
   )

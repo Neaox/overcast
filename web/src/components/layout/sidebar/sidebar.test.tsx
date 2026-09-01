@@ -5,6 +5,7 @@ import { inboxMessagesQueryOptions } from "@/features/mail/data"
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FavouritesProvider } from "@/hooks/use-favourites"
+import { ServiceIconColorProvider } from "@/hooks/use-service-icon-color"
 import { createTestQueryClient, renderWithRouter, screen, seedServerInfo } from "@/test/render"
 import { Sidebar } from "./sidebar"
 import {
@@ -73,11 +74,13 @@ function mockNarrowViewport(isNarrow: boolean) {
 function SidebarOnly() {
   return (
     <TooltipProvider>
-      <FavouritesProvider>
-        <SidebarCollapseProvider>
-          <Sidebar />
-        </SidebarCollapseProvider>
-      </FavouritesProvider>
+      <ServiceIconColorProvider>
+        <FavouritesProvider>
+          <SidebarCollapseProvider>
+            <Sidebar />
+          </SidebarCollapseProvider>
+        </FavouritesProvider>
+      </ServiceIconColorProvider>
     </TooltipProvider>
   )
 }
@@ -86,14 +89,16 @@ function SidebarWithInbox() {
   return (
     <ToastContextProvider>
       <TooltipProvider>
-        <FavouritesProvider>
-          <SidebarCollapseProvider>
-            <div className="flex">
-              <Sidebar />
-              <InboxPage />
-            </div>
-          </SidebarCollapseProvider>
-        </FavouritesProvider>
+        <ServiceIconColorProvider>
+          <FavouritesProvider>
+            <SidebarCollapseProvider>
+              <div className="flex">
+                <Sidebar />
+                <InboxPage />
+              </div>
+            </SidebarCollapseProvider>
+          </FavouritesProvider>
+        </ServiceIconColorProvider>
       </TooltipProvider>
     </ToastContextProvider>
   )
