@@ -213,14 +213,27 @@ RUN mkdir -p /etc/localstack/init/boot.d \
              /etc/overcast/init/ready.d \
              /etc/overcast/init/shutdown.d
 
-ENV OVERCAST_PORT=4566 \
-    OVERCAST_LISTEN=0.0.0.0 \
-    OVERCAST_DATA_DIR=/data \
-    OVERCAST_DATA_DIR_SOURCE=image \
-    OVERCAST_LOG_LEVEL=info \
-    OVERCAST_DEFAULT_REGION=us-east-1 \
-    OVERCAST_ACCOUNT_ID=000000000000 \
-    OVERCAST_DEBUG=false
+# The image bakes exactly these two variables and deliberately nothing else.
+# A value baked as ENV is indistinguishable, at runtime, from one the user
+# passed with `docker run -e`, so internal/config must treat it as an explicit
+# setting — which turns every LocalStack-compatibility alias that disagrees
+# with it (DEFAULT_REGION, EDGE_PORT, GATEWAY_LISTEN, DEBUG — see
+# internal/config/localstack_aliases.go) into a startup conflict, breaking the
+# drop-in migration promise (docs/migration-from-localstack.md) exactly in the
+# images migrators run. This block used to restate the binary's own defaults
+# (port 4566, region us-east-1, account 000000000000, log level info, debug
+# off, and a 0.0.0.0 bind — which the marker below already selects, see
+# resolveListenDefault in internal/config, #761), so removing them changed no
+# effective default. TestDockerfileBakesNoConfigDefaults (internal/config)
+# enforces that none creep back in.
+#
+# OVERCAST_DATA_DIR is the one genuinely image-specific default (/data rather
+# than the native ~/.overcast/data), and OVERCAST_DATA_DIR_SOURCE=image marks
+# it as the image's own default rather than user intent: the DATA_DIR alias
+# overrides it instead of conflicting with it, and OVERCAST_STATE=auto does
+# not read it as a persistence signal (see internal/config).
+ENV OVERCAST_DATA_DIR=/data \
+    OVERCAST_DATA_DIR_SOURCE=image
 
 # OVERCAST_STATE is intentionally NOT set here — it defaults to "auto" (see
 # internal/config/state_auto.go), which resolves to hybrid when a volume or
