@@ -16,8 +16,8 @@ Overcast supports `cdk deploy` and `cdk destroy` for stacks that use
 configure CDK to target Overcast and what to expect.
 
 For local VPC workflows, see [Local VPCs for CDK](./cdk/local-vpc.md). That page
-covers CDK context cache churn, `Vpc.fromLookup` vs `Vpc.fromVpcAttributes`, and
-the VPC provider pattern for keeping local-specific logic out of stacks.
+covers letting a local resources stack create the VPC, keeping local-specific
+logic out of application stacks, and CDK context cache churn.
 
 ---
 
