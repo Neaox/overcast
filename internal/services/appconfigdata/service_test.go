@@ -46,12 +46,36 @@ func (stubReader) GetHostedConfigVersionByNum(context.Context, string, string, i
 	return nil, false
 }
 
+// labelledReader is a stubReader whose profile has one hosted configuration
+// version, carrying a user-defined label.
+type labelledReader struct {
+	stubReader
+	hcv appconfig.HostedConfigurationVersion
+}
+
+func (labelledReader) LatestVersionNumber(context.Context, string, string) (int, error) {
+	return 1, nil
+}
+
+func (r labelledReader) GetHostedConfigVersionByNum(_ context.Context, _, _ string, version int) (*appconfig.HostedConfigurationVersion, bool) {
+	if version != 1 {
+		return nil, false
+	}
+	hcv := r.hcv
+	return &hcv, true
+}
+
 // newTestService returns a service on a mock clock, plus the chi router its
 // routes are registered on, so requests take the real bindings.
 func newTestService(t *testing.T) (*clock.Mock, chi.Router) {
 	t.Helper()
+	return newTestServiceWith(t, stubReader{})
+}
+
+func newTestServiceWith(t *testing.T, reader appConfigReader) (*clock.Mock, chi.Router) {
+	t.Helper()
 	mock := clock.NewMock()
-	svc := New(nil, state.NewMemoryStore(), zap.NewNop(), mock, stubReader{})
+	svc := New(nil, state.NewMemoryStore(), zap.NewNop(), mock, reader)
 	router := chi.NewRouter()
 	svc.RegisterRoutes(router)
 	return mock, router
@@ -135,5 +159,49 @@ func TestGetLatestConfiguration_requiredMinimumPollInterval(t *testing.T) {
 	after := do(router, http.MethodGet, "/configuration?configuration_token="+next, "")
 	if after.Code != http.StatusOK {
 		t.Errorf("poll after the interval elapsed: got %d, body %s", after.Code, after.Body)
+	}
+}
+
+func TestGetLatestConfiguration_versionLabelHeader(t *testing.T) {
+	// Given: a profile whose latest hosted configuration version carries a
+	// VersionLabel, as CreateHostedConfigurationVersion stores it
+	_, router := newTestServiceWith(t, labelledReader{hcv: appconfig.HostedConfigurationVersion{
+		VersionNumber: 1,
+		ContentType:   "application/json",
+		VersionLabel:  "release-1",
+		Content:       `{"feature":true}`,
+	}})
+	token := startSession(t, router,
+		`{"ApplicationIdentifier":"a","EnvironmentIdentifier":"e","ConfigurationProfileIdentifier":"p"}`)
+
+	// When: the first poll returns that version's content
+	response := do(router, http.MethodGet, "/configuration?configuration_token="+token, "")
+
+	// Then: the label rides along as the Version-Label header, the name the
+	// model binds GetLatestConfiguration's VersionLabel output member to
+	if response.Code != http.StatusOK {
+		t.Fatalf("GetLatestConfiguration: got %d, body %s", response.Code, response.Body)
+	}
+	if got := response.Header().Get("Version-Label"); got != "release-1" {
+		t.Errorf("expected Version-Label %q, got %q", "release-1", got)
+	}
+	if got := response.Body.String(); got != `{"feature":true}` {
+		t.Errorf("expected the version's content as the payload, got %q", got)
+	}
+
+	// And: a version without a label sends no header at all, as AWS does
+	_, unlabelled := newTestServiceWith(t, labelledReader{hcv: appconfig.HostedConfigurationVersion{
+		VersionNumber: 1,
+		ContentType:   "text/plain",
+		Content:       "plain",
+	}})
+	token = startSession(t, unlabelled,
+		`{"ApplicationIdentifier":"a","EnvironmentIdentifier":"e","ConfigurationProfileIdentifier":"p"}`)
+	response = do(unlabelled, http.MethodGet, "/configuration?configuration_token="+token, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GetLatestConfiguration without a label: got %d, body %s", response.Code, response.Body)
+	}
+	if _, present := response.Header()["Version-Label"]; present {
+		t.Errorf("expected no Version-Label header for an unlabelled version, got %q", response.Header().Get("Version-Label"))
 	}
 }

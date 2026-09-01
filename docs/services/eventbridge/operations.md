@@ -55,17 +55,17 @@ tags:
 
 ### Targets
 
-| Operation           | Status       | Notes                                                                                                            | AWS Docs                                                                                       |
-| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `PutTargets`        | ✅ Supported | Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
-| `ListTargetsByRule` | ✅ Supported | Lists targets including input transformers and ECS/Kinesis/SQS target parameters                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
-| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                                                                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
+| Operation           | Status       | Notes                                                                                                                       | AWS Docs                                                                                       |
+| ------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `PutTargets`        | ✅ Supported | Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS and event-bus targets; rejects other target types at add time | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
+| `ListTargetsByRule` | ✅ Supported | Lists targets including input transformers and ECS/Kinesis/SQS target parameters                                            | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
+| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                                                                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
 
 ### Events
 
-| Operation   | Status       | Notes                                                                                                                                              | AWS Docs                                                                               |
-| ----------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `PutEvents` | ✅ Supported | Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets, applying InputPath/InputTransformer and RetryPolicy/DLQ | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
+| Operation   | Status       | Notes                                                                                                                                                              | AWS Docs                                                                               |
+| ----------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `PutEvents` | ✅ Supported | Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS and event-bus targets, applying InputPath/InputTransformer and RetryPolicy/DLQ | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
 
 ### Tags
 

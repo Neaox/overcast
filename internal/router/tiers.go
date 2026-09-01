@@ -64,12 +64,17 @@ var ServiceTiers = map[string]EmulationTier{
 	// instances policies and target-tracking policies are refused, not
 	// emulated — see docs/services/autoscaling.md.
 	"autoscaling": TierPartial,
+	// eventbridge is not inert: PutEvents evaluates every rule on the bus and
+	// delivers matches in-process to Lambda, SQS, SNS, Step Functions,
+	// Kinesis, Firehose, ECS and event-bus targets, honouring RetryPolicy and
+	// dead-lettering to the target's DeadLetterConfig queue. Archives,
+	// replays, connections and API destinations still return 501.
+	"eventbridge": TierPartial,
 
 	// Inert — full CRUD, resources stored, but no enforcement / side-effects
-	"iam":         TierInert,
-	"eventbridge": TierInert,
-	"appsync":     TierInert,
-	"cloudfront":  TierInert,
+	"iam":        TierInert,
+	"appsync":    TierInert,
+	"cloudfront": TierInert,
 
 	// Stub — minimal metadata/probe responses that unblock SDK or IaC workflows;
 	// unsupported operations return 501.
@@ -116,8 +121,7 @@ var ServiceGoalTiers = map[string]EmulationTier{
 	"secretsmanager": TierFull,
 
 	// WIP — currently inert, goal is partial
-	"iam":         TierPartial,
-	"eventbridge": TierPartial,
+	"iam": TierPartial,
 
 	// WIP — currently partial, goal is full. The execution engine landed, so
 	// Step Functions is no longer inert; `.waitForTaskToken`, activities and

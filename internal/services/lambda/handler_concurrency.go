@@ -6,8 +6,10 @@ package lambda
 //   - PutFunctionConcurrency          PUT    /2017-10-31/functions/{name}/concurrency
 //   - GetFunctionConcurrency          GET    /2019-09-30/functions/{name}/concurrency
 //   - DeleteFunctionConcurrency       DELETE /2017-10-31/functions/{name}/concurrency
-//   - PutProvisionedConcurrencyConfig PUT    /2015-03-31/functions/{name}/provisioned-concurrency
-//   - GetProvisionedConcurrencyConfig GET    /2015-03-31/functions/{name}/provisioned-concurrency
+//   - PutProvisionedConcurrencyConfig    PUT    /2019-09-30/functions/{name}/provisioned-concurrency
+//   - GetProvisionedConcurrencyConfig    GET    /2019-09-30/functions/{name}/provisioned-concurrency
+//   - ListProvisionedConcurrencyConfigs  GET    /2019-09-30/functions/{name}/provisioned-concurrency?List=ALL
+//   - DeleteProvisionedConcurrencyConfig DELETE /2019-09-30/functions/{name}/provisioned-concurrency
 
 import (
 	"context"
@@ -265,7 +267,7 @@ const (
 
 // ─── Provisioned concurrency ─────────────────────────────────────────────────
 
-// PutProvisionedConcurrencyConfig handles PUT /2015-03-31/functions/{name}/provisioned-concurrency.
+// PutProvisionedConcurrencyConfig handles PUT /2019-09-30/functions/{name}/provisioned-concurrency.
 // The Qualifier query parameter is required (version number or alias name).
 func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
@@ -339,7 +341,7 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 	protocol.WriteRESTJSON(w, r, http.StatusAccepted, h.provisionedResponseFor(ctx, fn, cfg))
 }
 
-// DeleteProvisionedConcurrencyConfig handles DELETE /2015-03-31/functions/{name}/provisioned-concurrency.
+// DeleteProvisionedConcurrencyConfig handles DELETE /2019-09-30/functions/{name}/provisioned-concurrency.
 func (h *Handler) DeleteProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
@@ -430,7 +432,7 @@ func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *ht
 	})
 }
 
-// GetProvisionedConcurrencyConfig handles GET /2015-03-31/functions/{name}/provisioned-concurrency.
+// GetProvisionedConcurrencyConfig handles GET /2019-09-30/functions/{name}/provisioned-concurrency.
 func (h *Handler) GetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
