@@ -191,7 +191,3 @@ condition. This is a rare, unusual-environment case, not something to expect in 
 - **Mix backends per service** with `OVERCAST_STATE_<SERVICE>` — e.g. `hybrid` globally
   with `persistent` only for the one service under test. See
   [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
-
-Contributing to Overcast and need the implementation-level detail (WAL/overlay
-internals, flush/compaction mechanics, migration behavior)? See
-[docs/dev/storage-backends.md](./dev/storage-backends.md).

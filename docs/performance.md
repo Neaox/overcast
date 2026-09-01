@@ -275,9 +275,3 @@ waiter's first check already sees the terminal status — see
 other client-side work show up as request-log silence. Report those
 upstream or restructure the workflow (e.g. `cdk deploy --concurrency`);
 no overcast change will touch them.
-
----
-
-Contributing to Overcast and need the internals — startup-budget rules for service
-authors, how to document a performance claim, or benchmark discipline? See
-[docs/dev/performance.md](./dev/performance.md).

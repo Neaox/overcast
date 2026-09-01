@@ -1,6 +1,6 @@
 ---
 title: "Route 53 — Amazon Route 53"
-description: "Route 53 is served as a REST-XML API under the /2013-04-01/ path. Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers queries from a zone's records (A/AAAA/CNAME/MX/TXT/NS/SOA, wildcards, ALIAS) — health check probes are still never sent."
+description: "Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers zone queries — health check probes are still never sent."
 section: "Service Reference"
 tags:
   - amazon
@@ -19,10 +19,9 @@ zones, resource record sets, tags, and health checks are real metadata with
 AWS-faithful validation rules, error codes, defaults, auto-created child
 records, and pagination. Health check probes are still never sent — see
 "Known divergences" below — but DNS queries **are** answered: Overcast's own
-internal resolver (`internal/dns`, `OVERCAST_DNS`/`OVERCAST_DNS_PORT`, see
-[container-networking.md](../dev/container-networking.md)) is authoritative
-for any hosted zone in the store, in addition to the split-horizon emulator
-hostnames it already served.
+internal resolver (`internal/dns`, `OVERCAST_DNS`/`OVERCAST_DNS_PORT`) is
+authoritative for any hosted zone in the store, in addition to the
+split-horizon emulator hostnames it already served.
 
 ## DNS serving
 
@@ -55,9 +54,8 @@ hostnames it already served.
   zone/forwarding behaviour `internal/dns`'s package doc describes. A
   container-endpoint name (an RDS endpoint, an ElastiCache node) is still
   resolved by Docker's embedded resolver from the container's network
-  aliases before either authority is reached — see
-  [container-networking.md](../dev/container-networking.md) — so it is
-  unaffected by this feature either way.
+  aliases before either authority is reached, so it is unaffected by this
+  feature either way.
 - **Private zones and VPC association.** Real Route 53 only serves a private
   hosted zone's records to a resolver inside one of the zone's associated
   VPCs. Overcast does not model "inside a VPC" as a property of a DNS query —

@@ -1,6 +1,6 @@
 ---
 title: "Auto Scaling — AWS Auto Scaling"
-description: "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances until the group matches its desired capacity, runs the lifecycle state machine, honours lifecycle hooks, and executes simple and step scaling policies driven by CloudWatch alarms."
+description: "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances to match desired capacity, runs the lifecycle state machine, and executes scaling policies driven by CloudWatch alarms."
 section: "Service Reference"
 tags:
   - auto
@@ -76,8 +76,7 @@ with the `LifecycleActionToken`, and the instance stays there until
 
 ## Not implemented — refused, not ignored
 
-Per [the fidelity-risk rule](../plans/full-emulation-priority.md), a
-configuration the reconciler cannot converge is refused at the configuring
+A configuration the reconciler cannot converge is refused at the configuring
 operation rather than stored and quietly ignored:
 
 | Configuration | Operation | Result |

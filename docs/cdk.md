@@ -101,12 +101,11 @@ All of these operations are implemented.
   map changes.
 -->
 
-Overcast's CloudFormation provisioner has handlers for **136 resource types**
-(126 provisioned for real, 10 recognised as stubs), plus custom resources and
-nested stacks, which are resolved dynamically. The count comes from the
-`resourceHandlers` map in `internal/services/cloudformation/provisioner.go`.
-Resources with real handlers are provisioned through the emulated services —
-they create real state that you can query via the AWS APIs.
+Overcast's CloudFormation provisioner supports **136 resource types** today:
+126 fully provisioned, 10 recognised as stubs, plus custom resources and
+nested stacks (resolved dynamically). Resources with real handlers are
+provisioned through the emulated services — they create real state that you
+can query via the AWS APIs.
 
 ### Real handlers (resources are fully provisioned)
 

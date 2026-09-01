@@ -60,7 +60,7 @@ system's volume. See [Mounting over NFS](#mounting-over-nfs).
   Access points with `CreationInfo` have their root directory created in the
   volume with the declared ownership and permissions before the first mount;
   without `CreationInfo`, a missing directory makes the mount fail, as on
-  AWS (see `docs/plans/efs-data-plane.md`).
+  AWS.
 - In `mock` mode — and in `live` mode while no Docker daemon is reachable —
   there is no data plane at all: mount targets are metadata with deterministic
   synthesized network fields (availability zone, IP address, ENI ID derived
