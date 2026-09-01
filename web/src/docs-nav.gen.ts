@@ -1881,7 +1881,7 @@ export const DOCS_NAV = [
     "path": "docs/services/autoscaling.md",
     "href": "services/autoscaling.md",
     "title": "Auto Scaling — AWS Auto Scaling",
-    "description": "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances until the group matches its desired capacity, runs the lifecycle state machine, honours lifecycle hooks, and executes simple and step scaling policies driven by CloudWatch alarms.",
+    "description": "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances to match desired capacity, runs the lifecycle state machine, and executes scaling policies driven by CloudWatch alarms.",
     "section": "Service Reference",
     "tags": [
       "auto",
@@ -4463,7 +4463,7 @@ export const DOCS_NAV = [
     "path": "docs/services/route53.md",
     "href": "services/route53.md",
     "title": "Route 53 — Amazon Route 53",
-    "description": "Route 53 is served as a REST-XML API under the /2013-04-01/ path. Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers queries from a zone's records (A/AAAA/CNAME/MX/TXT/NS/SOA, wildcards, ALIAS) — health check probes are still never sent.",
+    "description": "Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers zone queries — health check probes are still never sent.",
     "section": "Service Reference",
     "tags": [
       "amazon",
