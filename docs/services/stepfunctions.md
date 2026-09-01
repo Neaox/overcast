@@ -1,112 +1,100 @@
 ---
-title: "Step Functions — endpoint support"
-description: "Step Functions accepts AWS JSON 1.0 via X-Amz-Target: AWSStepFunctions.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/StepFunctions/operation/\u003coperation\u003e with..."
+title: "Step Functions — AWS Step Functions"
+description: "A real Amazon States Language interpreter: executions run the definition, call other emulated services, and record a state-by-state history. What it cannot interpret fails loudly."
 section: "Service Reference"
 tags:
   - docs
-  - endpoint
-  - functions
   - services
-  - step
   - stepfunctions
-  - support
+  - workflows
 ---
 
-# Step Functions — endpoint support
+# Step Functions — AWS Step Functions
 
-> AWS docs: [Step Functions API Reference](https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)
+A real Amazon States Language interpreter — executions run the definition, call
+other emulated services and record a state-by-state history.
 
-Step Functions accepts AWS JSON 1.0 via `X-Amz-Target:
-AWSStepFunctions.<operation>`. It also accepts Smithy RPC v2 CBOR at
-`/service/StepFunctions/operation/<operation>` with `Smithy-Protocol:
-rpc-v2-cbor` and `Content-Type: application/cbor`. Overcast implements state
-machine CRUD **and a real Amazon States Language interpreter**: executions run
-the definition, invoke other emulated services, and record a state-by-state
-history.
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+SM=$(aws stepfunctions create-state-machine --name hello \
+  --role-arn arn:aws:iam::000000000000:role/sfn \
+  --definition '{"StartAt":"Greet","States":{"Greet":{"Type":"Pass","Result":"hi","End":true}}}' \
+  --query stateMachineArn --output text)
+
+EX=$(aws stepfunctions start-execution --state-machine-arn "$SM" \
+  --input '{}' --query executionArn --output text)
+
+aws stepfunctions describe-execution --execution-arn "$EX"
+aws stepfunctions get-execution-history --execution-arn "$EX"
+```
 
 > [!IMPORTANT]
-> **Anything Overcast cannot interpret fails the execution loudly.** An
-> unsupported Task resource, `.waitForTaskToken`, an activity task, a
-> distributed Map, or JSONata set on the definition or on a single state,
-> produces a `FAILED` execution whose `error` is `States.Runtime` and whose
-> `cause` names the feature — never a
-> silent pass-through, and never a fake `SUCCEEDED`. `States.Runtime` is
-> deliberately neither retriable nor catchable (matching AWS), so a
-> `Catch` on `States.ALL` cannot swallow an Overcast gap.
+> Anything Overcast cannot interpret **fails the execution loudly** — never a
+> silent pass-through, and never a fake `SUCCEEDED`. The error is
+> `States.Runtime` and the `cause` names the feature. `States.Runtime` is
+> deliberately neither retriable nor catchable, matching AWS, so a `Catch` on
+> `States.ALL` cannot swallow an Overcast gap.
 
----
+## What works
 
-## What the interpreter runs
+| Area | Interpreted |
+| --- | --- |
+| State types | All eight: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`, `Map` (inline) |
+| Data flow | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, and the `$$` context object |
+| Choice | Every ASL comparison operator, `And`/`Or`/`Not`, `Default` |
+| Error handling | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`) and `Catch` (`ErrorEquals`, `ResultPath`, `Next`). `States.ALL` and `States.TaskFailed` are wildcards over every error but `States.Runtime` |
+| Task timeouts | `TimeoutSeconds` and `TimeoutSecondsPath` really bound the attempt and raise `States.Timeout`, which `Retry`/`Catch` can match |
+| Task integrations | A Lambda function ARN; `arn:aws:states:::lambda:invoke`; `sqs:sendMessage`; `sns:publish`; `dynamodb:putItem`/`getItem`/`updateItem`; `states:startExecution` and its `.sync` / `.sync:2` forms |
+| Map | Inline `ItemsPath` iteration with `ItemProcessor` or the legacy `Iterator` |
+| Execution model | `StartExecution` persists `RUNNING` and returns; the interpreter continues on a tracked goroutine, so nothing dispatching to Step Functions is held open for the length of the workflow |
+| History | AWS's event vocabulary with 1-based `id` and `previousEventId` linkage, so step-functions-local-style assertions work unmodified |
 
-| Area | Interpreted | Fails loudly |
+Task states dispatch through Overcast's own router, so a workflow step runs
+exactly the handler an SDK call would — there is no second code path that could
+drift from the service it targets.
+
+## Differences from AWS
+
+| Area | Overcast | AWS |
 | --- | --- | --- |
-| State types | `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`, `Map` (inline) | — (all eight ASL state types are interpreted; an unknown `Type` is rejected at `CreateStateMachine` with `InvalidDefinition`, as on AWS) |
-| Data flow | `InputPath`, `OutputPath`, `ResultPath`, `Parameters`, `ResultSelector`, `ItemSelector`, `Result`, the `$$` context object | JSONPath wildcards, descendants, slices and filter expressions; `Assign` (variables) |
-| Intrinsics | `States.Format`, `States.Array`, `States.ArrayLength`, `States.StringToJson`, `States.JsonToString`, `States.MathAdd` | every other `States.*` intrinsic |
-| Choice | every ASL comparison operator, `And`/`Or`/`Not`, `Default` | an operator outside the language (rejected at create time) |
-| Error handling | `Retry` (`ErrorEquals`, `IntervalSeconds`, `MaxAttempts`, `BackoffRate`, `MaxDelaySeconds`), `Catch` (`ErrorEquals`, `ResultPath`, `Next`). `States.ALL` and `States.TaskFailed` are both wildcards, matching any error name except `States.Runtime`; every other reserved name matches literally | `Assign` (variables) on a `Catch` |
-| Task timeouts | `TimeoutSeconds` and `TimeoutSecondsPath` really bound the attempt and raise `States.Timeout`, which `Retry`/`Catch` can match | `HeartbeatSeconds` (unread — it only governs activity tasks and `.waitForTaskToken`, which already fail loudly) |
-| Task integrations | a Lambda function ARN; `arn:aws:states:::lambda:invoke`; `sqs:sendMessage`; `sns:publish`; `dynamodb:putItem`/`getItem`/`updateItem`; `states:startExecution` and its `.sync` / `.sync:2` forms | every other service integration, all `aws-sdk:` integrations, `.waitForTaskToken`, activity ARNs |
-| Map | inline `ItemsPath` iteration with `ItemProcessor` (or the legacy `Iterator`) | `ProcessorConfig.Mode: DISTRIBUTED`, `ItemReader`, `ItemBatcher`, `ResultWriter` |
-| Query language | JSONPath | JSONata (`QueryLanguage: JSONata`), whether it is set on the whole definition or on a single state, and the JSONata-only `Output` field |
+| Query language | JSONPath only; `QueryLanguage: JSONata` fails the execution, whether set on the definition or one state | JSONPath and JSONata |
+| Variables | `Assign` and the JSONata-only `Output` field fail the execution | Supported |
+| Intrinsics | `States.Format`, `States.Array`, `States.ArrayLength`, `States.StringToJson`, `States.JsonToString`, `States.MathAdd` — every other `States.*` fails | The full set |
+| JSONPath | Dotted members and array indices; wildcards, descendants, slices and filters fail | Full JSONPath |
+| Task integrations | The list above; every other service integration, all `aws-sdk:` integrations, `.waitForTaskToken` and activity ARNs fail | ~200 services |
+| Map | Inline only; `ProcessorConfig.Mode: DISTRIBUTED`, `ItemReader`, `ItemBatcher` and `ResultWriter` fail | Distributed Map |
+| `HeartbeatSeconds`, `Retry.JitterStrategy` | Parsed and never read | Honoured |
+| `GetExecutionHistory` | `reverseOrder`, `maxResults` and `includeExecutionData` are honoured; there is no pagination token | Paginated |
 
----
+`CreateStateMachine` validates the ASL and returns `InvalidDefinition` for a
+structurally invalid definition, as AWS does. Definitions that are valid ASL but
+use features Overcast cannot interpret still provision — so CDK and CloudFormation
+deploys keep working — and fail at execution time instead.
 
-## Notes
+## Gotchas
 
-- **Executions run in the background, as on AWS.** `StartExecution` persists
-  the execution as `RUNNING` and returns; the interpreter continues on a
-  tracked goroutine. `DescribeExecution` and `GetExecutionHistory` observe it
-  progressing, and `StopExecution` really interrupts it. Nothing that dispatches
-  to Step Functions — an EventBridge target, a Pipes target, a parent state
-  machine's plain `states:startExecution` — is held open for the length of the
-  workflow.
-- **`StartSyncExecution` is the synchronous one**, which is exactly its
-  express-workflow semantic on AWS, and `states:startExecution.sync` /
-  `.sync:2` block on the child the same way.
-- **`StopExecution` is asynchronous**, as on AWS: it returns the stop time and
-  the execution reaches `ABORTED` a moment later, carrying the `error` and
-  `cause` you supplied. A `RUNNING` record left behind by a process that exited
-  mid-execution is transitioned directly instead.
-- **Shutdown drains executions.** In-flight runs are cancelled and given the
-  shutdown budget to write their terminal state, so a stopped emulator does not
-  leave executions stuck at `RUNNING`.
-- **The run is bounded.** `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` (default
-  `15m`) is a runaway guard, not a request timeout — it never sits on the wire,
-  so ordinary `Wait` states are unaffected. A state machine's own top-level
-  `TimeoutSeconds` can lower the budget but never raise it. Exceeding it ends
-  the execution `TIMED_OUT` with AWS's `States.Timeout`, which is also what
-  stops a non-terminating `Choice` loop (alongside the 25,000-event history
-  cap AWS itself applies).
-- **A `Task`'s own `TimeoutSeconds` bounds that attempt.** It is a real
-  deadline, not a value echoed into the history event: the integration is
-  dispatched under it and an over-running attempt is interrupted and raised as
-  `States.Timeout`, so `Retry`/`Catch` on a task timeout behave as they do on
-  AWS and the history carries `TaskTimedOut`. Unlike the execution budget this
-  does **not** end the execution `TIMED_OUT` — an uncaught task timeout is a
-  `FAILED` execution whose `error` is `States.Timeout`, as on AWS. An
-  integration that ignores cancellation can still run to completion; the
-  attempt is reported timed out when it fails. Note that a local cold start
-  can be slower than AWS's, so a tight `TimeoutSeconds` may fire here where it
-  would not in the cloud.
-- **Task states dispatch through Overcast's own router**, so a workflow step
-  runs exactly the handler an SDK call would — there is no second code path that
-  could drift from the service it targets.
-- **`GetExecutionHistory` emits AWS's event vocabulary** (`ExecutionStarted`,
-  `TaskStateEntered`, `TaskScheduled`, `TaskSucceeded`, `MapIterationStarted`,
-  `LambdaFunctionFailed`, …) with 1-based `id` and `previousEventId` linkage, so
-  step-functions-local-style assertions work unmodified. `reverseOrder`,
-  `maxResults` and `includeExecutionData` are honoured; there is no pagination
-  token.
-- **`CreateStateMachine` validates the ASL** and returns `InvalidDefinition`
-  for a structurally invalid definition, as AWS does. Definitions that are valid
-  ASL but use features Overcast cannot interpret still provision — so CDK and
-  CloudFormation deploys keep working — and fail at execution time instead.
-- **`StartSyncExecution`** reuses the same interpreter and is served for
-  `EXPRESS` state machines only; `STANDARD` gets AWS's
-  `StateMachineTypeNotSupported`.
-- **Idempotent creation.** `CreateStateMachine` returns the existing state
-  machine if the name, definition, role ARN, and type all match.
+> [!WARNING]
+> `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` (default `15m`) is a runaway guard,
+> not a request timeout — it never sits on the wire, so ordinary `Wait` states are
+> unaffected. A state machine's own top-level `TimeoutSeconds` can lower the
+> budget but never raise it. Exceeding it ends the execution `TIMED_OUT` with
+> `States.Timeout`, which is also what stops a non-terminating `Choice` loop
+> (alongside the 25,000-event history cap AWS itself applies).
+
+A `Task`'s own `TimeoutSeconds` is a different thing: it bounds that attempt, and
+an uncaught task timeout is a `FAILED` execution rather than a `TIMED_OUT` one, as
+on AWS. Note that a local cold start can be slower than AWS's, so a tight
+`TimeoutSeconds` may fire here where it would not in the cloud.
+
+`StartSyncExecution` is served for `EXPRESS` state machines only; `STANDARD` gets
+AWS's `StateMachineTypeNotSupported`. `StopExecution` is asynchronous, as on AWS,
+and shutdown drains in-flight executions rather than leaving them stuck at
+`RUNNING`.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -119,5 +107,8 @@ Per-operation status, notes and AWS API links: [Step Functions operations](stepf
 
 ## Related
 
+- [Lambda](./lambda.md) — the most common `Task` target
+- [EventBridge](./eventbridge.md) and [Scheduler](./scheduler.md) — what starts executions on a schedule
+- [AWS API reference](https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

@@ -1,100 +1,87 @@
 ---
-title: "EventBridge — endpoint support"
-description: "EventBridge accepts AWS JSON 1.1 via X-Amz-Target: AWSEvents.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/EventBridge/operation/\u003coperation\u003e with Smithy-Protocol..."
+title: "EventBridge — Amazon EventBridge"
+description: "Event buses, rules and targets, with matched events delivered in-process to eight target types. Event patterns match on exact values only."
 section: "Service Reference"
 tags:
   - docs
-  - endpoint
   - eventbridge
+  - events
   - services
-  - support
 ---
 
-# EventBridge — endpoint support
+# EventBridge — Amazon EventBridge
 
-> AWS docs: [EventBridge API Reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/Welcome.html)
+Buses, rules and targets, with matched events delivered in-process to eight
+target types — and patterns that match on exact values only.
 
-EventBridge accepts AWS JSON 1.1 via `X-Amz-Target: AWSEvents.<operation>`.
-It also accepts Smithy RPC v2 CBOR at `/service/EventBridge/operation/<operation>`
-with `Smithy-Protocol: rpc-v2-cbor` and `Content-Type: application/cbor`.
-Overcast implements event buses, rules, targets, tagging, event ingestion, and
-same-process target delivery.
+**Status:** ⚠️ Partial
+
+## Quick start
+
+Route an event to an SQS queue:
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+QUEUE=$(aws sqs create-queue --queue-name orders --query QueueUrl --output text)
+ARN=$(aws sqs get-queue-attributes --queue-url "$QUEUE" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text)
+
+aws events put-rule --name orders --event-pattern '{"source":["app.orders"]}'
+aws events put-targets --rule orders --targets "Id=1,Arn=$ARN"
+aws events put-events --entries \
+  '[{"Source":"app.orders","DetailType":"OrderPlaced","Detail":"{\"id\":1}"}]'
+
+aws sqs receive-message --queue-url "$QUEUE"
+```
+
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Buses and rules | Bus, rule, target and tag CRUD. `DescribeEventBus` answers for `default` whether or not it was created. |
+| Delivery | `PutEvents` evaluates every rule on the bus and delivers matches to Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS `RunTask` and another event bus. |
+| Scheduled rules | `rate(...)` and AWS's six-field `cron(...)` fire on an in-process clock, through the same target dispatcher. |
+| Input shaping | `Input`, `InputPath` and `InputTransformer`, at most one per target, over the JSONPath subset AWS uses (`$`, dotted members, array indexing). |
+| Retries and dead-lettering | `RetryPolicy.MaximumRetryAttempts`, `MaximumEventAgeInSeconds` measured from the envelope's `time`, and a `DeadLetterConfig` SQS queue. |
+| Service-originated events | CloudWatch alarm transitions, S3 object created/deleted, EC2 and ECS state changes, Auto Scaling launch and terminate events, and Step Functions execution status changes publish onto the default bus. |
+
+`InputTransformer` templates may reference `<aws.events.rule-name>`,
+`<aws.events.rule-arn>`, `<aws.events.event.json>` and
+`<aws.events.event.ingestion-time>`. Recent per-target outcomes — delivered,
+retried, dead-lettered, dropped — are readable at
+`GET /_overcast/eventbridge/deliveries`, an emulator-only endpoint backed by an
+in-memory ring that does not survive a restart.
+
+## Differences from AWS
+
+| Area | Overcast | AWS |
+| --- | --- | --- |
+| Event patterns | Exact value matching only | `prefix`, `suffix`, `numeric`, `anything-but`, `exists`, `cidr`, `wildcard` |
+| Target types | Eight; anything else is refused by `PutTargets` | ~20 |
+| Retry timing | Immediate, capped at 5 retries | Exponential backoff over up to 24 hours |
+| Bus-to-bus forwarding | Nested in-process call, capped at 4 hops | Independent delivery, no hop budget |
+| Archives, replay, API destinations | Not implemented | Supported |
+| Service-originated events | Six publishers | Substantially more |
+
+A target ARN naming an unsupported service comes back in `PutTargets`'s
+`FailedEntries` with `ErrorCode: UnsupportedTargetType`. That is deliberately
+stricter than AWS: a rule that provisions cleanly and never fires is worse than
+one that refuses up front.
+
+## Gotchas
 
 > [!WARNING]
-> **Emulation tier: Partial** — EventBridge matches common event patterns and fans
-> matched events out to Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and
-> EventBridge event bus targets;
-> scheduled rules can also invoke ECS/Fargate `RunTask` targets. Target types outside
-> that list, archives/replay, API destinations and advanced pattern operators
-> (`prefix`, `numeric`, `anything-but`, …) are still incomplete.
+> **A content-filtering pattern never matches.** `{"detail":{"amount":[{"numeric":[">",100]}]}}`
+> is stored, the rule looks correct in `DescribeRule`, and no event ever
+> satisfies it. Filter on exact `source`, `detail-type` and `detail` values, and
+> do the rest in the target.
 
----
-
-## Notes
-
-- **Target fan-out.** `PutEvents` evaluates exact-match rule patterns and delivers matching
-  events to every target type listed above. A target ARN naming any other service is
-  **rejected by `PutTargets`** with a `FailedEntries` entry carrying `ErrorCode:
-  UnsupportedTargetType`, rather than being accepted and silently dropped at delivery time.
-  This is a deliberate divergence from AWS, where all ~20 target types work: an honest
-  refusal is preferred to a rule that provisions cleanly and never fires.
-- **Input transformation.** `Input`, `InputPath` and `InputTransformer` are applied before
-  delivery, and a target may set at most one of them (as on AWS). `InputPath` and
-  `InputTransformer.InputPathsMap` accept the JSONPath subset AWS uses: `$`, dotted member
-  access and array indexing. `InputTransformer` templates may reference
-  `<aws.events.rule-name>`, `<aws.events.rule-arn>`, `<aws.events.event.json>` and
-  `<aws.events.event.ingestion-time>`.
-- **Event bus targets.** A rule may target another event bus. The event is republished
-  there through `PutEvents` carrying the **original** `source`, `detail-type`, `detail` and
-  `resources`, so a rule on the downstream bus can match on the fields a real rule filters
-  on. A target that sets `Input`, `InputPath` or `InputTransformer` replaces the forwarded
-  `detail` with the transformed payload and keeps the routing fields. Every hop is a nested
-  in-process call, so a chain is capped at 4 hops: a cycle of buses forwarding to each other
-  terminates with a delivery error naming the hop budget rather than exhausting the stack.
-- **Retries and dead-letter queues.** A failed delivery is retried up to the target's
-  `RetryPolicy.MaximumRetryAttempts` (capped at 5 retries) and stops early once the event is
-  older than `RetryPolicy.MaximumEventAgeInSeconds`, measured from the envelope's own `time`.
-  The event is then sent to the target's `DeadLetterConfig` SQS queue if one is configured,
-  and otherwise dropped with a logged warning. Retries are immediate: real EventBridge backs
-  off over up to 24 hours, which a synchronous emulator has nowhere to wait for — so in
-  practice the age limit only bites when a target itself is slow to fail.
-- **Delivery visibility.** Recent per-target outcomes (delivered / retried / dead-lettered /
-  dropped) are exposed to the web console at `GET /_overcast/eventbridge/deliveries`, and
-  each rule's targets with their resolved type at `GET /_overcast/eventbridge/rule-targets`.
-  Both are emulator-only console endpoints, not AWS APIs, and the outcome feed is a bounded
-  in-memory ring that does not survive a restart.
-- **Scheduled ECS targets.** Rate and AWS cron expressions are evaluated by an
-  in-process clock-driven engine. ECS/Fargate targets call ECS `RunTask` with the
-  configured target parameters.
-- **Cron expressions.** The full six-field AWS syntax is supported, shared with
-  EventBridge Scheduler: numbers, `,` lists, `-` ranges, `/` steps (including over a
-  range, `0-6/2`), the three-letter month and day names (`JAN`, `MON-FRI`,
-  case-insensitive), and the `L`, `LW`, `<day>W`, `<day>L` and `<day>#<n>` day
-  specifiers. Day-of-week is AWS's 1-7 from Sunday, not Go's 0-6 from Sunday, so `1`
-  is Sunday and `7` is Saturday.
-
-  `PutRule` refuses an expression it cannot honour rather than storing a rule that
-  would never fire, and the error names the expression and the field at fault. The
-  five-field Unix form is the common mistake and AWS refuses it too — every five
-  minutes is `cron(*/5 * * * ? *)`, not `cron(*/5 * * * *)`.
-- **Service-originated events.** A handful of emulated services publish their own events onto
-  the default bus, the way real AWS services do on a customer's behalf: CloudWatch alarms
-  (`CloudWatch Alarm State Change`, every transition), S3 (`Object Created` / `Object Deleted`,
-  when a bucket's `EventBridgeConfiguration` is set), EC2 (`EC2 Instance State-change
-  Notification`, every time an instance's state changes — including its first transition into
-  `pending`), ECS (`ECS Task State Change`, every time a task's `lastStatus` changes), and Step
-  Functions (`Step Functions Execution Status Change`, source `aws.states`, every time a
-  standard-workflow execution's status changes — RUNNING on start, then SUCCEEDED, FAILED,
-  TIMED_OUT or ABORTED on completion; the FAILED/TIMED_OUT detail carries the execution's
-  `error`/`cause`). Real AWS emits substantially more service-originated events than these five;
-  a rule matching one of those will never fire here — see
-  [#758](https://github.com/overcast-sh/overcast/issues/758) (closed out by
-  [#1225](https://github.com/overcast-sh/overcast/pull/1225) and
-  [#1221](https://github.com/overcast-sh/overcast/issues/1221)).
-- **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
-  has not been explicitly created.
-- **CDK compatible management plane.** Sufficient for CDK deployments that create buses,
-  rules, and targets, including scheduled ECS/Fargate task target metadata.
+> [!IMPORTANT]
+> A `cron(...)` expression takes AWS's **six** fields, and day-of-week is 1-7
+> from Sunday. The five-field Unix form is refused, as it is on AWS: every five
+> minutes is `cron(*/5 * * * ? *)`. `L`, `LW`, `<day>W`, `<day>L`, `<day>#<n>`
+> and the three-letter month and day names all work.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -107,5 +94,8 @@ Per-operation status, notes and AWS API links: [EventBridge operations](eventbri
 
 ## Related
 
+- [Scheduler](./scheduler.md) — the same target dispatcher, on a clock
+- [Pipes](./pipes.md) — point-to-point source → target wiring
+- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

@@ -1,9 +1,8 @@
 ---
 title: "Scheduler — Amazon EventBridge Scheduler"
-description: "EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an unmodified SDK or aws scheduler CLI call reaches it. This implementation focuses on schedule groups,..."
+description: "Schedules and schedule groups with a clock-driven engine that dispatches to the same eight target types EventBridge rules reach."
 section: "Service Reference"
 tags:
-  - amazon
   - docs
   - eventbridge
   - scheduler
@@ -12,136 +11,73 @@ tags:
 
 # Scheduler — Amazon EventBridge Scheduler
 
-EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an
-unmodified SDK or `aws scheduler …` call reaches it. This implementation focuses
-on schedule groups, schedules, tagging, and clock-driven target dispatch to
-every target type EventBridge rules reach.
+Schedules and groups, with a clock-driven engine that fires them into the same
+eight target types EventBridge rules reach.
 
----
+**Status:** ⚠️ Partial
 
-## Behavior Notes
+## Quick start
 
-- Request paths — AWS's own bindings, taken from the pinned Smithy model:
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-  | Operation | Binding |
-  | --- | --- |
-  | `CreateSchedule` | `POST /schedules/{Name}` — `GroupName` in the body |
-  | `GetSchedule` | `GET /schedules/{Name}?groupName=` |
-  | `UpdateSchedule` | `PUT /schedules/{Name}` — `GroupName` in the body |
-  | `DeleteSchedule` | `DELETE /schedules/{Name}?groupName=` |
-  | `ListSchedules` | `GET /schedules?ScheduleGroup=` |
-  | `CreateScheduleGroup` | `POST /schedule-groups/{Name}` |
-  | `GetScheduleGroup` | `GET /schedule-groups/{Name}` |
-  | `DeleteScheduleGroup` | `DELETE /schedule-groups/{Name}` |
-  | `ListScheduleGroups` | `GET /schedule-groups` |
-  | `TagResource` / `UntagResource` / `ListTagsForResource` | `POST` / `DELETE` / `GET /tags/{ResourceArn}` |
+QUEUE=$(aws sqs create-queue --queue-name jobs --query QueueUrl --output text)
+ARN=$(aws sqs get-queue-attributes --queue-url "$QUEUE" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text)
 
-  A schedule is addressed by name alone; its group is never a path segment.
-  `/tags/{ResourceArn}` is shared with API Gateway, EKS and Pipes, and is
-  dispatched on the `scheduler` segment of the resource ARN.
+aws scheduler create-schedule --name tick \
+  --schedule-expression 'rate(1 minute)' \
+  --flexible-time-window Mode=OFF \
+  --target "Arn=$ARN,RoleArn=arn:aws:iam::000000000000:role/scheduler"
 
-  Releases up to and including `0.0.1-alpha.33` served these operations under an
-  emulator-invented `/_scheduler/` prefix instead, so every SDK and CLI call
-  answered `501`. That prefix has been removed rather than kept as an alias.
-- Default schedule group:
-  - `default` is auto-seeded and cannot be deleted.
-  - `DeleteScheduleGroup` deletes the schedules inside the group, as AWS does.
-- Supported schedule expressions:
-  - `rate(...)`
-  - `at(...)`
-  - `cron(...)` (AWS-style 6-field form). Each field takes `*`, `?`, a value,
-    a comma-separated list, a range (`9-17`) or a step (`*/5`, `0/15`,
-    `9-17/4`); a step over a range walks that range. The `L`, `W` and `#` day
-    specifiers and the three-letter month and day names are **not** supported,
-    and an expression using one is refused by `CreateSchedule`.
-  - A cron expression is evaluated by advancing field by field, so a sparse
-    schedule — yearly, say — costs the same per tick as a frequent one.
-- Validation on `CreateSchedule` and `UpdateSchedule`:
-  - The schedule and group names must match the model's constraint — 1–64
-    characters of `[0-9a-zA-Z-_.]`.
-  - The `ScheduleExpression` must be one the engine can evaluate. An expression
-    it cannot parse is refused up front rather than accepted and reported as an
-    engine error on every tick, which would leave a schedule that reads
-    correctly in `GetSchedule` and never fires.
-  - `FlexibleTimeWindow.Mode` is required and must be `OFF` or `FLEXIBLE`;
-    `State` must be `ENABLED` or `DISABLED`.
-- `UpdateSchedule` **replaces**, as AWS's does. The request carries the whole
-  schedule, so any optional member the caller omits — `Description`,
-  `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything
-  inside `Target` — ends up unset, and `State` returns to its `ENABLED`
-  default. Read the schedule, change what you mean to change, and send the
-  result back. What survives is the schedule's identity, again as on AWS: its
-  name, group, ARN and `CreationDate`.
+aws sqs receive-message --queue-url "$QUEUE" --wait-time-seconds 20
+```
 
-  Releases up to and including `0.0.1-alpha.33` merged instead, keeping an
-  omitted member at its stored value.
-- Pagination and filtering:
-  - `ListSchedules` and `ListScheduleGroups` honour `MaxResults` (1–100, a full
-    page when omitted) and `NextToken`.
-  - `ListSchedules` filters on `NamePrefix` and `State`; `ListScheduleGroups`
-    filters on `NamePrefix`.
-  - A `NextToken` that cannot be decoded is answered with a
-    `ValidationException` rather than silently restarting at the first page,
-    which an SDK paginator would read as a legitimate page and loop on.
-  - Both operations return the full stored object rather than AWS's
-    `ScheduleSummary`/`ScheduleGroupSummary` shape. That is a superset, so an
-    SDK deserialises it unchanged.
-- Background scheduler engine:
-  - Polls on a 1-second clock ticker.
-  - Uses the injected clock, so integration tests can advance time quickly.
-  - A tick hands each due schedule to a pool of delivery workers rather than
-    delivering it on the tick itself, so a target that is slow, unreachable or
-    working through its `RetryPolicy` delays only its own schedule. A schedule
-    is never in flight twice, so its firings stay in order; a tick that finds a
-    schedule still mid-delivery leaves it due and skips it.
-- Target dispatch:
-  - Delivery goes through the same internal dispatcher EventBridge rules and
-    Pipes use, so a target ARN behaves identically on a schedule and on a rule.
-    A firing is replayed against the emulator's own API, which means a missing
-    function, queue, topic, stream or state machine produces that service's own
-    AWS error rather than a silent no-op.
-  - Supported target types: **Lambda** (async invoke), **SQS**, **SNS**,
-    **Step Functions**, **Kinesis**, **Firehose**, **ECS** (`RunTask`) and
-    **EventBridge event buses** (`PutEvents`).
-  - Target parameters honoured: `SqsParameters.MessageGroupId`,
-    `KinesisParameters.PartitionKey`, `EventBridgeParameters` (`Source` and
-    `DetailType`), and `EcsParameters` (`TaskDefinitionArn`, `TaskCount`,
-    `LaunchType`, `PlatformVersion`, `Group`, `NetworkConfiguration`). The
-    remainder of AWS's `EcsParameters` shape — tags, placement constraints and
-    strategy, capacity provider strategy — is accepted and ignored.
-  - `Target.Input` is delivered verbatim. A target with no `Input` receives a
-    generated `{"source":"aws.scheduler","time":…,"id":…}` envelope.
-  - **A target type Overcast cannot fire is rejected at `CreateSchedule` and
-    `UpdateSchedule`** with a `ValidationException`, rather than being accepted
-    and dropped at fire time. This is stricter than AWS, which delivers to
-    ~270 services through templated and universal (`arn:aws:scheduler:::aws-sdk:…`)
-    targets; the refusal fails locally and loudly instead of leaving a schedule
-    that looks correct and never fires. An ECS target without
-    `EcsParameters.TaskDefinitionArn`, and an event-bus target without
-    `EventBridgeParameters`, are refused for the same reason.
-- Retries and dead-lettering:
-  - `RetryPolicy.MaximumRetryAttempts` is honoured, capped at **6 total
-    attempts**. Retries run back to back on the delivery worker that owns the
-    firing, with no backoff, so AWS's default of 185 attempts is not replayed:
-    a target with no `RetryPolicy` is attempted **once**. Other schedules are
-    unaffected while a firing retries. EventBridge rule targets behave the
-    same way.
-  - `RetryPolicy.MaximumEventAgeInSeconds` is honoured — once the payload is
-    older than the budget, no further attempt is made.
-  - `DeadLetterConfig.Arn` is honoured for SQS queues, which is the only
-    dead-letter target AWS supports. The payload is sent to the queue after the
-    final failed attempt.
-  - A firing that cannot be delivered and has no dead-letter queue is logged at
-    `ERROR` with the sink's own message — it is never dropped silently.
-- Not implemented:
-  - `FlexibleTimeWindow` is stored and returned, but a schedule always fires at
-    its exact due tick rather than being jittered across the window.
-  - `ScheduleExpressionTimezone` is stored and returned, but `cron(...)` and
-    `at(...)` are evaluated against the emulator's own clock rather than the
-    named zone.
-  - `KmsKeyArn` is stored and returned, but nothing is encrypted with it — the
-    emulator holds schedule data in plaintext, so no `Decrypt` call is ever
-    made against the key.
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Schedules and groups | Full CRUD and tagging. `default` is auto-seeded and cannot be deleted; deleting a group deletes the schedules in it, as AWS does. |
+| Expressions | `rate(...)`, `at(...)` and AWS's six-field `cron(...)` — the same parser EventBridge rules use, including `L`, `LW`, `<day>W`, `<day>L`, `<day>#<n>` and the three-letter month and day names. |
+| Engine | A 1-second ticker hands each due schedule to a pool of delivery workers, so a slow or retrying target delays only its own schedule. A schedule is never in flight twice, so its firings stay in order. |
+| Targets | Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS `RunTask` and EventBridge event buses — through the same dispatcher EventBridge rules and Pipes use, so a target ARN behaves identically wherever it is used. |
+| Target parameters | `SqsParameters.MessageGroupId`, `KinesisParameters.PartitionKey`, `EventBridgeParameters` (`Source`, `DetailType`), and `EcsParameters` (`TaskDefinitionArn`, `TaskCount`, `LaunchType`, `PlatformVersion`, `Group`, `NetworkConfiguration`). |
+| Payload | `Target.Input` is delivered verbatim; a target with none receives a generated `{"source":"aws.scheduler","time":…,"id":…}` envelope. |
+| Retries | `RetryPolicy.MaximumRetryAttempts` and `MaximumEventAgeInSeconds`, with a `DeadLetterConfig` SQS queue after the final failed attempt. |
+| Pagination | `MaxResults` (1–100) and `NextToken` on both list operations; `NamePrefix` and `State` filters on `ListSchedules`. |
+
+## Differences from AWS
+
+| Area | Overcast | AWS |
+| --- | --- | --- |
+| Target types | Eight, validated at `CreateSchedule`/`UpdateSchedule` | ~270, via templated and universal (`aws-sdk:`) targets |
+| Retries | Back to back, no backoff, capped at 6 total attempts. No `RetryPolicy` means **one** attempt | Up to 185 attempts with backoff |
+| `FlexibleTimeWindow` | Stored and returned; a schedule always fires at its exact due tick | Jittered across the window |
+| `ScheduleExpressionTimezone` | Stored and returned; expressions evaluate against the emulator's clock | Evaluated in the named zone |
+| `KmsKeyArn` | An association only; schedule data is held in plaintext | Encrypted |
+| List responses | Return the full stored object rather than AWS's summary shape — a superset, so an SDK deserialises it unchanged | `ScheduleSummary` / `ScheduleGroupSummary` |
+
+A target type Overcast cannot fire is **rejected at create and update** with a
+`ValidationException`, rather than accepted and dropped at fire time — as are an
+ECS target without `EcsParameters.TaskDefinitionArn` and an event-bus target
+without `EventBridgeParameters`. The refusal fails locally and loudly instead of
+leaving a schedule that reads correctly in `GetSchedule` and never fires. An
+expression the engine cannot evaluate is refused for the same reason.
+
+## Gotchas
+
+> [!WARNING]
+> **`UpdateSchedule` replaces, as AWS's does.** The request carries the whole
+> schedule, so any optional member you omit — `Description`,
+> `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything
+> inside `Target` — ends up unset, and `State` returns to its `ENABLED` default.
+> Read the schedule, change what you mean to change, and send the result back.
+> Only the name, group, ARN and `CreationDate` survive regardless.
+
+> [!IMPORTANT]
+> `cron(...)` takes AWS's **six** fields, and day-of-week is 1-7 from Sunday, not
+> 0-6 — so `1` is Sunday and `7` is Saturday. The five-field Unix form is refused,
+> as it is on AWS: every five minutes is `cron(*/5 * * * ? *)`.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -154,6 +90,8 @@ Per-operation status, notes and AWS API links: [Scheduler operations](scheduler/
 
 ## Related
 
+- [EventBridge](./eventbridge.md) — the same targets, driven by event patterns
+- [Pipes](./pipes.md) — the same targets, driven by a source
 - [AWS API reference](https://docs.aws.amazon.com/scheduler/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

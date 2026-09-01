@@ -1,95 +1,91 @@
 ---
-title: "EventBridge Pipes — endpoint support"
-description: "Notes"
+title: "Pipes — Amazon EventBridge Pipes"
+description: "Point-to-point wiring from three source types through an optional Lambda enrichment to seven targets, with real polling, retries and dead-lettering."
 section: "Service Reference"
 tags:
   - docs
-  - endpoint
   - eventbridge
   - pipes
   - services
-  - support
 ---
 
-# EventBridge Pipes — endpoint support
+# Pipes — Amazon EventBridge Pipes
 
-> AWS docs: [EventBridge Pipes API Reference](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/Welcome.html)
+Point-to-point wiring from a source, through an optional Lambda enrichment, to a
+target — polled and delivered for real.
 
-EventBridge Pipes uses REST-JSON under the `/v1/pipes` path prefix.
-Overcast supports full pipe CRUD, three source types, a Lambda enrichment step, and seven
-target types.
+**Status:** ⚠️ Partial
 
----
+## Quick start
 
-## Supported wiring
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+SRC=$(aws sqs create-queue --queue-name inbox --query QueueUrl --output text)
+SRC_ARN=$(aws sqs get-queue-attributes --queue-url "$SRC" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text)
+DST=$(aws sns create-topic --name fanout --query TopicArn --output text)
+
+aws pipes create-pipe --name inbox-to-topic \
+  --role-arn arn:aws:iam::000000000000:role/pipes \
+  --source "$SRC_ARN" --target "$DST"
+
+aws sqs send-message --queue-url "$SRC" --message-body '{"id":1}'
+aws pipes describe-pipe --name inbox-to-topic
+```
+
+## What works
 
 | Leg | Supported | Refused at `CreatePipe`/`UpdatePipe` |
 | --- | --- | --- |
-| **Source** | DynamoDB Streams, Kinesis streams, SQS queues | everything else, including Amazon MQ and Kafka |
-| **Enrichment** | a Lambda function (optional) | API destinations, API Gateway, Step Functions |
+| **Source** | DynamoDB Streams, Kinesis streams, SQS queues | Everything else, including Amazon MQ and Kafka |
+| **Enrichment** | A Lambda function (optional) | API destinations, API Gateway, Step Functions |
 | **Target** | Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, EventBridge event bus | ECS tasks, Batch, CloudWatch Logs, Redshift Data, SageMaker, Timestream, API destinations |
 
-A combination Overcast cannot run is rejected with a `ValidationException` naming the offending
-field, so a pipe is never stored in a state where it would silently do nothing.
+A combination Overcast cannot run is rejected with a `ValidationException` naming
+the offending field, so a pipe is never stored in a state where it would silently
+do nothing.
 
-## Notes
+| Area | Behaviour |
+| --- | --- |
+| Batching | A source produces a JSON array of records. A target with a batch API receives one entry per record; Lambda and Step Functions receive the whole array in one request, as on AWS. `BatchSize` applies to the polled sources. |
+| Enrichment | Invoked synchronously; its return value *replaces* the batch. An empty response (`""`, `{}`, `[]`, `null`) drops the batch without invoking the target; `[{}]` invokes the target with an empty payload. |
+| Input transformation | `EnrichmentParameters.InputTemplate` and `TargetParameters.InputTemplate` are applied per record, over the JSON-path subset AWS accepts plus the `aws.pipes.*` reserved variables. |
+| Polling | Kinesis and SQS sources are polled once per second on the emulator's clock. |
+| Partial batch responses | A **Lambda target's** response is read for `batchItemFailures`, and only the records it names are redelivered. |
+| Lifecycle | State transitions (`CREATING`→`RUNNING`, `STOPPING`→`STOPPED`, …) happen asynchronously with a short delay; setting `DesiredState` on update triggers one. |
 
-- **Batches.** A source produces a JSON array of records. A target with a batch API (SQS, SNS,
-  Kinesis, Firehose, EventBridge bus) receives one entry per record; Lambda and Step Functions
-  receive the whole array in a single request, as they do on AWS. `BatchSize` applies to the
-  polled sources; a DynamoDB Streams source is driven one record at a time by the internal event
-  bus, so it always runs a batch of one.
-- **Enrichment.** The Lambda enrichment is invoked synchronously and its return value *replaces*
-  the batch. An empty response (`""`, `{}`, `[]`, `null`) drops the batch without invoking the
-  target; `[{}]` invokes the target with an empty payload.
-- **Input transformation.** `EnrichmentParameters.InputTemplate` and
-  `TargetParameters.InputTemplate` are applied to each record individually, over the JSON-path
-  subset AWS accepts plus the `aws.pipes.*` reserved variables.
-- **Polling.** Kinesis and SQS sources are polled once per second on the emulator's clock. An SQS
-  source retries by leaving failed messages to become visible again — AWS dead-letters an
-  SQS-sourced pipe through the *queue's own* `RedrivePolicy`, not `DeadLetterConfig`, so Overcast
-  does nothing further there.
-- **Stream retries and dead-lettering (Kinesis and DynamoDB Streams).** Both stream sources share
-  AWS's `MaximumRetryAttempts`/`DeadLetterConfig` shape and the same retry-then-dead-letter
-  contract, capped at 5 retries (unset means AWS's "retry until the record expires", which the cap
-  stands in for; an explicit `0` means one attempt). A Kinesis batch is retried by leaving the
-  shard cursor alone for one poll tick per attempt; a DynamoDB Streams batch has no cursor to leave
-  alone — it arrives over the internal event bus and is gone once the subscriber returns — so it is
-  retried in place instead. Once the retries are exhausted the batch is sent to the source's
-  `DeadLetterConfig` SQS queue or SNS topic if one is configured (reported as `dlq` on the delivery
-  feed), and otherwise reported as `failed` with a logged warning, and the cursor/subscription moves
-  on rather than blocking on the batch forever. Overcast dead-letters the source records themselves
-  rather than AWS's shard/sequence-range failure envelope — Lambda's own on-failure destination for
-  a Kinesis event source mapping sends only that metadata (`KinesisBatchInfo`: `shardId`,
-  `startSequenceNumber`, `endSequenceNumber`, `streamArn`), not the records, so a consumer re-reads
-  them from the stream before they expire. Overcast keeps no shard/sequence bookkeeping to build
-  that envelope from — for the DynamoDB source because delivery is bus-driven, and for Kinesis for
-  consistency with it — so the records are sent instead, which is what makes the batch replayable
-  without a second read. A `DeadLetterConfig` naming a destination that is not an SQS queue or an
-  SNS topic is refused at `CreatePipe`/`UpdatePipe` time rather than stored.
-- **Filtering is not emulated.** `SourceParameters.FilterCriteria` is rejected rather than stored
-  and ignored — filter inside a Lambda enrichment instead.
-- **`UpdatePipe` is `PUT /v1/pipes/{name}`**, as AWS routes it, and requires `RoleArn`.
-- **Async state machine.** Pipe state transitions (CREATING→RUNNING, UPDATING→RUNNING,
-  STOPPING→STOPPED, …) happen asynchronously with a short delay.
-- **Start/stop.** Setting `DesiredState` to `STOPPED` or `RUNNING` on update triggers the
-  appropriate state transition.
-- **Partial batch responses.** A **Lambda** target's response is read for a
-  `batchItemFailures` report, and the records it names are the only ones redelivered: an SQS source
-  deletes the rest and leaves the reported messages to become visible again, a Kinesis source moves
-  its shard cursor to just before the earliest reported record, and a DynamoDB Streams source
-  retries from that record onwards. A report Overcast cannot honour — invalid JSON, an empty or
-  missing `itemIdentifier`, an identifier naming a record that was not in the batch — retries the
-  whole batch and is logged with the reason. A pipe has no `FunctionResponseTypes` to opt in with,
-  so a response that never mentions `batchItemFailures` is left alone rather than second-guessed;
-  that is what keeps a target returning a non-JSON payload succeeding as it always did. **Two
-  places still do not report:** a *Step Functions* target, whose asynchronous `StartExecution` has
-  no response to read, and a Lambda **enrichment**, whose return value AWS defines as *replacing*
-  the batch rather than reporting on it. AWS offers no partial-batch reporting for any other target
-  type.
-- **Stored but not acted on.** `LogConfiguration`, `KmsKeyIdentifier` and `ParallelizationFactor`
-  have no effect. `RoleArn` is required, as AWS requires it, but is not evaluated — Overcast is not
-  a security boundary.
+## Differences from AWS
+
+| Area | Overcast | AWS |
+| --- | --- | --- |
+| `FilterCriteria` | Rejected outright rather than stored and ignored — filter inside a Lambda enrichment instead | Server-side filtering |
+| Stream retries | Capped at 5 retries (an explicit `0` means one attempt); unset means the cap, standing in for AWS's "retry until the record expires" | Retry until expiry |
+| Dead-letter payload | The source records themselves, which is what makes the batch replayable without a second read | A shard/sequence-range failure envelope |
+| DynamoDB Streams batching | Bus-driven one record at a time, so always a batch of one | `BatchSize` applies |
+| SQS dead-lettering | Left to the queue's own `RedrivePolicy`, as on AWS — `DeadLetterConfig` does not apply to an SQS source | Same |
+| `ParallelizationFactor` | Stored and never read | Honoured |
+| `LogConfiguration`, `KmsKeyIdentifier` | Not modelled — discarded on decode and absent from `DescribePipe` | Stored and honoured |
+| `RoleArn` | Required, as AWS requires it, but never evaluated | Enforced |
+
+Once a stream source's retries are exhausted the batch goes to the source's
+`DeadLetterConfig` SQS queue or SNS topic if one is configured, and is otherwise
+reported failed with a logged warning while the cursor moves on rather than
+blocking forever. A `DeadLetterConfig` naming anything but an SQS queue or SNS
+topic is refused at create and update time.
+
+## Gotchas
+
+> [!WARNING]
+> `LogConfiguration` and `KmsKeyIdentifier` are not merely inert — they are
+> dropped. A `DescribePipe` assertion that round-trips either field will fail.
+
+> [!NOTE]
+> Only a Lambda **target** reports partial batch failures. A Step Functions
+> target's asynchronous `StartExecution` has no response to read, and a Lambda
+> **enrichment**'s return value AWS defines as *replacing* the batch rather than
+> reporting on it. AWS offers no partial-batch reporting for any other target
+> type either.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -102,5 +98,8 @@ Per-operation status, notes and AWS API links: [Pipes operations](pipes/operatio
 
 ## Related
 
+- [EventBridge](./eventbridge.md) — the same targets, driven by event patterns
+- [Scheduler](./scheduler.md) — the same targets, driven by a clock
+- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
