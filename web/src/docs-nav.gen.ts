@@ -1452,7 +1452,7 @@ export const DOCS_NAV = [
     "path": "docs/services/acm.md",
     "href": "services/acm.md",
     "title": "ACM — AWS Certificate Manager",
-    "description": "AWS Certificate Manager uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix CertificateManager..",
+    "description": "Certificate records for stacks that need an ARN. A requested certificate is ISSUED immediately — no DNS or email validation, and no key material is generated.",
     "section": "Service Reference",
     "tags": [
       "acm",
@@ -1470,8 +1470,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -2318,7 +2328,7 @@ export const DOCS_NAV = [
     "path": "docs/services/bedrock.md",
     "href": "services/bedrock.md",
     "title": "Bedrock — Amazon Bedrock Runtime",
-    "description": "Amazon Bedrock Runtime uses the REST JSON protocol, served at AWS's own /model/{modelId}/ inference paths. No model is invoked.",
+    "description": "Bedrock Runtime answers Converse and InvokeModel from a canned response. No model is emulated, so token counts and latency are zero and the text is fixed.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2335,8 +2345,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -3141,7 +3161,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cognito.md",
     "href": "services/cognito.md",
     "title": "Cognito — Amazon Cognito User Pools",
-    "description": "Cognito User Pools (Identity Provider) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix...",
+    "description": "User pools with real RS256 JWTs, a JWKS endpoint, OIDC discovery, a browser hosted-UI, TOTP and WebAuthn MFA, and Lambda triggers. Identity pools are not emulated.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -3159,68 +3179,33 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "User Pool operations",
-        "id": "user-pool-operations"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "User Pool Client operations",
-        "id": "user-pool-client-operations"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "User operations",
-        "id": "user-operations"
+        "text": "Tokens and discovery",
+        "id": "tokens-and-discovery"
       },
       {
         "depth": 2,
-        "text": "Auth / Token operations",
-        "id": "auth-token-operations"
+        "text": "Managed login",
+        "id": "managed-login"
       },
       {
         "depth": 2,
-        "text": "Group operations",
-        "id": "group-operations"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "User Pool Domain operations",
-        "id": "user-pool-domain-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
-      },
-      {
-        "depth": 2,
-        "text": "User import (emulator-only)",
-        "id": "user-import-emulator-only"
-      },
-      {
-        "depth": 3,
-        "text": "CLI",
-        "id": "cli"
-      },
-      {
-        "depth": 3,
-        "text": "HTTP endpoint",
-        "id": "http-endpoint"
-      },
-      {
-        "depth": 4,
-        "text": "Response",
-        "id": "response"
-      },
-      {
-        "depth": 4,
-        "text": "Status mapping",
-        "id": "status-mapping"
-      },
-      {
-        "depth": 4,
-        "text": "Behaviour",
-        "id": "behaviour"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -3231,6 +3216,86 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cognito/examples.md",
+    "href": "services/cognito/examples.md",
+    "title": "Cognito examples",
+    "description": "Import users from a real AWS user pool into a local one, by CLI or over HTTP, including the status mapping and what does not come across.",
+    "section": "Service Reference",
+    "tags": [
+      "cognito",
+      "docs",
+      "examples",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Cognito examples",
+        "id": "cognito-examples"
+      },
+      {
+        "depth": 2,
+        "text": "Import users from a real AWS pool",
+        "id": "import-users-from-a-real-aws-pool"
+      },
+      {
+        "depth": 3,
+        "text": "Status mapping",
+        "id": "status-mapping"
+      },
+      {
+        "depth": 3,
+        "text": "What comes across, and what does not",
+        "id": "what-comes-across-and-what-does-not"
+      },
+      {
+        "depth": 2,
+        "text": "Import over HTTP",
+        "id": "import-over-http"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cognito/limitations.md",
+    "href": "services/cognito/limitations.md",
+    "title": "Cognito limitations",
+    "description": "Which Lambda triggers fire on which call and which do not, what the Smithy RPC v2 path misses, and the emulator-only routes that have no AWS counterpart.",
+    "section": "Service Reference",
+    "tags": [
+      "cognito",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Cognito limitations",
+        "id": "cognito-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Lambda triggers",
+        "id": "lambda-triggers"
+      },
+      {
+        "depth": 2,
+        "text": "Wire protocols",
+        "id": "wire-protocols"
+      },
+      {
+        "depth": 2,
+        "text": "Emulator-only routes",
+        "id": "emulator-only-routes"
+      },
+      {
+        "depth": 2,
+        "text": "Everything else",
+        "id": "everything-else"
       }
     ]
   },
@@ -4592,7 +4657,7 @@ export const DOCS_NAV = [
     "path": "docs/services/iam.md",
     "href": "services/iam.md",
     "title": "IAM — Identity and Access Management",
-    "description": "IAM uses the AWS Query protocol (POST / with form-encoded body). Actions are dispatched by the Action parameter. Overcast emulates IAM resource management (users, roles, groups,...",
+    "description": "Users, roles, groups, policies and instance profiles for IaC compatibility, plus a real policy simulator. Enforcement is off by default and covers identity policies only.",
     "section": "Service Reference",
     "tags": [
       "access",
@@ -4610,28 +4675,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Deletes enforce dependencies",
-        "id": "deletes-enforce-dependencies"
-      },
-      {
-        "depth": 2,
-        "text": "Policy simulation",
-        "id": "policy-simulation"
-      },
-      {
-        "depth": 2,
-        "text": "Permissions boundaries",
-        "id": "permissions-boundaries"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Request-time enforcement (opt-in)",
         "id": "request-time-enforcement-opt-in"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4642,6 +4707,51 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/iam/limitations.md",
+    "href": "services/iam/limitations.md",
+    "title": "IAM limitations",
+    "description": "What the IAM policy evaluator covers and what it refuses to guess at, how permissions boundaries behave, and what request-time enforcement does not see.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "iam",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "IAM limitations",
+        "id": "iam-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "What the evaluator covers",
+        "id": "what-the-evaluator-covers"
+      },
+      {
+        "depth": 2,
+        "text": "What it will not guess",
+        "id": "what-it-will-not-guess"
+      },
+      {
+        "depth": 2,
+        "text": "Permissions boundaries",
+        "id": "permissions-boundaries"
+      },
+      {
+        "depth": 2,
+        "text": "What enforcement does not see",
+        "id": "what-enforcement-does-not-see"
+      },
+      {
+        "depth": 2,
+        "text": "Entities that are not modelled",
+        "id": "entities-that-are-not-modelled"
       }
     ]
   },
@@ -4771,6 +4881,41 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/services/iam/troubleshooting.md",
+    "href": "services/iam/troubleshooting.md",
+    "title": "IAM troubleshooting",
+    "description": "Symptom, cause and fix for the IAM errors that stop a local run: DeleteConflict on teardown, DELETE_FAILED stacks, and AccessDenied once enforcement is on.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "iam",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "IAM troubleshooting",
+        "id": "iam-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "DeleteConflict` (409) deleting a user, role, group or policy",
+        "id": "deleteconflict-409-deleting-a-user-role-group-or-policy"
+      },
+      {
+        "depth": 2,
+        "text": "DELETE_FAILED` tearing down a CloudFormation stack",
+        "id": "delete-failed-tearing-down-a-cloudformation-stack"
+      },
+      {
+        "depth": 2,
+        "text": "AccessDenied` after switching enforcement on",
+        "id": "accessdenied-after-switching-enforcement-on"
+      }
+    ]
+  },
+  {
     "path": "docs/services/kinesis.md",
     "href": "services/kinesis.md",
     "title": "Kinesis — Amazon Kinesis Data Streams",
@@ -4841,7 +4986,7 @@ export const DOCS_NAV = [
     "path": "docs/services/kms.md",
     "href": "services/kms.md",
     "title": "KMS — Key Management Service",
-    "description": "KMS accepts AWS JSON 1.1 requests at POST / with X-Amz-Target: TrentService.\u003cOperationName\u003e and Smithy RPC v2 CBOR requests at /service/kms/operation/\u003cOperationName\u003e with...",
+    "description": "Real symmetric and asymmetric cryptography — AES-256-GCM encrypt/decrypt, data keys, RSA sign/verify and HMAC — over keys that live only in this emulator.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -4856,6 +5001,21 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "KMS — Key Management Service",
         "id": "kms-key-management-service"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -5415,7 +5575,7 @@ export const DOCS_NAV = [
     "path": "docs/services/organizations.md",
     "href": "services/organizations.md",
     "title": "Organizations — AWS Organizations",
-    "description": "Policies are stored and returned faithfully; DescribeOrganization is a fixed stub, and nothing is ever attached or enforced.",
+    "description": "Policy CRUD and tagging, stored and returned faithfully. DescribeOrganization is a fixed stub; nothing is ever attached, and no policy takes effect.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -5431,13 +5591,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6107,53 +6272,41 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/secretsmanager.md",
     "href": "services/secretsmanager.md",
-    "title": "Secrets Manager — endpoint support",
-    "description": "Generated for Overcast. See also: AWS Secrets Manager API Reference",
+    "title": "Secrets Manager — AWS Secrets Manager",
+    "description": "Versioned secrets with staging labels, and rotation that really invokes your rotation Lambda through all four steps. Values are stored in plaintext.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "manager",
       "secrets",
       "secretsmanager",
-      "services",
-      "support"
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "Secrets Manager — endpoint support",
-        "id": "secrets-manager-endpoint-support"
+        "text": "Secrets Manager — AWS Secrets Manager",
+        "id": "secrets-manager-aws-secrets-manager"
       },
       {
         "depth": 2,
-        "text": "Protocol",
-        "id": "protocol"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
-      },
-      {
-        "depth": 3,
         "text": "Rotation",
         "id": "rotation"
       },
       {
-        "depth": 3,
-        "text": "Resource policies",
-        "id": "resource-policies"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6226,7 +6379,7 @@ export const DOCS_NAV = [
     "path": "docs/services/ses.md",
     "href": "services/ses.md",
     "title": "SES — Simple Email Service",
-    "description": "SES supports both the v1 Query protocol (form-encoded POST with Action field, XML responses) and the v2 REST-JSON protocol (path-based routing, JSON request/response bodies).",
+    "description": "Send mail with the v1 or v2 API and read it in the console's Inbox. Nothing leaves the machine, and every identity is verified the moment it is created.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6244,13 +6397,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Web console",
-        "id": "web-console"
+        "text": "What lands in the Inbox",
+        "id": "what-lands-in-the-inbox"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6338,7 +6501,7 @@ export const DOCS_NAV = [
     "path": "docs/services/shield.md",
     "href": "services/shield.md",
     "title": "Shield — AWS Shield",
-    "description": "AWS Shield (DDoS protection) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSShield_20160616..",
+    "description": "Protection records for stacks that declare AWS::Shield resources. Protections are stored and returned faithfully; no traffic is inspected, filtered or mitigated.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -6354,8 +6517,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6418,7 +6591,7 @@ export const DOCS_NAV = [
     "path": "docs/services/sns.md",
     "href": "services/sns.md",
     "title": "SNS — Simple Notification Service",
-    "description": "SNS uses a query-string or JSON API. Topics are identified by ARN: arn:aws:sns:us-east-1:000000000000:\u003ctopic-name\u003e",
+    "description": "Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and subscription dead-letter queues. Subscriptions confirm themselves; FIFO ordering is not emulated.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6436,8 +6609,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -6448,6 +6636,51 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/sns/limitations.md",
+    "href": "services/sns/limitations.md",
+    "title": "SNS limitations",
+    "description": "Every way Overcast's SNS diverges from AWS: subscription confirmation, FIFO topics, delivery failure semantics, and what CloudFormation does with a topic.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "limitations",
+      "services",
+      "sns"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SNS limitations",
+        "id": "sns-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Subscriptions",
+        "id": "subscriptions"
+      },
+      {
+        "depth": 2,
+        "text": "FIFO topics",
+        "id": "fifo-topics"
+      },
+      {
+        "depth": 2,
+        "text": "Delivery to Lambda",
+        "id": "delivery-to-lambda"
+      },
+      {
+        "depth": 2,
+        "text": "What happens to a failed delivery",
+        "id": "what-happens-to-a-failed-delivery"
+      },
+      {
+        "depth": 2,
+        "text": "CloudFormation",
+        "id": "cloudformation"
       }
     ]
   },
@@ -6510,7 +6743,7 @@ export const DOCS_NAV = [
     "path": "docs/services/sqs.md",
     "href": "services/sqs.md",
     "title": "SQS — Simple Queue Service",
-    "description": "SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query requests share the root endpoint; the action is identified by the Action query parameter or the...",
+    "description": "Standard and FIFO queues with long polling, visibility timeouts, dead-letter redrive and CloudWatch metrics. Queue URLs are minted per request, on the origin you called.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6528,13 +6761,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
         "text": "Queue URLs and endpoint resolution",
         "id": "queue-urls-and-endpoint-resolution"
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6601,43 +6844,37 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/ssm.md",
     "href": "services/ssm.md",
-    "title": "SSM Parameter Store — endpoint support",
-    "description": "Generated for Overcast. See also: AWS SSM Parameter Store API Reference",
+    "title": "SSM Parameter Store — AWS Systems Manager",
+    "description": "Parameter Store only: put, get, path queries, history and tags. SecureString values are masked without WithDecryption but are never actually encrypted.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "parameter",
       "services",
       "ssm",
       "store",
-      "support"
+      "systems-manager"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "SSM Parameter Store — endpoint support",
-        "id": "ssm-parameter-store-endpoint-support"
+        "text": "SSM Parameter Store — AWS Systems Manager",
+        "id": "ssm-parameter-store-aws-systems-manager"
       },
       {
         "depth": 2,
-        "text": "Protocol",
-        "id": "protocol"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6792,36 +7029,36 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/sts.md",
     "href": "services/sts.md",
-    "title": "STS — endpoint support",
-    "description": "Generated for Overcast. See also: AWS STS API Reference",
+    "title": "STS — Security Token Service",
+    "description": "Temporary credentials on demand: every call mints fresh ASIA-prefixed fake credentials without verifying anything. AssumeRole records the session for opt-in IAM enforcement.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
+      "security",
       "services",
       "sts",
-      "support"
+      "token"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "STS — endpoint support",
-        "id": "sts-endpoint-support"
+        "text": "STS — Security Token Service",
+        "id": "sts-security-token-service"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6955,7 +7192,7 @@ export const DOCS_NAV = [
     "path": "docs/services/waf.md",
     "href": "services/waf.md",
     "title": "WAF — AWS WAF v2",
-    "description": "Metadata-only AWS WAF v2 Web ACL CRUD for SDK and CloudFormation workflows; rules are stored but are not evaluated or enforced.",
+    "description": "Metadata-only WAFv2 Web ACL CRUD for SDK and CloudFormation workflows. Rules are stored and returned verbatim; no request is ever evaluated against them.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -6971,13 +7208,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Web UI and system map",
-        "id": "web-ui-and-system-map"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,

@@ -1,6 +1,6 @@
 ---
 title: "WAF — AWS WAF v2"
-description: "Metadata-only AWS WAF v2 Web ACL CRUD for SDK and CloudFormation workflows; rules are stored but are not evaluated or enforced."
+description: "Metadata-only WAFv2 Web ACL CRUD for SDK and CloudFormation workflows. Rules are stored and returned verbatim; no request is ever evaluated against them."
 section: "Service Reference"
 tags:
   - aws
@@ -11,38 +11,45 @@ tags:
 
 # WAF — AWS WAF v2
 
-AWS WAF v2 (Web Application Firewall) uses the `application/x-amz-json-1.1`
-protocol. Operations are identified by the `X-Amz-Target` header with the
-prefix `AWSWAF_20190729.`.
+Web ACL records for SDK and `AWS::WAFv2::WebACL` workflows. Rules are stored
+verbatim and never evaluated — nothing is allowed or blocked.
 
-Overcast provides a deliberately small, metadata-only WAFv2 control plane. It
-can create, read, list, and delete Web ACL records for SDK and
-`AWS::WAFv2::WebACL` CloudFormation workflows. Web ACL configuration is
-persisted as metadata only: Overcast does not evaluate it or allow/block
-requests to API Gateway, CloudFront, or Application Load Balancers.
+**Status:** ⚠️ Partial
 
----
+## Quick start
 
-## Notes
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-- Target dispatch header: `X-Amz-Target: AWSWAF_20190729.<Operation>`.
-- Supported operations: `CreateWebACL`, `GetWebACL`, `ListWebACLs`, and
-  `DeleteWebACL`.
-- `DeleteWebACL` accepts `LockToken`, but does not validate it.
-- All other WAFv2 operations return a JSON `501 Not Implemented` error response.
-- WAF Classic (`AWSWAF_20150824`) is not implemented and returns `501`.
+aws wafv2 create-web-acl \
+  --name api-acl --scope REGIONAL \
+  --default-action Allow={} \
+  --visibility-config SampledRequestsEnabled=false,CloudWatchMetricsEnabled=false,MetricName=api
 
-## Web UI and system map
+aws wafv2 list-web-acls --scope REGIONAL
+```
 
-The Web UI provides create, list, detail, and delete views for WAFv2 Web ACL
-metadata. Creation uses an `Allow` default action, no rules, and disabled
-metrics because `UpdateWebACL` is not implemented. Global search includes Web
-ACLs from both `REGIONAL` and `CLOUDFRONT` scopes.
+## What works
 
-Stored Web ACLs also appear on the system map with their scope and stored rule
-count. Selecting a node opens its detail view. This visualization represents
-control-plane metadata only and does not imply that WAF rules protect or route
-traffic.
+| Area     | Behaviour                                                                  |
+| -------- | -------------------------------------------------------------------------- |
+| Web ACLs | `CreateWebACL`, `GetWebACL`, `ListWebACLs`, `DeleteWebACL` in both `REGIONAL` and `CLOUDFRONT` scope |
+| Tags     | `TagResource`, `UntagResource`, `ListTagsForResource` by Web ACL ARN        |
+| Console  | Create, list, detail and delete views, plus a node on the system map        |
+
+## Differences from AWS
+
+| Behaviour        | On AWS                                                     | Here                                              |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------- |
+| Rule evaluation  | Requests to API Gateway, CloudFront and ALBs are filtered   | Rules are stored metadata; no request is evaluated |
+| `UpdateWebACL`   | Edits rules and visibility config on an existing ACL         | Not implemented — `501 Not Implemented`            |
+| `LockToken`      | Rejects a stale token with `WAFOptimisticLockException`      | Accepted and ignored                               |
+| Association      | `AssociateWebACL` attaches an ACL to a resource              | Not implemented                                    |
+| WAF Classic      | The `AWSWAF_20150824` API is still served                    | Not implemented — `501 Not Implemented`            |
+
+> [!NOTE]
+> Everything unlisted above returns `501 Not Implemented` rather than a
+> success that did nothing.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -56,5 +63,6 @@ Per-operation status, notes and AWS API links: [WAF v2 operations](waf/operation
 ## Related
 
 - [AWS API reference](https://docs.aws.amazon.com/waf/latest/APIReference/Welcome.html)
+- [Shield](shield.md) — the other half of the same control plane
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
