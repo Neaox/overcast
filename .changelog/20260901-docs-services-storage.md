@@ -1,0 +1,8 @@
+~ [docs] rewrote the storage and data service pages to the service page template: s3, dynamodb, dynamodbstreams, rds, efs, elasticache, glue, athena, opensearch, backup, transfer, kinesis, firehose and msk
+  each opens with one line of positioning, a status token and a runnable quick start, with divergences as a table
+  rds.md drops from 464 lines to a landing page plus rds/limitations.md and rds/troubleshooting.md, s3.md to a landing page plus s3/limitations.md, and the EFS NFS walkthrough moves to efs/examples.md
+* [docs/backup] backup.md said tagging was not implemented and that BackupVaultTags and BackupPlanTags were dropped at creation; TagResource, ListTags and UntagResource all exist, and inline creation tags are stored
+* [docs/msk] msk.md described cluster readiness as a TCP health check on port 9092; a cluster reaches ACTIVE only once the broker answers Kafka ApiVersions, and one that never does ends in FAILED with the reason in stateInfo. The page also gains VPC placement from clientSubnets, serverless clusters, and the per-caller bootstrap broker string
+* [docs/rds] rds.md listed one Docker image per engine; MySQL also runs mysql:8.4 and mysql:5.7, PostgreSQL postgres:15 and postgres:14, MariaDB mariadb:10.11, and Aurora MySQL 4.0 runs mysql:8.4
+* [docs/s3] s3.md said SSE headers are accepted and echoed; object-level server-side-encryption request headers are ignored and never echoed back, and only the bucket-level encryption configuration round-trips
+* [docs/s3] s3.md frontmatter still named a nonexistent S3_ADDRESSING_STYLE variable, which the page body had already corrected

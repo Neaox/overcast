@@ -22,8 +22,23 @@ func landing(sections ...string) string {
 // doc is a landing page for a service that is NOT in RestructurePending, so
 // every rule applies to it. pending is one that still is, so the three
 // prose-dependent rules are waived.
-func doc(body string) Doc     { return Doc{Path: "docs/services/demo.md", Body: body} }
-func pending(body string) Doc { return Doc{Path: "docs/services/s3.md", Body: body} }
+func doc(body string) Doc { return Doc{Path: "docs/services/demo.md", Body: body} }
+
+// pendingStem is read from RestructurePending rather than named here. The list
+// only shrinks, so a hard-coded stem turns finishing that one page into a
+// failure in tests that have nothing to do with it.
+func pendingStem(t *testing.T) string {
+	t.Helper()
+	if len(RestructurePending) == 0 {
+		t.Skip("no pages left in RestructurePending")
+	}
+	return RestructurePending[0]
+}
+
+func pending(t *testing.T, body string) Doc {
+	t.Helper()
+	return Doc{Path: "docs/services/" + pendingStem(t) + ".md", Body: body}
+}
 
 func messages(problems []Problem) string {
 	out := make([]string, 0, len(problems))
@@ -125,7 +140,7 @@ func TestCheck_waivesQuickStartIntroAndTablesForPendingPages(t *testing.T) {
 
 	// When: the service is still in RestructurePending
 	// Then: none of the three fire
-	assertClean(t, Check([]Doc{pending(body)}))
+	assertClean(t, Check([]Doc{pending(t, body)}))
 
 	// And: the same page fails once the service is no longer pending
 	problems := Check([]Doc{doc(body)})
@@ -141,7 +156,7 @@ func TestCheck_demandsAPendingEntryBeRemovedOnceItIsNoLongerTrue(t *testing.T) {
 
 	// When / Then: the build fails until the entry is deleted, so an exemption
 	// cannot outlive its reason
-	assertReports(t, Check([]Doc{pending(body)}), "remove them from RestructurePending so the rules stay enforced: s3")
+	assertReports(t, Check([]Doc{pending(t, body)}), "remove them from RestructurePending so the rules stay enforced: "+pendingStem(t))
 }
 
 func TestCheck_ignoresTablesThatAreNotCapabilityTables(t *testing.T) {
