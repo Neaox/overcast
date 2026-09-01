@@ -10,7 +10,7 @@ go get github.com/overcast-sh/overcast/testcontainers/go@main
 ```
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
 testcontainers.CleanupContainer(t, ctr)
 if err != nil {
     t.Fatal(err)

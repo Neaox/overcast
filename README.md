@@ -25,7 +25,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 1. **Works with the official AWS CLI** — `aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566` just works.
 2. **Works with all official AWS SDK clients** — Go, JavaScript/TypeScript, Python, Java, .NET without code changes.
 3. **Drop-in replacement for LocalStack** — same port (4566), same env vars mapped, same path conventions. Switching requires changing one line.
-4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/overcast-sh/overcast:alpha` is the full getting-started guide.
+4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/overcast-sh/overcast:latest` is the full getting-started guide.
 5. **Fast** — sub-50ms startup (~22ms p50, hybrid backend), <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
 6. **Honest about gaps** — unimplemented endpoints return `501 Not Implemented` with a clear message and a link to the support matrix. Silent failures are worse than loud ones.
 7. **Fully open** — MIT licensed, no auth tokens, no telemetry, no usage limits, no feature gates. Free forever for every use case including CI/CD.
@@ -80,16 +80,17 @@ The slim image leaves out SQLite as well as the UI, which means the `hybrid` and
 [storage.md § Builds without SQLite](./docs/storage.md#builds-without-sqlite).
 
 Overcast is pre-1.0, so every build publishes to the `:alpha` channel tag and to
-an exact version tag such as `:0.0.1-alpha.25`. There is no `:latest` tag yet —
-it starts publishing with the first stable release. Pin the exact version in CI;
-use `:alpha` to track the newest build.
+an exact version tag such as `:0.0.1-alpha.25`. `:latest` also moves with every
+build for now — tracking the newest alpha — and switches to tracking stable
+releases once the first one ships. Pin the exact version in CI; use `:latest`
+or `:alpha` to track the newest build.
 
 ```bash
 # Full image (with web UI on :4567)
-docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha
+docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:latest
 
 # Slim image (CI pipelines, no UI)
-docker run --rm -p 4566:4566 ghcr.io/overcast-sh/overcast-slim:alpha
+docker run --rm -p 4566:4566 ghcr.io/overcast-sh/overcast-slim:latest
 ```
 
 Point any AWS SDK or the AWS CLI at it:
@@ -133,7 +134,7 @@ docker run --rm \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e OVERCAST_LOG_LEVEL=debug \
-  ghcr.io/overcast-sh/overcast:alpha
+  ghcr.io/overcast-sh/overcast:latest
 
 # With persistent data (survives container restarts) — mounting a volume at
 # /data is enough; OVERCAST_STATE defaults to "auto", which resolves to
@@ -143,7 +144,7 @@ docker run --rm \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.overcast:/data \
-  ghcr.io/overcast-sh/overcast:alpha
+  ghcr.io/overcast-sh/overcast:latest
 
 # Slim image (no web UI) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
@@ -154,7 +155,7 @@ docker run --rm \
 # docs/storage.md#builds-without-sqlite.
 docker run --rm \
   -p 4566:4566 \
-  ghcr.io/overcast-sh/overcast-slim:alpha
+  ghcr.io/overcast-sh/overcast-slim:latest
 ```
 
 ### docker compose (recommended for local dev)
@@ -163,7 +164,7 @@ docker run --rm \
 # docker-compose.yml
 services:
   overcast:
-    image: ghcr.io/overcast-sh/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:latest
     ports:
       - "4566:4566"
       - "4567:4567"
@@ -195,7 +196,7 @@ Integration tests can start Overcast per-test with the
 [Testcontainers module for Go](./testcontainers/go):
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
 testcontainers.CleanupContainer(t, ctr)
 endpoint, _ := ctr.APIEndpoint(ctx) // point your AWS SDK client here
 ```
@@ -228,7 +229,7 @@ languages are planned ([#1495](https://github.com/overcast-sh/overcast/issues/14
 >     environment:
 >       DOCKER_TLS_CERTDIR: "" # disable TLS for simplicity
 >   overcast:
->     image: ghcr.io/overcast-sh/overcast:alpha
+>     image: ghcr.io/overcast-sh/overcast:latest
 >     ports:
 >       - "4566:4566"
 >     environment:
@@ -291,14 +292,25 @@ go build -trimpath -tags slim,nosqlite -o overcastd ./cmd/overcast
 
 ### Commands
 
-All subcommands are available in both `overcast` and `overcastd` (the web UI is simply absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference.
+All subcommands are available in both `overcast` and `overcastd` (the web UI is simply absent in the slim binary, and `overcastd` drops `mcp`). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
 
-| Command           | Description                                                             |
-| ----------------- | ----------------------------------------------------------------------- |
-| `overcast serve`  | Start the AWS service emulator                                          |
-| `overcast bridge` | Publish `.local` domains via mDNS and start a port-80 reverse proxy     |
-| `overcast status` | Check a running daemon is reachable (version, state backend) |
-| `overcast trust`  | Manage the local trust store for self-signed TLS certificates           |
+| Command                       | Description                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `overcast serve`              | Start the AWS service emulator                                           |
+| `overcast start` / `stop` / `restart` | Run `serve` as a named background instance (native or `--docker`)   |
+| `overcast status`             | Check a running daemon is reachable (version, state backend)             |
+| `overcast wait`               | Block until a daemon reports healthy (CI-friendly)                       |
+| `overcast logs`               | Tail a background instance's output                                      |
+| `overcast services`           | List enabled services and their emulation tiers                          |
+| `overcast reset`              | Wipe emulated state, all or one service                                  |
+| `overcast config`             | Show the daemon's effective configuration (needs `OVERCAST_DEBUG=true`)  |
+| `overcast env`                | Print AWS environment exports for pointing tools at overcast             |
+| `overcast aws`                | Run the host AWS CLI against overcast, environment scrubbed first        |
+| `overcast import cognito-users` | Import Cognito users from real AWS into overcast                       |
+| `overcast bridge`             | Publish `.local` domains via mDNS and start a port-80 reverse proxy      |
+| `overcast https`              | One-shot browser-trusted HTTPS setup (CA + trust store + certificate)    |
+| `overcast trust`              | Manage the local trust store for self-signed TLS certificates            |
+| `overcast mcp`                | Run the workspace MCP server for agents/editors (not in slim builds)     |
 
 Storage is the other place the two binaries differ. The released `overcastd` is
 built without SQLite, so `OVERCAST_STATE=hybrid` and `OVERCAST_STATE=persistent` refuse to
@@ -535,6 +547,7 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | Guide                                                               | Description                                                              |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [Using AWS SDKs and CLI](./docs/sdk-cli.md)                         | Configure the AWS CLI, Node.js, Python, Go, Java, .NET, Rust, Terraform  |
+| [CLI reference](./docs/cli.md)                                      | Every `overcast` subcommand: background instances, introspection, AWS helpers, networking/TLS |
 | [Using AWS CDK](./docs/cdk.md)                                      | `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting |
 | [Networking and host-based addressing](./docs/networking.md)        | Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS |
 | [Service reference](./docs/services/)                               | Per-service endpoint coverage matrices                                   |

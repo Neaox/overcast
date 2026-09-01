@@ -17,6 +17,7 @@ see the [root README](../README.md).
 ### Getting started
 
 - [Using AWS SDKs and CLI](./sdk-cli.md) — configure the AWS CLI (`--endpoint-url`), Node.js, Python, Go, Java, .NET, Rust, Terraform
+- [CLI reference](./cli.md) — every `overcast` subcommand: background instances, introspection, AWS environment helpers, networking and TLS
 - [Using AWS CDK](./cdk.md) — `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting
 - [CDK guides](./cdk/) — focused CDK workflow guides
 - [Local VPCs for CDK](./cdk/local-vpc.md) — stable local VPC bootstrap, CDK context cache behavior, VPC provider pattern
@@ -396,7 +397,7 @@ For state that persists across restarts, just mount a volume — `auto` does the
 docker run --rm \
   -p 4566:4566 \
   -v $(pwd)/overcast-data:/data \
-  ghcr.io/overcast-sh/overcast:alpha
+  ghcr.io/overcast-sh/overcast:latest
 ```
 
 This resolves to `hybrid` automatically because a volume is mounted at `/data`. Set
@@ -431,7 +432,7 @@ docker run --rm -p 4566:4566 \
   -e OVERCAST_STATE_DYNAMODB=persistent \
   -e OVERCAST_STATE_S3=hybrid \
   -v $(pwd)/data:/data \
-  ghcr.io/overcast-sh/overcast:alpha
+  ghcr.io/overcast-sh/overcast:latest
 ```
 
 > **Note:** a few services accept an override that can have no effect, and log a startup
@@ -476,7 +477,7 @@ prompt:
 overcast https enable            # once per machine
 docker run -d -e OVERCAST_TLS=auto \
   -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
-  -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha
+  -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:latest
 ```
 
 No `overcast` on the host? The daemon can mint its own CA and serve the
@@ -498,7 +499,7 @@ docker run --rm \
   -e OVERCAST_TLS_CERT=/certs/cert.pem \
   -e OVERCAST_TLS_KEY=/certs/key.pem \
   -v $(pwd):/certs \
-  ghcr.io/overcast-sh/overcast:alpha
+  ghcr.io/overcast-sh/overcast:latest
 ```
 
 ```bash
@@ -520,7 +521,7 @@ are reachable across the network:
 ```yaml
 services:
   overcast:
-    image: ghcr.io/overcast-sh/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:latest
     environment:
       OVERCAST_HOSTNAME: overcast # SQS QueueUrl → http://overcast:4566/...
     ports:

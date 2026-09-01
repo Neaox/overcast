@@ -371,6 +371,142 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/cli.md",
+    "href": "cli.md",
+    "title": "CLI reference",
+    "description": "Every overcast subcommand — starting and managing daemons, introspection, AWS environment helpers, and networking/TLS setup — with flags, defaults, and examples.",
+    "section": "Getting Started",
+    "tags": [
+      "cli",
+      "commands",
+      "docs",
+      "overcast",
+      "reference"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CLI reference",
+        "id": "cli-reference"
+      },
+      {
+        "depth": 2,
+        "text": "The daemon",
+        "id": "the-daemon"
+      },
+      {
+        "depth": 3,
+        "text": "overcast serve",
+        "id": "overcast-serve"
+      },
+      {
+        "depth": 2,
+        "text": "Background instances",
+        "id": "background-instances"
+      },
+      {
+        "depth": 3,
+        "text": "overcast start",
+        "id": "overcast-start"
+      },
+      {
+        "depth": 3,
+        "text": "overcast stop [name]",
+        "id": "overcast-stop-name"
+      },
+      {
+        "depth": 3,
+        "text": "overcast restart [name]",
+        "id": "overcast-restart-name"
+      },
+      {
+        "depth": 3,
+        "text": "overcast status",
+        "id": "overcast-status"
+      },
+      {
+        "depth": 3,
+        "text": "overcast wait",
+        "id": "overcast-wait"
+      },
+      {
+        "depth": 3,
+        "text": "overcast logs [name]",
+        "id": "overcast-logs-name"
+      },
+      {
+        "depth": 2,
+        "text": "Introspection and maintenance",
+        "id": "introspection-and-maintenance"
+      },
+      {
+        "depth": 3,
+        "text": "overcast services",
+        "id": "overcast-services"
+      },
+      {
+        "depth": 3,
+        "text": "overcast config",
+        "id": "overcast-config"
+      },
+      {
+        "depth": 3,
+        "text": "overcast reset [service]",
+        "id": "overcast-reset-service"
+      },
+      {
+        "depth": 2,
+        "text": "AWS environment helpers",
+        "id": "aws-environment-helpers"
+      },
+      {
+        "depth": 3,
+        "text": "overcast env",
+        "id": "overcast-env"
+      },
+      {
+        "depth": 3,
+        "text": "overcast aws [args...]",
+        "id": "overcast-aws-args"
+      },
+      {
+        "depth": 3,
+        "text": "overcast import cognito-users",
+        "id": "overcast-import-cognito-users"
+      },
+      {
+        "depth": 2,
+        "text": "Networking and TLS",
+        "id": "networking-and-tls"
+      },
+      {
+        "depth": 3,
+        "text": "overcast bridge",
+        "id": "overcast-bridge"
+      },
+      {
+        "depth": 3,
+        "text": "overcast https enable|disable|status",
+        "id": "overcast-https-enable-disable-status"
+      },
+      {
+        "depth": 3,
+        "text": "overcast trust install|uninstall|status",
+        "id": "overcast-trust-install-uninstall-status"
+      },
+      {
+        "depth": 2,
+        "text": "Development tooling",
+        "id": "development-tooling"
+      },
+      {
+        "depth": 3,
+        "text": "overcast mcp",
+        "id": "overcast-mcp"
+      }
+    ]
+  },
+  {
     "path": "docs/https.md",
     "href": "https.md",
     "title": "HTTPS and HTTP/2",
