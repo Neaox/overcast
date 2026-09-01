@@ -44,7 +44,8 @@ aws opensearch list-domain-names
 | Difference | Detail |
 | --- | --- |
 | No cluster | Nothing is indexed or queried; the domain endpoint is a name, not a service |
-| Partial `DomainStatus` | Only the members an inert domain can fill in honestly are returned |
+| Partial `DomainStatus` | Only `DomainId`, `DomainName`, `ARN`, `EngineVersion`, `Endpoint` and the `Created`/`Deleted`/`Processing` flags come back |
+| Cluster settings are dropped | `ClusterConfig`, `EBSOptions`, `VPCOptions`, access policies and the other ~25 `CreateDomain` members are accepted and ignored — they configure a cluster that does not exist |
 | No configuration changes | `UpdateDomainConfig`, upgrades, package association and the auto-tune APIs are not implemented |
 | No cross-cluster search | Outbound and inbound connections are not modelled |
 

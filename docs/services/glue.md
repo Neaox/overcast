@@ -24,13 +24,8 @@ jobs, crawlers and workflows are not.
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws glue create-database --database-input Name=analytics
-aws glue create-table --database-name analytics --table-input '{
-  "Name": "events",
-  "StorageDescriptor": {
-    "Columns": [{"Name": "id", "Type": "string"}],
-    "Location": "s3://data/events/"
-  }
-}'
+aws glue create-table --database-name analytics \
+  --table-input 'Name=events,TableType=EXTERNAL_TABLE'
 aws glue get-tables --database-name analytics
 ```
 
@@ -40,7 +35,7 @@ aws glue get-tables --database-name analytics
 | --- | --- |
 | Databases | `CreateDatabase`, `GetDatabase`, `GetDatabases`, `DeleteDatabase` |
 | Tables | `CreateTable`, `GetTable`, `GetTables`, `DeleteTable`, scoped to a database |
-| Table input | The whole `TableInput` — columns, partition keys, `StorageDescriptor`, `Parameters` — is stored and returned unchanged |
+| Stored fields | A database keeps `Name`, `Description` and `CatalogId`; a table keeps those plus `DatabaseName` and `TableType` |
 | Catalog id | Defaults to the account id when the request omits `CatalogId` |
 | Tags | `TagResource`, `UntagResource` and `GetTags` on database and table ARNs |
 
@@ -49,12 +44,19 @@ aws glue get-tables --database-name analytics
 | Difference | Detail |
 | --- | --- |
 | Data Catalog only | Jobs, crawlers, triggers, workflows, connections, the schema registry and Data Quality are not implemented |
-| No partitions API | Partition keys are stored on the table, but there are no partition rows and no `GetPartitions` |
+| Schemas are dropped | A table's `StorageDescriptor` — its columns, serde and `Location` — and its `PartitionKeys` and `Parameters` are accepted and discarded, so `GetTable` returns none of them |
+| Database input is dropped too | `LocationUri`, `Parameters` and `TargetDatabase` are not stored |
+| No partitions API | There are no partition rows and no `GetPartitions` |
 | No update operations | There is no `UpdateDatabase` or `UpdateTable`; re-create through `CreateTable` to change a definition |
-| Schemas are not validated | Column types are stored as strings; nothing checks them against the data at `Location` |
 | One catalog | `CatalogId` is echoed, never used to separate catalogs |
 
 ## Gotchas
+
+> [!WARNING]
+> A table is a name, not a schema. `CreateTable` accepts a full `TableInput`
+> and stores only `Name`, `TableType`, `Description` and `CatalogId` — code
+> that reads columns or an S3 `Location` back out of `GetTable` will find
+> neither.
 
 > [!NOTE]
 > [Athena](athena.md) does not read this catalog. It records queries and

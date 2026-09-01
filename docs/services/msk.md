@@ -57,7 +57,7 @@ aws kafka get-bootstrap-brokers --cluster-arn "$ARN"
 | No broker changes | `UpdateBrokerCount`, `UpdateBrokerStorage`, `UpdateBrokerType`, `UpdateMonitoring`, `UpdateSecurity` and `RebootBroker` return `501` |
 | No SCRAM | The secret-association operations return `501`; the broker is reachable without authentication |
 | No VPC connections | `CreateVpcConnection` and its siblings return `501` |
-| No storage or encryption enforcement | Volume sizes, encryption settings and client authentication blocks are stored and echoed only |
+| Encryption and auth are dropped | `encryptionInfo`, `clientAuthentication`, `loggingInfo`, `openMonitoring` and a broker group's `storageInfo` are accepted and discarded — a cluster keeps only `instanceType`, `clientSubnets`, `securityGroups` and `brokerAZDistribution` |
 
 ## Gotchas
 

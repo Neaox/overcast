@@ -29,8 +29,9 @@ AP=$(aws efs create-access-point --file-system-id "$FS" \
   --root-directory 'Path=/app/data,CreationInfo={OwnerUid=1000,OwnerGid=1000,Permissions=0755}' \
   --query AccessPointId --output text)
 
+AP_ARN="arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/$AP"
 aws lambda update-function-configuration --function-name writer \
-  --file-system-configs "Arn=arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/$AP,LocalMountPath=/mnt/data"
+  --file-system-configs "Arn=$AP_ARN,LocalMountPath=/mnt/data"
 ```
 
 An ECS task reaches the same bytes through `efsVolumeConfiguration` with the

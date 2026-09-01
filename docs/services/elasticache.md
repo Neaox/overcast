@@ -55,7 +55,7 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
 | --- | --- |
 | One node, always | A replication group starts a single primary container — no replicas, no cluster mode, no failover |
 | Endpoints cannot be told apart | A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry the same endpoint, because there is nothing to distinguish cluster-mode-enabled from disabled |
-| No parameter groups applied | Parameter and security group names are recorded, never pushed into the engine |
+| No parameter groups applied | `CacheParameterGroupName` is recorded and echoed, never pushed into the engine; `SecurityGroupIds` are dropped entirely |
 | No snapshots | Snapshot, backup and restore operations are not implemented |
 | No scaling | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers |
 | Create-only subnet group | `CacheSubnetGroupName` is not returned on the `ReplicationGroup` shape, because AWS does not return it either |

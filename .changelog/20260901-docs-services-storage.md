@@ -6,3 +6,5 @@
 * [docs/rds] rds.md listed one Docker image per engine; MySQL also runs mysql:8.4 and mysql:5.7, PostgreSQL postgres:15 and postgres:14, MariaDB mariadb:10.11, and Aurora MySQL 4.0 runs mysql:8.4
 * [docs/s3] s3.md said SSE headers are accepted and echoed; object-level server-side-encryption request headers are ignored and never echoed back, and only the bucket-level encryption configuration round-trips
 * [docs/s3] s3.md frontmatter still named a nonexistent S3_ADDRESSING_STYLE variable, which the page body had already corrected
+* [docs/glue] glue.md claimed the whole TableInput round-trips; a Glue table stores only Name, DatabaseName, TableType, Description and CatalogId, so StorageDescriptor, PartitionKeys and Parameters are accepted and discarded
+* [docs] transfer, opensearch, msk and elasticache pages now name the request fields their records drop rather than implying every input is stored

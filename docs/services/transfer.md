@@ -46,7 +46,8 @@ aws transfer list-users --server-id "$SERVER"
 | Difference | Detail |
 | --- | --- |
 | No data plane | No file-transfer protocol is served, so no client can log in and no file moves |
-| No S3 or EFS binding | `HomeDirectory` and `HomeDirectoryMappings` are stored strings; they map to nothing |
+| No S3 or EFS binding | `HomeDirectory` is a stored string that maps to nothing |
+| Most request fields are dropped | A server keeps only `EndpointType` and `IdentityProviderType` — `Protocols`, `EndpointDetails`, `LoggingRole`, `Domain` and `SecurityPolicyName` are accepted and discarded. A user keeps `Role`, `HomeDirectory` and `Policy`, not `HomeDirectoryType`, `HomeDirectoryMappings`, `PosixProfile` or `SshPublicKeyBody` |
 | No authentication | SSH public keys, service-managed credentials and custom identity providers are not exercised |
 | No endpoint address | `DescribeServer` reports no hostname, VPC endpoint or Elastic IP |
 | Sequential server ids | Ids are minted as `s-00000001`, `s-00000002`, … rather than AWS's random ids |
