@@ -384,6 +384,27 @@ func wireFakeGC(t *testing.T, h *Handler, fd *fakeECSDockerDaemon) {
 	})
 }
 
+// wireStalledGC wires a real GC whose remove loop is deliberately not running:
+// the state of an emulator whose background queue has not been reached yet,
+// which in a fast compat run is every emulator in the seconds after a delete.
+// A teardown path that leans on the queue leaves its container on the daemon
+// for as long as the test cares to look; one that removes inline does not.
+//
+// Torn down with DrainAndSweep, which processes the queue inline — so anything
+// a test deliberately left in it is cleaned up before the fake daemon closes.
+func wireStalledGC(t *testing.T, h *Handler, fd *fakeECSDockerDaemon) {
+	t.Helper()
+	gc := docker.NewGC(docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop()),
+		zap.NewNop(), h.cfg.ECSKeepContainers, h.instances.Resolve)
+	gc.SetBeforeRemove(h.captureContainerLogsByID)
+	h.gc = gc
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		gc.DrainAndSweep(ctx, serviceName)
+	})
+}
+
 // waitFor blocks until cond holds, for the assertions whose subject completes
 // on a goroutine the test does not own.
 func waitFor(t *testing.T, what string, cond func() bool) {
