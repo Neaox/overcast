@@ -22,7 +22,14 @@ its own value is how a re-run silently loses `:latest`.
 
 What each tag means, and therefore which releases it is compared against:
 
-    :latest    every stable release
+    :latest    every stable release — and, until the first stable release
+               exists, every prerelease. `docker pull` without a tag asks for
+               :latest, and while everything shipped is an alpha the honest
+               answer to "the latest Overcast" is the newest alpha, not a 404.
+               The first stable release ends that for good: from then on
+               :latest is stable-only, and no prerelease — however new — can
+               claim it, because 1.1.0-alpha.1 outranks 1.0.0 by precedence
+               but is not what an unqualified pull is asking for.
     :<channel> every prerelease with that channel identifier — :alpha is
                compared against alphas only. The channels are independent of
                each other and of :latest, because they answer different
@@ -162,8 +169,19 @@ def floating_tags(version: Version, released: list[Version]) -> list[str]:
         ]
         if _may_move(version, peers):
             tags.append(channel)
+        # Until the first stable release exists, :latest follows the newest
+        # prerelease across *all* channels — an unqualified `docker pull`
+        # should get the newest thing shipped, and comparing across channels
+        # is what stops an older alpha dragging :latest back past a newer
+        # beta. The first stable release ends this branch permanently: from
+        # then on the `released` list contains a stable, and :latest belongs
+        # to the stable path below alone.
+        if not any(not peer.prerelease for peer in released) and _may_move(
+            version, released
+        ):
+            tags.append("latest")
         # No line tags: see the module docstring. A prerelease publishes under
-        # its channel and nowhere else.
+        # its channel (and, pre-stable, :latest) and nowhere else.
         return tags
 
     stable = [peer for peer in released if not peer.prerelease]

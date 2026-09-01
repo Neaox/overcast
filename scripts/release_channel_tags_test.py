@@ -86,10 +86,13 @@ class FloatingTagsTest(unittest.TestCase):
 		self.assertEqual(["1.9", "1"], moved("1.9.1", ["2.0.0", "1.9.0"]))
 
 	# Nothing released yet under this pointer: the comparison is vacuous and
-	# the tag is claimed.
+	# the tag is claimed. No stable exists in either case, so the newest
+	# prerelease takes :latest along with its channel.
 	def test_first_release_in_a_channel(self) -> None:
-		self.assertEqual(["beta"], moved("1.0.0-beta.0", ["0.0.1-alpha.31"]))
-		self.assertEqual(["alpha"], moved("0.0.1-alpha.0", []))
+		self.assertEqual(
+			["beta", "latest"], moved("1.0.0-beta.0", ["0.0.1-alpha.31"])
+		)
+		self.assertEqual(["alpha", "latest"], moved("0.0.1-alpha.0", []))
 
 	def test_first_stable_release_claims_every_line(self) -> None:
 		self.assertEqual(
@@ -106,14 +109,20 @@ class FloatingTagsTest(unittest.TestCase):
 			moved("1.3.1", ["1.4.0-alpha.0", "1.3.0"]),
 		)
 
+	# The *channel* tags do not gate each other; pre-stable :latest is decided
+	# across all channels, and both of these are the newest thing shipped.
 	def test_channels_do_not_gate_each_other(self) -> None:
-		self.assertEqual(["beta"], moved("1.4.0-beta.0", ["1.4.0-alpha.9"]))
-		self.assertEqual(["alpha"], moved("1.5.0-alpha.0", ["1.4.0-beta.0"]))
+		self.assertEqual(
+			["beta", "latest"], moved("1.4.0-beta.0", ["1.4.0-alpha.9"])
+		)
+		self.assertEqual(
+			["alpha", "latest"], moved("1.5.0-alpha.0", ["1.4.0-beta.0"])
+		)
 
 	# A prerelease never claims a line tag: :1.4 must mean the shipped 1.4
 	# line, not whatever is being tried out on it.
 	def test_prerelease_claims_no_line_tags(self) -> None:
-		self.assertEqual(["alpha"], moved("1.4.0-alpha.0", []))
+		self.assertEqual(["alpha", "latest"], moved("1.4.0-alpha.0", []))
 
 	# Re-running a release republishes its images; the tag already points at
 	# this version, so writing it again is a no-op and refusing would silently
@@ -129,19 +138,37 @@ class FloatingTagsTest(unittest.TestCase):
 
 	def test_republishing_an_alpha_still_moves_the_channel(self) -> None:
 		self.assertEqual(
-			["alpha"],
+			["alpha", "latest"],
 			moved("0.0.1-alpha.31", ["0.0.1-alpha.31", "0.0.1-alpha.30"]),
 		)
 
 	# Today's shape, and the one regression the guard buys immediately:
-	# re-publishing alpha.30 after alpha.31 must not take :alpha backwards.
+	# re-publishing alpha.30 after alpha.31 must not take :alpha backwards —
+	# nor :latest, which pre-stable points at the same alphas.
 	def test_older_alpha_does_not_take_the_channel_back(self) -> None:
 		self.assertEqual([], moved("0.0.1-alpha.30", ["0.0.1-alpha.31"]))
 
-	def test_current_alpha_flow_is_unchanged(self) -> None:
+	# Today's shape: every release is an alpha and no stable exists, so the
+	# newest alpha carries :latest alongside :alpha. `docker pull` with no tag
+	# asks for :latest, and pre-stable the honest answer is the current alpha.
+	def test_current_alpha_flow_claims_latest_pre_stable(self) -> None:
 		self.assertEqual(
-			["alpha"],
+			["alpha", "latest"],
 			moved("0.0.1-alpha.32", ["0.0.1-alpha.31", "0.0.1-alpha.30"]),
+		)
+
+	# The first stable release ends prerelease ownership of :latest for good:
+	# afterwards a prerelease keeps its channel tag only, even though
+	# 1.1.0-alpha.0 outranks 1.0.0 by SemVer precedence.
+	def test_stable_release_ends_prerelease_claim_on_latest(self) -> None:
+		self.assertEqual(["alpha"], moved("1.1.0-alpha.0", ["1.0.0"]))
+
+	# Pre-stable, :latest is compared across every channel: an alpha shipped
+	# while a newer beta exists keeps its own channel moving but must not drag
+	# :latest back past the beta.
+	def test_older_prerelease_cannot_take_latest_past_a_newer_channel(self) -> None:
+		self.assertEqual(
+			["alpha"], moved("0.0.2-alpha.0", ["1.0.0-beta.1", "0.0.1-alpha.38"])
 		)
 
 	# The input is `git tag --list`, which holds whatever the repository has

@@ -79,7 +79,9 @@ The release workflow:
   - `ghcr.io/overcast-sh/overcast:<version>`
   - `ghcr.io/overcast-sh/overcast-slim:<version>`
 - moves whichever floating tags this release is entitled to move:
-  - prereleases: `:<channel>` such as `:alpha`
+  - prereleases: `:<channel>` such as `:alpha` — plus `:latest` until the
+    first stable release ships, so a plain `docker pull` works while
+    everything published is an alpha
   - stable releases: `:latest`, plus the line tags `:<major>` and
     `:<major>.<minor>` so a user can pin a line
   - never backwards — see [Floating tags only move
@@ -359,12 +361,16 @@ For an alpha release:
    publish jobs run. Then watch until all jobs pass.
 9. Verify the GitHub release `v<VERSION>` exists and contains native
    binaries plus `SHA256SUMS`.
-10. Verify the Docker images exist:
+10. Verify the Docker images exist. `:latest` is on this list because while in
+   alpha it tracks the alpha channel — the release notes say exactly which
+   moving tags this release wrote, and a tag they name must have moved:
    ```sh
    docker pull ghcr.io/overcast-sh/overcast:<version>
    docker pull ghcr.io/overcast-sh/overcast:alpha
+   docker pull ghcr.io/overcast-sh/overcast:latest
    docker pull ghcr.io/overcast-sh/overcast-slim:<version>
    docker pull ghcr.io/overcast-sh/overcast-slim:alpha
+   docker pull ghcr.io/overcast-sh/overcast-slim:latest
    ```
 11. Smoke test the slim image. Published on remapped ports so this does not
    collide with your own instance on 4566/4567:
@@ -897,9 +903,18 @@ What each tag is compared against:
 | Tag | Compared against | So that |
 | --- | --- | --- |
 | `:latest` | every stable release | a maintenance release of an older line cannot claim it |
+| `:latest`, before any stable exists | every prerelease, all channels | a plain `docker pull` works while everything shipped is an alpha, and an older alpha cannot drag `:latest` back past a newer beta |
 | `:alpha`, `:beta` | prereleases in that channel only | shipping 1.3.1 does not hold back `:alpha`, and vice versa |
 | `:1.2` | stable releases on the 1.2 line | pinning a line gets that line's newest patch |
 | `:1` | stable releases with major 1 | pinning a major does not go back a minor |
+
+The second row exists because `docker pull ghcr.io/overcast-sh/overcast` with
+no tag asks for `:latest`, and while every release is an alpha the honest
+answer is the newest alpha rather than a 404 — which is what forced the
+website's copy-paste commands onto `:alpha`. The first stable release retires
+that row for good: from then on `:latest` is stable-only, and no prerelease
+can claim it however new — `1.1.0-alpha.1` outranks `1.0.0` by SemVer
+precedence, but it is not what an unqualified pull is asking for.
 
 Line tags are **stable-only**. `:1.2` means the 1.2 line as it ships, not
 whatever prerelease is being tried out on it — and below 1.0 the alternative
