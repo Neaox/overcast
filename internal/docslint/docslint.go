@@ -159,6 +159,8 @@ func Check(docs []Doc) []Problem {
 			}
 		case docSubPage:
 			problems = append(problems, checkSubPage(doc, stem, sub)...)
+		case docIgnored:
+			// Anything outside docs/services/, and the services index itself.
 		}
 	}
 	problems = append(problems, checkPendingIsStillNeeded(waivedSatisfied)...)
