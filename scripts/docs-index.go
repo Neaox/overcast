@@ -54,6 +54,13 @@ const (
 	navOutput      = "web/src/docs-nav.gen.ts"
 	searchOutput   = "internal/docssearch/index.gen.jsonl"
 	frontmatterSep = "---"
+
+	// maxDescriptionLen caps a published doc's frontmatter description, as a
+	// proxy for the content charter's intro-budget rule (see
+	// docs/dev/content-charter.md): a long description is a reliable tell
+	// that the opening paragraph is doing too much before the reader hits a
+	// command, a table, or a linked next step.
+	maxDescriptionLen = 220
 )
 
 var (
@@ -113,6 +120,14 @@ type weightedDoc struct {
 	// Links are the document's Markdown link destinations, for the anchor
 	// check. They are not indexed and never reach an artifact.
 	Links []docLink
+	// RawBody is the document's Markdown source after frontmatter is
+	// stripped, with original line breaks intact — unlike BodyText, which is
+	// the parsed prose joined by "\n" per AST node and cannot be scanned line
+	// by line. BodyLineOffset is how many lines of the raw file sit above it,
+	// so a match in RawBody maps back to a real file:line. Both exist only
+	// for checkExcludedRefs; nothing else needs raw source.
+	RawBody        string
+	BodyLineOffset int
 }
 
 // docLink is one Markdown link destination and where it was written, so a
@@ -156,10 +171,13 @@ func main() {
 		if frontmatterChanges > 0 {
 			fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter --write-nav", frontmatterChanges))
 		}
-		// Anchors are checked here rather than in validateDocs because a
-		// broken one is a doc bug, not an index bug: it must not stop
-		// --write-nav from regenerating the index that proves the fix.
+		// Anchors and excluded-path citations are checked here rather than in
+		// validateDocs because either is a doc bug, not an index bug: it must
+		// not stop --write-nav from regenerating the index that proves the fix.
 		if err := checkAnchors(docs); err != nil {
+			fatal(err)
+		}
+		if err := checkExcludedRefs(docs); err != nil {
 			fatal(err)
 		}
 		entries := make([]docEntry, 0, len(docs))
@@ -238,6 +256,10 @@ func validateDocs(docs []weightedDoc) error {
 			problems = append(problems, e.Path+": bad href "+e.Href)
 		case len(docssearch.ScoreDocument(searchFields(doc))) == 0:
 			problems = append(problems, e.Path+": no searchable terms")
+		case e.Description == "":
+			problems = append(problems, e.Path+": no description")
+		case len(e.Description) > maxDescriptionLen:
+			problems = append(problems, fmt.Sprintf("%s: description is %d chars (max %d) — a long one is a reliable tell the intro is doing too much before the first actionable thing; trim it", e.Path, len(e.Description), maxDescriptionLen))
 		}
 	}
 	if len(problems) > 0 {
@@ -499,7 +521,14 @@ func buildEntry(path string, meta docMeta, body string, lineOffset int) weighted
 		Headings:    extractHeadings(body),
 	}
 	content := markdownFields(body)
-	return weightedDoc{Entry: entry, BodyText: content.Prose, CodeSpans: content.Code, Links: extractLinks(body, lineOffset)}
+	return weightedDoc{
+		Entry:          entry,
+		BodyText:       content.Prose,
+		CodeSpans:      content.Code,
+		Links:          extractLinks(body, lineOffset),
+		RawBody:        body,
+		BodyLineOffset: lineOffset,
+	}
 }
 
 // frontmatterLines is how many lines body sits below the start of raw, so a
@@ -714,6 +743,49 @@ func checkAnchors(docs []weightedDoc) error {
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("broken in-page anchor links:\n\t%s", strings.Join(problems, "\n\t"))
+	}
+	return nil
+}
+
+// excludedPathFragments are literal path fragments that can never
+// legitimately appear in a published doc's body: docs/dev/** and
+// docs/plans/** are excluded from the publish step (see
+// isPublishedDocPath), so a reference to either — however it is spelled —
+// is a citation a reader can never resolve. See the content charter,
+// docs/dev/content-charter.md § rule 3.
+var excludedPathFragments = []string{"docs/dev/", "docs/plans/"}
+
+// checkExcludedRefs rejects a published doc that cites the excluded
+// docs/dev/** or docs/plans/** trees, in either of the two ways that shows
+// up: a literal path fragment written into the prose (e.g. a bare
+// "(docs/plans/foo.md)" aside, never a link at all), or a Markdown link
+// whose destination resolves into either tree. The second case reuses the
+// same relative-path resolution checkAnchors does, so a link that never
+// spells out "docs/" at all — "./dev/foo.md", written from inside docs/ — is
+// still caught.
+func checkExcludedRefs(docs []weightedDoc) error {
+	problems := []string{}
+	for _, doc := range docs {
+		for i, line := range strings.Split(doc.RawBody, "\n") {
+			for _, frag := range excludedPathFragments {
+				if strings.Contains(line, frag) {
+					problems = append(problems, fmt.Sprintf("%s:%d: cites excluded path %q, which a reader can never resolve", doc.Entry.Path, doc.BodyLineOffset+i+1, frag))
+				}
+			}
+		}
+		for _, link := range doc.Links {
+			target, _, _ := strings.Cut(link.Dest, "#")
+			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+				continue
+			}
+			resolved := path.Join(path.Dir(doc.Entry.Path), target)
+			if strings.HasPrefix(resolved, "docs/dev/") || strings.HasPrefix(resolved, "docs/plans/") {
+				problems = append(problems, fmt.Sprintf("%s:%d: links to %s, which scripts/docs-index.go excludes from the published site", doc.Entry.Path, link.Line, resolved))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("published docs cite excluded docs/dev/ or docs/plans/ content:\n\t%s", strings.Join(problems, "\n\t"))
 	}
 	return nil
 }
