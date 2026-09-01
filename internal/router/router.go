@@ -294,10 +294,23 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// above — see docs/dev/performance.md § Startup budget.
 	logsSvc := logs.New(cfg, store, logger, clk)
 	prof.mark("  new: logs")
+	// debugProviders is built unconditionally: /_overcast/reset (always-on,
+	// below) needs it regardless of cfg.Debug, and it's used again for the
+	// debug-gated block right after.
+	debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
 	if cfg.Debug {
-		debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
 		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
 	}
+	// ---- Reset (always available) ------------------------------------------
+	// Unlike the rest of the /_overcast/debug namespace above, reset is not
+	// expensive or leaky instrumentation, and it grants no destructive power
+	// beyond what the unauthenticated AWS surface already exposes — so it is
+	// never gated on OVERCAST_DEBUG. Registered with absolute paths directly
+	// on r, matching /_overcast/health, /_overcast/metrics, etc. below rather
+	// than a chi sub-router — see the chi-subrouter-swallows-fallback gotcha
+	// noted throughout this package. See reset.go.
+	r.Post("/_overcast/reset", resetHandler(store, debugProviders))
+	r.Post("/_overcast/reset/{service}", resetServiceHandler(store, debugProviders))
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")
 	pipesSvc := pipes.New(cfg, store, logger, clk)

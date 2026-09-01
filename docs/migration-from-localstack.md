@@ -111,7 +111,7 @@ equivalent. The handful that could plausibly grow one are tracked in
 | `/_localstack/health` (detailed) | `/_overcast/debug/health`          | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/init`              | `/_overcast/init`         | Always enabled                 |
 | `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always enabled                 |
-| `/_localstack/state/reset`       | `/_overcast/debug/reset`           | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/state/reset`       | `/_overcast/reset`                 | Always enabled                 |
 | `/_localstack/info`              | `/_overcast/debug/config`          | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/state`             | `/_overcast/debug/state`           | Requires `OVERCAST_DEBUG=true` |
 

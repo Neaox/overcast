@@ -10,6 +10,8 @@
 //   - overcast status       — check a running daemon is reachable
 //   - overcast wait         — block until a daemon reports healthy
 //   - overcast services     — list enabled services and emulation tiers
+//   - overcast reset        — wipe emulated state, all or one service
+//   - overcast config       — show the daemon's effective configuration
 //   - overcast env          — print AWS environment exports for the daemon
 //   - overcast aws          — run the host AWS CLI against the daemon
 //   - overcast mcp          — run the workspace MCP server (not in slim builds)
@@ -49,6 +51,8 @@ func main() {
 	root.AddCommand(newAWSCmd())
 	root.AddCommand(newWaitCmd())
 	root.AddCommand(newServicesCmd())
+	root.AddCommand(newResetCmd())
+	root.AddCommand(newConfigCmd())
 	root.AddCommand(newMCPCmd())
 
 	if err := root.Execute(); err != nil {

@@ -28,16 +28,6 @@ func (fakeDynamoDebugProvider) DebugStateValues(context.Context) (map[string]str
 
 func (fakeDynamoDebugProvider) DebugResetState(context.Context) error { return nil }
 
-type resetCountingDynamoDebugProvider struct {
-	fakeDynamoDebugProvider
-	resets int
-}
-
-func (p *resetCountingDynamoDebugProvider) DebugResetState(context.Context) error {
-	p.resets++
-	return nil
-}
-
 // fakeLogsDebugProvider mirrors fakeDynamoDebugProvider for the CloudWatch
 // Logs events virtual namespace ("logs:events" — storage-plan.md 2.3).
 type fakeLogsDebugProvider struct{}
@@ -55,16 +45,6 @@ func (fakeLogsDebugProvider) DebugStateValues(context.Context) (map[string]strin
 }
 
 func (fakeLogsDebugProvider) DebugResetState(context.Context) error { return nil }
-
-type resetCountingLogsDebugProvider struct {
-	fakeLogsDebugProvider
-	resets int
-}
-
-func (p *resetCountingLogsDebugProvider) DebugResetState(context.Context) error {
-	p.resets++
-	return nil
-}
 
 func TestDebugState_includesAppSyncAndAPIGatewayNamespaces(t *testing.T) {
 	// Given: raw state exists for services beyond the original debug allowlist.
@@ -287,118 +267,6 @@ func TestDebugStateNamespaceKey_returnsRawTextValue(t *testing.T) {
 	}
 }
 
-func TestResetAllNamespaces_deletesAppSyncAndAPIGatewayState(t *testing.T) {
-	// Given: AppSync and API Gateway state exists.
-	store := state.NewMemoryStore()
-	ctx := context.Background()
-	if err := store.Set(ctx, "appsync", "us-east-1:ds:api-id:NamespaceDS", `{"name":"NamespaceDS"}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Set(ctx, "apigw:restapis", "us-east-1:api-id", `{"id":"api-id"}`); err != nil {
-		t.Fatal(err)
-	}
-
-	// When: reset-all deletes known namespaces.
-	resetAllNamespaces(ctx, store)
-
-	// Then: both services are actually cleared.
-	if _, found, err := store.Get(ctx, "appsync", "us-east-1:ds:api-id:NamespaceDS"); err != nil || found {
-		t.Fatalf("expected appsync state deleted, found=%v err=%v", found, err)
-	}
-	if _, found, err := store.Get(ctx, "apigw:restapis", "us-east-1:api-id"); err != nil || found {
-		t.Fatalf("expected apigw state deleted, found=%v err=%v", found, err)
-	}
-}
-
-func TestDebugResetService_dynamodbClearsVirtualItems(t *testing.T) {
-	// Given: DynamoDB has table metadata in state.Store and item data in its virtual backend.
-	store := state.NewMemoryStore()
-	ctx := context.Background()
-	if err := store.Set(ctx, "dynamodb:tables", "us-east-1/Music", `{"TableName":"Music"}`); err != nil {
-		t.Fatal(err)
-	}
-	dynamo := &resetCountingDynamoDebugProvider{}
-
-	// When: the DynamoDB debug reset endpoint runs.
-	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/dynamodb", nil)
-	rec := httptest.NewRecorder()
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("service", "dynamodb")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{dynamo}).ServeHTTP(rec, req)
-
-	// Then: store-backed metadata and virtual item state are both cleared.
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, body)
-	}
-	if dynamo.resets != 1 {
-		t.Fatalf("expected one DynamoDB virtual reset, got %d", dynamo.resets)
-	}
-	if _, found, err := store.Get(ctx, "dynamodb:tables", "us-east-1/Music"); err != nil || found {
-		t.Fatalf("expected dynamodb table state deleted, found=%v err=%v", found, err)
-	}
-}
-
-func TestDebugReset_clearsStateAcrossNamespacedStoreOverrides(t *testing.T) {
-	// Given a namespaced store where an unrelated service (s3) is routed to a
-	// dedicated store, distinct from the default store used by everything else.
-	defaultStore := state.NewMemoryStore()
-	s3Store := state.NewMemoryStore()
-	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
-		"s3": s3Store,
-	})
-	ctx := context.Background()
-	if err := ns.Set(ctx, "sqs:queues", "q1", `{"name":"q1"}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := ns.Set(ctx, "s3:buckets", "b1", `{"name":"b1"}`); err != nil {
-		t.Fatal(err)
-	}
-
-	// When the global debug reset endpoint is invoked with the wrapped store...
-	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset", nil)
-	rec := httptest.NewRecorder()
-	debugReset(ns, nil).ServeHTTP(rec, req)
-
-	// Then both the default store's data and the routed store's data are
-	// cleared — reset must not silently miss data because the top-level
-	// store is a *state.NamespacedStore rather than a bare *state.MemoryStore.
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, body)
-	}
-	if _, found, _ := defaultStore.Get(ctx, "sqs:queues", "q1"); found {
-		t.Error("expected default store state cleared after reset")
-	}
-	if _, found, _ := s3Store.Get(ctx, "s3:buckets", "b1"); found {
-		t.Error("expected routed (s3) store state cleared after reset")
-	}
-}
-
-func TestResetStore_recursesIntoNamespacedStoreUnderlyingStores(t *testing.T) {
-	// Direct unit test of the resetStore helper used by debugReset — proves
-	// it doesn't rely on a concrete `*state.MemoryStore` assertion against the
-	// (possibly wrapped) top-level store.
-	defaultStore := state.NewMemoryStore()
-	sqsStore := state.NewMemoryStore()
-	ns := state.NewNamespacedStore(defaultStore, map[string]state.Store{
-		"sqs": sqsStore,
-	})
-	ctx := context.Background()
-	ns.Set(ctx, "sqs:queues", "q1", "v1")
-	ns.Set(ctx, "appsync", "ds1", "v2")
-
-	resetStore(ctx, ns)
-
-	if _, found, _ := sqsStore.Get(ctx, "sqs:queues", "q1"); found {
-		t.Error("expected sqs-routed store cleared")
-	}
-	if _, found, _ := defaultStore.Get(ctx, "appsync", "ds1"); found {
-		t.Error("expected default store cleared")
-	}
-}
-
 // TestDebugState_includesLogsEventsVirtualNamespace is the CloudWatch Logs
 // equivalent of TestDebugState_includesDynamoDBItemsVirtualNamespace —
 // storage-plan.md 2.3 requires log events (now stored in a dedicated
@@ -440,90 +308,6 @@ func TestDebugState_includesLogsEventsVirtualNamespace(t *testing.T) {
 	}
 	if !containsDebugBody(body, `hello`) {
 		t.Fatalf("expected log event message in namespace response, got %s", body)
-	}
-}
-
-// TestDebugResetService_logsClearsVirtualEvents mirrors
-// TestDebugResetService_dynamodbClearsVirtualItems for the "logs" service
-// prefix, proving /_overcast/debug/reset/logs clears the dedicated event backend too.
-func TestDebugResetService_logsClearsVirtualEvents(t *testing.T) {
-	// Given: CloudWatch Logs has group metadata in state.Store and event data
-	// in its virtual backend.
-	store := state.NewMemoryStore()
-	ctx := context.Background()
-	if err := store.Set(ctx, "logs:groups", "us-east-1/my-group", `{"name":"my-group"}`); err != nil {
-		t.Fatal(err)
-	}
-	logsProvider := &resetCountingLogsDebugProvider{}
-
-	// When: the logs debug reset endpoint runs.
-	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/logs", nil)
-	rec := httptest.NewRecorder()
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("service", "logs")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{logsProvider}).ServeHTTP(rec, req)
-
-	// Then: store-backed metadata and virtual event state are both cleared.
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, body)
-	}
-	if logsProvider.resets != 1 {
-		t.Fatalf("expected one logs virtual reset, got %d", logsProvider.resets)
-	}
-	if _, found, err := store.Get(ctx, "logs:groups", "us-east-1/my-group"); err != nil || found {
-		t.Fatalf("expected logs group state deleted, found=%v err=%v", found, err)
-	}
-}
-
-// TestDebugReset_clearsMultipleProviders proves /_overcast/debug/reset clears every
-// registered DebugStateProvider, not just one hardcoded service — the
-// generalization this test file's other multi-provider tests underwrite.
-func TestDebugReset_clearsMultipleProviders(t *testing.T) {
-	store := state.NewMemoryStore()
-	dynamo := &resetCountingDynamoDebugProvider{}
-	logsProvider := &resetCountingLogsDebugProvider{}
-
-	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset", nil)
-	rec := httptest.NewRecorder()
-	debugReset(store, []DebugStateProvider{dynamo, logsProvider}).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if dynamo.resets != 1 {
-		t.Fatalf("expected DynamoDB provider reset once, got %d", dynamo.resets)
-	}
-	if logsProvider.resets != 1 {
-		t.Fatalf("expected logs provider reset once, got %d", logsProvider.resets)
-	}
-}
-
-// TestDebugResetService_dynamodbUnaffectedByOtherProviders is a regression
-// test for the debugDynamoDBProvider → []DebugStateProvider generalization:
-// resetting "dynamodb" must reset only the DynamoDB provider, even when other
-// providers (e.g. logs) are also registered.
-func TestDebugResetService_dynamodbUnaffectedByOtherProviders(t *testing.T) {
-	store := state.NewMemoryStore()
-	dynamo := &resetCountingDynamoDebugProvider{}
-	logsProvider := &resetCountingLogsDebugProvider{}
-
-	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/dynamodb", nil)
-	rec := httptest.NewRecorder()
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("service", "dynamodb")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	debugResetService(store, []DebugStateProvider{dynamo, logsProvider}).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if dynamo.resets != 1 {
-		t.Fatalf("expected DynamoDB provider reset once, got %d", dynamo.resets)
-	}
-	if logsProvider.resets != 0 {
-		t.Fatalf("expected logs provider untouched, got %d resets", logsProvider.resets)
 	}
 }
 

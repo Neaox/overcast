@@ -130,7 +130,7 @@ UI, Docker packaging.
 4. **Web UI (Raw State Debugger, Wave 3):** against a namespace with >1 000 keys — initial page
    loads 500, scrolling fetches more, tree view collapses/expands under virtualization, key
    search shows the "Load more" affordance instead of auto-paging, deep-link to a key on an
-   unloaded page resolves via the single-key fallback, `/_overcast/debug/reset` clears virtual namespaces
+   unloaded page resolves via the single-key fallback, `/_overcast/reset` clears virtual namespaces
    (logs/DynamoDB) too. Check `/_overcast/debug/metrics?includeRowCounts=true` shows flush history and
    sane counts while the burst from step 2 is running.
 5. **Compat suite:** run the `rust-sdk-compat` image job if the release includes it.

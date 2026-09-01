@@ -19,9 +19,9 @@ import (
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
-// TestDebugReset_withSQLiteStore covers the non-MemoryStore branch of debugReset
+// TestReset_withSQLiteStore covers the non-MemoryStore branch of resetHandler
 // (the resetAllNamespaces code path).
-func TestDebugReset_withSQLiteStore(t *testing.T) {
+func TestReset_withSQLiteStore(t *testing.T) {
 	sqliteStore, err := state.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
@@ -40,7 +40,7 @@ func TestDebugReset_withSQLiteStore(t *testing.T) {
 		t.Fatalf("warm-up Get (waiting for migration): %v", err)
 	}
 
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true), helpers.WithStore(sqliteStore))
+	srv := helpers.NewTestServer(t, helpers.WithStore(sqliteStore))
 
 	// Create a queue to populate state.
 	body, _ := json.Marshal(map[string]any{"QueueName": "sqlite-reset-queue"})
@@ -55,8 +55,8 @@ func TestDebugReset_withSQLiteStore(t *testing.T) {
 	createResp.Body.Close()
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 
-	// Reset via debug endpoint — exercises resetAllNamespaces.
-	resetResp, err := http.Post(srv.URL+"/_overcast/debug/reset", "application/json", nil)
+	// Reset via the always-on endpoint — exercises resetAllNamespaces.
+	resetResp, err := http.Post(srv.URL+"/_overcast/reset", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

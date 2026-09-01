@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"runtime"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,9 +30,9 @@ type debugEC2Provider interface {
 // DebugStateProvider is implemented by services with data outside the
 // generic kv store (a dedicated SQL table, e.g. DynamoDB items or CloudWatch
 // Logs events) that still needs to appear as a virtual namespace in
-// /_overcast/debug/state and be clearable via /_overcast/debug/reset. See storage-plan.md
+// /_overcast/debug/state and be clearable via /_overcast/reset. See storage-plan.md
 // item 2.3 — the raw state debugger only enumerates the generic kv store by
-// default, so a dedicated table is invisible (and immune to /_overcast/debug/reset)
+// default, so a dedicated table is invisible (and immune to /_overcast/reset)
 // without one of these.
 //
 // The router holds a slice of these (one per opted-in service) instead of
@@ -52,12 +51,15 @@ type DebugStateProvider interface {
 }
 
 // debugHandlers registers the /_overcast/debug/* endpoint namespace.
-// These are only mounted when cfg.Debug == true.
+// These are only mounted when cfg.Debug == true — this is instrumentation
+// for expensive or leaky machinery (state dumps, request tracing, pprof), not
+// where destructive-but-cheap operations belong. Reset lives outside this
+// gate; see reset.go.
 //
 // Equivalent to LocalStack's /_localstack/* endpoints — useful for:
-//   - Resetting state between test runs without restarting the container
 //   - Inspecting what's stored (useful when debugging test failures)
 //   - Verifying configuration is what you expect
+//   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
 func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
@@ -66,8 +68,6 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Post("/reset", debugReset(store, providers))
-		r.Post("/reset/{service}", debugResetService(store, providers))
 		r.Get("/metrics", debugMetrics(cfg, store))
 
 		// ---- Request tracing --------------------------------------------------
@@ -437,58 +437,6 @@ func truncateDebugJSONStrings(value any) any {
 	}
 }
 
-func debugReset(store state.Store, providers []DebugStateProvider) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		resetStore(r.Context(), store)
-		for _, p := range providers {
-			if p == nil {
-				continue
-			}
-			if err := p.DebugResetState(r.Context()); err != nil {
-				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-		}
-		writeDebugJSON(w, http.StatusOK, map[string]string{"status": "reset"})
-	}
-}
-
-func debugResetService(store state.Store, providers []DebugStateProvider) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		service := chi.URLParam(r, "service")
-		if !slices.Contains(config.AllServices(), service) {
-			writeDebugJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "unknown service: " + service,
-			})
-			return
-		}
-		namespaces, err := namespacesForService(r.Context(), store, service)
-		if err != nil {
-			writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		prefix := debugServicePrefix(service)
-		matchingProviders := debugProvidersForServicePrefix(providers, prefix)
-
-		for _, ns := range namespaces {
-			keys, _ := store.List(r.Context(), ns, "")
-			for _, k := range keys {
-				_ = store.Delete(r.Context(), ns, k)
-			}
-		}
-		for _, p := range matchingProviders {
-			if err := p.DebugResetState(r.Context()); err != nil {
-				writeDebugJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-		}
-		writeDebugJSON(w, http.StatusOK, map[string]string{
-			"status":  "reset",
-			"service": service,
-		})
-	}
-}
-
 // debugProviderForNamespace returns the provider whose virtual namespace
 // matches ns, or nil if none of providers own it.
 func debugProviderForNamespace(providers []DebugStateProvider, ns string) DebugStateProvider {
@@ -498,27 +446,6 @@ func debugProviderForNamespace(providers []DebugStateProvider, ns string) DebugS
 		}
 	}
 	return nil
-}
-
-// debugProvidersForServicePrefix returns every provider whose virtual
-// namespace's service segment (the part before ":", or the whole namespace
-// if there is no ":") equals prefix — e.g. "logs:events" matches prefix
-// "logs", "dynamodb:items" matches prefix "dynamodb".
-func debugProvidersForServicePrefix(providers []DebugStateProvider, prefix string) []DebugStateProvider {
-	if prefix == "" {
-		return nil
-	}
-	var matched []DebugStateProvider
-	for _, p := range providers {
-		if p == nil {
-			continue
-		}
-		ns := p.DebugNamespace()
-		if svc, _, found := strings.Cut(ns, ":"); (found && svc == prefix) || (!found && ns == prefix) {
-			matched = append(matched, p)
-		}
-	}
-	return matched
 }
 
 // debugMetricsResponse is the JSON body for GET /_overcast/debug/metrics
@@ -576,67 +503,6 @@ func writeDebugJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
-}
-
-func namespacesForService(ctx context.Context, store state.Store, service string) ([]string, error) {
-	all, err := store.ListNamespaces(ctx)
-	if err != nil {
-		return nil, err
-	}
-	prefix := debugServicePrefix(service)
-	if prefix == "" {
-		return []string{}, nil
-	}
-	var namespaces []string
-	for _, ns := range all {
-		if ns == prefix || strings.HasPrefix(ns, prefix+":") {
-			namespaces = append(namespaces, ns)
-		}
-	}
-	return namespaces, nil
-}
-
-// debugServicePrefix delegates to config.ServiceNamespacePrefix, the single
-// source of truth for the config-service-name → storage-namespace-prefix
-// mapping (see its doc comment for why this mapping exists).
-func debugServicePrefix(service string) string {
-	return config.ServiceNamespacePrefix(service)
-}
-
-// resetStore clears all data in store. It fast-paths *state.MemoryStore via
-// its Reset() method and falls back to a generic list-and-delete sweep
-// (resetAllNamespaces) for anything else. When store is a
-// *state.NamespacedStore, the same logic is applied recursively to every
-// distinct underlying store instead of asserting the concrete type of the
-// wrapper itself — a bare `store.(*state.MemoryStore)` check silently missed
-// wrapped stores regardless of what backend they actually wrap, doing a
-// (still-correct-but-unintended) generic sweep even when a fast reset was
-// available on every underlying store.
-func resetStore(ctx context.Context, store state.Store) {
-	if ns, ok := store.(*state.NamespacedStore); ok {
-		for _, underlying := range ns.UnderlyingStores() {
-			resetStore(ctx, underlying)
-		}
-		return
-	}
-	if ms, ok := store.(*state.MemoryStore); ok {
-		ms.Reset()
-		return
-	}
-	resetAllNamespaces(ctx, store)
-}
-
-func resetAllNamespaces(ctx context.Context, store state.Store) {
-	namespaces, err := store.ListNamespaces(ctx)
-	if err != nil {
-		return
-	}
-	for _, ns := range namespaces {
-		keys, _ := store.List(ctx, ns, "")
-		for _, k := range keys {
-			_ = store.Delete(ctx, ns, k)
-		}
-	}
 }
 
 // ---- Trace handlers ---------------------------------------------------------
