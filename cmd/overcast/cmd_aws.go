@@ -14,13 +14,17 @@ package main
 // AWS-CLI-native flags like --debug or --profile — passes through to the
 // child verbatim; overcast's own flag parser never gets a chance to
 // misinterpret them. The one piece of overcast's own surface that can still
-// appear on this command line is the root --endpoint flag, and only when
-// given *before* "aws" (`overcast --endpoint X aws ...`) — Cobra resolves
-// that positionally while locating the subcommand, but because this command
-// disables flag parsing entirely, Cobra never actually *parses* it into the
-// flag's Value (see extractLeadingEndpointFlag). --endpoint given after
-// "aws" is just another passthrough argument, same as any other aws-CLI
-// flag.
+// appear on this command line is the root --endpoint flag, recognized only
+// in the leading position. Cobra hands this command identical args whether
+// the flag was written before or after "aws" (it strips just the "aws"
+// token while locating the subcommand, and DisableFlagParsing means it
+// never parses the flag into its Value either way), so both spellings —
+// `overcast --endpoint X aws ...` and `overcast aws --endpoint X ...` —
+// resolve the overcast endpoint (see extractLeadingEndpointFlag). That is
+// deliberate: the aws CLI has no --endpoint global flag of its own (its
+// spelling is --endpoint-url), so a leading --endpoint was always meant
+// for overcast. --endpoint-url and anything non-leading pass through
+// untouched.
 
 import (
 	"context"
@@ -63,10 +67,10 @@ func newAWSCmd() *cobra.Command {
 			"AWS_PROFILE or AWS_ENDPOINT_URL from something else silently redirects\n" +
 			"or re-signs the call.\n\n" +
 			"All arguments are passed through to `aws` verbatim, including flags such\n" +
-			"as --debug. The root --endpoint flag works when given before \"aws\"\n" +
-			"(overcast --endpoint http://localhost:4580 aws s3 ls); otherwise the\n" +
-			"OVERCAST_ENDPOINT / OVERCAST_PORT environment variables apply, same as\n" +
-			"scripts/awslocal.sh.",
+			"as --debug. The root --endpoint flag is recognized in the leading position\n" +
+			"(overcast aws --endpoint http://localhost:4580 s3 ls, or before \"aws\");\n" +
+			"otherwise the OVERCAST_ENDPOINT / OVERCAST_PORT environment variables\n" +
+			"apply, same as scripts/awslocal.sh.",
 		DisableFlagParsing: true,
 		SilenceUsage:       true,
 		RunE:               runAWS,
@@ -131,11 +135,11 @@ func runAWS(cmd *cobra.Command, args []string) error {
 }
 
 // extractLeadingEndpointFlag pulls a leading "--endpoint VALUE" or
-// "--endpoint=VALUE" off the front of args. Cobra locates this command by
-// stripping recognized root flags (including --endpoint) from the front of
-// the raw argument list while searching for "aws", so if the user gave
-// --endpoint before the subcommand it is necessarily the first (or first
-// two) elements of args here — nothing later in args can be it, because
+// "--endpoint=VALUE" off the front of args. Cobra removes only the "aws"
+// token while locating this command, so a --endpoint written before the
+// subcommand arrives here in the leading position — indistinguishable from
+// one written directly after "aws", which is why both spellings work (see
+// the file comment). Anything past the leading position is passthrough;
 // DisableFlagParsing means Cobra never parses these tokens itself.
 func extractLeadingEndpointFlag(args []string) (value string, given bool, rest []string) {
 	if len(args) == 0 {

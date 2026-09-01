@@ -8,6 +8,10 @@
 //   - overcast trust        — manage the local trust store for TLS certificates
 //   - overcast https        — one-shot HTTPS setup (CA + trust store + certificate)
 //   - overcast status       — check a running daemon is reachable
+//   - overcast wait         — block until a daemon reports healthy
+//   - overcast services     — list enabled services and emulation tiers
+//   - overcast env          — print AWS environment exports for the daemon
+//   - overcast aws          — run the host AWS CLI against the daemon
 //
 // The Docker image uses `overcast serve` as its entrypoint. Host-only
 // commands (bridge, trust) require host-network access and are not useful
@@ -40,6 +44,10 @@ func main() {
 	root.AddCommand(newTrustCmd())
 	root.AddCommand(newHTTPSCmd())
 	root.AddCommand(newImportCmd())
+	root.AddCommand(newEnvCmd())
+	root.AddCommand(newAWSCmd())
+	root.AddCommand(newWaitCmd())
+	root.AddCommand(newServicesCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "overcast:", err)

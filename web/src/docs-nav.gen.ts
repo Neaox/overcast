@@ -1122,6 +1122,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "overcast aws` and `overcast env",
+        "id": "overcast-aws-and-overcast-env"
+      },
+      {
+        "depth": 3,
         "text": "Environment variables (recommended for CI)",
         "id": "environment-variables-recommended-for-ci"
       },

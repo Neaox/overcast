@@ -32,6 +32,30 @@ aws --endpoint-url http://localhost:4566 dynamodb list-tables
 
 This is the simplest way to try Overcast without changing any configuration.
 
+### `overcast aws` and `overcast env`
+
+The `overcast` binary can drive the AWS CLI for you. `overcast aws` runs the
+`aws` CLI from your PATH with the endpoint, test credentials, and region already
+set — and with every ambient `AWS_*` variable scrubbed first, so a stray
+profile or region in your shell can never send a command to real AWS:
+
+```bash
+overcast aws s3 mb s3://my-bucket
+overcast aws sqs list-queues
+```
+
+Migrating from LocalStack? `alias awslocal='overcast aws'` gives you the
+familiar name.
+
+For every other tool, `overcast env` prints the same variables as exports for
+your shell (sh, PowerShell, and fish output are supported — auto-detected,
+override with `--shell`):
+
+```bash
+eval "$(overcast env)"
+aws s3 ls        # any AWS tool in this shell now talks to Overcast
+```
+
 ### Environment variables (recommended for CI)
 
 Setting `AWS_ENDPOINT_URL` avoids repeating the flag on every command:
@@ -42,6 +66,9 @@ export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
 export AWS_DEFAULT_REGION=us-east-1
 ```
+
+In CI, `overcast wait --timeout 60s` blocks until the daemon reports healthy,
+so the job's first real AWS call never races the startup.
 
 Then use the CLI normally:
 
