@@ -1137,36 +1137,41 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "SDK examples",
+        "id": "sdk-examples"
+      },
+      {
+        "depth": 3,
         "text": "Node.js (AWS SDK v3)",
         "id": "node-js-aws-sdk-v3"
       },
       {
-        "depth": 3,
+        "depth": 4,
         "text": "Using `AWS_ENDPOINT_URL",
         "id": "using-aws-endpoint-url"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "text": "Python (boto3)",
         "id": "python-boto3"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "text": "Go (AWS SDK v2)",
         "id": "go-aws-sdk-v2"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "text": "Java (AWS SDK v2)",
         "id": "java-aws-sdk-v2"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "text": ".NET (AWS SDK)",
         "id": "net-aws-sdk"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "text": "Rust (AWS SDK)",
         "id": "rust-aws-sdk"
       },
