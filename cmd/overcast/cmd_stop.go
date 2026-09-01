@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -64,7 +65,7 @@ func newRestartCmd() *cobra.Command {
 				return err
 			}
 			if err := saveInstance(newRec); err != nil {
-				return fmt.Errorf("instance %q restarted (pid %d) but saving its registry record failed: %w", name, newRec.PID, err)
+				return fmt.Errorf("instance %q restarted but saving its registry record failed: %w", name, err)
 			}
 
 			printInstanceStarted(cmd, newRec)
@@ -100,22 +101,34 @@ func instanceNameArg(args []string) string {
 // comment (instances.go) for why secrets should not have been passed via
 // --env in the first place — restart carries over exactly what was saved,
 // nothing more.
+//
+// portsExplicit is set only when rec.Backend is "docker" (native ignores
+// it): restart means to reproduce the exact same instance, including its
+// port pair, so resolveDockerPorts (docker_backend.go) must error if either
+// port is now busy rather than silently scanning for a fresh pair.
 func startOptionsFromRecord(rec instanceRecord) startOptions {
 	return startOptions{
-		name:    rec.Name,
-		port:    rec.Port,
-		uiPort:  rec.UIPort,
-		state:   rec.State,
-		dataDir: rec.DataDir,
-		env:     rec.Env,
+		name:              rec.Name,
+		port:              rec.Port,
+		uiPort:            rec.UIPort,
+		state:             rec.State,
+		dataDir:           rec.DataDir,
+		env:               rec.Env,
+		portsExplicit:     rec.Backend == "docker",
+		image:             rec.Image,
+		dataVolume:        rec.DataVolume,
+		mountDockerSocket: rec.MountDockerSocket,
 	}
 }
 
 // stopInstance implements `overcast stop`'s body, shared with restart: look
-// up the record, ask a running process to exit — graceful then forced, see
-// sendTerminate in detach_unix.go/detach_windows.go — and remove the record
-// either way. Stopping an already-stopped instance is not an error; it just
-// cleans up the stale record and says so, per the brief.
+// up the record, ask a running process/container to exit, and remove the
+// record either way. Stopping an already-stopped instance is not an error;
+// it just cleans up the stale record and says so, per the brief.
+//
+// Backend-specific from here: native asks the pid to exit gracefully then
+// forces it (sendTerminate in detach_unix.go/detach_windows.go, below);
+// docker is stopDockerInstance, just below this function.
 func stopInstance(cmd *cobra.Command, name string) error {
 	out := cmd.OutOrStdout()
 
@@ -130,6 +143,10 @@ func stopInstance(cmd *cobra.Command, name string) error {
 		}
 		fmt.Fprintf(out, "instance %q was not running; removed its stale record\n", name)
 		return nil
+	}
+
+	if rec.Backend == "docker" {
+		return stopDockerInstance(out, name, rec)
 	}
 
 	proc, err := os.FindProcess(rec.PID)
@@ -152,6 +169,36 @@ func stopInstance(cmd *cobra.Command, name string) error {
 
 	if err := removeInstance(name); err != nil {
 		return fmt.Errorf("instance %q stopped but removing its record failed: %w", name, err)
+	}
+	fmt.Fprintf(out, "instance %q stopped\n", name)
+	return nil
+}
+
+// stopDockerInstance is stopInstance's "docker" branch: `docker stop`
+// (default grace period — same as a bare `docker stop` with no --time), then
+// `docker rm` it, since this backend created the container without --rm and
+// so owns its removal (see docker_backend.go's file comment). Both go
+// through the dockerRun exec seam. removeInstance always runs, even if the
+// docker calls themselves failed, so a container that somehow can't be
+// reached still doesn't leave a permanently-refusing "already running"
+// record behind — the same "clean up the record regardless" behavior the
+// native path has via its own force-kill fallback.
+func stopDockerInstance(out io.Writer, name string, rec instanceRecord) error {
+	stopErr, rmErr := error(nil), error(nil)
+	if _, err := dockerRun("stop", rec.ContainerID); err != nil {
+		stopErr = err
+	} else if _, err := dockerRun("rm", rec.ContainerID); err != nil {
+		rmErr = err
+	}
+
+	if err := removeInstance(name); err != nil {
+		return fmt.Errorf("instance %q: stopping the container failed and removing its registry record also failed: %w", name, err)
+	}
+	switch {
+	case stopErr != nil:
+		return fmt.Errorf("instance %q: docker stop %s: %w (registry record removed anyway)", name, rec.ContainerID, stopErr)
+	case rmErr != nil:
+		return fmt.Errorf("instance %q: container stopped but docker rm %s failed: %w (registry record removed anyway)", name, rec.ContainerID, rmErr)
 	}
 	fmt.Fprintf(out, "instance %q stopped\n", name)
 	return nil

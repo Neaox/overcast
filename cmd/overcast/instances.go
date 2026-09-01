@@ -5,7 +5,9 @@ package main
 // spawned. Each named instance gets a directory under
 // ~/.overcast/instances/<name>/ holding instance.json (this file's
 // instanceRecord, marshalled) and, for the native backend, daemon.log — the
-// spawned process's redirected stdout+stderr.
+// spawned process's redirected stdout+stderr. A docker-backed instance
+// (docker_backend.go) has no daemon.log of its own; its output lives in the
+// container and is read via `overcast logs` → `docker logs`.
 //
 // Concurrent CLI invocations racing on the same instance name are an
 // accepted v1 limitation: there is no file locking here. Two `overcast start
@@ -40,19 +42,29 @@ func defaultInstancesBaseDir() (string, error) {
 }
 
 // instanceRecord is the persisted state of one instance this CLI manages.
-// Backend is a string rather than an enum so a Docker backend (a later
-// phase) can introduce a new value without a breaking schema change to
-// instance.json — "native" is the only value this phase ever writes.
+// Backend is a string rather than an enum so a future backend can introduce
+// a new value without a breaking schema change to instance.json — "native"
+// and "docker" (docker_backend.go) are the two this CLI writes today.
 type instanceRecord struct {
 	Name     string `json:"name"`
-	Backend  string `json:"backend"` // "native" is the only value this phase produces.
-	PID      int    `json:"pid"`
+	Backend  string `json:"backend"` // "native" or "docker" (see docker_backend.go).
+	PID      int    `json:"pid"`     // native only; 0 for a docker-backed instance.
 	Port     int    `json:"port"`
 	UIPort   int    `json:"uiPort"`
 	Endpoint string `json:"endpoint"` // http://127.0.0.1:<port> — 127.0.0.1, not localhost (see cmd_start.go).
 	DataDir  string `json:"dataDir,omitempty"`
 	State    string `json:"state,omitempty"` // OVERCAST_STATE passthrough; empty means the daemon's own default.
-	LogFile  string `json:"logFile"`
+	LogFile  string `json:"logFile,omitempty"`
+	// ContainerID, Image, DataVolume and MountDockerSocket are docker-backend
+	// only (see docker_backend.go); all empty/false for "native". ContainerID
+	// is what `overcast stop`/`overcast logs` operate on, Image and
+	// DataVolume/MountDockerSocket are persisted so `overcast restart`
+	// reproduces the same container rather than falling back to the
+	// version-pinned default image or dropping the volume/socket mount.
+	ContainerID       string `json:"containerId,omitempty"`
+	Image             string `json:"image,omitempty"`
+	DataVolume        string `json:"dataVolume,omitempty"`
+	MountDockerSocket bool   `json:"mountDockerSocket,omitempty"`
 	// StartedAt is RFC3339 via time.Time's default JSON marshalling.
 	StartedAt time.Time `json:"startedAt"`
 	Version   string    `json:"version"`
@@ -169,16 +181,55 @@ func removeInstance(name string) error {
 	return nil
 }
 
-// instanceRunning reports whether rec's process is currently alive.
-// processAlive (detach_unix.go / detach_windows.go) does the actual
-// platform-specific liveness probe. This does not distinguish "this pid now
-// belongs to something else" from "still our daemon" — pid reuse on a
-// machine that has run many processes since this instance started is
-// possible but rare enough that v1 accepts it, the same way it accepts two
-// concurrent `overcast start` invocations racing on one name (see this
-// file's header comment).
+// instanceRunning reports whether rec's backend is currently alive: pid
+// liveness (processAlive, detach_unix.go/detach_windows.go) for "native",
+// container state (dockerContainerRunning, docker_backend.go — routed
+// through the dockerRun exec seam so this never shells out in a test) for
+// "docker". A docker liveness check that itself fails (docker not
+// installed, daemon unreachable, container already gone) reads as "not
+// running" here — the same as a stale pid — which is what lets `overcast
+// start` over a broken record proceed instead of refusing forever, and lets
+// `overcast stop` fall through to its stale-record cleanup path rather than
+// erroring. See instanceLifecycleState (cmd_status.go) for the caller that
+// needs to tell "confirmed stopped" apart from "could not check".
+//
+// This does not distinguish "this pid/container id now belongs to something
+// else" from "still our daemon" — pid or container-id reuse is possible but
+// rare enough that v1 accepts it, the same way it accepts two concurrent
+// `overcast start` invocations racing on one name (see this file's header
+// comment).
 func instanceRunning(rec instanceRecord) bool {
+	if rec.Backend == "docker" {
+		running, err := dockerContainerRunning(rec.ContainerID)
+		return err == nil && running
+	}
 	return processAlive(rec.PID)
+}
+
+// instanceLifecycleState is instanceRunning's three-valued cousin, for
+// `overcast status`'s instance table (cmd_status.go): "running", "stopped",
+// or "unknown" when the liveness check itself could not be completed (the
+// docker CLI missing, the daemon unreachable, a container id that no longer
+// resolves). instanceRunning collapses that last case into "not running"
+// because its callers (start's already-running refusal, stop, restart) need
+// a plain go/no-go signal and "unknown" is not actionable there; a status
+// table has room to say so instead of silently misreporting a health check
+// that never actually ran.
+func instanceLifecycleState(rec instanceRecord) string {
+	if rec.Backend == "docker" {
+		running, err := dockerContainerRunning(rec.ContainerID)
+		if err != nil {
+			return "unknown"
+		}
+		if running {
+			return "running"
+		}
+		return "stopped"
+	}
+	if processAlive(rec.PID) {
+		return "running"
+	}
+	return "stopped"
 }
 
 // completeInstanceNames is the shell-completion source for `overcast start

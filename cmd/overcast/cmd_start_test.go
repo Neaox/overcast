@@ -169,8 +169,12 @@ func TestBuildInstanceRecord(t *testing.T) {
 	}
 }
 
+// TestStartBackend_UnknownBackend used to name "docker" as the not-yet-implemented
+// backend; now that startDocker (docker_backend.go) exists, "bogus" plays
+// that role instead — the point of the test is just that startBackend's
+// dispatch refuses a name that isn't one of its real cases.
 func TestStartBackend_UnknownBackend(t *testing.T) {
-	if _, err := startBackend("docker", startOptions{name: "x"}); err == nil {
-		t.Fatal(`startBackend("docker", ...) succeeded, want an error — the docker backend does not exist yet`)
+	if _, err := startBackend("bogus", startOptions{name: "x"}); err == nil {
+		t.Fatal(`startBackend("bogus", ...) succeeded, want an error — no such backend exists`)
 	}
 }

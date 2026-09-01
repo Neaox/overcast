@@ -1,15 +1,18 @@
 package main
 
 // cmd_start.go — `overcast start`. Spawns `overcast serve` as a detached
-// background process and records it in the instance registry (instances.go)
+// background process (or, with --docker, runs it as a container — see
+// docker_backend.go) and records it in the instance registry (instances.go)
 // so `overcast stop`/`overcast restart` (cmd_stop.go) can find it again.
 //
-// Native only for now: startBackend's dispatch and the "backend" field on
-// the saved record exist so a future Docker backend can be added as another
-// case there, rather than as a parallel start path elsewhere.
+// startBackend's dispatch and the "backend" field on the saved record exist
+// so each backend is a self-contained case here rather than a parallel start
+// path living elsewhere; startNative is this file's case, startDocker
+// (docker_backend.go) is the other.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,32 +42,57 @@ func newStartCmd() *cobra.Command {
 			envFlags, _ := cmd.Flags().GetStringArray("env")
 			noWait, _ := cmd.Flags().GetBool("no-wait")
 			timeout, _ := cmd.Flags().GetDuration("timeout")
+			useDocker, _ := cmd.Flags().GetBool("docker")
+			image, _ := cmd.Flags().GetString("image")
+			channel, _ := cmd.Flags().GetString("channel")
+			dataVolume, _ := cmd.Flags().GetString("data-volume")
+			mountDockerSocket, _ := cmd.Flags().GetBool("mount-docker-socket")
+
+			if err := validateDockerOnlyFlags(useDocker, image, channel, dataVolume, mountDockerSocket); err != nil {
+				return err
+			}
 
 			envMap, err := parseStartEnv(envFlags)
 			if err != nil {
 				return err
 			}
 
-			// A dead record (its process no longer running) is replaced
-			// silently below by the eventual saveInstance call; only a live
-			// one is refused.
+			// A dead record (its process/container no longer running) is
+			// replaced silently below by the eventual saveInstance call;
+			// only a live one is refused.
 			if existing, err := loadInstance(name); err == nil && instanceRunning(existing) {
-				return fmt.Errorf("instance %q is already running (pid %d) — run `overcast stop %s` first", name, existing.PID, name)
+				return fmt.Errorf("instance %q is already running — run `overcast stop %s` first", name, name)
 			}
 
-			rec, err := startBackend("native", startOptions{
+			backend := "native"
+			opts := startOptions{
 				name:    name,
 				port:    port,
 				uiPort:  uiPort,
 				state:   state,
 				dataDir: dataDir,
 				env:     envMap,
-			})
+			}
+			if useDocker {
+				backend = "docker"
+				resolvedImage, err := resolveDockerImage(image, channel, version, func(note string) {
+					fmt.Fprintln(cmd.OutOrStdout(), note)
+				})
+				if err != nil {
+					return err
+				}
+				opts.portsExplicit = cmd.Flags().Changed("port") || cmd.Flags().Changed("ui-port")
+				opts.image = resolvedImage
+				opts.dataVolume = dataVolume
+				opts.mountDockerSocket = mountDockerSocket
+			}
+
+			rec, err := startBackend(backend, opts)
 			if err != nil {
 				return err
 			}
 			if err := saveInstance(rec); err != nil {
-				return fmt.Errorf("instance %q started (pid %d) but saving its registry record failed: %w", name, rec.PID, err)
+				return fmt.Errorf("instance %q started but saving its registry record failed: %w", name, err)
 			}
 
 			printInstanceStarted(cmd, rec)
@@ -89,30 +117,78 @@ func newStartCmd() *cobra.Command {
 	cmd.Flags().StringArray("env", nil, "extra OVERCAST_*/AWS_* environment variable for the daemon, as KEY=VALUE (repeatable)")
 	cmd.Flags().Bool("no-wait", false, "return immediately instead of waiting for the instance to become healthy")
 	cmd.Flags().Duration("timeout", 60*time.Second, "how long to wait for the instance to become healthy")
+
+	// --docker and its options: see docker_backend.go for what each does and
+	// why there is no further docker run passthrough.
+	cmd.Flags().Bool("docker", false, "run the instance as a Docker container instead of a native process")
+	cmd.Flags().String("image", "", "docker image to run, full override (only with --docker; default: this CLI's own version)")
+	cmd.Flags().String("channel", "", "docker image channel: alpha, beta, or latest (only with --docker; default: pinned to this CLI's version)")
+	_ = cmd.RegisterFlagCompletionFunc("channel", completeDockerChannels)
+	cmd.Flags().String("data-volume", "", "docker named volume to mount at /data (only with --docker)")
+	cmd.Flags().Bool("mount-docker-socket", false, "bind-mount the host docker socket into the container, for Lambda/ECS sibling containers (only with --docker)")
 	return cmd
+}
+
+// completeDockerChannels is --channel's shell-completion source: the fixed,
+// small set of valid values (see resolveDockerImage, docker_backend.go).
+func completeDockerChannels(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return dockerChannels, cobra.ShellCompDirectiveNoFileComp
+}
+
+// validateDockerOnlyFlags refuses --image/--channel/--data-volume/
+// --mount-docker-socket when --docker was not given: each is meaningless for
+// the native backend, and silently ignoring them would let a typo'd
+// `--dokcer` (say) look like it worked while quietly running native instead
+// of the container the caller actually asked for.
+func validateDockerOnlyFlags(docker bool, image, channel, dataVolume string, mountDockerSocket bool) error {
+	if docker {
+		return nil
+	}
+	switch {
+	case image != "":
+		return errors.New("--image requires --docker")
+	case channel != "":
+		return errors.New("--channel requires --docker")
+	case dataVolume != "":
+		return errors.New("--data-volume requires --docker")
+	case mountDockerSocket:
+		return errors.New("--mount-docker-socket requires --docker")
+	}
+	return nil
 }
 
 // printInstanceStarted prints the summary a caller needs right after start
 // (or restart) succeeds: where the instance is, where its log is, and how
 // to point AWS tools at it. Shared by cmd_stop.go's restart, whose success
-// message is identical apart from the verb.
+// message is identical apart from the verb. Backend-aware: a docker instance
+// has a container id instead of a pid and no daemon.log of its own —
+// `overcast logs` reads from the container either way, so that's what's
+// pointed at.
 func printInstanceStarted(cmd *cobra.Command, rec instanceRecord) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "overcast %q started (pid %d)\n", rec.Name, rec.PID)
+	if rec.Backend == "docker" {
+		fmt.Fprintf(out, "overcast %q started (container %s)\n", rec.Name, shortContainerID(rec.ContainerID))
+	} else {
+		fmt.Fprintf(out, "overcast %q started (pid %d)\n", rec.Name, rec.PID)
+	}
 	fmt.Fprintf(out, "  endpoint: %s\n", rec.Endpoint)
 	if rec.UIPort != 0 {
 		fmt.Fprintf(out, "  web console: http://127.0.0.1:%d\n", rec.UIPort)
 	}
-	fmt.Fprintf(out, "  log: %s\n", rec.LogFile)
+	if rec.Backend == "docker" {
+		fmt.Fprintf(out, "  logs: overcast logs %s\n", rec.Name)
+	} else {
+		fmt.Fprintf(out, "  log: %s\n", rec.LogFile)
+	}
 	fmt.Fprintln(out, `  run 'eval "$(overcast env)"' (PowerShell: overcast env | iex) to point AWS tools here`)
 }
 
 // parseStartEnv validates each --env KEY=VALUE flag against an allow-list:
 // only OVERCAST_* and AWS_* names may reach the spawned daemon's
 // environment, mirroring scripts/run-test-instance.ps1's -EnvVar (see that
-// script's header comment). The daemon is unauthenticated and — once a
-// Docker backend lands in a later phase — capable of starting containers on
-// the caller's behalf, so `overcast start --env` must not become a way to
+// script's header comment). The daemon is unauthenticated and, with the
+// docker backend (docker_backend.go), capable of starting containers on the
+// caller's behalf, so `overcast start --env` must not become a way to
 // inject arbitrary environment (PATH, LD_PRELOAD, …) into a process this
 // CLI spawns.
 func parseStartEnv(flags []string) (map[string]string, error) {
@@ -132,6 +208,9 @@ func parseStartEnv(flags []string) (map[string]string, error) {
 
 // startOptions collects the resolved, already-validated parameters for
 // spawning one instance, independent of which backend ends up running it.
+// The fields below dataDir are native-only; the fields below env are
+// docker-only (see startDocker, docker_backend.go) — each backend ignores
+// the fields that aren't its own.
 type startOptions struct {
 	name    string
 	port    int
@@ -139,15 +218,25 @@ type startOptions struct {
 	state   string
 	dataDir string
 	env     map[string]string
+
+	// portsExplicit: true when port/uiPort were explicitly requested (error
+	// if busy) rather than left at their defaults (scan for a free pair).
+	// See resolveDockerPorts (docker_backend.go).
+	portsExplicit     bool
+	image             string // already-resolved image reference; see resolveDockerImage.
+	dataVolume        string
+	mountDockerSocket bool
 }
 
-// startBackend dispatches by backend name. "native" is the only one this
-// phase implements; a Docker backend added later gets its own case here
-// rather than a parallel switch living somewhere else.
+// startBackend dispatches by backend name: "native" (this file) or "docker"
+// (docker_backend.go). Each backend is a self-contained case here rather
+// than a parallel switch living somewhere else.
 func startBackend(backend string, opts startOptions) (instanceRecord, error) {
 	switch backend {
 	case "native":
 		return startNative(opts)
+	case "docker":
+		return startDocker(opts)
 	default:
 		return instanceRecord{}, fmt.Errorf("unknown backend %q", backend)
 	}
