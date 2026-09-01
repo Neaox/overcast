@@ -56,6 +56,14 @@ const caFetchTimeout = 3 * time.Second
 // anything near this is not one. Mirrors trust.maxCAPemBytes (unexported).
 const maxCAPemBytes = 64 * 1024
 
+// caCacheFreshFor is how long a cached CA is served without re-fetching.
+// The CA changes essentially never (only `overcast trust` regeneration), so
+// this exists purely to keep a per-invocation HTTP round trip — and the
+// caFetchTimeout stall when the daemon is down — off every https `overcast
+// aws` call. Kept short anyway: a stale-but-wrong CA only costs one
+// re-fetch five minutes later.
+const caCacheFreshFor = 5 * time.Minute
+
 func newAWSCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "aws [args...]",
@@ -74,7 +82,70 @@ func newAWSCmd() *cobra.Command {
 		DisableFlagParsing: true,
 		SilenceUsage:       true,
 		RunE:               runAWS,
+		// With DisableFlagParsing set, Cobra routes every token — flags
+		// included — to ValidArgsFunction, which is what lets tab
+		// completion inside the passthrough args be delegated to the AWS
+		// CLI's own completer.
+		ValidArgsFunction: completeAWSArgs,
 	}
+}
+
+// completeAWSArgs delegates completion of the passthrough args to
+// aws_completer, which ships with every AWS CLI v2 install and speaks the
+// plain COMP_LINE/COMP_POINT protocol (candidates on stdout, one per
+// line). This is the only route to completing a *subcommand*'s passthrough
+// args: the shell trick thin wrappers use (`complete -C aws_completer
+// awslocal`) keys off the first word of the line, which here is "overcast"
+// and already owned by Cobra's completion script.
+//
+// Without aws_completer on PATH this falls back to file completion — for
+// an unknown suffix of an aws command line, a path is the least-wrong
+// guess (fileb:// payloads, template paths). Failures do the same: a
+// completion function must never surface an error at the prompt.
+func completeAWSArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	completer, err := exec.LookPath("aws_completer")
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+
+	// The overcast-owned tokens (a leading --endpoint pair, a "--"
+	// separator) are not part of the aws command line being completed.
+	_, _, rest := extractLeadingEndpointFlag(args)
+	rest = stripLeadingDoubleDash(rest)
+	line := awsCompLine(rest, toComplete)
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, completer)
+	c.Env = append(os.Environ(),
+		"COMP_LINE="+line,
+		fmt.Sprintf("COMP_POINT=%d", len(line)),
+	)
+	out, err := c.Output()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+
+	var candidates []string
+	for _, cand := range strings.Split(string(out), "\n") {
+		if cand = strings.TrimSpace(cand); cand != "" {
+			candidates = append(candidates, cand)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+	return candidates, cobra.ShellCompDirectiveNoFileComp
+}
+
+// awsCompLine reconstructs the COMP_LINE aws_completer expects: the line as
+// if the user had typed `aws` directly. An empty toComplete still counts as
+// a (started, empty) final word, which the trailing separator from
+// strings.Join naturally encodes.
+func awsCompLine(rest []string, toComplete string) string {
+	words := append([]string{"aws"}, rest...)
+	words = append(words, toComplete)
+	return strings.Join(words, " ")
 }
 
 // awsExitError carries a child process's exit code through the normal Go
@@ -286,19 +357,24 @@ func caCachePath(homeDir, endpoint string) string {
 	return filepath.Join(homeDir, ".overcast", "ca", hex.EncodeToString(sum[:])+".pem")
 }
 
-// ensureCABundle fetches endpoint's CA certificate (see the file comment on
-// fetchCABundle for why the fetch itself is unverified) and caches it at
-// caCachePath(homeDir, endpoint), returning that path. A failed fetch falls
-// back to a cache entry from an earlier run if one exists; if neither is
-// available it returns a one-line warning instead of an error, since a
-// missing CA bundle degrades to "TLS verification may fail" rather than
-// blocking the command entirely — the caller should print the warning and
-// carry on without AWS_CA_BUNDLE.
+// ensureCABundle returns the path of a cached copy of endpoint's CA
+// certificate, fetching it (see the file comment on fetchCABundle for why
+// the fetch itself is unverified) into caCachePath(homeDir, endpoint) when
+// the cache is missing or older than caCacheFreshFor. A fresh cache entry
+// short-circuits without any network I/O. A failed re-fetch falls back to a
+// stale cache entry; if neither is available it returns a one-line warning
+// instead of an error, since a missing CA bundle degrades to "TLS
+// verification may fail" rather than blocking the command entirely — the
+// caller should print the warning and carry on without AWS_CA_BUNDLE.
 //
 // client is normally nil (the real insecure bootstrap client is built
 // internally); tests pass one pointed at a local test server.
 func ensureCABundle(ctx context.Context, endpoint, homeDir string, client *http.Client) (path, warning string) {
 	path = caCachePath(homeDir, endpoint)
+
+	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < caCacheFreshFor {
+		return path, ""
+	}
 
 	body, fetchErr := fetchCABundle(ctx, endpoint, client)
 	if fetchErr == nil {

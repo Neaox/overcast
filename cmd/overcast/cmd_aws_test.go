@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -366,17 +367,92 @@ func TestEnsureCABundle_FetchesAndCaches(t *testing.T) {
 	}
 }
 
-func TestEnsureCABundle_FallsBackToCacheOnFetchFailure(t *testing.T) {
-	homeDir := t.TempDir()
-	endpoint := unreachableEndpoint(t)
+// seedCACache writes a cache entry for endpoint and backdates it past
+// caCacheFreshFor, so the freshness short-circuit does not hide the code
+// path a test wants to exercise.
+func seedStaleCACache(t *testing.T, homeDir, endpoint, content string) string {
+	t.Helper()
 	path := caCachePath(homeDir, endpoint)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("seeding cache dir: %v", err)
 	}
-	const staleContent = "-----BEGIN CERTIFICATE-----\nstale\n-----END CERTIFICATE-----\n"
-	if err := os.WriteFile(path, []byte(staleContent), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("seeding cache file: %v", err)
 	}
+	stale := time.Now().Add(-caCacheFreshFor - time.Minute)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatalf("backdating cache file: %v", err)
+	}
+	return path
+}
+
+// TestEnsureCABundle_FreshCacheSkipsFetch verifies a cache entry younger
+// than caCacheFreshFor is served with no network I/O at all — the
+// per-invocation optimization that keeps https `overcast aws` calls from
+// paying a round trip (or a caFetchTimeout stall) every time.
+func TestEnsureCABundle_FreshCacheSkipsFetch(t *testing.T) {
+	requests := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("should never be fetched"))
+	}))
+	defer srv.Close()
+
+	homeDir := t.TempDir()
+	path := caCachePath(homeDir, srv.URL)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("seeding cache dir: %v", err)
+	}
+	const cached = "-----BEGIN CERTIFICATE-----\ncached\n-----END CERTIFICATE-----\n"
+	if err := os.WriteFile(path, []byte(cached), 0o644); err != nil {
+		t.Fatalf("seeding cache file: %v", err)
+	}
+
+	gotPath, warning := ensureCABundle(context.Background(), srv.URL, homeDir, srv.Client())
+	if warning != "" {
+		t.Fatalf("unexpected warning: %s", warning)
+	}
+	if gotPath != path {
+		t.Fatalf("ensureCABundle returned %q, want fresh cached path %q", gotPath, path)
+	}
+	if requests != 0 {
+		t.Errorf("expected no fetch for a fresh cache entry, server saw %d request(s)", requests)
+	}
+}
+
+// TestEnsureCABundle_StaleCacheRefetches verifies a cache entry older than
+// caCacheFreshFor is re-fetched and overwritten.
+func TestEnsureCABundle_StaleCacheRefetches(t *testing.T) {
+	const freshPEM = "-----BEGIN CERTIFICATE-----\nfresh\n-----END CERTIFICATE-----\n"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(freshPEM))
+	}))
+	defer srv.Close()
+
+	homeDir := t.TempDir()
+	path := seedStaleCACache(t, homeDir, srv.URL, "-----BEGIN CERTIFICATE-----\nold\n-----END CERTIFICATE-----\n")
+
+	gotPath, warning := ensureCABundle(context.Background(), srv.URL, homeDir, srv.Client())
+	if warning != "" {
+		t.Fatalf("unexpected warning: %s", warning)
+	}
+	if gotPath != path {
+		t.Fatalf("ensureCABundle returned %q, want %q", gotPath, path)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading refreshed CA file: %v", err)
+	}
+	if string(got) != freshPEM {
+		t.Errorf("refreshed CA content = %q, want %q", got, freshPEM)
+	}
+}
+
+func TestEnsureCABundle_FallsBackToCacheOnFetchFailure(t *testing.T) {
+	homeDir := t.TempDir()
+	endpoint := unreachableEndpoint(t)
+	const staleContent = "-----BEGIN CERTIFICATE-----\nstale\n-----END CERTIFICATE-----\n"
+	path := seedStaleCACache(t, homeDir, endpoint, staleContent)
 
 	client := &http.Client{Timeout: caFetchTimeout}
 	gotPath, warning := ensureCABundle(context.Background(), endpoint, homeDir, client)
@@ -397,6 +473,44 @@ func TestEnsureCABundle_WarnsWhenNeitherFetchNorCacheAvailable(t *testing.T) {
 	}
 	if warning == "" {
 		t.Error("expected a warning when fetch and cache both fail")
+	}
+}
+
+// TestAWSCompLine pins the COMP_LINE reconstruction aws_completer is handed:
+// it must read exactly as if the user had typed `aws` directly, and an empty
+// in-progress word must still appear as a trailing separator so the
+// completer knows a new word has started.
+func TestAWSCompLine(t *testing.T) {
+	cases := []struct {
+		rest       []string
+		toComplete string
+		want       string
+	}{
+		{nil, "", "aws "},
+		{nil, "s", "aws s"},
+		{[]string{"s3"}, "", "aws s3 "},
+		{[]string{"s3"}, "l", "aws s3 l"},
+		{[]string{"s3", "cp"}, "--rec", "aws s3 cp --rec"},
+	}
+	for _, tc := range cases {
+		if got := awsCompLine(tc.rest, tc.toComplete); got != tc.want {
+			t.Errorf("awsCompLine(%v, %q) = %q, want %q", tc.rest, tc.toComplete, got, tc.want)
+		}
+	}
+}
+
+// TestCompleteAWSArgs_NoCompleterFallsBackToFiles verifies a machine without
+// aws_completer degrades to plain file completion rather than erroring or
+// returning nothing at the prompt.
+func TestCompleteAWSArgs_NoCompleterFallsBackToFiles(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	cmd := newAWSCmd()
+	candidates, directive := completeAWSArgs(cmd, []string{"s3"}, "l")
+	if candidates != nil {
+		t.Errorf("expected no candidates without aws_completer, got %v", candidates)
+	}
+	if directive != cobra.ShellCompDirectiveDefault {
+		t.Errorf("directive = %v, want ShellCompDirectiveDefault (file completion fallback)", directive)
 	}
 }
 
