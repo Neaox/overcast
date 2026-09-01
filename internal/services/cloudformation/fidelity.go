@@ -74,7 +74,6 @@ var cfnTypeServiceAliases = map[string]string{
 // real handler onto.
 var resourceServiceTiers = map[string]string{
 	"iam":         "inert",
-	"eventbridge": "inert",
 	"appsync":     "inert",
 	"cloudfront":  "inert",
 	"waf":         "stub",
