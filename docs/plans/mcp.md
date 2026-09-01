@@ -8,10 +8,11 @@ still intentionally left for later.
 
 The two servers are:
 
-- the workspace MCP server, started via `overcast mcp` (a subcommand of the
-  unified `overcast` binary, built from `cmd/overcast/cmd_mcp.go`; formerly
-  the standalone `cmd/overcast-mcp` binary — folded in so Overcast ships one
-  binary, not two)
+- the workspace MCP server, started via `go run ./cmd/overcast-mcp` — its own
+  standalone dev-only command. It was briefly folded into `overcast mcp`, a
+  subcommand of the unified binary, but split back out (see "Separate
+  ownership" below) so this dev-only tooling — including its
+  LSP/symbol-finder dependency graph — never links into a release build
 - the runtime MCP server, exposed by a running Overcast instance at `/_overcast/mcp`
 
 They share one protocol core in `internal/mcp`, but they are different
@@ -103,15 +104,16 @@ Shared core:
 
 Separate ownership:
 
-- `cmd/overcast/cmd_mcp.go` wires the `overcast mcp` subcommand to the
-  workspace server. It is a thin cobra shim only — the server logic lives in
-  `internal/mcp` and `internal/mcp/providers`, same as before the fold-in.
-  Excluded from slim builds (`cmd_mcp_slim.go` registers a stub instead) —
-  slim already excludes this package tree from the daemon's runtime MCP for
-  the same reason, and an unconditional import here would undo that.
+- `cmd/overcast-mcp/main.go` is a standalone `package main` that wires the
+  workspace server — a thin transport shim only, the server logic lives in
+  `internal/mcp` and `internal/mcp/providers`. It is not built by any
+  Makefile/Dockerfile/workflow target that produces a distributed artifact
+  (they all build only `./cmd/overcast`), so it never reaches a release the
+  way a `!slim` build tag on a subcommand of `cmd/overcast` still would have.
 - `internal/router/mcp_routes.go` mounts the runtime server into Overcast.
-- The `overcast mcp` subcommand must not ship runtime `/_overcast/mcp` HTTP
-  handlers.
+- `cmd/overcast` must not import `cmd/overcast-mcp` or
+  `providers.NewRepoProvider`, and must not ship runtime `/_overcast/mcp` HTTP
+  handlers outside of `internal/router`.
 - The runtime server must remain attached to the running Overcast instance and
   its state store.
 
@@ -128,11 +130,12 @@ Operational boundary:
 
 - Primary transport: stdio
 - Secondary transport: local HTTP for debugging or non-editor clients
-- Typical entrypoint: `go build -o ./bin/overcast ./cmd/overcast && ./bin/overcast mcp --stdio`
+- Typical entrypoint: `go run ./cmd/overcast-mcp --stdio`
 - Typical editor startup: `.vscode/mcp.json` launches it automatically over
   stdio
-- Not available in slim builds (`-tags slim`) — `overcast mcp` explains why
-  rather than failing with "unknown command"
+- Not a subcommand of `overcast`/`overcastd` at all, in any build — it is a
+  separate `go run`-only dev command, so there is nothing for a slim build to
+  exclude
 
 ### Runtime MCP transport
 
@@ -469,8 +472,8 @@ If both are available, the recommended order is:
 
 Workspace server:
 
-- `cmd/overcast/cmd_mcp.go` (subcommand wiring; `cmd_mcp_slim.go` is the
-  slim-build stub)
+- `cmd/overcast-mcp/main.go` (standalone entrypoint; dev-only, never built by
+  a release target)
 - `internal/mcp/providers/repo_provider.go`
 
 Runtime server:

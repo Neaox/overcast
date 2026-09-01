@@ -292,7 +292,7 @@ go build -trimpath -tags slim,nosqlite -o overcastd ./cmd/overcast
 
 ### Commands
 
-All subcommands are available in both `overcast` and `overcastd` (the web UI is simply absent in the slim binary, and `overcastd` drops `mcp`). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
+All subcommands are available in both `overcast` and `overcastd` (the web UI is simply absent in the slim binary). Run `overcast --help` or `overcast <command> --help` for the full flag reference, or see the [CLI reference](./docs/cli.md) for every command's flags, defaults, and examples in one place.
 
 | Command                       | Description                                                              |
 | ------------------------------ | ---------------------------------------------------------------------------- |
@@ -310,7 +310,6 @@ All subcommands are available in both `overcast` and `overcastd` (the web UI is 
 | `overcast bridge`             | Publish `.local` domains via mDNS and start a port-80 reverse proxy      |
 | `overcast https`              | One-shot browser-trusted HTTPS setup (CA + trust store + certificate)    |
 | `overcast trust`              | Manage the local trust store for self-signed TLS certificates            |
-| `overcast mcp`                | Run the workspace MCP server for agents/editors (not in slim builds)     |
 
 Storage is the other place the two binaries differ. The released `overcastd` is
 built without SQLite, so `OVERCAST_STATE=hybrid` and `OVERCAST_STATE=persistent` refuse to
