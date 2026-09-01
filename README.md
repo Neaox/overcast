@@ -257,8 +257,13 @@ Both binaries share the same `overcast serve` entrypoint and respond identically
 **macOS / Linux — manual:**
 
 ```bash
-# Replace VERSION and PLATFORM (linux-amd64, linux-arm64, darwin-amd64, darwin-arm64)
-curl -L https://github.com/Neaox/overcast/releases/latest/download/overcast-linux-amd64 \
+# Resolve the newest release tag. (Every release is currently a pre-release,
+# so GitHub's releases/latest shortcut URL does not work yet.)
+TAG=$(curl -fsSL "https://api.github.com/repos/Neaox/overcast/releases?per_page=1" \
+  | grep -m1 '"tag_name"' | cut -d '"' -f 4)
+
+# Replace PLATFORM with linux-amd64, linux-arm64, darwin-amd64, or darwin-arm64
+curl -fsSL "https://github.com/Neaox/overcast/releases/download/${TAG}/overcast-linux-amd64" \
   -o /usr/local/bin/overcast
 chmod +x /usr/local/bin/overcast
 ```
