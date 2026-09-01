@@ -193,11 +193,11 @@ func main() {
 		} else if changed {
 			fmt.Println("capgen: updated docs/README.md service index")
 		}
-		if changed, err := updateDocsReadmeServiceNames(root); err != nil {
-			fmt.Fprintf(os.Stderr, "capgen: docs/README.md: %v\n", err)
+		if changed, err := updateConfigurationServiceNames(root); err != nil {
+			fmt.Fprintf(os.Stderr, "capgen: docs/configuration.md: %v\n", err)
 			failures++
 		} else if changed {
-			fmt.Println("capgen: updated docs/README.md service names")
+			fmt.Println("capgen: updated docs/configuration.md service names")
 		}
 		if changed, err := updateRootReadmeServiceList(root, allCaps); err != nil {
 			fmt.Fprintf(os.Stderr, "capgen: README.md: %v\n", err)
@@ -2014,7 +2014,7 @@ var serviceConfigNames = map[string]string{
 }
 
 // serviceCDK describes a service in CDK terms, for the token tables in
-// docs/README.md and docs/cdk.md. This is the one part of those tables with no
+// docs/configuration.md and docs/cdk.md. This is the one part of those tables with no
 // derivable source in the repository, so it is declared here and rendered into
 // both documents — the two can restate the mapping without drifting apart.
 //
@@ -2354,9 +2354,11 @@ func cdkModuleCell(info serviceCDK) string {
 	return strings.Join(quoted, ", ")
 }
 
-// updateDocsReadmeServiceNames regenerates the service-name table in the
-// configuration reference.
-func updateDocsReadmeServiceNames(root string) (bool, error) {
+// updateConfigurationServiceNames regenerates the service-name table in
+// docs/configuration.md (moved off docs/README.md when the reference
+// monolith was split into standalone pages — see docs/README.md's own
+// "Contents" index).
+func updateConfigurationServiceNames(root string) (bool, error) {
 	rows := make([][]string, 0, len(statusTableOrder))
 	for _, svc := range statusTableOrder {
 		name := statusDisplayNames[svc]
@@ -2371,7 +2373,7 @@ func updateDocsReadmeServiceNames(root string) (bool, error) {
 	}
 
 	return replaceMarkedSection(
-		filepath.Join(root, "docs", "README.md"),
+		filepath.Join(root, "docs", "configuration.md"),
 		"<!-- BEGIN overcast:service-names -->",
 		"<!-- END overcast:service-names -->",
 		formatTable([]string{"Name", "Service", "CDK module (`aws-cdk-lib/…`)"}, rows),

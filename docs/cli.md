@@ -1,7 +1,7 @@
 ---
 title: "CLI reference"
 description: "Every overcast subcommand — starting and managing daemons, introspection, AWS environment helpers, and networking/TLS setup — with flags, defaults, and examples."
-section: "Getting Started"
+section: "Reference"
 tags:
   - cli
   - docs
@@ -28,7 +28,7 @@ instead of `overcast` itself, see [Using AWS SDKs and CLI](./sdk-cli.md).
 ### `overcast serve`
 
 Starts the emulator in the foreground. All emulator configuration is via
-environment variables (see the [configuration reference](./README.md#configuration-reference)) —
+environment variables (see the [configuration reference](./configuration.md)) —
 `serve` itself takes only three flags, for the web console and the optional
 mDNS bridge:
 

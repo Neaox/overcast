@@ -1,7 +1,7 @@
 ---
 title: "Performance and memory guide"
 description: "Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle, and low per-request overhead. CI pipelines should not wait for the emulator."
-section: "Getting Started"
+section: "Storage & Performance"
 tags:
   - docs
   - guide
@@ -89,7 +89,7 @@ no durability, which is exactly right for a pipeline that starts fresh every run
 setup happens to mount a volume you don't want used, or you just prefer to be explicit
 about it) — it's simply no longer necessary for the common case. The same applies per
 service via `OVERCAST_STATE_<SERVICE>=memory` for a single noisy service; see
-[docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides)
+[Persistence § Per-service storage overrides](./persistence.md#per-service-storage-overrides)
 for the override syntax.
 
 ### Data dir placement — avoid host bind mounts on Docker Desktop
@@ -241,7 +241,7 @@ When a tool like the CDK drives overcast, most of the wall-clock time
 the user experiences is spent in the client, not the emulator. Before
 assuming overcast itself is slow, establish which side owns the time —
 the request log (every real AWS API call is logged at `INFO` by default —
-see [`OVERCAST_LOG_LEVEL`](./README.md#configuration-reference)) with
+see [`OVERCAST_LOG_LEVEL`](./configuration.md#log-levels)) with
 `docker logs --timestamps` shows every request's duration and, by omission,
 every gap where the emulator was idle.
 

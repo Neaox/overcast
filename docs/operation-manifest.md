@@ -1,7 +1,7 @@
 ---
 title: "Overcast Operation Manifest"
 description: "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)"
-section: "Getting Started"
+section: "Reference"
 tags:
   - docs
   - manifest

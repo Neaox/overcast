@@ -5,7 +5,7 @@ This is a contributor-depth comparison of the four `state.Store` implementations
 comparison table, what survives a restart, and how to choose a backend**, see
 [docs/storage.md](../storage.md) — this page does not repeat that material. For **how to
 configure** a backend (`OVERCAST_STATE`, per-service overrides, Docker examples), see
-[docs/README.md § Persistence](../README.md#persistence). Use this page when you need to
+[docs/persistence.md](../persistence.md). Use this page when you need to
 reason about *why* a backend behaves the way it does at the implementation level: durability
 mechanics, what stays resident in memory, read/write performance shape, and known limitations
 worth knowing before you touch this code or pick a backend for a workload you're benchmarking.
