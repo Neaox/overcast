@@ -15,12 +15,13 @@ tags:
 
 Metadata-only AWS Backup implementation.
 
-## Summary
+## What's covered
 
 Supports backup-vault and backup-plan control-plane CRUD for local stack
 compatibility. AWS Backup uses the REST JSON protocol, and Overcast serves it at
 AWS's own bindings, so SDK clients, CDK constructs and `aws backup …` work
-unmodified.
+unmodified. For the operation count, see [Summary](#summary) at the bottom of
+this page.
 
 ## Behavior Notes
 

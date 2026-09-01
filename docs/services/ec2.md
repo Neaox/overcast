@@ -60,32 +60,9 @@ events (create, destroy, connect, disconnect) are forwarded through the event bu
 
 Network naming: `overcast-vpc-{vpcID}`.
 
-### Advanced: VPC networking strategies
-
-Real AWS allows overlapping VPC CIDR blocks in the same account/region.
-Docker bridge networks on one host do not: overlapping subnets collide at the
-kernel routing table level. Overcast exposes a strategy switch so users can
-choose the behavior that best matches their workflow.
-
-Configure with `OVERCAST_EC2_VPC_STRATEGY`:
-
-| Strategy           | Behavior                                                                                                                                       | Best For                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `shared` (default) | Overlapping VPCs reuse a single Docker network; `NetworkStatus=shared`.                                                                        | Most local-dev setups where convenience matters more than strict isolation. |
-| `strict`           | Overlapping `CreateVpc` requests fail with `InvalidVpc.Range`; conflicting persisted VPCs are marked `NetworkStatus=conflict`.                 | Teams that want loud failures on accidental overlap.                        |
-| `remapped`         | Overlapping VPCs get a unique Docker shadow subnet in `100.64.0.0/10`; `NetworkStatus=remapped` and `DockerCidrBlock` records the shadow CIDR. | Multi-VPC simulations that need overlap without Docker subnet collisions.   |
-
-`DescribeVpcs` includes synthetic tag `overcast:network-status=<value>` and
-`/_overcast/debug/ec2/vpcs` exposes internal fields (`NetworkStatus`,
-`DockerNetworkID`, `DockerCidrBlock`) for diagnostics.
-
-**Important caveat for `remapped`:** data-plane packet routing still follows
-Docker's real subnet assignment. API metadata keeps the user-requested
-`CidrBlock`, but workloads that hardcode raw private IPs are less portable than
-DNS-based SDK flows.
-
-`netns` is reserved for future work and is currently rejected at startup with a
-configuration error.
+See [Advanced: VPC networking strategies](#advanced-vpc-networking-strategies)
+below for `OVERCAST_EC2_VPC_STRATEGY` — what each strategy does today, and how
+to pick one.
 
 ---
 
@@ -215,15 +192,18 @@ disagree, set via the `OVERCAST_EC2_VPC_STRATEGY` environment variable.
 
 ### Strategies
 
-| Strategy             | Status                              | Behaviour on overlapping CIDRs                                                                                                      |
-| -------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `shared` _(default)_ | ✅ Implemented                      | VPCs with the same CIDR share a single Docker network. Container isolation between sharers is not enforced.                         |
-| `strict`             | ⏳ Not yet — falls back to `shared` | Reject overlapping CIDRs at `CreateVpc`. Startup always tolerates pre-existing overlaps (first-one-wins, losers marked `conflict`). |
-| `remapped`           | ⏳ Not yet — falls back to `shared` | Allocate a shadow `/16` from `100.64.0.0/10` when the requested CIDR collides. API responses still show the user's CIDR.            |
-| `netns`              | ⏳ Not yet — falls back to `shared` | Per-VPC Linux network namespace. Real overlap with real isolation. Requires root / `CAP_NET_ADMIN`.                                 |
+| Strategy             | Status                                    | Behaviour on overlapping CIDRs                                                                                                      |
+| -------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `shared` _(default)_ | ✅ Implemented                             | VPCs with the same CIDR share a single Docker network. Container isolation between sharers is not enforced.                         |
+| `strict`             | ✅ Implemented                             | Reject overlapping CIDRs at `CreateVpc`. Startup always tolerates pre-existing overlaps (first-one-wins, losers marked `conflict`). |
+| `remapped`           | ✅ Implemented                             | Allocate a shadow `/16` from `100.64.0.0/10` when the requested CIDR collides. API responses still show the user's CIDR.            |
+| `netns`              | ❌ Rejected at startup (not implemented)   | Per-VPC Linux network namespace. Real overlap with real isolation. Requires root / `CAP_NET_ADMIN`.                                 |
 
-Values other than `shared` are accepted today but log a warning at
-startup and fall back to `shared`. The design for each is captured below.
+`OVERCAST_EC2_VPC_STRATEGY=netns` fails startup with a configuration error
+naming the strategies that do exist — it is the one value this variable
+refuses outright rather than falling back from. An unrecognised value that
+isn't one of the four above (a typo, say) falls back to `shared` with a
+logged warning instead.
 
 ### `shared` — the default
 
@@ -242,7 +222,7 @@ startup and fall back to `shared`. The design for each is captured below.
   share a CIDR. Under `shared`, a container in `vpc-A` (10.0.0.0/16) can
   reach a container in `vpc-B` (10.0.0.0/16) because they're on the same
   bridge. That's wrong in real AWS, and `shared` doesn't pretend
-  otherwise. If you care, wait for `remapped` or `netns`.
+  otherwise. If you care, use `strict` or `remapped` instead.
 - **On `CreateVpc` failure modes.** If Docker is unavailable the VPC is
   stored with `NetworkStatus=unbacked` and reconcile picks it up later.
   If Docker is available but the create fails, we log and still store
@@ -255,30 +235,30 @@ startup and fall back to `shared`. The design for each is captured below.
   when the network is shared (it would affect every sharer), logs a
   `Warn`, and leaves the existing network in place.
 
-### `strict` (planned)
+### `strict`
 
-- **What it will do.** `CreateVpc` rejects any CIDR that overlaps an
+- **What it does.** `CreateVpc` rejects any CIDR that overlaps an
   existing VPC with `InvalidVpc.Range`. Startup reconcile never fails —
   VPCs whose CIDR collides with another existing VPC are marked
   `NetworkStatus=conflict` and refused for container-backed operations
   (`RunInstances`, `CreateDbInstance`, etc.) with a clear emulator
   error.
-- **When you'd use it.** You want loud, early failure on accidental
+- **When to use it.** You want loud, early failure on accidental
   overlap — ideal for CI pipelines or tests where overlapping CIDRs
   signal a bug in your IaC, not an intended configuration.
 - **When _not_ to use it.** You're running CDK apps or CloudFormation
   templates that legitimately create overlapping CIDRs (multi-account
   simulation, dev/prod parity tests). They'll fail at deploy.
 
-### `remapped` (planned)
+### `remapped`
 
-- **What it will do.** When a new VPC's CIDR collides, Overcast
+- **What it does.** When a new VPC's CIDR collides, Overcast
   silently carves a shadow `/16` out of `100.64.0.0/10` (CGNAT space),
   stores it as `DockerCidrBlock`, and creates the Docker network there.
   `DescribeVpcs` and every other API response still reports the user's
   `CidrBlock`. A translation layer converts between fabricated and real
   IPs for `PrivateIpAddress` fields, ENI descriptions, etc.
-- **When you'd use it.** You're running CDK or Terraform workloads
+- **When to use it.** You're running CDK or Terraform workloads
   where overlap is expected and you rely on API responses matching the
   CIDR you asked for. Highest fidelity.
 - **When _not_ to use it.** Your containers talk to each other by raw
@@ -287,30 +267,31 @@ startup and fall back to `shared`. The design for each is captured below.
   real. Workloads that use service discovery, ENI DNS, or RDS/ELB
   endpoint DNS are unaffected.
 
-### `netns` (planned, speculative)
+### `netns` (planned, not implemented)
 
-- **What it will do.** Create containers with `--network=none` and
+Unlike `strict` and `remapped`, this one is not a fallback case — Overcast
+refuses to start at all when `OVERCAST_EC2_VPC_STRATEGY=netns` is set, naming
+the strategies that do exist.
+
+- **What it would do.** Create containers with `--network=none` and
   move their veth into a per-VPC Linux network namespace with its own
   bridge and routing table. Each netns has an independent address
   space, so `10.0.0.0/16` in `vpc-A` is genuinely unrelated to the same
-  CIDR in `vpc-B`.
-- **When you'd use it.** You need real AWS-grade VPC isolation with
-  real overlap support. The only option that's faithful to both the
-  AWS model and the network behaviour simultaneously.
-- **When _not_ to use it.** You're not running overcastd as root
-  inside a container with `CAP_NET_ADMIN`. The netns plumbing Docker
-  doesn't expose requires elevated privileges that most dev setups
-  don't grant. Also: it's a substantially heavier code path than the
-  other three, so the performance overhead is real.
+  CIDR in `vpc-B` — the only strategy with real overlap *and* real
+  isolation.
+- **Why it isn't implemented yet.** The netns plumbing Docker doesn't
+  expose requires elevated privileges (root, `CAP_NET_ADMIN`) most dev
+  setups don't grant, and it is a substantially heavier code path than
+  the other three.
 
 ### Picking a strategy
 
-| Situation                                                                     | Use                                      |
-| ----------------------------------------------------------------------------- | ---------------------------------------- |
-| Single VPC, or multiple non-overlapping CIDRs                                 | `shared` _(default)_                     |
-| CI that should fail loudly on accidental CIDR collisions                      | `strict` (today: fallback to `shared`)   |
-| CDK/TF apps with legitimate overlapping CIDRs that care about API-visible IPs | `remapped` (today: fallback to `shared`) |
-| Testing real container-level VPC isolation with overlapping CIDRs             | `netns` (today: fallback to `shared`)    |
+| Situation                                                                     | Use                       |
+| ----------------------------------------------------------------------------- | -------------------------- |
+| Single VPC, or multiple non-overlapping CIDRs                                 | `shared` _(default)_       |
+| CI that should fail loudly on accidental CIDR collisions                      | `strict`                   |
+| CDK/TF apps with legitimate overlapping CIDRs that care about API-visible IPs | `remapped`                 |
+| Testing real container-level VPC isolation with overlapping CIDRs            | not available — `netns` is rejected at startup |
 
 ### Why `shared` is the default
 
@@ -331,15 +312,15 @@ active strategy decided:
 | Value      | Meaning                                                                |
 | ---------- | ---------------------------------------------------------------------- |
 | `ok`       | This VPC owns its backing Docker network.                              |
-| `shared`   | This VPC reuses a Docker network owned by another VPC (shared mode).   |
+| `shared`   | This VPC reuses a Docker network owned by another VPC (`shared` mode). |
 | `unbacked` | No Docker network (Docker was unavailable, or the last create failed). |
-| `conflict` | Reserved for `strict` mode — CIDR collided with another existing VPC.  |
-| `remapped` | Reserved for `remapped` mode — backed by a shadow CIDR.                |
+| `conflict` | `strict` mode — this VPC's CIDR collided with another existing VPC.    |
+| `remapped` | `remapped` mode — backed by a shadow CIDR.                             |
 
 `NetworkStatus` is persisted on each VPC record and written into the
-startup reconcile logs (`reconcile networks: …`). Debug-endpoint and
-web UI surfacing is planned alongside the future strategies — see
-the `strict`, `remapped`, and `netns` sections above.
+startup reconcile logs (`reconcile networks: …`), and exposed on
+`/_overcast/debug/ec2/vpcs` alongside `DockerNetworkID` and `DockerCidrBlock`
+for diagnostics.
 
 <!-- BEGIN overcast:capabilities -->
 

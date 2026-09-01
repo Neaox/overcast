@@ -22,18 +22,9 @@ the Smithy RPC path (`POST /service/cognito/operation/{Operation}`).
 
 **Accepted wire protocols:** `awsJson1_1`, `rpcv2Cbor`
 
----
-
-## Summary
-
-| Category      | ✅ Supported | ⚠️ Partial | 🚧 WIP | ❌ Unsupported |
-| ------------- | ------------ | ---------- | ------ | -------------- |
-| User Pools    | 5            | 0          | 0      | 0              |
-| Pool Clients  | 5            | 0          | 0      | 0              |
-| Users         | 10           | 0          | 0      | 0              |
-| Auth / Tokens | 19           | 0          | 0      | 0              |
-| Groups        | 9            | 0          | 0      | 0              |
-| Domains       | 4            | 0          | 0      | 0              |
+For the operation counts by category, see [Summary](#summary) at the bottom of
+this page — it's generated from the capability registry, so it never drifts
+from what's actually implemented.
 
 ---
 

@@ -33,6 +33,23 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ## Known limitations
 
+Where Overcast diverges from real Lambda. Each row is expanded in the prose below it.
+
+| Area | Divergence |
+| --- | --- |
+| Async invocation | Retries, destinations and DLQ all work; only the *exhausted*-concurrency retry-to-queue case (vs. a reserve of zero) differs from AWS |
+| `TracingConfig` / `EphemeralStorage` / `KMSKeyArn` | Stored and returned, never enforced — no X-Ray, no `/tmp` size cap, no encryption at rest |
+| Cold-start latency | Not simulated |
+| Concurrency quotas | Account-wide quotas and requests-per-second limits are not emulated; only reserved concurrency is enforced |
+| Runtime environment validation | Minimal |
+| Extension telemetry (Logs API / Telemetry API) | HTTP destinations only |
+| SnapStart | Not emulated — no restore records; `platform.runtimeDone` reports only `responseLatency` |
+| `LoggingConfig: {}` (explicitly empty) | `UpdateFunctionConfiguration` returns `501` rather than guessing no-op vs. reset |
+| Unqualified `DeleteFunction` | Removes the function record; versions, aliases and version counters are left behind |
+| Tagging | Only functions and event source mappings; other taggable resources return `501` |
+| Pinned `Code.S3ObjectVersion` | Excluded from the reactive S3 code sync |
+| Reactive S3 code sync | Only moves a function onto bytes it isn't already running |
+
 - **Asynchronous invocation is configurable, and only the event queue is
   missing.** `PutFunctionEventInvokeConfig` and its family are implemented, so
   `MaximumRetryAttempts` (0-2) and `MaximumEventAgeInSeconds` (60-21600) apply
