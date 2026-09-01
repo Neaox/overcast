@@ -140,6 +140,8 @@ Then point the SDK at the mapped port with region `us-east-1` and credentials
 `test`/`test` (or read the effective region and account from
 `GET /_overcast/info`).
 
+<!-- BEGIN overcast:code-tabs -->
+
 ### Node.js
 
 ```typescript
@@ -193,6 +195,8 @@ await overcast.StartAsync();
 
 var endpoint = $"http://{overcast.Hostname}:{overcast.GetMappedPublicPort(4566)}";
 ```
+
+<!-- END overcast:code-tabs -->
 
 For container-backed services (Lambda invokes, ECS tasks, RDS engines, …) add
 your implementation's bind-mount option for `/var/run/docker.sock` — see the
