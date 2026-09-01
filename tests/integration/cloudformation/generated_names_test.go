@@ -110,6 +110,21 @@ func TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation(t *testing.T
       }`,
 		},
 		{
+			name:      "AWS::Scheduler::Schedule",
+			logicalID: "Schedule",
+			properties: `{
+        "Type": "AWS::Scheduler::Schedule",
+        "Properties": {
+          "ScheduleExpression": "rate(5 minutes)",
+          "FlexibleTimeWindow": {"Mode": "OFF"},
+          "Target": {
+            "Arn": "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+            "RoleArn": "arn:aws:iam::000000000000:role/scheduler-role"
+          }
+        }
+      }`,
+		},
+		{
 			name:      "AWS::SecretsManager::Secret",
 			logicalID: "Secret",
 			properties: `{
@@ -187,6 +202,12 @@ func TestCreateStack_twoUnnamedResourcesOfOneType_doNotCollide(t *testing.T) {
 		{"AWS::Logs::LogGroup", `{"Type": "AWS::Logs::LogGroup", "Properties": {}}`},
 		{"AWS::Events::Rule", `{"Type": "AWS::Events::Rule", "Properties": {"EventPattern": {"source": ["com.example"]}}}`},
 		{"AWS::Scheduler::ScheduleGroup", `{"Type": "AWS::Scheduler::ScheduleGroup", "Properties": {}}`},
+		{"AWS::Scheduler::Schedule", `{"Type": "AWS::Scheduler::Schedule", "Properties": {
+			"ScheduleExpression": "rate(5 minutes)",
+			"FlexibleTimeWindow": {"Mode": "OFF"},
+			"Target": {
+				"Arn": "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+				"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role"}}}`},
 		{"AWS::CloudWatch::Alarm", `{"Type": "AWS::CloudWatch::Alarm", "Properties": {
 			"MetricName": "Errors", "Namespace": "AWS/Lambda", "Statistic": "Sum",
 			"Period": 60, "EvaluationPeriods": 1, "Threshold": 1,

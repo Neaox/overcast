@@ -15,6 +15,7 @@
 package cloudformation_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -258,4 +259,81 @@ func TestCFN_SchedulerSchedule_nameChangeReplaces(t *testing.T) {
 	newGet := schedulerRESTCall(t, srv, http.MethodGet, "/schedules/props-schedule-renamed?groupName=props-group", "")
 	defer newGet.Body.Close()
 	helpers.AssertStatus(t, newGet, http.StatusOK)
+}
+
+// unnamedScheduleTemplate is the shape CDK's L2 Schedule emits: no Name, so
+// CloudFormation mints one. Its %s is the description, so an update can change
+// a property without touching anything else.
+const unnamedScheduleTemplate = `{
+	"Resources": {
+		"Schedule": {
+			"Type": "AWS::Scheduler::Schedule",
+			"Properties": {
+				"Description": "%s",
+				"ScheduleExpression": "rate(5 minutes)",
+				"FlexibleTimeWindow": {"Mode": "OFF"},
+				"Target": {
+					"Arn": "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+					"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role"
+				}
+			}
+		}
+	}
+}`
+
+// TestCFN_SchedulerSchedule_unnamedScheduleUpdatesInPlace covers the other
+// half of the generated-name fix. Create now mints a name, but Update compared
+// the template's Name against the previous template's, where an unnamed
+// schedule's is the empty string on both sides — so it read as unchanged and
+// re-issued UpdateSchedule with no name, back to the "/schedules/" the router
+// answers 501 on. The comparison is against the physical ID now, which is the
+// only place the generated name is recorded.
+func TestCFN_SchedulerSchedule_unnamedScheduleUpdatesInPlace(t *testing.T) {
+	// Given: a stack holding a schedule the template does not name
+	srv := helpers.NewTestServer(t)
+	stackName := "scheduler-unnamed-update"
+
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(unnamedScheduleTemplate, "the original description")},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	if status := waitForStackStatusIn(t, srv, stackName, "CREATE_COMPLETE", "ROLLBACK_COMPLETE", "ROLLBACK_FAILED"); status != "CREATE_COMPLETE" {
+		t.Fatalf("create stack ended in %s; reasons:\n%s",
+			status, strings.Join(describeStackEventReasons(t, srv, stackName), "\n"))
+	}
+	physicalID := describeStackResourceIDs(t, srv, stackName)["Schedule"]
+	group, name, found := strings.Cut(physicalID, "/")
+	if !found || name == "" {
+		t.Fatalf("physical ID = %q, want %q and a generated name", physicalID, "default/…")
+	}
+
+	// When: a property changes and nothing else does
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(unnamedScheduleTemplate, "the updated description")},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	if status := waitForStackStatusIn(t, srv, stackName, "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "UPDATE_FAILED", "UPDATE_ROLLBACK_FAILED"); status != "UPDATE_COMPLETE" {
+		t.Fatalf("update stack ended in %s; reasons:\n%s",
+			status, strings.Join(describeStackEventReasons(t, srv, stackName), "\n"))
+	}
+
+	// Then: the schedule kept its generated name and took the new property
+	if got := describeStackResourceIDs(t, srv, stackName)["Schedule"]; got != physicalID {
+		t.Errorf("physical ID = %q, want the original %q — the update replaced the schedule", got, physicalID)
+	}
+	get := schedulerRESTCall(t, srv, http.MethodGet,
+		"/schedules/"+url.PathEscape(name)+"?"+url.Values{"groupName": {group}}.Encode(), "")
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusOK)
+	var sc struct {
+		Description string `json:"Description"`
+	}
+	helpers.DecodeJSON(t, get, &sc)
+	if sc.Description != "the updated description" {
+		t.Errorf("Description = %q, want the updated value", sc.Description)
+	}
 }

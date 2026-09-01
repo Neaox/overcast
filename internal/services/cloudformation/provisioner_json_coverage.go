@@ -1586,7 +1586,18 @@ func schedulerScheduleBody(name, groupName string, props map[string]any) map[str
 }
 
 func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// Name is optional on AWS::Scheduler::Schedule, and CDK's L2 Schedule
+	// leaves it out unless the caller passes scheduleName — the common shape,
+	// not an edge case. The empty name was forwarded, and CreateSchedule binds
+	// the name into the path, so the dispatch went to "/schedules/", which
+	// "/schedules/{name}" cannot match. It fell through to the router's
+	// modeled-route fallback, which claims the bare "/schedules" that DataBrew
+	// models and answers 501 NotImplemented — so the stack rolled back on
+	// "CreateSchedule: HTTP 501" for a template real CloudFormation deploys.
 	name, _ := props["Name"].(string)
+	if name == "" {
+		name = rCtx.generatedNameWithin(maxNameLenScheduler)
+	}
 	groupName, _ := props["GroupName"].(string)
 	if groupName == "" {
 		groupName = "default"
@@ -1612,12 +1623,26 @@ func (h *schedulerScheduleHandler) Create(ctx context.Context, router http.Handl
 	return physicalID, attrs, nil
 }
 
-func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+// schedulerScheduleID splits the physical ID Create mints, "{groupName}/{name}".
+// Neither a group name nor a schedule name may contain a slash, so the first
+// one separates them.
+//
+// It is the only record of the name a schedule the template left unnamed was
+// given, which is why Update reads it rather than the previous properties.
+func schedulerScheduleID(physicalID string) (groupName, name string, ok bool) {
 	parts := strings.SplitN(physicalID, "/", 2)
 	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
+	groupName, name, ok := schedulerScheduleID(physicalID)
+	if !ok {
 		return nil
 	}
-	path := "/schedules/" + url.PathEscape(parts[1]) + "?" + url.Values{"groupName": {parts[0]}}.Encode()
+	path := "/schedules/" + url.PathEscape(name) + "?" + url.Values{"groupName": {groupName}}.Encode()
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
 	return teardownError("DeleteSchedule", rec, err)
 }
@@ -1628,15 +1653,26 @@ func (h *schedulerScheduleHandler) Delete(ctx context.Context, router http.Handl
 // fields, so there is nothing to update once either changes: the old
 // physical ID no longer names anything UpdateSchedule can find.
 func (h *schedulerScheduleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// The physical ID carries the name the schedule is actually held under,
+	// which for a template that never named it is the one Create generated.
+	// The comparison used to be against oldProps alone, where that name is the
+	// empty string — so an unnamed schedule read as unchanged and UpdateSchedule
+	// was re-issued with no name, reaching the same unroutable "/schedules/"
+	// that Create used to.
+	oldGroupName, oldName, ok := schedulerScheduleID(physicalID)
+	if !ok {
+		return "", nil, errReplacementRequired
+	}
 	name, _ := props["Name"].(string)
+	if oldTemplateName, _ := oldProps["Name"].(string); name == "" && oldTemplateName == "" {
+		// Unnamed before and after: CloudFormation keeps the name it generated
+		// rather than minting a second one. A name that appears or disappears
+		// falls through to the replacement below, as it does on real AWS.
+		name = oldName
+	}
 	groupName, _ := props["GroupName"].(string)
 	if groupName == "" {
 		groupName = "default"
-	}
-	oldName, _ := oldProps["Name"].(string)
-	oldGroupName, _ := oldProps["GroupName"].(string)
-	if oldGroupName == "" {
-		oldGroupName = "default"
 	}
 	if name != oldName || groupName != oldGroupName {
 		return "", nil, errReplacementRequired
