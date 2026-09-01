@@ -1,6 +1,6 @@
 ---
 title: "OpenSearch — Amazon OpenSearch Service"
-description: "Amazon OpenSearch Service uses the REST JSON protocol, served under the /2021-01-01/ API version prefix."
+description: "OpenSearch domain records and their tags, served at AWS's own /2021-01-01/ bindings. No cluster is provisioned, so a domain's endpoint serves nothing."
 section: "Service Reference"
 tags:
   - amazon
@@ -12,23 +12,50 @@ tags:
 
 # OpenSearch — Amazon OpenSearch Service
 
-Amazon OpenSearch Service uses the REST JSON protocol, served under the
-`/2021-01-01/` API version prefix that every OpenSearch binding carries. AWS
-SDKs and `aws opensearch …` work unmodified.
+Domains are control-plane records only: no search cluster is started, so
+`DomainStatus.Endpoint` names a host that answers nothing.
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- Routes are AWS's own bindings. The domain surface is under
-  `/2021-01-01/opensearch/` (e.g. `POST /2021-01-01/opensearch/domain`), while
-  `ListDomainNames` and the tag operations sit directly under `/2021-01-01/`.
-- Domains are per-region, as on AWS: the same domain name in two regions is two
-  domains.
-- Operations that are not emulated return a JSON `501 Not Implemented` error
-  response.
-- Domain records are stored, but no OpenSearch cluster is provisioned, so
-  `DomainStatus.Endpoint` names a host that serves nothing.
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws opensearch create-domain \
+  --domain-name logs \
+  --engine-version OpenSearch_2.11
+aws opensearch describe-domain --domain-name logs
+aws opensearch list-domain-names
+```
+
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Domains | Create, describe, batch-describe, list and delete; active the moment they are created |
+| Name collisions | A repeat domain name in the same region is rejected |
+| Regions | Domains are per-region — the same name in two regions is two domains |
+| Filtering | `ListDomainNames --engine-type` is honoured, derived from each domain's `EngineVersion` |
+| Tags | Inline `TagList` at creation, plus `AddTags`, `ListTags` and `RemoveTags`; deleting a domain deletes its tags |
+
+## Differences from AWS
+
+| Difference | Detail |
+| --- | --- |
+| No cluster | Nothing is indexed or queried; the domain endpoint is a name, not a service |
+| Partial `DomainStatus` | Only `DomainId`, `DomainName`, `ARN`, `EngineVersion`, `Endpoint` and the `Created`/`Deleted`/`Processing` flags come back |
+| Cluster settings are dropped | `ClusterConfig`, `EBSOptions`, `VPCOptions`, access policies and the other ~25 `CreateDomain` members are accepted and ignored — they configure a cluster that does not exist |
+| No configuration changes | `UpdateDomainConfig`, upgrades, package association and the auto-tune APIs are not implemented |
+| No cross-cluster search | Outbound and inbound connections are not modelled |
+
+## Gotchas
+
+> [!WARNING]
+> Client libraries that talk the OpenSearch REST API (index, search, bulk)
+> address the domain endpoint directly, not this control plane. Those calls
+> reach nothing here — run a real OpenSearch container alongside Overcast if
+> your test needs to index documents.
 
 <!-- BEGIN overcast:capabilities -->
 
