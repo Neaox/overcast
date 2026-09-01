@@ -10,8 +10,11 @@ import (
 
 // The Amazon States Language interpreter.
 //
-// Executions run synchronously in-process on StartExecution, matching the
-// single-node deterministic-clock architecture the rest of Overcast uses. All
+// Executions run in-process, matching the single-node deterministic-clock
+// architecture the rest of Overcast uses. StartExecution answers as soon as
+// the RUNNING record is persisted and interprets on a tracked goroutine, as
+// AWS does; only StartSyncExecution and a `states:startExecution.sync` child
+// wait for the terminal state (see executionMode in execution_ops.go). All
 // eight ASL state types are interpreted. Everything Overcast cannot interpret
 // — an unsupported Task resource, `.waitForTaskToken`, distributed Map, the
 // JSONata query language — fails the execution loudly with an AWS-shaped error
@@ -164,9 +167,11 @@ func (h *Handler) executionTimeout(def *aslBranch) time.Duration {
 // runExecution interprets one state machine to completion and returns the
 // terminal status, output and history. The caller persists them.
 func (h *Handler) runExecution(ctx context.Context, sm *StateMachine, exec *Execution, def *aslBranch, region string, depth int, run *executionRun) executionOutcome {
-	// A hard wall-clock bound on the run. StartExecution is synchronous, so
-	// this bounds the HTTP request too, and it holds whatever clock is
-	// injected. The cancel is deferred so no timer outlives the execution.
+	// A hard wall-clock bound on the run. It is a runaway guard rather than a
+	// request timeout: StartExecution has already answered by the time this
+	// runs, and only the synchronous callers still hold a request open. It
+	// holds whatever clock is injected. The cancel is deferred so no timer
+	// outlives the execution.
 	budget := h.executionTimeout(def)
 	runCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
