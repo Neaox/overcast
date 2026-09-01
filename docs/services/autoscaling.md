@@ -13,22 +13,18 @@ tags:
 
 # Auto Scaling — AWS Auto Scaling
 
-> AWS docs: https://docs.aws.amazon.com/autoscaling/ec2/APIReference/Welcome.html
-
 Auto Scaling groups really converge. A single background reconciler launches and
 terminates EC2 instances through the emulator's own EC2 service until each
 group's owned instance set matches its `DesiredCapacity`, advances the lifecycle
 state machine, honours lifecycle hooks, replaces unhealthy instances, and
 records a scaling activity for everything it does.
 
-## What's covered
-
+## What works
 Group, launch-configuration, scaling-policy, lifecycle-hook and tag CRUD, plus
 `SetDesiredCapacity`, `ExecutePolicy`, `TerminateInstanceInAutoScalingGroup`,
 `CompleteLifecycleAction`, `RecordLifecycleActionHeartbeat`,
 `SetInstanceHealth`, `SetInstanceProtection`, `DescribeAutoScalingInstances` and
-`DescribeScalingActivities`. For the operation counts by category, see
-[Summary](#summary) at the bottom of this page.
+`DescribeScalingActivities`.
 
 ## Reconciliation
 
@@ -90,8 +86,7 @@ operation rather than stored and quietly ignored:
 | `PolicyType=PredictiveScaling` | `PutScalingPolicy` | `501` — there is no forecasting model over historical metrics. |
 | Warm pools, instance refresh, scheduled actions, notification configurations | — | Not registered; a protocol-correct `501`. |
 
-## Known divergences
-
+## Differences from AWS
 - **Termination policy.** Real Auto Scaling's `Default` policy balances across
   Availability Zones and then prefers the oldest launch configuration; Overcast
   implements `OldestInstance` (skipping instances protected from scale-in),
@@ -109,44 +104,15 @@ operation rather than stored and quietly ignored:
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category   | ✅ Supported |
-| ---------- | ------------ |
-| Operations | 25           |
-
----
-
-## Endpoints
-
-### Operations
-
-| Operation                             | Status       | Notes                                                                                                                                                                    | AWS Docs |
-| ------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
-| `CreateAutoScalingGroup`              | ✅ Supported | Reconciles: launches EC2 instances to DesiredCapacity. LaunchTemplate, MixedInstancesPolicy and InstanceId are refused with 501 — Overcast's EC2 has no launch templates |          |
-| `UpdateAutoScalingGroup`              | ✅ Supported | Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError                                                                          |          |
-| `DescribeAutoScalingGroups`           | ✅ Supported | Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn                                                     |          |
-| `DeleteAutoScalingGroup`              | ✅ Supported | ResourceInUse while instances remain unless ForceDelete; ForceDelete terminates them                                                                                     |          |
-| `SetDesiredCapacity`                  | ✅ Supported | Launches or terminates instances to converge; out-of-range values return AWS's ValidationError                                                                           |          |
-| `TerminateInstanceInAutoScalingGroup` | ✅ Supported | Terminates the EC2 instance and records the scaling activity; honours ShouldDecrementDesiredCapacity                                                                     |          |
-| `CreateLaunchConfiguration`           | ✅ Supported | ImageId/InstanceType/SecurityGroups drive RunInstances at launch time                                                                                                    |          |
-| `DescribeLaunchConfigurations`        | ✅ Supported |                                                                                                                                                                          |          |
-| `DeleteLaunchConfiguration`           | ✅ Supported | ResourceInUse while a group still references it                                                                                                                          |          |
-| `PutScalingPolicy`                    | ✅ Supported | SimpleScaling and StepScaling execute for real; TargetTrackingScaling and PredictiveScaling are refused with 501                                                         |          |
-| `DescribePolicies`                    | ✅ Supported |                                                                                                                                                                          |          |
-| `DeletePolicy`                        | ✅ Supported |                                                                                                                                                                          |          |
-| `ExecutePolicy`                       | ✅ Supported | Applies the policy's adjustment to DesiredCapacity, honouring cooldown and MinAdjustmentMagnitude                                                                        |          |
-| `PutLifecycleHook`                    | ✅ Supported | Really pauses launch/terminate in Pending:Wait / Terminating:Wait and emits the EventBridge lifecycle-action event                                                       |          |
-| `DescribeLifecycleHooks`              | ✅ Supported |                                                                                                                                                                          |          |
-| `DeleteLifecycleHook`                 | ✅ Supported | Releases any instance parked on the hook                                                                                                                                 |          |
-| `CompleteLifecycleAction`             | ✅ Supported | CONTINUE moves the instance on; ABANDON terminates it                                                                                                                    |          |
-| `RecordLifecycleActionHeartbeat`      | ✅ Supported | Extends the hook's heartbeat window                                                                                                                                      |          |
-| `CreateOrUpdateTags`                  | ✅ Supported | PropagateAtLaunch tags are applied to launched EC2 instances                                                                                                             |          |
-| `DeleteTags`                          | ✅ Supported |                                                                                                                                                                          |          |
-| `DescribeTags`                        | ✅ Supported | Filters: auto-scaling-group, key, propagate-at-launch, value; an unimplemented filter name is refused, not ignored                                                       |          |
-| `DescribeAutoScalingInstances`        | ✅ Supported | Reports the real instance set the reconciler owns                                                                                                                        |          |
-| `DescribeScalingActivities`           | ✅ Supported | One activity per launch and termination, with AWS's StatusCode and Cause wording                                                                                         |          |
-| `SetInstanceHealth`                   | ✅ Supported | Unhealthy instances are terminated and replaced by the reconciler                                                                                                        |          |
-| `SetInstanceProtection`               | ✅ Supported | Protected instances are excluded from scale-in                                                                                                                           |          |
+All 25 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Auto Scaling operations](autoscaling/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/Welcome.html)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

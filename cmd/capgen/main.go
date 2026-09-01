@@ -12,7 +12,10 @@
 //
 // --check        verify handler ops match declared capabilities; exit 1 on mismatch
 // --generate     write internal/capabilities/all.gen.go
-// --write-docs   regenerate sentinel-bracketed tables in docs/services/*.md
+// --write-docs   regenerate docs/services/<key>/operations.md and the sentinel-
+//
+//	bracketed Operations stub in docs/services/<key>.md
+//
 // --service      limit to one service name (default: all)
 // --workspace    workspace root (default: directory containing go.mod)
 package main
@@ -63,7 +66,7 @@ func main() {
 		checkModel = flag.Bool("check-model", false, "check capabilities, service keys, and compat registry groups against the generated AWS operation corpus")
 		generate   = flag.Bool("generate", false, "generate internal/capabilities/all.gen.go")
 		initCaps   = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
-		writeDocs  = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
+		writeDocs  = flag.Bool("write-docs", false, "regenerate docs/services/<key>/operations.md and the Operations stub in docs/services/<key>.md")
 		initDocs   = flag.Bool("init-docs", false, "add sentinel markers to docs that don't have them yet")
 		routes     = flag.Bool("routes", false, "print the chi route skeleton the pinned model gives --service")
 		service    = flag.String("service", "", "limit to one service (all if empty)")
@@ -177,10 +180,10 @@ func main() {
 			if _, statErr := os.Stat(docPath); os.IsNotExist(statErr) {
 				continue
 			}
-			if writeErr := writeDocTable(docPath, svc, svcCaps); writeErr != nil {
+			if writeErr := writeServiceDocs(root, svc, svcCaps); writeErr != nil {
 				fmt.Fprintf(os.Stderr, "capgen: %s: write docs: %v\n", svc, writeErr)
 			} else {
-				fmt.Printf("capgen: updated docs/services/%s.md\n", serviceDocFile(svc))
+				fmt.Printf("capgen: updated docs/services/%s.md and docs/services/%s/operations.md\n", serviceDocFile(svc), serviceDocFile(svc))
 			}
 		}
 		if changed, err := updateStatusMd(root, allCaps); err != nil {
@@ -749,46 +752,29 @@ func writeInitialCapabilities(path, svc string, ops []Operation) error {
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-// addSentinelMarkers inserts <!-- BEGIN/END overcast:capabilities --> markers into a doc file.
-// If markers are already present, this is a no-op. The markers are inserted before the last
-// "## Known limitations" or "## Notes" section, or appended before any trailing "---" separator.
+// addSentinelMarkers gives a new service doc an empty generated block at the
+// position writeLandingStub will keep it at — last, except for a trailing
+// "## Related". A doc that already has the markers is left alone.
+//
+// --write-docs no longer needs this (it appends the block itself when a doc has
+// none), but --init-docs stays: it is how a freshly hand-written service page
+// is shown the shape it has to end in before any capability rows exist.
 func addSentinelMarkers(docPath, svc string) error {
+	_ = svc
 	data, err := os.ReadFile(docPath)
 	if err != nil {
 		return err
 	}
 	content := string(data)
-	const beginMarker = "<!-- BEGIN overcast:capabilities -->"
-	const endMarker = "<!-- END overcast:capabilities -->"
-	if strings.Contains(content, beginMarker) {
+	if strings.Contains(content, capBeginMarker) {
 		return nil // already present
 	}
-	sentinels := "\n" + beginMarker + "\n" + endMarker + "\n"
-
-	// Prefer the existing manual table location so generated tables replace the
-	// manual section in-place rather than drifting below later narrative notes.
-	if anchor := findManualTableAnchor(content); anchor >= 0 {
-		content = content[:anchor] + sentinels + "\n" + content[anchor:]
-		return os.WriteFile(docPath, []byte(content), 0o644)
+	sentinels := capBeginMarker + "\n" + capEndMarker + "\n"
+	if idx := findLastTopLevelHeading(content, "## Related"); idx >= 0 {
+		content = strings.TrimRight(content[:idx], "\n") + "\n\n" + sentinels + "\n" + content[idx:]
+	} else {
+		content = strings.TrimRight(content, "\n") + "\n\n" + sentinels
 	}
-
-	// Find the first heading that signals end of the generated zone.
-	// Prefer "## Known limitations", "## Notes", or "## Known issues".
-	for _, heading := range []string{"## Known limitations", "## Notes", "## Known issues"} {
-		idx := strings.Index(content, "\n"+heading)
-		if idx >= 0 {
-			content = content[:idx] + sentinels + "\n" + content[idx+1:]
-			return os.WriteFile(docPath, []byte(content), 0o644)
-		}
-	}
-	// Fallback: insert before the last "---" separator if any.
-	lastSep := strings.LastIndex(content, "\n---\n")
-	if lastSep >= 0 {
-		content = content[:lastSep] + "\n" + sentinels + content[lastSep:]
-		return os.WriteFile(docPath, []byte(content), 0o644)
-	}
-	// Final fallback: append.
-	content = strings.TrimRight(content, "\n") + "\n" + sentinels + "\n"
 	return os.WriteFile(docPath, []byte(content), 0o644)
 }
 
@@ -1529,107 +1515,198 @@ func generateAllGenGo(root string, caps []CapabilityDecl) error {
 	return os.WriteFile(out, buf.Bytes(), 0o644)
 }
 
-// writeDocTable rewrites the sentinel-bracketed capability tables in a doc file.
-func writeDocTable(docPath, service string, caps []CapabilityDecl) error {
+// capgen owns two files per service, and both are bracketed by the same
+// sentinels so `make docs-check`'s regenerate-and-diff gate catches drift in
+// either:
+//
+//   - docs/services/<key>/operations.md — the full per-operation tables. The
+//     whole file is generated, frontmatter included; the sentinels sit just
+//     inside it so a reader who opens the raw Markdown can see that at a glance.
+//   - docs/services/<key>.md — a short Operations section: one coverage
+//     sentence and a link to the table. Everything else on the landing page is
+//     hand-written.
+//
+// The tables used to live at the bottom of the landing page, which made every
+// service doc a page of prose followed by two hundred rows nobody reads top to
+// bottom. Splitting them keeps the landing page answerable in one screen and
+// gives the reference its own URL, which is what a reference wants.
+const (
+	capBeginMarker = "<!-- BEGIN overcast:capabilities -->"
+	capEndMarker   = "<!-- END overcast:capabilities -->"
+
+	// operationsDocName is the sub-page capgen writes. docs/dev/service-doc-template.md
+	// names the other three sub-pages a service may have, all hand-written.
+	operationsDocName = "operations.md"
+)
+
+// writeServiceDocs regenerates both of capgen's targets for one service: the
+// operations sub-page and the landing page's Operations stub.
+func writeServiceDocs(root, service string, caps []CapabilityDecl) error {
+	docFile := serviceDocFile(service)
+	opsDir := filepath.Join(root, "docs", "services", docFile)
+	if err := os.MkdirAll(opsDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(opsDir, operationsDocName), []byte(buildOperationsDoc(service, caps)), 0o644); err != nil {
+		return err
+	}
+	return writeLandingStub(filepath.Join(root, "docs", "services", docFile+".md"), service, caps)
+}
+
+// coverage counts what the landing page's one-line summary reports. It is the
+// same arithmetic docs/generated/service-support.json publishes as total_ops /
+// implemented_ops, so the two can never disagree: anything not explicitly
+// StatusUnsupported is something a caller can invoke.
+func coverage(caps []CapabilityDecl) (implemented, total int) {
+	for _, c := range caps {
+		total++
+		if c.Status != "StatusUnsupported" {
+			implemented++
+		}
+	}
+	return implemented, total
+}
+
+// coverageSentence renders the coverage counts as one sentence, in both files.
+func coverageSentence(caps []CapabilityDecl) string {
+	implemented, total := coverage(caps)
+	noun := "operations are"
+	if total == 1 {
+		noun = "operation is"
+	}
+	if implemented == total {
+		return fmt.Sprintf("All %d listed %s implemented.", total, noun)
+	}
+	return fmt.Sprintf("%d of %d listed %s implemented.", implemented, total, noun)
+}
+
+// writeLandingStub replaces the landing page's generated block with the
+// Operations stub, leaving every hand-written section alone.
+//
+// The block goes last, except that a trailing "## Related" stays last — link
+// lists belong at the bottom of a page, and the structural lint in
+// internal/docslint enforces exactly that shape, so the two agree by
+// construction.
+func writeLandingStub(docPath, service string, caps []CapabilityDecl) error {
 	existing, err := os.ReadFile(docPath)
 	if err != nil {
 		return err
 	}
+	content := stripGeneratedBlock(string(existing))
+	block := capBeginMarker + "\n\n" + buildLandingStub(service, caps) + capEndMarker + "\n"
 
-	content := string(existing)
-	const beginMarker = "<!-- BEGIN overcast:capabilities -->"
-	const endMarker = "<!-- END overcast:capabilities -->"
-
-	generated := buildDocSection(service, caps)
-	generatedBlock := beginMarker + "\n" + generated + endMarker
-
-	begin := strings.Index(content, beginMarker)
-	end := strings.Index(content, endMarker)
-
-	var baseContent string
-	if begin >= 0 && end >= 0 && end > begin {
-		// Remove the existing generated block entirely so it can be reinserted at
-		// the manual-table anchor if the markers were placed incorrectly before.
-		baseContent = strings.TrimRight(content[:begin], "\n") + "\n\n" + strings.TrimLeft(content[end+len(endMarker):], "\n")
+	var out string
+	if idx := findLastTopLevelHeading(content, "## Related"); idx >= 0 {
+		out = strings.TrimRight(content[:idx], "\n") + "\n\n" + block + "\n" + content[idx:]
 	} else {
-		baseContent = content
+		out = strings.TrimRight(content, "\n") + "\n\n" + block
 	}
-
-	var newContent string
-	if start, end, ok := findManualTableRegion(baseContent); ok {
-		newContent = baseContent[:start] + generatedBlock + "\n\n" + strings.TrimLeft(baseContent[end:], "\n")
-	} else {
-		// Fallback: preserve append behavior when no manual table anchor exists.
-		newContent = strings.TrimRight(baseContent, "\n") + "\n\n" + generatedBlock + "\n"
-	}
-
-	return os.WriteFile(docPath, []byte(newContent), 0o644)
+	return os.WriteFile(docPath, []byte(out), 0o644)
 }
 
-// findManualTableRegion returns the byte range for the legacy manual capability
-// tables so the generated block can replace them in-place.
-func findManualTableRegion(content string) (start, end int, ok bool) {
-	start = findManualTableAnchor(content)
-	if start < 0 {
-		return 0, 0, false
+// stripGeneratedBlock removes a BEGIN..END block wherever it currently sits, so
+// a rerun re-inserts it at the canonical position rather than compounding a
+// past misplacement.
+func stripGeneratedBlock(content string) string {
+	begin := strings.Index(content, capBeginMarker)
+	end := strings.Index(content, capEndMarker)
+	if begin < 0 || end < begin {
+		return content
 	}
-	endpoints := findTopLevelHeading(content, "## Endpoints")
-	searchFrom := start + 1
-	if endpoints >= start {
-		searchFrom = endpoints + 1
-	}
-	end = findNextTopLevelHeading(content, searchFrom)
-	if end < 0 {
-		end = len(content)
-	}
-	return start, end, true
+	return strings.TrimRight(content[:begin], "\n") + "\n\n" + strings.TrimLeft(content[end+len(capEndMarker):], "\n")
 }
 
-// findManualTableAnchor returns the byte offset where the generated capability
-// block should be inserted so it replaces the legacy manual tables in-place.
-// Prefer the first top-level manual "## Summary" heading when it precedes a
-// manual "## Endpoints" section; otherwise fall back to the manual endpoints
-// heading itself.
-func findManualTableAnchor(content string) int {
-	summary := findTopLevelHeading(content, "## Summary")
-	endpoints := findTopLevelHeading(content, "## Endpoints")
-	if summary >= 0 && endpoints >= 0 && summary < endpoints {
-		return summary
-	}
-	if endpoints >= 0 {
-		return endpoints
-	}
-	return -1
+// buildLandingStub is the body of the landing page's generated block: the
+// coverage sentence and the link to the table. Deliberately two lines — the
+// landing page's job is to answer "does this service work", and a reader who
+// needs the per-operation detail follows the link.
+func buildLandingStub(service string, caps []CapabilityDecl) string {
+	docFile := serviceDocFile(service)
+	return fmt.Sprintf("## Operations\n\n%s\nPer-operation status, notes and AWS API links: [%s operations](%s/%s).\n\n",
+		coverageSentence(caps), serviceDisplayName(service), docFile, operationsDocName)
 }
 
-func findTopLevelHeading(content, heading string) int {
+// buildOperationsDoc renders the whole of docs/services/<key>/operations.md.
+func buildOperationsDoc(service string, caps []CapabilityDecl) string {
+	docFile := serviceDocFile(service)
+	name := serviceDisplayName(service)
+	title := name + " operations"
+
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "title: %s\n", quoteYAMLString(title))
+	fmt.Fprintf(&b, "description: %s\n", quoteYAMLString(operationsDescription(name, caps)))
+	b.WriteString("section: \"Service Reference\"\n")
+	b.WriteString("tags:\n")
+	for _, tag := range operationsDocTags(docFile) {
+		fmt.Fprintf(&b, "  - %s\n", tag)
+	}
+	b.WriteString("---\n\n")
+
+	b.WriteString(capBeginMarker + "\n\n")
+	fmt.Fprintf(&b, "# %s\n\n", title)
+	fmt.Fprintf(&b, "%s Back to [%s](../%s.md).\n", coverageSentence(caps), name, docFile)
+	b.WriteString(buildDocSection(service, caps))
+	b.WriteString(capEndMarker + "\n")
+	return b.String()
+}
+
+// operationsDescription is the frontmatter description, kept well inside the
+// 220-character cap scripts/docs-index.go enforces.
+func operationsDescription(name string, caps []CapabilityDecl) string {
+	implemented, total := coverage(caps)
+	return fmt.Sprintf("Every %s operation Overcast declares — %d of %d implemented — with status, behaviour notes and a link to the AWS API reference for each.", name, implemented, total)
+}
+
+// operationsDocTags mirrors what scripts/docs-index.go would infer from the
+// path, so the generated frontmatter and the inferred metadata agree.
+func operationsDocTags(docFile string) []string {
+	tags := []string{"docs", "operations", "services"}
+	tags = append(tags, strings.FieldsFunc(docFile, func(r rune) bool { return r == '-' || r == '_' })...)
+	seen := map[string]bool{}
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// serviceDisplayName is the human name for a service key, falling back to the
+// key itself for one that predates statusDisplayNames.
+func serviceDisplayName(service string) string {
+	if name := statusDisplayNames[service]; name != "" {
+		return name
+	}
+	return service
+}
+
+// quoteYAMLString renders a value the same way scripts/docs-index.go writes
+// frontmatter, so a regenerated file and a --refresh-frontmatter run produce
+// the same bytes.
+func quoteYAMLString(s string) string {
+	raw, _ := json.Marshal(s)
+	return string(raw)
+}
+
+// findLastTopLevelHeading returns the byte offset of the last line that is
+// exactly the given heading. Exact, not prefix: internal/docslint requires the
+// literal "## Related", so a near-miss spelling has to fail the lint rather
+// than quietly change where capgen writes.
+func findLastTopLevelHeading(content, heading string) int {
+	found := -1
 	offset := 0
 	for _, line := range strings.SplitAfter(content, "\n") {
-		trimmed := strings.TrimRight(line, "\r\n")
-		if trimmed == heading {
-			return offset
+		if strings.TrimRight(line, "\r\n") == heading {
+			found = offset
 		}
 		offset += len(line)
 	}
-	if strings.TrimRight(content, "\r\n") == heading {
-		return 0
-	}
-	return -1
-}
-
-func findNextTopLevelHeading(content string, after int) int {
-	if after < 0 {
-		after = 0
-	}
-	offset := 0
-	for _, line := range strings.SplitAfter(content, "\n") {
-		trimmed := strings.TrimRight(line, "\r\n")
-		if offset > after && strings.HasPrefix(trimmed, "## ") {
-			return offset
-		}
-		offset += len(line)
-	}
-	return -1
+	return found
 }
 
 // displayWidth returns the visible display width of a string, matching how

@@ -98,90 +98,14 @@ same-process target delivery.
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category    | ✅ Supported | ❌ Unsupported |
-| ----------- | ------------ | -------------- |
-| Event buses | 4            |                |
-| Rules       | 7            |                |
-| Targets     | 3            |                |
-| Events      | 1            |                |
-| Tags        | 3            |                |
-| Archives    |              | 4              |
-| Replays     |              | 3              |
-| Connections |              | 4              |
-
----
-
-## Endpoints
-
-### Event buses
-
-| Operation          | Status       | Notes                                      | AWS Docs                                                                                      |
-| ------------------ | ------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `CreateEventBus`   | ✅ Supported | Creates a custom event bus                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_CreateEventBus.html)   |
-| `DescribeEventBus` | ✅ Supported | Returns bus details; synthetic default bus | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeEventBus.html) |
-| `ListEventBuses`   | ✅ Supported | Always includes default bus                | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListEventBuses.html)   |
-| `DeleteEventBus`   | ✅ Supported |                                            | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteEventBus.html)   |
-
-### Rules
-
-| Operation          | Status       | Notes                                                                                                                                                                       | AWS Docs                                                                                      |
-| ------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `PutRule`          | ✅ Supported | Creates or updates a rule                                                                                                                                                   | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutRule.html)          |
-| `DescribeRule`     | ✅ Supported |                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeRule.html)     |
-| `ListRules`        | ✅ Supported | Lists rules for a bus                                                                                                                                                       | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListRules.html)        |
-| `EnableRule`       | ✅ Supported | Sets rule state to ENABLED                                                                                                                                                  | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_EnableRule.html)       |
-| `DisableRule`      | ✅ Supported | Sets rule state to DISABLED                                                                                                                                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DisableRule.html)      |
-| `DeleteRule`       | ✅ Supported |                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteRule.html)       |
-| `TestEventPattern` | ✅ Supported | Evaluates an event against a pattern with the matcher rule delivery uses; unparseable patterns are InvalidEventPatternException, mandatory envelope fields are not enforced | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_TestEventPattern.html) |
-
-### Targets
-
-| Operation           | Status       | Notes                                                                                                            | AWS Docs                                                                                       |
-| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `PutTargets`        | ✅ Supported | Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
-| `ListTargetsByRule` | ✅ Supported | Lists targets including input transformers and ECS/Kinesis/SQS target parameters                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
-| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                                                                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
-
-### Events
-
-| Operation   | Status       | Notes                                                                                                                                              | AWS Docs                                                                               |
-| ----------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `PutEvents` | ✅ Supported | Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets, applying InputPath/InputTransformer and RetryPolicy/DLQ | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
-
-### Tags
-
-| Operation             | Status       | Notes                        | AWS Docs                                                                                         |
-| --------------------- | ------------ | ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| `TagResource`         | ✅ Supported | Tag buses and rules          | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_TagResource.html)         |
-| `ListTagsForResource` | ✅ Supported | List tags for a resource     | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTagsForResource.html) |
-| `UntagResource`       | ✅ Supported | Removes tags from a resource | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_UntagResource.html)       |
-
-### Archives
-
-| Operation         | Status         | Notes       | AWS Docs                                                                                     |
-| ----------------- | -------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `CreateArchive`   | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_CreateArchive.html)   |
-| `DescribeArchive` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeArchive.html) |
-| `ListArchives`    | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListArchives.html)    |
-| `DeleteArchive`   | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteArchive.html)   |
-
-### Replays
-
-| Operation        | Status         | Notes       | AWS Docs                                                                                    |
-| ---------------- | -------------- | ----------- | ------------------------------------------------------------------------------------------- |
-| `StartReplay`    | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_StartReplay.html)    |
-| `DescribeReplay` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeReplay.html) |
-| `ListReplays`    | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListReplays.html)    |
-
-### Connections
-
-| Operation            | Status         | Notes       | AWS Docs                                                                                        |
-| -------------------- | -------------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `CreateConnection`   | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_CreateConnection.html)   |
-| `DescribeConnection` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DescribeConnection.html) |
-| `ListConnections`    | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListConnections.html)    |
-| `DeleteConnection`   | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_DeleteConnection.html)   |
+18 of 29 listed operations are implemented.
+Per-operation status, notes and AWS API links: [EventBridge operations](eventbridge/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

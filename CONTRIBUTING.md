@@ -1341,7 +1341,7 @@ manifest.
    Then regenerate the static snapshot and refresh the docs:
    ```sh
    make generate-caps   # regenerates internal/capabilities/all.gen.go
-   make docs            # rewrites the capabilities table in docs/services/<service>.md
+   make docs            # rewrites docs/services/<service>/operations.md and the landing page's Operations stub
    make check-caps      # verifies all dispatcher entries have a matching capability
    make aws-models-check # verifies capabilities against the pinned AWS operation corpus
    ```
@@ -1355,7 +1355,7 @@ manifest.
    global gate or mark an implemented AWS endpoint `DocOnly` merely to silence
    the check.
 
-   > **Do not manually edit the table in `docs/services/<service>.md`.** Everything between the `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->` markers is overwritten by `make docs`. Edit `capabilities_dev.go` and re-run `make docs` instead.
+   > **Do not manually edit `docs/services/<service>/operations.md`, or the block between the `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->` markers on the landing page.** Both are overwritten by `make docs`. Edit `capabilities_dev.go` and re-run `make docs` instead.
    >
    > **AWS Docs links** are auto-generated from the `serviceDocsBaseMap` in `cmd/capgen/main.go` — no per-operation `DocsURL` is needed for most operations. If a service is missing from that map, add it. Use the `DocsURL` field on a `Capability` entry only to override the link for a specific operation (e.g. when the URL pattern differs from the service base).
 7. Add a changelog fragment under `.changelog/` (see [Versioning and changelog](#versioning-and-changelog))
@@ -1412,32 +1412,13 @@ works and is exactly as unbounded as it always was — it just does not get the 
 6. Create `internal/services/<n>/capabilities_dev.go` — declare every operation the service exposes, with the correct `Status` for each. Use `//go:build dev` at the top. See `internal/services/sqs/capabilities_dev.go` as the canonical example. Then generate and check:
    ```sh
    make generate-caps   # adds the new service to internal/capabilities/all.gen.go
-   make docs            # creates the capabilities table in docs/services/<n>.md
+   make docs            # writes docs/services/<n>/operations.md and the landing page's Operations stub
    make check-caps      # optional: only works for dispatcher-based services
    ```
 7. Write P1 tests in `tests/integration/<n>/<n>_test.go`
 8. Add CloudFormation resource handlers for every resource type the service creates — register them in `resourceHandlers` in `internal/services/cloudformation/provisioner.go`. If the service creates resources that AWS has CloudFormation types for (which is nearly always the case), you must add the entries. At minimum, use `&stubResourceHandler{}` for resource types you can't fully implement yet — this lets CDK stacks succeed while the implementation is incomplete. See [CloudFormation integration](#cloudformation-integration) for the full rules, dispatch helpers, and verification checklist.
-9. Create `docs/services/<n>.md` using the template below. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) and run `make docs` to populate the capabilities table automatically. Everything between those markers is overwritten on every run — never edit it by hand. Any prose that belongs in the doc (behaviour notes, caveats, example snippets) must live **outside** the markers. Follow [Writing docs](#writing-docs) for that prose — in particular, never cite `docs/dev/**` or `docs/plans/**`, which `make docs-check` rejects.
+9. Create `docs/services/<n>.md` following [docs/dev/service-doc-template.md](./docs/dev/service-doc-template.md) — an H1, a one-sentence positioning line, a `**Status:**` chip, `## Quick start`, then whatever of `## What works` / `## Differences from AWS` / `## Gotchas` you have something to say about, and `## Related` last. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) above `## Related` and run `make docs`: it fills in the `## Operations` stub and writes the per-operation tables to `docs/services/<n>/operations.md`. Everything between the markers, and that whole sub-page, is overwritten on every run — never edit either by hand. `make docs-check` fails on a page that breaks the structure. Follow [Writing docs](#writing-docs) for the prose — in particular, never cite `docs/dev/**` or `docs/plans/**`, which `make docs-check` rejects.
 
-   ```markdown
-   # <Service Name>
-
-   > AWS docs: https://docs.aws.amazon.com/...
-
-   ## Summary
-
-   | Category | Supported | Partial | WIP | Unsupported |
-   | -------- | --------- | ------- | --- | ----------- |
-   | ...      | N         | N       | N   | N           |
-
-   ## Endpoints
-
-   ### <Category name>
-
-   | Operation | Status      | Notes | AWS Docs    |
-   | --------- | ----------- | ----- | ----------- |
-   | ...       | ✅/⚠️/🚧/❌ |       | [link](...) |
-   ```
 10. Add service to README.md table and add a changelog fragment under `.changelog/`
 11. Add the service's groups and tests to `compat/suites/registry.json` covering all P1 operations, then implement them in **every** SDK/CLI compat suite — the per-suite file and registration table is in [compat/AGENTS.md § When a new Overcast service is implemented](./compat/AGENTS.md#when-a-new-overcast-service-is-implemented). Uniformity is enforced by `go run ./cmd/compat --check-parity`; any suite you cannot complete in the same PR must be declared in `compat/parity-debt.json` with a reason
 12. **Web UI** — consider whether developers using Overcast would find it useful to see or administer this service's resources from the management console (most CRUD-style services qualify; internal plumbing like STS usually does not). If yes:
@@ -1465,6 +1446,14 @@ is in [docs/dev/content-charter.md](./docs/dev/content-charter.md). Read it
 before writing or substantially editing a published doc; `make docs-check`
 mechanically enforces the citation rule and a frontmatter description length
 cap, but the rest is a judgment call the charter exists to guide.
+
+Service pages have a fixed shape on top of that —
+[docs/dev/service-doc-template.md](./docs/dev/service-doc-template.md). A
+landing page (`docs/services/<key>.md`) answers "does this work and what's the
+one command" above the fold; the per-operation tables live on
+`docs/services/<key>/operations.md`, which `cmd/capgen` generates. `make
+docs-check` fails on a page that breaks the structure, so read the template
+before adding or restructuring a service page.
 
 ---
 
@@ -1518,13 +1507,13 @@ Preferred direction:
 - Fail CI when machine-readable support metadata and docs drift.
 
 **Rule: do not add manual operation tables to service docs.**
-`docs/services/<service>.md` already contains a generated summary table and a per-endpoint breakdown (produced by `make docs` from `capabilities_dev.go`). Do not add a hand-written duplicate above or alongside the generated block — they will drift immediately and confuse contributors. If the generated table is missing a column or status you need, add it to `capabilities_dev.go` and extend `capgen`/`docgen` instead of writing a parallel table by hand.
+`docs/services/<service>/operations.md` already contains a generated summary table and a per-endpoint breakdown (produced by `make docs` from `capabilities_dev.go`), and the landing page carries a generated coverage stub linking to it. Do not add a hand-written duplicate on the landing page — they will drift immediately and confuse contributors. If the generated table is missing a column or status you need, add it to `capabilities_dev.go` and extend `capgen`/`docgen` instead of writing a parallel table by hand.
 
 **Rule: never hand-edit generated status/coverage tables.**
 The following sections are generated and must only be updated via tooling:
 
 - `STATUS.md` block between `<!-- BEGIN overcast:status -->` and `<!-- END overcast:status -->`
-- service-doc capability blocks in `docs/services/<service>.md` between `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->`
+- `docs/services/<service>/operations.md` in full, and the block in `docs/services/<service>.md` between `<!-- BEGIN overcast:capabilities -->` and `<!-- END overcast:capabilities -->`
 
 After changing capabilities or operation support, run:
 
@@ -1861,7 +1850,7 @@ chore(ci): add TODO-to-issue GitHub Action
 - [ ] `capabilities_dev.go` updated and `make generate-caps` re-run if any operations changed
 - [ ] `make check-caps` passes (for dispatcher-based services)
 - [ ] `make docs-check` passes (no uncommitted doc drift)
-- [ ] `docs/services/<service>.md` — capabilities table regenerated via `make docs` (never edited by hand); any prose/behaviour notes outside the sentinel markers are up to date
+- [ ] `docs/services/<service>.md` and `docs/services/<service>/operations.md` — regenerated via `make docs` (never edited by hand); the landing page's hand-written sections still follow [the service page template](./docs/dev/service-doc-template.md)
 - [ ] CloudFormation resource handlers registered in `resourceHandlers` for every new resource type — see [CloudFormation integration](#cloudformation-integration)
 - [ ] Changelog fragment added under `.changelog/` (never edit `[Unreleased]` directly), or `/no-changelog <reason>` commented on the PR to record that it needs none
 - [ ] Commit messages follow conventional commits
@@ -1877,7 +1866,7 @@ chore(ci): add TODO-to-issue GitHub Action
 Open a [bug report](.github/ISSUE_TEMPLATE/bug_report.md) with:
 
 1. The service and operation that's broken (e.g. "SQS / ReceiveMessage")
-2. The operation's status in `docs/services/<service>.md` — if it says ❌, it's expected to not work
+2. The operation's status in `docs/services/<service>/operations.md` — if it says ❌, it's expected to not work
 3. What you expected vs what happened (include the error code)
 4. A minimal reproduction (curl or code snippet)
 5. Your Overcast version and run mode

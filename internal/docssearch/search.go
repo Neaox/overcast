@@ -78,10 +78,60 @@ func (idx *searchIndex) search(query string, limit int) []Result {
 		}
 		return results[i].Score > results[j].Score
 	})
+	results = promoteServiceLandingPages(results)
 	if len(results) > limit {
 		results = results[:limit]
 	}
 	return results
+}
+
+// promoteServiceLandingPages puts a service's own page above its generated
+// operations table whenever both match.
+//
+// The two describe the same service, so they match most of the same queries —
+// and the generated one wins on bulk, because it is a row per operation with
+// every behaviour note in it. That is the same failure
+// TestSearch_servicePageOutranksTheOperationManifest names for
+// docs/operation-manifest.md, one directory down. Someone searching "log group
+// retention" wants the page that says how retention behaves, with the table a
+// click away; they do not want to arrive in the middle of a ninety-row table.
+//
+// An ordering rule rather than a score penalty, because it is an ordering
+// guarantee: no amount of content in the generated file can defeat it, and
+// there is no factor to keep re-tuning as the corpus grows. Applied before the
+// limit is taken, so a landing page cannot be truncated away while its own
+// sub-page survives.
+func promoteServiceLandingPages(results []Result) []Result {
+	for i := 0; i < len(results); i++ {
+		landing, ok := landingHrefFor(results[i].Href)
+		if !ok {
+			continue
+		}
+		for j := i + 1; j < len(results); j++ {
+			if results[j].Href != landing {
+				continue
+			}
+			moved := results[j]
+			copy(results[i+1:j+1], results[i:j])
+			results[i] = moved
+			break
+		}
+	}
+	return results
+}
+
+// landingHrefFor maps "services/<key>/operations.md" to "services/<key>.md",
+// and reports false for anything that is not a generated operations page.
+func landingHrefFor(href string) (string, bool) {
+	const prefix, suffix = "services/", "/operations.md"
+	if !strings.HasPrefix(href, prefix) || !strings.HasSuffix(href, suffix) {
+		return "", false
+	}
+	key := href[len(prefix) : len(href)-len(suffix)]
+	if key == "" || strings.Contains(key, "/") {
+		return "", false
+	}
+	return prefix + key + ".md", true
 }
 
 func tokenize(s string) []string {

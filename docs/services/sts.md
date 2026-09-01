@@ -14,9 +14,6 @@ tags:
 
 > Generated for Overcast. See also: [AWS STS API Reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)
 
-For the operation counts by category, see [Summary](#summary) at the bottom of
-this page.
-
 ## Endpoint details
 
 | Operation                  | Status | Notes                                      | AWS docs                                                                                        |
@@ -51,36 +48,14 @@ this page.
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category    | ✅ Supported | ❌ Unsupported |
-| ----------- | ------------ | -------------- |
-| General     | 5            |                |
-| Unsupported |              | 6              |
-
----
-
-## Endpoints
-
-### General
-
-| Operation                   | Status       | Notes | AWS Docs                                                                                       |
-| --------------------------- | ------------ | ----- | ---------------------------------------------------------------------------------------------- |
-| `AssumeRole`                | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)                |
-| `AssumeRoleWithWebIdentity` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithWebIdentity.html) |
-| `GetCallerIdentity`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)         |
-| `GetFederationToken`        | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetFederationToken.html)        |
-| `GetSessionToken`           | ✅ Supported |       | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetSessionToken.html)           |
-
-### Unsupported
-
-| Operation                    | Status         | Notes                  | AWS Docs                                                                                        |
-| ---------------------------- | -------------- | ---------------------- | ----------------------------------------------------------------------------------------------- |
-| `AssumeRoleWithSAML`         | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithSAML.html)         |
-| `AssumeRoot`                 | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoot.html)                 |
-| `DecodeAuthorizationMessage` | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_DecodeAuthorizationMessage.html) |
-| `GetAccessKeyInfo`           | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html)           |
-| `GetDelegatedAccessToken`    | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetDelegatedAccessToken.html)    |
-| `GetWebIdentityToken`        | ❌ Unsupported | Returns NotImplemented | [docs](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetWebIdentityToken.html)        |
+5 of 11 listed operations are implemented.
+Per-operation status, notes and AWS API links: [STS operations](sts/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

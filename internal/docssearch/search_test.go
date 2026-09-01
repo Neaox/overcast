@@ -58,6 +58,16 @@ func TestSearch_servicePageOutranksTheOperationManifest(t *testing.T) {
 	}
 }
 
+// TestSearch_camelCaseOperationWords checks that an operation is findable by
+// the English words inside its CamelCase name, which is what tokenize's
+// identifier splitting exists for.
+//
+// The answer is the service's operations page rather than its landing page:
+// since the per-operation tables moved to docs/services/<key>/operations.md,
+// that page is the only place in the corpus where StartLiveTail is written at
+// all. promoteServiceLandingPages does not fire here, and should not — it
+// reorders a landing page above its own sub-page only when the landing page
+// matched the query too, and "live tail" appears nowhere on it.
 func TestSearch_camelCaseOperationWords(t *testing.T) {
 	// Given: the generated docs index includes operation names.
 
@@ -68,7 +78,34 @@ func TestSearch_camelCaseOperationWords(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected search results")
 	}
+	if results[0].Href != "services/cloudwatch-logs/operations.md" {
+		t.Fatalf("expected the CloudWatch Logs operations page first, got %q", results[0].Href)
+	}
+}
+
+// TestSearch_serviceLandingPageOutranksItsOwnOperationsTable is the guard
+// above, for the generated listing that now sits directly beneath each service
+// page rather than one shared manifest elsewhere in the tree.
+func TestSearch_serviceLandingPageOutranksItsOwnOperationsTable(t *testing.T) {
+	// Given: a query both the landing page and its operations table match.
+	// When: it is searched for.
+	results := Search("log group retention", 5)
+
+	// Then: the page that explains the behaviour comes first, and the table is
+	// still in the results behind it.
+	if len(results) == 0 {
+		t.Fatal("expected search results")
+	}
 	if results[0].Href != "services/cloudwatch-logs.md" {
-		t.Fatalf("expected CloudWatch Logs first, got %q", results[0].Href)
+		t.Fatalf("ranked %q first, want services/cloudwatch-logs.md", results[0].Href)
+	}
+	found := false
+	for _, r := range results {
+		if r.Href == "services/cloudwatch-logs/operations.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the operations table should still be in the results, just not first")
 	}
 }

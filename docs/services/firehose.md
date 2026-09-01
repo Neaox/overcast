@@ -12,8 +12,6 @@ tags:
 
 # Firehose — Amazon Data Firehose
 
-> AWS docs: https://docs.aws.amazon.com/firehose/latest/APIReference/
-
 Amazon Data Firehose uses the `application/x-amz-json-1.1` protocol.
 Operations are identified by the `X-Amz-Target` header with the prefix
 `Firehose_20150804.`.
@@ -28,40 +26,15 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category         | ✅ Supported |
-| ---------------- | ------------ |
-| Delivery Streams | 4            |
-| Records          | 2            |
-| Tags             | 3            |
-
----
-
-## Endpoints
-
-### Delivery Streams
-
-| Operation                | Status       | Notes                           | AWS Docs                                                                                         |
-| ------------------------ | ------------ | ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `CreateDeliveryStream`   | ✅ Supported | Creates a delivery stream       | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_CreateDeliveryStream.html)   |
-| `DescribeDeliveryStream` | ✅ Supported | Returns delivery stream details | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_DescribeDeliveryStream.html) |
-| `ListDeliveryStreams`    | ✅ Supported | Lists all delivery streams      | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_ListDeliveryStreams.html)    |
-| `DeleteDeliveryStream`   | ✅ Supported | Deletes a delivery stream       | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_DeleteDeliveryStream.html)   |
-
-### Records
-
-| Operation        | Status       | Notes                                 | AWS Docs                                                                                 |
-| ---------------- | ------------ | ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `PutRecord`      | ✅ Supported | Writes a single record to the stream  | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_PutRecord.html)      |
-| `PutRecordBatch` | ✅ Supported | Writes multiple records to the stream | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_PutRecordBatch.html) |
-
-### Tags
-
-| Operation                   | Status       | Notes                                        | AWS Docs                                                                                            |
-| --------------------------- | ------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `TagDeliveryStream`         | ✅ Supported | Adds or overwrites tags on a delivery stream | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_TagDeliveryStream.html)         |
-| `UntagDeliveryStream`       | ✅ Supported | Removes tags by key from a delivery stream   | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_UntagDeliveryStream.html)       |
-| `ListTagsForDeliveryStream` | ✅ Supported | Returns tags for a delivery stream           | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_ListTagsForDeliveryStream.html) |
+All 9 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Firehose operations](firehose/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/firehose/latest/APIReference/)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

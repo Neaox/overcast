@@ -11,8 +11,6 @@ tags:
 
 # Shield — AWS Shield
 
-> AWS docs: https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/Welcome.html
-
 AWS Shield (DDoS protection) uses the `application/x-amz-json-1.1` protocol.
 Operations are identified by the `X-Amz-Target` header with the prefix
 `AWSShield_20160616.`.
@@ -27,39 +25,15 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category     | ✅ Supported |
-| ------------ | ------------ |
-| Subscription | 1            |
-| Protections  | 4            |
-| Tags         | 3            |
-
----
-
-## Endpoints
-
-### Subscription
-
-| Operation              | Status       | Notes                                        | AWS Docs                                                                                      |
-| ---------------------- | ------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `DescribeSubscription` | ✅ Supported | Returns a minimal active subscription object | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_DescribeSubscription.html) |
-
-### Protections
-
-| Operation            | Status       | Notes                                       | AWS Docs                                                                                    |
-| -------------------- | ------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `CreateProtection`   | ✅ Supported | Creates a protection; requires Name and ARN | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_CreateProtection.html)   |
-| `DescribeProtection` | ✅ Supported | Lookup by ProtectionId or ResourceArn       | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_DescribeProtection.html) |
-| `ListProtections`    | ✅ Supported | Lists all protections                       | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_ListProtections.html)    |
-| `DeleteProtection`   | ✅ Supported | Deletes a protection by ID                  | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_DeleteProtection.html)   |
-
-### Tags
-
-| Operation             | Status       | Notes                              | AWS Docs                                                                                     |
-| --------------------- | ------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| `TagResource`         | ✅ Supported | Adds/updates tags on a protection  | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes tag keys from a protection | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Lists tags on a protection         | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_ListTagsForResource.html) |
+All 8 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Shield operations](shield/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/Welcome.html)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

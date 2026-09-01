@@ -11,19 +11,15 @@ tags:
 
 # Organizations — AWS Organizations
 
-> AWS docs: https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html
-
 Organizations is emulated at the inert tier: policy metadata is stored and
 returned faithfully — identifiers, ARNs, tags, pagination and the modeled
 errors — and nothing a policy describes ever takes effect.
 
-## What's covered
-
+## What works
 Policies have a full CRUD and tagging surface. `DescribeOrganization` returns a
 fixed organization so that CDK bootstrap gets past it. Everything else —
 accounts, organizational units, roots, handshakes, delegated administrators —
-returns 501 Not Implemented. For the operation counts, see
-[Summary](#summary) at the bottom of this page.
+returns 501 Not Implemented.
 
 ## Behavior Notes
 
@@ -46,40 +42,15 @@ returns 501 Not Implemented. For the operation counts, see
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category          | 🧊 Inert |
-| ----------------- | -------- |
-| Operations        | 1        |
-| Policy operations | 5        |
-| Tag operations    | 3        |
-
----
-
-## Endpoints
-
-### Operations
-
-| Operation              | Status   | Notes | AWS Docs                                                                                            |
-| ---------------------- | -------- | ----- | --------------------------------------------------------------------------------------------------- |
-| `DescribeOrganization` | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribeOrganization.html) |
-
-### Policy operations
-
-| Operation        | Status   | Notes                                                                                                 | AWS Docs                                                                                      |
-| ---------------- | -------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `CreatePolicy`   | 🧊 Inert | Stores the policy and derives its ID and ARN. The document is never evaluated.                        | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_CreatePolicy.html)   |
-| `DescribePolicy` | 🧊 Inert |                                                                                                       | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DescribePolicy.html) |
-| `UpdatePolicy`   | 🧊 Inert | Merges the members the caller sent; the policy ARN is stable across a rename.                         | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_UpdatePolicy.html)   |
-| `DeletePolicy`   | 🧊 Inert | PolicyInUseException is unreachable: attaching a policy is not emulated, so no policy can be in use.  | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_DeletePolicy.html)   |
-| `ListPolicies`   | 🧊 Inert | Filters by the required policy type and paginates. An invalid NextToken is rejected, never restarted. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListPolicies.html)   |
-
-### Tag operations
-
-| Operation             | Status   | Notes                                                                                                        | AWS Docs                                                                                           |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `TagResource`         | 🧊 Inert | Policies only. A root, OU or account ID returns TargetNotFoundException, since none of those are stored yet. | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | 🧊 Inert | Policies only, as for TagResource.                                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | 🧊 Inert | Policies only, as for TagResource.                                                                           | [docs](https://docs.aws.amazon.com/organizations/latest/APIReference/API_ListTagsForResource.html) |
+All 9 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Organizations operations](organizations/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)

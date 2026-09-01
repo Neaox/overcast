@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/overcast-sh/overcast/internal/docslint"
 	"github.com/overcast-sh/overcast/internal/docssearch"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -178,6 +180,12 @@ func main() {
 			fatal(err)
 		}
 		if err := checkExcludedRefs(docs); err != nil {
+			fatal(err)
+		}
+		if err := checkServiceDocStructure(docs); err != nil {
+			fatal(err)
+		}
+		if err := checkGeneratedDocsAreTracked(); err != nil {
 			fatal(err)
 		}
 		entries := make([]docEntry, 0, len(docs))
@@ -788,6 +796,57 @@ func checkExcludedRefs(docs []weightedDoc) error {
 		return fmt.Errorf("published docs cite excluded docs/dev/ or docs/plans/ content:\n\t%s", strings.Join(problems, "\n\t"))
 	}
 	return nil
+}
+
+// checkServiceDocStructure holds every page under docs/services/ to the shape
+// docs/dev/service-doc-template.md describes: required sections, template
+// section order, the generated block last, and the fixed set of sub-page names.
+//
+// The rules themselves live in internal/docslint, which has tests. This file
+// cannot: it is `//go:build ignore`, which is also why the search scoring moved
+// out to internal/docssearch.
+func checkServiceDocStructure(docs []weightedDoc) error {
+	entries := make([]docslint.Doc, 0, len(docs))
+	for _, doc := range docs {
+		entries = append(entries, docslint.Doc{
+			Path:           doc.Entry.Path,
+			Body:           doc.RawBody,
+			BodyLineOffset: doc.BodyLineOffset,
+		})
+	}
+	problems := docslint.Check(entries)
+	if len(problems) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(problems))
+	for _, p := range problems {
+		lines = append(lines, p.String())
+	}
+	return fmt.Errorf("service docs do not follow the service page template:\n\t%s", strings.Join(lines, "\n\t"))
+}
+
+// checkGeneratedDocsAreTracked rejects an untracked file under docs/services/.
+//
+// `make docs-check` proves the committed docs match what the generators would
+// write by regenerating and diffing — and a diff cannot see a file git has
+// never been told about. cmd/capgen writes one operations sub-page per
+// service, so adding a service and forgetting to `git add` its sub-page
+// produces a landing page whose Operations link 404s, with every check green.
+// The same gap covers a hand-written sub-page nobody staged.
+//
+// Absent git — a source tarball, a vendored copy — this is not a check that
+// can be run, and not running it is the right answer rather than an error
+// about the environment.
+func checkGeneratedDocsAreTracked() error {
+	out, err := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", docsRoot+"/services").Output()
+	if err != nil {
+		return nil
+	}
+	untracked := strings.Fields(strings.TrimSpace(string(out)))
+	if len(untracked) == 0 {
+		return nil
+	}
+	return fmt.Errorf("untracked files under %s/services; run make docs, then commit them:\n\t%s", docsRoot, strings.Join(untracked, "\n\t"))
 }
 
 // suggestHeading names the heading a broken anchor most likely meant: one

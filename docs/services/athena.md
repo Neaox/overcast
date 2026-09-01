@@ -11,8 +11,6 @@ tags:
 
 # Athena — Amazon Athena
 
-> AWS docs: https://docs.aws.amazon.com/athena/latest/APIReference/
-
 Amazon Athena uses the `application/x-amz-json-1.1` protocol.
 Operations are identified by the `X-Amz-Target` header with the prefix
 `AmazonAthena.`.
@@ -27,42 +25,15 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 
 <!-- BEGIN overcast:capabilities -->
 
-## Summary
+## Operations
 
-| Category   | ✅ Supported |
-| ---------- | ------------ |
-| Queries    | 4            |
-| WorkGroups | 4            |
-| Tags       | 3            |
-
----
-
-## Endpoints
-
-### Queries
-
-| Operation             | Status       | Notes                                    | AWS Docs                                                                                    |
-| --------------------- | ------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `StartQueryExecution` | ✅ Supported | Starts a query; immediately succeeds     | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_StartQueryExecution.html) |
-| `GetQueryExecution`   | ✅ Supported | Returns query execution details          | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_GetQueryExecution.html)   |
-| `GetQueryResults`     | ✅ Supported | Returns query results (empty result set) | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_GetQueryResults.html)     |
-| `ListQueryExecutions` | ✅ Supported | Lists all query execution IDs            | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListQueryExecutions.html) |
-
-### WorkGroups
-
-| Operation         | Status       | Notes                     | AWS Docs                                                                                |
-| ----------------- | ------------ | ------------------------- | --------------------------------------------------------------------------------------- |
-| `CreateWorkGroup` | ✅ Supported | Creates a workgroup       | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_CreateWorkGroup.html) |
-| `GetWorkGroup`    | ✅ Supported | Returns workgroup details | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_GetWorkGroup.html)    |
-| `ListWorkGroups`  | ✅ Supported | Lists all workgroups      | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListWorkGroups.html)  |
-| `DeleteWorkGroup` | ✅ Supported | Deletes a workgroup       | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_DeleteWorkGroup.html) |
-
-### Tags
-
-| Operation             | Status       | Notes                             | AWS Docs                                                                                    |
-| --------------------- | ------------ | --------------------------------- | ------------------------------------------------------------------------------------------- |
-| `TagResource`         | ✅ Supported | Adds/updates tags on a workgroup  | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes tag keys from a workgroup | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Lists tags on a workgroup         | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListTagsForResource.html) |
+All 11 listed operations are implemented.
+Per-operation status, notes and AWS API links: [Athena operations](athena/operations.md).
 
 <!-- END overcast:capabilities -->
+
+## Related
+
+- [AWS API reference](https://docs.aws.amazon.com/athena/latest/APIReference/)
+- [All service pages](README.md)
+- [Service names and state overrides](../configuration.md#service-names)
