@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import type { LifecycleRule } from "@aws-sdk/client-s3"
 
 import { s3, toLifecycleRule } from "./s3"
@@ -92,5 +92,51 @@ describe("s3.getObjectDownloadUrl", () => {
     const params = query(s3.getObjectDownloadUrl("b", "report.csv", "v2"))
     expect(params.get("x-overcast-endpoint")).toBe("http://localhost:4566")
     expect(params.get("versionId")).toBe("v2")
+  })
+})
+
+describe("s3.getObjectText", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const respond = (body: string, status: number, contentRange?: string) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, {
+          status,
+          headers: contentRange ? { "Content-Range": contentRange } : {},
+        }),
+      ),
+    )
+  }
+
+  it("reports truncation when the range was clamped to a larger object", async () => {
+    respond("x".repeat(64), 206, "bytes 0-63/5242880")
+    await expect(s3.getObjectText("b", "big.log", undefined, 64)).resolves.toMatchObject({
+      truncated: true,
+    })
+  })
+
+  it("does not report truncation when a 206 served the whole object", async () => {
+    // S3 answers 206 for ANY satisfiable range — a 36-byte object read with
+    // Range: bytes=0-1048575 comes back 206, "bytes 0-35/36", complete.
+    respond("tiny", 206, "bytes 0-3/4")
+    await expect(s3.getObjectText("b", "tiny.txt")).resolves.toEqual({
+      text: "tiny",
+      truncated: false,
+    })
+  })
+
+  it("does not report truncation on a 200 that ignored the range", async () => {
+    respond("whole body", 200)
+    await expect(s3.getObjectText("b", "plain.txt")).resolves.toEqual({
+      text: "whole body",
+      truncated: false,
+    })
+  })
+
+  it("counts an unreadable Content-Range as complete rather than cut", async () => {
+    respond("body", 206)
+    await expect(s3.getObjectText("b", "odd.txt")).resolves.toMatchObject({ truncated: false })
   })
 })
