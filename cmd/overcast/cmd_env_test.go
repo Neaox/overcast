@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -187,16 +188,22 @@ func TestConflictingAWSVars_Dedup(t *testing.T) {
 }
 
 // TestEnvCmd_AutoShell verifies --shell auto (the default) resolves per
-// runtime.GOOS; this suite runs on Windows, so auto must match powershell.
+// runtime.GOOS: powershell on Windows, sh everywhere else — asserted
+// against the platform actually running the suite, since CI runs Linux and
+// developers run Windows.
 func TestEnvCmd_AutoShell(t *testing.T) {
 	stubEnviron(t, nil)
-	auto := runEnvCmd(t)
-	powershell := runEnvCmd(t, "--shell", "powershell")
-	if auto != powershell {
-		t.Errorf("auto output = %q, want it to match explicit --shell powershell = %q", auto, powershell)
+	wantShell, wantMarker := "sh", "export AWS_ACCESS_KEY_ID='test';"
+	if runtime.GOOS == "windows" {
+		wantShell, wantMarker = "powershell", `$env:AWS_ACCESS_KEY_ID = "test"`
 	}
-	if !strings.Contains(auto, `$env:AWS_ACCESS_KEY_ID = "test"`) {
-		t.Errorf("auto output does not look like powershell format:\n%s", auto)
+	auto := runEnvCmd(t)
+	explicit := runEnvCmd(t, "--shell", wantShell)
+	if auto != explicit {
+		t.Errorf("auto output = %q, want it to match explicit --shell %s = %q", auto, wantShell, explicit)
+	}
+	if !strings.Contains(auto, wantMarker) {
+		t.Errorf("auto output does not look like %s format:\n%s", wantShell, auto)
 	}
 }
 
