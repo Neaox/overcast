@@ -23,8 +23,8 @@ package mcp
 // the protocol's.
 //
 // Without this, deleting the broadcast would have silently left a stdio client
-// with no notifications at all. That is the transport `overcast mcp --stdio`
-// uses.
+// with no notifications at all. That is the transport `go run
+// ./cmd/overcast-mcp --stdio` uses.
 
 import (
 	"context"
