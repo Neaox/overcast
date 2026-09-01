@@ -1,6 +1,6 @@
 ---
 title: "Local VPCs for CDK"
-description: "CDK VPC lookups are designed for stable AWS environments. Local Overcast VPCs are torn down and recreated often, so their generated vpc-*, subnet-*, and rtb-* IDs change between deploys. The simplest way to avoid that churn is to let CDK create the local VPC..."
+description: "Let CDK create the local VPC in a LocalResourcesStack instead of looking up hand-maintained IDs — locally recreated VPCs get new IDs on every deploy, and lookups can't track them."
 section: "CDK"
 tags:
   - cdk
