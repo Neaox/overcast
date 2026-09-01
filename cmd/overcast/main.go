@@ -7,7 +7,7 @@
 //   - overcast bridge       — publish *.local domains via mDNS + port-80 proxy
 //   - overcast trust        — manage the local trust store for TLS certificates
 //   - overcast https        — one-shot HTTPS setup (CA + trust store + certificate)
-//   - overcast status       — inspect a running daemon
+//   - overcast status       — check a running daemon is reachable
 //
 // The Docker image uses `overcast serve` as its entrypoint. Host-only
 // commands (bridge, trust) require host-network access and are not useful
