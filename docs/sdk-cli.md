@@ -49,12 +49,21 @@ familiar name.
 
 For every other tool, `overcast env` prints the same variables as exports for
 your shell (sh, PowerShell, and fish output are supported — auto-detected,
-override with `--shell`):
+override with `--shell`). The output also unsets every other `AWS_*` variable
+your shell currently exports — `AWS_PROFILE`, `AWS_SESSION_TOKEN`, a
+per-service `AWS_ENDPOINT_URL_<SERVICE>` — so after the eval, nothing left
+over can redirect a call to real AWS:
 
 ```bash
 eval "$(overcast env)"
 aws s3 ls        # any AWS tool in this shell now talks to Overcast
 ```
+
+One thing `overcast env` deliberately leaves alone is `~/.aws` itself: your
+config and credentials files stay readable, and the exported variables simply
+outrank them everywhere it matters (credentials, region, endpoint). For a
+single call with total isolation from local AWS configuration, use
+`overcast aws`, which also points the config-file variables at an empty file.
 
 ### Environment variables (recommended for CI)
 
