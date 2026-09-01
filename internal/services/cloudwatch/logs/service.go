@@ -78,7 +78,7 @@ const debugEventsScanLimit = 500
 // Logs events, implementing router.DebugStateProvider. Log events live in
 // the dedicated logs_events SQL table (or the in-memory equivalent), not the
 // generic kv store, so without this they'd be invisible to /_overcast/debug/state and
-// exempt from /_overcast/debug/reset — mirrors DynamoDB's "dynamodb:items" virtual
+// exempt from /_overcast/reset — mirrors DynamoDB's "dynamodb:items" virtual
 // namespace (internal/services/dynamodb/service.go).
 func (s *Service) DebugNamespace() string { return "logs:events" }
 
@@ -118,7 +118,7 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 	return values, nil
 }
 
-// DebugResetState deletes every persisted log event, for /_overcast/debug/reset.
+// DebugResetState deletes every persisted log event, for /_overcast/reset.
 func (s *Service) DebugResetState(ctx context.Context) error {
 	return s.handler.store.backend.debugDeleteAll(ctx)
 }

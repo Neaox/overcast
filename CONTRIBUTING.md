@@ -783,7 +783,7 @@ migration for what is, from SQLite's point of view, not a schema change at all.
 ### Data earns a table
 
 The generic `kv` table is the default for a reason: it comes for free with `HybridStore`'s
-memory-speed reads, the async flush path, `/_overcast/debug/state` visibility, and `/_overcast/debug/reset`
+memory-speed reads, the async flush path, `/_overcast/debug/state` visibility, and `/_overcast/reset`
 support. A dedicated SQL table forfeits all of that — it needs its own backend
 implementation(s), its own migration, and its own debug wiring. **A namespace earns a
 dedicated table; a service does not automatically get one just because it's high-traffic.**
@@ -823,7 +823,7 @@ following — treat this as the real cost of graduating, not an afterthought:
   [internal/state/migrate.go](./internal/state/migrate.go) — see
   [Writing a migration](#writing-a-migration) below.
 - **A `router.DebugStateProvider` implementation**, so the new table stays visible to
-  `/_overcast/debug/state` and resettable via `/_overcast/debug/reset`. The raw state debugger only enumerates
+  `/_overcast/debug/state` and resettable via `/_overcast/reset`. The raw state debugger only enumerates
   the generic `kv` store by default, so a dedicated table is otherwise invisible to it and
   immune to reset. Implement
   `DebugNamespace`/`DebugStateKeys`/`DebugStateValues`/`DebugResetState` (see

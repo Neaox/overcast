@@ -2,7 +2,8 @@
 
 // Script: debug
 // Queries debug endpoints on a running Overcast instance.
-// Requires OVERCAST_DEBUG=true on the server.
+// Requires OVERCAST_DEBUG=true on the server, except `reset`, which is
+// always available (see internal/router/reset.go).
 //
 // Usage:
 //
@@ -161,7 +162,8 @@ func cmdState(args []string) {
 }
 
 func cmdReset(args []string) {
-	path := "/_overcast/debug/reset"
+	// Reset is always available (never debug-gated) — see internal/router/reset.go.
+	path := "/_overcast/reset"
 	if len(args) > 0 {
 		path += "/" + args[0]
 	}

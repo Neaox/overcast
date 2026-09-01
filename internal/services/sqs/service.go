@@ -113,7 +113,7 @@ const debugMessagesScanLimit = 500
 // messages, implementing router.DebugStateProvider. Messages live in the
 // dedicated sqs_messages SQL table (or the in-memory equivalent), not the
 // generic kv store, so without this they'd be invisible to /_overcast/debug/state and
-// exempt from /_overcast/debug/reset — the graduation rule (storage-plan.md
+// exempt from /_overcast/reset — the graduation rule (storage-plan.md
 // "Settled decisions") requires this for every dedicated table, mirroring
 // DynamoDB's "dynamodb:items" and CloudWatch Logs' "logs:events".
 func (s *Service) DebugNamespace() string { return "sqs:messages" }
@@ -150,7 +150,7 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 	return values, nil
 }
 
-// DebugResetState deletes every persisted message, for /_overcast/debug/reset.
+// DebugResetState deletes every persisted message, for /_overcast/reset.
 func (s *Service) DebugResetState(ctx context.Context) error {
 	return s.handler.store.backend.debugDeleteAll(ctx)
 }

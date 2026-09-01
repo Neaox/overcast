@@ -431,8 +431,12 @@ func TestDebugStateNamespace_returnsJSON(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
-func TestDebugReset_wipesState(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+// TestReset_wipesState uses a debug-disabled server deliberately: reset moved
+// out from under the debug gate (it is neither expensive nor leaky, and adds
+// no destructive power the unauthenticated AWS surface doesn't already
+// expose), so this proves POST /_overcast/reset works with OVERCAST_DEBUG unset.
+func TestReset_wipesState(t *testing.T) {
+	srv := helpers.NewTestServer(t)
 
 	// Pre-populate state via SQS CreateQueue.
 	body, _ := json.Marshal(map[string]any{"QueueName": "reset-test-queue"})
@@ -448,7 +452,7 @@ func TestDebugReset_wipesState(t *testing.T) {
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 
 	// Reset all state.
-	resetResp, err := http.Post(srv.URL+"/_overcast/debug/reset", "application/json", nil)
+	resetResp, err := http.Post(srv.URL+"/_overcast/reset", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,10 +466,10 @@ func TestDebugReset_wipesState(t *testing.T) {
 	}
 }
 
-func TestDebugResetService_knownService(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+func TestResetService_knownService(t *testing.T) {
+	srv := helpers.NewTestServer(t)
 
-	resp, err := http.Post(srv.URL+"/_overcast/debug/reset/s3", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/_overcast/reset/s3", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,16 +483,39 @@ func TestDebugResetService_knownService(t *testing.T) {
 	}
 }
 
-func TestDebugResetService_unknownService(t *testing.T) {
-	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+func TestResetService_unknownService(t *testing.T) {
+	srv := helpers.NewTestServer(t)
 
-	resp, err := http.Post(srv.URL+"/_overcast/debug/reset/unknown-service", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/_overcast/reset/unknown-service", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+// TestDebugReset_gone proves the old debug-gated reset path was moved, not
+// aliased: this project is ALPHA and does not keep shims for its own past
+// decisions (see /_overcast/reset above). Even with OVERCAST_DEBUG=true (so
+// the rest of the /_overcast/debug namespace is mounted — health, config,
+// state, metrics, traces), "reset" and "reset/{service}" are no longer
+// registered under it, so the request falls through to S3's private
+// bucket/object router (bucket="_overcast", key="debug/reset") — the same
+// fallback any unclaimed /_overcast/* path hits. That is what "gone" looks
+// like at the HTTP layer; it is emphatically not a 200 "reset" response.
+func TestDebugReset_gone(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+
+	resp, err := http.Post(srv.URL+"/_overcast/debug/reset", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("POST /_overcast/debug/reset: status = 200, want anything but — the debug-gated path must be gone, not still answering as reset")
+	}
 }
 
 func TestDebugMetrics_returnsJSON(t *testing.T) {

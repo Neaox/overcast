@@ -134,7 +134,7 @@ type messageBackend interface {
 	// whether more rows exist beyond limit.
 	debugScan(ctx context.Context, limit int) (records []debugMessageRecord, truncated bool, err error)
 
-	// debugDeleteAll removes every persisted message, for /_overcast/debug/reset.
+	// debugDeleteAll removes every persisted message, for /_overcast/reset.
 	debugDeleteAll(ctx context.Context) error
 }
 

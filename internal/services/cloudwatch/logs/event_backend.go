@@ -70,7 +70,7 @@ type eventBackend interface {
 	// second return value reports whether more rows exist beyond limit.
 	debugScan(ctx context.Context, limit int) (records []debugEventRecord, truncated bool, err error)
 
-	// debugDeleteAll removes every persisted event, for /_overcast/debug/reset.
+	// debugDeleteAll removes every persisted event, for /_overcast/reset.
 	debugDeleteAll(ctx context.Context) error
 
 	// getEventsRange returns up to limit persisted events for one stream
@@ -572,7 +572,7 @@ type sqlEventBackend struct {
 	// ~1.2ms → ~104ms per batch from 1k → 500k persisted events). Counters
 	// deliberately survive deleteStream/deleteGroup, matching the memory
 	// backend's A1-style lesson (see memEventBackend.deleteStream); only
-	// debugDeleteAll (the debug/reset path) clears them, again matching.
+	// debugDeleteAll (the reset path) clears them, again matching.
 	seqMu   sync.Mutex
 	nextSeq map[string]int64 // key: memEventKey(region, group, stream)
 }
@@ -921,7 +921,7 @@ func (b *sqlEventBackend) debugDeleteAll(ctx context.Context) error {
 		return fmt.Errorf("cloudwatch logs debug delete all: %w", err)
 	}
 	// Reset the per-stream seq counters too, matching memEventBackend's
-	// debugDeleteAll — debug/reset is the one path that intentionally
+	// debugDeleteAll — reset is the one path that intentionally
 	// restarts the world.
 	b.seqMu.Lock()
 	b.nextSeq = make(map[string]int64)
