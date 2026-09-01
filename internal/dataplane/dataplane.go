@@ -29,9 +29,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // connector is the slice of *docker.Client this package needs, so callers can

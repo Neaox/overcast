@@ -106,7 +106,7 @@ Two separate concerns, as in any server reachable by a name it does not bind —
 | LocalStack | `GATEWAY_LISTEN` | `LOCALSTACK_HOST` |
 | Floci | — (`FLOCI_PORT` only) | `FLOCI_HOSTNAME` |
 
-`OVERCAST_LISTEN` follows LocalStack's `GATEWAY_LISTEN` idiom directly — same shape of variable, same job — which is what closed the naming collision that used to live in this section (see [#870](https://github.com/Neaox/overcast/issues/870)). The pre-rename name, `OVERCAST_HOST`, has been removed: Overcast is alpha software, and the project's policy for a removed setting is a startup error naming the replacement rather than a silently-honoured leftover.
+`OVERCAST_LISTEN` follows LocalStack's `GATEWAY_LISTEN` idiom directly — same shape of variable, same job — which is what closed the naming collision that used to live in this section (see [#870](https://github.com/overcast-sh/overcast/issues/870)). The pre-rename name, `OVERCAST_HOST`, has been removed: Overcast is alpha software, and the project's policy for a removed setting is a startup error naming the replacement rather than a silently-honoured leftover.
 
 `OVERCAST_HOSTNAME` is the name that goes inside URLs Overcast hands back, and it is additive to the built-in wildcard bases rather than replacing them. It also becomes a virtual-hosted base for [host classification](#4-which-service-owns-a-request), an `/etc/hosts` entry inside every container Overcast starts, and a TLS SAN. It is the true analogue of LocalStack's `LOCALSTACK_HOST`, not `OVERCAST_LISTEN`.
 
@@ -380,7 +380,7 @@ Current behaviour, symptom first.
 - **A container cannot reach the SMTP capture server.** It binds loopback whatever `OVERCAST_LISTEN` says.
 - **On a native Windows or macOS host, wildcard subdomains do not resolve inside containers, the data-plane guard does not run, and VPC placement is therefore not enforced.** The resolver needs `/etc/resolv.conf` to find upstreams and silently does not start without one, logging at debug level. The apex names still work, because those come from `/etc/hosts`. Since a forbidden connection could only fail by hanging there, the restriction is withheld rather than delivered blind — so the same stack behaves differently on a host run and a containerised one. Run Overcast in a container to get either.
 - **Same-CIDR VPCs are not isolated under the default strategy.** `shared` puts them on one Docker bridge, so anything scoped to a network is scoped to both. `strict` and `remapped` give real separation; `netns` is declared but falls back to `shared` with a startup warning.
-- ~~A native run still defaults to the wildcard.~~ Resolved by [#761](https://github.com/Neaox/overcast/issues/761): the default now depends on where Overcast is running — `0.0.0.0` when containerised (Docker's `-p` publishing requires it), `127.0.0.1` natively. A startup log line names every bound address and, when defaulted, why. An explicit `OVERCAST_LISTEN` always wins over either default.
+- ~~A native run still defaults to the wildcard.~~ Resolved by [#761](https://github.com/overcast-sh/overcast/issues/761): the default now depends on where Overcast is running — `0.0.0.0` when containerised (Docker's `-p` publishing requires it), `127.0.0.1` natively. A startup log line names every bound address and, when defaulted, why. An explicit `OVERCAST_LISTEN` always wins over either default.
 
 ---
 

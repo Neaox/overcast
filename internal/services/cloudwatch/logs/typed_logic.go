@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	eventsbus "github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	eventsbus "github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // logsTagCfg is the CloudWatch Logs dialect of the shared tag validator

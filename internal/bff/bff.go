@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/docssearch"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/docssearch"
 )
 
 const (

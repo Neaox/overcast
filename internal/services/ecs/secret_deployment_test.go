@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 func TestUpdateService_forceNewDeploymentRefreshesSecret(t *testing.T) {

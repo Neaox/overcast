@@ -3,7 +3,7 @@ package lambda
 import (
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // lambdaRuntimeValues mirrors com.amazonaws.lambda#Runtime in the pinned AWS

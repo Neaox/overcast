@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/internal/mcp"
 )
 
 func TestRepoProviderRegistersExpectedTools(t *testing.T) {

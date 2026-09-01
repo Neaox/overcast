@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestUpdateStack_unchangedResourceKeepsCreateStatus(t *testing.T) {

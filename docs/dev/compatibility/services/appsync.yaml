@@ -242,7 +242,7 @@ findings:
     - Continue broader typed protocol validation and data-source CloudFormation coverage before marking the full AppSync service reviewed.
   intentionally_partial: []
 handoff:
-  issue: https://github.com/Neaox/overcast/issues/8
+  issue: https://github.com/overcast-sh/overcast/issues/8
   start_with: [remaining typed protocol validation, AppSync data-source CloudFormation end-to-end coverage]
   do_not_redo: [CreateGraphqlApi success status, required name/authenticationType, authenticationType enum, apiType enum, CloudFormation GraphQLApi tag-array conversion, GraphQLApi EnvironmentVariables, GraphQLEndpointArn, resolver/function S3-backed schema/template/code locations, DomainName, DomainNameApiAssociation, ApiCache, SourceApiAssociation, AWS::AppSync::Api, AWS::AppSync::ChannelNamespace, AppSync tag route conflict, TagResource regex validation, UpdateGraphqlApi required-field/enum validation, CreateGraphqlApi typed ownerContact validation, CreateApiKey CDK-style Expires upper bound, StartSchemaCreation AppSync built-in directives, StartSchemaCreation AppSync built-in scalar types, StartSchemaCreation custom scalar and AWS-prefix object validation]
   commands: [go test -count=1 ./internal/services/appsync/... ./internal/services/cloudformation/... ./tests/integration/appsync/... ./tests/integration/cloudformation/...]

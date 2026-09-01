@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // drainMax bounds the wait for the pipes to be drained before a runtime

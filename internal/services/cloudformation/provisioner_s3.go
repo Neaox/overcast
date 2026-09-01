@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	s3service "github.com/Neaox/overcast/internal/services/s3"
+	s3service "github.com/overcast-sh/overcast/internal/services/s3"
 )
 
 const s3ConfigurationContentType = "application/xml"

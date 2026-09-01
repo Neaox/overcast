@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Neaox/overcast-compat-cli/internal/groups"
-	"github.com/Neaox/overcast-compat-cli/internal/registry"
+	"github.com/overcast-sh/overcast-compat-cli/internal/groups"
+	"github.com/overcast-sh/overcast-compat-cli/internal/registry"
 )
 
 // The suite's own registrations must resolve against the real registry.json.

@@ -3,7 +3,7 @@ package stepfunctions
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 // TestTypedOps_matchLegacyOperationRegistry checks the two dispatch tables

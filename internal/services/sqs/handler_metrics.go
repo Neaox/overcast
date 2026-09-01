@@ -14,7 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/metrics"
 )
 
 // sqsMonitorCatalog is the fixed, reviewed set of AWS/SQS series and

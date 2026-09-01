@@ -36,7 +36,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // masterPasswordTimeout bounds the password statement. It is one round trip to

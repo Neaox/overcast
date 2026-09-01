@@ -20,8 +20,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/containerlogs"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/containerlogs"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // awslogsTarget is where one container's output goes.

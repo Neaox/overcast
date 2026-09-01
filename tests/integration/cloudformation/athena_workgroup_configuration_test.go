@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func athenaJSONCall(t *testing.T, srv *helpers.TestServer, action string, body map[string]any) *http.Response {

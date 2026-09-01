@@ -446,7 +446,7 @@ Where the note goes depends on how far the release has got:
 
 - **Release PR open.** Add a fragment exactly as usual. On the next push to `main` the bot folds it into the `## [x.y.z]` section and deletes the fragment; nothing else is needed. An open release PR is never a reason to skip the fragment. If the entry is **breaking** and the release in flight is not `0.x`, `Breaking-change hold` blocks the merge until the release goes out — the fragment stays correct and still gets folded in; only the merge waits.
 - **Release PR merged, tag not yet published** (`bash scripts/release-candidate-check.sh` prints `true` on an ordinary PR). A fragment fails the release and there is nothing left to fold into. Wait for the tag if the change can wait — `main` in this state should be taking only what is needed to get the release out. If it cannot, waive with a reason saying the fragment is coming, and add it after the tag.
-- **You are on the release PR.** Nothing to do: it is exempt by shape (`VERSION` + `CHANGELOG.md` + fragment deletions only, untagged version, non-empty section). Do not waive it and do not add a fragment. Note that `release-candidate-check.sh` prints `true` here too — that alone does *not* mean the release has merged, and reading it that way is what produced the wrong bot comment on [#563](https://github.com/Neaox/overcast/pull/563). If you push a code change onto the release branch, the check asks again and it is asking correctly: this is the **one** exception to "never edit `CHANGELOG.md`" — write the note straight into the `## [x.y.z]` section, because you are the hand that owns the file and a fragment left in `.changelog/` would fail the release. Better still, put the change on its own PR to `main` and let it fold itself in.
+- **You are on the release PR.** Nothing to do: it is exempt by shape (`VERSION` + `CHANGELOG.md` + fragment deletions only, untagged version, non-empty section). Do not waive it and do not add a fragment. Note that `release-candidate-check.sh` prints `true` here too — that alone does *not* mean the release has merged, and reading it that way is what produced the wrong bot comment on [#563](https://github.com/overcast-sh/overcast/pull/563). If you push a code change onto the release branch, the check asks again and it is asking correctly: this is the **one** exception to "never edit `CHANGELOG.md`" — write the note straight into the `## [x.y.z]` section, because you are the hand that owns the file and a fragment left in `.changelog/` would fail the release. Better still, put the change on its own PR to `main` and let it fold itself in.
 
 ### How to write a fragment
 
@@ -647,7 +647,7 @@ Corollaries that have each cost a recovery:
 
 - **Never pipe an exit-code-bearing gh command into another** (`gh ... --watch | tail`).
   The pipeline reports the *last* command's status, which is how
-  [#410](https://github.com/Neaox/overcast/pull/410) merged over a failing compat
+  [#410](https://github.com/overcast-sh/overcast/pull/410) merged over a failing compat
   check. `pr-wait.sh` redirects to a file for exactly this reason.
 - **Green checks are not `CLEAN`.** `gh pr merge` proceeds on `UNSTABLE` (a
   failing *non-required* check) and only stops on `BLOCKED`. Read

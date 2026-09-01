@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // glueCall performs a Glue JSON 1.1 dispatch request.

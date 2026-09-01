@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 const testRotationLambdaARN = "arn:aws:lambda:us-east-1:000000000000:function:rotate-fn"

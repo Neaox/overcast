@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 const downstreamBusARN = "arn:aws:events:us-east-1:000000000000:event-bus/downstream"

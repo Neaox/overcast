@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // TestDebugMetricsSnapshot_memoryStoreReportsCounters proves MemoryStore

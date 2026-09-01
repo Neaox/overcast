@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // docServiceNamesHeading is the section of docs/README.md that documents every

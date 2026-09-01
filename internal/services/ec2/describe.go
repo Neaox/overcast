@@ -29,7 +29,7 @@ package ec2
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // describeQuery is everything a Describe* selects on, decoded: the IDs the

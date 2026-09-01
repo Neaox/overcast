@@ -22,8 +22,8 @@ import (
 	cborlib "github.com/fxamacker/cbor/v2"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // ecrCall performs an ECR JSON 1.1 dispatch request.

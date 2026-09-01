@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/Neaox/overcast/internal/hostbridge/mdns"
+	"github.com/overcast-sh/overcast/internal/hostbridge/mdns"
 )
 
 // fakePublisher records every call it receives so tests can assert the

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func BenchmarkRequestIAMResource_SQSCreateQueue(b *testing.B) {

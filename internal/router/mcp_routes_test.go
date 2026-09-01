@@ -14,10 +14,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/mcp"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // mcpDiscoverBody is a well-formed modern request, and the cheapest one there

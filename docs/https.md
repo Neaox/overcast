@@ -97,7 +97,7 @@ overcast https enable            # once per machine: mint the CA, approve the
 docker run -d -e OVERCAST_TLS=auto \
   -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
   -p 4566:4566 -p 4567:4567 \
-  ghcr.io/neaox/overcast:alpha
+  ghcr.io/overcast-sh/overcast:alpha
 ```
 
 Then open **<https://localhost.overcast.sh:4567>**. Recreate the container,
@@ -117,7 +117,7 @@ With docker-compose, give the CA its own volume so `down` cannot take it
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:alpha
     environment:
       OVERCAST_TLS: auto
       OVERCAST_CA_DIR: /ca
@@ -148,7 +148,7 @@ serves the CA **certificate** (public half only, never the key) at
 docker run -d -e OVERCAST_TLS=auto \
   -e OVERCAST_CA_DIR=/ca -v overcast-ca:/ca \
   -p 4566:4566 -p 4567:4567 \
-  ghcr.io/neaox/overcast:alpha
+  ghcr.io/overcast-sh/overcast:alpha
 
 overcast https enable --endpoint https://localhost:4566
 ```

@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // NotificationDispatcher reads per-bucket notification configs and routes

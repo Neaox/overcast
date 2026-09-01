@@ -23,8 +23,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/alarmaction"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/alarmaction"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Policy types, as AWS spells them.

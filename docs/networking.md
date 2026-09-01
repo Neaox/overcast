@@ -126,7 +126,7 @@ those services' control planes, so there is no engine behind the hostname to
 route to — and every one of those labels (`rds`, `cache`, `kafka`, `es`,
 `auth`) is a bare common word. Registering one would make a bucket named
 `my.cache` unaddressable in the bare form for no benefit. See the guardrail in
-[internal/middleware/hostroute.go](https://github.com/Neaox/overcast/blob/main/internal/middleware/hostroute.go).
+[internal/middleware/hostroute.go](https://github.com/overcast-sh/overcast/blob/main/internal/middleware/hostroute.go).
 
 `{base}` is whatever hostname the request actually arrived on — Overcast
 never hardcodes a domain. Point requests at `localhost`, an
@@ -215,7 +215,7 @@ convenience vs. offline-friendliness:
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast
+    image: ghcr.io/overcast-sh/overcast
     ports:
       - "4566:4566" # AWS API endpoint
       - "4567:4567" # web management console
@@ -464,7 +464,7 @@ Overcast used to create one Docker network per emulator service:
 `overcast_msk`, `overcast_eks` and `overcast_efs`. That partition is gone, and
 so are the seven environment variables that named those networks. It was the
 reason a cache node could be reachable from a Lambda function and not from an
-ECS task ([#872](https://github.com/Neaox/overcast/issues/872)) — whether any
+ECS task ([#872](https://github.com/overcast-sh/overcast/issues/872)) — whether any
 two things could talk depended on which service happened to bridge the gap.
 
 What to do:

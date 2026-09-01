@@ -39,7 +39,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/services/ecs"
+	"github.com/overcast-sh/overcast/internal/services/ecs"
 )
 
 func TestECSServiceFailureEvent_recognisesEveryFailureWording(t *testing.T) {

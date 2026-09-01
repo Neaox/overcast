@@ -1,6 +1,6 @@
 package scheduler
 
-import "github.com/Neaox/overcast/internal/capabilities"
+import "github.com/overcast-sh/overcast/internal/capabilities"
 
 const (
 	catScheduleGroups = "Schedule Groups"

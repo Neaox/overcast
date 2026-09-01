@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // handleExportContainerDied immediately schedules the same idempotent sweep

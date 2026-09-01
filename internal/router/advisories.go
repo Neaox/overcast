@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // AdvisorySeverity is the severity of an Advisory: one of the constants below.

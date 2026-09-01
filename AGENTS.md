@@ -246,7 +246,7 @@ issue number from the branch name, which is why agent branches are named
 and comments — not timeline events. GitHub cross-references a pull request onto
 an issue the moment the PR body names it, so the strongest available signal is
 one `gh issue view` does not show. On 2026-08-22 two agents both worked #1325:
-the second opened [PR #1351](https://github.com/Neaox/overcast/pull/1351) with
+the second opened [PR #1351](https://github.com/overcast-sh/overcast/pull/1351) with
 auto-merge armed 1h43m after the first was cross-referenced onto the issue, and
 25 minutes after that first PR had already merged. The issue was open,
 unassigned and uncommented the whole time. `status/in-progress` existed in the
@@ -579,7 +579,7 @@ and produces a play-by-play of "N passed" messages that change no decision.
 `gh pr checks`, use the script instead.
 
 Never pipe an exit-code-bearing `gh` command into another — the pipeline reports
-the last command's status, which is how [#410](https://github.com/Neaox/overcast/pull/410)
+the last command's status, which is how [#410](https://github.com/overcast-sh/overcast/pull/410)
 merged over a failing compat check. Full rationale and the surrounding
 corollaries are in the [`pull-request` skill § After Opening](./.agents/skills/pull-request/SKILL.md#after-opening--waiting-on-ci).
 
@@ -607,7 +607,7 @@ reads the *checked-out* `VERSION`, so on a release branch it prints `true`
 because that branch carries the new version — which says the branch is a
 release candidate, not that the window is open. Conflating the two is what put
 the wrong changelog-gate comment on
-[#563](https://github.com/Neaox/overcast/pull/563).
+[#563](https://github.com/overcast-sh/overcast/pull/563).
 
 **Never enable auto-merge on a release-prep PR.** Do not run `gh pr merge --auto`
 against a PR that changes `VERSION`, and do not enable auto-merge on it through
@@ -653,8 +653,8 @@ Four rules, each of which has cost this repo a recovery:
   supported`. Use the asynchronous endpoint and poll the UUID it returns:
 
   ```sh
-  gh api -X PUT repos/Neaox/overcast/pulls/<n>/merge-async -f merge_method=squash
-  gh api repos/Neaox/overcast/pulls/<n>/merge-async/<uuid>   # until "status":"merged"
+  gh api -X PUT repos/overcast-sh/overcast/pulls/<n>/merge-async -f merge_method=squash
+  gh api repos/overcast-sh/overcast/pulls/<n>/merge-async/<uuid>   # until "status":"merged"
   ```
 
 - **A PR showing no checks at all is `CONFLICTING`, not queued** — GitHub

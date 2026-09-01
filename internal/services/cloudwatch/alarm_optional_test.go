@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // putAlarmForm issues a Query-protocol PutMetricAlarm and returns the response.

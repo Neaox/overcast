@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func elbQuery(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {

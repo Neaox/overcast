@@ -19,7 +19,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestStartLiveTail_streamsMatchingEvents(t *testing.T) {

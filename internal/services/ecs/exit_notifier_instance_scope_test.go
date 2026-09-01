@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // exit_notifier_instance_scope_test.go — a container exit is acted on only by

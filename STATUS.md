@@ -126,20 +126,20 @@
 This section previously named four items — full UpdateTable GSI/LSI support,
 IAM integration tests, DynamoDB Streams tests, and real ECR registry
 push/pull — that had all already shipped by the time this drift was reported
-in [#744](https://github.com/Neaox/overcast/issues/744): none of the PRs that
+in [#744](https://github.com/overcast-sh/overcast/issues/744): none of the PRs that
 finished them came back to remove the STATUS.md line. Rather than hand-curate
 a list that has already gone stale twice, "current focus" now points at the
 live source instead of restating it: filter
-[GitHub Issues](https://github.com/Neaox/overcast/issues) by
-[`priority/p0`](https://github.com/Neaox/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp0)
+[GitHub Issues](https://github.com/overcast-sh/overcast/issues) by
+[`priority/p0`](https://github.com/overcast-sh/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp0)
 for what's blocking or
-[`priority/p1`](https://github.com/Neaox/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp1)
-for what's next. [#484](https://github.com/Neaox/overcast/issues/484) is the
+[`priority/p1`](https://github.com/overcast-sh/overcast/issues?q=is%3Aissue+is%3Aopen+label%3Apriority%2Fp1)
+for what's next. [#484](https://github.com/overcast-sh/overcast/issues/484) is the
 prioritized Tier 2 full-emulation backlog itself.
 
 ## Future roadmap
 
-Tracked in [GitHub Issues](https://github.com/Neaox/overcast/issues).
+Tracked in [GitHub Issues](https://github.com/overcast-sh/overcast/issues).
 `// TODO(priority:Pn):` comments in code are auto-converted to issues.
 
 - Step Functions `.waitForTaskToken`, activity tasks and distributed Map (the ASL interpreter landed; these are what it still refuses)

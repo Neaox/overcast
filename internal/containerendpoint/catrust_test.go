@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 // catrust_test.go — how containers Overcast starts come to trust its TLS.

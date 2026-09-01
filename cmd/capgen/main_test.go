@@ -293,7 +293,7 @@ func TestParseHandlerOps_detectsTypedOperationRegistry(t *testing.T) {
 	svcDir := t.TempDir()
 	writeGoFile(t, svcDir, "typed_ops.go", `package widget
 
-import "github.com/Neaox/overcast/internal/protocol/op"
+import "github.com/overcast-sh/overcast/internal/protocol/op"
 
 func (s *Service) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{
@@ -340,7 +340,7 @@ func (h *Handler) ArchiveWidget(w http.ResponseWriter, r *http.Request) {
 `)
 	writeGoFile(t, svcDir, "typed_ops.go", `package widget
 
-import "github.com/Neaox/overcast/internal/protocol/op"
+import "github.com/overcast-sh/overcast/internal/protocol/op"
 
 func (h *Handler) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{
@@ -372,7 +372,7 @@ func TestParseHandlerOps_typedRegistryEntryDelegatingToAStubIsAStub(t *testing.T
 	svcDir := t.TempDir()
 	writeGoFile(t, svcDir, "typed_ops.go", `package widget
 
-import "github.com/Neaox/overcast/internal/protocol/op"
+import "github.com/overcast-sh/overcast/internal/protocol/op"
 
 func (h *Handler) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{

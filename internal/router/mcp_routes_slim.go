@@ -3,10 +3,10 @@
 package router
 
 import (
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/state"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/state"
 	"go.uber.org/zap"
 )
 

@@ -25,8 +25,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // Migration versions 10-19 are reserved for the CloudWatch Logs events table

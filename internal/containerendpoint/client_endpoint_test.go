@@ -3,7 +3,7 @@ package containerendpoint
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // AWS_ENDPOINT_URL carrying a raw address costs containers two things: it dies

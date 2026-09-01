@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestCreateStack_resourcesWithoutNames_areNamedByCloudFormation(t *testing.T) {

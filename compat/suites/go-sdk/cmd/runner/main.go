@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/groups"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/registry"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/groups"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/registry"
 )
 
 const suite = "go-sdk"

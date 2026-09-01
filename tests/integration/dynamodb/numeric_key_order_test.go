@@ -30,7 +30,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // TestQuery_NumberSortKey_NumericOrder is the headline reproduction: a

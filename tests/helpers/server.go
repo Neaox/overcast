@@ -16,11 +16,11 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/inithooks"
-	"github.com/Neaox/overcast/internal/router"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/inithooks"
+	"github.com/overcast-sh/overcast/internal/router"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // TestServer wraps httptest.Server with a pre-configured emulator instance.

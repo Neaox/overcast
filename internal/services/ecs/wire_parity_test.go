@@ -22,7 +22,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // jsonFields returns the json tag names a request struct accepts.

@@ -35,8 +35,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	intmcp "github.com/Neaox/overcast/internal/mcp"
-	"github.com/Neaox/overcast/internal/mcp/providers"
+	intmcp "github.com/overcast-sh/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/internal/mcp/providers"
 )
 
 func newMCPCmd() *cobra.Command {

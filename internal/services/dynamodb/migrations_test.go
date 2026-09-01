@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // openRawMigrationTestDB opens a *sql.DB directly against a fresh temp file,

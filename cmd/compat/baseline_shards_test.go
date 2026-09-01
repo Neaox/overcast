@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 // repoBaselineDir is the sharded baseline this repository ships, reached from

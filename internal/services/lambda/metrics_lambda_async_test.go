@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // TestStartAsync_RecordsAsyncEventsReceived pins that accepting an Event

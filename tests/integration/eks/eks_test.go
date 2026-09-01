@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/state"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func eksCall(t *testing.T, method, url string, body any) *http.Response {

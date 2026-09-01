@@ -88,9 +88,9 @@ same-process target delivery.
   TIMED_OUT or ABORTED on completion; the FAILED/TIMED_OUT detail carries the execution's
   `error`/`cause`). Real AWS emits substantially more service-originated events than these five;
   a rule matching one of those will never fire here — see
-  [#758](https://github.com/Neaox/overcast/issues/758) (closed out by
-  [#1225](https://github.com/Neaox/overcast/pull/1225) and
-  [#1221](https://github.com/Neaox/overcast/issues/1221)).
+  [#758](https://github.com/overcast-sh/overcast/issues/758) (closed out by
+  [#1225](https://github.com/overcast-sh/overcast/pull/1225) and
+  [#1221](https://github.com/overcast-sh/overcast/issues/1221)).
 - **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
   has not been explicitly created.
 - **CDK compatible management plane.** Sufficient for CDK deployments that create buses,

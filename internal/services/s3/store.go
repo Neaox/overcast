@@ -15,8 +15,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // Namespaces used in the state store. Keeping them as constants avoids

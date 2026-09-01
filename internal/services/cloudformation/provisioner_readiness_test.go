@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // pollDrivenClock is a clock that moves only when something waits on it: every

@@ -38,7 +38,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // receiveBatchSize mirrors SQS's real MaxNumberOfMessages ceiling — the

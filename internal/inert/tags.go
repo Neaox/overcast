@@ -3,8 +3,8 @@ package inert
 import (
 	"context"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // Tags is the one ARN-keyed tag store every Tier 1 resource in a service

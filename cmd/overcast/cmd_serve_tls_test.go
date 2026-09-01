@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 // loopbackCert mints a leaf from a throwaway CA — the same call the serve path

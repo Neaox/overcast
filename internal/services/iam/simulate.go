@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/iampolicy"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/iampolicy"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Policy simulation: SimulatePrincipalPolicy and SimulateCustomPolicy.

@@ -35,7 +35,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // warnIfExistingDatabaseIgnored logs one actionable Warn when cfg resolves to

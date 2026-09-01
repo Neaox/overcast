@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 // RegistryGroup is one group entry from registry.json.

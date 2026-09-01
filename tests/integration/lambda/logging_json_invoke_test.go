@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // logging_json_invoke_test.go covers Lambda's advanced logging controls end to

@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // resolve_test.go covers deriving an address that sibling containers can

@@ -53,10 +53,10 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Initial.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
-[0.0.1-alpha.1]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.0...v0.0.1-alpha.1
-[0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
+[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.0...v0.0.1-alpha.1
+[0.0.1-alpha.0]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.0
 """
 		)
 
@@ -85,9 +85,9 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Fix.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
-[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.1...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
+[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.1
 """
 		)
 
@@ -95,7 +95,7 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 		self.assertIn(
 			"CHANGELOG.md link [Unreleased] must be "
-			"https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD.",
+			"https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD.",
 			errors,
 		)
 
@@ -120,8 +120,8 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Fix.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.1
 """
 		)
 
@@ -168,11 +168,11 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Initial.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v1.3.1...HEAD
-[1.3.1]: https://github.com/Neaox/overcast/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/Neaox/overcast/compare/v1.2.3...v1.3.0
-[1.2.4]: https://github.com/Neaox/overcast/compare/v1.2.3...v1.2.4
-[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/overcast-sh/overcast/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/overcast-sh/overcast/compare/v1.2.3...v1.3.0
+[1.2.4]: https://github.com/overcast-sh/overcast/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/overcast-sh/overcast/releases/tag/v1.2.3
 """
 		)
 
@@ -205,10 +205,10 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Initial.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v1.3.1...HEAD
-[1.3.1]: https://github.com/Neaox/overcast/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/Neaox/overcast/compare/v1.2.9...v1.3.0
-[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/overcast-sh/overcast/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/overcast-sh/overcast/compare/v1.2.9...v1.3.0
+[1.2.3]: https://github.com/overcast-sh/overcast/releases/tag/v1.2.3
 """
 		)
 
@@ -240,9 +240,9 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Initial.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v1.2.4...HEAD
-[1.2.4]: https://github.com/Neaox/overcast/releases/tag/v1.2.4
-[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/overcast-sh/overcast/releases/tag/v1.2.4
+[1.2.3]: https://github.com/overcast-sh/overcast/releases/tag/v1.2.3
 """
 		)
 
@@ -250,7 +250,7 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 		self.assertIn(
 			"CHANGELOG.md link [1.2.4] must be "
-			"https://github.com/Neaox/overcast/compare/v1.2.3...v1.2.4.",
+			"https://github.com/overcast-sh/overcast/compare/v1.2.3...v1.2.4.",
 			errors,
 		)
 
@@ -267,8 +267,8 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Fix.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.2
 """
 		)
 		fragments_dir = path.parent / ".changelog"
@@ -298,8 +298,8 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 
 - Fix.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.2
 """
 		)
 		fragments_dir = path.parent / ".changelog"
@@ -335,8 +335,8 @@ class StdioEncodingTest(unittest.TestCase):
 
 - Fix.
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.2
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.2
 """
 		)
 		fragments_dir = path.parent / ".changelog"

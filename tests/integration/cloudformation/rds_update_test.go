@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // rdsInstanceTemplate builds a one-instance template. An empty id leaves the

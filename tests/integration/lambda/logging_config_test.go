@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func createFunctionWithLoggingConfig(t *testing.T, srv *helpers.TestServer, name string, logging map[string]any) *http.Response {

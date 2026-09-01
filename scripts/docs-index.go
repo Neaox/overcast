@@ -23,7 +23,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Neaox/overcast/internal/docssearch"
+	"github.com/overcast-sh/overcast/internal/docssearch"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"

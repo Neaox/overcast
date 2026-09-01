@@ -3,7 +3,7 @@ package cognito
 import (
 	"unicode"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // effectivePasswordPolicy returns the pool's password policy with defaults applied.

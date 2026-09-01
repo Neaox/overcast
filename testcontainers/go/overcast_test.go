@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 
-	overcast "github.com/Neaox/overcast/testcontainers/go"
+	overcast "github.com/overcast-sh/overcast/testcontainers/go"
 )
 
 // testImage is the image under test. CI points it at the image built from the
@@ -21,7 +21,7 @@ func testImage() string {
 	if img := os.Getenv("OVERCAST_TESTCONTAINERS_IMAGE"); img != "" {
 		return img
 	}
-	return "ghcr.io/neaox/overcast-slim:alpha"
+	return "ghcr.io/overcast-sh/overcast-slim:alpha"
 }
 
 func TestRun(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/eventstream"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/eventstream"
 	"go.uber.org/zap"
 )
 

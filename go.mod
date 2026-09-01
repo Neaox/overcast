@@ -1,4 +1,4 @@
-module github.com/Neaox/overcast
+module github.com/overcast-sh/overcast
 
 go 1.25.0
 

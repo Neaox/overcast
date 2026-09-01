@@ -3,7 +3,7 @@ package codec
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // json11 implements Codec for AWS JSON 1.1 (Content-Type

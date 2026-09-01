@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // ─── §2.1 refusals ────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // backupStackTemplate provisions a vault and a plan that stores into it — the

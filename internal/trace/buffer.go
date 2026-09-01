@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // maxInternalRing bounds the internal ring however large the user floor gets.

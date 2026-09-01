@@ -29,8 +29,8 @@
 #   docker build --target slim -t overcast-slim:dev .       # slim
 #
 # Build for all supported platforms (requires docker buildx):
-#   docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/neaox/overcast:latest --push .
-#   docker buildx build --platform linux/amd64,linux/arm64 --target slim -t ghcr.io/neaox/overcast-slim:latest --push .
+#   docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/overcast-sh/overcast:latest --push .
+#   docker buildx build --platform linux/amd64,linux/arm64 --target slim -t ghcr.io/overcast-sh/overcast-slim:latest --push .
 #
 # `--target slim` is the whole instruction: the target selects a builder stage
 # that compiles `-tags slim,nosqlite`, so there is no second thing to remember.
@@ -73,7 +73,7 @@ WORKDIR /web
 # field. It shipped bundled with Node through v24 but is gone from newer
 # distributions (Node 26 LTS included, due October 2026) — install it as its
 # own npm package instead, which works the same regardless of what Node
-# bundles. See https://github.com/Neaox/overcast/issues/558.
+# bundles. See https://github.com/overcast-sh/overcast/issues/558.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN npm install -g corepack@latest && corepack enable pnpm
 

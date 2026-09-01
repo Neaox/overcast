@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // initPhase reports the execution environment's INIT phase as the three

@@ -13,7 +13,7 @@ import (
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // cwServiceShape is the Smithy service shape CloudWatch's RPC v2 URI names.

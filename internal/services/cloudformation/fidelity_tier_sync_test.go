@@ -10,8 +10,8 @@ package cloudformation_test
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/router"
-	"github.com/Neaox/overcast/internal/services/cloudformation"
+	"github.com/overcast-sh/overcast/internal/router"
+	"github.com/overcast-sh/overcast/internal/services/cloudformation"
 )
 
 // TestResourceServiceTiers_matchRouterServiceTiers guards fidelity.go's small,

@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Neaox/overcast-compat-cli/internal/groups"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
-	"github.com/Neaox/overcast-compat-cli/internal/registry"
+	"github.com/overcast-sh/overcast-compat-cli/internal/groups"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/registry"
 )
 
 // splitCSV parses a comma-separated env var into a set of trimmed non-empty

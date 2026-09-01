@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ── Request types (json tags used by codec.Decode for form mapping) ───

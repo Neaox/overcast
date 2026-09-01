@@ -17,8 +17,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/hostbridge"
-	"github.com/Neaox/overcast/internal/hostbridge/mdns"
+	"github.com/overcast-sh/overcast/internal/hostbridge"
+	"github.com/overcast-sh/overcast/internal/hostbridge/mdns"
 )
 
 // sseSource streams domain events from overcastd's SSE endpoint. It is a

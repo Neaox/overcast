@@ -100,7 +100,7 @@ The trade in `mock` is the endpoint: `DescribeDBInstances` still reports an
 address and port, and nothing is listening on them. Reach for it when you are
 testing the control plane and the tens of seconds a real first boot costs are
 the thing in your way — Overcast's own compatibility suites run this way, which
-[issue #614](https://github.com/Neaox/overcast/issues/614) tracks undoing. If
+[issue #614](https://github.com/overcast-sh/overcast/issues/614) tracks undoing. If
 your code connects to the database, keep the default.
 
 ### Master account and initial database

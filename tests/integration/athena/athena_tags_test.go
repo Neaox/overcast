@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 const athenaTagWGARN = "arn:aws:athena:us-east-1:000000000000:workgroup/tagged-wg"

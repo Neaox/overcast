@@ -9,7 +9,7 @@ import (
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // TestTypedOps_CoverEveryDispatchedOperation is the CBOR counterpart of

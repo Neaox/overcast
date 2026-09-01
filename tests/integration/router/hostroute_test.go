@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestHostDispatch_unrecognisedLabelFallsThroughToS3(t *testing.T) {

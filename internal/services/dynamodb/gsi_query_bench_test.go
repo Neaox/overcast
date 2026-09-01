@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 const gsiQueryBenchTargetGroupSize = 25

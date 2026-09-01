@@ -1,4 +1,4 @@
-module github.com/Neaox/overcast-compat-go-sdk
+module github.com/overcast-sh/overcast-compat-go-sdk
 
 go 1.24
 

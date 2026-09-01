@@ -42,7 +42,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // benchObjectMeta mirrors the shape and field mix of the per-request

@@ -238,7 +238,7 @@ between rounds, fully sequential.
 functions at 128 MB, runtime images pre-cached; bench client in a
 `golang:1.24` container via `host.docker.internal`. 2026-07-31.
 
-**Before — `ghcr.io/neaox/overcast-slim:0.0.1-alpha.26` (pre-#402…#406):**
+**Before — `ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.26` (pre-#402…#406):**
 
 | Runtime    | cold p50 | cold p95 | cold max | warm p50  | warm p95  | apigw p50 | apigw p95 |
 |------------|---------:|---------:|---------:|----------:|----------:|----------:|----------:|

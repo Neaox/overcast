@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // On AWS there is no such thing as a non-VPC MSK cluster: a provisioned cluster

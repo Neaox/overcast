@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // describe drives a Query-protocol handler the way DispatchQuery does — form

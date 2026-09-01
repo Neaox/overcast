@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // parentCapturingRouter records the X-Overcast-Parent-Request-Id header of

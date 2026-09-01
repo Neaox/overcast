@@ -76,8 +76,8 @@ The release workflow:
 - uploads native binaries for Linux, macOS, and Windows
 - uploads `SHA256SUMS`
 - publishes Docker images to GHCR:
-  - `ghcr.io/neaox/overcast:<version>`
-  - `ghcr.io/neaox/overcast-slim:<version>`
+  - `ghcr.io/overcast-sh/overcast:<version>`
+  - `ghcr.io/overcast-sh/overcast-slim:<version>`
 - moves whichever floating tags this release is entitled to move:
   - prereleases: `:<channel>` such as `:alpha`
   - stable releases: `:latest`, plus the line tags `:<major>` and
@@ -110,8 +110,8 @@ GitHub release tag = v0.0.1-alpha.0
 ```
 
 For prereleases, the Docker channel tag is derived from the prerelease suffix.
-`0.0.1-alpha.0` publishes `ghcr.io/neaox/overcast:alpha` and
-`ghcr.io/neaox/overcast-slim:alpha`. The version string is the only thing that
+`0.0.1-alpha.0` publishes `ghcr.io/overcast-sh/overcast:alpha` and
+`ghcr.io/overcast-sh/overcast-slim:alpha`. The version string is the only thing that
 decides this — not the prerelease checkbox on the GitHub release, which the tag
 check above has already reconciled with `VERSION`. Whether the channel tag then
 *moves* is a separate question, answered in [Floating tags only move
@@ -330,8 +330,8 @@ For an alpha release:
 5. Update the compare links at the bottom of `CHANGELOG.md` — add a
    `[x.y.z-alpha.n]` reference and repoint `[Unreleased]` at the new tag:
    ```markdown
-   [Unreleased]: https://github.com/Neaox/overcast/compare/vx.y.z-alpha.n...HEAD
-   [x.y.z-alpha.n]: https://github.com/Neaox/overcast/compare/v<previous>...vx.y.z-alpha.n
+   [Unreleased]: https://github.com/overcast-sh/overcast/compare/vx.y.z-alpha.n...HEAD
+   [x.y.z-alpha.n]: https://github.com/overcast-sh/overcast/compare/v<previous>...vx.y.z-alpha.n
    ```
    Then confirm steps 2-5 with the same validator the `Release` workflow runs,
    rather than discovering a missing link reference in CI:
@@ -343,7 +343,7 @@ For an alpha release:
    a **release candidate** (`scripts/release-candidate-check.sh` — this also
    covers follow-up PRs after a failed release workflow, when the unreleased
    version already sits on `main`). Each candidate build publishes
-   `ghcr.io/neaox/overcast[-slim]:<version>-rc.<n>` (linux/amd64 and
+   `ghcr.io/overcast-sh/overcast[-slim]:<version>-rc.<n>` (linux/amd64 and
    linux/arm64, the same platforms the release publishes, so the candidate
    runs natively wherever it is smoke tested; `<n>`
    increments per build), uploads the ten native binaries as workflow
@@ -361,15 +361,15 @@ For an alpha release:
    binaries plus `SHA256SUMS`.
 10. Verify the Docker images exist:
    ```sh
-   docker pull ghcr.io/neaox/overcast:<version>
-   docker pull ghcr.io/neaox/overcast:alpha
-   docker pull ghcr.io/neaox/overcast-slim:<version>
-   docker pull ghcr.io/neaox/overcast-slim:alpha
+   docker pull ghcr.io/overcast-sh/overcast:<version>
+   docker pull ghcr.io/overcast-sh/overcast:alpha
+   docker pull ghcr.io/overcast-sh/overcast-slim:<version>
+   docker pull ghcr.io/overcast-sh/overcast-slim:alpha
    ```
 11. Smoke test the slim image. Published on remapped ports so this does not
    collide with your own instance on 4566/4567:
    ```sh
-   docker run --rm -d --name overcast-smoke -p 4576:4566 -p 4577:4567 ghcr.io/neaox/overcast-slim:<version>
+   docker run --rm -d --name overcast-smoke -p 4576:4566 -p 4577:4567 ghcr.io/overcast-sh/overcast-slim:<version>
    curl -sf http://localhost:4576/_overcast/health
 
    # It is a *slim* image only if both of these hold. /_overcast/mcp is registered in
@@ -499,7 +499,7 @@ cases, not two — the release PR is one of them:
   `VERSION` is the new, untagged one. That is why the exemption tests the whole
   shape rather than the predicate alone: read on its own it puts the release PR
   in Row 2, which was exactly the misfire on
-  [#563](https://github.com/Neaox/overcast/pull/563), where the release PR was
+  [#563](https://github.com/overcast-sh/overcast/pull/563), where the release PR was
   told the release had already merged.
 - **Row 2, merged and untagged.** There is no release PR left to fold into and
   an unconsumed fragment fails the release, so the ask changes wording: wait for

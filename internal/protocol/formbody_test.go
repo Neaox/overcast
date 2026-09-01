@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 func formRequest(t *testing.T, method, target, body string) *http.Request {

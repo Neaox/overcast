@@ -33,8 +33,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // CapabilityDecl is a capability entry parsed from a capabilities_dev.go file.
@@ -729,7 +729,7 @@ func writeInitialCapabilities(path, svc string, ops []Operation) error {
 	var buf bytes.Buffer
 	buf.WriteString("//go:build dev\n\n")
 	buf.WriteString("package " + svc + "\n\n")
-	buf.WriteString("import \"github.com/Neaox/overcast/internal/capabilities\"\n\n")
+	buf.WriteString("import \"github.com/overcast-sh/overcast/internal/capabilities\"\n\n")
 	buf.WriteString("func init() {\n")
 	buf.WriteString("\tcapabilities.Default.Register(\n")
 	for _, op := range ops {

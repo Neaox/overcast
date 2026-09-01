@@ -16,7 +16,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // The modeled bindings. ListDomainNames and the tag operations sit directly

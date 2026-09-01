@@ -11,7 +11,7 @@ package logs
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // PutSubscriptionFilter creates or updates a subscription filter.

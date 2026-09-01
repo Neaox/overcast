@@ -65,7 +65,7 @@ type Runner struct {
 	// something other than the process's real stdout/stderr keeps such an
 	// orphan from blocking unrelated readers of those streams — including,
 	// under `go test` on Windows, the test binary's own output pipe. See
-	// https://github.com/Neaox/overcast/issues/947.
+	// https://github.com/overcast-sh/overcast/issues/947.
 	Stdout io.Writer
 	Stderr io.Writer
 

@@ -7,7 +7,7 @@ package main
 import (
 	"io/fs"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 // uiFS is the embedded compat UI, served at / by the compat server.

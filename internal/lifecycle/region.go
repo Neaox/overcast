@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // ScopedKey builds the region-scoped scheduler key AfterScoped and

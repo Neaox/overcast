@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/smtp"
+	"github.com/overcast-sh/overcast/internal/smtp"
 )
 
 // inboxHandlers returns a chi.Router that mounts the inbox capture API under

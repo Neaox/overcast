@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // The environmental cases below are the verbatim errors GitHub's runners

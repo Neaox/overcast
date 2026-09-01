@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // The tests in this package run the whole init in-process: real pipes, real

@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // ── AWS::CertificateManager::Certificate ─────────────────────────────────────

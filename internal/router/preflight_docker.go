@@ -46,7 +46,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // dockerUnavailableWarning names every configured Docker-backed service whose

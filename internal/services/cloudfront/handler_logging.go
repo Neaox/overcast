@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // responseRecorder wraps ResponseWriter to capture status code and bytes written

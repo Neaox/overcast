@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Stack-status guards: which stack states each stack operation may start from.

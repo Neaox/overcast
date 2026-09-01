@@ -33,7 +33,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // pressureTestPayload returns a ~1KB JSON value, roughly modeling the shape

@@ -13,7 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/alarmaction"
+	"github.com/overcast-sh/overcast/internal/alarmaction"
 )
 
 // capturingRouter stands in for the emulator's root handler.

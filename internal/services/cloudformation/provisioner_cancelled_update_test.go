@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // cancellingUpdateHandler updates like rollbackUpdateHandler and then cancels

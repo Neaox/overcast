@@ -2,7 +2,7 @@
 
 package backup
 
-import "github.com/Neaox/overcast/internal/capabilities"
+import "github.com/overcast-sh/overcast/internal/capabilities"
 
 // The nine rows below were StatusInert before #864 flipped them to StatusWIP,
 // and #815 makes them reachable. Neither of those grades is the honest one now:

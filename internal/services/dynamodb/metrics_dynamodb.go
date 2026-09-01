@@ -58,8 +58,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/metrics"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // metricsRecorder is the narrow interface DynamoDB depends on to record

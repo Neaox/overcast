@@ -24,8 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // Migration versions 20-29 are reserved for the DynamoDB items/stream-

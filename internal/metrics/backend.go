@@ -39,7 +39,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // persistedBucket is one durable minute-resolution aggregate, plus enough of

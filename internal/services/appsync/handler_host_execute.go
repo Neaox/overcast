@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // HostRouteRewrite adapts a Host-routed AppSync request

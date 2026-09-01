@@ -10,7 +10,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ── Aurora XML types ──────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
 )
 
 const (

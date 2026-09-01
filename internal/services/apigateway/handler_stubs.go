@@ -9,7 +9,7 @@ package apigateway
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ---- REST API v1: Account -------------------------------------------------

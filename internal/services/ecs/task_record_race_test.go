@@ -20,8 +20,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // stopper is one of the ways a task is taken to STOPPED while it is still

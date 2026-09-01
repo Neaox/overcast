@@ -23,7 +23,7 @@ import (
 	msqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"github.com/Neaox/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/logging"
 )
 
 // HybridStore serves all reads from an in-memory map (memory speed) and

@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 )
 
 // container_endpoint_test.go covers the Lambda runtime's use of

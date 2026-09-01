@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
 )
 
 // deadLetterAttributeErrorMessageLimit is how much of the error message AWS

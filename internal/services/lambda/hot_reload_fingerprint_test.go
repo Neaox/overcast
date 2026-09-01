@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // hotReloadTestFunction returns a function tagged for hot reload at dir, and an

@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/groups"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/registry"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/groups"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/registry"
 )
 
 // The suite's own registrations must resolve against the real registry.json.

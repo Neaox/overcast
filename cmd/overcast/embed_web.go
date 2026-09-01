@@ -6,9 +6,9 @@ import (
 	"io/fs"
 	"net/http"
 
-	overcast "github.com/Neaox/overcast"
-	"github.com/Neaox/overcast/internal/bff"
-	"github.com/Neaox/overcast/internal/containerendpoint"
+	overcast "github.com/overcast-sh/overcast"
+	"github.com/overcast-sh/overcast/internal/bff"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 )
 
 func newUIHandler(apiPort, browserAPIPort int, region string, debug bool, tlsEnabled bool, tlsTrustPEM []byte) (http.Handler, error) {

@@ -610,7 +610,7 @@ export function HttpsSection() {
                       label: "docker run",
                       note: "Keep /data on a volume — the CA lives there.",
                       command:
-                        "docker run -d -e OVERCAST_TLS=auto -v overcast-data:/data -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha",
+                        "docker run -d -e OVERCAST_TLS=auto -v overcast-data:/data -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha",
                     },
                   ]}
                 />

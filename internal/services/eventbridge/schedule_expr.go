@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/awscron"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/awscron"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 func scheduleValidationError(err error) *protocol.AWSError {

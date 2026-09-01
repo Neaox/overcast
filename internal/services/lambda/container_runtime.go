@@ -33,16 +33,16 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/dataplane"
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/logging"
-	"github.com/Neaox/overcast/internal/services/lambda/initbin"
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/dataplane"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initbin"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // ContainerRuntime implements Runtime by running Lambda functions in Docker

@@ -47,7 +47,7 @@
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,
 > `internal/services/{lambda,ecs,rds,elasticache,msk,efs,eks,ec2}/`,
 > `docs/dev/container-networking.md`, `docs/networking.md`, `docs/README.md`.
-> Related: [#872](https://github.com/Neaox/overcast/issues/872) (ElastiCache is
+> Related: [#872](https://github.com/overcast-sh/overcast/issues/872) (ElastiCache is
 > unreachable from ECS — the instance of this that prompted the question),
 > [container-networking.md](../dev/container-networking.md) (the mechanism),
 > [ec2.md § VPC networking strategies](../services/ec2.md) (per-VPC networks).

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/awsapi"
 )
 
 // signedRequest builds a request carrying a SigV4 Authorization header scoped

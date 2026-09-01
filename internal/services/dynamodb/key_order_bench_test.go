@@ -22,7 +22,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func benchmarkPutItem(b *testing.B, table *Table, item Item) {

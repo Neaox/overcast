@@ -43,7 +43,7 @@ type Container struct {
 }
 
 // Run starts an Overcast container from img (for example
-// "ghcr.io/neaox/overcast-slim:alpha", or a locally built tag) and blocks
+// "ghcr.io/overcast-sh/overcast-slim:alpha", or a locally built tag) and blocks
 // until /_overcast/health answers 200.
 //
 // Unless the caller sets OVERCAST_HOSTNAME (or one of its LocalStack aliases),

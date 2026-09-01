@@ -3,7 +3,7 @@ package ses
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // stub replies with 501 Not Implemented for any SES operation that is known

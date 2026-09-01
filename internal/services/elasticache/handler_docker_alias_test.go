@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // An endpoint address is minted on the hostname the *calling client* reached

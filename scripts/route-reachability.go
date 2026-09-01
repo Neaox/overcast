@@ -68,8 +68,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Neaox/overcast/internal/capabilities"
-	"github.com/Neaox/overcast/internal/routecheck"
+	"github.com/overcast-sh/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/routecheck"
 )
 
 func main() {

@@ -27,8 +27,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 func newHTTPSCmd() *cobra.Command {
@@ -57,7 +57,7 @@ recreating the container never costs you another trust prompt:
 
   overcast https enable
   docker run -e OVERCAST_TLS=auto -e OVERCAST_CA_DIR=/ca \
-    -v ~/.overcast/data/ca:/ca:ro -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
+    -v ~/.overcast/data/ca:/ca:ro -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha
 
 No overcast CLI on the host? The daemon can mint its own CA and serve the
 certificate for --endpoint to install instead:
@@ -185,7 +185,7 @@ install you just approved:
 
   docker run -e OVERCAST_TLS=auto \
     -e OVERCAST_CA_DIR=/ca -v %s:/ca:ro \
-    -p 4566:4566 -p %d:%d ghcr.io/neaox/overcast:alpha
+    -p 4566:4566 -p %d:%d ghcr.io/overcast-sh/overcast:alpha
 
 Then open
 

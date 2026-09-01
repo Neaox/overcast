@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // json10 implements Codec for AWS JSON 1.0 (Content-Type

@@ -1,8 +1,8 @@
 package organizations
 
 import (
-	"github.com/Neaox/overcast/internal/inert"
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/inert"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 // handWrittenOps is Organizations' pre-existing, hand-written operation

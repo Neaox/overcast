@@ -56,7 +56,7 @@ the design:
 - **Not a security boundary.** Credentials are accepted but not validated by
   default. Never expose it on a public network — and note that `OVERCAST_LISTEN`
   (renamed from `OVERCAST_HOST`, which has been removed — see
-  [#870](https://github.com/Neaox/overcast/issues/870)) defaults to `0.0.0.0`
+  [#870](https://github.com/overcast-sh/overcast/issues/870)) defaults to `0.0.0.0`
   when Overcast is containerised (required for Docker's `-p` publishing to
   reach it) and to `127.0.0.1` when it is not (#761) — so a native run with
   nothing set no longer listens on every interface. An explicit
@@ -367,7 +367,7 @@ Two directories do nest — `cloudwatch/logs`, which is a *separate* registered
 service rather than part of CloudWatch, and `cognito/templates`. Neither
 violates the rule as intended, but `CONTRIBUTING.md` states it without the
 carve-out, so the wording is being tightened in
-[#746](https://github.com/Neaox/overcast/issues/746).
+[#746](https://github.com/overcast-sh/overcast/issues/746).
 
 **Some sources are generated and committed.** The capability registry, the docs
 search index, and the AWS operation manifest are all generated from code or
@@ -390,7 +390,7 @@ works:
 ```bash
 docker run --rm -p 4566:4566 -p 4567:4567 \
   -e OVERCAST_DEBUG=true \
-  ghcr.io/neaox/overcast:alpha
+  ghcr.io/overcast-sh/overcast:alpha
 ```
 
 Then, with `npm install @aws-sdk/client-sqs`:
@@ -676,14 +676,14 @@ Some of these are principled and permanent; others are simply undone.
   declarations. The wrapper is identically shaped every time, so a shared helper
   or a generator could remove it. It persists because it has never been a
   priority, not because it should. Tracked as
-  [#755](https://github.com/Neaox/overcast/issues/755).
+  [#755](https://github.com/overcast-sh/overcast/issues/755).
 
 - **Request and response structs are hand-written — planned for generation.**
   AWS publishes machine-readable models for every operation, and Overcast
   already ingests them for routing and `501`s ([§4](#4-the-request-path)) —
   but not for producing types. Generating them from the same source is designed
   and sequenced but not started, tracked as
-  [#756](https://github.com/Neaox/overcast/issues/756). Until it happens, every
+  [#756](https://github.com/overcast-sh/overcast/issues/756). Until it happens, every
   struct and every tag is typed by hand, which is exactly where a wrong member
   name comes from.
 
@@ -696,14 +696,14 @@ Some of these are principled and permanent; others are simply undone.
   service back to the legacy path was the right call — but it means the
   operation manifest lists 69 operations as typed that no request ever reaches.
   Re-enabling needs an operation-by-operation audit, tracked as
-  [#754](https://github.com/Neaox/overcast/issues/754).
+  [#754](https://github.com/overcast-sh/overcast/issues/754).
 
 If you are adding a service, use the typed pattern; if you are reading an old
 one, expect to find both.
 
 **Further reading:** [docs/dev/smithy.md](./smithy.md) for protocol
 identification and the codec interfaces;
-[#756](https://github.com/Neaox/overcast/issues/756) for where the migration is
+[#756](https://github.com/overcast-sh/overcast/issues/756) for where the migration is
 going.
 
 ---
@@ -985,7 +985,7 @@ four things:
 The cost is a marshal, the middleware chain and a route match. Nobody has
 benchmarked it, so treat "small" as an inference rather than a measurement: it
 rests on the call being in-process, with no network involved. Measuring it is
-tracked as [#757](https://github.com/Neaox/overcast/issues/757).
+tracked as [#757](https://github.com/overcast-sh/overcast/issues/757).
 
 What makes it affordable is where it gets used. Every case is one where the
 surrounding work dwarfs it — provisioning a stack resource, delivering an event
@@ -1105,10 +1105,10 @@ internal bus a second time.
 That list is short because real AWS emits far more service-originated events
 than Overcast does. A rule matching one of those will never fire here. The
 extension point exists (`events.BusPublisher`), so this is a gap rather than a
-limitation; tracked as [#758](https://github.com/Neaox/overcast/issues/758)
+limitation; tracked as [#758](https://github.com/overcast-sh/overcast/issues/758)
 (EC2, ECS and Step Functions closed the gap for those three services across
-[#1225](https://github.com/Neaox/overcast/pull/1225) and
-[#1221](https://github.com/Neaox/overcast/issues/1221)).
+[#1225](https://github.com/overcast-sh/overcast/pull/1225) and
+[#1221](https://github.com/overcast-sh/overcast/issues/1221)).
 
 ---
 
@@ -1161,7 +1161,7 @@ someone running `cdk deploy` is actually looking. Worth knowing before trusting
 a green deploy.
 
 Making that visible — in the deploy output and in the console's CloudFormation
-view — is tracked as [#760](https://github.com/Neaox/overcast/issues/760).
+view — is tracked as [#760](https://github.com/overcast-sh/overcast/issues/760).
 
 **Further reading:** [docs/cdk.md](../cdk.md);
 [CONTRIBUTING.md § CloudFormation integration](../../CONTRIBUTING.md#cloudformation-integration).
@@ -1316,7 +1316,7 @@ always; discipline holds it most of the time.
 The web side reached this conclusion already, and ships a custom ESLint plugin
 plus ratchet-style tests that permit existing violations while forbidding new
 ones. Two of the Go rules are checkable with a linter golangci-lint already
-ships. Tracked as [#762](https://github.com/Neaox/overcast/issues/762).
+ships. Tracked as [#762](https://github.com/overcast-sh/overcast/issues/762).
 
 **Further reading:**
 [CONTRIBUTING.md § Shared utilities](../../CONTRIBUTING.md#shared-utilities--use-serviceutil-never-duplicate).

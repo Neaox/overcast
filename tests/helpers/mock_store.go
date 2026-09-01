@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // MockStore is a hand-written test double for state.Store.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/dns"
+	"github.com/overcast-sh/overcast/internal/dns"
 )
 
 // This file makes Route 53 an authoritative data source for Overcast's own

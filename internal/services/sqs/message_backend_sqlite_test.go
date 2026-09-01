@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // TestSQLMessageBackend_ToleratesCorruptRows proves the SQL backend's

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // TestGeneratedCorpus_noModeledOperationReachesS3 drives every modeled non-S3

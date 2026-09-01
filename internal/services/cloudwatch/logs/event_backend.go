@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // eventBackend is the interface every CloudWatch Logs event store must

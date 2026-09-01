@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func TestIAMEnforce_enabled_s3ResourcePolicyAllowsMatchingObject(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // registeredServices returns every service name the emulator registers —

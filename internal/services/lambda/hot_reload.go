@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/hostpath"
+	"github.com/overcast-sh/overcast/internal/hostpath"
 )
 
 const hotReloadTagKey = "overcast:hot-reload-path"

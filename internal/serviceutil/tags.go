@@ -24,8 +24,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // ---- Namespaced tags --------------------------------------------------------

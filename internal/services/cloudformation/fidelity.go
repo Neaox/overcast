@@ -2,7 +2,7 @@ package cloudformation
 
 // fidelity.go — telling a user which resources in their stack are stubs or
 // backed by an inert/stub-tier service, from the deploy path they already
-// watch. See https://github.com/Neaox/overcast/issues/760.
+// watch. See https://github.com/overcast-sh/overcast/issues/760.
 //
 // A stack can reach CREATE_COMPLETE while parts of it do nothing. Three
 // categories look identical to the user (a green resource) but arise for

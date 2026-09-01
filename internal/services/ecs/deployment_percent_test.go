@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // newRollingFixture creates a one-task service whose container publishes a

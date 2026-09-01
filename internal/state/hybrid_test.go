@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/logging"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/state"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	_ "modernc.org/sqlite"

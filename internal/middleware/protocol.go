@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // Protocol is the wire-protocol detection middleware. It walks a list of

@@ -37,8 +37,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/metrics"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // restAPIMonitorCatalog is the fixed, reviewed set of AWS/ApiGateway REST

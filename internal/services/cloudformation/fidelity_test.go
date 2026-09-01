@@ -2,7 +2,7 @@ package cloudformation
 
 // fidelity_test.go — pins classifyResourceFidelity's three categories and the
 // provisioner wiring that turns them into a resource's status reason. See
-// https://github.com/Neaox/overcast/issues/760 and fidelity.go.
+// https://github.com/overcast-sh/overcast/issues/760 and fidelity.go.
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ── classifyResourceFidelity: unit-level ────────────────────────────────────

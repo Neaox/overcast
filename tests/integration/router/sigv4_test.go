@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // sqsListQueuesRequest builds an SQS ListQueues request against srv signed

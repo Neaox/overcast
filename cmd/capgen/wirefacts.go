@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/awsapi"
 )
 
 // This file is the second half of #864: the manifest as the source of truth for

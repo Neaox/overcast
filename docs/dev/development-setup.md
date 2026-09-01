@@ -143,7 +143,7 @@ schema that v1 cannot parse.
 ### Setup
 
 ```bash
-git clone https://github.com/Neaox/overcast
+git clone https://github.com/overcast-sh/overcast
 cd overcast
 
 # Verify tools
@@ -209,7 +209,7 @@ use `task` instead.
 ### Setup
 
 ```powershell
-git clone https://github.com/Neaox/overcast
+git clone https://github.com/overcast-sh/overcast
 cd overcast
 
 # Check tools

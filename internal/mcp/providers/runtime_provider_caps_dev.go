@@ -5,7 +5,7 @@ package providers
 import (
 	"strings"
 
-	"github.com/Neaox/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/capabilities"
 )
 
 // runtimeCapabilitiesDetail returns per-operation capability info from the

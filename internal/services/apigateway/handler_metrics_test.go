@@ -18,7 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/metrics"
 )
 
 func withAPIIDParam(req *http.Request, apiID string) *http.Request {

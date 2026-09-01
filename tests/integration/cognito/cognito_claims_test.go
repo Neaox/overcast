@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // decodeJWTPayload extracts the JSON payload (middle segment) of a JWT.

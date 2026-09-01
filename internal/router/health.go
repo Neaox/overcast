@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // healthResponse is the JSON body returned by GET /_overcast/health.

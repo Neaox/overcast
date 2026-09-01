@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/state"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // TestReset_withSQLiteStore covers the non-MemoryStore branch of resetHandler

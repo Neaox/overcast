@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/iampolicy"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/iampolicy"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Permissions boundaries: the managed policy that caps what a user's or role's

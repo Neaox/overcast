@@ -1,16 +1,16 @@
 # Overcast Testcontainers module for Go
 
 A [Testcontainers](https://golang.testcontainers.org/) module for the
-[Overcast](https://github.com/Neaox/overcast) AWS emulator: start the emulator
+[Overcast](https://github.com/overcast-sh/overcast) AWS emulator: start the emulator
 from test code, wait for readiness, and get the endpoint and credentials an
 AWS SDK client needs.
 
 ```bash
-go get github.com/Neaox/overcast/testcontainers/go@main
+go get github.com/overcast-sh/overcast/testcontainers/go@main
 ```
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/neaox/overcast-slim:alpha")
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
 testcontainers.CleanupContainer(t, ctr)
 if err != nil {
     t.Fatal(err)

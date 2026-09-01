@@ -33,7 +33,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // tagsSignedRequest sends a REST JSON request the way an SDK sends one: with a

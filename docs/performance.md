@@ -119,7 +119,7 @@ docker run -d --name overcast \
   -p 4566:4566 -p 4567:4567 \
   -e OVERCAST_STATE=hybrid \
   -v overcast-data:/data \
-  ghcr.io/neaox/overcast
+  ghcr.io/overcast-sh/overcast
 ```
 
 The same with `docker compose`:
@@ -127,7 +127,7 @@ The same with `docker compose`:
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast
+    image: ghcr.io/overcast-sh/overcast
     ports:
       - "4566:4566" # AWS API endpoint
       - "4567:4567" # web management console
@@ -156,7 +156,7 @@ on the named volume:
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast
+    image: ghcr.io/overcast-sh/overcast
     ports:
       - "4566:4566"
       - "4567:4567"

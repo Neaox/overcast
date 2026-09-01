@@ -57,7 +57,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 const (

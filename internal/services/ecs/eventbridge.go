@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 const (

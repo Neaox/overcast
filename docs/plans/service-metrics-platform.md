@@ -6,7 +6,7 @@
 > 2026-08-22; Lambda's async P1 metric tier, WALStore/`-tags nosqlite`
 > persistence, and the SNS/DynamoDB Monitor tabs (phase 4) shipped
 > 2026-08-23**, tracked by
-> [#1181](https://github.com/Neaox/overcast/issues/1181) (priority/p1, RICE ≈ 100).
+> [#1181](https://github.com/overcast-sh/overcast/issues/1181) (priority/p1, RICE ≈ 100).
 > #1181 was closed by an earlier commit before phase 2/3/4 shipped — see the
 > issue's own comment thread for the correction; it stays closed here because
 > every phase-4 item is now either shipped or tracked as its own issue: the

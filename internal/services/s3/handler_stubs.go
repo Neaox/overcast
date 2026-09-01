@@ -10,7 +10,7 @@ package s3
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ---- Bucket GET stubs ------------------------------------------------------

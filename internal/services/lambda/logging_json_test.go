@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // logging_json_test.go pins the wire shapes and level mapping of JSON logging

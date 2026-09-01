@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsmodel"
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 func main() {

@@ -66,14 +66,14 @@ If none of these hold, `auto` resolves to **`memory`** — persisting into a dir
 nobody asked for and nothing mounts is pointless, so the fast, ephemeral backend is the
 better default. In practice this means:
 
-- `docker run -v mydata:/data ghcr.io/neaox/overcast` → **`hybrid`** (signal 1), with zero
+- `docker run -v mydata:/data ghcr.io/overcast-sh/overcast` → **`hybrid`** (signal 1), with zero
   configuration.
-- `docker run ghcr.io/neaox/overcast` (no volume) → **`memory`** — including CI, where
+- `docker run ghcr.io/overcast-sh/overcast` (no volume) → **`memory`** — including CI, where
   containers typically run with no data volume, so `auto` lands on the fast, ephemeral
   mode CI wants automatically.
 - A native install that already has data at `~/.overcast/data` → **`hybrid`** (signal 3),
   so upgrading to this default never silently drops existing data.
-- `docker run -v mydata:/data ghcr.io/neaox/overcast-slim` → **`memory`**, because the slim
+- `docker run -v mydata:/data ghcr.io/overcast-sh/overcast-slim` → **`memory`**, because the slim
   image has no SQLite and `hybrid` does not exist in it. The signals above are not even
   consulted. See [Builds without SQLite](#builds-without-sqlite).
 
@@ -97,9 +97,9 @@ therefore decides which backends exist at all:
 
 | Artifact                             | SQLite | `hybrid` / `persistent` | `memory` / `wal` | `auto` can resolve to |
 | ------------------------------------ | ------ | ----------------------- | ---------------- | --------------------- |
-| `ghcr.io/neaox/overcast` image       | yes    | available               | available        | `hybrid` or `memory`  |
+| `ghcr.io/overcast-sh/overcast` image       | yes    | available               | available        | `hybrid` or `memory`  |
 | `overcast-<os>-<arch>` binaries      | yes    | available               | available        | `hybrid` or `memory`  |
-| `ghcr.io/neaox/overcast-slim` image  | **no** | **unavailable**         | available        | **`memory` only**     |
+| `ghcr.io/overcast-sh/overcast-slim` image  | **no** | **unavailable**         | available        | **`memory` only**     |
 | `overcastd-<os>-<arch>` binaries     | **no** | **unavailable**         | available        | **`memory` only**     |
 
 In an artifact without SQLite:
@@ -122,10 +122,10 @@ So a persistent slim container needs the volume **and** the backend:
 docker run --rm -p 4566:4566 \
   -v overcast-data:/data \
   -e OVERCAST_STATE=wal \
-  ghcr.io/neaox/overcast-slim:alpha
+  ghcr.io/overcast-sh/overcast-slim:alpha
 ```
 
-If you specifically want `hybrid` or `persistent`, use the full `ghcr.io/neaox/overcast`
+If you specifically want `hybrid` or `persistent`, use the full `ghcr.io/overcast-sh/overcast`
 image or an `overcast-<os>-<arch>` binary — both include SQLite and behave exactly as the
 rest of this page describes.
 

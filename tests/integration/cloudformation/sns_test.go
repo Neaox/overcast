@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func snsQuery(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {

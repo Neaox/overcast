@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/capabilities"
-	"github.com/Neaox/overcast/internal/routecheck"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/routecheck"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // TestAllDeclaredCapabilitiesAreReachable is the enforcement teeth

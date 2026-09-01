@@ -156,10 +156,10 @@ Merge the bottom PR with the asynchronous endpoint, then poll the UUID it hands
 back until it reports `merged`:
 
 ```sh
-gh api -X PUT repos/Neaox/overcast/pulls/<n>/merge-async -f merge_method=squash
+gh api -X PUT repos/overcast-sh/overcast/pulls/<n>/merge-async -f merge_method=squash
 # => {"status":"pending","details":{"uuid":"…","expected_head_sha":"…"}}
 
-gh api repos/Neaox/overcast/pulls/<n>/merge-async/<uuid>
+gh api repos/overcast-sh/overcast/pulls/<n>/merge-async/<uuid>
 # => {"status":"merged","details":{"sha":"…"}}
 ```
 

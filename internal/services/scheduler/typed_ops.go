@@ -3,9 +3,9 @@ package scheduler
 import (
 	"context"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/op"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 func (s *Service) typedOps() map[string]op.Operation {

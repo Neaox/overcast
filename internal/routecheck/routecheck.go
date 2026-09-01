@@ -37,8 +37,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/capabilities"
 )
 
 // Probe is one request issued at one modeled binding.

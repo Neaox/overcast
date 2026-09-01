@@ -138,7 +138,7 @@ func TestDockerRunArgsPublishesToLoopbackOnly(t *testing.T) {
 	// Then: every mapping is bound to 127.0.0.1. A bare "<host>:<container>"
 	// mapping binds every interface, which puts an unauthenticated emulator on
 	// whatever network the machine is attached to.
-	argv := dockerRunArgs(4570, 4571, "ghcr.io/neaox/overcast:alpha", "warn", "", "")
+	argv := dockerRunArgs(4570, 4571, "ghcr.io/overcast-sh/overcast:alpha", "warn", "", "")
 	want := []string{
 		"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort),
 		"127.0.0.1:4571:" + strconv.Itoa(reservedUIPort),
@@ -183,8 +183,8 @@ func TestDockerRunArgsCarriesImageAndEnvironment(t *testing.T) {
 	// When: the docker argv is built
 	// Then: the image is the last argument (so nothing is mistaken for a flag)
 	// and the instance is told to keep its state in memory
-	argv := dockerRunArgs(4570, 0, "ghcr.io/neaox/overcast:alpha", "debug", "", "")
-	if last := argv[len(argv)-1]; last != "ghcr.io/neaox/overcast:alpha" {
+	argv := dockerRunArgs(4570, 0, "ghcr.io/overcast-sh/overcast:alpha", "debug", "", "")
+	if last := argv[len(argv)-1]; last != "ghcr.io/overcast-sh/overcast:alpha" {
 		t.Errorf("dockerRunArgs ended with %q, want the image", last)
 	}
 	joined := strings.Join(argv, " ")
@@ -309,7 +309,7 @@ func TestChooseOvercastArtifactPrefersARequestedImageOverALocalBinary(t *testing
 	// --overcast-image silently ran yesterday's bin/overcast.exe instead and
 	// the run looked exactly like one that had tested the image.
 	got, err := chooseOvercastArtifact(artifactRequest{
-		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1",
+		Image:           "ghcr.io/overcast-sh/overcast:0.0.1-alpha.33-rc.1",
 		ImageRequested:  true,
 		FoundBin:        `F:\dev\overcast\bin\overcast.exe`,
 		DockerAvailable: true,
@@ -320,7 +320,7 @@ func TestChooseOvercastArtifactPrefersARequestedImageOverALocalBinary(t *testing
 	if got.Mode != overcastModeDocker {
 		t.Fatalf("chose %s %q, want the requested container image", got.Mode, got.Ref)
 	}
-	if got.Ref != "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1" {
+	if got.Ref != "ghcr.io/overcast-sh/overcast:0.0.1-alpha.33-rc.1" {
 		t.Errorf("chose image %q, want the one that was named", got.Ref)
 	}
 	// And: the binary that was passed over is named, so a reader can tell this
@@ -358,14 +358,14 @@ func TestChooseOvercastArtifactUsesARequestedImageWithNoBinaryPresent(t *testing
 	// rather than that nothing else was available — the two are different runs
 	// and the log should not conflate them.
 	got, err := chooseOvercastArtifact(artifactRequest{
-		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.32",
+		Image:           "ghcr.io/overcast-sh/overcast:0.0.1-alpha.32",
 		ImageRequested:  true,
 		DockerAvailable: true,
 	})
 	if err != nil {
 		t.Fatalf("chooseOvercastArtifact: %v", err)
 	}
-	if got.Mode != overcastModeDocker || got.Ref != "ghcr.io/neaox/overcast:0.0.1-alpha.32" {
+	if got.Mode != overcastModeDocker || got.Ref != "ghcr.io/overcast-sh/overcast:0.0.1-alpha.32" {
 		t.Fatalf("chose %s %q, want the requested image", got.Mode, got.Ref)
 	}
 	if !strings.Contains(got.Reason, "--overcast-image") {
@@ -400,7 +400,7 @@ func TestChooseOvercastArtifactRefusesARequestedImageWithoutDocker(t *testing.T)
 	// be the bug in issue #801 wearing a different hat: the caller named the
 	// bits to test, so a run that cannot test them is not a run.
 	_, err := chooseOvercastArtifact(artifactRequest{
-		Image:          "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1",
+		Image:          "ghcr.io/overcast-sh/overcast:0.0.1-alpha.33-rc.1",
 		ImageRequested: true,
 		FoundBin:       "/repo/bin/overcast",
 	})
@@ -462,7 +462,7 @@ func TestChooseOvercastArtifactRefusesTwoNamedArtifacts(t *testing.T) {
 	_, err := chooseOvercastArtifact(artifactRequest{
 		Bin:             "/tmp/overcast",
 		BinRequested:    true,
-		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.32",
+		Image:           "ghcr.io/overcast-sh/overcast:0.0.1-alpha.32",
 		ImageRequested:  true,
 		FoundBin:        "/tmp/overcast",
 		DockerAvailable: true,
@@ -470,7 +470,7 @@ func TestChooseOvercastArtifactRefusesTwoNamedArtifacts(t *testing.T) {
 	if err == nil {
 		t.Fatal("chooseOvercastArtifact returned no error for two named artifacts")
 	}
-	for _, want := range []string{"/tmp/overcast", "ghcr.io/neaox/overcast:0.0.1-alpha.32"} {
+	for _, want := range []string{"/tmp/overcast", "ghcr.io/overcast-sh/overcast:0.0.1-alpha.32"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
@@ -501,7 +501,7 @@ func TestOvercastArtifactDescribeNamesTheArtifact(t *testing.T) {
 		artifact overcastArtifact
 		want     string
 	}{
-		{overcastArtifact{Mode: overcastModeDocker, Ref: "ghcr.io/neaox/overcast:alpha"}, "container image ghcr.io/neaox/overcast:alpha"},
+		{overcastArtifact{Mode: overcastModeDocker, Ref: "ghcr.io/overcast-sh/overcast:alpha"}, "container image ghcr.io/overcast-sh/overcast:alpha"},
 		{overcastArtifact{Mode: overcastModeBinary, Ref: "/repo/bin/overcast"}, "binary /repo/bin/overcast"},
 	}
 	for _, tc := range cases {
@@ -921,7 +921,7 @@ func TestImageRefIsPullableRefreshesAMovingRegistryTag(t *testing.T) {
 	// the health gate with nothing but a timeout to go on.
 	for _, ref := range []string{
 		defaultOvercastImage,
-		"ghcr.io/neaox/overcast:0.0.1-alpha.35-rc.1902",
+		"ghcr.io/overcast-sh/overcast:0.0.1-alpha.35-rc.1902",
 		"localhost:5000/overcast:dev",
 		"docker.io/library/alpine:3",
 	} {
@@ -955,7 +955,7 @@ func TestImageRefIsPullableSkipsDigestPinnedReferences(t *testing.T) {
 	// Then: no pull. A digest names exactly one image for all time, so a
 	// cached copy cannot be stale and `docker run` already fetches it if it is
 	// missing.
-	ref := "ghcr.io/neaox/overcast@sha256:0d7bcf259da3777a423aaae3f94ddd3f28f87d19daf1dfc52757598921950e94"
+	ref := "ghcr.io/overcast-sh/overcast@sha256:0d7bcf259da3777a423aaae3f94ddd3f28f87d19daf1dfc52757598921950e94"
 	pullable, why := imageRefIsPullable(ref)
 	if pullable {
 		t.Errorf("imageRefIsPullable(%q) = true, want a digest treated as immutable", ref)

@@ -18,7 +18,7 @@ package codec
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Smithy protocol shape IDs. These are the canonical names used by the

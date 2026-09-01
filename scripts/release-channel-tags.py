@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """release-channel-tags.py — which floating Docker tags may this release move?
 
-`ghcr.io/neaox/overcast:<version>` is immutable: one version, one tag, written
+`ghcr.io/overcast-sh/overcast:<version>` is immutable: one version, one tag, written
 once. Every *other* tag the release workflow publishes is a moving pointer —
 `:latest`, `:alpha`, and the line tags `:1` and `:1.2` — and a moving pointer
 can move the wrong way. Release 1.2.4 as a maintenance fix for an old line

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Neaox/overcast/internal/router"
+	"github.com/overcast-sh/overcast/internal/router"
 )
 
 // phaseTimer records startup phases from before router.New is called.

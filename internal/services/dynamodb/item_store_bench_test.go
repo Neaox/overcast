@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func benchmarkScanPageLimit25(b *testing.B, backend itemBackend, preExisting int) {

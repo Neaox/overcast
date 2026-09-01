@@ -30,7 +30,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // parameterFilterKeys maps each filter key this package implements to the value

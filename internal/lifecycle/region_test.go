@@ -8,7 +8,7 @@ import (
 
 	"github.com/benbjohnson/clock"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // TestAfterScoped verifies the two guarantees AfterScoped exists for: the

@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // dynamoDBStreamRecord builds one DynamoDB Streams record.

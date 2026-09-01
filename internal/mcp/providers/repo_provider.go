@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/internal/mcp"
 )
 
 type RepoProvider struct {

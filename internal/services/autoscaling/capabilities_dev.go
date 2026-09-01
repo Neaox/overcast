@@ -2,7 +2,7 @@
 
 package autoscaling
 
-import "github.com/Neaox/overcast/internal/capabilities"
+import "github.com/overcast-sh/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.RegisterForService(serviceName,

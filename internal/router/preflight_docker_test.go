@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 func TestDockerUnavailableWarning_emptyWhenEverythingConnected(t *testing.T) {

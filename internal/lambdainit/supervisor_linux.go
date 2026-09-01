@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // diagLog writes the init's own diagnostics — one greppable line each, all

@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	intmcp "github.com/Neaox/overcast/internal/mcp"
-	"github.com/Neaox/overcast/internal/mcp/providers"
+	intmcp "github.com/overcast-sh/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/internal/mcp/providers"
 )
 
 func TestMCPCmd_FlagDefaults(t *testing.T) {

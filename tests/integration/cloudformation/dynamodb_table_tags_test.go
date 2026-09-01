@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // TestCreateStack_DynamoDBTableTags covers #523: AWS::DynamoDB::Table's Tags

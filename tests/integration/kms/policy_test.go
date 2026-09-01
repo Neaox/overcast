@@ -10,7 +10,7 @@ import (
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 const lockoutMessage = "The new key policy will not allow you to update the key policy in the future."
