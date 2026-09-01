@@ -185,6 +185,19 @@ services:
 
 ---
 
+## Testcontainers
+
+Tests using LocalStack's Testcontainers modules should switch to
+[Overcast's own module](./testcontainers.md) rather than pointing the
+LocalStack module at the Overcast image (Java's
+`asCompatibleSubstituteFor`, for example): those modules parse the image tag
+as a LocalStack version to select legacy behaviours and wait for a log line
+Overcast does not emit, so the substitution fails in non-obvious ways. A Go
+module ships today; other languages are planned
+([#1495](https://github.com/Neaox/overcast/issues/1495)).
+
+---
+
 ## Behavioural differences
 
 These are deliberate choices where overcast behaves differently from LocalStack.

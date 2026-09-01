@@ -146,6 +146,14 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: go vet ./...
 
+      # A nested Go module, so the root `./...` above never descends into it.
+      - name: Vet the Testcontainers module
+        if: needs.changes.outputs.code == 'true'
+        working-directory: testcontainers/go
+        run: |
+          go mod download
+          go vet ./...
+
   # The longest job in the workflow, and it used to start 187 s late waiting on
   # the SPA it never read — see the note on `vet`. It sets the critical path,
   # so this is where dropping the dependency is worth the most.
@@ -967,6 +975,22 @@ jobs:
             printf '%.200s\n' "$ui" >&2
             exit 1
           fi
+
+      # The Testcontainers Go module (testcontainers/go), exercised against
+      # the image built from this pull request rather than a published tag —
+      # so a change that breaks the module's contract (the health endpoint,
+      # /_overcast/info, the edge port) fails here, before it ships.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.RUN_BUILD == 'true' && matrix.image == 'slim'
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Testcontainers Go module tests
+        if: env.RUN_BUILD == 'true' && matrix.image == 'slim'
+        working-directory: testcontainers/go
+        env:
+          OVERCAST_TESTCONTAINERS_IMAGE: ${{ matrix.tag }}
+        run: go test -count=1 -timeout 600s ./...
 
       # The same two probes with the opposite expectation. Without it, "make
       # the slim image slim" has a passing shortcut that breaks the console

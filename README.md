@@ -186,6 +186,20 @@ volumes:
 docker compose up
 ```
 
+### Testcontainers
+
+Integration tests can start Overcast per-test with the
+[Testcontainers module for Go](./testcontainers/go):
+
+```go
+ctr, err := overcast.Run(ctx, "ghcr.io/neaox/overcast-slim:alpha")
+testcontainers.CleanupContainer(t, ctr)
+endpoint, _ := ctr.APIEndpoint(ctx) // point your AWS SDK client here
+```
+
+See [docs/testcontainers.md](./docs/testcontainers.md) — modules for other
+languages are planned ([#1495](https://github.com/Neaox/overcast/issues/1495)).
+
 > [!NOTE]
 > **Docker socket and container-based services**
 >

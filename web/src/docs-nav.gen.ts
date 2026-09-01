@@ -650,6 +650,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Testcontainers",
+        "id": "testcontainers"
+      },
+      {
+        "depth": 2,
         "text": "Behavioural differences",
         "id": "behavioural-differences"
       },
@@ -5237,6 +5242,82 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Choosing a backend",
         "id": "choosing-a-backend"
+      }
+    ]
+  },
+  {
+    "path": "docs/testcontainers.md",
+    "href": "testcontainers.md",
+    "title": "Testcontainers",
+    "description": "Run Overcast from your integration tests with the Testcontainers module for Go: a few lines to start the emulator, wait for readiness, and point an AWS SDK client at it.",
+    "section": "Getting Started",
+    "tags": [
+      "docker",
+      "go",
+      "overcast",
+      "testcontainers",
+      "testing"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Testcontainers",
+        "id": "testcontainers"
+      },
+      {
+        "depth": 2,
+        "text": "Go",
+        "id": "go"
+      },
+      {
+        "depth": 3,
+        "text": "Which image",
+        "id": "which-image"
+      },
+      {
+        "depth": 3,
+        "text": "Options",
+        "id": "options"
+      },
+      {
+        "depth": 3,
+        "text": "Container API",
+        "id": "container-api"
+      },
+      {
+        "depth": 3,
+        "text": "Port mapping caveats",
+        "id": "port-mapping-caveats"
+      },
+      {
+        "depth": 2,
+        "text": "Other languages: the generic-container pattern",
+        "id": "other-languages-the-generic-container-pattern"
+      },
+      {
+        "depth": 3,
+        "text": "Node.js",
+        "id": "node-js"
+      },
+      {
+        "depth": 3,
+        "text": "Java",
+        "id": "java"
+      },
+      {
+        "depth": 3,
+        "text": "Python",
+        "id": "python"
+      },
+      {
+        "depth": 3,
+        "text": ".NET",
+        "id": "net"
+      },
+      {
+        "depth": 2,
+        "text": "Using LocalStack's Testcontainers modules",
+        "id": "using-localstack-s-testcontainers-modules"
       }
     ]
   }

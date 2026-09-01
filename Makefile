@@ -202,6 +202,7 @@ lint-todos:
 ## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+	cd testcontainers/go && $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 	@bash scripts/verify-changed.sh --record go
 
 ## lint-web: run web UI linting (oxlint — web/.oxlintrc.json is the whole gate)
