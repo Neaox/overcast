@@ -1,6 +1,7 @@
 // Package hostbridge wires a stream of domain-registration events from the
 // overcast emulator to the host machine's mDNS responder and local trust
-// store. It is the implementation behind the `overcast dev` subcommand.
+// store. It is the implementation behind the `overcast bridge` subcommand
+// (`overcast serve --bridge` shares it via startBridge).
 //
 // The bridge is deliberately small: it owns an active set of published
 // records, consumes Events from a Source, and translates them into calls
