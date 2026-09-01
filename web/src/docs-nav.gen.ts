@@ -21,7 +21,7 @@ export const DOCS_NAV = [
     "path": "docs/README.md",
     "href": "README.md",
     "title": "Documentation",
-    "description": "This directory contains the full Overcast documentation. For a quick overview, see the root README.",
+    "description": "Every Overcast guide and reference, routed by what you are trying to do — first run, wiring an SDK, deploying a CDK stack, tuning storage, or debugging something that went wrong.",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -35,23 +35,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Contents",
-        "id": "contents"
+        "text": "Get running",
+        "id": "get-running"
       },
       {
-        "depth": 3,
-        "text": "Getting started",
-        "id": "getting-started"
+        "depth": 2,
+        "text": "Build against it",
+        "id": "build-against-it"
       },
       {
-        "depth": 3,
-        "text": "Reference",
-        "id": "reference"
-      },
-      {
-        "depth": 3,
-        "text": "Storage and performance",
-        "id": "storage-and-performance"
+        "depth": 2,
+        "text": "Tune and inspect",
+        "id": "tune-and-inspect"
       },
       {
         "depth": 2,
@@ -67,11 +62,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Services",
         "id": "services"
-      },
-      {
-        "depth": 2,
-        "text": "HTTPS / TLS",
-        "id": "https-tls"
       },
       {
         "depth": 2,
@@ -237,25 +227,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Example: deploy a Lambda + API Gateway stack",
         "id": "example-deploy-a-lambda-api-gateway-stack"
-      }
-    ]
-  },
-  {
-    "path": "docs/cdk/README.md",
-    "href": "cdk/README.md",
-    "title": "CDK Guides",
-    "description": "Focused guides for CDK workflows that need more detail than the main Using AWS CDK with Overcast page.",
-    "section": "CDK",
-    "tags": [
-      "cdk",
-      "docs",
-      "guides"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "CDK Guides",
-        "id": "cdk-guides"
       }
     ]
   },
@@ -445,6 +416,11 @@ export const DOCS_NAV = [
         "id": "overcast-bridge"
       },
       {
+        "depth": 4,
+        "text": "Platform setup for mDNS and port 80",
+        "id": "platform-setup-for-mdns-and-port-80"
+      },
+      {
         "depth": 3,
         "text": "overcast https enable|disable|status",
         "id": "overcast-https-enable-disable-status"
@@ -474,6 +450,21 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "Configuration reference",
         "id": "configuration-reference"
+      },
+      {
+        "depth": 2,
+        "text": "Bind address and port",
+        "id": "bind-address-and-port"
+      },
+      {
+        "depth": 2,
+        "text": "LocalStack aliases",
+        "id": "localstack-aliases"
+      },
+      {
+        "depth": 2,
+        "text": "Exposing MCP",
+        "id": "exposing-mcp"
       },
       {
         "depth": 2,
@@ -702,7 +693,7 @@ export const DOCS_NAV = [
     "path": "docs/migration-from-localstack.md",
     "href": "migration-from-localstack.md",
     "title": "Migrating from LocalStack",
-    "description": "overcast is designed as a drop-in replacement for LocalStack Community Edition. In most cases, changing AWS_ENDPOINT_URL is the only change needed.",
+    "description": "Overcast is a drop-in replacement for LocalStack Community Edition: same port, same init-hook layout, and LocalStack's own environment variables honoured directly. Usually nothing but the image changes.",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -718,34 +709,24 @@ export const DOCS_NAV = [
         "id": "migrating-from-localstack"
       },
       {
-        "depth": 2,
-        "text": "Quick migration",
-        "id": "quick-migration"
-      },
-      {
-        "depth": 1,
-        "text": "Before (LocalStack)",
-        "id": "before-localstack"
-      },
-      {
-        "depth": 1,
-        "text": "After (overcast) — same URL, different container",
-        "id": "after-overcast-same-url-different-container"
-      },
-      {
         "depth": 1,
         "text": "Before",
         "id": "before"
       },
       {
         "depth": 1,
-        "text": "After",
-        "id": "after"
+        "text": "After — the environment block carries over as-is; both variables are honoured",
+        "id": "after-the-environment-block-carries-over-as-is-both-variables-are-honoured"
       },
       {
         "depth": 2,
-        "text": "Environment variable mapping",
-        "id": "environment-variable-mapping"
+        "text": "Environment variables",
+        "id": "environment-variables"
+      },
+      {
+        "depth": 3,
+        "text": "When an alias and its Overcast name disagree",
+        "id": "when-an-alias-and-its-overcast-name-disagree"
       },
       {
         "depth": 3,
@@ -763,36 +744,6 @@ export const DOCS_NAV = [
         "id": "init-hooks"
       },
       {
-        "depth": 3,
-        "text": "Status endpoint",
-        "id": "status-endpoint"
-      },
-      {
-        "depth": 1,
-        "text": "All stages",
-        "id": "all-stages"
-      },
-      {
-        "depth": 1,
-        "text": "Single stage",
-        "id": "single-stage"
-      },
-      {
-        "depth": 3,
-        "text": "awslocal` wrapper",
-        "id": "awslocal-wrapper"
-      },
-      {
-        "depth": 3,
-        "text": "Example docker-compose.yml",
-        "id": "example-docker-compose-yml"
-      },
-      {
-        "depth": 3,
-        "text": "Configuration",
-        "id": "configuration"
-      },
-      {
         "depth": 2,
         "text": "Testcontainers",
         "id": "testcontainers"
@@ -804,18 +755,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "S3: path-style addressing by default",
-        "id": "s3-path-style-addressing-by-default"
+        "text": "S3: path-style by default, virtual-hosted supported",
+        "id": "s3-path-style-by-default-virtual-hosted-supported"
       },
       {
         "depth": 1,
-        "text": "AWS CLI",
-        "id": "aws-cli"
-      },
-      {
-        "depth": 1,
-        "text": "Python boto3",
-        "id": "python-boto3"
+        "text": "boto3: boto3.client('s3', config=Config(s3={'addressing_style': 'path'}))",
+        "id": "boto3-boto3-client-s3-config-config-s3-addressing-style-path"
       },
       {
         "depth": 3,
@@ -829,8 +775,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "Persistence: auto-detected, same as LocalStack's `DATA_DIR` presence",
-        "id": "persistence-auto-detected-same-as-localstack-s-data-dir-presence"
+        "text": "Persistence: auto-detected, like LocalStack's `DATA_DIR` presence",
+        "id": "persistence-auto-detected-like-localstack-s-data-dir-presence"
       },
       {
         "depth": 3,
@@ -839,8 +785,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Coverage differences",
-        "id": "coverage-differences"
+        "text": "Coverage",
+        "id": "coverage"
       },
       {
         "depth": 2,
@@ -854,34 +800,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "SDK returns \"The specified bucket does not exist\" for a bucket I just created",
-        "id": "sdk-returns-the-specified-bucket-does-not-exist-for-a-bucket-i-just-created"
+        "text": "A bucket I just created does not exist",
+        "id": "a-bucket-i-just-created-does-not-exist"
       },
       {
         "depth": 3,
-        "text": "Tests pass with LocalStack but fail with overcast",
-        "id": "tests-pass-with-localstack-but-fail-with-overcast"
-      }
-    ]
-  },
-  {
-    "path": "docs/multi-container-networking.md",
-    "href": "multi-container-networking.md",
-    "title": "Multi-container networking",
-    "description": "Set OVERCAST_HOSTNAME to the Docker Compose service name so client-facing URLs (queue URLs, endpoints) resolve from sibling containers, not just the host.",
-    "section": "Networking",
-    "tags": [
-      "compose",
-      "docker",
-      "docs",
-      "hostname",
-      "networking"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "Multi-container networking",
-        "id": "multi-container-networking"
+        "text": "Tests pass with LocalStack but fail here",
+        "id": "tests-pass-with-localstack-but-fail-here"
       }
     ]
   },
@@ -889,13 +814,16 @@ export const DOCS_NAV = [
     "path": "docs/networking.md",
     "href": "networking.md",
     "title": "Networking and host-based addressing",
-    "description": "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline.",
+    "description": "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, reaching Overcast from sibling containers, and how VPCs isolate emulated compute.",
     "section": "Networking",
     "tags": [
+      "compose",
       "dns",
+      "docker",
       "docs",
       "guide",
-      "networking"
+      "networking",
+      "vpc"
     ],
     "headings": [
       {
@@ -929,9 +857,9 @@ export const DOCS_NAV = [
         "id": "the-localhost-overcast-sh-wildcard-dns-option"
       },
       {
-        "depth": 3,
-        "text": "Example: `docker compose` with a wildcard-DNS hostname",
-        "id": "example-docker-compose-with-a-wildcard-dns-hostname"
+        "depth": 2,
+        "text": "Docker Compose and sibling containers",
+        "id": "docker-compose-and-sibling-containers"
       },
       {
         "depth": 2,
@@ -989,7 +917,7 @@ export const DOCS_NAV = [
     "path": "docs/operation-manifest.md",
     "href": "operation-manifest.md",
     "title": "Overcast Operation Manifest",
-    "description": "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)",
+    "description": "Typed-dispatch operation registrations, per service, plus the services routed by path and method instead. A dispatch-mechanism inventory, not a coverage metric — the service index answers that.",
     "section": "Reference",
     "tags": [
       "docs",
@@ -1005,13 +933,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "acm — 10 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "acm-10-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
+        "text": "acm — 10 ops, modeled: 40, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "acm-10-ops-modeled-40-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "appregistry — 17 ops, modeled: 24, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appregistry-17-ops-modeled-24-protocols-json10-json11-rpcv2cbor"
+        "text": "appregistry — 17 ops, modeled: 24",
+        "id": "appregistry-17-ops-modeled-24"
       },
       {
         "depth": 2,
@@ -1040,18 +968,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cloudwatch-logs-14-ops-modeled-118-protocols-json10-json11-rpcv2cbor"
+        "text": "cloudwatch-logs — 17 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cloudwatch-logs-17-ops-modeled-118-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "cognito — 70 ops, modeled: 129, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cognito-70-ops-modeled-129-protocols-json10-json11-rpcv2cbor"
+        "text": "cognito — 70 ops, modeled: 132, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cognito-70-ops-modeled-132-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "dynamodb — 20 ops, modeled: 57, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "dynamodb-20-ops-modeled-57-protocols-json10-json11-rpcv2cbor"
+        "text": "dynamodb — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "dynamodb-20-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1060,13 +988,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "ec2 — 69 ops, modeled: 772, protocols: QueryXML",
-        "id": "ec2-69-ops-modeled-772-protocols-queryxml"
+        "text": "ec2 — 69 ops, modeled: 801, protocols: QueryXML",
+        "id": "ec2-69-ops-modeled-801-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "ecr — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "ecr-20-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
+        "text": "ecr — 22 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "ecr-22-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1075,13 +1003,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "efs — 28 ops, modeled: 31, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "efs-28-ops-modeled-31-protocols-json10-json11-rpcv2cbor"
+        "text": "efs — 28 ops, modeled: 31",
+        "id": "efs-28-ops-modeled-31"
       },
       {
         "depth": 2,
-        "text": "eks — 50 ops, modeled: 65, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eks-50-ops-modeled-65-protocols-json10-json11-rpcv2cbor"
+        "text": "eks — 50 ops, modeled: 70",
+        "id": "eks-50-ops-modeled-70"
       },
       {
         "depth": 2,
@@ -1090,13 +1018,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "elbv2 — 15 ops, modeled: 51, protocols: QueryXML",
-        "id": "elbv2-15-ops-modeled-51-protocols-queryxml"
+        "text": "elbv2 — 18 ops, modeled: 51, protocols: QueryXML",
+        "id": "elbv2-18-ops-modeled-51-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "eventbridge — 17 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eventbridge-17-ops-modeled-108-protocols-json10-json11-rpcv2cbor"
+        "text": "eventbridge — 18 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "eventbridge-18-ops-modeled-108-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1105,18 +1033,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "glue — 11 ops, modeled: 297, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "glue-11-ops-modeled-297-protocols-json10-json11-rpcv2cbor"
+        "text": "glue — 11 ops, modeled: 299, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "glue-11-ops-modeled-299-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "iam — 74 ops, modeled: 176, protocols: QueryXML",
-        "id": "iam-74-ops-modeled-176-protocols-queryxml"
+        "text": "iam — 74 ops, modeled: 180, protocols: QueryXML",
+        "id": "iam-74-ops-modeled-180-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "kinesis — 20 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "kinesis-20-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
+        "text": "kinesis — 23 ops, modeled: 44, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "kinesis-23-ops-modeled-44-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1140,8 +1068,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "scheduler — 12 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "scheduler-12-ops-modeled-12-protocols-json10-json11-rpcv2cbor"
+        "text": "scheduler — 12 ops, modeled: 12",
+        "id": "scheduler-12-ops-modeled-12"
       },
       {
         "depth": 2,
@@ -1175,8 +1103,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "stepfunctions — 14 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "stepfunctions-14-ops-modeled-37-protocols-json10-json11-rpcv2cbor"
+        "text": "stepfunctions — 15 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "stepfunctions-15-ops-modeled-37-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1257,37 +1185,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Client-perceived latency — where \"overcast feels slow\" actually goes",
         "id": "client-perceived-latency-where-overcast-feels-slow-actually-goes"
-      }
-    ]
-  },
-  {
-    "path": "docs/persistence.md",
-    "href": "persistence.md",
-    "title": "Persistence",
-    "description": "Configure OVERCAST_STATE and per-service storage overrides — which backend auto picks, how to mount a volume, and where the active configuration is visible at runtime.",
-    "section": "Storage \u0026 Performance",
-    "tags": [
-      "configuration",
-      "docs",
-      "persistence",
-      "state",
-      "storage"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "Persistence",
-        "id": "persistence"
-      },
-      {
-        "depth": 2,
-        "text": "Per-service storage overrides",
-        "id": "per-service-storage-overrides"
-      },
-      {
-        "depth": 2,
-        "text": "Where the active configuration is visible",
-        "id": "where-the-active-configuration-is-visible"
       }
     ]
   },
@@ -1457,7 +1354,7 @@ export const DOCS_NAV = [
     "path": "docs/services/acm.md",
     "href": "services/acm.md",
     "title": "ACM — AWS Certificate Manager",
-    "description": "AWS Certificate Manager uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix CertificateManager..",
+    "description": "Certificate records for stacks that need an ARN. A requested certificate is ISSUED immediately — no DNS or email validation, and no key material is generated.",
     "section": "Service Reference",
     "tags": [
       "acm",
@@ -1475,8 +1372,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -2392,7 +2299,7 @@ export const DOCS_NAV = [
     "path": "docs/services/bedrock.md",
     "href": "services/bedrock.md",
     "title": "Bedrock — Amazon Bedrock Runtime",
-    "description": "Amazon Bedrock Runtime uses the REST JSON protocol, served at AWS's own /model/{modelId}/ inference paths. No model is invoked.",
+    "description": "Bedrock Runtime answers Converse and InvokeModel from a canned response. No model is emulated, so token counts and latency are zero and the text is fixed.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2409,8 +2316,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -3272,7 +3189,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cognito.md",
     "href": "services/cognito.md",
     "title": "Cognito — Amazon Cognito User Pools",
-    "description": "Cognito User Pools (Identity Provider) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix...",
+    "description": "User pools with real RS256 JWTs, a JWKS endpoint, OIDC discovery, a browser hosted-UI, TOTP and WebAuthn MFA, and Lambda triggers. Identity pools are not emulated.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -3290,68 +3207,33 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "User Pool operations",
-        "id": "user-pool-operations"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "User Pool Client operations",
-        "id": "user-pool-client-operations"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "User operations",
-        "id": "user-operations"
+        "text": "Tokens and discovery",
+        "id": "tokens-and-discovery"
       },
       {
         "depth": 2,
-        "text": "Auth / Token operations",
-        "id": "auth-token-operations"
+        "text": "Managed login",
+        "id": "managed-login"
       },
       {
         "depth": 2,
-        "text": "Group operations",
-        "id": "group-operations"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "User Pool Domain operations",
-        "id": "user-pool-domain-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
-      },
-      {
-        "depth": 2,
-        "text": "User import (emulator-only)",
-        "id": "user-import-emulator-only"
-      },
-      {
-        "depth": 3,
-        "text": "CLI",
-        "id": "cli"
-      },
-      {
-        "depth": 3,
-        "text": "HTTP endpoint",
-        "id": "http-endpoint"
-      },
-      {
-        "depth": 4,
-        "text": "Response",
-        "id": "response"
-      },
-      {
-        "depth": 4,
-        "text": "Status mapping",
-        "id": "status-mapping"
-      },
-      {
-        "depth": 4,
-        "text": "Behaviour",
-        "id": "behaviour"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -3362,6 +3244,86 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cognito/examples.md",
+    "href": "services/cognito/examples.md",
+    "title": "Cognito examples",
+    "description": "Import users from a real AWS user pool into a local one, by CLI or over HTTP, including the status mapping and what does not come across.",
+    "section": "Service Reference",
+    "tags": [
+      "cognito",
+      "docs",
+      "examples",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Cognito examples",
+        "id": "cognito-examples"
+      },
+      {
+        "depth": 2,
+        "text": "Import users from a real AWS pool",
+        "id": "import-users-from-a-real-aws-pool"
+      },
+      {
+        "depth": 3,
+        "text": "Status mapping",
+        "id": "status-mapping"
+      },
+      {
+        "depth": 3,
+        "text": "What comes across, and what does not",
+        "id": "what-comes-across-and-what-does-not"
+      },
+      {
+        "depth": 2,
+        "text": "Import over HTTP",
+        "id": "import-over-http"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cognito/limitations.md",
+    "href": "services/cognito/limitations.md",
+    "title": "Cognito limitations",
+    "description": "Which Lambda triggers fire on which call and which do not, what the Smithy RPC v2 path misses, and the emulator-only routes that have no AWS counterpart.",
+    "section": "Service Reference",
+    "tags": [
+      "cognito",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Cognito limitations",
+        "id": "cognito-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Lambda triggers",
+        "id": "lambda-triggers"
+      },
+      {
+        "depth": 2,
+        "text": "Wire protocols",
+        "id": "wire-protocols"
+      },
+      {
+        "depth": 2,
+        "text": "Emulator-only routes",
+        "id": "emulator-only-routes"
+      },
+      {
+        "depth": 2,
+        "text": "Everything else",
+        "id": "everything-else"
       }
     ]
   },
@@ -4725,7 +4687,7 @@ export const DOCS_NAV = [
     "path": "docs/services/iam.md",
     "href": "services/iam.md",
     "title": "IAM — Identity and Access Management",
-    "description": "IAM uses the AWS Query protocol (POST / with form-encoded body). Actions are dispatched by the Action parameter. Overcast emulates IAM resource management (users, roles, groups,...",
+    "description": "Users, roles, groups, policies and instance profiles for IaC compatibility, plus a real policy simulator. Enforcement is off by default and covers identity policies only.",
     "section": "Service Reference",
     "tags": [
       "access",
@@ -4743,28 +4705,28 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Deletes enforce dependencies",
-        "id": "deletes-enforce-dependencies"
-      },
-      {
-        "depth": 2,
-        "text": "Policy simulation",
-        "id": "policy-simulation"
-      },
-      {
-        "depth": 2,
-        "text": "Permissions boundaries",
-        "id": "permissions-boundaries"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
         "text": "Request-time enforcement (opt-in)",
         "id": "request-time-enforcement-opt-in"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4775,6 +4737,51 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/iam/limitations.md",
+    "href": "services/iam/limitations.md",
+    "title": "IAM limitations",
+    "description": "What the IAM policy evaluator covers and what it refuses to guess at, how permissions boundaries behave, and what request-time enforcement does not see.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "iam",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "IAM limitations",
+        "id": "iam-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "What the evaluator covers",
+        "id": "what-the-evaluator-covers"
+      },
+      {
+        "depth": 2,
+        "text": "What it will not guess",
+        "id": "what-it-will-not-guess"
+      },
+      {
+        "depth": 2,
+        "text": "Permissions boundaries",
+        "id": "permissions-boundaries"
+      },
+      {
+        "depth": 2,
+        "text": "What enforcement does not see",
+        "id": "what-enforcement-does-not-see"
+      },
+      {
+        "depth": 2,
+        "text": "Entities that are not modelled",
+        "id": "entities-that-are-not-modelled"
       }
     ]
   },
@@ -4904,6 +4911,41 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/services/iam/troubleshooting.md",
+    "href": "services/iam/troubleshooting.md",
+    "title": "IAM troubleshooting",
+    "description": "Symptom, cause and fix for the IAM errors that stop a local run: DeleteConflict on teardown, DELETE_FAILED stacks, and AccessDenied once enforcement is on.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "iam",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "IAM troubleshooting",
+        "id": "iam-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "DeleteConflict` (409) deleting a user, role, group or policy",
+        "id": "deleteconflict-409-deleting-a-user-role-group-or-policy"
+      },
+      {
+        "depth": 2,
+        "text": "DELETE_FAILED` tearing down a CloudFormation stack",
+        "id": "delete-failed-tearing-down-a-cloudformation-stack"
+      },
+      {
+        "depth": 2,
+        "text": "AccessDenied` after switching enforcement on",
+        "id": "accessdenied-after-switching-enforcement-on"
+      }
+    ]
+  },
+  {
     "path": "docs/services/kinesis.md",
     "href": "services/kinesis.md",
     "title": "Kinesis — Amazon Kinesis Data Streams",
@@ -4974,7 +5016,7 @@ export const DOCS_NAV = [
     "path": "docs/services/kms.md",
     "href": "services/kms.md",
     "title": "KMS — Key Management Service",
-    "description": "KMS accepts AWS JSON 1.1 requests at POST / with X-Amz-Target: TrentService.\u003cOperationName\u003e and Smithy RPC v2 CBOR requests at /service/kms/operation/\u003cOperationName\u003e with...",
+    "description": "Real symmetric and asymmetric cryptography — AES-256-GCM encrypt/decrypt, data keys, RSA sign/verify and HMAC — over keys that live only in this emulator.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -4989,6 +5031,21 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "KMS — Key Management Service",
         "id": "kms-key-management-service"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -5548,7 +5605,7 @@ export const DOCS_NAV = [
     "path": "docs/services/organizations.md",
     "href": "services/organizations.md",
     "title": "Organizations — AWS Organizations",
-    "description": "Policies are stored and returned faithfully; DescribeOrganization is a fixed stub, and nothing is ever attached or enforced.",
+    "description": "Policy CRUD and tagging, stored and returned faithfully. DescribeOrganization is a fixed stub; nothing is ever attached, and no policy takes effect.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -5564,13 +5621,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6301,53 +6363,41 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/secretsmanager.md",
     "href": "services/secretsmanager.md",
-    "title": "Secrets Manager — endpoint support",
-    "description": "Generated for Overcast. See also: AWS Secrets Manager API Reference",
+    "title": "Secrets Manager — AWS Secrets Manager",
+    "description": "Versioned secrets with staging labels, and rotation that really invokes your rotation Lambda through all four steps. Values are stored in plaintext.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "manager",
       "secrets",
       "secretsmanager",
-      "services",
-      "support"
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "Secrets Manager — endpoint support",
-        "id": "secrets-manager-endpoint-support"
+        "text": "Secrets Manager — AWS Secrets Manager",
+        "id": "secrets-manager-aws-secrets-manager"
       },
       {
         "depth": 2,
-        "text": "Protocol",
-        "id": "protocol"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
-      },
-      {
-        "depth": 3,
         "text": "Rotation",
         "id": "rotation"
       },
       {
-        "depth": 3,
-        "text": "Resource policies",
-        "id": "resource-policies"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6420,7 +6470,7 @@ export const DOCS_NAV = [
     "path": "docs/services/ses.md",
     "href": "services/ses.md",
     "title": "SES — Simple Email Service",
-    "description": "SES supports both the v1 Query protocol (form-encoded POST with Action field, XML responses) and the v2 REST-JSON protocol (path-based routing, JSON request/response bodies).",
+    "description": "Send mail with the v1 or v2 API and read it in the console's Inbox. Nothing leaves the machine, and every identity is verified the moment it is created.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6438,13 +6488,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Web console",
-        "id": "web-console"
+        "text": "What lands in the Inbox",
+        "id": "what-lands-in-the-inbox"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6532,7 +6592,7 @@ export const DOCS_NAV = [
     "path": "docs/services/shield.md",
     "href": "services/shield.md",
     "title": "Shield — AWS Shield",
-    "description": "AWS Shield (DDoS protection) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSShield_20160616..",
+    "description": "Protection records for stacks that declare AWS::Shield resources. Protections are stored and returned faithfully; no traffic is inspected, filtered or mitigated.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -6548,8 +6608,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6612,7 +6682,7 @@ export const DOCS_NAV = [
     "path": "docs/services/sns.md",
     "href": "services/sns.md",
     "title": "SNS — Simple Notification Service",
-    "description": "SNS uses a query-string or JSON API. Topics are identified by ARN: arn:aws:sns:us-east-1:000000000000:\u003ctopic-name\u003e",
+    "description": "Fan-out to SQS, Lambda, email, SMS and webhooks, with filter policies and subscription dead-letter queues. Subscriptions confirm themselves; FIFO ordering is not emulated.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6630,8 +6700,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -6642,6 +6727,51 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/sns/limitations.md",
+    "href": "services/sns/limitations.md",
+    "title": "SNS limitations",
+    "description": "Every way Overcast's SNS diverges from AWS: subscription confirmation, FIFO topics, delivery failure semantics, and what CloudFormation does with a topic.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "limitations",
+      "services",
+      "sns"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "SNS limitations",
+        "id": "sns-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Subscriptions",
+        "id": "subscriptions"
+      },
+      {
+        "depth": 2,
+        "text": "FIFO topics",
+        "id": "fifo-topics"
+      },
+      {
+        "depth": 2,
+        "text": "Delivery to Lambda",
+        "id": "delivery-to-lambda"
+      },
+      {
+        "depth": 2,
+        "text": "What happens to a failed delivery",
+        "id": "what-happens-to-a-failed-delivery"
+      },
+      {
+        "depth": 2,
+        "text": "CloudFormation",
+        "id": "cloudformation"
       }
     ]
   },
@@ -6704,7 +6834,7 @@ export const DOCS_NAV = [
     "path": "docs/services/sqs.md",
     "href": "services/sqs.md",
     "title": "SQS — Simple Queue Service",
-    "description": "SQS supports AWS JSON 1.0, AWS Query, and Smithy RPC v2 CBOR. JSON and Query requests share the root endpoint; the action is identified by the Action query parameter or the...",
+    "description": "Standard and FIFO queues with long polling, visibility timeouts, dead-letter redrive and CloudWatch metrics. Queue URLs are minted per request, on the origin you called.",
     "section": "Service Reference",
     "tags": [
       "docs",
@@ -6722,13 +6852,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
         "text": "Queue URLs and endpoint resolution",
         "id": "queue-urls-and-endpoint-resolution"
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6795,43 +6935,37 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/ssm.md",
     "href": "services/ssm.md",
-    "title": "SSM Parameter Store — endpoint support",
-    "description": "Generated for Overcast. See also: AWS SSM Parameter Store API Reference",
+    "title": "SSM Parameter Store — AWS Systems Manager",
+    "description": "Parameter Store only: put, get, path queries, history and tags. SecureString values are masked without WithDecryption but are never actually encrypted.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "parameter",
       "services",
       "ssm",
       "store",
-      "support"
+      "systems-manager"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "SSM Parameter Store — endpoint support",
-        "id": "ssm-parameter-store-endpoint-support"
+        "text": "SSM Parameter Store — AWS Systems Manager",
+        "id": "ssm-parameter-store-aws-systems-manager"
       },
       {
         "depth": 2,
-        "text": "Protocol",
-        "id": "protocol"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -6986,36 +7120,36 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/sts.md",
     "href": "services/sts.md",
-    "title": "STS — endpoint support",
-    "description": "Generated for Overcast. See also: AWS STS API Reference",
+    "title": "STS — Security Token Service",
+    "description": "Temporary credentials on demand: every call mints fresh ASIA-prefixed fake credentials without verifying anything. AssumeRole records the session for opt-in IAM enforcement.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
+      "security",
       "services",
       "sts",
-      "support"
+      "token"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "STS — endpoint support",
-        "id": "sts-endpoint-support"
+        "text": "STS — Security Token Service",
+        "id": "sts-security-token-service"
       },
       {
         "depth": 2,
-        "text": "Endpoint details",
-        "id": "endpoint-details"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "SDK compatibility",
-        "id": "sdk-compatibility"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -7149,7 +7283,7 @@ export const DOCS_NAV = [
     "path": "docs/services/waf.md",
     "href": "services/waf.md",
     "title": "WAF — AWS WAF v2",
-    "description": "Metadata-only AWS WAF v2 Web ACL CRUD for SDK and CloudFormation workflows; rules are stored but are not evaluated or enforced.",
+    "description": "Metadata-only WAFv2 Web ACL CRUD for SDK and CloudFormation workflows. Rules are stored and returned verbatim; no request is ever evaluated against them.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -7165,13 +7299,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Web UI and system map",
-        "id": "web-ui-and-system-map"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -7223,12 +7362,13 @@ export const DOCS_NAV = [
   {
     "path": "docs/storage.md",
     "href": "storage.md",
-    "title": "Storage backends",
-    "description": "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with.",
+    "title": "Storage and persistence",
+    "description": "Pick and configure a storage backend: what auto resolves to, what survives a restart on each of memory/wal/persistent/hybrid, per-service overrides, and which backends each published artifact ships with.",
     "section": "Storage \u0026 Performance",
     "tags": [
       "docs",
       "durability",
+      "persistence",
       "slim",
       "state",
       "storage"
@@ -7236,8 +7376,8 @@ export const DOCS_NAV = [
     "headings": [
       {
         "depth": 1,
-        "text": "Storage backends",
-        "id": "storage-backends"
+        "text": "Storage and persistence",
+        "id": "storage-and-persistence"
       },
       {
         "depth": 2,
@@ -7256,13 +7396,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What survives a restart or crash, per backend",
-        "id": "what-survives-a-restart-or-crash-per-backend"
+        "text": "What survives a restart or crash",
+        "id": "what-survives-a-restart-or-crash"
       },
       {
         "depth": 2,
-        "text": "Choosing a backend",
-        "id": "choosing-a-backend"
+        "text": "Per-service storage overrides",
+        "id": "per-service-storage-overrides"
+      },
+      {
+        "depth": 2,
+        "text": "Where the active configuration is visible",
+        "id": "where-the-active-configuration-is-visible"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
       }
     ]
   },
@@ -7346,7 +7496,7 @@ export const DOCS_NAV = [
     "path": "docs/troubleshooting.md",
     "href": "troubleshooting.md",
     "title": "Troubleshooting",
-    "description": "Startup preflight warnings, what each one means, and the fix — Overcast logs one actionable WARN the moment a symptom appears, never a wall of output on a healthy setup.",
+    "description": "Start here when something is wrong: a symptom-to-guide index, then every startup warning and runtime advisory Overcast raises, with what each one means and the fix.",
     "section": "Troubleshooting",
     "tags": [
       "debugging",
@@ -7363,8 +7513,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Startup preflight",
-        "id": "startup-preflight"
+        "text": "Startup warnings",
+        "id": "startup-warnings"
+      },
+      {
+        "depth": 2,
+        "text": "Runtime advisories",
+        "id": "runtime-advisories"
       }
     ]
   }

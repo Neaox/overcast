@@ -1,6 +1,6 @@
 ---
 title: "IAM — Identity and Access Management"
-description: "IAM uses the AWS Query protocol (POST / with form-encoded body). Actions are dispatched by the Action parameter. Overcast emulates IAM resource management (users, roles, groups,..."
+description: "Users, roles, groups, policies and instance profiles for IaC compatibility, plus a real policy simulator. Enforcement is off by default and covers identity policies only."
 section: "Service Reference"
 tags:
   - access
@@ -13,194 +13,99 @@ tags:
 
 # IAM — Identity and Access Management
 
-> AWS docs: [IAM API Reference](https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)
+Users, roles, groups, policies and instance profiles, so CDK and Terraform
+stacks provision. Nothing is enforced unless you switch enforcement on.
 
-IAM uses the AWS Query protocol (`POST /` with form-encoded body). Actions are dispatched by
-the `Action` parameter. Overcast emulates IAM resource management (users, roles, groups,
-policies, instance profiles) for CDK/IaC compatibility — **credentials are accepted but not
-validated**.
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws iam create-role --role-name app \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+
+aws iam attach-role-policy --role-name app \
+  --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+```
 
 > [!CAUTION]
-> **Policies are not enforced by default.** IAM resources are created and stored, and every
-> API call succeeds regardless of attached policies unless you opt in to enforcement with
-> `OVERCAST_ENFORCE_IAM` (see below). Overcast is not a security boundary: credentials are
-> accepted but never verified, and the evaluator covers a subset of the IAM policy language.
+> **Overcast is not a security boundary.** Credentials are accepted but never
+> verified, and every call succeeds regardless of attached policies unless you
+> opt in to enforcement below.
 
----
+## What works
 
-## Notes
+| Area              | Behaviour                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| Entities          | Users, roles, groups, managed and inline policies, instance profiles, access keys, tags on all of them |
+| Group membership  | `GetGroup` resolves members into `Users`, paginated with `Marker` / `MaxItems` (default 100, cap 1000) |
+| Permissions boundaries | Attached at create or later, reported as `AttachedPermissionsBoundary`, and read by both the simulator and enforcement |
+| Policy simulation | `SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation and return AWS's `allowed` / `explicitDeny` / `implicitDeny` vocabulary |
+| Delete safety     | `DeleteUser`, `DeleteRole`, `DeleteGroup` and `DeletePolicy` refuse with `DeleteConflict` (409) while dependencies remain |
+| Account details   | `GetAccountAuthorizationDetails`                                                              |
 
-- **Policy versions are counters, not history.** `CreatePolicyVersion` with `SetAsDefault=true`
-  replaces the operative document and bumps `DefaultVersionId` (which is what CloudFormation's
-  `AWS::IAM::ManagedPolicy` update dispatches), but superseded documents are not retained —
-  there is no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion`.
-- **`GetGroup` returns the group's members.** Membership recorded by `AddUserToGroup` /
-  `RemoveUserFromGroup` is resolved into the response's `Users` collection, paginated with
-  `Marker` / `MaxItems` (AWS's documented default of 100 and cap of 1000). A membership entry
-  whose user record has since gone, or cannot be decoded, is skipped rather than failing the
-  call — one bad stored record cannot make a group unreadable. A `Marker` that does not decode
-  is rejected with `InvalidInput` instead of silently restarting at the first page.
-- **Event bus integration.** User, role, policy and group lifecycle events are published to the
-  internal event bus for topology/UI updates.
-
-## Deletes enforce dependencies
-
-`DeleteUser`, `DeleteRole`, `DeleteGroup` and `DeletePolicy` refuse with AWS's `DeleteConflict`
-(HTTP 409) while the entity still has dependencies, and the message names what to clear — the
-same behaviour Terraform, CDK, `aws-nuke` and eksctl already expect from real IAM.
-
-| Delete         | Refused while                     | Message                                                            |
-| -------------- | --------------------------------- | ------------------------------------------------------------------ |
-| `DeleteUser`   | access keys exist                 | `Cannot delete entity, must delete access keys first.`             |
-|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
-|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
-|                | the user is in a group            | `Cannot delete entity, must remove users from group first.`        |
-| `DeleteRole`   | the role is in an instance profile | `Cannot delete entity, must remove roles from instance profile first.` |
-|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
-|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
-| `DeleteGroup`  | the group has members             | `Cannot delete entity, must remove users from group first.`        |
-|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
-|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
-| `DeletePolicy` | attached to any user, role or group, or used as one of their permissions boundaries | `Cannot delete a policy attached to entities.` |
-
-A non-existent entity is still `NoSuchEntity` (404): existence is checked before dependencies.
-When several dependencies block at once the checks run in the order listed above, which is the
-order AWS's own API Reference lists the prerequisites in; AWS does not document which one wins,
-so clearing them top to bottom is what a caller should expect.
-
-Overcast does not model login profiles, signing certificates, SSH keys, Git credentials or MFA
-devices, so the AWS conflicts for those cannot arise here.
-
-> [!NOTE]
-> Local teardown scripts that used to delete an IAM entity without unwinding it first will now
-> get a 409. Remove the dependency through the modeled API — `DeleteAccessKey`,
-> `DeleteUserPolicy`, `DetachUserPolicy`, `RemoveUserFromGroup`,
-> `RemoveRoleFromInstanceProfile`, `DeleteRolePolicy`, `DetachRolePolicy`,
-> `DeleteGroupPolicy`, `DetachGroupPolicy` — exactly as you would against AWS. CloudFormation
-> stack teardown handles the dependencies a stack owns itself: `AWS::IAM::Policy` removes its
-> inline document from the entities it named, roles, users, groups and managed policies detach
-> the `ManagedPolicyArns` / `Policies` / `Groups` / attachment-list relationships their own
-> template properties declared, and reverse dependency order puts instance profiles before
-> their roles.
-
-A `DeleteConflict` a stack cannot clear for itself — something outside the stack attached a
-policy, minted an access key, or added the user to a group — fails the stack. `DeleteStack`
-reports `DELETE_FAILED` with IAM's own message on the resource's event and status reason, and
-leaves the entity standing, as real CloudFormation does. Clear the dependency and delete the
-stack again. See [CloudFormation § Teardown failure](./cloudformation.md).
-
-## Policy simulation
-
-`SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation of the IAM policy
-language and return AWS's decision vocabulary — `allowed`, `explicitDeny`, `implicitDeny` —
-with `MatchedStatements` naming the policy and statement that decided it, and
-`MissingContextValues` naming condition keys the call did not supply. Simulation reads
-nothing else and changes nothing: it is the "what would happen" view, and it is available
-whether or not enforcement is switched on.
-
-Each `MatchedStatements` entry carries `SourcePolicyId`/`SourcePolicyType` plus AWS's
-`StartPosition`/`EndPosition` (`Line`/`Column`), which point at the deciding statement's
-opening `{` and closing `}` in the exact document text supplied on the call (a
-`PolicyInputList` entry, an inline/managed policy document, or `ResourcePolicy`). This is
-what lets a caller tell two statements apart when they come from the *same* document — for
-example an `Allow` and a `Deny` in one policy — which `SourcePolicyId`/`SourcePolicyType`
-alone cannot do. The positions are Overcast's own byte-accurate computation against the
-document text it was given; they are not copied from any upstream source, and a caller
-should not expect them to match what real AWS would report for the same document down to
-the byte.
-
-What the evaluator covers:
-
-- `Effect`, `Action`/`NotAction`, `Resource`/`NotResource`, with `*` and `?` wildcards.
-  Actions match case-insensitively, as on AWS; resource ARNs match case-sensitively.
-- Explicit deny wins, then allow, otherwise the default implicit deny.
-- `Condition` operators: the `String*`, `Numeric*`, `Date*`, `Bool`, `IpAddress`/`NotIpAddress`,
-  `Arn*` and `Null` families, including the `…IfExists` suffix.
-- Policy variables (`${aws:username}`, `${aws:userid}`, …) in resources and condition values.
-- Resource-based policies passed as `ResourcePolicy`, including `Principal`/`NotPrincipal`
-  matching. Within the single account Overcast emulates, an allow in either the identity
-  policies or the resource policy is sufficient, and a deny in either is final.
-- Permissions boundaries — both the one attached to the simulated principal and one supplied
-  as `PermissionsBoundaryPolicyInputList` — reported through
-  `PermissionsBoundaryDecisionDetail`. See below.
-
-What it does not cover, and says so rather than guessing: a condition operator or principal
-type it does not implement makes the call fail with AWS's `PolicyEvaluation` error naming the
-construct, instead of resolving to an allow or a deny. Service control policies, session
-policies, and the `ForAllValues`/`ForAnyValue` set operators are not implemented. A policy
-document that cannot be parsed is rejected with `InvalidInput`.
-
-Permissions boundaries granted through a `ResourcePolicy` are **not** exempted: on AWS a
-resource-based policy that names an IAM user principal directly is allowed to bypass that
-user's boundary, and Overcast applies the boundary to the combined identity/resource decision
-instead. That divergence only shows up when a simulation supplies a `ResourcePolicy` *and* the
-principal carries a boundary.
-
-## Permissions boundaries
-
-`PutUserPermissionsBoundary` / `PutRolePermissionsBoundary` attach a managed policy as a user's
-or role's permissions boundary, and `CreateUser` / `CreateRole` accept one directly through
-their `PermissionsBoundary` parameter (which is what `AWS::IAM::User` passes from a template).
-`GetUser`, `GetRole`, `ListUsers`, `ListRoles` and `GetAccountAuthorizationDetails` report it as
-AWS's `AttachedPermissionsBoundary`. A boundary naming a policy that does not exist is refused
-with `NoSuchEntity`, and `DeletePolicy` refuses with `DeleteConflict` while a policy is still
-bounding an entity.
-
-A boundary grants nothing on its own: it caps what the entity's identity policies can grant, so
-the effective permissions are the **intersection** of the two, and an explicit deny in either is
-final. Both `SimulatePrincipalPolicy` and opt-in request-time enforcement read the stored
-boundary, so a boundary attached out of band takes effect on the very next call — attaching,
-replacing or removing one invalidates the enforcement middleware's compiled-policy cache, as any
-other policy change does.
-
-Supplying `PermissionsBoundaryPolicyInputList` to `SimulatePrincipalPolicy` uses that boundary
-*instead of* the stored one: AWS allows only one boundary per simulation, and asking "what would
-this boundary do" is the reason to supply it.
-
-A boundary that is attached but cannot be read — its managed policy has been deleted out of
-band, its stored record does not decode, or its document is not a valid policy — allows nothing.
-Reading it as absent would grant exactly the permissions it was attached to withhold, and
-failing the whole call would let one corrupt record break an otherwise healthy principal. The
-reason is logged at warn level.
+Simulation reads nothing else and changes nothing, and it works whether or not
+enforcement is switched on. `MatchedStatements` names the deciding policy and
+statement, with `StartPosition` / `EndPosition` pointing at that statement's
+braces in the exact document text supplied — which is what tells two statements
+in the *same* document apart.
 
 ## Request-time enforcement (opt-in)
 
-Set `OVERCAST_ENFORCE_IAM=true` to have every request evaluated against the calling
-principal's policies before it reaches the service handler. **It is off by default, and with
-it off the evaluator reads nothing and decides nothing** — behaviour is exactly as it was.
+Set `OVERCAST_ENFORCE_IAM=true` and every request is evaluated against the
+calling principal's policies before it reaches the service handler. **It is off
+by default, and with it off the evaluator reads nothing and decides nothing.**
 
 When it is on:
 
-- The caller is resolved from the SigV4 access key to an IAM user (its inline, attached and
-  group policies) or to a role assumed through STS (its inline and attached policies), plus
-  that entity's permissions boundary if it has one.
-- A request the policies do not allow is refused with the calling service's own
-  `AccessDenied`-shaped error, in that service's wire format.
-- The action evaluated is `<prefix>:<Operation>`, where the operation is the one the request
-  invokes and the prefix is **the IAM action prefix AWS uses for that service** — so write
-  policies with the names the AWS documentation gives. Most services are called the same
-  thing throughout, but ten are not: MSK authorizes as `kafka:`, Step Functions as
-  `states:`, EFS as `elasticfilesystem:`, OpenSearch as `es:`, ELBv2 as
-  `elasticloadbalancing:`, Service Catalog AppRegistry as `servicecatalog:`, Cognito user
-  pools as `cognito-idp:`, and WAF as `wafv2:` — each a distinct AWS signing name reused as
-  the action prefix. DynamoDB Streams and AppConfig Data are the other two, and differ in
-  kind rather than degree: AWS gives neither its own IAM action namespace at all, so
-  `dynamodb:GetRecords`/`dynamodb:DescribeStream`/`dynamodb:GetShardIterator`/`dynamodb:ListStreams`
-  authorize DynamoDB Streams requests under DynamoDB's own prefix, and `appconfig:` authorizes
-  AppConfig Data's `GetLatestConfiguration`/`StartConfigurationSession` under AppConfig's.
-- Enforcement is **fail-closed**: an unsigned request, a policy that cannot be parsed, or a
-  construct the evaluator does not implement all deny. The reason is logged at debug level.
-- The one exception is a request whose operation cannot be named, which is **not** gated. S3
-  reaches this routinely, because its sub-resource operations (`?tagging`, `?restore`,
-  `?legal-hold`, …) are identified by query parameters rather than by path. Denying them
-  would break ordinary S3 traffic the moment enforcement was switched on. The gap is logged
-  at debug level rather than passing silently.
-- Resource-based policies (S3 bucket policies, Lambda/SQS/SNS policies) are **not** consulted
-  at request time yet — only identity policies are. The simulator accepts a resource policy
-  explicitly, which is the way to test one today.
+- The caller is resolved from the SigV4 access key to an IAM user (its inline,
+  attached and group policies) or to a role assumed through STS, plus that
+  entity's permissions boundary.
+- A refused request gets the calling service's own `AccessDenied`-shaped error,
+  in that service's wire format.
+- **Identity policies only.** Resource-based policies — S3 bucket policies,
+  Lambda/SQS/SNS policies — are not consulted. Pass one to the simulator
+  explicitly to test it.
+- Enforcement is **fail-closed**: an unsigned request, an unparseable policy, or
+  a construct the evaluator does not implement all deny.
 
-Enforcement decides only what the emulator's own evaluator can see. It is a development aid
-for catching missing permissions early, not a security control.
+The action evaluated is `<prefix>:<Operation>`, where the prefix is the IAM
+action prefix AWS itself uses — so write policies with the names the AWS
+documentation gives. Ten services differ from their Overcast service key:
+
+| Service            | IAM action prefix       |
+| ------------------ | ------------------------- |
+| MSK                | `kafka:`                  |
+| Step Functions     | `states:`                 |
+| EFS                | `elasticfilesystem:`      |
+| OpenSearch         | `es:`                     |
+| ELBv2              | `elasticloadbalancing:`   |
+| AppRegistry        | `servicecatalog:`         |
+| Cognito user pools | `cognito-idp:`            |
+| WAF                | `wafv2:`                  |
+| DynamoDB Streams   | `dynamodb:`               |
+| AppConfig Data     | `appconfig:`              |
+
+## Differences from AWS
+
+| Behaviour             | On AWS                                          | Here                                                       |
+| --------------------- | ----------------------------------------------- | ------------------------------------------------------------ |
+| Enforcement           | Always on                                       | Off unless `OVERCAST_ENFORCE_IAM=true`; identity policies only |
+| Credentials           | Verified against the signing key                | Accepted without verification                               |
+| Policy versions       | Every version is retained and retrievable       | A counter only — no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion` |
+| Login profiles, MFA devices, SSH keys, signing certificates, Git credentials | Full API | Not modelled              |
+
+The policy language the evaluator does and does not cover is in
+[Limitations](iam/limitations.md).
+
+## Gotchas
+
+> [!WARNING]
+> A teardown script that deletes an IAM entity without unwinding it first now
+> gets a `409 DeleteConflict`, as it would against real AWS. See
+> [Troubleshooting](iam/troubleshooting.md).
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -213,5 +118,8 @@ Per-operation status, notes and AWS API links: [IAM operations](iam/operations.m
 
 ## Related
 
+- [IAM limitations](iam/limitations.md) · [IAM troubleshooting](iam/troubleshooting.md)
+- [AWS API reference](https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)
+- [STS](sts.md) — where an assumed-role session comes from
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

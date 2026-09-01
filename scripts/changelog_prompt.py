@@ -204,7 +204,7 @@ def describe(text: str) -> str:
         kind = (
             "migration note"
             if text.strip().lower().startswith(changelog.MIGRATION_PREFIX)
-            else "continuation"
+            else "detail line"
         )
         return f"{kind} for the entry above"
     entries, errors = changelog.parse_entries(text, require_migration=False)

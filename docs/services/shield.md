@@ -1,6 +1,6 @@
 ---
 title: "Shield — AWS Shield"
-description: "AWS Shield (DDoS protection) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSShield_20160616.."
+description: "Protection records for stacks that declare AWS::Shield resources. Protections are stored and returned faithfully; no traffic is inspected, filtered or mitigated."
 section: "Service Reference"
 tags:
   - aws
@@ -11,17 +11,38 @@ tags:
 
 # Shield — AWS Shield
 
-AWS Shield (DDoS protection) uses the `application/x-amz-json-1.1` protocol.
-Operations are identified by the `X-Amz-Target` header with the prefix
-`AWSShield_20160616.`.
+Protection records, so a stack that declares Shield resources provisions
+cleanly. No traffic is ever inspected or mitigated.
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- Target dispatch header: `X-Amz-Target: AWSShield_20160616.<Operation>`.
-- Unrecognized operations return a JSON `501 Not Implemented` error response.
-- Protection resources are stored but Shield Advanced features (e.g. DDoS cost protection, response team) are not emulated.
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws shield create-protection \
+  --name web-alb \
+  --resource-arn arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/web/abc
+
+aws shield list-protections
+```
+
+## What works
+
+| Area         | Behaviour                                                                 |
+| ------------ | ------------------------------------------------------------------------- |
+| Protections  | `CreateProtection`, `DescribeProtection` (by ID or resource ARN), `ListProtections`, `DeleteProtection` |
+| Subscription | `DescribeSubscription` returns a minimal active subscription              |
+| Tags         | `TagResource`, `UntagResource`, `ListTagsForResource` on a protection     |
+
+## Differences from AWS
+
+| Behaviour             | On AWS                                          | Here                                       |
+| --------------------- | ----------------------------------------------- | ------------------------------------------ |
+| DDoS mitigation       | Traffic is inspected and attacks absorbed        | Nothing is inspected; a protection is a record |
+| Attack reporting      | `DescribeAttack`, `ListAttacks`, attack metrics  | Not implemented — `501 Not Implemented`     |
+| Shield Advanced extras | Response team access, cost protection, proactive engagement | Not modelled                    |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -35,5 +56,6 @@ Per-operation status, notes and AWS API links: [Shield operations](shield/operat
 ## Related
 
 - [AWS API reference](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/Welcome.html)
+- [WAF](waf.md) — the other half of the same control plane
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

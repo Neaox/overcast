@@ -26,22 +26,19 @@ top to bottom.
   LAMBDA_NETWORK/ECS_NETWORK/RDS_NETWORK/ELASTICACHE_NETWORK/MSK_NETWORK/
   EKS_NETWORK/EFS_NETWORK, replaced by OVERCAST_NETWORK).
 -->
-The web console's `OVERCAST_UI_PORT` is documented under
-[Web management console](./README.md#web-management-console); everything the
-Go emulator itself reads is below.
-
 | Variable                         | Default                | Description                                                                          |
 | --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
-| `OVERCAST_LISTEN`                | `0.0.0.0` containerised, `127.0.0.1` native (see [#761](https://github.com/overcast-sh/overcast/issues/761)) | Hostname or IP to bind the AWS API to (LocalStack's `GATEWAY_LISTEN` idiom — not the same thing as `OVERCAST_HOSTNAME` below). Accepts a comma-separated list to bind several, e.g. `127.0.0.1,172.17.0.1` to be reachable from this machine and from its containers over the Docker bridge without being on any network the machine is attached to. A wildcard cannot be combined with a specific address. The web console binds the first address only. An explicit value always wins over the default, in either direction (e.g. `OVERCAST_LISTEN=0.0.0.0` restores the old native reach from a VM or another machine). Renamed from `OVERCAST_HOST`, which has been removed: a leftover `OVERCAST_HOST` fails at startup naming this variable instead of being silently ignored |
-| `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md). LocalStack's `LOCALSTACK_HOST` is accepted as a compatibility alias (see the row below) |
-| `LOCALSTACK_HOST` *(alias)*      | _(none)_               | LocalStack-compatibility alias for `OVERCAST_HOSTNAME` ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — Overcast is meant to be a drop-in replacement for LocalStack, so its documented settings are honoured directly rather than requiring a rename. Accepts LocalStack's `hostname[:port]` format (e.g. `localhost.localstack.cloud:4566`): the hostname part maps to `OVERCAST_HOSTNAME`, and a port part is accepted only if it matches `OVERCAST_PORT`. Setting both `OVERCAST_HOSTNAME` and `LOCALSTACK_HOST` to the *same* hostname is fine (the natural result of migrating a compose file line by line); setting them to *different* hostnames, or a `LOCALSTACK_HOST` port that disagrees with `OVERCAST_PORT`, fails startup naming both rather than silently preferring one. A startup log line names the alias whenever it was recognised |
-| `HOSTNAME_EXTERNAL` *(alias)*    | _(none)_               | Legacy LocalStack name `LOCALSTACK_HOST` replaced; also accepted as a compatibility alias for `OVERCAST_HOSTNAME` ([#1190](https://github.com/overcast-sh/overcast/issues/1190)), chained after `LOCALSTACK_HOST` — all three spellings must agree when more than one is set. Never carried a port suffix, unlike `LOCALSTACK_HOST` |
-| `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
-| `OVERCAST_PORT`                  | `4566`                 | TCP port. LocalStack's `EDGE_PORT` is accepted as a direct compatibility alias ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) |
-| `EDGE_PORT` *(alias)*            | _(none)_               | LocalStack-compatibility alias for `OVERCAST_PORT` ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — same format, direct pass-through. Disagreeing with an explicit `OVERCAST_PORT` fails startup naming both |
-| `GATEWAY_LISTEN` *(alias)*       | _(none)_               | LocalStack-compatibility alias for `OVERCAST_LISTEN` **and** `OVERCAST_PORT` together ([#1190](https://github.com/overcast-sh/overcast/issues/1190)). Accepts LocalStack's `<ip>:<port>[,<ip>:<port>...]` format: the address(es) map to `OVERCAST_LISTEN`, the port to `OVERCAST_PORT`. Every entry must share the same port — a `GATEWAY_LISTEN` naming more than one port has no single `OVERCAST_PORT` to map to and is a documented non-match (fails startup rather than picking one and dropping the other bind). Counts as an explicit bind-address setting, so it overrides the environment-dependent `OVERCAST_LISTEN` default the same way an explicit `OVERCAST_LISTEN` would |
-| `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. See [Persistence](./persistence.md) for how `auto` picks and the durability tradeoffs |
-| `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory` — see [Persistence § Per-service storage overrides](./persistence.md#per-service-storage-overrides) |
+| `OVERCAST_UI_PORT`               | `4567`                 | Port for the web management console (`--ui-port`); `0` disables it. Falls back to an ephemeral port when 4567 is taken. Full binary and full image only |
+| `OVERCAST_LISTEN`                | `0.0.0.0` containerised, `127.0.0.1` native | Address(es) to bind the AWS API to; comma-separate to bind several. See [Bind address and port](#bind-address-and-port) |
+| `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs. **Set it to `localhost.overcast.sh`** unless you are offline — see [Networking](./networking.md) |
+| `LOCALSTACK_HOST` *(alias)*      | _(none)_               | LocalStack alias for `OVERCAST_HOSTNAME`; accepts `hostname[:port]`. See [LocalStack aliases](#localstack-aliases) |
+| `HOSTNAME_EXTERNAL` *(alias)*    | _(none)_               | Legacy LocalStack alias for `OVERCAST_HOSTNAME`, chained after `LOCALSTACK_HOST`. Never carried a port suffix |
+| `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside the containers it starts, on top of the three built-in ones |
+| `OVERCAST_PORT`                  | `4566`                 | TCP port for the AWS API |
+| `EDGE_PORT` *(alias)*            | _(none)_               | LocalStack alias for `OVERCAST_PORT` |
+| `GATEWAY_LISTEN` *(alias)*       | _(none)_               | LocalStack alias for `OVERCAST_LISTEN` **and** `OVERCAST_PORT` together, in `<ip>:<port>[,...]` form. See [Bind address and port](#bind-address-and-port) |
+| `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto`, `memory`, `hybrid`, `persistent` or `wal` — see [Storage and persistence](./storage.md) for how `auto` picks and the durability tradeoffs |
+| `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory` — see [Storage and persistence § Per-service storage overrides](./storage.md#per-service-storage-overrides) |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
 | `OVERCAST_HYBRID_SYNC`           | `interval`             | Hybrid pending-log fsync policy: `always`, `interval`, or `never`                    |
 | `OVERCAST_HYBRID_SYNC_INTERVAL`  | `100ms`                | Periodic fsync interval used when `OVERCAST_HYBRID_SYNC=interval`                    |
@@ -51,45 +48,46 @@ Go emulator itself reads is below.
 | `OVERCAST_WAL_FSYNC`             | `interval`             | WAL fsync policy: `always`, `interval`, or `never`                                   |
 | `OVERCAST_WAL_FSYNC_INTERVAL`    | `100ms`                | Periodic fsync interval used when `OVERCAST_WAL_FSYNC=interval`                      |
 | `OVERCAST_WAL_MAX_LOG_BYTES`     | `67108864`             | WAL log compaction threshold in bytes (default 64 MiB)                               |
-| `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state. LocalStack's `DATA_DIR` is accepted as a direct compatibility alias ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — setting it counts as an explicitly configured data directory for `OVERCAST_STATE=auto`'s detection, the same as `OVERCAST_DATA_DIR` itself would. The Docker images bake `/data` as their default, marked as the image's own (not user intent), so `DATA_DIR` overrides it rather than conflicting — the only `OVERCAST_*` variable the images bake at all |
-| `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local overcast CA lives. Separable from the data dir because the two have opposite lifetimes: state is disposable, a CA is a trust anchor you installed into this machine once. Point it at a host-owned directory (`-v ~/.overcast/data/ca:/ca:ro`) so an ephemeral container mints leaves from a root that outlives it — see [HTTPS and HTTP/2](./https.md#docker). May be read-only |
-| `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when not present in SigV4 header. LocalStack's `DEFAULT_REGION` is accepted as a direct compatibility alias ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) |
+| `OVERCAST_DATA_DIR`              | `~/.overcast/data`     | Directory for store files and other on-disk state; the Docker images bake `/data`. LocalStack's `DATA_DIR` is an alias, and setting either counts as an explicit data directory for `OVERCAST_STATE=auto` |
+| `OVERCAST_CA_DIR`                | `$OVERCAST_DATA_DIR/ca` | Where the local CA lives — separable from the data dir because a CA outlives disposable state. May be read-only; see [HTTPS § Docker](./https.md#docker) |
+| `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when the SigV4 header carries none. LocalStack's `DEFAULT_REGION` is an alias |
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
-| `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below. LocalStack's `DEBUG=1` is accepted as a compatibility alias for `debug` ([#1190](https://github.com/overcast-sh/overcast/issues/1190)); `DEBUG=0` is a no-op |
+| `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels). LocalStack's `DEBUG=1` is an alias for `debug` |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_overcast/debug/*` endpoints — see [Debug endpoints](./debug-endpoints.md)  |
-| `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | User-facing request traces always retained — the floor. Only read when `OVERCAST_DEBUG=true`. See [Debug endpoints § Trace retention](./debug-endpoints.md#trace-retention) |
+| `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | Request traces always retained — the floor. Only read when `OVERCAST_DEBUG=true`; see [Debug endpoints § Trace retention](./debug-endpoints.md#trace-retention) |
 | `OVERCAST_DEBUG_TRACE_CEILING`   | `10000`                | How far a burst may grow retention past the floor |
 | `OVERCAST_DEBUG_TRACE_WINDOW`    | `1h`                   | How long traces above the floor survive before being reclaimed |
 | `OVERCAST_DEBUG_TRACE_PINNED`    | `1000`                 | Traces kept because they went wrong, exempt from the floor and the window |
-| `OVERCAST_DEBUG_TRACE_BYTES_MB`  | `512`                  | Retained request/response body budget. Reclaims ordinary overflow first, then the oldest kept failures; never below the floor |
-| `OVERCAST_SIGV4_VALIDATE`        | `false`                | Verify SigV4 signatures (header-signed and presigned URLs) and reject invalid or expired ones with `403 InvalidSignatureException`. Signing secrets resolve through IAM user access keys and STS session credentials, falling back to the local-dev default `test`. Unsigned requests still pass through |
-| `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
-| `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
+| `OVERCAST_DEBUG_TRACE_BYTES_MB`  | `512`                  | Retained request/response body budget. Ordinary overflow is reclaimed first, then the oldest kept failures; never below the floor |
+| `OVERCAST_SERVICE_METRICS`       | `auto`                 | Whether emulated services record CloudWatch metrics for their own activity: `auto` (today identical to `enabled`), `enabled`, or `disabled`. `disabled` stops that automatic collection; `PutMetricData` from your own code is unaffected |
+| `OVERCAST_SIGV4_VALIDATE`        | `false`                | Verify SigV4 signatures (header-signed and presigned) and reject invalid or expired ones with `403 InvalidSignatureException`. Unsigned requests still pass through |
+| `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies and return AWS-shaped `AccessDenied` when they do not allow the request — see [IAM § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
+| `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests over their usage plan's throttle or quota with `429`. Off by default: the limits are measured and reported, never enforced — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
-| `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one Step Functions execution. Executions run off the request path, so this never bounds `StartExecution` itself; a state machine's own `TimeoutSeconds` can lower it but not raise it. Exceeding it ends the execution `TIMED_OUT` with `States.Timeout` |
+| `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one execution, never on `StartExecution` itself. A state machine's own `TimeoutSeconds` can lower it but not raise it |
 | `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web UI over HTTPS with a certificate minted from the local overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |
 | `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
 | `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
-| `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait; also budgets the final store flush — if it can't finish in time the process exits anyway and unflushed writes replay from the pending log on next start |
+| `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait, which also budgets the final store flush. Nothing is lost when it runs out — unflushed writes replay from the pending log |
 | `OVERCAST_PROTOCOL_STRICT`       | `false`                | Return `415` when a request arrives in a protocol the target service does not declare, instead of attempting the decode anyway |
 | `OVERCAST_DNS`                   | `true`                 | Run the built-in DNS resolver that serves the split-horizon names to the containers Overcast starts. Failing to bind the port is not fatal |
 | `OVERCAST_DNS_PORT`              | `53`                   | Port for the built-in DNS resolver. Docker's `--dns` cannot express a port, so anything other than `53` is only useful for tests |
 | `OVERCAST_HOT_RELOAD`            | `false`                | Umbrella switch for hot reload across every compute service — see [The inner loop](./local-dev.md) |
 | `OVERCAST_LAMBDA_HOT_RELOAD`     | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for Lambda functions                             |
 | `OVERCAST_ECS_HOT_RELOAD`        | _(`OVERCAST_HOT_RELOAD`)_ | Per-service override: hot reload for ECS tasks                                    |
-| `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks when their CIDRs overlap: `shared`, `strict`, or `remapped` are all implemented; `netns` fails startup naming the strategies that exist — see [EC2 limitations § VPC networking strategies](./services/ec2/limitations.md#vpc-networking-strategies) |
-| `OVERCAST_MCP_REMOTE_EXPOSURE`   | `false`                | **Security-relevant.** Declares that the MCP endpoint (`/_overcast/mcp`) will be reachable by non-local clients, and turns on bearer-token auth for every MCP request. Setting it `true` makes `OVERCAST_MCP_AUTH_TOKEN` mandatory — Overcast refuses to start without one. Note it does not itself change what Overcast binds: if `OVERCAST_LISTEN` exposes the port, the MCP endpoint is exposed with it, so set this (and a token) before exposing the port beyond localhost. Browser `Origin` checks (localhost origins only) are enforced on MCP regardless |
-| `OVERCAST_MCP_AUTH_TOKEN`        | —                      | Bearer token every MCP request must present once set (mandatory when `OVERCAST_MCP_REMOTE_EXPOSURE=true`; setting it alone also enables the auth check). Treat it like any other credential — anyone holding it can drive the emulator through MCP |
-| `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts is reachable on by name when it belongs to no VPC — the default data plane. A resource that names a VPC joins that VPC's network instead. Overcast derives a second network from this, `<name>_control`, which carries the Lambda Runtime API and the emulator endpoint |
-| `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` (Linux/macOS), `npipe:////./pipe/docker_engine` (Windows) | Docker endpoint — Unix path, Windows named pipe, or `tcp://host:port` (for DinD). The per-service socket overrides below must all address the **same** daemon: containers are attached to shared networks across service boundaries |
-| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on. The addresses are not configurable and do not follow `OVERCAST_LISTEN`: Overcast binds loopback plus the one address containers on the control plane reach it at — its own address on that network when Overcast is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop |
+| `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks when their CIDRs overlap: `shared`, `strict` or `remapped` — see [EC2 limitations § VPC networking strategies](./services/ec2/limitations.md#vpc-networking-strategies) |
+| `OVERCAST_MCP_REMOTE_EXPOSURE`   | `false`                | **Security-relevant.** Declares that `/_overcast/mcp` will be reachable by non-local clients, and requires `OVERCAST_MCP_AUTH_TOKEN`. See [Exposing MCP](#exposing-mcp) |
+| `OVERCAST_MCP_AUTH_TOKEN`        | —                      | Bearer token every MCP request must present once set. Treat it like any other credential |
+| `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts joins when it belongs to no VPC. Overcast derives `<name>_control` from it for the Lambda Runtime API — see [Networking](./networking.md) |
+| `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` (Linux/macOS), `npipe:////./pipe/docker_engine` (Windows) | Docker endpoint — Unix path, Windows named pipe, or `tcp://host:port` for DinD. Every per-service socket override below must address the **same** daemon |
+| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port the Lambda Runtime API is exposed on. Its addresses are not configurable and do not follow `OVERCAST_LISTEN` |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_               | Max concurrent Docker-backed Lambda container starts. Unset: derived from the Docker host as `clamp(NCPU/2, 2, 8)` (each start bursts ~2 CPUs during INIT); `4` when Docker `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES`           | _(auto)_               | Max Lambda containers across all functions. Unset: derived from the Docker host as `clamp(MemTotal×0.65 / 256 MiB, 4, 32)`; `25` when `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | _(auto)_            | Max concurrent containers for one function. Unset: `clamp(maxInstances/2, 2, maxInstances)`; `10` when `/info` is unavailable |
 | `LAMBDA_MAX_MEMORY_MB`           | _(auto)_               | Aggregate memory budget for live Lambda containers (Σ `MemorySize`, in MB). Unset: 65% of the Docker host's `MemTotal`; unlimited when `/info` is unavailable |
 | `LAMBDA_MAX_WARM_INSTANCES`      | `10`                   | Idle containers kept warm per function after a burst                                 |
 | `LAMBDA_SEED_RUNTIME_IMAGES`     | `false`                | Pre-pull every currently-supported Lambda runtime image at startup                   |
-| `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT. LocalStack's `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT` is accepted as a direct compatibility alias ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) |
+| `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT. LocalStack's `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT` is an alias |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `LAMBDA_TAR_CACHE_MB`            | `256`                  | In-memory cache of pre-built cold-start code and layer tars; `0` disables it         |
 | `LAMBDA_PROACTIVE_INIT`          | `true`                 | Pre-initialize one execution environment once a function's configuration settles; set `false` to opt out |
@@ -128,11 +126,52 @@ Go emulator itself reads is below.
 | `OVERCAST_SMTP_TLS`              | `false`                | Enable implicit TLS (port 465) for external relay                                    |
 | `OVERCAST_SMTP_INBOX_MAX`        | `500`                  | Maximum number of captured messages retained before eviction                         |
 | `OVERCAST_INIT_ENABLED`          | `true`                 | Run init-hook scripts found in `OVERCAST_INIT_DIRS` at startup; set `false` to disable |
-| `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in stage subdirs (`boot.d/`, `start.d/`, `ready.d/`, `shutdown.d/`); LocalStack's layout is honoured for drop-in migration — see [Migrating from LocalStack](./migration-from-localstack.md) |
+| `OVERCAST_INIT_DIRS`             | `/etc/localstack/init,/etc/overcast/init` | Comma-separated base directories scanned for init-hook scripts in `boot.d/`, `start.d/`, `ready.d/` and `shutdown.d/` — see [Migrating from LocalStack](./migration-from-localstack.md#init-hooks) |
 | `OVERCAST_INIT_TIMEOUT`          | `30s`                  | Per-script timeout for init hooks                                                    |
-| `SERVICES` *(ignored)*           | _(none)_               | LocalStack variable recognised but with no effect ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — Overcast runs every service, always, so there is nothing to select. Not rejected; a startup log line names it as seen |
-| `LOCALSTACK_API_KEY` *(ignored)* | _(none)_               | LocalStack variable recognised but with no effect ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — Overcast has no LocalStack Pro/auth-gated feature set to unlock. Not rejected; a startup log line names it as seen |
-| `LOCALSTACK_AUTH_TOKEN` *(ignored)* | _(none)_            | Same as `LOCALSTACK_API_KEY` above ([#1190](https://github.com/overcast-sh/overcast/issues/1190))                                          |
+| `SERVICES` *(ignored)*           | _(none)_               | LocalStack variable read and logged, with no effect: every service always runs |
+| `LOCALSTACK_API_KEY` *(ignored)* | _(none)_               | LocalStack variable read and logged, with no effect: nothing here is auth-gated |
+| `LOCALSTACK_AUTH_TOKEN` *(ignored)* | _(none)_            | Same as `LOCALSTACK_API_KEY` |
+
+## Bind address and port
+
+`OVERCAST_LISTEN` accepts a comma-separated list, so one instance can be
+reachable from this machine *and* from its containers over the Docker bridge
+without being on any network the machine is attached to:
+
+```bash
+OVERCAST_LISTEN=127.0.0.1,172.17.0.1 overcast serve
+```
+
+A wildcard cannot be combined with a specific address, and the web console binds
+the first address only. An explicit value always wins over the
+environment-dependent default in either direction — `OVERCAST_LISTEN=0.0.0.0`
+restores the old native reach from a VM or another machine. `OVERCAST_HOST` was
+renamed to this and removed; a leftover one fails startup naming the replacement
+rather than being silently ignored.
+
+`GATEWAY_LISTEN` maps to `OVERCAST_LISTEN` and `OVERCAST_PORT` together and
+counts as an explicit bind-address setting. Every entry must share one port: a
+value naming two has no single `OVERCAST_PORT` to become, so startup fails
+rather than dropping a bind.
+
+## LocalStack aliases
+
+Every row marked *(alias)* is read directly, so a LocalStack `environment:`
+block usually carries over untouched. Setting an alias and its Overcast name to
+the same value is fine; setting them to **different** values fails startup
+naming both, rather than silently preferring one. A startup log line names every
+alias that was recognised. The full mapping — including the variables
+deliberately *not* aliased — is in
+[Migrating from LocalStack](./migration-from-localstack.md#environment-variables).
+
+## Exposing MCP
+
+`OVERCAST_MCP_REMOTE_EXPOSURE=true` makes `OVERCAST_MCP_AUTH_TOKEN` mandatory —
+Overcast refuses to start without one — and turns on bearer-token auth for every
+MCP request. It does not itself change what Overcast binds: if `OVERCAST_LISTEN`
+exposes the port, the MCP endpoint is exposed with it, so set both *before*
+exposing the port beyond localhost. Browser `Origin` checks (localhost origins
+only) are enforced on MCP either way.
 
 ## Service names
 
@@ -220,4 +259,4 @@ For per-service endpoint coverage, follow the doc links in
 | `error` | One-liners for failures that need attention (storage degraded, a migration failed).                       |
 
 For contributors: the full call-site policy (what belongs at `debug` vs
-`trace`) is documented in [CONTRIBUTING.md § Log levels](../CONTRIBUTING.md#log-levels).
+`trace`) is documented in [CONTRIBUTING.md § Log levels](https://github.com/overcast-sh/overcast/blob/main/CONTRIBUTING.md#log-levels).

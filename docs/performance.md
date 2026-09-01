@@ -14,10 +14,6 @@ tags:
 Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle,
 and low per-request overhead. CI pipelines should not wait for the emulator.
 
-This guide covers what to expect and how to tune Overcast for your workflow.
-
----
-
 ## Goals
 
 | Metric                                    | Target                                       |
@@ -58,8 +54,8 @@ The `overcast-slim` image and the `overcastd` binaries are built without SQLite,
 [docs/storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
 
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
-modernc/sqlite pure-Go driver, all 27 services registered, no SDK
-clients connected) with `OVERCAST_STATE=<backend>`,
+modernc/sqlite pure-Go driver, every service registered, no SDK clients
+connected) with `OVERCAST_STATE=<backend>`,
 `OVERCAST_DATA_DIR=<empty tmp>`, polling `/_overcast/metrics` every 5 ms from a
 sibling Go process. Wall time is `os.Process.Start` → first HTTP 200
 on `/_overcast/metrics`. Internal startup is `startup_duration_ms` from that
@@ -89,7 +85,7 @@ no durability, which is exactly right for a pipeline that starts fresh every run
 setup happens to mount a volume you don't want used, or you just prefer to be explicit
 about it) — it's simply no longer necessary for the common case. The same applies per
 service via `OVERCAST_STATE_<SERVICE>=memory` for a single noisy service; see
-[Persistence § Per-service storage overrides](./persistence.md#per-service-storage-overrides)
+[Storage and persistence § Per-service storage overrides](./storage.md#per-service-storage-overrides)
 for the override syntax.
 
 ### Data dir placement — avoid host bind mounts on Docker Desktop
@@ -172,12 +168,11 @@ volumes:
 
 ### Startup slow-filesystem probe
 
-Since the storage-pressure-handling work, `HybridStore` runs a one-time
-fsync micro-probe in the background right after construction (never on
-the request path): it writes a few KB to a throwaway file in the data
-dir, fsyncs it, times the round trip, and removes the file. If that
-takes longer than **75ms**, it logs one `WARN` line naming the data dir
-and suggesting a named Docker volume, and links back to this section.
+The `hybrid` backend runs a one-time fsync micro-probe in the background
+right after startup (never on the request path): it writes a few KB to a
+throwaway file in the data dir, fsyncs it, times the round trip, and
+removes the file. If that takes longer than **75ms**, it logs one `WARN`
+line naming the data dir and suggesting a named Docker volume.
 
 75ms is deliberately well above native/container-native filesystem noise
 (a healthy fsync of a few KB is low single digits of milliseconds, even on
@@ -188,12 +183,10 @@ flush slow` warning under real write load.
 
 The probe's outcome is also queryable, not just logged: `GET
 /_overcast/debug/metrics` includes a `dataDirProbe` object per store
-(`{fsyncMillis, slow, probedAt}`) alongside the existing flush-history and
-pending-log diagnostics, so tooling (or a future web UI health panel) can
-surface it without scraping logs. A probe that fails outright (e.g. a
-permission error) is reported as absent (`dataDirProbe: null`) rather than
-a false "fast" or "slow" reading — that's a different, less actionable
-condition than "the check ran and found a slow disk."
+(`{fsyncMillis, slow, probedAt}`) alongside the flush-history and
+pending-log diagnostics. A probe that fails outright (a permission error,
+say) reports as absent (`dataDirProbe: null`) rather than a false "fast" or
+"slow" reading.
 
 **What to do if you see the warning:** same remedy as `hybrid flush slow`
 above — move `/data` off the bind mount and onto a named Docker volume.
@@ -246,9 +239,9 @@ see [`OVERCAST_LOG_LEVEL`](./configuration.md#log-levels)) with
 every gap where the emulator was idle.
 
 Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 /
-WSL2, `overcast:dev`, hybrid backend, 15 services; a CDK v2
-bootstrap-and-deploy of four application stacks that took ~45 s
-wall-clock while every overcast response completed in <200 ms):
+WSL2, hybrid backend; a CDK v2 bootstrap-and-deploy of four application
+stacks that took ~45 s wall-clock while every overcast response completed
+in <200 ms):
 
 | Segment                      | Wall time | Owner    | Notes                                                                 |
 | ----------------------------- | --------- | -------- | --------------------------------------------------------------------- |
@@ -266,10 +259,10 @@ polling `DescribeStacks` every 100 ms with `curl`). But the AWS SDK
 waiter checks immediately — sees `IN_PROGRESS` because provisioning
 started microseconds earlier — then sleeps its 5 s `minDelay` before
 looking again. Every fast stack therefore costs one full waiter cycle
-regardless of emulator speed. The fix that shortens this window shipped
-in #251: a bounded synchronous wait (`OVERCAST_CFN_SYNC_WAIT_MS`) so the
-waiter's first check already sees the terminal status — see
-[docs/services/cloudformation.md](services/cloudformation.md).
+regardless of emulator speed. Overcast shortens that window with a bounded
+synchronous wait (`OVERCAST_CFN_SYNC_WAIT_MS`, default 1000 ms) so the
+waiter's first check on a fast stack already sees the terminal status — see
+[CloudFormation](./services/cloudformation.md).
 
 **What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any
 other client-side work show up as request-log silence. Report those

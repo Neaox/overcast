@@ -1,68 +1,59 @@
 ---
-title: "SSM Parameter Store — endpoint support"
-description: "Generated for Overcast. See also: AWS SSM Parameter Store API Reference"
+title: "SSM Parameter Store — AWS Systems Manager"
+description: "Parameter Store only: put, get, path queries, history and tags. SecureString values are masked without WithDecryption but are never actually encrypted."
 section: "Service Reference"
 tags:
   - docs
-  - endpoint
   - parameter
   - services
   - ssm
   - store
-  - support
+  - systems-manager
 ---
 
-# SSM Parameter Store — endpoint support
+# SSM Parameter Store — AWS Systems Manager
 
-> Generated for Overcast. See also: [AWS SSM Parameter Store API Reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
+Parameter Store, and nothing else from Systems Manager. Documents, automation
+and run command all return `501 Not Implemented`.
 
-## Protocol
+**Status:** ⚠️ Partial
 
-SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
-`X-Amz-Target: AmazonSSM.<OperationName>` and Smithy RPC v2 CBOR requests at
-`/service/ssm/operation/<OperationName>` with `Smithy-Protocol: rpc-v2-cbor`.
+## Quick start
 
-## Endpoint details
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-| Operation                    | Status | Notes                                                        | AWS docs                                                                                                  |
-| ---------------------------- | ------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| PutParameter                 | ✅     | String, StringList, SecureString; versioning; Overwrite      | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html)             |
-| GetParameter                 | ✅     | Latest version; SecureString masked without WithDecryption   | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameter.html)             |
-| GetParameters                | ✅     | Batch get; invalid names returned in InvalidParameters       | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameters.html)            |
-| GetParametersByPath          | ✅     | Recursive + non-recursive; MaxResults + NextToken pagination | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html)      |
-| DescribeParameters           | ✅     | Name BeginsWith filter; pagination                           | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html)       |
-| GetParameterHistory          | ✅     | All versions; pagination                                     | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameterHistory.html)      |
-| AddTagsToResource            | ✅     | Tags on Parameter resources                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_AddTagsToResource.html)        |
-| ListTagsForResource          | ✅     | Returns all tags for a parameter                             | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ListTagsForResource.html)      |
-| DeleteParameter              | ✅     | Single parameter deletion                                    | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html)          |
-| DeleteParameters             | ✅     | Batch delete; invalid names returned in InvalidParameters    | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameters.html)         |
-| LabelParameterVersion        | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_LabelParameterVersion.html)    |
-| UnlabelParameterVersion      | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_UnlabelParameterVersion.html)  |
-| RemoveTagsFromResource       | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RemoveTagsFromResource.html)   |
-| GetServiceSetting            | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetServiceSetting.html)        |
-| SendCommand                  | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html)              |
-| StartAutomationExecution     | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_StartAutomationExecution.html) |
-| CreateDocument               | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_CreateDocument.html)           |
-| RegisterDefaultPatchBaseline | ❌     | Returns 501                                                  | [link](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RegisterDefaultPatchBaseline.html) |
+aws ssm put-parameter --name /app/db/url --type String --value postgres://localhost/app
+aws ssm get-parameter --name /app/db/url --query Parameter.Value --output text
+```
 
-## SDK compatibility
+## What works
 
-| SDK                       | Tested |
-| ------------------------- | ------ |
-| AWS SDK for Go v2         | ❌     |
-| AWS SDK for JavaScript v3 | ✅     |
-| boto3 (Python)            | ❌     |
-| AWS SDK for Java          | ❌     |
-| AWS SDK for .NET          | ❌     |
+| Area         | Behaviour                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| Writes       | `PutParameter` with `String`, `StringList` and `SecureString`; `Overwrite` creates a new version      |
+| Reads        | `GetParameter`, `GetParameters` (unknown names come back in `InvalidParameters`), `GetParameterHistory` |
+| Path queries | `GetParametersByPath`, recursive or direct children only                                             |
+| Listing      | `DescribeParameters` with a name `BeginsWith` filter                                                 |
+| Pagination   | `MaxResults` + `NextToken` on `GetParametersByPath` and `DescribeParameters`                         |
+| Tags         | `AddTagsToResource`, `ListTagsForResource`                                                           |
+| Deletes      | `DeleteParameter`, `DeleteParameters`                                                                |
 
-## Notes
+Every `PutParameter` — overwrite included — creates a new version, and
+`GetParameterHistory` returns them all.
 
-- **Versioning**: Every `PutParameter` (including overwrites) creates a new version. `GetParameterHistory` returns all versions.
-- **SecureString**: When `WithDecryption: false`, the value is replaced with a masked placeholder. When `WithDecryption: true`, the plaintext is returned (no real KMS encryption).
-- **Path hierarchy**: `GetParametersByPath` with `Recursive: false` returns only direct children of the given path. With `Recursive: true`, all descendants are returned.
-- **Pagination**: `GetParametersByPath` and `DescribeParameters` support `MaxResults` + `NextToken` pagination.
-- **Protocol**: Uses AWS JSON 1.1 (`X-Amz-Target: AmazonSSM.*`,
-  `application/x-amz-json-1.1`) and Smithy RPC v2 CBOR.
+## Differences from AWS
+
+| Behaviour                   | On AWS                                                               | Here                                                                       |
+| --------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `SecureString`              | Encrypted with a KMS key                                             | Stored in plaintext; masked in the response unless `WithDecryption` is set   |
+| Version labels              | `LabelParameterVersion` / `UnlabelParameterVersion`                  | Not implemented — `501 Not Implemented`                                      |
+| `RemoveTagsFromResource`    | Removes tag keys                                                     | Not implemented — `501 Not Implemented`                                      |
+| The rest of Systems Manager | Documents, automation, run command, patch baselines, service settings | Not implemented — `501 Not Implemented`                                      |
+
+> [!CAUTION]
+> A `SecureString` is not secure here. `WithDecryption: true` returns the
+> plaintext because the plaintext is what was stored.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -75,5 +66,7 @@ Per-operation status, notes and AWS API links: [SSM operations](ssm/operations.m
 
 ## Related
 
+- [AWS API reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
+- [Secrets Manager](secretsmanager.md) — versioning, rotation and resource policies
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
