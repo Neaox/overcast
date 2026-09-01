@@ -6,7 +6,6 @@
   "packageManager": "pnpm@11.23.0",
   "scripts": {
     "dev": "vite",
-    "docs:index": "cd .. && go run ./scripts/docs-index.go --write-nav --write-search-index",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "pnpm run typecheck && vite build",
     "test": "vitest run",

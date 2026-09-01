@@ -30,7 +30,7 @@ import { slug } from "@/lib/slug"
  * tab's panel.
  *
  * The headings deliberately still exist in the raw Markdown, so
- * scripts/docs-index.go keeps indexing them for search, the "On this page"
+ * internal/docsindex keeps indexing them for search, the "On this page"
  * nav, and anchor checking; the tab group re-establishes each heading's
  * anchor id (slug of the label) so those deep links stay live.
  *

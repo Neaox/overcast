@@ -340,7 +340,7 @@ or `scripts/docker-go.ps1` (PowerShell) for every `go` command; both work from
 linked worktrees. On Windows hosts that block local PowerShell scripts, invoke
 the wrapper with `powershell -ExecutionPolicy Bypass -File
 scripts\docker-go.ps1 <go-subcommand> ...`. For a `make` target that is only a
-Go invocation (for example `docs-index`), read the target in `Makefile` and run
+Go invocation (for example `docs-lint`), read the target in `Makefile` and run
 its underlying `go` command through the wrapper. Do not hand-edit generated
 files because the host lacks `go` or `make`.
 
@@ -409,7 +409,7 @@ Agents most often trip on these — check before finishing:
 - **Using subfolders as sub-packages inside a service** — all service files live in one flat package
 - **Hand-rolling a `<Table>` in the web UI when `ResourceTable` fits** — any list of resources goes through `ResourceTable` (index pages via `ResourceListPage`/`ResourceListSection`, detail pages via `variant="embedded"`); a bespoke table needs a reason in a comment at the call site. See [CONTRIBUTING § Tables](./CONTRIBUTING.md#tables--reach-for-resourcetable-before-composing-table-yourself) and #1327
 - **Testing only with raw HTTP** — prefer AWS SDK clients for management-plane validation where possible
-- **Forgetting `make docs-index`** after editing `docs/` — the committed docs search index goes stale and CI fails
+- **Reaching for a docs regeneration step after editing `docs/`** — there isn't one any more. The console derives its docs navigation and search index from the embedded docs at runtime ([internal/docsindex](./internal/docsindex/docsindex.go)); `make docs-lint` checks the docs themselves
 - **Adding a compat test to one suite only** — every SDK/CLI suite tests the same operations; add to `compat/suites/registry.json` first, then implement everywhere. `go run ./cmd/compat --check-parity` fails the build otherwise. See [compat/AGENTS.md § Baseline & uniformity policy](./compat/AGENTS.md#baseline--uniformity-policy)
 - **Leaving the changelog question unanswered** — a PR that adds no fragment under `.changelog/` fails the `Changelog entry` check until someone says the omission was deliberate. Add the fragment, or comment `/no-changelog <reason>` on the PR (`gh pr comment <number> --body '/no-changelog test-only: new fixtures for the SQS suite'`). The reason is required and is kept; `/needs-changelog` puts the question back. A PR whose every file is in an area that never ships (`compat/`, `cmd/compat/`, `tests/`, test files anywhere, `docs/plans/`, `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`, `.devcontainer/`, contributor docs) is passed without a word — the authoritative list is `EXEMPT_*` in [scripts/changelog-required.py](./scripts/changelog-required.py), and a single file outside it puts the whole PR back in scope. **`scripts/` is not exempt as a directory**, and deliberately so: it holds things that do change shipped output, `docs-index.go` and the release scripts among them. Only `scripts/*_test.py` is exempt, by suffix. So a PR adding a developer-only script still has to answer the question — comment `/no-changelog tooling-only: …` and post it *before* you start waiting on checks, or `pr-wait.sh --fail-fast` will trip on a gate that is about to waive itself. Never edit `CHANGELOG.md` to clear it — that file belongs to the release PR, and a second hand in it aborts the bot's merge and stops the release PR refreshing itself. While a release PR is open just add the fragment; the bot folds it in for you. See [.changelog/README.md § When a change needs no fragment](./.changelog/README.md#when-a-change-needs-no-fragment)
 - **Merging a lockfile PR whose base has moved** — `web/pnpm-lock.yaml` is regenerated, never merged: its peer-resolution keys refer to each other, so two copies regenerated independently combine into a lockfile that fails `pnpm install --frozen-lockfile` even though git reports no conflict (#1340 — every PR red for 28 minutes). The `Lockfile freshness` check fails a PR whose lockfile was generated against a `main` that has since changed its own, and goes red on open PRs the moment such a push lands. The fix is always the same: rebase (or merge `main` in), run `pnpm install` in `web/`, push. Never resolve it by merging the two texts. Renovate's PRs rebase themselves
@@ -419,21 +419,30 @@ Agents most often trip on these — check before finishing:
 
 ## Generated files
 
+[docs/dev/generated-files.md](./docs/dev/generated-files.md) is the full inventory — every generated artefact, whether it is committed, build output, or derived at runtime, and why. The short version:
+
 These generated sources are **committed** and must be regenerated through their owning command:
 
 | File | Regenerate with |
 | --- | --- |
 | `internal/capabilities/all.gen.go` | `make generate-caps` |
-| `internal/docssearch/index.gen.jsonl` | `make docs-index` |
-| `web/src/docs-nav.gen.ts` | `make docs-index` |
 | `web/src/types/api.gen.ts` | `make generate-ts` |
+| `web/src/routeTree.gen.ts` | `pnpm dev` / `pnpm build` (the TanStack Router vite plugin writes it) |
 | `internal/awsapi/manifest.gen.go` | `make generate-aws-operations` |
+| `docs/README.md` service index, `docs/services/<key>/operations.md`, `docs/generated/service-support.json` | `make docs` |
+
+There is **no docs index to regenerate**. `web/src/docs-nav.gen.ts` and
+`internal/docssearch/index.gen.jsonl` used to be here; both were sorted
+manifests with one entry per page, so every docs pull request rewrote part of
+them and two concurrent docs branches conflicted on a file nobody had written
+by hand. They are derived at runtime now, from the docs the binary already
+embeds — see [internal/docsindex](./internal/docsindex/docsindex.go).
 
 - **After changing a Go response struct the web UI consumes, run `make generate-ts` and commit the result.** `web/src/types/api.gen.ts` is rendered by [cmd/tsgen](./cmd/tsgen/main.go) from the structs listed in its manifest (`/_overcast/health`, `/_overcast/metrics`, `/_overcast/debug/metrics`, the SSE envelope, the topology graph, the inbox, the request-tracing payloads, …); `make check-ts` — part of `make docs-check`, and `go test ./cmd/tsgen` — fails when the committed file is stale. Never write a server type by hand in `web/src/types/common.ts`; to expose a new one, add it to the manifest. A struct that refers to a type the manifest does not list is an error naming the field, so the generated set grows only on purpose; a type with its own `MarshalJSON` is refused too — name the package-level struct the method encodes instead (`trace.Entry` → `trace.entryJSON`).
-- **After editing a published doc under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
-- **`docs/plans/` and `docs/dev/` are NOT indexed — skip `make docs-index` for them.** [scripts/docs-index.go](./scripts/docs-index.go) skips both directories outright (`filepath.SkipDir`) and `isPublishedDocPath` excludes them, so regenerating after a plan or dev-doc edit produces an identical file and only costs you a minute. They are working documents, not user-facing pages.
-- **A Markdown-only change needs no test run.** Editing a plan, a dev doc, or prose in a published doc cannot change Go behaviour, so `go test` proves nothing. Run tests when code, generated files, or test fixtures change. (Published docs still need `make docs-index`; the index is generated output, not a test.)
-- **Never hand-edit or hand-merge generated files.** Resolve docs-index conflicts with `make docs-index`. Regenerate `internal/awsapi/manifest.gen.go` with `make generate-aws-operations`, using an `api-models-aws` checkout at the revision pinned in `models/aws/VERSION` and setting the `AWS_MODELS_DIR` and `AWS_MODELS_REVISION` variables required by the target.
+- **After editing a published doc under `docs/`, run `make docs-lint`.** Nothing to regenerate and nothing to commit beyond the doc — the check is on the doc itself: frontmatter, in-page anchors, the service page template, and the 220-character description budget.
+- **`docs/plans/` and `docs/dev/` are neither published nor indexed.** [internal/docsindex](./internal/docsindex/docsindex.go) skips both directories outright, as `embed.go`'s pattern does, so they are invisible to the console. They are working documents, not user-facing pages — and a published doc may not cite them.
+- **A published doc *is* a build input.** `embed.go` compiles `docs/*.md`, `docs/cdk` and `docs/services` into the binary and the console indexes them at runtime, so `internal/docsindex`'s tests assert on the real corpus (search rankings included). Editing one runs the full CI suite; editing `docs/plans/` or `docs/dev/` does not.
+- **Never hand-edit or hand-merge generated files.** Regenerate `internal/awsapi/manifest.gen.go` with `make generate-aws-operations`, using an `api-models-aws` checkout at the revision pinned in `models/aws/VERSION` and setting the `AWS_MODELS_DIR` and `AWS_MODELS_REVISION` variables required by the target.
 - **Reproduce the AWS operation coverage CI job with `make aws-models-check`.** It validates, without network access: the committed manifest and its runtime ownership indexes; protocol identifiers; that every declared operation name is real in AWS — **including a `DocOnly` row named like an operation**; that a REST-bound operation is **registered at the HTTP method and URI the model binds it to**; that **the service that registered a route is one the model actually gives that path to** — the third route-side axis, between the declaring service's own bindings and "is this path modeled by *someone*" (`internal/router/routeownership_dev_test.go`, #1227); that an operation is reachable over every protocol its service answers on; that a row declaring Supported is one a client can actually call; and that the wire facts a service states about itself agree with the model — its `TargetPrefix()`, its `PathPrefixes()` claim, and the Query API versions and service aliases in `internal/awsapi`. With a pinned checkout, set `AWS_MODELS_DIR` to add the same byte-for-byte regeneration check used by the scheduled model-refresh workflow.
 
   **An exemption is deleted when its reason stops being true, not reviewed.** `capgen --check-model` fails on a stale entry in `capabilityManifestExemptions`, `capabilityOperationAliases` or `compatRegistryServiceExemptions`, and on a ledger row naming a fault that has been fixed. Nine of the fourteen manifest exemptions were false when that check was written. Never widen an exemption to make a gate green — that is the mechanism #864 was filed about.

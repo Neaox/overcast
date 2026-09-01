@@ -983,3 +983,31 @@ export interface ChartPoint {
   timestamp: string
   value: number
 }
+
+/**
+ * Entry is the navigation shape: what the console needs to render the docs
+ * sidebar and the "On this page" table of contents. It carries no search
+ * corpus — that comes from SearchEntries, which the SPA never downloads.
+ *
+ * Generated from Go `docsindex.Entry` (internal/docsindex/docsindex.go).
+ */
+export interface DocsNavEntry {
+  path: string
+  href: string
+  title: string
+  description: string
+  section: string
+  tags: string[]
+  headings: DocsHeading[]
+}
+
+/**
+ * Heading is one Markdown heading, with the id the docs browser renders for it.
+ *
+ * Generated from Go `docsindex.Heading` (internal/docsindex/docsindex.go).
+ */
+export interface DocsHeading {
+  depth: number
+  text: string
+  id: string
+}

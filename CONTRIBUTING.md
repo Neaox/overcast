@@ -265,8 +265,10 @@ GOOS=windows GOARCH=amd64 go build ./...
 Lambda init is embedded in the binary and, like the SPA, is build output rather
 than a committed file. A plain `go build ./...` skips it and still compiles —
 the committed placeholder keeps the embed resolving — so run it whenever the
-binary has to actually invoke a Lambda function. See
-[AGENTS.md § Generated files](./AGENTS.md#generated-files).
+binary has to actually invoke a Lambda function.
+[docs/dev/generated-files.md](./docs/dev/generated-files.md) is the full
+inventory: every generated artefact, whether it is committed, build output or
+derived at runtime, and the rule that decides which.
 
 `go build ./...` on the current platform only catches compile errors for that
 platform. If you use `syscall`, `os/exec` with Unix-specific flags, or anything
@@ -402,11 +404,11 @@ the Go stages need a built SPA — which is why the CI Go jobs declare
 `go build ./...` always compiles; the resulting binary just has no UI, and the
 Go stages here assert a real `index.html` rather than accepting that.)
 
-The docs index (`web/src/docs-nav.gen.ts`, `internal/docssearch/index.gen.jsonl`)
-is generated but committed, so it is not a build prerequisite. The docs-index
-stage still runs first so the docs-check stage can diff a freshly generated
-index against the committed one — that is what catches a `docs/` edit pushed
-without running `make docs-index`.
+Nothing else has to be generated first. The console's docs navigation and its
+search index are derived from the docs the binary embeds, at runtime
+([`internal/docsindex`](./internal/docsindex/docsindex.go)), so there is no
+artifact to build before a build and none to catch stale. `make docs-lint`
+(part of `make docs-check`) checks the docs themselves.
 
 The script stops at the first failure and names the stage that failed. Every Go
 command goes through [`scripts/docker-go.sh`](./scripts/docker-go.sh), so **no

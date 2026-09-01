@@ -12,9 +12,15 @@ scripts/*.ps1 text eol=crlf
 # GitHub review and keeps them out of language stats, while leaving `git diff`
 # fully textual — deliberately not `-diff`, which would hide the content from
 # review and reduce a staleness failure to "binary files differ". Never
-# hand-merge these: resolve any conflict by re-running `make docs-index` /
-# `make generate-caps` / `make generate-ts`.
-internal/docssearch/index.gen.jsonl linguist-generated=true
-web/src/docs-nav.gen.ts linguist-generated=true
+# hand-merge these: resolve any conflict by re-running `make generate-caps` /
+# `make generate-ts`.
+#
+# The docs navigation and search index used to be here too. They are not
+# generated into the repository any more — the console derives both from the
+# docs the binary embeds, at runtime — because a sorted one-entry-per-page
+# manifest conflicts whenever one branch adds a page and another edits its
+# neighbour, and a merge driver cannot help: GitHub computes mergeability
+# server-side and does not run custom drivers. See internal/docsindex.
 web/src/types/api.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true
+web/src/routeTree.gen.ts linguist-generated=true

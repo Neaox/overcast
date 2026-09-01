@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -29,9 +30,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/docsindex"
 	"github.com/overcast-sh/overcast/internal/docssearch"
 )
 
@@ -195,8 +198,17 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/apigateway/apis/{apiId}/metrics", handleAPIGatewayApiMetrics)
 
 	// ── Docs ──────────────────────────────────────────────────────────────
-	r.Get("/api/docs/search", handleDocsSearch)
+	// The navigation and the search corpus are both derived from docsFS, once,
+	// on first use. They used to be generated files committed to the repository
+	// (web/src/docs-nav.gen.ts and internal/docssearch/index.gen.jsonl); see
+	// internal/docsindex for why they are not any more.
+	docs := newDocsIndex(docsFS)
+	r.Get("/api/docs/nav", handleDocsNav(docs))
+	r.Get("/api/docs/search", handleDocsSearch(docs))
 	r.Get("/api/docs/page", handleDocsPage(docsFS))
+	// Registered last of the /api/docs/* set: chi matches static segments
+	// before a wildcard, so "nav" and "search" reach their own handlers rather
+	// than being read as service names.
 	r.Get("/api/docs/{service}", handleDocs(docsFS))
 
 	// ── SPA fallback ──────────────────────────────────────────────────────
@@ -1741,30 +1753,94 @@ func handleRDSLogs(w http.ResponseWriter, r *http.Request) {
 
 var safeServiceName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
-func handleDocsSearch(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	limit := 10
-	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
-		parsed, err := strconv.Atoi(rawLimit)
-		if err == nil && parsed > 0 && parsed <= 50 {
-			limit = parsed
+// docsIndex parses the embedded docs into navigation entries and a search
+// index, at most once, on the first request that needs either.
+//
+// Off the startup path deliberately: parsing every published page and
+// inverting it costs on the order of 100ms (BenchmarkBuildIndex in
+// internal/docsindex), and a run that never opens the console docs should not
+// pay it at boot. A parse failure is kept rather than retried — the input is
+// fixed at compile time, so a second attempt cannot differ.
+type docsIndex struct {
+	entries func() ([]docsindex.Entry, error)
+	search  func() *docssearch.Index
+}
+
+func newDocsIndex(docsFS fs.FS) *docsIndex {
+	collect := sync.OnceValues(func() ([]docsindex.Doc, error) {
+		if docsFS == nil {
+			return nil, errors.New("no documentation is embedded in this build")
 		}
-	}
-	// An index that failed to load must not look like a corpus with no
-	// matches: every query would answer "no results" and the console would
-	// show a working search box over nothing. Say the index is missing, the
-	// way a binary built without an SPA says so instead of 404ing.
-	if err := docssearch.Unavailable(); err != nil {
-		http.Error(w, "docs search index unavailable ("+err.Error()+"). "+
-			"The docs pages themselves are unaffected.", http.StatusServiceUnavailable)
-		return
-	}
-	results := docssearch.Search(query, limit)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"query":   query,
-		"results": results,
+		return docsindex.Collect(docsFS)
 	})
+	return &docsIndex{
+		entries: func() ([]docsindex.Entry, error) {
+			docs, err := collect()
+			if err != nil {
+				return nil, err
+			}
+			// An empty corpus is a failure, not an empty page list: a slim
+			// build embeds no docs, and answering 200 with [] would render an
+			// empty sidebar that looks like a working one.
+			if len(docs) == 0 {
+				return nil, errors.New("no documentation is embedded in this build")
+			}
+			return docsindex.Entries(docs), nil
+		},
+		search: sync.OnceValue(func() *docssearch.Index {
+			docs, err := collect()
+			if err != nil {
+				return docssearch.Unavailable(err)
+			}
+			return docssearch.NewIndex(docsindex.SearchEntries(docs))
+		}),
+	}
+}
+
+// handleDocsNav serves the docs sidebar and per-page table of contents: one
+// entry per published doc, in path order. The console used to import this as a
+// 7,000-line generated TypeScript module bundled into the SPA; it fetches it
+// now, from the same binary it already fetches every doc body from.
+func handleDocsNav(docs *docsIndex) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entries, err := docs.entries()
+		if err != nil {
+			http.Error(w, "docs navigation unavailable ("+err.Error()+").",
+				http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries})
+	}
+}
+
+func handleDocsSearch(docs *docsIndex) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		limit := 10
+		if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+			parsed, err := strconv.Atoi(rawLimit)
+			if err == nil && parsed > 0 && parsed <= 50 {
+				limit = parsed
+			}
+		}
+		idx := docs.search()
+		// An index that failed to build must not look like a corpus with no
+		// matches: every query would answer "no results" and the console would
+		// show a working search box over nothing. Say the index is missing, the
+		// way a binary built without an SPA says so instead of 404ing.
+		if err := idx.Err(); err != nil {
+			http.Error(w, "docs search index unavailable ("+err.Error()+"). "+
+				"The docs pages themselves are unaffected.", http.StatusServiceUnavailable)
+			return
+		}
+		results := idx.Search(query, limit)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query":   query,
+			"results": results,
+		})
+	}
 }
 
 func handleDocsPage(docsFS fs.FS) http.HandlerFunc {

@@ -5,18 +5,16 @@
 # Mirrors .github/workflows/test.yml, including the ordering CI encodes with
 # `needs: web` + the web-dist artifact:
 #
-#   docs-index → web lint → typecheck → vitest → SPA build
+#   web lint → typecheck → vitest → SPA build
 #              → go vet → go build → go test
 #
 # One hard dependency drives that order:
 #   - embed.go has `//go:embed all:web/dist`, so every non-slim Go build, vet
 #     and test needs a built SPA. The web stages run before the Go stages.
 #
-# The docs index (web/src/docs-nav.gen.ts, internal/docssearch/index.gen.jsonl)
-# is generated but committed, so nothing has to be generated before a build.
-# The docs-index stage below regenerates it anyway and the docs-check stage
-# diffs the result, which is what catches a docs/ edit committed without a
-# regenerated index.
+# Nothing is generated before a build: the console derives its docs navigation
+# and search index from the docs the binary embeds (internal/docsindex), so
+# there is no artifact to regenerate and none to catch stale.
 #
 # Every Go command goes through scripts/docker-go.sh, so this works on a
 # machine with Docker but no Go installed (e.g. Windows outside the
@@ -215,15 +213,6 @@ if [ "$scope" = "go" ] && [ ! -f "$ROOT/web/dist/index.html" ]; then
   Run 'make ci-local-web' (or 'make build-web') first."
 fi
 
-# ─── docs index ──────────────────────────────────────────────────────────────
-#
-# The index is committed, so this stage is not a build prerequisite; it exists
-# so the docs-check stage below can diff a freshly generated index against the
-# committed one.
-
-stage "docs-index"
-go_cmd run ./scripts/docs-index.go --write-nav --write-search-index || fail
-
 # ─── Web (produces web/dist, which the Go stages embed) ──────────────────────
 
 if [ "$scope" != "go" ]; then
@@ -280,16 +269,11 @@ if [ "$scope" != "web" ]; then
     # The web UI's server types are generated from the Go structs; a Go field
     # rename without `make generate-ts` fails here, as it does in CI.
     go_cmd run ./cmd/tsgen --check || fail
+    # Docs frontmatter, in-page anchors, service page structure. Nothing to
+    # regenerate: the docs navigation and search index are derived at runtime
+    # from the embedded docs (internal/docsindex), not committed.
     go_cmd run ./scripts/docs-index.go --check || fail
-    # The docs-index stage already regenerated both index files, so a docs/
-    # edit committed without a regenerated index shows up here as a dirty
-    # tree. (docs-index.go --check compares content too, but it can only fire
-    # in flows that did not just regenerate — e.g. a bare `make docs-check`.)
-    git -C "$ROOT" diff --exit-code -- \
-        internal/capabilities/all.gen.go README.md STATUS.md \
-        docs/README.md docs/services/ docs/generated/service-support.json \
-        internal/docssearch/index.gen.jsonl web/src/docs-nav.gen.ts web/src/types/api.gen.ts \
-        || { echo "  generated files are stale — commit the regenerated files above" >&2; fail; }
+    git -C "$ROOT" diff --exit-code --         internal/capabilities/all.gen.go README.md STATUS.md         docs/README.md docs/services/ docs/generated/service-support.json         web/src/types/api.gen.ts         || { echo "  generated files are stale — commit the regenerated files above" >&2; fail; }
 fi
 
 # ─── done ────────────────────────────────────────────────────────────────────

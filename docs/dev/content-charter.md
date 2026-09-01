@@ -1,8 +1,8 @@
 # Docs content charter
 
-The rules below apply to everything under `docs/` that `scripts/docs-index.go`
-publishes (i.e. everything except `docs/plans/` and `docs/dev/` itself — see
-`isPublishedDocPath`). They exist so a docs edit reads like it was written for
+The rules below apply to everything under `docs/` that Overcast publishes
+(i.e. everything except `docs/plans/` and `docs/dev/` itself — see
+`internal/docsindex`). They exist so a docs edit reads like it was written for
 the person hitting the page, not for whoever reviewed the PR. Follow them the
 same way whether you're a human or an agent; `scripts/docs-index.go --check`
 mechanically enforces the two rules that are checkable (3 and, partially, 2).
