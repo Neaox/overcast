@@ -90,9 +90,13 @@ export function SidebarNavItem({
       : pathname.startsWith(to)
   const rowCls = rowVariants({ collapsed, active, tone })
   const { enabled: colorEnabled } = useServiceIconColor()
-  // Active rows keep the accent state colour — the "you are here" signal —
-  // rather than the service's own hue, so tinting only applies at rest.
-  const tint = colorEnabled && color && !active ? color : undefined
+  // The glyph keeps its own ramp colour in every state, active included — the
+  // "you are here" signal lives on the row (bg-accent-muted, bold, and the
+  // label text going accent via rowVariants), not on the icon. An explicit
+  // class on the icon itself always wins over the row's inherited
+  // `currentColor`, active/hover states included, so this is also what keeps
+  // hover from re-forcing accent onto a coloured glyph.
+  const tint = colorEnabled && color ? color : undefined
   const iconCls = cn("shrink-0", collapsed ? "h-[17px] w-[17px]" : "h-4 w-4", tint)
   const badgeNode = badge && badge.count > 0 && (
     <SidebarBadge count={badge.count} collapsed={collapsed} label={badge.label} />
