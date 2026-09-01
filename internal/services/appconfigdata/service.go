@@ -352,10 +352,13 @@ func (s *Service) getLatestConfiguration(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Version-Label is modeled here too, and is deliberately not sent: it
-	// carries the hosted configuration version's user-defined label, which
-	// Overcast's AppConfig control plane does not store. AWS also omits it when
-	// there is none.
+	// Version-Label carries the hosted configuration version's user-defined
+	// label, which the AppConfig control plane stores from
+	// CreateHostedConfigurationVersion. AWS omits the header when the version
+	// has none, so an empty label sends nothing.
+	if hcv.VersionLabel != "" {
+		w.Header().Set("Version-Label", hcv.VersionLabel)
+	}
 	if hcv.ContentType != "" {
 		w.Header().Set("Content-Type", hcv.ContentType)
 	}
