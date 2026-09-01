@@ -1,6 +1,6 @@
 ---
 title: "SES — Simple Email Service"
-description: "SES supports both the v1 Query protocol (form-encoded POST with Action field, XML responses) and the v2 REST-JSON protocol (path-based routing, JSON request/response bodies)."
+description: "Send mail with the v1 or v2 API and read it in the console's Inbox. Nothing leaves the machine, and every identity is verified the moment it is created."
 section: "Service Reference"
 tags:
   - docs
@@ -13,35 +13,68 @@ tags:
 
 # SES — Simple Email Service
 
-> SES v2 docs: https://docs.aws.amazon.com/ses/latest/APIReference-V2/Welcome.html
+Send with the v1 or v2 API and the message lands in the console's Inbox
+instead of a mailbox. Nothing is delivered off the machine.
 
-SES supports both the v1 Query protocol (form-encoded POST with `Action` field,
-XML responses) and the v2 REST-JSON protocol (path-based routing, JSON
-request/response bodies).
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws ses verify-email-identity --email-address app@example.com
+aws ses send-email \
+  --from app@example.com \
+  --destination ToAddresses=someone@example.com \
+  --message 'Subject={Data=Hello},Body={Text={Data=It works}}'
+```
+
+Open <http://localhost:4567/inbox> to read it.
+
+## What lands in the Inbox
+
+Overcast runs an SMTP server on port `1025` and captures everything sent
+through it, plus deliveries that never touch SMTP at all:
+
+| Source                                | Appears as                        |
+| ------------------------------------- | --------------------------------- |
+| SES `SendEmail`, `SendRawEmail`, `SendTemplatedEmail` | An email               |
+| SNS `email` / `email-json` subscriptions | An email, threaded by publish   |
+| SNS `sms` subscriptions and `Publish --phone-number` | An SMS                 |
+| SNS `http` / `https` subscriptions    | A captured webhook delivery       |
+| Cognito confirmation, invite and reset messages | An email or an SMS      |
+
+The same messages are available over HTTP at
+`GET /_overcast/ses/inbox/messages`. The buffer holds the most recent 500
+messages (`OVERCAST_SMTP_INBOX_MAX`); set `OVERCAST_SMTP_HOST` to relay to a
+real server instead of capturing.
+
+## What works
+
+| Area          | Behaviour                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| Sending (v1)  | `SendEmail`, `SendRawEmail` (raw MIME), `SendTemplatedEmail`                             |
+| Sending (v2)  | `SendEmail` at `POST /v2/email/outbound-emails`                                          |
+| Templates     | Full CRUD plus `{{key}}` substitution on send                                            |
+| Identities    | v1 verify/list/delete and the v2 `CreateEmailIdentity` family, with inline `Tags`         |
+| Tags (v2)     | `TagResource`, `UntagResource`, `ListTagsForResource` by identity ARN                    |
+| Console       | The [SES page](http://localhost:4567/ses) adds and removes identities                    |
+
+## Differences from AWS
+
+| Behaviour            | On AWS                                                | Here                                                     |
+| -------------------- | ----------------------------------------------------- | ---------------------------------------------------------- |
+| Delivery             | The message reaches the recipient                     | Captured in the Inbox; nothing is sent                     |
+| Identity verification | A DNS or email round-trip, then `Pending` → `Success` | Auto-verified; `GetIdentityVerificationAttributes` always says `Success` |
+| Unverified senders   | `MessageRejected`                                     | Accepted — the sending identity is not checked             |
+| Sandbox and quotas   | Enforced; `GetSendQuota` reports real limits          | Unlimited quota, empty send statistics                     |
+| DKIM, MAIL FROM, notification topics | Configurable per identity             | Not implemented — `501 Not Implemented`                     |
+| Configuration sets and receipt rules | Full API                              | Not implemented — `501 Not Implemented`                     |
 
 > [!NOTE]
-> Emails are **not delivered** — all outbound messages are captured and visible in the
-> Mail page of the web console. All identities are automatically verified; there is no
-> real verification flow.
-
----
-
-## SDK compatibility
-
-| SDK            | Client                        | Status      |
-| -------------- | ----------------------------- | ----------- |
-| Go v2          | `aws-sdk-go-v2/service/ses`   | ✅ Tested   |
-| Go v2          | `aws-sdk-go-v2/service/sesv2` | ✅ Tested   |
-| Python (boto3) | `boto3.client("ses")`         | ✅ Expected |
-| Python (boto3) | `boto3.client("sesv2")`       | ✅ Expected |
-| JS/TS v3       | `@aws-sdk/client-ses`         | ✅ Expected |
-| JS/TS v3       | `@aws-sdk/client-sesv2`       | ✅ Expected |
-
-## Web console
-
-The SES page (`/ses`) shows all verified identities with the ability to add
-new email/domain identities and delete existing ones. Emails sent via SES
-appear in the Mail page.
+> The console's SES page manages identities only. Sent mail is in the Inbox,
+> not on that page.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -55,5 +88,7 @@ Per-operation status, notes and AWS API links: [SES operations](ses/operations.m
 ## Related
 
 - [AWS API reference](https://docs.aws.amazon.com/ses/latest/APIReference/Welcome.html)
+- [SNS](sns.md) — email, SMS and webhook subscriptions land in the same Inbox
+- [Cognito](cognito.md) — user pool mail lands there too
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

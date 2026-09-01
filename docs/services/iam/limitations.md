@@ -1,0 +1,94 @@
+---
+title: "IAM limitations"
+description: "What the IAM policy evaluator covers and what it refuses to guess at, how permissions boundaries behave, and what request-time enforcement does not see."
+section: "Service Reference"
+tags:
+  - docs
+  - iam
+  - limitations
+  - services
+---
+
+# IAM limitations
+
+What the policy evaluator covers, and where it stops. The summary is on the
+[IAM service page](../iam.md).
+
+## What the evaluator covers
+
+| Construct        | Supported                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| Core             | `Effect`, `Action`/`NotAction`, `Resource`/`NotResource`, with `*` and `?` wildcards |
+| Matching         | Actions case-insensitively, as on AWS; resource ARNs case-sensitively               |
+| Precedence       | Explicit deny wins, then allow, otherwise the default implicit deny                 |
+| Conditions       | The `String*`, `Numeric*`, `Date*`, `Bool`, `IpAddress`/`NotIpAddress`, `Arn*` and `Null` families, including the `…IfExists` suffix |
+| Policy variables | `${aws:username}`, `${aws:userid}`, … in resources and condition values             |
+| Resource policies | Passed as `ResourcePolicy` to the simulator, including `Principal`/`NotPrincipal`  |
+
+Within the single account Overcast emulates, an allow in either the identity
+policies or the resource policy is sufficient, and a deny in either is final.
+
+## What it will not guess
+
+A condition operator or principal type the evaluator does not implement makes
+the call fail with AWS's `PolicyEvaluation` error naming the construct, rather
+than quietly resolving to an allow or a deny. `MissingContextValues` names
+condition keys the call did not supply.
+
+| Not implemented                             | Result                                    |
+| ------------------------------------------- | ------------------------------------------- |
+| Service control policies, session policies  | Not evaluated                              |
+| `ForAllValues` / `ForAnyValue` set operators | `PolicyEvaluation`                         |
+| An unparseable policy document              | `InvalidInput`                             |
+| AWS-managed policy documents                | Not stored, so an attached `arn:aws:iam::aws:policy/…` grants nothing under enforcement |
+
+`StartPosition` / `EndPosition` are Overcast's own byte-accurate computation
+against the document text it was given. They are not copied from any upstream
+source, and will not match real AWS byte for byte.
+
+## Permissions boundaries
+
+A boundary grants nothing on its own: it caps what the entity's identity
+policies can grant, so effective permissions are the **intersection** of the
+two, and an explicit deny in either is final. Both `SimulatePrincipalPolicy`
+and request-time enforcement read the stored boundary, so one attached out of
+band takes effect on the very next call.
+
+Supplying `PermissionsBoundaryPolicyInputList` to `SimulatePrincipalPolicy`
+uses that boundary *instead of* the stored one — AWS allows only one boundary
+per simulation, and "what would this boundary do" is the reason to supply it.
+
+| Case                                            | Behaviour                                                     |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| Boundary naming a policy that does not exist    | `NoSuchEntity`                                                 |
+| `DeletePolicy` while a policy is still bounding | `DeleteConflict`                                               |
+| Boundary attached but unreadable                | Allows nothing, and the reason is logged at warn level          |
+| Boundary plus a simulated `ResourcePolicy`      | The boundary still applies — AWS would let a direct-principal resource policy bypass it |
+
+That last row is the one divergence, and it only shows up when a simulation
+supplies a `ResourcePolicy` *and* the principal carries a boundary.
+
+## What enforcement does not see
+
+`OVERCAST_ENFORCE_IAM` gates identity policies only. Two further gaps:
+
+- **Resource-based policies** — S3 bucket policies, Lambda/SQS/SNS policies —
+  are not consulted at request time. The simulator accepts one explicitly,
+  which is the way to test one today.
+- **A request whose operation cannot be named** is not gated. S3 reaches this
+  routinely, because its sub-resource operations (`?tagging`, `?restore`,
+  `?legal-hold`, …) are identified by query parameters rather than by path.
+  Denying them would break ordinary S3 traffic the moment enforcement was
+  switched on. The gap is logged at debug level rather than passing silently.
+
+Enforcement decides only what this evaluator can see. It is a development aid
+for catching a missing permission early, not a security control.
+
+## Entities that are not modelled
+
+Login profiles, signing certificates, SSH public keys, Git credentials and MFA
+devices do not exist here, so the AWS delete conflicts for those cannot arise.
+Managed policy *versions* are a counter rather than a history:
+`CreatePolicyVersion` with `SetAsDefault=true` replaces the operative document
+and bumps `DefaultVersionId`, which is what `AWS::IAM::ManagedPolicy` updates
+dispatch, but superseded documents are not retained.

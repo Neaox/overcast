@@ -1,50 +1,60 @@
 ---
-title: "STS — endpoint support"
-description: "Generated for Overcast. See also: AWS STS API Reference"
+title: "STS — Security Token Service"
+description: "Temporary credentials on demand: every call mints fresh ASIA-prefixed fake credentials without verifying anything. AssumeRole records the session for opt-in IAM enforcement."
 section: "Service Reference"
 tags:
   - docs
-  - endpoint
+  - security
   - services
   - sts
-  - support
+  - token
 ---
 
-# STS — endpoint support
+# STS — Security Token Service
 
-> Generated for Overcast. See also: [AWS STS API Reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)
+Every credential call succeeds and returns freshly generated fake credentials.
+Nothing is verified — not the role, not the identity, not the token.
 
-## Endpoint details
+**Status:** ⚠️ Partial
 
-| Operation                  | Status | Notes                                      | AWS docs                                                                                        |
-| -------------------------- | ------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| GetCallerIdentity          | ✅     | Returns fake account/user ARN              | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)          |
-| GetSessionToken            | ✅     | Returns fake temporary credentials         | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetSessionToken.html)            |
-| AssumeRole                 | ✅     | Returns fake credentials + AssumedRoleUser | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)                 |
-| AssumeRoleWithWebIdentity  | ✅     | Returns fake credentials                   | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithWebIdentity.html)  |
-| GetFederationToken         | ✅     | Returns fake credentials + FederatedUser   | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetFederationToken.html)         |
-| AssumeRoleWithSAML         | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithSAML.html)         |
-| AssumeRoot                 | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoot.html)                 |
-| DecodeAuthorizationMessage | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_DecodeAuthorizationMessage.html) |
-| GetAccessKeyInfo           | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html)           |
-| GetDelegatedAccessToken    | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetDelegatedAccessToken.html)    |
-| GetWebIdentityToken        | ❌     | Returns NotImplemented                     | [link](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetWebIdentityToken.html)        |
+## Quick start
 
-## SDK compatibility
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
 
-| SDK                       | Tested |
-| ------------------------- | ------ |
-| AWS SDK for Go v2         | ❌     |
-| AWS SDK for JavaScript v3 | ✅     |
-| boto3 (Python)            | ❌     |
-| AWS SDK for Java          | ❌     |
-| AWS SDK for .NET          | ❌     |
+aws sts get-caller-identity
+aws sts assume-role \
+  --role-arn arn:aws:iam::000000000000:role/app \
+  --role-session-name local
+```
 
-## Notes
+## What works
 
-- **Credentials**: All temporary credential operations return freshly generated fake credentials (ASIA-prefixed access key, random secret and session token).
-- **No credential validation**: Credentials are not stored or validated; they are single-use fake values.
-- **Protocol**: Uses AWS Query protocol (form-encoded POST body, XML responses).
+| Call                        | Returns                                                          |
+| --------------------------- | ---------------------------------------------------------------- |
+| `GetCallerIdentity`         | A fixed account, user ID and root ARN                            |
+| `GetSessionToken`           | Temporary credentials (default 12 hours)                         |
+| `AssumeRole`                | Temporary credentials plus an `AssumedRoleUser` (default 1 hour) |
+| `AssumeRoleWithWebIdentity` | Temporary credentials; the token is not parsed                   |
+| `GetFederationToken`        | Temporary credentials plus a `FederatedUser`                     |
+
+Access keys are `ASIA`-prefixed, with a random secret and session token as on
+AWS. `DurationSeconds` is honoured wherever it is accepted.
+
+> [!NOTE]
+> `AssumeRole` records the minted access key against the role ARN, which is how
+> opt-in [IAM enforcement](iam.md#request-time-enforcement-opt-in) resolves a caller to
+> a role's policies. With enforcement off, nothing reads it.
+
+## Differences from AWS
+
+| Behaviour           | On AWS                                                  | Here                                                   |
+| ------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| `AssumeRole`        | The role must exist and its trust policy must allow you | Any `RoleArn` is accepted, existing or not              |
+| `GetCallerIdentity` | Reports the actual signing principal                    | Always the account root ARN, whoever called             |
+| Web identity tokens | The OIDC token is validated against the provider        | Not parsed; a fixed subject is returned                 |
+| Credential expiry   | Expired credentials are refused                         | Never checked — no credential is ever verified          |
+| SAML, `AssumeRoot`, `DecodeAuthorizationMessage`, `GetAccessKeyInfo` | Full API                | Not implemented — `NotImplemented`     |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -57,5 +67,7 @@ Per-operation status, notes and AWS API links: [STS operations](sts/operations.m
 
 ## Related
 
+- [AWS API reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)
+- [IAM](iam.md) — where an assumed role's policies live
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
