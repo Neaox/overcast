@@ -169,16 +169,34 @@ func listInstances() ([]instanceRecord, error) {
 // on a nonexistent path returns nil — which is what lets stopInstance
 // (cmd_stop.go) call this unconditionally on both the normal and
 // stale-record paths.
+//
+// The removal retries for up to ~2s: on Windows, GetExitCodeProcess flips
+// away from STILL_ACTIVE (so waitForExit returns) slightly before the OS
+// finishes releasing the dead process's open handles, and an immediate
+// RemoveAll can lose that race against the daemon's still-held daemon.log —
+// observed live as "unlinkat daemon.log: being used by another process",
+// with the directory left half-deleted (instance.json gone, daemon.log
+// orphaned). Transient antivirus/indexer locks on freshly-written files are
+// the other known holder the retry absorbs. Unix never needs a second
+// attempt; the loop exits on the first success.
 func removeInstance(name string) error {
 	base, err := instancesBaseDir()
 	if err != nil {
 		return err
 	}
 	dir := instanceDir(base, name)
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("remove instance directory %s: %w", dir, err)
+	const (
+		attempts = 20
+		backoff  = 100 * time.Millisecond
+	)
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if lastErr = os.RemoveAll(dir); lastErr == nil {
+			return nil
+		}
+		time.Sleep(backoff)
 	}
-	return nil
+	return fmt.Errorf("remove instance directory %s: %w", dir, lastErr)
 }
 
 // instanceRunning reports whether rec's backend is currently alive: pid

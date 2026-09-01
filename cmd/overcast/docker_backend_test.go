@@ -148,15 +148,26 @@ func TestPortFree_FalseForABoundPort(t *testing.T) {
 // for these ports" path: both must be free, and the pair returned is exactly
 // what was given, no scanning.
 func TestResolveDockerPorts_ExplicitUsesAsIs(t *testing.T) {
-	// Reserve two adjacent free ports the same way the production scan
-	// would, then release them immediately so resolveDockerPorts can bind.
+	// Reserve two free ports via ephemeral binds held simultaneously (so
+	// they are distinct), then release both so resolveDockerPorts can bind.
+	// Both come from the OS, never arithmetic: a derived port like port+1000
+	// can exceed 65535 or belong to another process — that exact flake
+	// happened (ephemeral draw 65506 → "ui-port 66506 already in use").
+	// Explicit mode does not require adjacency, which two ephemeral draws
+	// also exercise.
 	ln1, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		ln1.Close()
+		t.Fatalf("listen: %v", err)
+	}
 	port := ln1.Addr().(*net.TCPAddr).Port
+	uiPort := ln2.Addr().(*net.TCPAddr).Port
 	ln1.Close()
-	uiPort := port + 1000 // arbitrary, unrelated free port — explicit mode does not require adjacency.
+	ln2.Close()
 
 	gotPort, gotUI, err := resolveDockerPorts(port, uiPort, true)
 	if err != nil {
