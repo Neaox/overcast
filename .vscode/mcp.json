@@ -5,10 +5,10 @@
       "command": "sh",
       "args": [
         "-c",
-        "mkdir -p '${workspaceFolder}/.overcast' && exec 2>>'${workspaceFolder}/.overcast/mcp-workspace.log' && go build -o '${workspaceFolder}/bin/overcast' ./cmd/overcast && exec '${workspaceFolder}/bin/overcast' mcp --workspace '${workspaceFolder}' --stdio"
+        "mkdir -p '${workspaceFolder}/.overcast' && exec 2>>'${workspaceFolder}/.overcast/mcp-workspace.log' && exec go run '${workspaceFolder}/cmd/overcast-mcp' --workspace '${workspaceFolder}' --stdio"
       ],
       "dev": {
-        "watch": "{cmd/overcast,internal/mcp}/**/*"
+        "watch": "{cmd/overcast-mcp,internal/mcp}/**/*"
       }
     },
     "overcastCompat": {
