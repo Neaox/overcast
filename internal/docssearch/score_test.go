@@ -1,45 +1,42 @@
 package docssearch
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
 
 // syntheticIndex builds a searchable index from documents described field by
-// field, through the same scorer and the same "term:score" encoding the
-// generator writes. Ranking questions are about the *shape* of a corpus — how
-// often a word appears, and in which field — so they are asked here rather
-// than against docs/, where the answer changes whenever someone edits a page.
-func syntheticIndex(t *testing.T, docs ...DocumentFields) *searchIndex {
+// field, through the same scorer internal/docsindex runs over the real corpus.
+// Ranking questions are about the *shape* of a corpus — how often a word
+// appears, and in which field — so they are asked here rather than against
+// docs/, where the answer changes whenever someone edits a page. The corpus
+// itself is exercised in internal/docsindex.
+func syntheticIndex(t *testing.T, docs ...DocumentFields) *Index {
 	t.Helper()
-	var b strings.Builder
+	entries := make([]Entry, 0, len(docs))
 	for _, doc := range docs {
 		href := strings.ToLower(strings.ReplaceAll(doc.Title, " ", "-")) + ".md"
-		line, err := json.Marshal(indexEntry{
-			Path:    "docs/" + href,
-			Href:    href,
-			Title:   doc.Title,
-			Section: doc.Section,
-			Tags:    doc.Tags,
-			Terms:   FormatTerms(ScoreDocument(doc)),
+		entries = append(entries, Entry{
+			Document: Document{
+				Path:    "docs/" + href,
+				Href:    href,
+				Title:   doc.Title,
+				Section: doc.Section,
+				Tags:    doc.Tags,
+			},
+			Terms: ScoreDocument(doc),
 		})
-		if err != nil {
-			t.Fatalf("marshal %s: %v", doc.Title, err)
-		}
-		b.Write(line)
-		b.WriteByte('\n')
 	}
-	idx := parseIndex([]byte(b.String()))
-	if idx.err != nil {
-		t.Fatalf("parse synthetic index: %v", idx.err)
+	idx := NewIndex(entries)
+	if err := idx.Err(); err != nil {
+		t.Fatalf("build synthetic index: %v", err)
 	}
 	return idx
 }
 
-func topHref(t *testing.T, idx *searchIndex, query string) string {
+func topHref(t *testing.T, idx *Index, query string) string {
 	t.Helper()
-	results := idx.search(query, 5)
+	results := idx.Search(query, 5)
 	if len(results) == 0 {
 		t.Fatalf("%q: expected results", query)
 	}
@@ -152,28 +149,6 @@ func TestScoreDocument_saturatesRepeatedOccurrences(t *testing.T) {
 		}
 		if tc.repeats < 16 && got >= weightHeading {
 			t.Errorf("%d body mentions scored %d, which reaches heading weight %d", tc.repeats, got, weightHeading)
-		}
-	}
-}
-
-// TestFormatTerms_roundTripsThroughTheIndexReader keeps the writer and the
-// reader of the "term:score" encoding honest about the awkward case: a term
-// may itself contain a colon, so the pair splits on its last one.
-func TestFormatTerms_roundTripsThroughTheIndexReader(t *testing.T) {
-	// Given: scored terms, one of which contains a colon.
-	scores := map[string]int{"logs:20140328": 9, "lambda": 3}
-
-	// When: they are formatted and parsed back.
-	idx := &searchIndex{postings: map[string][]Posting{}}
-	if err := idx.addTerms(0, FormatTerms(scores)); err != nil {
-		t.Fatalf("addTerms: %v", err)
-	}
-
-	// Then: every term survives with its score.
-	for term, want := range scores {
-		postings := idx.postings[term]
-		if len(postings) != 1 || postings[0].Score != want {
-			t.Errorf("%q: got %+v, want one posting scored %d", term, postings, want)
 		}
 	}
 }

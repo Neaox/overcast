@@ -8,12 +8,13 @@ import remarkRemoveComments from "remark-remove-comments"
 import { BookOpen, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
-import { DOCS_NAV } from "@/docs-nav.gen"
+import { Skeleton } from "@/components/ui/skeleton"
 import { CodeTabsGroup, CodeTabsPanel } from "@/features/docs/code-tabs"
 import { MarkdownCodeBlock } from "@/features/docs/markdown-code"
 import remarkCodeTabs from "@/lib/remark-code-tabs"
 import { slug } from "@/lib/slug"
 import { cn } from "@/lib/utils"
+import type { DocsNavEntry } from "@/types/common"
 
 export { slug }
 
@@ -55,10 +56,41 @@ async function fetchDoc(path: string): Promise<string> {
   return res.text()
 }
 
+/**
+ * The docs sidebar and per-page table of contents, from the same binary this
+ * page already fetches every doc body from.
+ *
+ * It used to be `import { DOCS_NAV } from "@/docs-nav.gen"` — a 7,000-line
+ * generated module committed to the repository and bundled into the SPA. Every
+ * docs pull request rewrote hundreds of lines of it, so concurrent docs
+ * branches conflicted on a file nobody had written by hand. The server derives
+ * it from the docs it already embeds (internal/docsindex), and the page that
+ * cannot render without /api/docs/page loses nothing by also needing
+ * /api/docs/nav.
+ */
+async function fetchNav(): Promise<DocsNavEntry[]> {
+  const res = await fetch("/api/docs/nav")
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const body = (await res.json()) as { entries?: DocsNavEntry[] }
+  return body.entries ?? []
+}
+
+const navQueryOptions = queryOptions({
+  queryKey: ["docs-nav"],
+  queryFn: fetchNav,
+  staleTime: Infinity,
+  retry: false,
+})
+
 function DocsPage() {
   const { path = "README.md" } = Route.useSearch()
-  const currentDoc = DOCS_NAV.find((doc) => doc.href === path) ?? DOCS_NAV[0]
-  const sections = Array.from(new Set(DOCS_NAV.map((doc) => doc.section)))
+  const { data: nav, isPending: navPending } = useQuery(navQueryOptions)
+  const entries = nav ?? []
+  // Before the nav arrives — and for a path the nav does not list — the page
+  // still has to render its header. The path is the one thing it always knows,
+  // so fall back to that rather than to a blank title that then shifts.
+  const currentDoc = entries.find((doc) => doc.href === path) ?? placeholderDoc(path)
+  const sections = Array.from(new Set(entries.map((doc) => doc.section)))
   const { data, isLoading, isError } = useQuery(
     queryOptions({
       queryKey: ["docs-page", path],
@@ -85,25 +117,34 @@ function DocsPage() {
             <BookOpen className="h-4 w-4 text-accent" />
             Docs
           </div>
+          {navPending && (
+            <div className="space-y-2 px-2 py-1" aria-hidden>
+              {SIDEBAR_SKELETON_WIDTHS.map((width, i) => (
+                <Skeleton key={i} depth={i % 2 === 0 ? "1" : "2"} className={cn("h-4", width)} />
+              ))}
+            </div>
+          )}
           {sections.map((section) => (
             <div key={section} className="mb-4">
               <div className="mb-1 px-2 text-xs font-medium text-fg-subtle">{section}</div>
               <div className="space-y-0.5">
-                {DOCS_NAV.filter((doc) => doc.section === section).map((doc) => (
-                  <Link
-                    key={doc.href}
-                    to="/docs"
-                    search={{ path: doc.href }}
-                    className={cn(
-                      "block rounded-md px-2 py-1.5 text-sm transition-colors",
-                      doc.href === path
-                        ? "bg-accent-muted text-fg"
-                        : "text-fg-muted hover:bg-accent-muted hover:text-accent",
-                    )}
-                  >
-                    {doc.title}
-                  </Link>
-                ))}
+                {entries
+                  .filter((doc) => doc.section === section)
+                  .map((doc) => (
+                    <Link
+                      key={doc.href}
+                      to="/docs"
+                      search={{ path: doc.href }}
+                      className={cn(
+                        "block rounded-md px-2 py-1.5 text-sm transition-colors",
+                        doc.href === path
+                          ? "bg-accent-muted text-fg"
+                          : "text-fg-muted hover:bg-accent-muted hover:text-accent",
+                      )}
+                    >
+                      {doc.title}
+                    </Link>
+                  ))}
               </div>
             </div>
           ))}
@@ -248,6 +289,35 @@ function DocsPage() {
       </aside>
     </main>
   )
+}
+
+// Placeholder bar widths for the sidebar while the navigation is in flight —
+// enough of them to hold the column's height, so the page does not jump when
+// the real list arrives.
+const SIDEBAR_SKELETON_WIDTHS = [
+  "w-24",
+  "w-32",
+  "w-28",
+  "w-36",
+  "w-20",
+  "w-32",
+  "w-24",
+  "w-28",
+  "w-36",
+  "w-24",
+] as const
+
+/** The header's stand-in while the nav is in flight, or if it never arrives. */
+function placeholderDoc(path: string): DocsNavEntry {
+  return {
+    path: `docs/${path}`,
+    href: path,
+    title: path,
+    description: "",
+    section: "Documentation",
+    tags: [],
+    headings: [],
+  }
 }
 
 function resolveDocsHref(currentPath: string, href: string): string {

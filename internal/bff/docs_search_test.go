@@ -4,22 +4,32 @@ package bff
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
-	"testing/fstest"
 )
+
+// publishedDocs is the docs tree the console binary embeds. The handler derives
+// both the docs navigation and the search corpus from it — there is no
+// generated index to load, so a search test has to supply the same input the
+// binary gets.
+func publishedDocs() fs.FS {
+	return os.DirFS(filepath.Join("..", "..", "docs"))
+}
 
 func TestDocsSearch_cdkQuery(t *testing.T) {
 	// Given: the BFF is serving with docs routes enabled.
-	handler := NewHandler(nil, fstest.MapFS{}, UIConfig{})
+	handler := NewHandler(nil, publishedDocs(), UIConfig{})
 
 	// When: we search docs for the local CDK VPC pattern.
 	req := httptest.NewRequest(http.MethodGet, "/api/docs/search?q=cdk+local+vpc&limit=3", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	// Then: the generated search index returns the local VPC guide.
+	// Then: the search index returns the local VPC guide.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -43,7 +53,7 @@ func TestDocsSearch_cdkQuery(t *testing.T) {
 
 func TestDocsSearch_emptyQuery(t *testing.T) {
 	// Given: the BFF is serving with docs routes enabled.
-	handler := NewHandler(nil, fstest.MapFS{}, UIConfig{})
+	handler := NewHandler(nil, publishedDocs(), UIConfig{})
 
 	// When: we search docs with an empty query.
 	req := httptest.NewRequest(http.MethodGet, "/api/docs/search?q=&limit=3", nil)

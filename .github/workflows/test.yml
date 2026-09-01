@@ -765,8 +765,10 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # No setup-go: the docs index is committed, so the SPA build no longer
-      # shells out to the Go generator. This job is Node-only.
+      # No setup-go, and nothing generated before the build: the console
+      # fetches its docs navigation from the Go BFF at runtime rather than
+      # importing a generated module, so this job is Node-only and stays that
+      # way. See internal/docsindex.
       # pnpm/action-setup must precede setup-node: `cache: pnpm` resolves the
       # store path by running pnpm, so pnpm has to be on PATH by then.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10

@@ -158,6 +158,12 @@ var manifest = []target{
 	{"internal/metrics", "MonitorResponse", "MonitorResponse"},
 	{"internal/metrics", "MonitorSeries", "MonitorSeries"},
 	{"internal/metrics", "ChartPoint", "ChartPoint"},
+
+	// GET /api/docs/nav — the console's docs sidebar and "On this page" list.
+	// The console used to import this data as a generated TypeScript module
+	// committed to the repository; it fetches it now (internal/docsindex).
+	{"internal/docsindex", "Entry", "DocsNavEntry"},
+	{"internal/docsindex", "Heading", "DocsHeading"},
 }
 
 // basicTS maps Go predeclared types to TypeScript.

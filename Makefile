@@ -55,7 +55,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         ci-local ci-local-web ci-local-go \
         bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
-        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
+        generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check docs docs-lint docs-check supportmeta-check check-binary-symbols
 
 ## help: print this help message
 help:
@@ -277,22 +277,23 @@ aws-models-check:
 			-shapes-out models/aws/shapes -shapes-services models/aws/shapes-services.txt -check; \
 	fi
 
-## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
-docs-index:
-	$(GO) run ./scripts/docs-index.go --write-nav --write-search-index
+## docs-lint: check docs frontmatter, in-page anchors, service page structure and the description budget
+# There is nothing to regenerate: the console derives its docs navigation and
+# search index from the docs the binary embeds (internal/docsindex), so editing
+# docs/ needs no follow-up command. This is the gate on the docs themselves.
+docs-lint:
+	$(GO) run ./scripts/docs-index.go --check
 
 ## docs: regenerate sentinel-bracketed capability tables in docs/services/*.md
 docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
-	$(GO) run ./scripts/docs-index.go --write-nav --write-search-index
 
 ## docs-check: verify docs capability tables, all.gen.go, api.gen.ts, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
-docs-check: check-caps check-ts
+docs-check: check-caps check-ts docs-lint
 	$(GO) run -tags dev ./cmd/capgen --generate
 	@git diff --exit-code internal/capabilities/all.gen.go \
 		|| (echo "ERROR: internal/capabilities/all.gen.go is stale. Run: make generate-caps" && exit 1)
 	$(GO) run -tags dev ./cmd/capgen --write-docs
-	$(GO) run ./scripts/docs-index.go --check
 	@git diff --exit-code README.md STATUS.md docs/README.md docs/configuration.md docs/cdk.md docs/services/ docs/generated/service-support.json \
 		|| (echo "ERROR: README.md, STATUS.md, docs/README.md, docs/configuration.md, docs/cdk.md, docs/services/, or docs/generated/service-support.json are stale. Run: make docs" && exit 1)
 

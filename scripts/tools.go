@@ -11,14 +11,12 @@
 // the requirement, `make docs-check` could no longer build the script, and
 // every Go update PR went red on the Docs job.
 //
+// goldmark is no longer one of them — internal/docsindex imports it from the
+// buildable tree, so tidy sees it — and nothing else a script imports is
+// invisible to tidy today. The file stays because the hazard has not gone
+// away: add an import here whenever a script starts importing a module that
+// nothing in the buildable tree needs.
+//
 // The `tools` tag is never set by anything, so this file is never compiled;
-// tidy still reads it, which is all it is for. Add an import here whenever a
-// script starts importing a module that nothing in the buildable tree needs.
+// tidy still reads it, which is all it is for.
 package scripts
-
-import (
-	_ "github.com/yuin/goldmark"
-	_ "github.com/yuin/goldmark/ast"
-	_ "github.com/yuin/goldmark/extension"
-	_ "github.com/yuin/goldmark/text"
-)

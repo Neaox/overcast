@@ -30,10 +30,10 @@ class NeedsCodeJobs(unittest.TestCase):
 	def test_prose_only_skips(self) -> None:
 		for files in (
 			["AGENTS.md"],
-			["docs/services/rds.md"],
 			["docs/plans/ci-streamlining.md"],
+			["docs/dev/development-setup.md"],
 			[".changelog/20260804-something.md"],
-			["README.md", "docs/networking.md", ".changelog/x.md"],
+			["README.md", "CONTRIBUTING.md", ".changelog/x.md"],
 		):
 			with self.subTest(files=files):
 				self.assertFalse(scope.needs_code_jobs(files))
@@ -55,12 +55,24 @@ class NeedsCodeJobs(unittest.TestCase):
 		# is a classifier: one doc plus one handler is a code change.
 		self.assertTrue(scope.needs_code_jobs(["docs/services/rds.md", "internal/services/rds/password.go"]))
 
-	def test_generated_docs_index_is_code(self) -> None:
-		# Editing a published doc regenerates these, and they compile into the
-		# binary and the SPA. If they were treated as prose, a docs change
-		# would skip the build that has to accept them.
-		self.assertTrue(scope.needs_code_jobs(["docs/services/rds.md", "internal/docssearch/index.gen.go"]))
-		self.assertTrue(scope.needs_code_jobs(["docs/services/rds.md", "web/src/docs-index.gen.ts"]))
+	def test_a_published_doc_is_code(self) -> None:
+		# embed.go compiles published docs into the binary and
+		# internal/docsindex indexes them, so a published doc is a build input
+		# and the corpus tests assert on it. Treating one as prose would skip
+		# the suite that has to accept it.
+		for files in (
+			["docs/services/rds.md"],
+			["docs/README.md"],
+			["docs/cdk/local-vpc.md"],
+			["docs/generated/service-support.json"],
+		):
+			with self.subTest(files=files):
+				self.assertTrue(scope.needs_code_jobs(files))
+
+	def test_a_contributor_doc_is_not(self) -> None:
+		# docs/plans/ and docs/dev/ are excluded from the embed pattern and the
+		# index, so nothing reads them.
+		self.assertFalse(scope.needs_code_jobs(["docs/dev/content-charter.md", "docs/plans/x.md"]))
 
 	def test_markdown_outside_docs_is_still_prose(self) -> None:
 		self.assertFalse(scope.needs_code_jobs(["compat/AGENTS.md", "tests/AGENTS.md"]))
@@ -78,7 +90,8 @@ class NeedsCodeJobs(unittest.TestCase):
 class IsProse(unittest.TestCase):
 	def test_suffix_and_prefix(self) -> None:
 		self.assertTrue(scope.is_prose("CONTRIBUTING.md"))
-		self.assertTrue(scope.is_prose("docs/generated/service-support.json"))
+		self.assertTrue(scope.is_prose("docs/dev/testing.md"))
+		self.assertFalse(scope.is_prose("docs/generated/service-support.json"))
 		self.assertFalse(scope.is_prose("internal/router/router.go"))
 		self.assertFalse(scope.is_prose("Makefile"))
 

@@ -1,13 +1,10 @@
 // Package docssearch serves search over the published docs/ tree.
 //
-// The corpus searched below is index.gen.jsonl, generated from docs/ and
-// committed — this package embeds it, so a bare checkout has to build. After
-// editing anything under docs/, regenerate with `make docs-index` (or `task
-// docs-index`, or `go generate` here) and commit the result; CI fails on a
-// stale index. See index.go for how it is loaded and why it is shaped that
-// way.
-//
-//go:generate go run ../../scripts/docs-index.go --write-search-index
+// The corpus is the docs the binary embeds (see embed.go). internal/docsindex
+// parses them into one scored Entry per page and NewIndex inverts those into
+// the term-major structure this file queries. Nothing is generated into the
+// repository and nothing has to be regenerated after a docs edit: index.go
+// explains why the artifact that used to hold this corpus is gone.
 package docssearch
 
 import (
@@ -29,21 +26,17 @@ var stopwords = map[string]bool{
 	"this": true, "to": true, "with": true,
 }
 
-// Search returns ranked documentation matches from the generated index. A
-// document matches only when it holds every token in the query; its score is
-// the sum of the per-term scores the generator weighted by field.
+// Search returns ranked documentation matches. A document matches only when it
+// holds every token in the query; its score is the sum of the per-term scores
+// ScoreDocument weighted by field.
 //
-// The weighting happens once, at index time, in ScoreDocument — which field a
-// term came from, and how often, with repetition counting sub-linearly. By the
-// time a "term:score" pair is read here that judgement is already made, so
-// this function only has to apply it. (A TypeScript port in the vite dev
-// server's Hono BFF used to have to apply it identically; that mirror was
-// retired in #1104 and the dev server now proxies /api/docs/search here.)
-func Search(query string, limit int) []Result { return index().search(query, limit) }
-
-// search is Search against a given index, so tests can rank a synthetic corpus
-// rather than only the embedded one.
-func (idx *searchIndex) search(query string, limit int) []Result {
+// The weighting happens once, when the index is built — which field a term came
+// from, and how often, with repetition counting sub-linearly. By the time a
+// posting is read here that judgement is already made, so this function only
+// has to apply it. (A TypeScript port in the vite dev server's Hono BFF used to
+// have to apply it identically; that mirror was retired in #1104 and the dev
+// server now proxies /api/docs/search here.)
+func (idx *Index) Search(query string, limit int) []Result {
 	if limit <= 0 {
 		limit = 10
 	}

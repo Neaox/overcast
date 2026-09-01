@@ -1,9 +1,7 @@
 package docssearch
 
 import (
-	"fmt"
 	"math/bits"
-	"sort"
 	"strings"
 )
 
@@ -38,8 +36,8 @@ type Heading struct {
 }
 
 // DocumentFields is one document's searchable content, split by the field it
-// came from. The indexer (scripts/docs-index.go) fills this in; ScoreDocument
-// turns it into the term scores that ship in index.gen.jsonl.
+// came from. internal/docsindex fills this in from a page's Markdown;
+// ScoreDocument turns it into that page's term scores.
 type DocumentFields struct {
 	Title       string
 	Tags        []string
@@ -93,32 +91,11 @@ func ScoreDocument(f DocumentFields) map[string]int {
 
 // saturate maps an occurrence count to its diminishing-returns multiplier:
 // 1 -> 1, 2-3 -> 2, 4-7 -> 3, 8-15 -> 4, and so on. It is 1+floor(log2(n)),
-// the standard sub-linear term-frequency scale, computed in integers so the
-// generated index stays exact and byte-reproducible across platforms.
+// the standard sub-linear term-frequency scale, computed in integers so a
+// score is exact and identical on every platform.
 func saturate(n int) int {
 	if n <= 0 {
 		return 0
 	}
 	return bits.Len(uint(n))
-}
-
-// FormatTerms renders term scores as the space-separated "term:score" pairs
-// one index line carries, sorted by term so the artifact is reproducible. It
-// is the inverse of searchIndex.addTerms, and lives beside it so the two
-// cannot drift: a term may itself contain ':', which is why the reader splits
-// on the last colon rather than the first.
-func FormatTerms(scores map[string]int) string {
-	names := make([]string, 0, len(scores))
-	for term := range scores {
-		names = append(names, term)
-	}
-	sort.Strings(names)
-	var b strings.Builder
-	for i, term := range names {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		fmt.Fprintf(&b, "%s:%d", term, scores[term])
-	}
-	return b.String()
 }

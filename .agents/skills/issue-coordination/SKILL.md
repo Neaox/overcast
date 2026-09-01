@@ -135,12 +135,12 @@ wall-clock.
 
 ### Generated files are a fourth case, and they resolve differently
 
-`internal/capabilities/all.gen.go`, `internal/docssearch/index.gen.jsonl`,
-`web/src/docs-nav.gen.ts` and `internal/awsapi/manifest.gen.go` are committed
+`internal/capabilities/all.gen.go`, `web/src/types/api.gen.ts`,
+`web/src/routeTree.gen.ts` and `internal/awsapi/manifest.gen.go` are committed
 build output. Two agents whose work regenerates the same one will conflict, but
 that conflict is **not** a dependency and must never be hand-merged or
-hand-resolved — it is fixed by re-running the owning command (`make docs-index`,
-`make generate-caps`, `make generate-aws-operations`) after the rebase. Do not
+hand-resolved — it is fixed by re-running the owning command (`make generate-caps`,
+`make generate-ts`, `make generate-aws-operations`) after the rebase. Do not
 stack work merely because two branches both regenerate a table; do warn each
 agent that the file is generated, so nobody resolves it by hand and commits a
 plausible-looking file that no command would produce.

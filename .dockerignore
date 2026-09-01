@@ -2,8 +2,9 @@
 *
 
 # ---- Go builder (stage 2) ---------------------------------------------------
-# The docs index is committed, so it arrives with !internal/ and !web/ below —
-# scripts/docs-index.go no longer needs to be in the build context.
+# Nothing is generated during the image build: the console derives the docs
+# navigation and search index from the embedded docs at runtime, so the build
+# context needs no generator and no Go toolchain in the web stage.
 !go.mod
 !go.sum
 !embed.go

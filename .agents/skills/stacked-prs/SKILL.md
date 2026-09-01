@@ -125,16 +125,19 @@ rebase — check `gh pr view <n> --json mergeStateStatus` before waiting.
 
 ## Conflicts in generated files
 
-Rebasing a stack in this repo almost always conflicts in the committed
-generated sources. Resolve them by **regenerating**, never by hand-merging, and
-in this order — `capgen` imports `internal/docssearch`, so it cannot compile
-while that file still holds conflict markers:
+A stack that touches capability declarations conflicts in the committed
+generated sources. Resolve them by **regenerating**, never by hand-merging:
 
 ```sh
-./scripts/docker-go.sh run ./scripts/docs-index.go --write-nav --write-search-index
 ./scripts/docker-go.sh run -tags dev ./cmd/capgen --generate
 ./scripts/docker-go.sh run -tags dev ./cmd/capgen --write-docs
+./scripts/docker-go.sh run ./cmd/tsgen --write
 ```
+
+A stack of docs branches no longer conflicts on anything generated: the docs
+navigation and search index are derived at runtime from the embedded docs
+(`internal/docsindex`), so only the Markdown two branches both edited can
+conflict — and that is a real conflict, with a real decision in it.
 
 `docs/plans/*.md` conflicts are usually a **union**, not a choice: each item's
 row records its own status, so both sides' rows survive.

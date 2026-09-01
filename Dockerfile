@@ -81,8 +81,9 @@ RUN npm install -g corepack@latest && corepack enable pnpm
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
-# src/docs-nav.gen.ts is committed, so it arrives with this COPY — no Go
-# toolchain or preliminary generation stage is needed to build the SPA.
+# Nothing is generated for the SPA: the console fetches its docs navigation
+# from the Go BFF at runtime (internal/docsindex), so no Go toolchain and no
+# preliminary generation stage is needed here.
 COPY web/ .
 RUN VITE_BUNDLED=true pnpm run build
 

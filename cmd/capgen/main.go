@@ -1652,13 +1652,13 @@ func buildOperationsDoc(service string, caps []CapabilityDecl) string {
 }
 
 // operationsDescription is the frontmatter description, kept well inside the
-// 220-character cap scripts/docs-index.go enforces.
+// 220-character cap internal/docsindex enforces.
 func operationsDescription(name string, caps []CapabilityDecl) string {
 	implemented, total := coverage(caps)
 	return fmt.Sprintf("Every %s operation Overcast declares — %d of %d implemented — with status, behaviour notes and a link to the AWS API reference for each.", name, implemented, total)
 }
 
-// operationsDocTags mirrors what scripts/docs-index.go would infer from the
+// operationsDocTags mirrors what internal/docsindex would infer from the
 // path, so the generated frontmatter and the inferred metadata agree.
 func operationsDocTags(docFile string) []string {
 	tags := []string{"docs", "operations", "services"}
@@ -1685,7 +1685,7 @@ func serviceDisplayName(service string) string {
 	return service
 }
 
-// quoteYAMLString renders a value the same way scripts/docs-index.go writes
+// quoteYAMLString renders a value the same way internal/docsindex writes
 // frontmatter, so a regenerated file and a --refresh-frontmatter run produce
 // the same bytes.
 func quoteYAMLString(s string) string {

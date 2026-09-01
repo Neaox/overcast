@@ -1,7 +1,7 @@
 /**
  * Heading text → anchor id, the docs viewer's slugger.
  *
- * This must stay in lockstep with scripts/docs-index.go's slug(), which
+ * This must stay in lockstep with internal/docsindex's Slug(), which
  * computes the same ids for the generated nav/search index, and with
  * internal/router/advisories.go, which hand-computes fragments from Go string
  * literals (see slug.test.ts). Note it collapses every non-alphanumeric run to
