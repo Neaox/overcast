@@ -225,6 +225,32 @@ The full checklists are in CONTRIBUTING.md:
 - [How to add a service](./CONTRIBUTING.md#how-to-add-a-service)
 - [Service package structure](./CONTRIBUTING.md#service-package-structure)
 - [Web UI standards](./CONTRIBUTING.md#web-ui-standards)
+- [Writing docs](./CONTRIBUTING.md#writing-docs)
+
+---
+
+## Writing published docs
+
+Everything under `docs/` except `docs/dev/` and `docs/plans/` ships on
+overcast.sh. Read [docs/dev/content-charter.md](./docs/dev/content-charter.md)
+before writing or editing a published doc — it's one page. The three rules
+agents trip on most, from a 2026-08 content audit of the live site:
+
+- **Never cite a file the public site doesn't publish.** No links into
+  `docs/dev/**` or `docs/plans/**`, no bare `internal/` Go path standing in
+  for an explanation — the audit found this in eleven published files, e.g.
+  "(...service-metrics-platform.md)" left in six service docs as an
+  unresolvable reference. `go run ./scripts/docs-index.go --check` (part of
+  `make docs-check`) rejects both a literal `docs/dev/`/`docs/plans/` path
+  fragment and a Markdown link that resolves into either tree.
+- **No banned-genre asides.** Build-machinery narration ("fetched at build
+  time"), internal editorial-policy explanation ("stays out of the public
+  site"), or process narration about the docs team's own review — all true,
+  none of it for the reader. Say the behavior, not how it was decided or
+  where it comes from.
+- **A table cell is not a paragraph.** A cell over ~25 words or with a
+  nested clause belongs in prose below the table with its own heading, not
+  crammed into the row.
 
 ---
 
