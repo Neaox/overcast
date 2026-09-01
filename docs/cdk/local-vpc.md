@@ -12,9 +12,7 @@ tags:
 
 # Local VPCs for CDK
 
-CDK VPC lookups are designed for stable AWS environments. Local Overcast VPCs are often torn down and recreated, so their generated `vpc-*`, `subnet-*`, and `rtb-*` IDs can change between deploys. Importing those IDs means keeping something outside CDK — a bootstrap script, a metadata file, or `cdk.context.json` — in sync with whatever the last teardown produced.
-
-The simplest way out is to stop importing. Give the local environment its own stack that **creates** the VPC. CDK then owns the IDs, so there is nothing to look up, cache, or hand-maintain, and a teardown/redeploy cycle just produces new IDs that CDK already knows.
+CDK VPC lookups assume a stable environment, but Overcast's local VPCs get new `vpc-*`, `subnet-*`, and `rtb-*` IDs on every teardown — nothing outside CDK can track them without going stale. The fix is to stop importing: give the local environment its own stack that **creates** the VPC, so CDK owns the IDs and a teardown/redeploy cycle just produces new ones it already knows.
 
 ## Recommended Pattern
 

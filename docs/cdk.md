@@ -80,9 +80,13 @@ CDK's deploy workflow is:
 3. **S3 upload** — the synthesised CloudFormation template and assets are
    uploaded to the CDK bootstrap bucket.
 4. **`CreateChangeSet`** / **`ExecuteChangeSet`** — CloudFormation provisions
-   resources by dispatching to the emulated services internally.
+   resources by dispatching to the emulated services internally, on a
+   background goroutine that keeps running after the call returns.
 5. **`DescribeStacks`** — CDK polls until the stack reaches `CREATE_COMPLETE`
-   or `UPDATE_COMPLETE`.
+   or `UPDATE_COMPLETE`. Overcast waits briefly (`OVERCAST_CFN_SYNC_WAIT_MS`,
+   default 1000ms) so a fast stack is already terminal on the first poll, but
+   this is a real poll, not a formality — a stack with more resources is
+   still `*_IN_PROGRESS` when step 5 starts.
 
 All of these operations are implemented.
 
@@ -93,7 +97,7 @@ All of these operations are implemented.
 <!--
   Derivation: the counts and tables in this section are transcribed from the
   resourceHandlers map in internal/services/cloudformation/provisioner.go —
-  136 registered entries (126 real handlers + 10 stubResourceHandler entries),
+  136 registered entries (127 real handlers + 9 stubResourceHandler entries),
   plus the dynamically resolved Custom::* / AWS::CloudFormation::CustomResource
   and AWS::CloudFormation::Stack (see resolveHandler in the same file).
   Re-derive with:  grep -c '"AWS::' on the map literal (stubs are the entries
@@ -102,7 +106,7 @@ All of these operations are implemented.
 -->
 
 Overcast's CloudFormation provisioner supports **136 resource types** today:
-126 fully provisioned, 10 recognised as stubs, plus custom resources and
+127 fully provisioned, 9 recognised as stubs, plus custom resources and
 nested stacks (resolved dynamically). Resources with real handlers are
 provisioned through the emulated services — they create real state that you
 can query via the AWS APIs.
@@ -114,7 +118,7 @@ can query via the AWS APIs.
 | S3              | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`                                                                                                                                                                                                                                        |
 | SQS             | `AWS::SQS::Queue`                                                                                                                                                                                                                                                                 |
 | SNS             | `AWS::SNS::Topic`, `AWS::SNS::Subscription`                                                                                                                                                                                                                                       |
-| DynamoDB        | `AWS::DynamoDB::Table`                                                                                                                                                                                                                                                            |
+| DynamoDB        | `AWS::DynamoDB::Table`, `AWS::DynamoDB::GlobalTable`                                                                                                                                                                                                                              |
 | Lambda          | `AWS::Lambda::Function`, `AWS::Lambda::Alias`, `AWS::Lambda::Url`, `AWS::Lambda::EventSourceMapping`, `AWS::Lambda::Permission`, `AWS::Lambda::LayerVersion`, `AWS::Lambda::CodeSigningConfig`                                                                                    |
 | IAM             | `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`, `AWS::IAM::ServiceLinkedRole`, `AWS::IAM::User`, `AWS::IAM::Group`, `AWS::IAM::AccessKey`                                                                                           |
 | EC2 / VPC       | `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`, `AWS::EC2::InternetGateway`, `AWS::EC2::VPNGateway`, `AWS::EC2::VPCGatewayAttachment`, `AWS::EC2::RouteTable`, `AWS::EC2::Route`, `AWS::EC2::SubnetRouteTableAssociation`, `AWS::EC2::NatGateway`, `AWS::EC2::EIP` |
@@ -164,7 +168,6 @@ These resource types are recognised and return a synthetic physical ID so the
 stack can complete, but no real resources are created:
 
 - `AWS::SQS::QueuePolicy`
-- `AWS::DynamoDB::GlobalTable`
 - `AWS::ApiGateway::Account`
 - `AWS::ApiGatewayV2::Deployment`
 - `AWS::ElastiCache::ParameterGroup`
@@ -270,9 +273,11 @@ SSM, IAM, and STS — all are supported.
 
 ### Stack stuck in `CREATE_IN_PROGRESS`
 
-Overcast provisions resources synchronously in a background goroutine. If a
-resource handler fails, the stack transitions to `ROLLBACK_COMPLETE`. Check the
-server logs for errors.
+Overcast provisions resources asynchronously in a background goroutine, so
+`CREATE_IN_PROGRESS` on its own is expected — it clears once the goroutine
+finishes. If it never clears, a resource handler is likely hung or failing;
+check the server logs. A stack that does fail transitions to
+`ROLLBACK_COMPLETE`.
 
 ### `Fn::GetAtt` returns unexpected values
 
