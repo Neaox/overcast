@@ -62,11 +62,15 @@ func TestRunReportsEffectiveRegion(t *testing.T) {
 	ctx := context.Background()
 
 	// Region() must reflect the emulator's effective config, not a hardcoded
-	// default. Uses the native variable rather than the LocalStack alias
-	// DEFAULT_REGION: the image bakes OVERCAST_DEFAULT_REGION as ENV, and an
-	// alias disagreeing with an explicitly set native variable fails startup.
+	// default. Deliberately uses the LocalStack alias DEFAULT_REGION rather
+	// than the native variable, doing double duty as an end-to-end guard on
+	// the drop-in migration promise: the image must not bake ENV defaults
+	// that turn a disagreeing alias into a startup conflict (#1497 — this
+	// exact `docker run -e DEFAULT_REGION=...` shape used to fail against
+	// the image's own baked OVERCAST_DEFAULT_REGION, so the image under test
+	// needs that fix; see testImage).
 	ctr, err := overcast.Run(ctx, testImage(),
-		testcontainers.WithEnv(map[string]string{"OVERCAST_DEFAULT_REGION": "eu-west-1"}))
+		testcontainers.WithEnv(map[string]string{"DEFAULT_REGION": "eu-west-1"}))
 	testcontainers.CleanupContainer(t, ctr)
 	require.NoError(t, err)
 
