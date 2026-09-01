@@ -152,7 +152,7 @@ the remainder replays from the pending log on the next start.
 > knowing: images survive a restart on *any* backend, `memory` included, because
 > the first read of a repository reconciles it against the registry — so
 > re-creating a repository is enough to get its images back. See
-> [ECR § Persistence](./services/ecr.md#persistence).
+> [ECR § Persistence](./services/ecr/limitations.md#persistence).
 
 If the SQLite file becomes unreadable or corrupt, `persistent` and `hybrid` log a
 warning and — `hybrid` only — keep serving in a degraded, memory-only mode for

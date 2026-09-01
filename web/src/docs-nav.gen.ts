@@ -1568,11 +1568,11 @@ export const DOCS_NAV = [
     "path": "docs/services/appconfig.md",
     "href": "services/appconfig.md",
     "title": "AppConfig — AWS AppConfig",
-    "description": "AWS AppConfig uses the REST JSON protocol, served at the /applications and /tags paths AWS models.",
+    "description": "The AppConfig control plane: applications, environments, configuration profiles and hosted configuration versions, served at AWS's own REST-JSON paths.",
     "section": "Service Reference",
     "tags": [
       "appconfig",
-      "aws",
+      "configuration",
       "docs",
       "services"
     ],
@@ -1584,8 +1584,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -1658,15 +1673,12 @@ export const DOCS_NAV = [
     "path": "docs/services/appconfigdata.md",
     "href": "services/appconfigdata.md",
     "title": "AppConfigData — AWS AppConfig Data Plane",
-    "description": "AWS AppConfigData is the **runtime data plane** for AppConfig. Applications use it to retrieve the latest deployed configuration content via a poll-based session model.",
+    "description": "The AppConfig runtime data plane: a poll-based session that hands back the latest configuration content, with single-use rotating tokens.",
     "section": "Service Reference",
     "tags": [
       "appconfig",
       "appconfigdata",
-      "aws",
-      "data",
       "docs",
-      "plane",
       "services"
     ],
     "headings": [
@@ -1677,23 +1689,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Protocol",
-        "id": "protocol"
-      },
-      {
-        "depth": 3,
-        "text": "Session lifecycle",
-        "id": "session-lifecycle"
-      },
-      {
-        "depth": 3,
-        "text": "Response headers from `GetLatestConfiguration",
-        "id": "response-headers-from-getlatestconfiguration"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Relationship to AppConfig control plane",
-        "id": "relationship-to-appconfig-control-plane"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -1746,13 +1758,12 @@ export const DOCS_NAV = [
     "path": "docs/services/appregistry.md",
     "href": "services/appregistry.md",
     "title": "AppRegistry — Service Catalog AppRegistry",
-    "description": "Service Catalog AppRegistry groups related AWS resources into named applications. Overcast implements the REST-JSON path-based API under /applications — all operations return...",
+    "description": "Groups related resources into named applications, with CloudFormation stack and CDK awsApplication tag association wired through to the web console.",
     "section": "Service Reference",
     "tags": [
       "appregistry",
-      "catalog",
       "docs",
-      "service",
+      "service-catalog",
       "services"
     ],
     "headings": [
@@ -1763,8 +1774,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "CloudFormation integration",
-        "id": "cloudformation-integration"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -2404,201 +2430,40 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/cloudformation.md",
     "href": "services/cloudformation.md",
-    "title": "CloudFormation — endpoint support",
-    "description": "CloudFormation uses the AWS Query protocol (POST / with form-encoded body). Overcast implements stack lifecycle, change sets, and resource provisioning with an async provisioner...",
+    "title": "CloudFormation — AWS CloudFormation",
+    "description": "Stack lifecycle, change sets and real resource provisioning through the emulated services — the entry point for CDK and IaC-driven deployments.",
     "section": "Service Reference",
     "tags": [
       "cloudformation",
       "docs",
-      "endpoint",
-      "services",
-      "support"
+      "iac",
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "CloudFormation — endpoint support",
-        "id": "cloudformation-endpoint-support"
+        "text": "CloudFormation — AWS CloudFormation",
+        "id": "cloudformation-aws-cloudformation"
       },
       {
         "depth": 2,
-        "text": "Intrinsic functions",
-        "id": "intrinsic-functions"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Dynamic references",
-        "id": "dynamic-references"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Supported resource types",
-        "id": "supported-resource-types"
-      },
-      {
-        "depth": 3,
-        "text": "Resources that wait",
-        "id": "resources-that-wait"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
-      },
-      {
-        "depth": 3,
-        "text": "JSON and YAML templates",
-        "id": "json-and-yaml-templates"
-      },
-      {
-        "depth": 3,
-        "text": "Bounded async provisioner",
-        "id": "bounded-async-provisioner"
-      },
-      {
-        "depth": 3,
-        "text": "Stacks are addressable by name or ARN — but a deleted stack only by ARN, as on AWS",
-        "id": "stacks-are-addressable-by-name-or-arn-but-a-deleted-stack-only-by-arn-as-on-aws"
-      },
-      {
-        "depth": 3,
-        "text": "How big a template may be",
-        "id": "how-big-a-template-may-be"
-      },
-      {
-        "depth": 3,
-        "text": "DependsOn",
-        "id": "dependson"
-      },
-      {
-        "depth": 3,
-        "text": "Status state machine",
-        "id": "status-state-machine"
-      },
-      {
-        "depth": 3,
-        "text": "Which state an operation may start from",
-        "id": "which-state-an-operation-may-start-from"
-      },
-      {
-        "depth": 3,
-        "text": "Where the rollback reason lives",
-        "id": "where-the-rollback-reason-lives"
-      },
-      {
-        "depth": 3,
-        "text": "Where the reason lives when nothing rolls back",
-        "id": "where-the-reason-lives-when-nothing-rolls-back"
-      },
-      {
-        "depth": 3,
-        "text": "Why a deploy failed, after the rollback deleted the evidence",
-        "id": "why-a-deploy-failed-after-the-rollback-deleted-the-evidence"
-      },
-      {
-        "depth": 3,
-        "text": "What an update rollback puts back",
-        "id": "what-an-update-rollback-puts-back"
-      },
-      {
-        "depth": 3,
-        "text": "Getting out of `UPDATE_ROLLBACK_FAILED",
-        "id": "getting-out-of-update-rollback-failed"
-      },
-      {
-        "depth": 3,
-        "text": "Tracing an event back to the request that caused it",
-        "id": "tracing-an-event-back-to-the-request-that-caused-it"
-      },
-      {
-        "depth": 3,
-        "text": "A limitation a resource carries is its `ResourceStatusReason",
-        "id": "a-limitation-a-resource-carries-is-its-resourcestatusreason"
-      },
-      {
-        "depth": 3,
-        "text": "Stub and inert-tier resources say so on the same channel",
-        "id": "stub-and-inert-tier-resources-say-so-on-the-same-channel"
-      },
-      {
-        "depth": 3,
-        "text": "A persistence flush is not a stack failure",
-        "id": "a-persistence-flush-is-not-a-stack-failure"
-      },
-      {
-        "depth": 3,
-        "text": "Fn::GetAtt",
-        "id": "fn-getatt"
-      },
-      {
-        "depth": 3,
-        "text": "Cross-stack references",
-        "id": "cross-stack-references"
-      },
-      {
-        "depth": 3,
-        "text": "Custom resources",
-        "id": "custom-resources"
-      },
-      {
-        "depth": 3,
-        "text": "Nested stacks",
-        "id": "nested-stacks"
-      },
-      {
-        "depth": 3,
-        "text": "Scheduled ECS/Fargate tasks",
-        "id": "scheduled-ecs-fargate-tasks"
-      },
-      {
-        "depth": 3,
-        "text": "S3 bucket sub-resources",
-        "id": "s3-bucket-sub-resources"
-      },
-      {
-        "depth": 3,
-        "text": "API Gateway properties",
-        "id": "api-gateway-properties"
-      },
-      {
-        "depth": 3,
-        "text": "EC2 VPC networking properties",
-        "id": "ec2-vpc-networking-properties"
-      },
-      {
-        "depth": 3,
-        "text": "AppSync stacks",
-        "id": "appsync-stacks"
-      },
-      {
-        "depth": 3,
-        "text": "Generated secrets",
-        "id": "generated-secrets"
-      },
-      {
-        "depth": 3,
-        "text": "Change sets",
-        "id": "change-sets"
-      },
-      {
-        "depth": 3,
-        "text": "Stack updates and drift",
-        "id": "stack-updates-and-drift"
-      },
-      {
-        "depth": 3,
-        "text": "DeletionPolicy",
-        "id": "deletionpolicy"
-      },
-      {
-        "depth": 3,
-        "text": "Teardown failure",
-        "id": "teardown-failure"
-      },
-      {
-        "depth": 3,
-        "text": "Legacy state compatibility",
-        "id": "legacy-state-compatibility"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -2609,6 +2474,81 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudformation/limitations.md",
+    "href": "services/cloudformation/limitations.md",
+    "title": "CloudFormation limitations",
+    "description": "The stack status machine and which operations each state allows, how rollbacks and teardown failures are reported, dynamic reference semantics, and update strategies.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudformation",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudFormation limitations",
+        "id": "cloudformation-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Stacks are addressable by name or ARN — a deleted stack only by ARN",
+        "id": "stacks-are-addressable-by-name-or-arn-a-deleted-stack-only-by-arn"
+      },
+      {
+        "depth": 2,
+        "text": "Which state an operation may start from",
+        "id": "which-state-an-operation-may-start-from"
+      },
+      {
+        "depth": 2,
+        "text": "Where the reason lives",
+        "id": "where-the-reason-lives"
+      },
+      {
+        "depth": 2,
+        "text": "What an update rollback puts back",
+        "id": "what-an-update-rollback-puts-back"
+      },
+      {
+        "depth": 2,
+        "text": "Teardown failure",
+        "id": "teardown-failure"
+      },
+      {
+        "depth": 2,
+        "text": "DeletionPolicy",
+        "id": "deletionpolicy"
+      },
+      {
+        "depth": 2,
+        "text": "Dynamic references",
+        "id": "dynamic-references"
+      },
+      {
+        "depth": 2,
+        "text": "Update strategies",
+        "id": "update-strategies"
+      },
+      {
+        "depth": 2,
+        "text": "Resources that wait",
+        "id": "resources-that-wait"
+      },
+      {
+        "depth": 2,
+        "text": "A limitation a resource carries is its `ResourceStatusReason",
+        "id": "a-limitation-a-resource-carries-is-its-resourcestatusreason"
+      },
+      {
+        "depth": 2,
+        "text": "A persistence flush is not a stack failure",
+        "id": "a-persistence-flush-is-not-a-stack-failure"
       }
     ]
   },
@@ -2689,6 +2629,36 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Type registry",
         "id": "type-registry"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudformation/troubleshooting.md",
+    "href": "services/cloudformation/troubleshooting.md",
+    "title": "CloudFormation troubleshooting",
+    "description": "Stacks stuck in a failed rollback, deploys whose evidence the rollback destroyed, deletes that will not finish, and resources that deploy green but do nothing.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudformation",
+      "docs",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudFormation troubleshooting",
+        "id": "cloudformation-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "Getting out of `UPDATE_ROLLBACK_FAILED",
+        "id": "getting-out-of-update-rollback-failed"
+      },
+      {
+        "depth": 2,
+        "text": "Why a deploy failed, after the rollback deleted the evidence",
+        "id": "why-a-deploy-failed-after-the-rollback-deleted-the-evidence"
       }
     ]
   },
@@ -3770,13 +3740,12 @@ export const DOCS_NAV = [
     "path": "docs/services/ecr.md",
     "href": "services/ecr.md",
     "title": "ECR — Elastic Container Registry",
-    "description": "Overcast emulates the ECR control-plane API (AmazonEC2ContainerRegistry_V20150921.*). All operations use AWS JSON 1.1 over HTTPS, dispatched via X-Amz-Target. RPC v2 CBOR is also...",
+    "description": "AWS's ECR control-plane API in front of a real Docker registry, so docker push and pull work locally and ECS and Lambda can run what you pushed.",
     "section": "Service Reference",
     "tags": [
       "container",
       "docs",
       "ecr",
-      "elastic",
       "registry",
       "services"
     ],
@@ -3788,43 +3757,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Repository URI",
-        "id": "repository-uri"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Authorization token",
-        "id": "authorization-token"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Asking whether an image is published",
-        "id": "asking-whether-an-image-is-published"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "Persistence",
-        "id": "persistence"
-      },
-      {
-        "depth": 2,
-        "text": "Running an image from here",
-        "id": "running-an-image-from-here"
-      },
-      {
-        "depth": 2,
-        "text": "Limitations",
-        "id": "limitations"
-      },
-      {
-        "depth": 2,
-        "text": "Reclaiming a leaked registry container",
-        "id": "reclaiming-a-leaked-registry-container"
-      },
-      {
-        "depth": 2,
-        "text": "Reclaiming the storage volume",
-        "id": "reclaiming-the-storage-volume"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -3835,6 +3784,56 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecr/limitations.md",
+    "href": "services/ecr/limitations.md",
+    "title": "ECR limitations",
+    "description": "How a repository URI is derived and why it says localhost, what survives a restart, and how the image inventory tracks the registry rather than accumulating.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecr",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECR limitations",
+        "id": "ecr-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "The repository URI",
+        "id": "the-repository-uri"
+      },
+      {
+        "depth": 3,
+        "text": "Why `localhost` and not `OVERCAST_HOSTNAME",
+        "id": "why-localhost-and-not-overcast-hostname"
+      },
+      {
+        "depth": 3,
+        "text": "The startup reachability probe",
+        "id": "the-startup-reachability-probe"
+      },
+      {
+        "depth": 2,
+        "text": "The ephemeral-port fallback is degraded, not equivalent",
+        "id": "the-ephemeral-port-fallback-is-degraded-not-equivalent"
+      },
+      {
+        "depth": 2,
+        "text": "Persistence",
+        "id": "persistence"
+      },
+      {
+        "depth": 2,
+        "text": "Asking whether an image is published",
+        "id": "asking-whether-an-image-is-published"
       }
     ]
   },
@@ -3894,17 +3893,45 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/services/ecr/troubleshooting.md",
+    "href": "services/ecr/troubleshooting.md",
+    "title": "ECR troubleshooting",
+    "description": "Push and pull failures against the local registry, leaked registry containers after a kill, and how to reclaim the image storage volume.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecr",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECR troubleshooting",
+        "id": "ecr-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "Reclaiming a leaked registry container",
+        "id": "reclaiming-a-leaked-registry-container"
+      },
+      {
+        "depth": 2,
+        "text": "Reclaiming the storage volume",
+        "id": "reclaiming-the-storage-volume"
+      }
+    ]
+  },
+  {
     "path": "docs/services/ecs.md",
     "href": "services/ecs.md",
     "title": "ECS — Elastic Container Service",
-    "description": "ECS uses AWS JSON 1.1 over HTTPS. All operations share a single endpoint URL; the action is identified by the X-Amz-Target header with prefix AmazonEC2ContainerServiceV20141113...",
+    "description": "ECS runs real Docker containers for standalone tasks and for services, with AWS's deployment, rollout and awsvpc networking semantics.",
     "section": "Service Reference",
     "tags": [
       "container",
       "docs",
       "ecs",
-      "elastic",
-      "service",
       "services"
     ],
     "headings": [
@@ -3915,83 +3942,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Services place real tasks",
-        "id": "services-place-real-tasks"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "A task definition change is a rollout",
-        "id": "a-task-definition-change-is-a-rollout"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Images published to the emulated ECR",
-        "id": "images-published-to-the-emulated-ecr"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "When a task cannot start",
-        "id": "when-a-task-cannot-start"
-      },
-      {
-        "depth": 2,
-        "text": "When a task starts and then dies",
-        "id": "when-a-task-starts-and-then-dies"
-      },
-      {
-        "depth": 2,
-        "text": "How many tasks a rollout runs at once",
-        "id": "how-many-tasks-a-rollout-runs-at-once"
-      },
-      {
-        "depth": 2,
-        "text": "Rollout state and the deployment circuit breaker",
-        "id": "rollout-state-and-the-deployment-circuit-breaker"
-      },
-      {
-        "depth": 2,
-        "text": "Container secrets",
-        "id": "container-secrets"
-      },
-      {
-        "depth": 2,
-        "text": "Load balancers",
-        "id": "load-balancers"
-      },
-      {
-        "depth": 2,
-        "text": "Container logs",
-        "id": "container-logs"
-      },
-      {
-        "depth": 2,
-        "text": "Volumes",
-        "id": "volumes"
-      },
-      {
-        "depth": 2,
-        "text": "Hot reload — editing local source inside a task",
-        "id": "hot-reload-editing-local-source-inside-a-task"
-      },
-      {
-        "depth": 2,
-        "text": "EFS volumes",
-        "id": "efs-volumes"
-      },
-      {
-        "depth": 2,
-        "text": "Task container networking",
-        "id": "task-container-networking"
-      },
-      {
-        "depth": 3,
-        "text": "Containers in an awsvpc task share one network namespace",
-        "id": "containers-in-an-awsvpc-task-share-one-network-namespace"
-      },
-      {
-        "depth": 3,
-        "text": "A task in a VPC is restricted to it",
-        "id": "a-task-in-a-vpc-is-restricted-to-it"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4002,6 +3969,116 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecs/examples.md",
+    "href": "services/ecs/examples.md",
+    "title": "ECS examples",
+    "description": "Running images from the emulated ECR, injecting secrets, shipping container logs, serving through a load balancer, and hot-reloading local source inside a task.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecs",
+      "examples",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECS examples",
+        "id": "ecs-examples"
+      },
+      {
+        "depth": 2,
+        "text": "Images published to the emulated ECR",
+        "id": "images-published-to-the-emulated-ecr"
+      },
+      {
+        "depth": 2,
+        "text": "Secrets",
+        "id": "secrets"
+      },
+      {
+        "depth": 2,
+        "text": "Container logs",
+        "id": "container-logs"
+      },
+      {
+        "depth": 2,
+        "text": "Load balancers",
+        "id": "load-balancers"
+      },
+      {
+        "depth": 2,
+        "text": "Hot reload",
+        "id": "hot-reload"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecs/limitations.md",
+    "href": "services/ecs/limitations.md",
+    "title": "ECS limitations",
+    "description": "How Overcast's ECS scheduler decides a deployment is done, what a rollout does with ports and counts, and which volume and networking rules are enforced.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECS limitations",
+        "id": "ecs-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "What \"done\" means for a deployment",
+        "id": "what-done-means-for-a-deployment"
+      },
+      {
+        "depth": 3,
+        "text": "The settle window",
+        "id": "the-settle-window"
+      },
+      {
+        "depth": 2,
+        "text": "A task definition change is a rollout",
+        "id": "a-task-definition-change-is-a-rollout"
+      },
+      {
+        "depth": 2,
+        "text": "When a task cannot start, and when it dies later",
+        "id": "when-a-task-cannot-start-and-when-it-dies-later"
+      },
+      {
+        "depth": 2,
+        "text": "How many tasks a rollout runs at once",
+        "id": "how-many-tasks-a-rollout-runs-at-once"
+      },
+      {
+        "depth": 2,
+        "text": "Rollout state and the circuit breaker",
+        "id": "rollout-state-and-the-circuit-breaker"
+      },
+      {
+        "depth": 2,
+        "text": "Volumes",
+        "id": "volumes"
+      },
+      {
+        "depth": 2,
+        "text": "awsvpc` tasks share one network namespace",
+        "id": "awsvpc-tasks-share-one-network-namespace"
+      },
+      {
+        "depth": 2,
+        "text": "A task in a VPC is restricted to it",
+        "id": "a-task-in-a-vpc-is-restricted-to-it"
       }
     ]
   },
@@ -4037,6 +4114,31 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "General",
         "id": "general"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ecs/troubleshooting.md",
+    "href": "services/ecs/troubleshooting.md",
+    "title": "ECS troubleshooting",
+    "description": "Symptom, cause and fix for ECS tasks that will not start, services that will not roll out, missing mounts, and hot-reload tags that are ignored.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ecs",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "ECS troubleshooting",
+        "id": "ecs-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "A stack completes around a service that is not working",
+        "id": "a-stack-completes-around-a-service-that-is-not-working"
       }
     ]
   },
@@ -4224,15 +4326,12 @@ export const DOCS_NAV = [
     "path": "docs/services/eks.md",
     "href": "services/eks.md",
     "title": "EKS — Amazon Elastic Kubernetes Service",
-    "description": "EKS supports two modes:",
+    "description": "EKS control-plane metadata by default, or a real k3s control plane per cluster with OVERCAST_EKS_MODE=live. Nodegroups never start compute in either mode.",
     "section": "Service Reference",
     "tags": [
-      "amazon",
       "docs",
       "eks",
-      "elastic",
       "kubernetes",
-      "service",
       "services"
     ],
     "headings": [
@@ -4243,13 +4342,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Behavior notes",
-        "id": "behavior-notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Live mode limits and non-goals",
-        "id": "live-mode-limits-and-non-goals"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -4260,6 +4369,46 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Related",
         "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/eks/limitations.md",
+    "href": "services/eks/limitations.md",
+    "title": "EKS limitations",
+    "description": "The two EKS modes, what live mode does and does not provision, and why a mock-created cluster is refused once live mode is on.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "eks",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EKS limitations",
+        "id": "eks-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "The two modes",
+        "id": "the-two-modes"
+      },
+      {
+        "depth": 2,
+        "text": "A mock-created cluster is refused in live mode",
+        "id": "a-mock-created-cluster-is-refused-in-live-mode"
+      },
+      {
+        "depth": 2,
+        "text": "UpdateKubeconfig` and 503",
+        "id": "updatekubeconfig-and-503"
+      },
+      {
+        "depth": 2,
+        "text": "Non-goals",
+        "id": "non-goals"
       }
     ]
   },
@@ -4533,26 +4682,40 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/eventbridge.md",
     "href": "services/eventbridge.md",
-    "title": "EventBridge — endpoint support",
-    "description": "EventBridge accepts AWS JSON 1.1 via X-Amz-Target: AWSEvents.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/EventBridge/operation/\u003coperation\u003e with Smithy-Protocol...",
+    "title": "EventBridge — Amazon EventBridge",
+    "description": "Event buses, rules and targets, with matched events delivered in-process to eight target types. Event patterns match on exact values only.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "eventbridge",
-      "services",
-      "support"
+      "events",
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "EventBridge — endpoint support",
-        "id": "eventbridge-endpoint-support"
+        "text": "EventBridge — Amazon EventBridge",
+        "id": "eventbridge-amazon-eventbridge"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -5298,64 +5461,170 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/lambda.md",
     "href": "services/lambda.md",
-    "title": "Lambda",
-    "description": "Lambda emulation has two distinct concerns:",
+    "title": "Lambda — AWS Lambda",
+    "description": "Real function execution in Docker containers built from the official AWS Lambda base images, with warm-environment reuse, provisioned concurrency and the Runtime, Logs and Telemetry APIs.",
     "section": "Service Reference",
     "tags": [
       "docs",
+      "lambda",
+      "serverless",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Lambda — AWS Lambda",
+        "id": "lambda-aws-lambda"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
+      },
+      {
+        "depth": 2,
+        "text": "Reaching Overcast from function code",
+        "id": "reaching-overcast-from-function-code"
+      },
+      {
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/lambda/examples.md",
+    "href": "services/lambda/examples.md",
+    "title": "Lambda examples",
+    "description": "Hot-reloading local source into a running function, supplying layers from a cache or from real AWS, and running extensions that call back into Overcast.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "examples",
       "lambda",
       "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "Lambda",
-        "id": "lambda"
+        "text": "Lambda examples",
+        "id": "lambda-examples"
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Hot reload",
+        "id": "hot-reload"
+      },
+      {
+        "depth": 3,
+        "text": "Quickest CDK path: `cdk watch",
+        "id": "quickest-cdk-path-cdk-watch"
+      },
+      {
+        "depth": 3,
+        "text": "Bind-mount hot reload",
+        "id": "bind-mount-hot-reload"
+      },
+      {
+        "depth": 3,
+        "text": "What counts as a change",
+        "id": "what-counts-as-a-change"
       },
       {
         "depth": 2,
-        "text": "VPC placement — `VpcConfig",
-        "id": "vpc-placement-vpcconfig"
+        "text": "Layers",
+        "id": "layers"
+      },
+      {
+        "depth": 3,
+        "text": "Option 1 — pre-download the layer (no AWS credentials)",
+        "id": "option-1-pre-download-the-layer-no-aws-credentials"
+      },
+      {
+        "depth": 3,
+        "text": "Option 2 — fetch from real AWS (needs credentials)",
+        "id": "option-2-fetch-from-real-aws-needs-credentials"
       },
       {
         "depth": 2,
-        "text": "Runtimes",
-        "id": "runtimes"
+        "text": "Extensions",
+        "id": "extensions"
       },
       {
         "depth": 3,
-        "text": "The three answers a runtime can get",
-        "id": "the-three-answers-a-runtime-can-get"
+        "text": "Extensions that call AWS",
+        "id": "extensions-that-call-aws"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/lambda/limitations.md",
+    "href": "services/lambda/limitations.md",
+    "title": "Lambda limitations",
+    "description": "Where Overcast's Lambda diverges from AWS: async retries, concurrency limits, runtime coverage, the JSON log record vocabulary, and VPC placement.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "lambda",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Lambda limitations",
+        "id": "lambda-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Divergences",
+        "id": "divergences"
       },
       {
         "depth": 3,
-        "text": "Deprecation follows AWS's phases, not a single flag",
-        "id": "deprecation-follows-aws-s-phases-not-a-single-flag"
+        "text": "Asynchronous invocation",
+        "id": "asynchronous-invocation"
       },
       {
         "depth": 3,
-        "text": "Execution coverage",
-        "id": "execution-coverage"
+        "text": "Recorded but not honoured",
+        "id": "recorded-but-not-honoured"
       },
       {
         "depth": 3,
-        "text": "Container images published to the emulated ECR",
-        "id": "container-images-published-to-the-emulated-ecr"
+        "text": "Other divergences",
+        "id": "other-divergences"
+      },
+      {
+        "depth": 2,
+        "text": "Deleting a version, and where tags live",
+        "id": "deleting-a-version-and-where-tags-live"
       },
       {
         "depth": 2,
         "text": "Concurrency and execution environments",
         "id": "concurrency-and-execution-environments"
-      },
-      {
-        "depth": 3,
-        "text": "Limits",
-        "id": "limits"
       },
       {
         "depth": 3,
@@ -5374,8 +5643,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Partial batch responses",
-        "id": "partial-batch-responses"
+        "text": "Runtimes",
+        "id": "runtimes"
       },
       {
         "depth": 2,
@@ -5384,148 +5653,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "Text",
-        "id": "text"
-      },
-      {
-        "depth": 3,
-        "text": "JSON",
-        "id": "json"
-      },
-      {
-        "depth": 4,
-        "text": "The init-phase records",
-        "id": "the-init-phase-records"
-      },
-      {
-        "depth": 3,
         "text": "Filtering",
         "id": "filtering"
       },
       {
-        "depth": 3,
-        "text": "What the container sees",
-        "id": "what-the-container-sees"
+        "depth": 2,
+        "text": "Partial batch responses",
+        "id": "partial-batch-responses"
       },
       {
         "depth": 2,
-        "text": "Lambda Layers",
-        "id": "lambda-layers"
-      },
-      {
-        "depth": 3,
-        "text": "Default behavior (no config)",
-        "id": "default-behavior-no-config"
-      },
-      {
-        "depth": 3,
-        "text": "Option 1: Pre-download layers (no AWS credentials needed at runtime)",
-        "id": "option-1-pre-download-layers-no-aws-credentials-needed-at-runtime"
-      },
-      {
-        "depth": 1,
-        "text": "Get the presigned download URL",
-        "id": "get-the-presigned-download-url"
-      },
-      {
-        "depth": 1,
-        "text": "Download it",
-        "id": "download-it"
-      },
-      {
-        "depth": 1,
-        "text": "docker-compose.yml — Option A: mount just the layers directory",
-        "id": "docker-compose-yml-option-a-mount-just-the-layers-directory"
-      },
-      {
-        "depth": 1,
-        "text": "docker-compose.yml — Option B: mount the whole data directory",
-        "id": "docker-compose-yml-option-b-mount-the-whole-data-directory"
-      },
-      {
-        "depth": 3,
-        "text": "Option 2: Automatic remote fetching (requires AWS credentials)",
-        "id": "option-2-automatic-remote-fetching-requires-aws-credentials"
-      },
-      {
-        "depth": 2,
-        "text": "Lambda Extensions",
-        "id": "lambda-extensions"
-      },
-      {
-        "depth": 3,
-        "text": "Reaching Overcast from function code",
-        "id": "reaching-overcast-from-function-code"
-      },
-      {
-        "depth": 3,
-        "text": "Extensions that call AWS",
-        "id": "extensions-that-call-aws"
-      },
-      {
-        "depth": 3,
-        "text": "Extension troubleshooting",
-        "id": "extension-troubleshooting"
-      },
-      {
-        "depth": 2,
-        "text": "Hot Reload",
-        "id": "hot-reload"
-      },
-      {
-        "depth": 3,
-        "text": "Quickest CDK path: `cdk watch",
-        "id": "quickest-cdk-path-cdk-watch"
-      },
-      {
-        "depth": 3,
-        "text": "Bind-mount hot reload",
-        "id": "bind-mount-hot-reload"
-      },
-      {
-        "depth": 1,
-        "text": "or",
-        "id": "or"
-      },
-      {
-        "depth": 4,
-        "text": "What counts as a change",
-        "id": "what-counts-as-a-change"
-      },
-      {
-        "depth": 3,
-        "text": "CDK hot-reload tags",
-        "id": "cdk-hot-reload-tags"
-      },
-      {
-        "depth": 3,
-        "text": "Hot-reload behavior and troubleshooting",
-        "id": "hot-reload-behavior-and-troubleshooting"
-      },
-      {
-        "depth": 2,
-        "text": "Configuration Reference",
-        "id": "configuration-reference"
-      },
-      {
-        "depth": 3,
-        "text": "Proactive initialization",
-        "id": "proactive-initialization"
-      },
-      {
-        "depth": 2,
-        "text": "Deleting a version, and where tags live",
-        "id": "deleting-a-version-and-where-tags-live"
-      },
-      {
-        "depth": 2,
-        "text": "Operations",
-        "id": "operations"
-      },
-      {
-        "depth": 2,
-        "text": "Related",
-        "id": "related"
+        "text": "VPC placement — `VpcConfig",
+        "id": "vpc-placement-vpcconfig"
       }
     ]
   },
@@ -5611,6 +5750,31 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Tags",
         "id": "tags"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/lambda/troubleshooting.md",
+    "href": "services/lambda/troubleshooting.md",
+    "title": "Lambda troubleshooting",
+    "description": "Symptom, cause and fix for stub responses, throttles, layer init errors, extensions that reach real AWS, and hot reload that stops noticing edits.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "lambda",
+      "services",
+      "troubleshooting"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Lambda troubleshooting",
+        "id": "lambda-troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "Working out why a warm environment went away",
+        "id": "working-out-why-a-warm-environment-went-away"
       }
     ]
   },
@@ -5905,32 +6069,40 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/pipes.md",
     "href": "services/pipes.md",
-    "title": "EventBridge Pipes — endpoint support",
-    "description": "Notes",
+    "title": "Pipes — Amazon EventBridge Pipes",
+    "description": "Point-to-point wiring from three source types through an optional Lambda enrichment to seven targets, with real polling, retries and dead-lettering.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
       "eventbridge",
       "pipes",
-      "services",
-      "support"
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "EventBridge Pipes — endpoint support",
-        "id": "eventbridge-pipes-endpoint-support"
+        "text": "Pipes — Amazon EventBridge Pipes",
+        "id": "pipes-amazon-eventbridge-pipes"
       },
       {
         "depth": 2,
-        "text": "Supported wiring",
-        "id": "supported-wiring"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -6597,10 +6769,9 @@ export const DOCS_NAV = [
     "path": "docs/services/scheduler.md",
     "href": "services/scheduler.md",
     "title": "Scheduler — Amazon EventBridge Scheduler",
-    "description": "EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an unmodified SDK or aws scheduler CLI call reaches it. This implementation focuses on schedule groups,...",
+    "description": "Schedules and schedule groups with a clock-driven engine that dispatches to the same eight target types EventBridge rules reach.",
     "section": "Service Reference",
     "tags": [
-      "amazon",
       "docs",
       "eventbridge",
       "scheduler",
@@ -6614,8 +6785,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -7346,33 +7532,40 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/stepfunctions.md",
     "href": "services/stepfunctions.md",
-    "title": "Step Functions — endpoint support",
-    "description": "Step Functions accepts AWS JSON 1.0 via X-Amz-Target: AWSStepFunctions.\u003coperation\u003e. It also accepts Smithy RPC v2 CBOR at /service/StepFunctions/operation/\u003coperation\u003e with...",
+    "title": "Step Functions — AWS Step Functions",
+    "description": "A real Amazon States Language interpreter: executions run the definition, call other emulated services, and record a state-by-state history. What it cannot interpret fails loudly.",
     "section": "Service Reference",
     "tags": [
       "docs",
-      "endpoint",
-      "functions",
       "services",
-      "step",
       "stepfunctions",
-      "support"
+      "workflows"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "Step Functions — endpoint support",
-        "id": "step-functions-endpoint-support"
+        "text": "Step Functions — AWS Step Functions",
+        "id": "step-functions-aws-step-functions"
       },
       {
         "depth": 2,
-        "text": "What the interpreter runs",
-        "id": "what-the-interpreter-runs"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,

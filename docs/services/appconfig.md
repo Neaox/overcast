@@ -1,44 +1,66 @@
 ---
 title: "AppConfig — AWS AppConfig"
-description: "AWS AppConfig uses the REST JSON protocol, served at the /applications and /tags paths AWS models."
+description: "The AppConfig control plane: applications, environments, configuration profiles and hosted configuration versions, served at AWS's own REST-JSON paths."
 section: "Service Reference"
 tags:
   - appconfig
-  - aws
+  - configuration
   - docs
   - services
 ---
 
 # AppConfig — AWS AppConfig
 
-AWS AppConfig uses the REST JSON protocol, served at the paths AWS models:
-`/applications` and `/tags/{ResourceArn}`. There is no `X-Amz-Target`
-namespace — the AWS models give AppConfig none.
+The AppConfig control plane — applications, environments, profiles and hosted
+configuration versions — with the runtime data plane in
+[AppConfigData](./appconfigdata.md).
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- Routes are the modeled ones, e.g. `POST /applications`,
-  `POST /applications/{ApplicationId}/environments`.
-- `/applications` is shared with Service Catalog AppRegistry, which models the
-  same tree. Overcast picks the service from the SigV4 credential scope, so an
-  AppConfig SDK call must be signed as `appconfig`; unsigned callers reach
-  AppRegistry, as they always have.
-- `/tags/{ResourceArn}` is dispatched on the ARN, so an `arn:aws:appconfig:…`
-  ARN reaches AppConfig's own tag store.
-- `CreateHostedConfigurationVersion` and `GetHostedConfigurationVersion` carry
-  the configuration as the HTTP payload and the metadata in `Application-Id`,
-  `Configuration-Profile-Id`, `Version-Number`, `Description`, `Content-Type`
-  and `VersionLabel` headers, as AWS binds them.
-- List operations page with the `max_results` and `next_token` query
-  parameters and answer `{ "Items": [...], "NextToken": "..." }`.
-- Unrecognized operations return a JSON `501 Not Implemented` error response.
-- Resources are stored in-memory with hierarchical relationships (Application → Environment, Application → ConfigurationProfile).
-- Resources are not region-scoped: an application created in one region is
-  visible in another.
-- The data plane (`StartConfigurationSession`, `GetLatestConfiguration`) is a
-  separate AWS service — see [appconfigdata.md](./appconfigdata.md).
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+APP=$(aws appconfig create-application --name my-app --query Id --output text)
+aws appconfig create-environment --application-id "$APP" --name dev
+PROF=$(aws appconfig create-configuration-profile --application-id "$APP" \
+  --name cfg --location-uri hosted --query Id --output text)
+
+echo '{"featureX":true}' > cfg.json
+aws appconfig create-hosted-configuration-version --application-id "$APP" \
+  --configuration-profile-id "$PROF" --content-type application/json \
+  --content fileb://cfg.json version.json
+```
+
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Resources | Applications, environments, configuration profiles and hosted configuration versions, with the hierarchy AWS models (application → environment, application → profile). |
+| Protocol | REST-JSON at AWS's own paths — `POST /applications`, `POST /applications/{ApplicationId}/environments`, and so on. There is no `X-Amz-Target` namespace, because the AWS models give AppConfig none. |
+| Hosted versions | The configuration travels as the HTTP payload with `Content-Type` required; `Description` and `VersionLabel` ride request headers, and the response echoes `Application-Id`, `Configuration-Profile-Id`, `Version-Number`, `Description`, `Content-Type` and `VersionLabel`, as AWS binds them. `Latest-Version-Number` gives optimistic concurrency, answering `409` on a mismatch. |
+| Tagging | `/tags/{ResourceArn}`, dispatched on the ARN, so an `arn:aws:appconfig:…` ARN reaches AppConfig's own tag store. |
+| Pagination | `max_results` and `next_token` query parameters, answering `{ "Items": [...], "NextToken": "..." }`. |
+
+## Differences from AWS
+
+| Area | Overcast | AWS |
+| --- | --- | --- |
+| Region scoping | Resources are not region-scoped — an application created in one region is visible in another | Region-scoped |
+| Deployments and deployment strategies | Not modelled. A hosted version is readable through [AppConfigData](./appconfigdata.md) as soon as it is created — nothing has to be deployed first | Percentage-based rollout over time |
+| Updating an environment or a profile | Only `UpdateApplication` exists; the other update operations answer `501` | Supported |
+| Hosted version size | Capped at 1 MB, answering `PayloadTooLargeException` | Same cap |
+| Other operations AWS models | A JSON `501 Not Implemented` | Implemented |
+
+## Gotchas
+
+> [!IMPORTANT]
+> `/applications` is shared with [Service Catalog AppRegistry](./appregistry.md),
+> which models the same tree. Overcast picks the service from the SigV4 credential
+> scope, so an AppConfig call must be signed as `appconfig`. An unsigned caller, or
+> one whose scope cannot be parsed, reaches AppRegistry; a scope that mismatches
+> gets `403 InvalidSignatureException`. Every AWS SDK and the CLI sign correctly.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -51,6 +73,8 @@ Per-operation status, notes and AWS API links: [AppConfig operations](appconfig/
 
 ## Related
 
+- [AppConfigData](./appconfigdata.md) — the runtime data plane that reads these configurations
+- [AppRegistry](./appregistry.md) — the other service on `/applications`
 - [AWS API reference](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
