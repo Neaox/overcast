@@ -303,7 +303,7 @@ const (
 	maxNameLenCache     = 50  // ElastiCache cache cluster IDs (lowercase only)
 	maxNameLenECR       = 256 // repository names (lowercase only)
 	maxNameLenEvents    = 64  // EventBridge rule names
-	maxNameLenScheduler = 64  // EventBridge Scheduler schedule-group names
+	maxNameLenScheduler = 64  // EventBridge Scheduler schedule and schedule-group names
 	maxNameLenSFN       = 80  // Step Functions state-machine names
 	maxNameLenDefault   = 255
 )
