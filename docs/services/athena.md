@@ -1,6 +1,6 @@
 ---
 title: "Athena — Amazon Athena"
-description: "Amazon Athena uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AmazonAthena.."
+description: "Athena's control plane — workgroups, query executions and tags. Queries are recorded and reported SUCCEEDED without running, so every result set comes back empty."
 section: "Service Reference"
 tags:
   - amazon
@@ -11,17 +11,52 @@ tags:
 
 # Athena — Amazon Athena
 
-Amazon Athena uses the `application/x-amz-json-1.1` protocol.
-Operations are identified by the `X-Amz-Target` header with the prefix
-`AmazonAthena.`.
+Athena's control plane is emulated; no SQL is executed, so every query succeeds
+immediately with an empty result set.
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- Target dispatch header: `X-Amz-Target: AmazonAthena.<Operation>`.
-- Unrecognized operations return a JSON `501 Not Implemented` error response.
-- Queries immediately succeed with status `SUCCEEDED` and return empty result sets — no actual query execution is performed.
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws athena create-work-group --name analytics
+aws athena start-query-execution \
+  --work-group analytics \
+  --query-string 'SELECT 1' \
+  --result-configuration OutputLocation=s3://results/
+
+aws athena get-query-execution --query-execution-id <id>
+# Status.State is already SUCCEEDED
+```
+
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Workgroups | Create, get, list, delete; `Configuration` is stored and handed back verbatim |
+| Query executions | `StartQueryExecution` records the SQL, workgroup and `OutputLocation` and returns an id |
+| Polling | `GetQueryExecution` reports `SUCCEEDED`, with submission and completion timestamps |
+| Results | `GetQueryResults` returns a well-formed but empty `ResultSet` |
+| Tags | `TagResource`, `UntagResource` and `ListTagsForResource` on workgroup ARNs |
+
+## Differences from AWS
+
+| Difference | Detail |
+| --- | --- |
+| No query engine | The SQL string is stored, never parsed or run — a query over a Glue table returns nothing, not that table's rows |
+| No result objects | Nothing is written to `OutputLocation`; the bucket stays empty |
+| Never queues, never fails | There is no `QUEUED`, `RUNNING`, `FAILED` or `CANCELLED` state to observe |
+| No statistics | `Statistics`, `EngineVersion` and data-scanned figures are absent |
+| Workgroup config is inert | Result-location overrides and bytes-scanned cutoffs are echoed, not enforced |
+
+## Gotchas
+
+> [!NOTE]
+> Athena is here so a stack that provisions workgroups deploys, and so code
+> calling `StartQueryExecution` gets an id-shaped answer it can poll.
+> Assertions about returned rows need real Athena.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -34,6 +69,7 @@ Per-operation status, notes and AWS API links: [Athena operations](athena/operat
 
 ## Related
 
+- [Glue Data Catalog](glue.md) — where Athena's table metadata lives
 - [AWS API reference](https://docs.aws.amazon.com/athena/latest/APIReference/)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

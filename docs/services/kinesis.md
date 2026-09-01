@@ -1,6 +1,6 @@
 ---
 title: "Kinesis — Amazon Kinesis Data Streams"
-description: "Kinesis Data Streams accepts the AWS JSON 1.1 protocol on the shared POST / endpoint with X-Amz-Target: Kinesis_20131202.\u003cOperationName\u003e. It also accepts Smithy RPC v2 CBOR at..."
+description: "Kinesis Data Streams with real record storage, partition-key routing, shard iterators and shard split/merge. Retention is recorded but never trims, so records live for the life of the stream."
 section: "Service Reference"
 tags:
   - amazon
@@ -13,12 +13,55 @@ tags:
 
 # Kinesis — Amazon Kinesis Data Streams
 
-Kinesis Data Streams accepts the AWS JSON 1.1 protocol on the shared `POST /`
-endpoint with `X-Amz-Target: Kinesis_20131202.<OperationName>`. It also accepts
-Smithy RPC v2 CBOR at `/service/Kinesis/operation/<OperationName>` with
-`Smithy-Protocol: rpc-v2-cbor` and `Content-Type: application/cbor`.
+Records are really stored, routed by partition-key hash and read back through
+shard iterators; nothing is ever trimmed.
 
----
+**Status:** ✅ Supported
+
+## Quick start
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws kinesis create-stream --stream-name events --shard-count 1
+aws kinesis put-record --stream-name events --partition-key a --data hello
+
+ITER=$(aws kinesis get-shard-iterator --stream-name events \
+  --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON \
+  --query ShardIterator --output text)
+aws kinesis get-records --shard-iterator "$ITER"
+```
+
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Streams | `CreateStream` is `ACTIVE` immediately; inline `Tags` and `StreamModeDetails` apply at creation, defaulting to `PROVISIONED` |
+| Writes | `PutRecord` and `PutRecords` route by partition-key hash into the owning shard |
+| Reads | `GetShardIterator` supports `TRIM_HORIZON`, `LATEST`, `AT_SEQUENCE_NUMBER` and `AFTER_SEQUENCE_NUMBER`; `GetRecords` returns a usable `NextShardIterator` |
+| Resharding | `SplitShard` and `MergeShards` close the parents and create real children with correct hash-key ranges |
+| Consumers | Lambda event source mappings and EventBridge Pipes poll Kinesis streams |
+| Tags | `AddTagsToStream`/`RemoveTagsFromStream` and the ARN-addressed `TagResource`/`UntagResource`/`ListTagsForResource` |
+
+## Differences from AWS
+
+| Difference | Detail |
+| --- | --- |
+| Retention is not enforced | `IncreaseStreamRetentionPeriod` and `DecreaseStreamRetentionPeriod` store and echo the value; no record is ever expired, so a shard keeps everything until the stream is deleted |
+| Writes never fail | `PutRecords` always reports `FailedRecordCount: 0` — throughput throttling and `ProvisionedThroughputExceededException` are not simulated |
+| Encryption is metadata | `StartStreamEncryption` stores `EncryptionType` and `KeyId` and `Describe*` echoes them; records are stored unencrypted |
+| Capacity modes are inert | `UpdateStreamMode` is recorded; on-demand capacity is not enforced |
+| No pagination | `ListStreams` returns every stream name and `ListShards` every open shard in one page |
+| No enhanced fan-out | Consumers are not emulated — `SubscribeToShard` and the consumer registration APIs are absent, and a consumer ARN is refused by `TagResource` |
+| Closed shards are hidden | `ListShards` returns open shards only, so a split parent disappears from the list |
+
+## Gotchas
+
+> [!WARNING]
+> Because nothing is trimmed, a long-lived stream in a shared Overcast keeps
+> growing and `TRIM_HORIZON` keeps replaying from the very first record. Delete
+> and re-create the stream between test runs — `DeleteStream` removes its
+> records with it.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -31,6 +74,8 @@ Per-operation status, notes and AWS API links: [Kinesis operations](kinesis/oper
 
 ## Related
 
+- [Firehose](firehose.md)
+- [DynamoDB Streams](dynamodbstreams.md)
 - [AWS API reference](https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
