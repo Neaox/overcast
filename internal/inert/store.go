@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // Store is the generic metadata store behind every Tier 1 resource: one

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestFunctionPolicy_AddGetRemoveLifecycle(t *testing.T) {

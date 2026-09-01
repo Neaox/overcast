@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	intmcp "github.com/Neaox/overcast/internal/mcp"
-	mcpproviders "github.com/Neaox/overcast/internal/mcp/providers"
+	intmcp "github.com/overcast-sh/overcast/internal/mcp"
+	mcpproviders "github.com/overcast-sh/overcast/internal/mcp/providers"
 )
 
 type registryData struct {

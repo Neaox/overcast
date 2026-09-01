@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // A stack whose log group updates cleanly and whose added subscription cannot

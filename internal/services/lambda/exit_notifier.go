@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // exitNotifier bridges Docker watcher bus events to per-container channels,

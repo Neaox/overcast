@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // AWS rejects CreateFunction when the deployment package cannot be read from

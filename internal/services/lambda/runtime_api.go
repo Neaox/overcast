@@ -43,9 +43,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
 	"github.com/google/uuid"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 	"go.uber.org/zap"
 )
 

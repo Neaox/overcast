@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func cfListTagsMap(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {

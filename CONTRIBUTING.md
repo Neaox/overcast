@@ -220,7 +220,7 @@ These guide every decision — from architecture to variable naming. Read them b
     one line of at most 120 characters — the Action takes the rest of that line as the
     issue title, and everything below it as the issue body, so detail goes on the next
     line rather than running the title on. Naming a marker
-    mid-sentence files an issue out of the middle of your prose ([#1138](https://github.com/Neaox/overcast/issues/1138)),
+    mid-sentence files an issue out of the middle of your prose ([#1138](https://github.com/overcast-sh/overcast/issues/1138)),
     so refer to deferred work in prose without writing the word: "the P3 note on
     `apigateway.Method`". `make lint-todos` enforces this.
 11. **AWS compatibility over test convenience.** Never diverge from real AWS behaviour to make tests easier.
@@ -317,7 +317,7 @@ not silently narrow platform support or document a single-machine workaround as 
 
 ```bash
 # 1. Fork and clone
-git clone https://github.com/Neaox/overcast
+git clone https://github.com/overcast-sh/overcast
 cd overcast
 
 # 2. Install Go dependencies
@@ -1555,7 +1555,7 @@ entry point). **There is no ESLint in this repository.**
   typescript-go, so they do not depend on the `typescript` devDependency.
 - **New rules go in `.oxlintrc.json`.** There is nowhere else to put one.
 
-ESLint was retired in [#1330](https://github.com/Neaox/overcast/issues/1330)
+ESLint was retired in [#1330](https://github.com/overcast-sh/overcast/issues/1330)
 step 3. The four rules it was still running turned out to enforce nothing: three
 are inert by construction, and `react-hooks/component-hook-factories` is
 unreachable in `eslint-plugin-react-hooks` 7.0.1 (the React Compiler pass behind
@@ -1619,7 +1619,7 @@ in a comment at the call site — "ResourceTable didn't fit because …" — so 
 reader can tell a decision from an oversight. Fifty-five bespoke tables accumulated
 before this rule existed; their migration, and `ResourceTable`'s move onto TanStack
 Table v9 (sorting, column visibility, pagination on one engine), is tracked in
-[#1327](https://github.com/Neaox/overcast/issues/1327). Do not add to the count.
+[#1327](https://github.com/overcast-sh/overcast/issues/1327). Do not add to the count.
 
 ### Attribute grids — `DefinitionCard`, not a two-column `<Table>`
 
@@ -1647,7 +1647,7 @@ card a detail page opens with, a configuration tab, a dialog's file metadata, a
 panel showing a single setting. Keep `StatusBadge`, `Timestamp`, `ArnText` and
 the rest as the value node — the component owns typography and layout, not
 content. Its adoption across the detail pages is tracked in
-[#1101](https://github.com/Neaox/overcast/issues/1101).
+[#1101](https://github.com/overcast-sh/overcast/issues/1101).
 
 ### Topology map methodology
 
@@ -1873,7 +1873,7 @@ Open a [bug report](.github/ISSUE_TEMPLATE/bug_report.md) with:
 
 ## Ideas for contributions
 
-Check [GitHub Issues](https://github.com/Neaox/overcast/issues) for open work.
+Check [GitHub Issues](https://github.com/overcast-sh/overcast/issues) for open work.
 Look for the `good first issue` label if you're new, or filter by priority
 (`P1`, `P2`, `P3`) and effort (`small`, `medium`, `large`) to find something
 that fits.

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // rdsTagCfg tunes shared tag validation to return RDS-specific error codes.

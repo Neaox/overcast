@@ -4,7 +4,7 @@ import (
 	"context"
 	"hash/fnv"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Parallel-scan segmentation over the ordered storage structure

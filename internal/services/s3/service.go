@@ -32,12 +32,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 const serviceName = "s3"

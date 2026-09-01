@@ -26,8 +26,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // AWS's modeled ranges for the two limits.

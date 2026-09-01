@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // mskRequest sends a REST JSON request to the MSK emulator.

@@ -102,8 +102,8 @@ items are judgement calls, not checkboxes:
 **RC = release candidate.** CI treats any same-repo PR whose `VERSION` carries no `v<VERSION>` tag as
 one (`scripts/release-candidate-check.sh`), so the release-prep PR publishes, per build:
 
-- `ghcr.io/neaox/overcast:<version>-rc.<n>` — the console image
-- `ghcr.io/neaox/overcast-slim:<version>-rc.<n>` — the slim image, no web UI, no SQLite
+- `ghcr.io/overcast-sh/overcast:<version>-rc.<n>` — the console image
+- `ghcr.io/overcast-sh/overcast-slim:<version>-rc.<n>` — the slim image, no web UI, no SQLite
 - the native binaries, as workflow artifacts
 
 `<n>` increments per build, so every push to the release branch produces a new candidate and the bot
@@ -170,8 +170,8 @@ The parts that catch real bugs:
   the one nobody remembers to check.
 
 ```sh
-scripts/run-test-instance.sh --image ghcr.io/neaox/overcast:<version>-rc.<n>
-scripts/run-test-instance.sh --image ghcr.io/neaox/overcast-slim:<version>-rc.<n>
+scripts/run-test-instance.sh --image ghcr.io/overcast-sh/overcast:<version>-rc.<n>
+scripts/run-test-instance.sh --image ghcr.io/overcast-sh/overcast-slim:<version>-rc.<n>
 ```
 
 Services backed by real containers — Lambda, ECS, RDS, ElastiCache, MSK — need the Docker socket
@@ -180,7 +180,7 @@ mounted, or they degrade to metadata-only stubs and you will be testing the stub
 
 ```sh
 scripts/run-test-instance.sh --mount-docker-socket \
-  --image ghcr.io/neaox/overcast:<version>-rc.<n>
+  --image ghcr.io/overcast-sh/overcast:<version>-rc.<n>
 ```
 
 **Required: route reachability against this same instance.** `TestAllDeclaredCapabilitiesAreReachable`
@@ -226,7 +226,7 @@ file instead of producing one").
 ```sh
 # 1. run the suites
 go run ./cmd/compat \
-  --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n> \
+  --overcast-image ghcr.io/overcast-sh/overcast:<version>-rc.<n> \
   --format json --results-file compat-results.json
 
 # 2. then gate the results it produced
@@ -343,7 +343,7 @@ not, is worse than no note.
 **Anything you find that is not a regression and not a blocker becomes a GitHub issue**, with the
 reproduction, the pre-existing-versus-new determination, and the blast radius — not a line in the PR
 comment that scrolls away. Say so in the comment and link it. Determine which it is by running the
-same probe against the previous release's image (`ghcr.io/neaox/overcast:<previous>`) and, where the
+same probe against the previous release's image (`ghcr.io/overcast-sh/overcast:<previous>`) and, where the
 answer matters, by dating the code with `git log -S` and `git tag --contains`: a fault present in
 every tag is not this release's problem and must not hold it up.
 

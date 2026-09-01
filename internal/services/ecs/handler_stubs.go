@@ -10,7 +10,7 @@ package ecs
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // initOps registers every known ECS operation to its handler.

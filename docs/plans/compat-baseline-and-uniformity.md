@@ -5,7 +5,7 @@
 > that absolutely. The dashboard QOL items closed 2026-08-23 (#1184, #1185), and
 > so did the framework audit's three deferred hygiene gaps (name hygiene lint,
 > cross-suite assertion parity report, non-TS assert-idiom sweep) via
-> [#1186](https://github.com/Neaox/overcast/issues/1186) — Java's deeper
+> [#1186](https://github.com/overcast-sh/overcast/issues/1186) — Java's deeper
 > per-method assert audit is the one piece still open, tracked as a follow-up.
 > Outstanding as of 2026-08-23: the parity backfill (now across all six SDK
 > suites — the registry has grown since the dotnet/rust-only snapshot).
@@ -323,7 +323,7 @@ emulator or suite bug.
 **Remaining tidy-up so new tests are easy to add** (mechanical, per-suite PRs):
 
 1. ~~**Name hygiene rule, enforced by review not tooling.**~~ **Closed by
-   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23.** A
+   [#1186](https://github.com/overcast-sh/overcast/issues/1186), 2026-08-23.** A
    full per-language re-scan (every literal that constructs a name including
    the run id) turned out to be unusable on its own — dozens of unrelated
    services share a bare `compat-{runId}` scaffold harmlessly, and a naive
@@ -341,14 +341,14 @@ emulator or suite bug.
    group token at all (`ses.go`); fixed to `{runId}-ses-tmpl` to match the
    sibling suites' `-tmpl` convention.
 2. ~~**Assertion-parity is unenforced.**~~ **Closed by
-   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23,** via
+   [#1186](https://github.com/overcast-sh/overcast/issues/1186), 2026-08-23,** via
    the cheap first step named above: `scripts/compat-report.py`'s
    `suite_bug_candidates()` now surfaces, in the job summary, every registry
    test that fails in exactly one suite while at least two other suites
    implementing the same test pass it — informational only, does not gate
    the run. A shared behaviour spec remains not worth it at this scale.
 3. ~~**Go/py/java assert idiom sweep.**~~ **Done for Go, Python and Java in
-   [#1186](https://github.com/Neaox/overcast/issues/1186), 2026-08-23 (Java's
+   [#1186](https://github.com/overcast-sh/overcast/issues/1186), 2026-08-23 (Java's
    deeper per-method pass landed in the follow-up to #1295 the same day);
    dotnet/rust got the deeper pass too and came back clean.** Python: 36 bare `assert cond, msg` statements across 12
    files in `compat/suites/python-sdk/groups/` converted to
@@ -406,7 +406,7 @@ emulator or suite bug.
    no-op'd and passed; they now attach/list/detach the AWS-managed
    `AmazonS3ReadOnlyAccess` like node/go do. Verified by building the suite
    image (compile + registry unit tests) and running the 22 touched groups
-   against a throwaway `ghcr.io/neaox/overcast:dev` container: 148/148 pass,
+   against a throwaway `ghcr.io/overcast-sh/overcast:dev` container: 148/148 pass,
    every changed test confirmed executed. `dotnet-sdk`/`rust-sdk` (outside the
    issue's original scope) got the same deeper pass: dotnet's flags were all
    multi-line `Assertions.*` continuations, teardowns or expect-NotFound
@@ -417,7 +417,7 @@ emulator or suite bug.
    discard shape verbatim — go-sdk drops ~51 read responses on the `_, err :=`
    line (a shape the `_ = resp` grep above never saw), python-sdk has ~32 bare
    read calls, node-js-sdk a handful plus `Array.isArray` on always-array
-   fields — tracked in [#1321](https://github.com/Neaox/overcast/issues/1321).
+   fields — tracked in [#1321](https://github.com/overcast-sh/overcast/issues/1321).
 4. **cli suite runtime** (4m16s in CI, the slowest matrix job): one process
    spawn per aws-cli call. Acceptable; revisit only if the matrix wall-time
    starts to bind.

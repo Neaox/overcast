@@ -35,8 +35,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/metrics"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // metricsRecorder is the narrow interface SQS depends on to record outcome

@@ -10,10 +10,10 @@ Prism.languages.gostacktrace = {
     },
   },
   "stack-frame": {
-    // github.com/Neaox/overcast/internal/services/sqs.CreateQueue(0x..., 0x...)
+    // github.com/overcast-sh/overcast/internal/services/sqs.CreateQueue(0x..., 0x...)
     pattern: /^[^\t\n].+[^)]$/m,
     inside: {
-      // Package path: github.com/Neaox/overcast/internal/services/
+      // Package path: github.com/overcast-sh/overcast/internal/services/
       namespace: {
         pattern: /^([\w.-]+\/)+/,
         inside: {

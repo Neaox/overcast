@@ -2,9 +2,9 @@
 
 > **Status:** shipped (2026-08-15). All phases — contract + failing tests, journal + capture,
 > ECS collector, endpoints, the console Diagnostics tab, and docs — merged to `main` in
-> [#1005](https://github.com/Neaox/overcast/pull/1005).
-> [#993](https://github.com/Neaox/overcast/pull/993) (merged 2026-08-15) and the ECS
-> log-retention hardening ([#997](https://github.com/Neaox/overcast/pull/997), merged
+> [#1005](https://github.com/overcast-sh/overcast/pull/1005).
+> [#993](https://github.com/overcast-sh/overcast/pull/993) (merged 2026-08-15) and the ECS
+> log-retention hardening ([#997](https://github.com/overcast-sh/overcast/pull/997), merged
 > 2026-08-15) landed with it. Remaining: the two open questions at the end
 > (crash-loop capture race, `DeleteCluster` orphaning).
 > **Scope:** `internal/services/cloudformation/`, `internal/services/ecs/`, `internal/bff/`,
@@ -32,7 +32,7 @@ one ECS gives it:
 > Troubleshooting section.`
 
 That is byte-correct AWS behaviour — [handler_services.go:977](../../internal/services/ecs/handler_services.go)
-emits it, and [#993](https://github.com/Neaox/overcast/pull/993) made sure it is the sentence that
+emits it, and [#993](https://github.com/overcast-sh/overcast/pull/993) made sure it is the sentence that
 survives rather than a newer, less useful one. It is also almost useless for debugging, because the
 actual answer — container `app` exited 1, stderr `Error: DATABASE_URL is not set` — is not expressible
 in CloudFormation's vocabulary at all.
@@ -79,7 +79,7 @@ snapshots the genuinely volatile parts (the task records, which die at one hour)
 re-capturing what is already retained.
 
 These ECS-side defects are separable from the diagnostics feature and independently worth fixing, so
-they shipped as their own change — [#997](https://github.com/Neaox/overcast/pull/997), merged
+they shipped as their own change — [#997](https://github.com/overcast-sh/overcast/pull/997), merged
 2026-08-15 — which this plan depended on.
 
 ## This is not a new fidelity exception
@@ -250,7 +250,7 @@ so one component per kind renders every collector, present and future.
 
 **Event ordering is the source service's, preserved verbatim.** ECS lists a service's events newest
 first, and which of two failure events survives to be read is the entire subject of
-[#993](https://github.com/Neaox/overcast/pull/993) — a collector that quietly reversed them would
+[#993](https://github.com/overcast-sh/overcast/pull/993) — a collector that quietly reversed them would
 undo that work. The renderer displays the slice exactly as sent.
 
 **`provenance` is orthogonal to `kind`.** Today the `headline` is the only `overcast-inference`
@@ -438,7 +438,7 @@ best failure affordance.
 ### P5 — documentation and reach — **done**
 
 `docs/services/cloudformation.md`'s notes and a changelog fragment are done. `docs/services/ecs.md`
-shipped with the ECS hardening change ([#997](https://github.com/Neaox/overcast/pull/997)), which
+shipped with the ECS hardening change ([#997](https://github.com/overcast-sh/overcast/pull/997)), which
 owned that file.
 The collector interface is documented at `diagnosticCollector`, with Lambda and RDS named as the
 obvious next two and the note that both fit the existing three section kinds.

@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func arDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) *http.Response {

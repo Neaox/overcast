@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // notReadyRetryAfterSeconds is the Retry-After hint sent with a 503 response

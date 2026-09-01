@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // retainedLogGroupUpdateTemplate is the second version of updateBaseTemplate:

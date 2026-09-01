@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // TestLoad_defaults verifies that Load() returns sensible defaults when no

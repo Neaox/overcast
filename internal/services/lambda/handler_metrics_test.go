@@ -14,9 +14,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/metrics"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func newMonitorTestHandler(t *testing.T) (*Handler, *metrics.Service, *clock.Mock) {

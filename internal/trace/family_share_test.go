@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // countPinnedFamily reports how much of the pinned ring is occupied by calls

@@ -74,13 +74,13 @@ var dockerRun = func(args ...string) (string, error) {
 // (native) always launches. --image overrides it entirely; there is no flag
 // to switch to overcast-slim, since a CLI-managed instance is exactly the
 // case the console image is for.
-const dockerImageRepo = "ghcr.io/neaox/overcast"
+const dockerImageRepo = "ghcr.io/overcast-sh/overcast"
 
 // resolveDockerImage applies --image > --channel > version-pinned-default
 // precedence for `overcast start --docker`'s image reference.
 //
 // The default is pinned to this CLI's own version
-// (ghcr.io/neaox/overcast:<version>), not a floating tag like :latest or
+// (ghcr.io/overcast-sh/overcast:<version>), not a floating tag like :latest or
 // :alpha. That is a deliberate departure from tools like LocalStack, which
 // float :latest and document no supported CLI-to-emulator version pairing at
 // all: a floating default silently lets the CLI you installed six months ago

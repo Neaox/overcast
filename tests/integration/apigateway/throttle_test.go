@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // createLimitedUsagePlan creates a usage plan covering {apiID, stageName} with

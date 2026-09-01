@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // A deploy dispatching megabytes internally must pin none of it on the calling

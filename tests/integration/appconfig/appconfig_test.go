@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // appconfigSigV4 is the credential scope an AWS SDK for AppConfig signs with.

@@ -24,8 +24,8 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 const lambdaAuthorizerDeniedFieldsKey = "__overcastDeniedFields"

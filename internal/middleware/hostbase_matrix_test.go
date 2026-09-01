@@ -3,7 +3,7 @@ package middleware
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // hostbase_matrix_test.go — every addressing form against every recognised

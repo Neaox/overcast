@@ -24,7 +24,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // jsEvaluator implements the CodeEvaluator interface using goja.

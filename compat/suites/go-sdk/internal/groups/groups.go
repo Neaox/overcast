@@ -4,8 +4,8 @@ package groups
 import (
 	"context"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 // ServiceGroup bundles the impls, setup, and teardown maps for one service.

@@ -20,8 +20,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // maxDeliveryAttempts caps how many times one firing is attempted, however

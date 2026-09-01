@@ -2,7 +2,7 @@
 
 package route53
 
-import "github.com/Neaox/overcast/internal/capabilities"
+import "github.com/overcast-sh/overcast/internal/capabilities"
 
 // Category names as constants — any typo is a compile error, not a silent new category.
 const (

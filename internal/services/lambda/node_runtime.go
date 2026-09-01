@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // NodeRuntime is a stub Runtime for Node.js functions.

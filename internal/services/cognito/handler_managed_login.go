@@ -45,8 +45,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // ─── template data types ──────────────────────────────────────────────────────

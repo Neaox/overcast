@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/inert"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/inert"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 type emptyIn struct{}

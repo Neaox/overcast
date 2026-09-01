@@ -56,7 +56,7 @@ var findSh = sync.OnceValue(func() string {
 // `&` is orphaned and keeps running, still holding whatever handles it
 // inherited from the shell — including, under `go test`, the test binary's
 // own stdout pipe, which is what makes a passing package get reported as
-// failed. See https://github.com/Neaox/overcast/issues/947.
+// failed. See https://github.com/overcast-sh/overcast/issues/947.
 func runScriptCmd(cmd *exec.Cmd) error {
 	job, err := newKillOnCloseJob()
 	if err != nil {

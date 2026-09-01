@@ -27,7 +27,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/alarmaction"
+	"github.com/overcast-sh/overcast/internal/alarmaction"
 )
 
 // Alarm state values, as AWS spells them.

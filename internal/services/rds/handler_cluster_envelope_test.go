@@ -30,7 +30,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // makeClusterAvailable moves a freshly seeded cluster to "available" without

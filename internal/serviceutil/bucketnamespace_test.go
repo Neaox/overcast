@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // TestAccountRegionalBucketSuffix pins the suffix grammar AWS documents for

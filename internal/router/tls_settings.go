@@ -13,9 +13,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 // tls_settings.go — GET /_overcast/tls/status and POST /_overcast/tls/setup,
@@ -181,7 +181,7 @@ const caShareCommand = `overcast https enable   # once per machine, on the host
 
 docker run -e OVERCAST_TLS=auto \
   -e OVERCAST_CA_DIR=/ca -v ~/.overcast/data/ca:/ca:ro \
-  -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha`
+  -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha`
 
 // tlsStatusHandler serves GET /_overcast/tls/status.
 func tlsStatusHandler(cfg *config.Config, logger *zap.Logger) http.HandlerFunc {

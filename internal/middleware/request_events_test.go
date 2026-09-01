@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // collectEvents subscribes to every event on bus and returns a func that

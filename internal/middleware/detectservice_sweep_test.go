@@ -41,12 +41,12 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/capabilities"
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // wireProbe is one request shape for one declared operation, together with the

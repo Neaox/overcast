@@ -17,8 +17,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // resolverService returns an ECR service standing in for one whose registry

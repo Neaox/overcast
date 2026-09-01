@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/smtp"
+	"github.com/overcast-sh/overcast/internal/smtp"
 )
 
 // dialSMTP connects to addr, runs through a minimal SMTP session sending one

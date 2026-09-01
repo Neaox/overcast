@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/capabilities"
 )
 
 // noFilterParameter names the EC2 describes AWS gives no Filters parameter at

@@ -15,7 +15,7 @@ tags:
 [Testcontainers](https://testcontainers.com/) starts throwaway Docker
 containers from test code and tears them down with the test. Overcast ships a
 first-party Testcontainers module for **Go**; modules for other languages are
-planned ([#1495](https://github.com/Neaox/overcast/issues/1495) tracks listing
+planned ([#1495](https://github.com/overcast-sh/overcast/issues/1495) tracks listing
 them in the Testcontainers catalog once Overcast reaches v1.0).
 
 The module starts an Overcast container, waits until `/_overcast/health`
@@ -25,10 +25,10 @@ region, account ID, and accepted credentials.
 ## Go
 
 The module lives in this repository as the nested Go module
-[`testcontainers/go`](https://github.com/Neaox/overcast/tree/main/testcontainers/go):
+[`testcontainers/go`](https://github.com/overcast-sh/overcast/tree/main/testcontainers/go):
 
 ```bash
-go get github.com/Neaox/overcast/testcontainers/go@main
+go get github.com/overcast-sh/overcast/testcontainers/go@main
 ```
 
 (While Overcast is in alpha the module is installed from `main`; tagged module
@@ -44,13 +44,13 @@ import (
     "github.com/aws/aws-sdk-go-v2/service/s3"
     "github.com/testcontainers/testcontainers-go"
 
-    overcast "github.com/Neaox/overcast/testcontainers/go"
+    overcast "github.com/overcast-sh/overcast/testcontainers/go"
 )
 
 func TestWithOvercast(t *testing.T) {
     ctx := context.Background()
 
-    ctr, err := overcast.Run(ctx, "ghcr.io/neaox/overcast-slim:alpha")
+    ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
     testcontainers.CleanupContainer(t, ctr)
     if err != nil {
         t.Fatal(err)
@@ -73,12 +73,12 @@ func TestWithOvercast(t *testing.T) {
 
 ### Which image
 
-- `ghcr.io/neaox/overcast-slim:alpha` — API only, smallest and fastest to
+- `ghcr.io/overcast-sh/overcast-slim:alpha` — API only, smallest and fastest to
   start. The right default for tests.
-- `ghcr.io/neaox/overcast:alpha` — adds the web console (handy when debugging
+- `ghcr.io/overcast-sh/overcast:alpha` — adds the web console (handy when debugging
   a failing test interactively; pair with `WithConsole`).
 
-Pin an exact version tag (e.g. `ghcr.io/neaox/overcast-slim:0.0.1-alpha.25`)
+Pin an exact version tag (e.g. `ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.25`)
 in CI — Docker never re-pulls a moving tag it already has, so `:alpha` can go
 stale on long-lived runners.
 
@@ -94,7 +94,7 @@ mount options, …). The module adds two of its own:
 | `WithConsole`      | Also exposes the web console port (4567); reach it with `ConsoleEndpoint`. Full image only.                                                                          |
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/neaox/overcast:alpha",
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast:alpha",
     overcast.WithDockerSocket(),
     overcast.WithConsole(),
     testcontainers.WithEnv(map[string]string{
@@ -132,7 +132,7 @@ daemon.
 ## Other languages: the generic-container pattern
 
 Dedicated modules for other languages are planned
-([#1495](https://github.com/Neaox/overcast/issues/1495)), but nothing about
+([#1495](https://github.com/overcast-sh/overcast/issues/1495)), but nothing about
 Overcast requires one — every Testcontainers implementation can run it as a
 generic container today. The recipe is always the same three lines of intent:
 the image, expose port `4566`, and wait for HTTP 200 on `/_overcast/health`.
@@ -147,7 +147,7 @@ Then point the SDK at the mapped port with region `us-east-1` and credentials
 ```typescript
 import { GenericContainer, Wait } from "testcontainers";
 
-const container = await new GenericContainer("ghcr.io/neaox/overcast-slim:alpha")
+const container = await new GenericContainer("ghcr.io/overcast-sh/overcast-slim:alpha")
   .withExposedPorts(4566)
   .withWaitStrategy(Wait.forHttp("/_overcast/health", 4566))
   .start();
@@ -158,7 +158,7 @@ const endpoint = `http://${container.getHost()}:${container.getMappedPort(4566)}
 ### Java
 
 ```java
-GenericContainer<?> overcast = new GenericContainer<>("ghcr.io/neaox/overcast-slim:alpha")
+GenericContainer<?> overcast = new GenericContainer<>("ghcr.io/overcast-sh/overcast-slim:alpha")
     .withExposedPorts(4566)
     .waitingFor(Wait.forHttp("/_overcast/health").forPort(4566));
 overcast.start();
@@ -177,7 +177,7 @@ from testcontainers.core.waiting_utils import wait_container_is_ready
 def wait_for_health(endpoint: str) -> None:
     requests.get(f"{endpoint}/_overcast/health", timeout=2).raise_for_status()
 
-with DockerContainer("ghcr.io/neaox/overcast-slim:alpha").with_exposed_ports(4566) as overcast:
+with DockerContainer("ghcr.io/overcast-sh/overcast-slim:alpha").with_exposed_ports(4566) as overcast:
     endpoint = f"http://{overcast.get_container_host_ip()}:{overcast.get_exposed_port(4566)}"
     wait_for_health(endpoint)
 ```
@@ -186,7 +186,7 @@ with DockerContainer("ghcr.io/neaox/overcast-slim:alpha").with_exposed_ports(456
 
 ```csharp
 var overcast = new ContainerBuilder()
-    .WithImage("ghcr.io/neaox/overcast-slim:alpha")
+    .WithImage("ghcr.io/overcast-sh/overcast-slim:alpha")
     .WithPortBinding(4566, assignRandomHostPort: true)
     .WithWaitStrategy(Wait.ForUnixContainer()
         .UntilHttpRequestIsSucceeded(r => r.ForPort(4566).ForPath("/_overcast/health")))

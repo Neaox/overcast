@@ -32,7 +32,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // Kind is the AWS service segment of a target ARN, restricted to the target

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // A Lambda whose S3 deployment package cannot be fetched must fail its

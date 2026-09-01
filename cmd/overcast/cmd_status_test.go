@@ -18,10 +18,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/router"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/router"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // runStatusCmd executes `overcast status` against endpoint and returns its

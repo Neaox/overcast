@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Neaox/overcast-compat-cli/internal/awscli"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
 )
 
 // APIGateway returns the API Gateway service group (REST v1 + HTTP v2).

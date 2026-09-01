@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // operationRegistry is the immutable generated AWS operation registry, the same

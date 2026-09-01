@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // newWrappedHybridStore builds a *state.NamespacedStore backed by a real

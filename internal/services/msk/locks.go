@@ -19,7 +19,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // errClusterMovedOn abandons a mutation whose guard no longer holds: something

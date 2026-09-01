@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 func (h *Handler) containerInstanceARN(ctx context.Context, cluster, id string) string {

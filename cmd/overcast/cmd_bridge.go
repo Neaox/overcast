@@ -20,8 +20,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/hostbridge"
-	"github.com/Neaox/overcast/internal/hostbridge/mdns"
+	"github.com/overcast-sh/overcast/internal/hostbridge"
+	"github.com/overcast-sh/overcast/internal/hostbridge/mdns"
 )
 
 func newBridgeCmd() *cobra.Command {

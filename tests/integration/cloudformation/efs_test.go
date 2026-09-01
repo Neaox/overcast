@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // efsStackTemplate provisions a file system with policy/lifecycle/backup

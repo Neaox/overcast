@@ -44,7 +44,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 // Flags are package-level so that both main and run can read them; run holds

@@ -20,7 +20,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // stackEventsXML is the slice of DescribeStackEvents this file reads. The

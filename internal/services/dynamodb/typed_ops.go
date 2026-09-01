@@ -4,8 +4,8 @@ import (
 	"hash/crc32"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 func (h *Handler) rawOps() map[string]op.Operation {

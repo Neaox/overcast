@@ -3,8 +3,8 @@ package serviceutil
 import (
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // AllowProtocolDrift decides what a service's Dispatch/DispatchQuery method

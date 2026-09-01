@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // limitationCollectorKey is the context key for the collector a resource's

@@ -17,8 +17,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // sourceKind is the kind of source a pipe polls or subscribes to.

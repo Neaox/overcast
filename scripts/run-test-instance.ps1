@@ -11,7 +11,7 @@
 #   scripts/run-test-instance.ps1 -MountDockerSocket -NoLogs -Name shot
 #
 # Options:
-#   -Image REF             image to run (default ghcr.io/neaox/overcast:alpha).
+#   -Image REF             image to run (default ghcr.io/overcast-sh/overcast:alpha).
 #                          Pass the image you built from your own worktree --
 #                          `make docker-console` tags it after your branch.
 #   -BasePort N            start the free-port scan at N (default 4570).
@@ -108,7 +108,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$Image = 'ghcr.io/neaox/overcast:alpha'
+$Image = 'ghcr.io/overcast-sh/overcast:alpha'
 $BasePort = 4570
 $Name = ''
 $DataVolume = ''
@@ -142,7 +142,7 @@ loopback ports, never on 4566/4567 (those belong to the user's own instance).
 
 Usage: scripts/run-test-instance.ps1 [options]
 
-  -Image REF             image to run (default ghcr.io/neaox/overcast:alpha)
+  -Image REF             image to run (default ghcr.io/overcast-sh/overcast:alpha)
   -BasePort N            start the free-port scan at N (default 4570)
   -Name NAME             name the container so a later step can stop it
   -EnvVar KEY=VALUE      one container env var; KEY must be OVERCAST_* or

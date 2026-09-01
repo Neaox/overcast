@@ -3,9 +3,9 @@ package autoscaling
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 // Handler holds the Auto Scaling operation registry. Every operation has

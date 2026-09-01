@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // CreateCapacityProvider handles AmazonEC2ContainerServiceV20141113.CreateCapacityProvider.

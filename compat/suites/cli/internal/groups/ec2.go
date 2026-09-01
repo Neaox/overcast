@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Neaox/overcast-compat-cli/internal/awscli"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
 )
 
 // EC2 returns the EC2 service group.

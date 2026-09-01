@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // publishFrom drives the real Publish handler on a request whose context

@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 var base = time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)

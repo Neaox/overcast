@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 func TestWriteRunReportFile_persistsStructuredReport(t *testing.T) {
@@ -142,9 +142,9 @@ func TestArtifactNamedDistinguishesARequestFromADefault(t *testing.T) {
 		want      bool
 	}{
 		{"compiled-in default", defaultOvercastImage, "", false, false},
-		{"named on the command line", "ghcr.io/neaox/overcast:rc", "", true, true},
-		{"named through the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:rc", false, true},
-		{"command line overriding the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:other", true, true},
+		{"named on the command line", "ghcr.io/overcast-sh/overcast:rc", "", true, true},
+		{"named through the environment", "ghcr.io/overcast-sh/overcast:rc", "ghcr.io/overcast-sh/overcast:rc", false, true},
+		{"command line overriding the environment", "ghcr.io/overcast-sh/overcast:rc", "ghcr.io/overcast-sh/overcast:other", true, true},
 		{"explicitly emptied", "", "", true, false},
 		{"unset with an empty default", "", "", false, false},
 	}

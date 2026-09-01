@@ -25,7 +25,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
 )
 
 // AWS's `requestContext.condition` values for an asynchronous invocation

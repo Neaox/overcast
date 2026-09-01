@@ -82,7 +82,7 @@ operation rather than stored and quietly ignored:
 
 | Configuration | Operation | Result |
 | --- | --- | --- |
-| `LaunchTemplate` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — Overcast's EC2 has no `CreateLaunchTemplate` to resolve `ImageId`/`InstanceType` from. Use a launch configuration. Tracked in [#518](https://github.com/Neaox/overcast/issues/518). |
+| `LaunchTemplate` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — Overcast's EC2 has no `CreateLaunchTemplate` to resolve `ImageId`/`InstanceType` from. Use a launch configuration. Tracked in [#518](https://github.com/overcast-sh/overcast/issues/518). |
 | `MixedInstancesPolicy` | `CreateAutoScalingGroup` / `UpdateAutoScalingGroup` | `501` — there is no instance-type fleet or spot allocation to distribute over. |
 | `InstanceId` (create from a running instance) | `CreateAutoScalingGroup` | `501` — launch parameters cannot be derived from a running instance. |
 | No launch source at all | `CreateAutoScalingGroup` | `400 ValidationError`, as on AWS. |

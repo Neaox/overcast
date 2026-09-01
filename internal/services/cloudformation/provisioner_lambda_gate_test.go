@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/services/lambda"
+	"github.com/overcast-sh/overcast/internal/services/lambda"
 )
 
 // reviewedGatedForwards is the intersection as it is *meant* to be: members the

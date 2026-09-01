@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // CloudFormation dispatches AWS::Lambda::Function through the Lambda API, so

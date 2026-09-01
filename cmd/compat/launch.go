@@ -47,7 +47,7 @@ const (
 
 	// defaultOvercastImage is the container used when no native binary is
 	// available. Matches scripts/run-test-instance.sh.
-	defaultOvercastImage = "ghcr.io/neaox/overcast:alpha"
+	defaultOvercastImage = "ghcr.io/overcast-sh/overcast:alpha"
 
 	// dockerSocketPath is where a Unix Docker socket lives, on the host and
 	// inside the container both. The container side is not configurable: it is

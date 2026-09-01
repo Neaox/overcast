@@ -3,7 +3,7 @@ package secretsmanager
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ─── Stubs (not implemented) ───────────────────────────────────────────────

@@ -520,7 +520,7 @@ Build tag: `//go:build dev`
 
 package myservice
 
-import "github.com/Neaox/overcast/internal/capabilities"
+import "github.com/overcast-sh/overcast/internal/capabilities"
 
 var Capabilities = []*capabilities.Capability{
     {Operation: "CreateThing", Status: capabilities.StatusSupported, Tier: "core"},

@@ -15,7 +15,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // listDistributionsPage is the minimal shape needed to walk ListDistributions'

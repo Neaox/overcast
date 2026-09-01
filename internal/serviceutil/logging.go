@@ -12,10 +12,10 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/logging"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // ── Trace level ──────────────────────────────────────────────────────────────

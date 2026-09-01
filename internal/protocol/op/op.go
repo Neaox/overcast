@@ -15,8 +15,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // Operation is a runtime-dispatchable, codec-agnostic AWS operation.

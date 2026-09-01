@@ -28,7 +28,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Neaox/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/metrics"
 )
 
 // metricsReader is the narrow read surface CloudWatch needs from

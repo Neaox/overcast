@@ -11,9 +11,9 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // checkSecretHash validates the SECRET_HASH parameter when a client has a client

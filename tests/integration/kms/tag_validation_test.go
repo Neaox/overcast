@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func kmsTagMap(t *testing.T, srv *helpers.TestServer, keyID string) map[string]string {

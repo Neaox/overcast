@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // EventBridge Scheduler addresses a schedule by name alone. Its group is a body

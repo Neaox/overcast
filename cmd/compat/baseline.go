@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 const baselineVersion = 1

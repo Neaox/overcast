@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 // testRegistry builds a registry covering two groups, one of them scoped to a

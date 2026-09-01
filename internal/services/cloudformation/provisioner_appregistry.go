@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // extractAwsApplicationTag returns the value of the `awsApplication` tag

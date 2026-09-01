@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // newTestItemBackends returns one instance per itemBackend implementation

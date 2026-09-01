@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-**https://github.com/Neaox/overcast/issues**.
+**https://github.com/overcast-sh/overcast/issues**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

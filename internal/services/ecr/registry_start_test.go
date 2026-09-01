@@ -21,9 +21,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // registryDaemon is a fake Docker daemon that answers the first conflicts

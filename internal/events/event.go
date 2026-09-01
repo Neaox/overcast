@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Type identifies the kind of event. Values follow the AWS event name

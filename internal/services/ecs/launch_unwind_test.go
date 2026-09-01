@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 func TestRunTask_partialPlacementUnwindsTheContainersAlreadyStarted(t *testing.T) {

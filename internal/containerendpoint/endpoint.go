@@ -32,7 +32,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // splitHorizonHostnames resolve to 127.0.0.1 in public DNS, so a URL built on

@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/state"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestUpdateStack_disableRollbackRetentionSurvivesRestart(t *testing.T) {

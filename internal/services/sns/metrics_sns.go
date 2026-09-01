@@ -31,7 +31,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/metrics"
 )
 
 // metricsRecorder is the narrow interface SNS depends on to record outcome

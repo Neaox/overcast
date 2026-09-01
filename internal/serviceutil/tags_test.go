@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // A corrupt persisted tag blob must be isolated — treated as empty — rather

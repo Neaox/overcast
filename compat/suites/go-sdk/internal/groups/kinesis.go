@@ -6,11 +6,11 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis/types"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 func Kinesis(c *clients.Clients) ServiceGroup {

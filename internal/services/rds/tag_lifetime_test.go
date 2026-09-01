@@ -13,9 +13,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // storedTagCount reports how many tag blobs the whole namespace holds, which is

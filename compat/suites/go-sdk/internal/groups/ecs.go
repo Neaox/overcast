@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 func ECS(c *clients.Clients) ServiceGroup {

@@ -19,10 +19,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/metrics"
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/metrics"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func withTableNameParam(req *http.Request, name string) *http.Request {

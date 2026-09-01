@@ -17,7 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // countingRuntime hands out instances and counts how many it was asked for. It

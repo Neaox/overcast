@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 func TestProtocol_NoIdentifiersIsPassthrough(t *testing.T) {

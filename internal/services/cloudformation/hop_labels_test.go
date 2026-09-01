@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // bucketResource is a stack resource whose teardown dispatches an internal

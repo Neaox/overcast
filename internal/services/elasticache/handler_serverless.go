@@ -13,12 +13,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/dataplane"
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
-	"github.com/Neaox/overcast/internal/serviceutil/readiness"
+	"github.com/overcast-sh/overcast/internal/dataplane"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/serviceutil/readiness"
 )
 
 type xmlCreateServerlessCacheResponse struct {

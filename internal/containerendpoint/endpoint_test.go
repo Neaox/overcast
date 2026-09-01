@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // endpoint_test.go covers the two mechanisms that keep AWS resource URLs

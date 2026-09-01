@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 // twoGroupsOneName models the shape that made a mis-binding possible: two

@@ -11,7 +11,7 @@ package stepfunctions_test
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // countEvents returns how many history events have the given type.

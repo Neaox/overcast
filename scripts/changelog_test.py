@@ -508,8 +508,8 @@ CHANGELOG_FIXTURE = """# Changelog
 
 - [sqs] an older fix
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...HEAD
-[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.1...HEAD
+[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.1
 """
 
 
@@ -544,21 +544,21 @@ class ChangelogEditTest(unittest.TestCase):
 		result = changelog.update_links(CHANGELOG_FIXTURE, "0.0.1-alpha.2", "0.0.1-alpha.1")
 
 		self.assertIn(
-			"[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD",
+			"[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD",
 			result,
 		)
 		self.assertIn(
-			"[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/"
+			"[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/compare/"
 			"v0.0.1-alpha.1...v0.0.1-alpha.2",
 			result,
 		)
-		self.assertIn("[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/", result)
+		self.assertIn("[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/releases/tag/", result)
 
 	def test_first_release_links_to_the_tag(self) -> None:
 		result = changelog.update_links(CHANGELOG_FIXTURE, "0.0.1-alpha.0", None)
 
 		self.assertIn(
-			"[0.0.1-alpha.0]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.0",
+			"[0.0.1-alpha.0]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.0",
 			result,
 		)
 
@@ -627,9 +627,9 @@ FOLD_FIXTURE = """# Changelog
 
 - [sqs] an older fix
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.2...HEAD
-[0.0.1-alpha.2]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
-[0.0.1-alpha.1]: https://github.com/Neaox/overcast/releases/tag/v0.0.1-alpha.1
+[Unreleased]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.2...HEAD
+[0.0.1-alpha.2]: https://github.com/overcast-sh/overcast/compare/v0.0.1-alpha.1...v0.0.1-alpha.2
+[0.0.1-alpha.1]: https://github.com/overcast-sh/overcast/releases/tag/v0.0.1-alpha.1
 """
 
 

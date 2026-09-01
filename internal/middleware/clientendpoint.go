@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // clientEndpointContextKey is the context key for the origin the caller used to

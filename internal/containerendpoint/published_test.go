@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // published_test.go covers recovering the host port Overcast is published on.

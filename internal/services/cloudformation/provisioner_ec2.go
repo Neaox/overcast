@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 func applyEC2Tags(ctx context.Context, router http.Handler, region, resourceID string, tags any) error {

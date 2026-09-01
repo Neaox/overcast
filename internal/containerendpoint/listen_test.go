@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // listen_test.go covers choosing a bind set for a server containers connect

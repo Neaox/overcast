@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // The byte budget has to be a bound, or it is not a backstop.

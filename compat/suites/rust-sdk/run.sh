@@ -11,7 +11,7 @@ set -e
 # Override with OVERCAST_RUST_SKIP_PULL=1 to skip the GHCR pull.
 
 IMAGE="oc-rust-sdk-compat"
-REMOTE_IMAGE="${OVERCAST_RUST_REMOTE_IMAGE:-ghcr.io/neaox/overcast/rust-sdk-compat}"
+REMOTE_IMAGE="${OVERCAST_RUST_REMOTE_IMAGE:-ghcr.io/overcast-sh/overcast/rust-sdk-compat}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTEXT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

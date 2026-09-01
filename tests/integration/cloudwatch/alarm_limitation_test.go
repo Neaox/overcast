@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // metricMathAlarm is the shape CDK emits for an alarm on a MathExpression: no

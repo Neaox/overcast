@@ -17,8 +17,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/services/ecs"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/services/ecs"
 )
 
 // scriptedECSRouter answers DescribeServices from a list of service shapes, one

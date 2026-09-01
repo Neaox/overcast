@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/awsapi"
 )
 
 // This file holds the single mapping from a REST-routed HTTP request to the

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // GetBootstrapBrokers used to return ExternalHostname():hostPort to every

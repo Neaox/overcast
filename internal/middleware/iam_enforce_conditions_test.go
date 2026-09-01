@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // ─── End-to-end middleware tests with Condition blocks ────────────────────────

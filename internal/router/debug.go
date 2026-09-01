@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/boottime"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/internal/trace"
+	"github.com/overcast-sh/overcast/internal/boottime"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/trace"
 )
 
 // debugEC2Provider is the subset of the EC2 service needed by the debug

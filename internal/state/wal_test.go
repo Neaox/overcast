@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func newWALStore(t *testing.T, dir string) state.Store {

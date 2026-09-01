@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // alarmInput is a protocol-independent PutMetricAlarm request.

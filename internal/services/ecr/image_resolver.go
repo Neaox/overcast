@@ -20,7 +20,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // ecrRegistryUser is the username in every ECR authorization token; the

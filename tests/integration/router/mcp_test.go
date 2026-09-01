@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/mcp"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/mcp"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // Replaces TestRuntimeMCPInitialize_returnsToolsCapability.

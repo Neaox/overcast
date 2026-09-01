@@ -3,8 +3,8 @@ package cognito
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 func (s *Service) setUserPoolMfaConfig(w http.ResponseWriter, r *http.Request) {

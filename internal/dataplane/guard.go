@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // Guard answers the DNS server's question — should this name be answered with

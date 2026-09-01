@@ -7,11 +7,11 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 func CloudFormation(c *clients.Clients) ServiceGroup {

@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 func newTrustCmd() *cobra.Command {

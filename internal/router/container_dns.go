@@ -8,9 +8,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/dns"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/dns"
 )
 
 // startContainerDNS binds the resolver that answers Overcast's split-horizon

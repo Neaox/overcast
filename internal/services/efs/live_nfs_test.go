@@ -16,10 +16,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // ─── Fake Docker daemon with container lifecycle ──────────────────────────────

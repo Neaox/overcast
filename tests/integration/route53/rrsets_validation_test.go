@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func newZone(t *testing.T, srv *helpers.TestServer, name, ref string) (bareID string) {

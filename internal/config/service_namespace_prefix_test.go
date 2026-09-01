@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // TestServiceNamespacePrefix pins the three known config-service-name →

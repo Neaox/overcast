@@ -646,7 +646,7 @@ def branch_slug() -> str:
     return slugify(name.rsplit("/", 1)[-1])
 
 
-REPO_URL = "https://github.com/Neaox/overcast"
+REPO_URL = "https://github.com/overcast-sh/overcast"
 PRERELEASE = re.compile(
     r"^(?P<base>\d+\.\d+\.\d+)-(?P<channel>[0-9A-Za-z-]+)\.(?P<counter>\d+)$"
 )

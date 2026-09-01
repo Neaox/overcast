@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/logging"
 )
 
 // defaultMaintenanceInterval is how often the background maintenance loop

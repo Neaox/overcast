@@ -141,7 +141,7 @@ are cached on the host daemon afterwards and start in seconds.
 | `--port-base` | `4570` | First port considered when scanning (never 4566/4567) |
 | `--port` | `:7777` | *Preferred* dashboard port; a free one is picked if taken |
 | `--overcast-bin` | — | Binary to run. Naming one is honoured or the run fails; left unset, the search is `bin/overcast`, then `PATH` |
-| `--overcast-image` | `ghcr.io/neaox/overcast:alpha` | Image to run. **Naming one selects the container**, even when a local binary exists; left unset, it is only the fallback for when no binary is found |
+| `--overcast-image` | `ghcr.io/overcast-sh/overcast:alpha` | Image to run. **Naming one selects the container**, even when a local binary exists; left unset, it is only the fallback for when no binary is found |
 | `--overcast-host` | `localhost` | Hostname the suites use — e.g. `localhost.overcast.sh` for virtual-host-style S3 |
 | `--overcast-ui` | off | Also expose the managed instance's own web UI |
 | `--mount-docker-socket` | **on** | Bind-mount the host Docker socket into a managed container, which is what lets the instance run Lambda and ECS containers. `COMPAT_DOCKER_SOCK` sets the host path |
@@ -153,7 +153,7 @@ disabled, so it leaves nothing behind.
 
 A managed instance gets the host Docker socket, because Lambda and ECS start
 containers through it and without one every Lambda invoke fails
-([#867](https://github.com/Neaox/overcast/issues/867)). Compat then asks the
+([#867](https://github.com/overcast-sh/overcast/issues/867)). Compat then asks the
 instance's own `/_overcast/health` whether it found a daemon, and says so once at
 startup if it did not. When the *machine* is the reason — nothing to mount, or
 no daemon here at all — the tests that need one are skipped

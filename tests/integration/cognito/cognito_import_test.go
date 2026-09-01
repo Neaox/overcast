@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func importUsersCall(t *testing.T, srv *helpers.TestServer, poolID string, body map[string]any) *http.Response {

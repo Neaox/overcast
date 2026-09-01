@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
-	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	snstypes "github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/clients"
+	"github.com/overcast-sh/overcast-compat-go-sdk/internal/harness"
 )
 
 func SNS(c *clients.Clients) ServiceGroup {

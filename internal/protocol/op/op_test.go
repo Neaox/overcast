@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 type fakeIn struct {

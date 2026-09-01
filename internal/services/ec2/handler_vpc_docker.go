@@ -6,8 +6,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // This file holds the low-level Docker-network primitives used by the VPC

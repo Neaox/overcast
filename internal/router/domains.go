@@ -24,7 +24,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/domainregistry"
+	"github.com/overcast-sh/overcast/internal/domainregistry"
 )
 
 // domainEnvelope is the JSON shape streamed to each SSE client.

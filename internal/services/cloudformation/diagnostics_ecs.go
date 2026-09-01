@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 const ecsDiagnosticsTarget = "AmazonEC2ContainerServiceV20141113."

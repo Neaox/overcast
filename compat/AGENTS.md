@@ -77,7 +77,7 @@ Consequences for agents:
   emulator on whatever network the machine is attached to. So a container is
   published on loopback and a native binary is told `OVERCAST_LISTEN=127.0.0.1`
   (renamed from `OVERCAST_HOST`, which has been removed — see
-  [#870](https://github.com/Neaox/overcast/issues/870)).
+  [#870](https://github.com/overcast-sh/overcast/issues/870)).
   On Linux both also cover the Docker bridge gateway, because that is what
   `host.docker.internal:host-gateway` resolves to there and it is the only way
   [suites/rust-sdk/run.sh](./suites/rust-sdk/run.sh) reaches the emulator from
@@ -447,7 +447,7 @@ Two more shapes that look reasonable and are not:
 Through `cmd/compat`, name it and it is what runs:
 
 ```bash
-go run ./cmd/compat --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n>
+go run ./cmd/compat --overcast-image ghcr.io/overcast-sh/overcast:<version>-rc.<n>
 ```
 
 Naming an image **selects the container**, so a `bin/overcast` sitting in the
@@ -455,9 +455,9 @@ tree is passed over rather than silently preferred, and the run says which
 artifact it chose:
 
 ```
-compat: using the container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1 — --overcast-image names it, …
+compat: using the container image ghcr.io/overcast-sh/overcast:0.0.1-alpha.33-rc.1 — --overcast-image names it, …
 compat: NOT using the local binary /repo/bin/overcast: --overcast-image was given, …
-compat: Overcast ready at http://localhost:4570 (container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1, managed by compat)
+compat: Overcast ready at http://localhost:4570 (container image ghcr.io/overcast-sh/overcast:0.0.1-alpha.33-rc.1, managed by compat)
 ```
 
 It did not always: binary discovery used to run first unconditionally and the
@@ -474,7 +474,7 @@ Build the harness, then retag:
 
 ```bash
 docker compose -f compat/docker-compose.yml build
-docker tag ghcr.io/neaox/overcast:<version>-rc.<n> compat-overcast
+docker tag ghcr.io/overcast-sh/overcast:<version>-rc.<n> compat-overcast
 docker compose -f compat/docker-compose.yml run --rm compat
 ```
 

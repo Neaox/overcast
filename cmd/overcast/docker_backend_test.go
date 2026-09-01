@@ -78,7 +78,7 @@ func TestResolveDockerImage_VersionPinnedDefault(t *testing.T) {
 // TestResolveDockerImage_DevBuildFallsBackToAlpha covers the one case with no
 // matching version tag: an unreleased "dev" build. It must fall back to
 // :alpha and say so via the note callback, rather than trying (and failing)
-// to pull ghcr.io/neaox/overcast:dev.
+// to pull ghcr.io/overcast-sh/overcast:dev.
 func TestResolveDockerImage_DevBuildFallsBackToAlpha(t *testing.T) {
 	var noted string
 	got, err := resolveDockerImage("", "", "dev", func(s string) { noted = s })
@@ -363,7 +363,7 @@ func TestStartDocker_AssemblesRunArgs(t *testing.T) {
 		port:              port,
 		uiPort:            uiPort,
 		portsExplicit:     true,
-		image:             "ghcr.io/neaox/overcast:alpha",
+		image:             "ghcr.io/overcast-sh/overcast:alpha",
 		env:               map[string]string{"OVERCAST_LOG_LEVEL": "debug", "AWS_REGION": "eu-west-1"},
 		state:             "hybrid",
 		dataVolume:        "myvol",
@@ -398,7 +398,7 @@ func TestStartDocker_AssemblesRunArgs(t *testing.T) {
 			t.Errorf("docker run argv %q does not contain %q", joined, want)
 		}
 	}
-	if argv[len(argv)-1] != "ghcr.io/neaox/overcast:alpha" {
+	if argv[len(argv)-1] != "ghcr.io/overcast-sh/overcast:alpha" {
 		t.Errorf("last argv element = %q, want the image reference last", argv[len(argv)-1])
 	}
 
@@ -416,7 +416,7 @@ func TestStartDocker_AssemblesRunArgs(t *testing.T) {
 	if rec.ContainerID != "abcdef0123456789" {
 		t.Errorf("rec.ContainerID = %q, want the trimmed docker run output", rec.ContainerID)
 	}
-	if rec.Image != "ghcr.io/neaox/overcast:alpha" {
+	if rec.Image != "ghcr.io/overcast-sh/overcast:alpha" {
 		t.Errorf("rec.Image = %q, want the resolved image persisted", rec.Image)
 	}
 	if rec.DataVolume != "myvol" || !rec.MountDockerSocket {
@@ -444,7 +444,7 @@ func TestStartDocker_NoVolumeNoSocketNoExtraFlags(t *testing.T) {
 		port:          port,
 		uiPort:        port + 1,
 		portsExplicit: true,
-		image:         "ghcr.io/neaox/overcast:alpha",
+		image:         "ghcr.io/overcast-sh/overcast:alpha",
 	}); err != nil {
 		t.Fatalf("startDocker: %v", err)
 	}
@@ -465,10 +465,10 @@ func TestStartDocker_NoVolumeNoSocketNoExtraFlags(t *testing.T) {
 // is kept.
 func TestStartDocker_ContainerIDIgnoresPullProgress(t *testing.T) {
 	port := freeLoopbackPort(t)
-	pullOutput := "Unable to find image 'ghcr.io/neaox/overcast:alpha' locally\n" +
-		"alpha: Pulling from neaox/overcast\n" +
+	pullOutput := "Unable to find image 'ghcr.io/overcast-sh/overcast:alpha' locally\n" +
+		"alpha: Pulling from overcast-sh/overcast\n" +
 		"Digest: sha256:deadbeef\n" +
-		"Status: Downloaded newer image for ghcr.io/neaox/overcast:alpha\n" +
+		"Status: Downloaded newer image for ghcr.io/overcast-sh/overcast:alpha\n" +
 		"287718fc08eb1234567890abcdef1234567890abcdef1234567890abcdef12\n"
 	withFakeDockerRun(t, func(args ...string) (string, error) {
 		return pullOutput, nil
@@ -476,7 +476,7 @@ func TestStartDocker_ContainerIDIgnoresPullProgress(t *testing.T) {
 
 	rec, err := startDocker(startOptions{
 		name: "pulltest", port: port, uiPort: port + 1, portsExplicit: true,
-		image: "ghcr.io/neaox/overcast:alpha",
+		image: "ghcr.io/overcast-sh/overcast:alpha",
 	})
 	if err != nil {
 		t.Fatalf("startDocker: %v", err)
@@ -490,10 +490,10 @@ func TestStartDocker_ContainerIDIgnoresPullProgress(t *testing.T) {
 func TestStartDocker_RunFailurePropagates(t *testing.T) {
 	port := freeLoopbackPort(t)
 	withFakeDockerRun(t, func(args ...string) (string, error) {
-		return "", errors.New("Unable to find image 'ghcr.io/neaox/overcast:alpha' locally")
+		return "", errors.New("Unable to find image 'ghcr.io/overcast-sh/overcast:alpha' locally")
 	})
 	if _, err := startDocker(startOptions{
-		name: "x", port: port, uiPort: port + 1, portsExplicit: true, image: "ghcr.io/neaox/overcast:alpha",
+		name: "x", port: port, uiPort: port + 1, portsExplicit: true, image: "ghcr.io/overcast-sh/overcast:alpha",
 	}); err == nil {
 		t.Fatal("startDocker succeeded despite a failing docker run, want an error")
 	}

@@ -6,8 +6,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // fakeConnector records what a service asked Docker to attach, so the tests

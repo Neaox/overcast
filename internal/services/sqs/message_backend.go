@@ -57,7 +57,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // messageBackend is the narrow interface every SQS message store must

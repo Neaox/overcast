@@ -1,4 +1,4 @@
-// oxlint is the ONLY linter for web/ — see https://github.com/Neaox/overcast/issues/1330.
+// oxlint is the ONLY linter for web/ — see https://github.com/overcast-sh/overcast/issues/1330.
 // `pnpm run lint` is `oxlint .`; there is no ESLint in the repo any more (#1330
 // step 3). This file is the whole gate.
 //

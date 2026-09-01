@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // This file extends ec2_teardown_test.go's coverage of EC2's half of the

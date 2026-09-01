@@ -21,9 +21,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // deliveryLogSize is how many recent pipe executions are retained, across all

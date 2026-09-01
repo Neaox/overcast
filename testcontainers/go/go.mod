@@ -1,4 +1,4 @@
-module github.com/Neaox/overcast/testcontainers/go
+module github.com/overcast-sh/overcast/testcontainers/go
 
 go 1.25.0
 

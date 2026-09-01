@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 func TestCompareBaseline_currentRegression(t *testing.T) {
@@ -229,13 +229,13 @@ func TestLintFlakyChange_newQuarantineRejected(t *testing.T) {
 	// Given: a change that adds a test to the flaky list
 	tracked := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked}}
 	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked, {
 		Suite: "go-sdk", Group: "s3-crud", Test: "CreateBucket",
-		Reason: "sometimes fails", Issue: "https://github.com/Neaox/overcast/issues/999",
+		Reason: "sometimes fails", Issue: "https://github.com/overcast-sh/overcast/issues/999",
 		Since: refTime().Format(flakyDateLayout),
 	}}}
 
@@ -257,12 +257,12 @@ func TestLintFlakyChange_removingAQuarantineIsTheGoal(t *testing.T) {
 	// Given: a change that deletes an entry — the test was fixed
 	fixed := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}
 	kept := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "Unsubscribe",
-		Reason: "cascade", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "cascade", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{fixed, kept}}
@@ -278,7 +278,7 @@ func TestLintFlakyChange_entryNeedsAReason(t *testing.T) {
 	// Given: an existing entry stripped of its reason
 	entry := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{entry}}
@@ -320,7 +320,7 @@ func TestLintFlakyChange_overdueEntryBlocksPullRequests(t *testing.T) {
 	// Given: an entry quarantined longer than the hard deadline
 	stale := &flakyFile{Version: 2, Flaky: []flakyEntry{{
 		Suite: "cli", Group: "g", Test: "T", Reason: "intermittent",
-		Issue: "https://github.com/Neaox/overcast/issues/388",
+		Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().AddDate(0, 0, -(flakyHardDeadlineDays + 1)).Format(flakyDateLayout),
 	}}}
 
@@ -339,7 +339,7 @@ func TestLintFlakyChange_recentEntryIsFine(t *testing.T) {
 	// Given: an entry quarantined yesterday, properly recorded
 	fresh := &flakyFile{Version: 2, Flaky: []flakyEntry{{
 		Suite: "cli", Group: "g", Test: "T", Reason: "intermittent",
-		Issue: "https://github.com/Neaox/overcast/issues/388",
+		Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().AddDate(0, 0, -1).Format(flakyDateLayout),
 	}}}
 
@@ -378,7 +378,7 @@ func TestLintFlakyChange_seedingAnEmptyListIsAllowed(t *testing.T) {
 	oldFlaky := &flakyFile{Version: flakyVersion}
 	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}}}
 
@@ -406,13 +406,13 @@ func TestLintFlakyChange_approvedGrowthIsAccepted(t *testing.T) {
 	// quarantine (the quarantine-approved label on the PR).
 	tracked := flakyEntry{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked}}
 	newFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{tracked, {
 		Suite: "python-sdk", Group: "lambda-crud", Test: "DeleteFunction",
-		Reason: "deletion visible late", Issue: "https://github.com/Neaox/overcast/issues/414",
+		Reason: "deletion visible late", Issue: "https://github.com/overcast-sh/overcast/issues/414",
 		Since: refTime().Format(flakyDateLayout),
 	}}}
 
@@ -427,7 +427,7 @@ func TestLintFlakyChange_approvalWaivesGrowthOnly(t *testing.T) {
 	// Given: an approved addition that carries no reason, issue, or date
 	oldFlaky := &flakyFile{Version: flakyVersion, Flaky: []flakyEntry{{
 		Suite: "dotnet-sdk", Group: "sns-subscriptions", Test: "PublishDeliveredToSQS",
-		Reason: "known race", Issue: "https://github.com/Neaox/overcast/issues/388",
+		Reason: "known race", Issue: "https://github.com/overcast-sh/overcast/issues/388",
 		Since: refTime().Format(flakyDateLayout),
 	}}}
 	newFlaky := &flakyFile{Version: flakyVersion}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // startShipper wires a shipper to the fake host and runs it until the test

@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsmodel"
+	"github.com/overcast-sh/overcast/internal/awsmodel"
 )
 
 // The pruned shape snapshot.

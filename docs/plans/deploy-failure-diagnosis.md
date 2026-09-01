@@ -2,15 +2,15 @@
 
 > **Status:** proposed; prior art all merged (as of 2026-08-22). Everything marked ✅
 > is now in `main` — see [Prior art](#prior-art) — and W4's first instance, the
-> region preflight check, shipped in [#1004](https://github.com/Neaox/overcast/pull/1004)
+> region preflight check, shipped in [#1004](https://github.com/overcast-sh/overcast/pull/1004)
 > (`internal/router/preflight_region.go`). W4's four remaining named instances
 > (Docker, ports, endpoint, ephemeral state) shipped in
-> [#1267](https://github.com/Neaox/overcast/pull/1267) (closing
-> [#1193](https://github.com/Neaox/overcast/issues/1193)) — see
+> [#1267](https://github.com/overcast-sh/overcast/pull/1267) (closing
+> [#1193](https://github.com/overcast-sh/overcast/issues/1193)) — see
 > [W4](#w4--environment-preflight) for what each one covers and doesn't; the
 > disk-full instance remains open (reactive-only via the existing storage
 > health advisories, no proactive free-space probe). W1's eight-service audit
-> is done ✅ ([#1107](https://github.com/Neaox/overcast/issues/1107)) — see
+> is done ✅ ([#1107](https://github.com/overcast-sh/overcast/issues/1107)) — see
 > [W1's audit table](#w1-audit-table). Still open: W2's verdict + log line +
 > `overcast explain`, and W3 (the correlation key).
 > **Scope:** `internal/services/*` (the create/update success paths),
@@ -71,7 +71,7 @@ caused it, so the most recent line is reliably not the interesting one.
 This is a law of this codebase, not an observation about one bug.
 [trace-retention.md](./trace-retention.md) states it — "the failure is early and
 the noise is late" — and derives its whole eviction policy from it.
-[#993](https://github.com/Neaox/overcast/pull/993) is the same law in the ECS
+[#993](https://github.com/overcast-sh/overcast/pull/993) is the same law in the ECS
 scheduler: a replacement task's cheerful "has started 1 tasks." was hiding the
 placement failure underneath it.
 
@@ -148,7 +148,7 @@ elsewhere; check before inventing a rule, and record what you checked.
 
 #### W1 audit table
 
-Closed by [#1107](https://github.com/Neaox/overcast/issues/1107). One row per
+Closed by [#1107](https://github.com/overcast-sh/overcast/issues/1107). One row per
 create path; "settles on" names the mechanism that gates the terminal success
 status, cited to the code; "CFN waits" says whether the CloudFormation resource
 handler stabilizes (polls the service's own status) before `CREATE_COMPLETE`.
@@ -258,11 +258,11 @@ both sides of that and say so:
 The check should fire **when a symptom matches**, not as a wall of startup
 output nobody reads.
 
-The region check shipped ✅ ([#1004](https://github.com/Neaox/overcast/pull/1004),
+The region check shipped ✅ ([#1004](https://github.com/overcast-sh/overcast/pull/1004),
 `internal/router/preflight_region.go` + the console's empty-list advisory).
 
-Four more instances shipped in [#1267](https://github.com/Neaox/overcast/pull/1267)
-(closing [#1193](https://github.com/Neaox/overcast/issues/1193)) ✅:
+Four more instances shipped in [#1267](https://github.com/overcast-sh/overcast/pull/1267)
+(closing [#1193](https://github.com/overcast-sh/overcast/issues/1193)) ✅:
 
 - **Docker not running / socket not permitted.** `internal/router.dockerUnavailableWarning`
   (`internal/router/preflight_docker.go`) diffs the configs the Docker Supervisor was asked
@@ -334,17 +334,17 @@ evidence that W3 makes joinable, and each is worth much less on its own:
 
 Work already done that this generalises. All of it merged to `main` on 2026-08-15.
 
-- **[#993](https://github.com/Neaox/overcast/pull/993)** — ECS scheduler failure
+- **[#993](https://github.com/overcast-sh/overcast/pull/993)** — ECS scheduler failure
   reasons surviving newer progress events; `Retain` / `RetainExceptOnCreate`
   rollback semantics.
-- **[#997](https://github.com/Neaox/overcast/pull/997)** (was
+- **[#997](https://github.com/overcast-sh/overcast/pull/997)** (was
   `claude/ecs-log-retention-hardening`) — the capture/removal race, the
   unbounded `ecs:task-container-logs` namespace, and a TTY log-corruption bug in
   a duplicated Docker demultiplexer.
 - **The ECS deployment settle window** (was `claude/ecs-deployment-settle`,
-  merged as part of [#1005](https://github.com/Neaox/overcast/pull/1005)) — W1's
+  merged as part of [#1005](https://github.com/overcast-sh/overcast/pull/1005)) — W1's
   first instance, and the source of its vocabulary.
-- **[#1005](https://github.com/Neaox/overcast/pull/1005)** (was
+- **[#1005](https://github.com/overcast-sh/overcast/pull/1005)** (was
   `claude/cfn-deploy-diagnostics`) — the capture-before-rollback journal, the
   provenance tiers (`aws-api` / `overcast-capture` / `overcast-inference`) and
   the counterfactual sentence. W2's console delivery, already built for one

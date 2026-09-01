@@ -19,7 +19,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // seedClusterMember stores an instance and registers it with the cluster the

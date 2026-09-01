@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 func TestLaunchTask_containerExitCannotRaceTaskPublication(t *testing.T) {

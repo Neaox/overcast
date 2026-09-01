@@ -23,7 +23,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // migrationMetricTablesVersion creates the schema unconditionally — there is

@@ -31,9 +31,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/inert"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/inert"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // Namespaces. Organizations is a global service, so its keys carry no region

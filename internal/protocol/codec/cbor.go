@@ -8,7 +8,7 @@ import (
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 type rpcv2CBOR struct{}

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 // TestCACertHandler_404WithoutCA verifies the endpoint reports "no CA" when

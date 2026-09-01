@@ -11,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 type recordingDockerReconciler struct {

@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ── AWS::IAM::Policy (inline policy) ───────────────────────────────────────

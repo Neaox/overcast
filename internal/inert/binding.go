@@ -3,7 +3,7 @@ package inert
 import (
 	"slices"
 
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 // Class is an operation's §3.1 lifecycle classification. It is carried on

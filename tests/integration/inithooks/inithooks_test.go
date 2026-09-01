@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Neaox/overcast/internal/inithooks"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/inithooks"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestInitStatus_noHooks(t *testing.T) {

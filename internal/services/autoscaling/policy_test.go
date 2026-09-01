@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/alarmaction"
+	"github.com/overcast-sh/overcast/internal/alarmaction"
 )
 
 func TestValidatePolicyInput_refusesPolicyTypesItCannotExecute(t *testing.T) {

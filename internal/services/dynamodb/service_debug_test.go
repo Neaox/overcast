@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // TestDebugScanRawDisplay_NumberKey_ShowsRawDecimalNotEncodedForm is the

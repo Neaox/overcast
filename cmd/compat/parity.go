@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/compat"
+	"github.com/overcast-sh/overcast/compat"
 )
 
 const parityDebtVersion = 1

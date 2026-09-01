@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/domainregistry"
-	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/domainregistry"
+	"github.com/overcast-sh/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // registryHas checks whether the registry contains a record with the given domain name.

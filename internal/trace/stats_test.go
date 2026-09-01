@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // Retention that silently drops things is indistinguishable from a bug. These

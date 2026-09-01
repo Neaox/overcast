@@ -6,8 +6,8 @@ package sqs
 // docs/plans/smithy.md §5 Phase 2 for the per-op migration checklist.
 
 import (
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 // typedOps returns the typed operation registry for SQS, keyed by AWS

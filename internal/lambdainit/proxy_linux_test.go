@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 func TestClassifyNamesTheInvocationBoundaries(t *testing.T) {

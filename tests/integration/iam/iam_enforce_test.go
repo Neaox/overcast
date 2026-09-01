@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func sqsCallWithAuth(t *testing.T, srv *helpers.TestServer, target string, body map[string]any, auth string) *http.Response {

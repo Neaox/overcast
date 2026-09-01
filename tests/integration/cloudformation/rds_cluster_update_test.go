@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // clusterProps is the mutable half of the cluster template, so a test can

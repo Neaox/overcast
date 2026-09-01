@@ -17,7 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/hostbridge/mdns"
+	"github.com/overcast-sh/overcast/internal/hostbridge/mdns"
 )
 
 // EventType distinguishes a domain registration from a de-registration.

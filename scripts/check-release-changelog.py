@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-REPO_URL = "https://github.com/Neaox/overcast"
+REPO_URL = "https://github.com/overcast-sh/overcast"
 
 
 def strip_comments(text: str) -> str:

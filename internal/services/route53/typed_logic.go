@@ -3,7 +3,7 @@ package route53
 import (
 	"context"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // Typed (Query-protocol) handlers. These are thin wrappers over the same

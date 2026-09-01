@@ -4,32 +4,32 @@ Status: **implemented and merged** — the route gates landed on `main` in PR #8
 with point 9's path-namespace gate completed by #921 (and the debug/data-plane
 namespace moves in #929/#935). The **wire-fact gates** (points 6 and 10 below,
 plus the exemption ratchet) landed second, closing the rest of
-[#864](https://github.com/Neaox/overcast/issues/864). Point 13, the
+[#864](https://github.com/overcast-sh/overcast/issues/864). Point 13, the
 route-ownership gate, landed third, closing
-[#1227](https://github.com/Neaox/overcast/issues/1227) — the axis neither route
+[#1227](https://github.com/overcast-sh/overcast/issues/1227) — the axis neither route
 gate had: not "does the declaring service's own binding have a route" (point 1)
 and not "is this registered path modeled by *someone*" (point 9), but "does the
 service that *registered* this route model this path".
-Gates: [#863](https://github.com/Neaox/overcast/issues/863) (closed).
-Audit that prompted it: [#861](https://github.com/Neaox/overcast/issues/861).
-[#1226](https://github.com/Neaox/overcast/issues/1226) retired the
+Gates: [#863](https://github.com/overcast-sh/overcast/issues/863) (closed).
+Audit that prompted it: [#861](https://github.com/overcast-sh/overcast/issues/861).
+[#1226](https://github.com/overcast-sh/overcast/issues/1226) retired the
 `unmodeledTargetPrefixes` ledger to empty: AppRegistry, EFS, EKS and Scheduler
 no longer answer `POST /` for the invented target prefix, and CloudFormation's
 own provisioner — the one internal caller that used to speak it — now
 dispatches over each service's modeled REST bindings instead.
-[#1228](https://github.com/Neaox/overcast/issues/1228) added the third of the
+[#1228](https://github.com/overcast-sh/overcast/issues/1228) added the third of the
 protocol-symmetry gate's probes, rpcv2Cbor — the narrow limit named below —
 and found `protocolAsymmetries` stays empty: CloudWatch is the only dispatched
 service the models declare it for, and its rpcv2Cbor coverage was uniformly
 absent rather than partial, which is outside this gate's asymmetry definition.
-[#1280](https://github.com/Neaox/overcast/issues/1280) then closed that gap
+[#1280](https://github.com/overcast-sh/overcast/issues/1280) then closed that gap
 rather than the boundary around it — CloudWatch now registers a
 `ProtocolService`, so all fifteen of its declared operations answer over
 rpcv2Cbor and the probe exercises the service for real (see the rpcv2Cbor
 entry below).
 Remainder, all filed and none of it #864's, #1227's, #1226's or #1228's: the
 shape artefact
-[#883](https://github.com/Neaox/overcast/issues/883)/[#884](https://github.com/Neaox/overcast/issues/884).
+[#883](https://github.com/overcast-sh/overcast/issues/883)/[#884](https://github.com/overcast-sh/overcast/issues/884).
 As of 2026-08-22 the `unservedBindings` ledger is **empty** — all 43 opening
 rows retired as #854–#860, #862 and #815 landed — and `protocolAsymmetries` is
 empty too (#886 landed, #1228 confirmed it holds with rpcv2Cbor probed too).
@@ -194,7 +194,7 @@ what changed:
   passed silently, because a broader route is how a shared prefix comes to
   answer for a service nobody asked — #854's worst symptom.
 - **rpcv2Cbor.** Modeled for several services and, until
-  [#1228](https://github.com/Neaox/overcast/issues/1228), not probed by the
+  [#1228](https://github.com/overcast-sh/overcast/issues/1228), not probed by the
   protocol gate — it needed a CBOR encoder, which an empty CBOR map
   (`0xa0`) turns out not to: the probe only asks whether the request was
   dispatched, and a decode failure counts as reached exactly as a validation
@@ -215,7 +215,7 @@ what changed:
   declares it, and a caller who cannot force another protocol got a wall of
   501s where AWS answers), just not one this gate's narrow contract reports.
 
-  [#1280](https://github.com/Neaox/overcast/issues/1280) closed it. CloudWatch
+  [#1280](https://github.com/overcast-sh/overcast/issues/1280) closed it. CloudWatch
   registers a `ProtocolService` whose typed operations bind onto the same
   protocol-neutral cores its awsJson handlers call — the shape #1169
   established with `computeMetricDataResults`, so the CBOR door is a third

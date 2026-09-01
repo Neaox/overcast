@@ -3,7 +3,7 @@ package organizations
 import (
 	"context"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 type describeOrganizationRequest struct{}

@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/alarmaction"
+	"github.com/overcast-sh/overcast/internal/alarmaction"
 )
 
 // TestAlarmEvaluatorLoop_EvaluatesOnTick pins that the background loop — not

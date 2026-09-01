@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker"
 )
 
 // GetTaskContainerLogs returns the last 200 lines of logs for a specific

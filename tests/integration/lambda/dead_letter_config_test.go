@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 const deadLetterQueueARN = "arn:aws:sqs:us-east-1:000000000000:fn-dlq"

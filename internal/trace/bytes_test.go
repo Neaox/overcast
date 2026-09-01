@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/clock"
 )
 
 // addSized registers a trace carrying a response body of n bytes and settles

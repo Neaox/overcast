@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // TestTaskDeathsCountedWhileReconciling — every death counts, even against a

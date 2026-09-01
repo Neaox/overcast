@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // restXML implements Codec for the AWS REST-XML protocol (S3, CloudFront).

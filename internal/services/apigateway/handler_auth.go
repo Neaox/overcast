@@ -21,7 +21,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // API Gateway error-type header values for the two 429 gateway responses.

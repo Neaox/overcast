@@ -17,7 +17,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // createTableWithLSI creates a composite-key table (forumId, postId) with a

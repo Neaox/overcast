@@ -111,7 +111,7 @@ function DocsPage() {
             These docs cover <span className="text-fg-muted">using</span> Overcast. Developing
             Overcast itself? Contributor docs live in{" "}
             <a
-              href="https://github.com/Neaox/overcast/tree/main/docs/dev"
+              href="https://github.com/overcast-sh/overcast/tree/main/docs/dev"
               target="_blank"
               rel="noreferrer"
               className="text-accent underline underline-offset-2"

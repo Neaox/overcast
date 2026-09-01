@@ -21,9 +21,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	gqlast "github.com/vektah/gqlparser/v2/ast"
 
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // ─── Schema ──────────────────────────────────────────────────────────────────

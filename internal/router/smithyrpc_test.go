@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/awsapi"
 )
 
 // stubRPCService is the smallest thing newSmithyRPCService accepts. Its

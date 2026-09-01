@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/inithooks"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/inithooks"
 )
 
 // initStatusHandler returns the state of all init hook stages and scripts.

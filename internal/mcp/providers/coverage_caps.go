@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/capabilities"
 )
 
 // mergeCodeDerivedCoverage augments the coverage list with data from

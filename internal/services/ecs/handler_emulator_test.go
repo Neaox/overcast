@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/middleware"
 	"go.uber.org/zap"
 )
 

@@ -5,10 +5,10 @@
 Overcast emulates the APIs of popular cloud services so you can develop and test
 locally without an internet connection, a cloud account, or a bill.
 
-[![CI](https://github.com/Neaox/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/Neaox/overcast/actions)
-[![GitHub release](https://img.shields.io/github/v/release/Neaox/overcast?include_prereleases)](https://github.com/Neaox/overcast/releases)
+[![CI](https://github.com/overcast-sh/overcast/actions/workflows/test.yml/badge.svg)](https://github.com/overcast-sh/overcast/actions)
+[![GitHub release](https://img.shields.io/github/v/release/overcast-sh/overcast?include_prereleases)](https://github.com/overcast-sh/overcast/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Container image](https://img.shields.io/badge/ghcr.io-neaox%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/Neaox/overcast/pkgs/container/overcast)
+[![Container image](https://img.shields.io/badge/ghcr.io-overcast-sh%2Fovercast-blue?logo=docker&logoColor=white)](https://github.com/overcast-sh/overcast/pkgs/container/overcast)
 
 Every change is tested against **eight official AWS clients** — the AWS CLI,
 the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
@@ -21,7 +21,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 1. **Works with the official AWS CLI** — `aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566` just works.
 2. **Works with all official AWS SDK clients** — Go, JavaScript/TypeScript, Python, Java, .NET without code changes.
 3. **Drop-in replacement for LocalStack** — same port (4566), same env vars mapped, same path conventions. Switching requires changing one line.
-4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/neaox/overcast:alpha` is the full getting-started guide.
+4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/overcast-sh/overcast:alpha` is the full getting-started guide.
 5. **Fast** — sub-50ms startup (~22ms p50, hybrid backend), <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
 6. **Honest about gaps** — unimplemented endpoints return `501 Not Implemented` with a clear message and a link to the support matrix. Silent failures are worse than loud ones.
 7. **Fully open** — MIT licensed, no auth tokens, no telemetry, no usage limits, no feature gates. Free forever for every use case including CI/CD.
@@ -68,8 +68,8 @@ Two images are published to GHCR:
 
 | Image                         | Description                                                | Size   |
 | ----------------------------- | ---------------------------------------------------------- | ------ |
-| `ghcr.io/neaox/overcast`      | Full image with web management console (ports 4566 + 4567) | ~50 MB |
-| `ghcr.io/neaox/overcast-slim` | Headless — Go binary only, no UI, no SQLite (port 4566)    | ~20 MB |
+| `ghcr.io/overcast-sh/overcast`      | Full image with web management console (ports 4566 + 4567) | ~50 MB |
+| `ghcr.io/overcast-sh/overcast-slim` | Headless — Go binary only, no UI, no SQLite (port 4566)    | ~20 MB |
 
 The slim image leaves out SQLite as well as the UI, which means the `hybrid` and
 `persistent` storage backends do not exist in it: it is **memory-only unless you set
@@ -83,10 +83,10 @@ use `:alpha` to track the newest build.
 
 ```bash
 # Full image (with web UI on :4567)
-docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/neaox/overcast:alpha
+docker run --rm -p 4566:4566 -p 4567:4567 ghcr.io/overcast-sh/overcast:alpha
 
 # Slim image (CI pipelines, no UI)
-docker run --rm -p 4566:4566 ghcr.io/neaox/overcast-slim:alpha
+docker run --rm -p 4566:4566 ghcr.io/overcast-sh/overcast-slim:alpha
 ```
 
 Point any AWS SDK or the AWS CLI at it:
@@ -130,7 +130,7 @@ docker run --rm \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e OVERCAST_LOG_LEVEL=debug \
-  ghcr.io/neaox/overcast:alpha
+  ghcr.io/overcast-sh/overcast:alpha
 
 # With persistent data (survives container restarts) — mounting a volume at
 # /data is enough; OVERCAST_STATE defaults to "auto", which resolves to
@@ -140,7 +140,7 @@ docker run --rm \
   -p 4567:4567 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.overcast:/data \
-  ghcr.io/neaox/overcast:alpha
+  ghcr.io/overcast-sh/overcast:alpha
 
 # Slim image (no web UI) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
@@ -151,7 +151,7 @@ docker run --rm \
 # docs/storage.md#builds-without-sqlite.
 docker run --rm \
   -p 4566:4566 \
-  ghcr.io/neaox/overcast-slim:alpha
+  ghcr.io/overcast-sh/overcast-slim:alpha
 ```
 
 ### docker compose (recommended for local dev)
@@ -160,7 +160,7 @@ docker run --rm \
 # docker-compose.yml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:alpha
     ports:
       - "4566:4566"
       - "4567:4567"
@@ -192,13 +192,13 @@ Integration tests can start Overcast per-test with the
 [Testcontainers module for Go](./testcontainers/go):
 
 ```go
-ctr, err := overcast.Run(ctx, "ghcr.io/neaox/overcast-slim:alpha")
+ctr, err := overcast.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:alpha")
 testcontainers.CleanupContainer(t, ctr)
 endpoint, _ := ctr.APIEndpoint(ctx) // point your AWS SDK client here
 ```
 
 See [docs/testcontainers.md](./docs/testcontainers.md) — modules for other
-languages are planned ([#1495](https://github.com/Neaox/overcast/issues/1495)).
+languages are planned ([#1495](https://github.com/overcast-sh/overcast/issues/1495)).
 
 > [!NOTE]
 > **Docker socket and container-based services**
@@ -225,7 +225,7 @@ languages are planned ([#1495](https://github.com/Neaox/overcast/issues/1495)).
 >     environment:
 >       DOCKER_TLS_CERTDIR: "" # disable TLS for simplicity
 >   overcast:
->     image: ghcr.io/neaox/overcast:alpha
+>     image: ghcr.io/overcast-sh/overcast:alpha
 >     ports:
 >       - "4566:4566"
 >     environment:
@@ -238,7 +238,7 @@ languages are planned ([#1495](https://github.com/Neaox/overcast/issues/1495)).
 
 ## Native binaries
 
-Download pre-built binaries from the [GitHub releases page](https://github.com/Neaox/overcast/releases).
+Download pre-built binaries from the [GitHub releases page](https://github.com/overcast-sh/overcast/releases).
 No runtime dependencies — a single static binary is all you need.
 
 ### Binary variants
@@ -259,11 +259,11 @@ Both binaries share the same `overcast serve` entrypoint and respond identically
 ```bash
 # Resolve the newest release tag. (Every release is currently a pre-release,
 # so GitHub's releases/latest shortcut URL does not work yet.)
-TAG=$(curl -fsSL "https://api.github.com/repos/Neaox/overcast/releases?per_page=1" \
+TAG=$(curl -fsSL "https://api.github.com/repos/overcast-sh/overcast/releases?per_page=1" \
   | grep -m1 '"tag_name"' | cut -d '"' -f 4)
 
 # Replace PLATFORM with linux-amd64, linux-arm64, darwin-amd64, or darwin-arm64
-curl -fsSL "https://github.com/Neaox/overcast/releases/download/${TAG}/overcast-linux-amd64" \
+curl -fsSL "https://github.com/overcast-sh/overcast/releases/download/${TAG}/overcast-linux-amd64" \
   -o /usr/local/bin/overcast
 chmod +x /usr/local/bin/overcast
 ```
@@ -275,7 +275,7 @@ Download `overcast-windows-amd64.exe` from the releases page and place it anywhe
 **Build from source:**
 
 ```bash
-git clone https://github.com/Neaox/overcast.git && cd overcast
+git clone https://github.com/overcast-sh/overcast.git && cd overcast
 # Full binary (builds web UI first)
 cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 go build -trimpath -o overcast ./cmd/overcast
@@ -566,4 +566,4 @@ about (documented in the per-service [support matrices](docs/services/)) and
 inevitably some we haven't found yet. Fidelity improves all the time — and
 discrepancy reports are what drive that work. If you find behavior that
 differs from real AWS, please
-[open a compatibility issue](https://github.com/Neaox/overcast/issues/new?template=compat_review.md).
+[open a compatibility issue](https://github.com/overcast-sh/overcast/issues/new?template=compat_review.md).

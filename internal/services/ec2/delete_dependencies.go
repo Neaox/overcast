@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // securityGroupDependencyError reports the group's refusal to be deleted, if

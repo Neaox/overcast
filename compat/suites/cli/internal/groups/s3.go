@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Neaox/overcast-compat-cli/internal/awscli"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
 )
 
 // S3 returns the S3 service group.

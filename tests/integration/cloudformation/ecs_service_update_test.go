@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // serviceStackTemplate renders the WordPress-shaped stack at a given desired

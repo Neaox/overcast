@@ -43,7 +43,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Neaox/overcast/internal/hostbridge/trust"
+	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 )
 
 // caFetchTimeout bounds the CA bootstrap fetch below. Short, unlike

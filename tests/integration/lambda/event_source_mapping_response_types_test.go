@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // responseTypesOf reads FunctionResponseTypes out of a decoded mapping.

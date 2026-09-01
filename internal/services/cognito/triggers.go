@@ -55,7 +55,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // ─── trigger source values (AWS's own strings — see the Lambda trigger docs

@@ -5,7 +5,7 @@ package capabilities_test
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/capabilities"
+	"github.com/overcast-sh/overcast/internal/capabilities"
 )
 
 func TestRegistryRegisterAndLookup(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 func TestARN_s3_omitsRegionAndAccount(t *testing.T) {

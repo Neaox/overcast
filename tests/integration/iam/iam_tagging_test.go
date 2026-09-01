@@ -15,7 +15,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 var iamTagMemberRE = regexp.MustCompile(`(?s)<member>\s*<Key>([^<]*)</Key>\s*<Value>([^<]*)</Value>\s*</member>`)

@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // TestDetectServiceClassifiesEverySignedRouteByItsSigningName is the signed

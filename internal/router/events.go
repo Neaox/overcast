@@ -65,13 +65,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/logging"
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/events"
 	"github.com/go-chi/chi/v5"
+	"github.com/overcast-sh/overcast/internal/events"
 )
 
 // sseEnvelope is the JSON shape streamed to each SSE client.

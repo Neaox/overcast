@@ -36,7 +36,7 @@ unmodified.
 - Tagging is not implemented: `BackupVaultTags` and `BackupPlanTags` are
   accepted at creation and dropped, and there are no `TagResource`,
   `UntagResource` or `ListTags` operations
-  ([#815](https://github.com/Neaox/overcast/issues/815)).
+  ([#815](https://github.com/overcast-sh/overcast/issues/815)).
 - Designed to unblock IaC/API flows expecting vault and plan resources.
 - Operations that are not emulated return a JSON `501 Not Implemented` error
   response.

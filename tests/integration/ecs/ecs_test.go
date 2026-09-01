@@ -19,8 +19,8 @@ import (
 
 	cborlib "github.com/fxamacker/cbor/v2"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/tests/helpers"
 	"go.uber.org/zap"
 )
 

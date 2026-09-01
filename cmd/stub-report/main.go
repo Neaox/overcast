@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/awsapi"
 )
 
 type serviceOps struct {

@@ -23,7 +23,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/services/lambda/initbin"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initbin"
 )
 
 func TestMain(m *testing.M) {

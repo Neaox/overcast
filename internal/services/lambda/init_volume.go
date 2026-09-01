@@ -33,8 +33,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/docker"
-	"github.com/Neaox/overcast/internal/services/lambda/initproto"
+	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/services/lambda/initproto"
 )
 
 // initVolumeTarget is where the init volume is mounted in a function

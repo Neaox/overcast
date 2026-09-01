@@ -130,7 +130,7 @@ export function PlaceholderPage({
         <p className="text-sm text-fg-subtle">
           API responses and behaviour are subject to change as support improves.{" "}
           <a
-            href="https://github.com/Neaox/overcast/issues"
+            href="https://github.com/overcast-sh/overcast/issues"
             target="_blank"
             rel="noreferrer"
             className="text-accent hover:underline"

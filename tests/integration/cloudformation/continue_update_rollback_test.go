@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // The update adds a second bucket whose VersioningConfiguration S3 rejects.

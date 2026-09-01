@@ -33,7 +33,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 const iamQueryVersion = "2010-05-08"

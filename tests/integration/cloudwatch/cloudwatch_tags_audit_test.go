@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 // sortedKeys returns a map's keys in a stable order, so the Query member

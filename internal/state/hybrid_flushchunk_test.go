@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 // TestHybridStore_FlushChunksLargeBatchesAndPersistsAllRows proves a flush

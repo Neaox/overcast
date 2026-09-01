@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast/internal/awscron"
+	"github.com/overcast-sh/overcast/internal/awscron"
 )
 
 // nextFireTime computes the next time that expr should fire, given the last fire

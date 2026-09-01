@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/Neaox/overcast/internal/logging"
+	"github.com/overcast-sh/overcast/internal/logging"
 )
 
 // TraceLevel/ParseLevel/WrapLevelEncoder themselves are unit-tested in

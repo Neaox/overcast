@@ -28,7 +28,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/state"
+	"github.com/overcast-sh/overcast/internal/state"
 )
 
 func benchmarkCrossNamespaceWrites(b *testing.B, writers int) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Neaox/overcast-compat-cli/internal/awscli"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
 )
 
 // EventBridge returns the EventBridge service group.

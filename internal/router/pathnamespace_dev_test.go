@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 // internalPrefix is middleware.InternalPrefix, aliased so this file reads the

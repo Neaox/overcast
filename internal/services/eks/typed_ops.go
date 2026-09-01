@@ -1,7 +1,7 @@
 package eks
 
 import (
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 func (s *Service) typedOps() map[string]op.Operation {

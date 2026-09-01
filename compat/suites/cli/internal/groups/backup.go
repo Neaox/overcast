@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Neaox/overcast-compat-cli/internal/awscli"
-	"github.com/Neaox/overcast-compat-cli/internal/harness"
+	"github.com/overcast-sh/overcast-compat-cli/internal/awscli"
+	"github.com/overcast-sh/overcast-compat-cli/internal/harness"
 )
 
 // One Namer per Backup sub-group so the five groups, which run in parallel,

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 // AWS refuses to delete an IAM entity that still has dependencies, with

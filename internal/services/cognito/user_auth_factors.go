@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 const userAuthOTPCodeTTL = 3 * time.Minute

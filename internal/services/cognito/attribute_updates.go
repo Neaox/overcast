@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
 const attributeVerificationCodeTTL = 15 * time.Minute

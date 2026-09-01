@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	eventsbus "github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/eventstream"
-	"github.com/Neaox/overcast/internal/serviceutil"
+	eventsbus "github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/eventstream"
+	"github.com/overcast-sh/overcast/internal/serviceutil"
 )
 
 // AWS's Live Tail buffering contract (StartLiveTail API reference): a session

@@ -3,7 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/overcast-sh/overcast/internal/protocol/op"
 )
 
 func TestTypedOps_matchDispatchSurface(t *testing.T) {

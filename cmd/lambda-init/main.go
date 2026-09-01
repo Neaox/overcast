@@ -14,7 +14,7 @@ package main
 import (
 	"os"
 
-	"github.com/Neaox/overcast/internal/lambdainit"
+	"github.com/overcast-sh/overcast/internal/lambdainit"
 )
 
 func main() {

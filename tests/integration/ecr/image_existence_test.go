@@ -36,7 +36,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/overcast-sh/overcast/tests/helpers"
 )
 
 func TestDescribeImages_absentTagIsImageNotFound(t *testing.T) {

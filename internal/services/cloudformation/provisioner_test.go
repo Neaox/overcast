@@ -14,8 +14,8 @@ import (
 
 	benclock "github.com/benbjohnson/clock"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/config"
 )
 
 // TestTopoSortImplicitDeps verifies that Ref, Fn::GetAtt, and Fn::Sub inside

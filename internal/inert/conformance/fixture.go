@@ -29,8 +29,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // Class is an operation's §3.1 lifecycle classification.

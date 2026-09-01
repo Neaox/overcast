@@ -3,9 +3,9 @@ package serviceutil
 import (
 	"net/http"
 
-	"github.com/Neaox/overcast/internal/awsapi"
-	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
+	"github.com/overcast-sh/overcast/internal/awsapi"
+	"github.com/overcast-sh/overcast/internal/protocol"
+	"github.com/overcast-sh/overcast/internal/protocol/codec"
 )
 
 // operationRegistry is the immutable generated AWS operation registry. It holds

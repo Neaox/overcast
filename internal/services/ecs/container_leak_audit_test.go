@@ -38,7 +38,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/overcast-sh/overcast/internal/middleware"
 )
 
 func TestRunTask_taskIsInvisibleUntilItsContainersAreFullyPlaced(t *testing.T) {

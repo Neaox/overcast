@@ -44,7 +44,7 @@ services:
 # After
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:alpha
     ports: ["4566:4566"]
     environment:
       OVERCAST_LOG_LEVEL: debug
@@ -56,17 +56,17 @@ services:
 
 | LocalStack        | overcast                                 | Notes                                                             |
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| `LOCALSTACK_HOST` | `OVERCAST_HOSTNAME`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — no rename needed. The *advertised* name embedded in returned URLs — the true analogue. (`OVERCAST_HOST`, despite the similar name, used to be the bind address instead; it has since been renamed and removed — see the next row). Accepts LocalStack's `hostname[:port]` format (e.g. `localhost.localstack.cloud:4566`): the hostname part maps to `OVERCAST_HOSTNAME`, and a port part is accepted only if it matches `OVERCAST_PORT`. `LOCALSTACK_HOST` and `OVERCAST_HOSTNAME` may both be set to the *same* value; setting them to different values, or to a conflicting port, fails startup naming both rather than silently preferring one |
-| `HOSTNAME_EXTERNAL` | `OVERCAST_HOSTNAME`                    | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — the legacy LocalStack name `LOCALSTACK_HOST` replaced. Chained after `LOCALSTACK_HOST`: if you set both (and/or `OVERCAST_HOSTNAME`), all set values must agree, or startup fails naming every one that disagrees. Unlike `LOCALSTACK_HOST` it never carried a port suffix |
-| `EDGE_PORT`       | `OVERCAST_PORT`                          | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)). Default: `4566`. Disagreeing with an explicit `OVERCAST_PORT` fails startup naming both |
-| `SERVICES`        | — *(recognised, no effect)*              | Overcast runs every service, always, so there is nothing to select. The variable is read and logged once at startup as seen, but never rejected and never given any effect ([#1190](https://github.com/Neaox/overcast/issues/1190)) — drop it once you've migrated, there's nothing it can still be doing |
-| `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — SQLite persistence directory. Setting it counts as an explicitly configured data directory for `OVERCAST_STATE=auto`'s detection, the same as `OVERCAST_DATA_DIR` itself would. In the Docker images it also overrides the image's own baked-in `OVERCAST_DATA_DIR=/data` default rather than conflicting with it — that baked value is marked as the image's default, not user intent |
-| `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — verbose logging. `DEBUG=0` is a no-op, leaving `OVERCAST_LOG_LEVEL`'s own default (`info`) or explicit value in place; disagreeing with an explicit non-debug `OVERCAST_LOG_LEVEL` fails startup naming both |
-| `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)). Default: `us-east-1` |
-| `GATEWAY_LISTEN`  | `OVERCAST_LISTEN` + `OVERCAST_PORT`      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — bind address, split into two variables the same way Overcast already does. Accepts LocalStack's `<ip>:<port>[,<ip>:<port>...]` format: addresses map to `OVERCAST_LISTEN`, the (single, agreeing) port maps to `OVERCAST_PORT` — a `GATEWAY_LISTEN` naming more than one port across its entries has no single `OVERCAST_PORT` to map to and is a documented non-match (fails startup rather than picking one and silently dropping the other bind). Counts as an explicit bind-address setting, overriding the environment-dependent default (`0.0.0.0` in a container, `127.0.0.1` natively) the same way an explicit `OVERCAST_LISTEN` would. (Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN` as the replacement, rather than being silently ignored) |
-| `PERSISTENCE=1`   | `OVERCAST_STATE=persistent`              | **Honoured as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) for the closest named Overcast equivalent to LocalStack's persistence toggle. `PERSISTENCE=0` is a no-op, leaving `OVERCAST_STATE`'s own default/auto-detection in place — which, like LocalStack's `DATA_DIR` presence, already resolves to `hybrid` when a volume/data dir is present, `memory` otherwise, so this alias mainly matters when `PERSISTENCE=1` is set *without* also pointing a data directory at something durable. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `persistent`/`auto`→`hybrid` are unavailable there and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
-| `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT` | `LAMBDA_INIT_TIMEOUT_SECONDS` | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — the same concept (seconds to wait for the Lambda runtime environment to start up) under a different name. Default: `10` |
-| `LOCALSTACK_API_KEY` / `LOCALSTACK_AUTH_TOKEN` | — *(recognised, no effect)* | No LocalStack Pro/auth-gated feature set to unlock. Read and logged once at startup as seen, but never rejected ([#1190](https://github.com/Neaox/overcast/issues/1190)) |
+| `LOCALSTACK_HOST` | `OVERCAST_HOSTNAME`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — no rename needed. The *advertised* name embedded in returned URLs — the true analogue. (`OVERCAST_HOST`, despite the similar name, used to be the bind address instead; it has since been renamed and removed — see the next row). Accepts LocalStack's `hostname[:port]` format (e.g. `localhost.localstack.cloud:4566`): the hostname part maps to `OVERCAST_HOSTNAME`, and a port part is accepted only if it matches `OVERCAST_PORT`. `LOCALSTACK_HOST` and `OVERCAST_HOSTNAME` may both be set to the *same* value; setting them to different values, or to a conflicting port, fails startup naming both rather than silently preferring one |
+| `HOSTNAME_EXTERNAL` | `OVERCAST_HOSTNAME`                    | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — the legacy LocalStack name `LOCALSTACK_HOST` replaced. Chained after `LOCALSTACK_HOST`: if you set both (and/or `OVERCAST_HOSTNAME`), all set values must agree, or startup fails naming every one that disagrees. Unlike `LOCALSTACK_HOST` it never carried a port suffix |
+| `EDGE_PORT`       | `OVERCAST_PORT`                          | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)). Default: `4566`. Disagreeing with an explicit `OVERCAST_PORT` fails startup naming both |
+| `SERVICES`        | — *(recognised, no effect)*              | Overcast runs every service, always, so there is nothing to select. The variable is read and logged once at startup as seen, but never rejected and never given any effect ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — drop it once you've migrated, there's nothing it can still be doing |
+| `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — SQLite persistence directory. Setting it counts as an explicitly configured data directory for `OVERCAST_STATE=auto`'s detection, the same as `OVERCAST_DATA_DIR` itself would. In the Docker images it also overrides the image's own baked-in `OVERCAST_DATA_DIR=/data` default rather than conflicting with it — that baked value is marked as the image's default, not user intent |
+| `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — verbose logging. `DEBUG=0` is a no-op, leaving `OVERCAST_LOG_LEVEL`'s own default (`info`) or explicit value in place; disagreeing with an explicit non-debug `OVERCAST_LOG_LEVEL` fails startup naming both |
+| `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)). Default: `us-east-1` |
+| `GATEWAY_LISTEN`  | `OVERCAST_LISTEN` + `OVERCAST_PORT`      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — bind address, split into two variables the same way Overcast already does. Accepts LocalStack's `<ip>:<port>[,<ip>:<port>...]` format: addresses map to `OVERCAST_LISTEN`, the (single, agreeing) port maps to `OVERCAST_PORT` — a `GATEWAY_LISTEN` naming more than one port across its entries has no single `OVERCAST_PORT` to map to and is a documented non-match (fails startup rather than picking one and silently dropping the other bind). Counts as an explicit bind-address setting, overriding the environment-dependent default (`0.0.0.0` in a container, `127.0.0.1` natively) the same way an explicit `OVERCAST_LISTEN` would. (Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN` as the replacement, rather than being silently ignored) |
+| `PERSISTENCE=1`   | `OVERCAST_STATE=persistent`              | **Honoured as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) for the closest named Overcast equivalent to LocalStack's persistence toggle. `PERSISTENCE=0` is a no-op, leaving `OVERCAST_STATE`'s own default/auto-detection in place — which, like LocalStack's `DATA_DIR` presence, already resolves to `hybrid` when a volume/data dir is present, `memory` otherwise, so this alias mainly matters when `PERSISTENCE=1` is set *without* also pointing a data directory at something durable. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `persistent`/`auto`→`hybrid` are unavailable there and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
+| `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT` | `LAMBDA_INIT_TIMEOUT_SECONDS` | **Honoured directly as a compatibility alias** ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) — the same concept (seconds to wait for the Lambda runtime environment to start up) under a different name. Default: `10` |
+| `LOCALSTACK_API_KEY` / `LOCALSTACK_AUTH_TOKEN` | — *(recognised, no effect)* | No LocalStack Pro/auth-gated feature set to unlock. Read and logged once at startup as seen, but never rejected ([#1190](https://github.com/overcast-sh/overcast/issues/1190)) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | *(same names, standard AWS SDK vars)* | Not an Overcast-specific setting — both emulators read these directly via the AWS SDK's normal credential chain. Like LocalStack, Overcast accepts any non-empty value by default: SigV4 signature validation is off unless you opt in with `OVERCAST_SIGV4_VALIDATE=true` |
 | —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `auto` there is always `memory` and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
 | —                 | `OVERCAST_DEBUG=true`                    | Enable `/_overcast/debug/*` endpoints                                      |
@@ -83,7 +83,7 @@ itself shipped.
 
 ### Not aliased
 
-Overcast's LocalStack-compatibility audit ([#1190](https://github.com/Neaox/overcast/issues/1190))
+Overcast's LocalStack-compatibility audit ([#1190](https://github.com/overcast-sh/overcast/issues/1190))
 also checked every other variable [LocalStack documents](https://docs.localstack.cloud/aws/capabilities/config/configuration/).
 These are deliberately **not** aliased — half-mapping them would be a false-friend trap, not a convenience:
 
@@ -99,7 +99,7 @@ The remaining LocalStack-documented variables (roughly 130 more, covering per-se
 container tuning, JVM heap sizes, k3s/EKS cluster internals, and LocalStack Pro/Cloud Pods
 features Overcast has no analogue for) were reviewed and found to have no genuine Overcast
 equivalent. The handful that could plausibly grow one are tracked in
-[#1338](https://github.com/Neaox/overcast/issues/1338) rather than half-implemented here.
+[#1338](https://github.com/overcast-sh/overcast/issues/1338) rather than half-implemented here.
 
 ---
 
@@ -169,7 +169,7 @@ in a `boot.d` hook or use a custom Dockerfile layer.
 ```yaml
 services:
   overcast:
-    image: ghcr.io/neaox/overcast:alpha
+    image: ghcr.io/overcast-sh/overcast:alpha
     ports: ["4566:4566"]
     volumes:
       - "./init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
@@ -194,7 +194,7 @@ LocalStack module at the Overcast image (Java's
 as a LocalStack version to select legacy behaviours and wait for a log line
 Overcast does not emit, so the substitution fails in non-obvious ways. A Go
 module ships today; other languages are planned
-([#1495](https://github.com/Neaox/overcast/issues/1495)).
+([#1495](https://github.com/overcast-sh/overcast/issues/1495)).
 
 ---
 
@@ -280,7 +280,7 @@ semantics that `auto` wouldn't pick on its own.
 > are built without SQLite, which `hybrid` and `persistent` require, so `auto` there always
 > resolves to `memory` — a mounted volume gives you no persistence at all, and nothing
 > announces that beyond the startup log. If you are replacing a LocalStack container
-> that had `DATA_DIR` set, either use the full `ghcr.io/neaox/overcast` image or add
+> that had `DATA_DIR` set, either use the full `ghcr.io/overcast-sh/overcast` image or add
 > `OVERCAST_STATE=wal`, the one durable backend the slim artifacts do have. See
 > [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
 

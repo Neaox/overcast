@@ -28,7 +28,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Neaox/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/eventtarget"
 )
 
 // pollInterval is how often each polled source is read. Real EventBridge polls

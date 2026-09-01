@@ -54,11 +54,11 @@ class RenderTest(unittest.TestCase):
 			"PREVIOUS_BASE": "main",
 			"CURRENT_BASE": "main",
 			"CREATED_NOTE": "",
-			"REQUESTED_BY": "Neaox",
+			"REQUESTED_BY": "overcast-sh",
 			"REASON": "`v2..0` is not a branch name I will create or target.",
 			# changelog-required.yml
-			"WAIVED_BY": "Neaox",
-			"WAIVER_URL": "https://github.com/Neaox/overcast/pull/463#issuecomment-1",
+			"WAIVED_BY": "overcast-sh",
+			"WAIVER_URL": "https://github.com/overcast-sh/overcast/pull/463#issuecomment-1",
 			"WAIVER_REASON": "CI-only: pins the release action to a digest",
 			# changelog-waiver.yml
 			"PROBLEM": "`/no-changelog` needs a reason after it.",
