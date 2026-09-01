@@ -44,14 +44,6 @@ see the [root README](../README.md).
 - [Performance](./performance.md) — startup expectations, storage tuning, and where "feels slow" time actually goes
 - [Storage backends](./storage.md) — durability comparison and what survives a restart, per backend
 
-Internal working plans (storage stabilization, storage access patterns, pagination fidelity,
-the storage regression test plan, and others) live in `docs/plans/` in the repository, and
-contributor-facing developer docs (building from source, debugging, wire-protocol design,
-storage internals, AWS compatibility review tracking) live in `docs/dev/` — both are
-deliberately excluded from this published documentation set. See
-[CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md) if you're contributing
-to Overcast itself.
-
 ---
 
 ## Support level legend
@@ -227,7 +219,7 @@ itself reads is below.
 | `OVERCAST_EC2_VPC_STRATEGY`      | `shared`               | How VPCs map to Docker networks: `shared`, `strict`, or `remapped` (`strict` and `remapped` currently fall back to `shared` with a startup warning; `netns` is rejected) — see [Local VPCs](./cdk/local-vpc.md) |
 | `OVERCAST_MCP_REMOTE_EXPOSURE`   | `false`                | **Security-relevant.** Declares that the MCP endpoint (`/_overcast/mcp`) will be reachable by non-local clients, and turns on bearer-token auth for every MCP request. Setting it `true` makes `OVERCAST_MCP_AUTH_TOKEN` mandatory — Overcast refuses to start without one. Note it does not itself change what Overcast binds: if `OVERCAST_LISTEN` exposes the port, the MCP endpoint is exposed with it, so set this (and a token) before exposing the port beyond localhost. Browser `Origin` checks (localhost origins only) are enforced on MCP regardless |
 | `OVERCAST_MCP_AUTH_TOKEN`        | —                      | Bearer token every MCP request must present once set (mandatory when `OVERCAST_MCP_REMOTE_EXPOSURE=true`; setting it alone also enables the auth check). Treat it like any other credential — anyone holding it can drive the emulator through MCP |
-| `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts is reachable on by name when it belongs to no VPC — the default data plane. A resource that names a VPC joins that VPC's network instead. Overcast derives a second network from this, `<name>_control`, which carries the Lambda Runtime API and the emulator endpoint; see [container networking](./dev/container-networking.md) |
+| `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts is reachable on by name when it belongs to no VPC — the default data plane. A resource that names a VPC joins that VPC's network instead. Overcast derives a second network from this, `<name>_control`, which carries the Lambda Runtime API and the emulator endpoint |
 | `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD). The per-service socket overrides below must all address the **same** daemon: containers are attached to shared networks across service boundaries |
 | `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on. The addresses are not configurable and do not follow `OVERCAST_LISTEN`: Overcast binds loopback plus the one address containers on the control plane reach it at — its own address on that network when Overcast is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_               | Max concurrent Docker-backed Lambda container starts. Unset: derived from the Docker host as `clamp(NCPU/2, 2, 8)` (each start bursts ~2 CPUs during INIT); `4` when Docker `/info` is unavailable |
@@ -414,7 +406,7 @@ backend than what `auto` would pick.
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
-Hybrid seeds small control-plane namespaces into memory on startup and reads large data-plane namespaces (messages, log events, metric datapoints) from SQLite on every access — there is no read-through cache for those, by design — so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata, while high-volume data never has to fit in memory. See [storage.md](./storage.md) for the full backend comparison, or [dev/storage-backends.md](./dev/storage-backends.md) for the implementation internals.
+Hybrid seeds small control-plane namespaces into memory on startup and reads large data-plane namespaces (messages, log events, metric datapoints) from SQLite on every access — there is no read-through cache for those, by design — so background schedulers and dashboards do not continuously poll SQLite for hot resource metadata, while high-volume data never has to fit in memory. See [storage.md](./storage.md) for the full backend comparison.
 
 ```bash
 -e OVERCAST_STATE=memory -e OVERCAST_STATE_S3=hybrid
@@ -631,12 +623,8 @@ it off entirely.
 
 ### Startup preflight
 
-A handful of environment mistakes cost real time on this project because
-they don't look like environment mistakes — Overcast answers normally, and
-the symptom (an empty console list, a container that never starts, data that
-isn't where you left it) reads exactly like a bug in the emulator. Where
-Overcast can tell, it says so: one actionable `WARN`, the moment the symptom
-appears, never a wall of startup output and never on a healthy setup.
+These warnings only fire when something's actually misconfigured — a healthy
+setup produces none of them.
 
 | Message names...                                                         | Means                                                                                                                    |
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |

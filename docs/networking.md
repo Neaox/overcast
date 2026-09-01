@@ -263,9 +263,6 @@ Consequences worth knowing before they look like bugs:
   container, `localhost` is the container) and remains the one configuration that silently
   breaks container callers.
 
-How this is implemented, and which caller each address is minted for, is in
-[docs/dev/networking.md](./dev/networking.md#5-the-addresses-overcast-hands-back).
-
 ---
 
 ## Data-plane endpoints — RDS, and anything else that is a container
@@ -289,8 +286,7 @@ back as `mydb.ap-southeast-2.rds.localhost.overcast.sh`, and *that* is the value
 a CDK stack bakes into an ECS task definition or a Secrets Manager secret.
 
 **How it resolves inside a Lambda or ECS task.** Not through Overcast's DNS
-server — that one answers "where is Overcast" (see
-[the container-DNS notes](./dev/container-networking.md)). The engine container
+server — that one answers "where is Overcast". The engine container
 carries its endpoint name as a **Docker network alias** on every network
 emulated compute runs on — the shared data plane (`OVERCAST_NETWORK`, default
 `overcast`), or the VPC network of its DB subnet group when it has one — and
@@ -496,7 +492,6 @@ that every running container is attached to.
 
 ## See also
 
-- [Container networking (internals)](./dev/container-networking.md) — which resolver answers what, and why a missing alias hangs rather than erroring
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK
 - [Using AWS CDK](./cdk.md) — the S3-specific virtual-hosted-addressing / Windows DNS issue
 - [Lambda service reference](./services/lambda.md) — full endpoint coverage table

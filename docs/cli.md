@@ -13,19 +13,13 @@ tags:
 # CLI reference
 
 The `overcast` binary is both the emulator daemon and the host-side tooling
-around it: starting and stopping background instances, checking on a running
+around it — starting and stopping background instances, checking on a running
 daemon, and configuring your shell to talk to it. `overcastd` (the slim
-binary) exposes the same subcommands, minus the ones the slim build cannot
-support (`mcp`) and the web console.
+binary) exposes the same subcommands, minus `mcp` and the web console.
 
-Every command accepts `--endpoint` (default `http://localhost:4566`) to target
-a daemon other than the default. Run `overcast --help` or
-`overcast <command> --help` for the exhaustive flag list — this page covers
-what each command is for and the flags worth knowing about.
-
-For AWS SDK/CLI configuration (`--endpoint-url`, `overcast aws`, `overcast
-env`, per-language SDK snippets), see
-[Using AWS SDKs and CLI](./sdk-cli.md). This page is about `overcast` itself.
+Every command accepts `--endpoint` (default `http://localhost:4566`); run
+`overcast --help` for the exhaustive flag list. For AWS SDK/CLI configuration
+instead of `overcast` itself, see [Using AWS SDKs and CLI](./sdk-cli.md).
 
 ---
 
@@ -74,7 +68,7 @@ registry, not on a foreground `overcast serve`.
 | `--timeout`              | `60s`     | How long to wait for the instance to become healthy.                                             |
 | `--docker`               | `false`   | Run the instance as a Docker container instead of a native process.                              |
 | `--image`                | _(unset)_ | Full image override (`--docker` only).                                                            |
-| `--channel`              | _(unset)_ | Docker image channel: `alpha`, `beta`, or `latest` (`--docker` only). Without `--image`/`--channel`, the image defaults to this CLI's own version tag (e.g. `ghcr.io/overcast-sh/overcast:0.0.1-alpha.25`) rather than a floating tag, so a container `start` always matches the binary that launched it. An unreleased (`dev`) build falls back to `:alpha`. |
+| `--channel`              | _(unset)_ | Docker image channel: `alpha`, `beta`, or `latest` (`--docker` only). See below for the default. |
 | `--data-volume`          | _(unset)_ | Docker named volume to mount at `/data` (`--docker` only).                                        |
 | `--mount-docker-socket`  | `false`   | Bind-mount the host Docker socket into the container, for Lambda/ECS sibling containers (`--docker` only). |
 
@@ -83,6 +77,11 @@ overcast start                              # default instance on 4566/4567
 overcast start --name ci --port 4570 --ui-port 0 --no-wait
 overcast start --docker --channel latest --mount-docker-socket
 ```
+
+Without `--image`/`--channel`, a `--docker` instance defaults to this CLI's
+own version tag (e.g. `ghcr.io/overcast-sh/overcast:0.0.1-alpha.25`) rather
+than a floating tag, so it always matches the binary that launched it. An
+unreleased (`dev`) build falls back to `:alpha`.
 
 Starting an instance whose name is already running fails with a pointer to
 `overcast stop`; a dead record left behind by a crashed process is replaced

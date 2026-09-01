@@ -50,6 +50,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [Refreshing the AWS API models](#refreshing-the-aws-api-models)
   - [How to add an endpoint](#how-to-add-an-endpoint)
   - [How to add a service](#how-to-add-a-service)
+  - [Writing docs](#writing-docs)
   - [Service package structure](#service-package-structure)
   - [Web UI standards](#web-ui-standards)
     - [Linting — oxlint](#linting--oxlint)
@@ -1416,7 +1417,7 @@ works and is exactly as unbounded as it always was — it just does not get the 
    ```
 7. Write P1 tests in `tests/integration/<n>/<n>_test.go`
 8. Add CloudFormation resource handlers for every resource type the service creates — register them in `resourceHandlers` in `internal/services/cloudformation/provisioner.go`. If the service creates resources that AWS has CloudFormation types for (which is nearly always the case), you must add the entries. At minimum, use `&stubResourceHandler{}` for resource types you can't fully implement yet — this lets CDK stacks succeed while the implementation is incomplete. See [CloudFormation integration](#cloudformation-integration) for the full rules, dispatch helpers, and verification checklist.
-9. Create `docs/services/<n>.md` using the template below. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) and run `make docs` to populate the capabilities table automatically. Everything between those markers is overwritten on every run — never edit it by hand. Any prose that belongs in the doc (behaviour notes, caveats, example snippets) must live **outside** the markers.
+9. Create `docs/services/<n>.md` using the template below. Add the sentinel markers (`<!-- BEGIN overcast:capabilities -->` / `<!-- END overcast:capabilities -->`) and run `make docs` to populate the capabilities table automatically. Everything between those markers is overwritten on every run — never edit it by hand. Any prose that belongs in the doc (behaviour notes, caveats, example snippets) must live **outside** the markers. Follow [Writing docs](#writing-docs) for that prose — in particular, never cite `docs/dev/**` or `docs/plans/**`, which `make docs-check` rejects.
 
    ```markdown
    # <Service Name>
@@ -1452,6 +1453,18 @@ works and is exactly as unbounded as it always was — it just does not get the 
 - Add topology nodes and edges in `internal/router/topology.go` so the service appears on the system map with its resource relationships
 - Add SSE event types and wire cache invalidation in `web/src/hooks/use-event-stream.ts` so the UI updates in real time
 - Add an AWS SDK client factory in `web/src/services/aws-clients.ts`; if the service needs a custom BFF route (beyond simple JSON proxy), add a handler in `internal/bff/bff.go` and register it in `bff.NewHandler`
+
+---
+
+## Writing docs
+
+Every file under `docs/` that isn't `docs/plans/` or `docs/dev/` ships on the
+public site. The full rule set — one job per doc, a two-sentence intro
+budget, no citing a file the site doesn't publish, tables over paragraphs —
+is in [docs/dev/content-charter.md](./docs/dev/content-charter.md). Read it
+before writing or substantially editing a published doc; `make docs-check`
+mechanically enforces the citation rule and a frontmatter description length
+cap, but the rest is a judgment call the charter exists to guide.
 
 ---
 
