@@ -175,7 +175,7 @@ screenshots is at [overcast.sh/console](https://overcast.sh/console/).
 | Per-service UI | S3 browser, SQS message inspector, DynamoDB item editor, Lambda test/invoke, and more |
 | Live activity feed | Every API call as it happens — operation, resource, status code, latency |
 | Request traces | Full bodies, headers, log lines and internal hops for any call, searchable. Needs `OVERCAST_DEBUG=true` |
-| Inbox | Everything Overcast would have sent: SES mail, SNS email subscriptions and Cognito verification mail via the built-in SMTP server on `:1025`, plus SNS SMS, HTTP webhook and mobile-push deliveries — searchable, headers and bodies included, with no third-party mail catcher |
+| Inbox | Everything Overcast would have sent: SES mail, SNS email subscriptions and Cognito verification mail via the built-in SMTP server on `:1025`, plus SNS SMS and HTTP webhook deliveries — searchable, headers and bodies included, with no third-party mail catcher |
 | Topology map | Cross-service resource relationships |
 | Real-time updates | Server-sent events push changes as they happen |
 
