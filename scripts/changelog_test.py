@@ -191,17 +191,21 @@ class ParseEntriesTest(unittest.TestCase):
 		self.assertEqual([], entries[0].areas)
 		self.assertEqual("build from source works again", entries[0].prose)
 
-	def test_indented_lines_continue_the_previous_entry(self) -> None:
+	def test_indented_lines_become_detail_on_the_previous_entry(self) -> None:
+		# Each indented (non-migration) line is its own detail note, kept
+		# separate from the summary rather than merged into one paragraph —
+		# that is what lets the summary stay a single scannable sentence.
 		entries, errors = changelog.parse_entries(
-			"+ [sqs] long polling\n"
+			"+ [sqs] long polling on ReceiveMessage\n"
 			"    honours WaitTimeSeconds\n"
 			"    and caps it at 20\n"
 		)
 
 		self.assertEqual([], errors)
 		self.assertEqual(1, len(entries))
+		self.assertEqual("long polling on ReceiveMessage", entries[0].prose)
 		self.assertEqual(
-			"long polling honours WaitTimeSeconds and caps it at 20", entries[0].prose
+			["honours WaitTimeSeconds", "and caps it at 20"], entries[0].detail
 		)
 
 	def test_migration_continues_onto_following_lines(self) -> None:
@@ -252,6 +256,43 @@ class ParseEntriesTest(unittest.TestCase):
 
 		self.assertTrue(any("repeats 'sqs'" in e for e in errors))
 
+	def test_rejects_a_summary_over_the_cap(self) -> None:
+		long_prose = "x" * (changelog.SUMMARY_MAX + 1)
+		_, errors = changelog.parse_entries(f"+ [sqs] {long_prose}\n")
+
+		self.assertTrue(
+			any("lead with a summary sentence" in e for e in errors), errors
+		)
+		self.assertTrue(any("move detail to indented continuation" in e for e in errors))
+
+	def test_accepts_a_summary_exactly_at_the_cap(self) -> None:
+		# The cap counts the rendered line — '[sqs] ' prefix included.
+		prefix_len = len("[sqs] ")
+		prose = "x" * (changelog.SUMMARY_MAX - prefix_len)
+		entries, errors = changelog.parse_entries(f"+ [sqs] {prose}\n")
+
+		self.assertEqual([], errors)
+		self.assertEqual(changelog.SUMMARY_MAX, len(entries[0].summary_line))
+
+	def test_breaking_flag_counts_toward_the_cap(self) -> None:
+		# '**BREAKING** ' occupies width in the rendered bullet too, so a
+		# breaking entry has less room for prose before the cap fires.
+		flag_len = len("**BREAKING** [sqs] ")
+		prose = "x" * (changelog.SUMMARY_MAX - flag_len + 1)
+		_, errors = changelog.parse_entries(
+			f"-! [sqs] {prose}\n  migration: stop calling it\n"
+		)
+
+		self.assertTrue(any("lead with a summary sentence" in e for e in errors), errors)
+
+	def test_detail_lines_do_not_count_toward_the_cap(self) -> None:
+		# Only the summary line is capped; detail is deliberately unbounded.
+		detail = "y" * 300
+		entries, errors = changelog.parse_entries(f"+ [sqs] a short summary\n  {detail}\n")
+
+		self.assertEqual([], errors)
+		self.assertEqual([detail], entries[0].detail)
+
 
 class RenderEntryTest(unittest.TestCase):
 	def test_round_trips_through_the_parser(self) -> None:
@@ -279,6 +320,19 @@ class RenderEntryTest(unittest.TestCase):
 		self.assertEqual(
 			"*. [s3] now rejects bad checksums\n", changelog.render_entry(entries[0])
 		)
+
+	def test_round_trips_detail_lines(self) -> None:
+		source = (
+			"+ [cli] `overcast env` prints AWS environment exports\n"
+			"  includes unset lines for other AWS_* variables\n"
+			"  so nothing left over can redirect a call to real AWS\n"
+		)
+		entries, errors = changelog.parse_entries(source)
+		self.assertEqual([], errors)
+
+		rendered = "".join(changelog.render_entry(entry) for entry in entries)
+
+		self.assertEqual(source, rendered)
 
 
 class ParseFragmentTest(unittest.TestCase):
@@ -393,6 +447,61 @@ class AssembleTest(unittest.TestCase):
 			"\n"
 			"- a fix with no area\n",
 			output,
+		)
+
+	def test_detail_lines_survive_assembly_indented_in_the_same_bullet(self) -> None:
+		# The website (and any standard markdown renderer) parses an indented
+		# line immediately following a bullet, with no blank line between, as
+		# part of that bullet's own <li> rather than a sibling. This is the
+		# release-notes merge path: assemble() is what release-prep runs, so
+		# this is what a multi-line fragment actually turns into.
+		root = write_dir(
+			{
+				"20260801-env.md": (
+					"+ [cli] `overcast env` prints AWS environment exports\n"
+					"  includes unset lines for other AWS_* variables\n"
+					"  so nothing left over can redirect a call to real AWS\n"
+				)
+			}
+		)
+		fragments, errors = changelog.load_fragments(root)
+		self.assertEqual([], errors)
+
+		output = changelog.assemble(fragments, "0.0.1-alpha.30", "2026-08-01")
+
+		self.assertEqual(
+			"## [0.0.1-alpha.30] - 2026-08-01\n"
+			"\n"
+			"### Added\n"
+			"\n"
+			"- [cli] `overcast env` prints AWS environment exports\n"
+			"  includes unset lines for other AWS_* variables\n"
+			"  so nothing left over can redirect a call to real AWS\n",
+			output,
+		)
+		# No blank line separates the bullet from its detail: same <li>.
+		bullet_index = output.index("- [cli]")
+		detail_index = output.index("  includes unset lines")
+		between = output[bullet_index:detail_index]
+		self.assertNotIn("\n\n", between)
+
+	def test_breaking_entries_sort_first_within_their_category(self) -> None:
+		root = write_dir(
+			{
+				"20260801-a.md": "+ [aaa] a routine change, sorts first by area alone\n",
+				"20260801-b.md": (
+					"+! [zzz] a compatibility break, should still lead the category\n"
+					"  migration: do the thing\n"
+				),
+			}
+		)
+		fragments, errors = changelog.load_fragments(root)
+		self.assertEqual([], errors)
+
+		output = changelog.assemble(fragments, "0.0.1-alpha.30", "2026-08-01")
+
+		self.assertLess(
+			output.index("**BREAKING**"), output.index("a routine change, sorts first")
 		)
 
 	def test_flags_breaking_entries_with_their_migration(self) -> None:
@@ -701,6 +810,33 @@ class FoldEntriesTest(unittest.TestCase):
 		result = self.fold("-! [state] the v1 layout\n  migration: export first\n")
 
 		self.assertIn("- **BREAKING** [state] the v1 layout\n  migration: export first", result)
+
+	def test_detail_lines_survive_folding_indented_in_the_same_bullet(self) -> None:
+		result = self.fold(
+			"+ [cli] `overcast env` prints AWS environment exports\n"
+			"  includes unset lines for other AWS_* variables\n"
+		)
+
+		self.assertIn(
+			"- [cli] `overcast env` prints AWS environment exports\n"
+			"  includes unset lines for other AWS_* variables",
+			result,
+		)
+
+	def test_breaking_entries_sort_first_when_folded(self) -> None:
+		result = self.fold(
+			"+ [aaa] a routine change, sorts first by area alone\n"
+			"+! [zzz] a compatibility break, should still lead\n"
+			"  migration: do the thing\n"
+		)
+
+		added = result.index("### Added")
+		fixed = result.index("### Fixed")
+		category = result[added:fixed]
+		self.assertLess(
+			category.index("**BREAKING**"),
+			category.index("a routine change, sorts first by area alone"),
+		)
 
 	def test_repeated_folds_do_not_stack_blank_lines(self) -> None:
 		# `\s*$` on the category heading matched across the newline, so

@@ -78,7 +78,7 @@ func TestChangelogFragment_foldsRemovalsAndTraitChangesIntoOneChangedEntry(t *te
 	if strings.Contains(got, "\n- ") || strings.HasPrefix(got, "- ") {
 		t.Errorf("changelogFragment() = %q, want no Removed entry: an upstream retirement is a Changed, and `-` would mark it breaking", got)
 	}
-	if !strings.HasPrefix(got, "~ [router] the pinned AWS API models moved to 2026-08-21:") {
+	if !strings.HasPrefix(got, "~ [router] the pinned AWS API models moved to 2026-08-21.") {
 		t.Errorf("changelogFragment() = %q, want a single Changed entry dated from the model date", got)
 	}
 	if !strings.Contains(got, "1 operation AWS retired") || !strings.Contains(got, "1 operation changed protocol traits") {

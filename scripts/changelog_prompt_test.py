@@ -127,7 +127,7 @@ class DescribeTest(unittest.TestCase):
 
 	def test_describes_continuations_and_blanks(self) -> None:
 		self.assertIn("migration note", changelog_prompt.describe("  migration: x"))
-		self.assertIn("continuation", changelog_prompt.describe("  more prose"))
+		self.assertIn("detail line", changelog_prompt.describe("  more prose"))
 		self.assertIn("blank line finishes", changelog_prompt.describe(""))
 
 
