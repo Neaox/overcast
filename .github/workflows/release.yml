@@ -630,3 +630,34 @@ jobs:
             echo "- Console image: \`ghcr.io/$owner_lc/overcast:$VERSION\`"
             echo "- Slim image: \`ghcr.io/$owner_lc/overcast-slim:$VERSION\`"
           } >> "$GITHUB_STEP_SUMMARY"
+      # The website (overcast-sh/website) listens for this dispatch and
+      # rebuilds its docs from the new release immediately. Its daily
+      # scheduled run picks up missed releases, so a failure anywhere in
+      # these two steps only delays the site — it must never fail the
+      # release. The default GITHUB_TOKEN cannot dispatch cross-repo; the
+      # release App can, once it is installed on the website repo with
+      # contents write. continue-on-error absorbs a missing installation
+      # (or missing App secrets) and the dispatch step skips on the empty
+      # token it leaves behind.
+      - name: Mint token for website dispatch
+        id: website-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: overcast-sh
+          repositories: website
+      - name: Trigger website rebuild
+        env:
+          GH_TOKEN: ${{ steps.website-token.outputs.token }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::No token for the website dispatch (release App not installed on overcast-sh/website, or App secrets absent); the site's daily schedule will pick up $TAG."
+            exit 0
+          fi
+          gh api repos/overcast-sh/website/dispatches \
+            -f event_type=overcast-release \
+            -f "client_payload[tag]=$TAG" \
+            || echo "::warning::Website dispatch failed; the site's daily schedule will pick up $TAG."
