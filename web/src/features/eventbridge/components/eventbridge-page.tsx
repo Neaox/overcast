@@ -23,7 +23,6 @@ import { CreateAction, RefreshAction, ResourceListFilter } from "@/components/ui
 import { ResourceListSection } from "@/components/ui/resource-list-section"
 import { ResourceTable } from "@/components/ui/resource-table"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-import { InertBanner } from "@/components/inert-banner"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
 
 interface FilterProps {
@@ -61,7 +60,6 @@ export function EventBridgePage({
           />
         }
       />
-      <InertBanner serviceName="EventBridge" />
       <Tabs selectedKey={tab} onSelectionChange={(key) => onTabChange(key as EventBridgeTab)}>
         <TabList>
           <Tab id="buses">Event Buses</Tab>
