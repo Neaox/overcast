@@ -33,7 +33,7 @@ needs no tags, no flags, and no Docker file-sharing configuration, and it works
 with compiled runtimes and bundlers that hot reload cannot help:
 
 ```bash
-AWS_ENDPOINT_URL=http://localhost:2456 cdk watch
+AWS_ENDPOINT_URL=http://localhost:4566 cdk watch
 ```
 
 Reach for a bind mount when the redeploy cycle itself is the cost you want gone.
