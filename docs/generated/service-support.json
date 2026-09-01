@@ -4842,7 +4842,7 @@
           "operation": "PutTargets",
           "category": "Targets",
           "status": "✅ Supported",
-          "notes": "Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time"
+          "notes": "Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS and event-bus targets; rejects other target types at add time"
         },
         {
           "operation": "ListTargetsByRule",
@@ -4860,7 +4860,7 @@
           "operation": "PutEvents",
           "category": "Events",
           "status": "✅ Supported",
-          "notes": "Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets, applying InputPath/InputTransformer and RetryPolicy/DLQ"
+          "notes": "Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis, Firehose, ECS and event-bus targets, applying InputPath/InputTransformer and RetryPolicy/DLQ"
         },
         {
           "operation": "TagResource",
