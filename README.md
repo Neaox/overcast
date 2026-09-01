@@ -1,6 +1,10 @@
-# Overcast
-
-**A fast, free, open-source local cloud service emulator.**
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://overcast.sh/brand/overcast-logo-dark.svg">
+    <img alt="Overcast" src="https://overcast.sh/brand/overcast-logo-light.svg" width="360">
+  </picture>
+</p>
+<p align="center"><em>A fast, free, open-source local cloud service emulator.</em></p>
 
 Overcast emulates the APIs of popular cloud services so you can develop and test
 locally without an internet connection, a cloud account, or a bill.
@@ -36,29 +40,28 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 
 ## Contents
 
-- [Overcast](#overcast)
-  - [Project goals](#project-goals)
-  - [Contents](#contents)
-  - [Quick start](#quick-start)
-  - [What Overcast is NOT](#what-overcast-is-not)
-  - [Running with Docker](#running-with-docker)
-    - [docker run](#docker-run)
-    - [docker compose (recommended for local dev)](#docker-compose-recommended-for-local-dev)
-  - [Native binaries](#native-binaries)
-    - [Binary variants](#binary-variants)
-    - [Installation](#installation)
-    - [Commands](#commands)
-    - [overcast serve](#overcast-serve)
-    - [overcast bridge](#overcast-bridge)
-    - [overcast status](#overcast-status)
-    - [overcast trust](#overcast-trust)
-    - [Platform notes](#platform-notes)
-      - [macOS](#macos)
-      - [Linux](#linux)
-      - [Windows](#windows)
-  - [Supported services](#supported-services)
-  - [Documentation](#documentation)
-  - [Contributing](#contributing)
+- [Project goals](#project-goals)
+- [Contents](#contents)
+- [Quick start](#quick-start)
+- [What Overcast is NOT](#what-overcast-is-not)
+- [Running with Docker](#running-with-docker)
+  - [docker run](#docker-run)
+  - [docker compose (recommended for local dev)](#docker-compose-recommended-for-local-dev)
+- [Native binaries](#native-binaries)
+  - [Binary variants](#binary-variants)
+  - [Installation](#installation)
+  - [Commands](#commands)
+  - [overcast serve](#overcast-serve)
+  - [overcast bridge](#overcast-bridge)
+  - [overcast status](#overcast-status)
+  - [overcast trust](#overcast-trust)
+  - [Platform notes](#platform-notes)
+    - [macOS](#macos)
+    - [Linux](#linux)
+    - [Windows](#windows)
+- [Supported services](#supported-services)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
 
 ---
 
