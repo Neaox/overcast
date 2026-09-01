@@ -7,6 +7,10 @@
 //   - overcast bridge       — publish *.local domains via mDNS + port-80 proxy
 //   - overcast trust        — manage the local trust store for TLS certificates
 //   - overcast https        — one-shot HTTPS setup (CA + trust store + certificate)
+//   - overcast start        — run a background daemon instance (native or --docker)
+//   - overcast stop         — stop a background instance
+//   - overcast restart      — restart a background instance with its saved options
+//   - overcast logs         — tail a background instance's output
 //   - overcast status       — check a running daemon is reachable
 //   - overcast wait         — block until a daemon reports healthy
 //   - overcast services     — list enabled services and emulation tiers
@@ -51,6 +55,10 @@ func main() {
 	root.AddCommand(newAWSCmd())
 	root.AddCommand(newWaitCmd())
 	root.AddCommand(newServicesCmd())
+	root.AddCommand(newStartCmd())
+	root.AddCommand(newStopCmd())
+	root.AddCommand(newRestartCmd())
+	root.AddCommand(newLogsCmd())
 	root.AddCommand(newResetCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newMCPCmd())

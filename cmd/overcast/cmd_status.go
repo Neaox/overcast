@@ -2,7 +2,10 @@ package main
 
 // cmd_status.go — `overcast status`. Pings overcast's /_overcast/health
 // endpoint and reports whether the daemon is reachable. Deliberately minimal;
-// the goal is a human-friendly one-liner, not a dashboard.
+// the goal is a human-friendly one-liner, not a dashboard — plus, when this
+// CLI's own instance registry (instances.go) is non-empty, a short table of
+// every instance it knows about (not just the one at --endpoint), since
+// `overcast start`/`stop` can manage several under different names.
 
 import (
 	"context"
@@ -11,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -66,7 +70,31 @@ func newStatusCmd() *cobra.Command {
 				line += " (" + strings.Join(details, ", ") + ")"
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), line)
+
+			printInstanceTable(cmd.OutOrStdout())
 			return nil
 		},
 	}
+}
+
+// printInstanceTable appends a NAME/BACKEND/ENDPOINT/STATE table for every
+// instance this CLI's registry (instances.go) knows about, regardless of
+// whether it matches the --endpoint just probed above — `overcast
+// start`/`stop` can manage several named instances at once, and this is the
+// only place a caller sees them all in one shot. Prints nothing when the
+// registry is empty (nothing has ever been started) or unreadable, so
+// `overcast status` on a machine that has never run `overcast start` keeps
+// its exact original one-line output.
+func printInstanceTable(out io.Writer) {
+	recs, err := listInstances()
+	if err != nil || len(recs) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tBACKEND\tENDPOINT\tSTATE")
+	for _, rec := range recs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", rec.Name, rec.Backend, rec.Endpoint, instanceLifecycleState(rec))
+	}
+	_ = tw.Flush()
 }

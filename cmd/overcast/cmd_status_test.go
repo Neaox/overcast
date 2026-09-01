@@ -9,8 +9,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -126,5 +128,95 @@ func TestStatusCmd_plainBody(t *testing.T) {
 	}
 	if !strings.Contains(out, "overcast OK at "+srv.URL) {
 		t.Errorf("output %q does not report OK at %s", out, srv.URL)
+	}
+}
+
+// TestStatusCmd_InstanceTable_Empty pins the exact original one-line
+// behavior for a registry that has nothing in it — the case
+// TestStatusCmd_againstRealRouter etc. above already implicitly rely on
+// (they don't seam instancesBaseDir at all, so they only stay one-liners
+// because a fresh checkout's real ~/.overcast/instances doesn't exist).
+// This test makes that guarantee explicit and hermetic.
+func TestStatusCmd_InstanceTable_Empty(t *testing.T) {
+	withTestInstancesDir(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runStatusCmd(t, srv.URL)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if n := strings.Count(strings.TrimRight(out, "\n"), "\n"); n != 0 {
+		t.Errorf("output is %d lines with an empty registry, want a one-liner:\n%s", n+1, out)
+	}
+}
+
+// TestStatusCmd_InstanceTable_ListsRegisteredInstances covers the actual
+// listing: every registered instance appears, backend and endpoint verbatim,
+// with a running/stopped state derived from its own liveness check.
+func TestStatusCmd_InstanceTable_ListsRegisteredInstances(t *testing.T) {
+	withTestInstancesDir(t)
+	// This test process's own pid, so the record reads as running.
+	if err := saveInstance(instanceRecord{Name: "running-one", Backend: "native", PID: os.Getpid(), Endpoint: "http://127.0.0.1:4566"}); err != nil {
+		t.Fatalf("saveInstance: %v", err)
+	}
+	if err := saveInstance(instanceRecord{Name: "stopped-one", Backend: "native", PID: exitedPID(t), Endpoint: "http://127.0.0.1:4570"}); err != nil {
+		t.Fatalf("saveInstance: %v", err)
+	}
+
+	prevDockerRun := dockerRun
+	dockerRun = func(args ...string) (string, error) { return "false", nil }
+	t.Cleanup(func() { dockerRun = prevDockerRun })
+	if err := saveInstance(instanceRecord{Name: "docker-one", Backend: "docker", ContainerID: "cid123", Endpoint: "http://127.0.0.1:4580"}); err != nil {
+		t.Fatalf("saveInstance: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runStatusCmd(t, srv.URL)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	for _, want := range []string{
+		"running-one", "native", "http://127.0.0.1:4566", "running",
+		"stopped-one", "http://127.0.0.1:4570", "stopped",
+		"docker-one", "docker", "http://127.0.0.1:4580",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output %q does not contain %q", out, want)
+		}
+	}
+}
+
+// TestStatusCmd_InstanceTable_DockerInspectFailureReportsUnknown covers the
+// three-valued state a docker instance can be in: a liveness check that
+// itself fails to run (docker missing, daemon down, container long gone)
+// must show as "unknown", not silently as "stopped".
+func TestStatusCmd_InstanceTable_DockerInspectFailureReportsUnknown(t *testing.T) {
+	withTestInstancesDir(t)
+	prevDockerRun := dockerRun
+	dockerRun = func(args ...string) (string, error) { return "", errors.New("no such container") }
+	t.Cleanup(func() { dockerRun = prevDockerRun })
+	if err := saveInstance(instanceRecord{Name: "gone", Backend: "docker", ContainerID: "cid123", Endpoint: "http://127.0.0.1:4580"}); err != nil {
+		t.Fatalf("saveInstance: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runStatusCmd(t, srv.URL)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("status output %q does not report the docker instance's state as unknown", out)
 	}
 }
