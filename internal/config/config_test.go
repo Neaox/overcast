@@ -1696,6 +1696,86 @@ func TestLoad_dataDirAlias(t *testing.T) {
 	}
 }
 
+// TestLoad_dataDirAlias_overridesImageBakedDefault verifies the image
+// carve-out to the alias conflict rule: the Docker image bakes
+// OVERCAST_DATA_DIR=/data as its own default, marked by
+// OVERCAST_DATA_DIR_SOURCE=image, and `docker run -e DATA_DIR=/persist`
+// against that baked ENV must win instead of failing startup as a
+// disagreement — the image's default is not user intent (the drop-in
+// LocalStack migration promise, #1190). The alias also counts as an
+// explicitly configured data directory for OVERCAST_STATE=auto, marker or
+// not.
+func TestLoad_dataDirAlias_overridesImageBakedDefault(t *testing.T) {
+	if !config.SQLiteSupported() {
+		t.Skip("hybrid is unavailable in a -tags nosqlite build; the SQLite gate is covered directly in state_auto_internal_test.go")
+	}
+
+	// Given: the image's own baked-in data dir (marked as such), and the user
+	// pointing DATA_DIR somewhere else — the two disagree.
+	clearEnv(t)
+	baked := t.TempDir()
+	userDir := t.TempDir()
+	t.Setenv("OVERCAST_DATA_DIR", baked)
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+	t.Setenv("DATA_DIR", userDir)
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: no conflict — the alias wins over the image-baked default.
+	if err != nil {
+		t.Fatalf("Load: expected DATA_DIR to override the image-baked OVERCAST_DATA_DIR, got error: %v", err)
+	}
+	if cfg.DataDir != userDir {
+		t.Errorf("DataDir: expected the alias value %q, got %q", userDir, cfg.DataDir)
+	}
+	if got := cfg.LocalStackAliasesUsed["OVERCAST_DATA_DIR"]; got != "DATA_DIR" {
+		t.Errorf("LocalStackAliasesUsed[OVERCAST_DATA_DIR]: expected DATA_DIR, got %q", got)
+	}
+	if cfg.State != config.StateBackendHybrid {
+		t.Errorf("State: expected hybrid (DATA_DIR is user intent even under the image marker), got %q", cfg.State)
+	}
+	if cfg.StateAutoSignal != "explicit-data-dir" {
+		t.Errorf("StateAutoSignal: expected explicit-data-dir, got %q", cfg.StateAutoSignal)
+	}
+}
+
+// TestLoad_imageBakedDefaults_aliasOnlyConfigurationWins simulates a
+// LocalStack migrator's `docker run` against the image environment: the only
+// variables the image bakes (OVERCAST_DATA_DIR plus its source marker — see
+// the ENV block in Dockerfile, and TestDockerfileBakesNoConfigDefaults,
+// which pins that set), with configuration supplied through LocalStack
+// aliases alone. Startup must succeed with every alias taking effect;
+// reproduced failing before the fix, when the image also baked
+// OVERCAST_PORT/OVERCAST_LISTEN/OVERCAST_LOG_LEVEL/OVERCAST_DEFAULT_REGION
+// and each disagreeing alias was a startup conflict.
+func TestLoad_imageBakedDefaults_aliasOnlyConfigurationWins(t *testing.T) {
+	// Given: the image's baked environment, and LocalStack-style settings only.
+	clearEnv(t)
+	t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+	t.Setenv("DEFAULT_REGION", "eu-west-1")
+	t.Setenv("EDGE_PORT", "4666")
+	t.Setenv("DEBUG", "1")
+
+	// When
+	cfg, err := config.Load()
+
+	// Then: startup succeeds and every alias took effect.
+	if err != nil {
+		t.Fatalf("Load: expected alias-only configuration to work against the image environment, got error: %v", err)
+	}
+	if cfg.Region != "eu-west-1" {
+		t.Errorf("Region: expected eu-west-1 (DEFAULT_REGION), got %q", cfg.Region)
+	}
+	if cfg.Port != 4666 {
+		t.Errorf("Port: expected 4666 (EDGE_PORT), got %d", cfg.Port)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel: expected debug (DEBUG=1), got %q", cfg.LogLevel)
+	}
+}
+
 // TestLoad_debugAlias verifies LocalStack's DEBUG=1 maps to
 // OVERCAST_LOG_LEVEL=debug, and that DEBUG=0 is a no-op (behaves as unset)
 // rather than forcing any particular log level.

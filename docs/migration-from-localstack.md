@@ -60,7 +60,7 @@ services:
 | `HOSTNAME_EXTERNAL` | `OVERCAST_HOSTNAME`                    | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — the legacy LocalStack name `LOCALSTACK_HOST` replaced. Chained after `LOCALSTACK_HOST`: if you set both (and/or `OVERCAST_HOSTNAME`), all set values must agree, or startup fails naming every one that disagrees. Unlike `LOCALSTACK_HOST` it never carried a port suffix |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)). Default: `4566`. Disagreeing with an explicit `OVERCAST_PORT` fails startup naming both |
 | `SERVICES`        | — *(recognised, no effect)*              | Overcast runs every service, always, so there is nothing to select. The variable is read and logged once at startup as seen, but never rejected and never given any effect ([#1190](https://github.com/Neaox/overcast/issues/1190)) — drop it once you've migrated, there's nothing it can still be doing |
-| `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — SQLite persistence directory. Setting it counts as an explicitly configured data directory for `OVERCAST_STATE=auto`'s detection, the same as `OVERCAST_DATA_DIR` itself would |
+| `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — SQLite persistence directory. Setting it counts as an explicitly configured data directory for `OVERCAST_STATE=auto`'s detection, the same as `OVERCAST_DATA_DIR` itself would. In the Docker images it also overrides the image's own baked-in `OVERCAST_DATA_DIR=/data` default rather than conflicting with it — that baked value is marked as the image's default, not user intent |
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — verbose logging. `DEBUG=0` is a no-op, leaving `OVERCAST_LOG_LEVEL`'s own default (`info`) or explicit value in place; disagreeing with an explicit non-debug `OVERCAST_LOG_LEVEL` fails startup naming both |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)). Default: `us-east-1` |
 | `GATEWAY_LISTEN`  | `OVERCAST_LISTEN` + `OVERCAST_PORT`      | **Honoured directly as a compatibility alias** ([#1190](https://github.com/Neaox/overcast/issues/1190)) — bind address, split into two variables the same way Overcast already does. Accepts LocalStack's `<ip>:<port>[,<ip>:<port>...]` format: addresses map to `OVERCAST_LISTEN`, the (single, agreeing) port maps to `OVERCAST_PORT` — a `GATEWAY_LISTEN` naming more than one port across its entries has no single `OVERCAST_PORT` to map to and is a documented non-match (fails startup rather than picking one and silently dropping the other bind). Counts as an explicit bind-address setting, overriding the environment-dependent default (`0.0.0.0` in a container, `127.0.0.1` natively) the same way an explicit `OVERCAST_LISTEN` would. (Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup naming `OVERCAST_LISTEN` as the replacement, rather than being silently ignored) |
@@ -71,6 +71,15 @@ services:
 | —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `auto` there is always `memory` and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
 | —                 | `OVERCAST_DEBUG=true`                    | Enable `/_overcast/debug/*` endpoints                                      |
 | —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |
+
+The "fails startup naming both" rules above describe two settings *you* set
+disagreeing. The Docker images get out of the way of that check: they bake no
+`OVERCAST_*` environment defaults beyond `OVERCAST_DATA_DIR=/data` (which is
+marked as the image's own default, so `DATA_DIR` overrides it), which means a
+LocalStack `environment:` block carried over unchanged — `DEFAULT_REGION`,
+`EDGE_PORT`, `GATEWAY_LISTEN`, `DEBUG`, `DATA_DIR` and all — configures a
+fresh `docker run` without tripping a conflict against anything the image
+itself shipped.
 
 ### Not aliased
 

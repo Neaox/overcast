@@ -22,6 +22,14 @@ package config
 // logLocalStackAliases in cmd/overcast/cmd_serve.go), so an operator sees
 // which of their LocalStack-style settings took effect.
 //
+// One carve-out: an Overcast variable whose value is the Docker image's own
+// baked-in ENV default -- today only OVERCAST_DATA_DIR, marked by
+// OVERCAST_DATA_DIR_SOURCE=image -- is a default, not user intent, so the
+// alias overrides it instead of conflicting with it (see Load's
+// data-directory resolution). The images deliberately bake nothing else
+// (see the ENV block in Dockerfile, and TestDockerfileBakesNoConfigDefaults),
+// so every other conflict really is two user-set values disagreeing.
+//
 // Where LocalStack's semantics differ fundamentally from anything Overcast
 // has, or the "equivalent" would be a false-friend trap rather than a true
 // match, the variable is deliberately *not* aliased -- see
@@ -158,7 +166,9 @@ var defaultRegionAlias = stringAlias{localstackVar: "DEFAULT_REGION", overcastVa
 // written under -- the direct analogue of OVERCAST_DATA_DIR. Setting it also
 // counts as "the data directory was explicitly configured" for
 // OVERCAST_STATE=auto's detection (see detectAutoStateSignals in
-// state_auto.go), the same as OVERCAST_DATA_DIR would.
+// state_auto.go), the same as OVERCAST_DATA_DIR would. In the Docker image,
+// it overrides the baked-in OVERCAST_DATA_DIR=/data default instead of
+// conflicting with it -- see the carve-out in the package comment above.
 var dataDirAlias = stringAlias{localstackVar: "DATA_DIR", overcastVar: "OVERCAST_DATA_DIR"}
 
 // hostnameExternalAlias: HOSTNAME_EXTERNAL is the legacy LocalStack name
