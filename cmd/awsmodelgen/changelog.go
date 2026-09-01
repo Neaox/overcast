@@ -57,12 +57,18 @@ func changelogFragment(d inventoryDiff, modelDate string) string {
 
 	var out bytes.Buffer
 	if len(d.AddedOperations) > 0 {
-		fmt.Fprintf(&out, "+ [router] %s newly modeled by AWS are recognised%s. A signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer\n",
-			countLabel(len(d.AddedOperations), "operation", "operations"),
-			addedServicesClause(d.AddedServices))
+		fmt.Fprintf(&out, "+ [router] %s newly modeled by AWS are recognised.\n",
+			countLabel(len(d.AddedOperations), "operation", "operations"))
+		// A named-services clause is unbounded in length (up to nameLimit real
+		// AWS service slugs), so it goes on its own detail line rather than the
+		// capped summary — see .changelog/README.md "Leading with a summary".
+		if clause := addedServicesClause(d.AddedServices); clause != "" {
+			fmt.Fprintf(&out, "  %s\n", clause)
+		}
+		out.WriteString("  a signed request to one reaches a protocol-correct `501` marked `x-emulator-unsupported`, in that service's own error envelope, instead of falling through to the S3 fallback and coming back as a bucket or object answer\n")
 	}
 	if counts, effects := d.changedClauses(); len(counts) > 0 {
-		fmt.Fprintf(&out, "~ [router] the pinned AWS API models moved to %s: %s. %s\n",
+		fmt.Fprintf(&out, "~ [router] the pinned AWS API models moved to %s.\n  %s\n  %s\n",
 			modelDate, joinClauses(counts), joinEffects(effects))
 	}
 	return out.String()
@@ -107,17 +113,19 @@ func joinEffects(effects []string) string {
 
 // addedServicesClause names the new services when there are few enough to read,
 // and counts them otherwise. The cutoff keeps one entry line readable; the PR
-// body carries the full list either way.
+// body carries the full list either way. Rendered as a standalone sentence
+// (its own detail line), not a continuation of the summary above it — see
+// changelogFragment.
 func addedServicesClause(services []string) string {
 	const nameLimit = 6
 	if len(services) == 0 {
 		return ""
 	}
-	clause := fmt.Sprintf(", spanning %s new to the corpus", countLabel(len(services), "service", "services"))
+	clause := fmt.Sprintf("spanning %s new to the corpus", countLabel(len(services), "service", "services"))
 	if len(services) <= nameLimit {
 		clause += fmt.Sprintf(" (`%s`)", strings.Join(services, "`, `"))
 	}
-	return clause
+	return clause + "."
 }
 
 func countLabel(n int, singular, plural string) string {

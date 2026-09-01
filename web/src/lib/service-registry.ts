@@ -427,7 +427,7 @@ export const SERVICES = {
     to: "/ses",
     category: "messaging",
     description: "Email sending service",
-    dashboardDescription: "Email sending — send messages and inspect delivery history.",
+    dashboardDescription: "Email identities — verify addresses and domains; mail lands in the Inbox.",
     docKey: "ses",
   },
   pipes: {

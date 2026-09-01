@@ -83,7 +83,7 @@ Per-operation status, notes and AWS API links: [DynamoDB operations](dynamodb/op
 ## Related
 
 - [DynamoDB Streams](dynamodbstreams.md)
-- [Persistence](../persistence.md) — where table data lives between restarts
+- [Storage and persistence](../storage.md#what-survives-a-restart-or-crash) — where table data lives between restarts
 - [AWS API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

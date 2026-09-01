@@ -16,9 +16,11 @@ Entry grammar, one entry per line:
 '+' Added, '-' Removed, '~' Changed, '*' Fixed; any section may be spelled out,
 which is how Deprecated and Security are written. '!' marks the change
 breaking, '.' marks it explicitly not breaking — needed only where the default
-does not apply (see BREAKING_DEFAULT). An indented line continues the entry
-above it; an indented 'migration:' line carries the upgrade instructions every
-breaking entry must include.
+does not apply (see BREAKING_DEFAULT). The first line's prose is the entry's
+summary sentence and is capped at SUMMARY_MAX chars; an indented line adds
+detail beneath it, rendered as its own line in the same bullet; an indented
+'migration:' line carries the upgrade instructions every breaking entry must
+include.
 
 Subcommands:
     check      Lint the fragments and enforce the empty-[Unreleased] rule.
@@ -67,6 +69,12 @@ ENTRY_LINE = re.compile(
 MISPLACED_MARKER = re.compile(r"^\[(?P<areas>[^\]]*)\](?P<marker>[!.])")
 MIGRATION_PREFIX = "migration:"
 SLUG_MAX = 48
+
+# Guideline cap on an entry's first line — the summary a reader scans release
+# notes by. Counted against what actually renders on that line (the
+# '**BREAKING**' flag and '[area]' tag included, since both occupy width
+# there too), not the raw fragment syntax. See .changelog/README.md.
+SUMMARY_MAX = 160
 
 # Whether an unmarked entry in each category breaks compatibility.
 #
@@ -139,6 +147,11 @@ class Entry:
     # record the scope of a cross-cutting change, which stays one entry.
     areas: list[str]
     prose: str
+    # Extra detail beyond the summary line, one indented continuation line per
+    # entry, in source order. Rendered as its own indented line under the
+    # bullet — never merged into `prose` — so the summary stays a single
+    # scannable sentence and the detail stays readable underneath it.
+    detail: list[str] = field(default_factory=list)
     migration: str = ""
     line: int = 0
     source: str = ""  # fragment filename, for stable assembly ordering
@@ -146,6 +159,13 @@ class Entry:
     @property
     def area(self) -> str:
         return self.areas[0] if self.areas else ""
+
+    @property
+    def summary_line(self) -> str:
+        """The rendered first line, exactly as a reader scans it."""
+        prefix = f"[{'/'.join(self.areas)}] " if self.areas else ""
+        flag = "**BREAKING** " if self.breaking else ""
+        return f"{flag}{prefix}{self.prose}"
 
 
 @dataclass
@@ -250,7 +270,7 @@ def parse_entries(
             elif continuing_migration:
                 entries[-1].migration = f"{entries[-1].migration} {stripped}"
             else:
-                entries[-1].prose = f"{entries[-1].prose} {stripped}"
+                entries[-1].detail.append(stripped)
             continue
 
         continuing_migration = False
@@ -301,15 +321,22 @@ def parse_entries(
                 f"{where}line {number}: area list {problem}." for problem in problems
             )
 
-        entries.append(
-            Entry(
-                section=section,
-                breaking=breaking,
-                areas=areas,
-                prose=prose,
-                line=number,
-            )
+        entry = Entry(
+            section=section,
+            breaking=breaking,
+            areas=areas,
+            prose=prose,
+            line=number,
         )
+        entries.append(entry)
+
+        length = len(entry.summary_line)
+        if length > SUMMARY_MAX:
+            errors.append(
+                f"{where}line {number}: summary is {length} chars (limit "
+                f"{SUMMARY_MAX}); lead with a summary sentence, move detail to "
+                "indented continuation lines."
+            )
 
     # Marking a change breaking has to cost something, or '!' becomes noise:
     # the release notes need the upgrade instructions anyway, and requiring
@@ -330,7 +357,8 @@ One entry per line, blank line to finish.
 
   +  Added      -  Removed     ~  Changed     *  Fixed
   !  breaking   .  not breaking (only needed when the default is wrong)
-  indent to continue the entry above, or to add a 'migration:' note
+  first line is a standalone summary sentence (<= 160 chars)
+  indent a line to add detail beneath it, or a 'migration:' note
 
   e.g.  + [sqs] long polling on `ReceiveMessage`
 """
@@ -461,8 +489,9 @@ def assemble(fragments: list[Fragment], version: str, date: str) -> str:
         # Entries without an area sort last; same-area entries end up adjacent
         # so the curation pass can merge them into one bullet. Sorting entries
         # rather than files groups two entries about one service even when they
-        # arrived in different PRs.
-        picked.sort(key=lambda entry: (entry.area or "~", entry.source, entry.line))
+        # arrived in different PRs. Breaking entries lead the category — see
+        # entry_sort_key.
+        picked.sort(key=entry_sort_key)
         lines.append("")
         lines.append(f"### {section}")
         for entry in picked:
@@ -475,18 +504,32 @@ def render_bullet(entry: Entry) -> list[str]:
     """The CHANGELOG.md lines for one entry.
 
     Shared by assemble and fold so a folded entry is indistinguishable from
-    one the original draft carried.
+    one the original draft carried. The summary is always the first line;
+    detail lines (if any) and the migration note (if any) follow, each its
+    own indented line under the same bullet — no blank line separates them,
+    which is what keeps a reader's markdown renderer parsing them as one list
+    item rather than as siblings.
     """
-    prefix = f"[{'/'.join(entry.areas)}] " if entry.areas else ""
-    flag = "**BREAKING** " if entry.breaking else ""
-    lines = [f"- {flag}{prefix}{entry.prose}"]
+    lines = [f"- {entry.summary_line}"]
+    lines.extend(f"  {note}" for note in entry.detail)
     if entry.migration:
         lines.append(f"  migration: {entry.migration}")
     return lines
 
 
+def entry_sort_key(entry: Entry) -> tuple[bool, str, str, int]:
+    """Assembly/fold order: breaking first, then by area, then by arrival.
+
+    Breaking changes are the ones a reader most needs to see before anything
+    else in a category, and the summary-first shape (point 2) is exactly what
+    makes that read well — a scanner hits '**BREAKING**' on the first line of
+    the first bullet in the category instead of buried further down.
+    """
+    return (not entry.breaking, entry.area or "~", entry.source, entry.line)
+
+
 def sort_entries(entries: list[Entry]) -> list[Entry]:
-    return sorted(entries, key=lambda e: (e.area or "~", e.source, e.line))
+    return sorted(entries, key=entry_sort_key)
 
 
 def section_bounds(changelog: str, version: str) -> tuple[int, int]:
@@ -617,6 +660,8 @@ def render_entry(entry: Entry) -> str:
         marker = "!" if entry.breaking else "."
     areas = f" [{'/'.join(entry.areas)}]" if entry.areas else ""
     rendered = f"{symbol}{marker}{areas} {entry.prose}\n"
+    for note in entry.detail:
+        rendered += f"  {note}\n"
     if entry.migration:
         rendered += f"  {MIGRATION_PREFIX} {entry.migration}\n"
     return rendered

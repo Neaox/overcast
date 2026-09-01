@@ -1,6 +1,6 @@
 ---
 title: "Bedrock — Amazon Bedrock Runtime"
-description: "Amazon Bedrock Runtime uses the REST JSON protocol, served at AWS's own /model/{modelId}/ inference paths. No model is invoked."
+description: "Bedrock Runtime answers Converse and InvokeModel from a canned response. No model is emulated, so token counts and latency are zero and the text is fixed."
 section: "Service Reference"
 tags:
   - amazon
@@ -12,30 +12,46 @@ tags:
 
 # Bedrock — Amazon Bedrock Runtime
 
-Amazon Bedrock Runtime uses the REST JSON protocol, served at the paths AWS
-binds it to: `POST /model/{modelId}/invoke` and `POST /model/{modelId}/converse`.
-No model is invoked — both answer from a canned response.
+`Converse` and `InvokeModel` answer from a canned response. No model runs, so
+this exercises your wiring — not your prompts.
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- `modelId` may be a model ID, an inference-profile ID, or an ARN. It is a
-  single path segment, so an SDK percent-encodes an ARN's separators; the route
-  matches either form.
-- **`Converse`** returns a complete `ConverseResponse` — every member the AWS
-  model marks required, with the canned assistant text in
-  `output.message.content[0].text`. Because nothing is inferred, the token
-  counts and `metrics.latencyMs` are all zero.
-- **`InvokeModel`** takes and returns an opaque payload whose format belongs to
-  the *model*, not to Bedrock. Overcast emulates no model, so it answers with a
-  single `overcastEmulator` field rather than imitating one family's shape and
-  being wrong for the rest. Use `Converse` where you need a response shape AWS
-  itself defines.
-- The streaming and token-counting siblings
-  (`InvokeModelWithResponseStream`, `ConverseStream`, `CountTokens`) are not
-  emulated and return a JSON `501 Not Implemented`, as does any other
-  unimplemented operation.
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws bedrock-runtime converse \
+  --model-id anthropic.claude-3-5-sonnet-20241022-v2:0 \
+  --messages '[{"role":"user","content":[{"text":"hello"}]}]'
+```
+
+The reply is a complete `ConverseResponse` — every member the AWS model marks
+required, with fixed assistant text in `output.message.content[0].text`.
+
+## What works
+
+| Area          | Behaviour                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| `Converse`    | `POST /model/{modelId}/converse`; full response shape, so an SDK deserialises it without complaint |
+| `InvokeModel` | `POST /model/{modelId}/invoke`; answers `{"overcastEmulator": …}`                                  |
+| `modelId`     | A model ID, an inference-profile ID, or an ARN — percent-encoded or not                            |
+
+## Differences from AWS
+
+| Behaviour          | On AWS                                            | Here                                                     |
+| ------------------ | ------------------------------------------------- | -------------------------------------------------------- |
+| Inference          | The named model runs                              | Nothing runs; the text is fixed regardless of the prompt |
+| Usage metrics      | Real token counts and `metrics.latencyMs`         | All zero                                                 |
+| `InvokeModel` body | The model's own schema                            | One `overcastEmulator` field                             |
+| Streaming          | `InvokeModelWithResponseStream`, `ConverseStream` | Not implemented — `501 Not Implemented`                   |
+| `CountTokens`      | Counts tokens for a model                         | Not implemented — `501 Not Implemented`                   |
+
+> [!TIP]
+> `InvokeModel`'s body is opaque on AWS too — its schema belongs to the model,
+> not to Bedrock. Use `Converse` where you need a response shape AWS itself
+> defines.
 
 <!-- BEGIN overcast:capabilities -->
 

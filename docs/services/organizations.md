@@ -1,6 +1,6 @@
 ---
 title: "Organizations — AWS Organizations"
-description: "Policies are stored and returned faithfully; DescribeOrganization is a fixed stub, and nothing is ever attached or enforced."
+description: "Policy CRUD and tagging, stored and returned faithfully. DescribeOrganization is a fixed stub; nothing is ever attached, and no policy takes effect."
 section: "Service Reference"
 tags:
   - aws
@@ -11,34 +11,46 @@ tags:
 
 # Organizations — AWS Organizations
 
-Organizations is emulated at the inert tier: policy metadata is stored and
-returned faithfully — identifiers, ARNs, tags, pagination and the modeled
-errors — and nothing a policy describes ever takes effect.
+Policy metadata is stored and returned faithfully — identifiers, ARNs, tags,
+pagination, modeled errors. Nothing a policy describes ever takes effect.
+
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+aws organizations create-policy \
+  --name deny-expensive --type SERVICE_CONTROL_POLICY \
+  --description "example" \
+  --content '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"ec2:RunInstances","Resource":"*"}]}'
+
+aws organizations list-policies --filter SERVICE_CONTROL_POLICY
+```
 
 ## What works
-Policies have a full CRUD and tagging surface. `DescribeOrganization` returns a
-fixed organization so that CDK bootstrap gets past it. Everything else —
-accounts, organizational units, roots, handshakes, delegated administrators —
-returns 501 Not Implemented.
 
-## Behavior Notes
+| Area                   | Behaviour                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| Policies               | Full CRUD: `CreatePolicy`, `DescribePolicy`, `UpdatePolicy`, `DeletePolicy`, `ListPolicies` |
+| Tags                   | `TagResource`, `UntagResource`, `ListTagsForResource` — policy IDs only               |
+| `DescribeOrganization` | A fixed organization (`o-overcast`, master account `000000000000`), so CDK bootstrap gets past it |
+| Stable IDs             | A policy's ID derives from its name, so it survives restarts and a state export/import |
 
-- A policy's ID is derived from its name, so it is stable across restarts and
-  across a state export/import. Creating a second policy with the same name
-  returns `DuplicatePolicyException`.
-- Renaming a policy through `UpdatePolicy` leaves its ID (and so its ARN)
-  unchanged, matching AWS. One divergence follows from deriving the ID from the
-  name: after a rename, the original name stays taken, so recreating it returns
-  `DuplicatePolicyException` where AWS would allow it.
-- `TagResource`, `UntagResource` and `ListTagsForResource` accept policy IDs
-  only. Roots, OUs and accounts are not stored, so tagging one returns
-  `TargetNotFoundException` rather than reporting a success that did not happen.
-- Attaching a policy is not emulated — `AttachPolicy` and `DetachPolicy` return
-  501 — so no policy is ever in effect and `DeletePolicy` never reports
-  `PolicyInUseException`.
-- `DescribeOrganization` returns a hardcoded organization with ID `o-overcast`
-  and master account ID `000000000000`, for compatibility with CDK bootstrap
-  operations that probe for its availability.
+## Differences from AWS
+
+| Behaviour           | On AWS                                            | Here                                                          |
+| ------------------- | ------------------------------------------------- | -------------------------------------------------------------- |
+| Policy enforcement  | An attached SCP constrains member accounts        | Nothing is attached; `AttachPolicy` / `DetachPolicy` return 501 |
+| `DeletePolicy`      | `PolicyInUseException` while attached             | Never in use, so never refused                                  |
+| Renaming a policy   | The old name becomes free again                   | The old name stays taken — recreating it is `DuplicatePolicyException` |
+| Tagging a root/OU/account | Succeeds                                    | `TargetNotFoundException` — those entities are not stored       |
+| Accounts, OUs, roots, handshakes, delegated administrators | Full API   | Not implemented — `501 Not Implemented`                        |
+
+> [!NOTE]
+> A policy's ID comes from its name, which is why a rename keeps its ARN
+> stable (as on AWS) but leaves the original name occupied (unlike AWS).
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -52,5 +64,6 @@ Per-operation status, notes and AWS API links: [Organizations operations](organi
 ## Related
 
 - [AWS API reference](https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html)
+- [IAM](iam.md) — the policy language that is actually evaluated here
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)
