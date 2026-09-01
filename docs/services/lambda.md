@@ -903,7 +903,7 @@ invalidates the warm pool entry. No tag, bind mount, or Docker file-sharing
 configuration is required:
 
 ```bash
-AWS_ENDPOINT_URL=http://localhost:2456 cdk watch
+AWS_ENDPOINT_URL=http://localhost:4566 cdk watch
 ```
 
 Each save triggers a redeploy of only the changed function assets. This works
@@ -1044,7 +1044,7 @@ Keep `dist/` fresh with your bundler, then deploy once:
 
 ```bash
 npx esbuild src/handler.ts --bundle --platform=node --outdir=dist --watch
-AWS_ENDPOINT_URL=http://localhost:2456 cdk deploy
+AWS_ENDPOINT_URL=http://localhost:4566 cdk deploy
 ```
 
 For Python or pre-built JavaScript, point the tag directly at the source tree:
