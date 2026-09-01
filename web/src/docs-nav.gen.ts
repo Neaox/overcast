@@ -21,7 +21,7 @@ export const DOCS_NAV = [
     "path": "docs/README.md",
     "href": "README.md",
     "title": "Documentation",
-    "description": "This directory contains the full Overcast documentation. For a quick overview, see the root README.",
+    "description": "Every Overcast guide and reference, routed by what you are trying to do — first run, wiring an SDK, deploying a CDK stack, tuning storage, or debugging something that went wrong.",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -35,23 +35,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Contents",
-        "id": "contents"
+        "text": "Get running",
+        "id": "get-running"
       },
       {
-        "depth": 3,
-        "text": "Getting started",
-        "id": "getting-started"
+        "depth": 2,
+        "text": "Build against it",
+        "id": "build-against-it"
       },
       {
-        "depth": 3,
-        "text": "Reference",
-        "id": "reference"
-      },
-      {
-        "depth": 3,
-        "text": "Storage and performance",
-        "id": "storage-and-performance"
+        "depth": 2,
+        "text": "Tune and inspect",
+        "id": "tune-and-inspect"
       },
       {
         "depth": 2,
@@ -67,11 +62,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Services",
         "id": "services"
-      },
-      {
-        "depth": 2,
-        "text": "HTTPS / TLS",
-        "id": "https-tls"
       },
       {
         "depth": 2,
@@ -237,25 +227,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Example: deploy a Lambda + API Gateway stack",
         "id": "example-deploy-a-lambda-api-gateway-stack"
-      }
-    ]
-  },
-  {
-    "path": "docs/cdk/README.md",
-    "href": "cdk/README.md",
-    "title": "CDK Guides",
-    "description": "Focused guides for CDK workflows that need more detail than the main Using AWS CDK with Overcast page.",
-    "section": "CDK",
-    "tags": [
-      "cdk",
-      "docs",
-      "guides"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "CDK Guides",
-        "id": "cdk-guides"
       }
     ]
   },
@@ -445,6 +416,11 @@ export const DOCS_NAV = [
         "id": "overcast-bridge"
       },
       {
+        "depth": 4,
+        "text": "Platform setup for mDNS and port 80",
+        "id": "platform-setup-for-mdns-and-port-80"
+      },
+      {
         "depth": 3,
         "text": "overcast https enable|disable|status",
         "id": "overcast-https-enable-disable-status"
@@ -474,6 +450,21 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "Configuration reference",
         "id": "configuration-reference"
+      },
+      {
+        "depth": 2,
+        "text": "Bind address and port",
+        "id": "bind-address-and-port"
+      },
+      {
+        "depth": 2,
+        "text": "LocalStack aliases",
+        "id": "localstack-aliases"
+      },
+      {
+        "depth": 2,
+        "text": "Exposing MCP",
+        "id": "exposing-mcp"
       },
       {
         "depth": 2,
@@ -702,7 +693,7 @@ export const DOCS_NAV = [
     "path": "docs/migration-from-localstack.md",
     "href": "migration-from-localstack.md",
     "title": "Migrating from LocalStack",
-    "description": "overcast is designed as a drop-in replacement for LocalStack Community Edition. In most cases, changing AWS_ENDPOINT_URL is the only change needed.",
+    "description": "Overcast is a drop-in replacement for LocalStack Community Edition: same port, same init-hook layout, and LocalStack's own environment variables honoured directly. Usually nothing but the image changes.",
     "section": "Getting Started",
     "tags": [
       "docs",
@@ -718,34 +709,24 @@ export const DOCS_NAV = [
         "id": "migrating-from-localstack"
       },
       {
-        "depth": 2,
-        "text": "Quick migration",
-        "id": "quick-migration"
-      },
-      {
-        "depth": 1,
-        "text": "Before (LocalStack)",
-        "id": "before-localstack"
-      },
-      {
-        "depth": 1,
-        "text": "After (overcast) — same URL, different container",
-        "id": "after-overcast-same-url-different-container"
-      },
-      {
         "depth": 1,
         "text": "Before",
         "id": "before"
       },
       {
         "depth": 1,
-        "text": "After",
-        "id": "after"
+        "text": "After — the environment block carries over as-is; both variables are honoured",
+        "id": "after-the-environment-block-carries-over-as-is-both-variables-are-honoured"
       },
       {
         "depth": 2,
-        "text": "Environment variable mapping",
-        "id": "environment-variable-mapping"
+        "text": "Environment variables",
+        "id": "environment-variables"
+      },
+      {
+        "depth": 3,
+        "text": "When an alias and its Overcast name disagree",
+        "id": "when-an-alias-and-its-overcast-name-disagree"
       },
       {
         "depth": 3,
@@ -763,36 +744,6 @@ export const DOCS_NAV = [
         "id": "init-hooks"
       },
       {
-        "depth": 3,
-        "text": "Status endpoint",
-        "id": "status-endpoint"
-      },
-      {
-        "depth": 1,
-        "text": "All stages",
-        "id": "all-stages"
-      },
-      {
-        "depth": 1,
-        "text": "Single stage",
-        "id": "single-stage"
-      },
-      {
-        "depth": 3,
-        "text": "awslocal` wrapper",
-        "id": "awslocal-wrapper"
-      },
-      {
-        "depth": 3,
-        "text": "Example docker-compose.yml",
-        "id": "example-docker-compose-yml"
-      },
-      {
-        "depth": 3,
-        "text": "Configuration",
-        "id": "configuration"
-      },
-      {
         "depth": 2,
         "text": "Testcontainers",
         "id": "testcontainers"
@@ -804,18 +755,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "S3: path-style addressing by default",
-        "id": "s3-path-style-addressing-by-default"
+        "text": "S3: path-style by default, virtual-hosted supported",
+        "id": "s3-path-style-by-default-virtual-hosted-supported"
       },
       {
         "depth": 1,
-        "text": "AWS CLI",
-        "id": "aws-cli"
-      },
-      {
-        "depth": 1,
-        "text": "Python boto3",
-        "id": "python-boto3"
+        "text": "boto3: boto3.client('s3', config=Config(s3={'addressing_style': 'path'}))",
+        "id": "boto3-boto3-client-s3-config-config-s3-addressing-style-path"
       },
       {
         "depth": 3,
@@ -829,8 +775,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "Persistence: auto-detected, same as LocalStack's `DATA_DIR` presence",
-        "id": "persistence-auto-detected-same-as-localstack-s-data-dir-presence"
+        "text": "Persistence: auto-detected, like LocalStack's `DATA_DIR` presence",
+        "id": "persistence-auto-detected-like-localstack-s-data-dir-presence"
       },
       {
         "depth": 3,
@@ -839,8 +785,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Coverage differences",
-        "id": "coverage-differences"
+        "text": "Coverage",
+        "id": "coverage"
       },
       {
         "depth": 2,
@@ -854,34 +800,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "SDK returns \"The specified bucket does not exist\" for a bucket I just created",
-        "id": "sdk-returns-the-specified-bucket-does-not-exist-for-a-bucket-i-just-created"
+        "text": "A bucket I just created does not exist",
+        "id": "a-bucket-i-just-created-does-not-exist"
       },
       {
         "depth": 3,
-        "text": "Tests pass with LocalStack but fail with overcast",
-        "id": "tests-pass-with-localstack-but-fail-with-overcast"
-      }
-    ]
-  },
-  {
-    "path": "docs/multi-container-networking.md",
-    "href": "multi-container-networking.md",
-    "title": "Multi-container networking",
-    "description": "Set OVERCAST_HOSTNAME to the Docker Compose service name so client-facing URLs (queue URLs, endpoints) resolve from sibling containers, not just the host.",
-    "section": "Networking",
-    "tags": [
-      "compose",
-      "docker",
-      "docs",
-      "hostname",
-      "networking"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "Multi-container networking",
-        "id": "multi-container-networking"
+        "text": "Tests pass with LocalStack but fail here",
+        "id": "tests-pass-with-localstack-but-fail-here"
       }
     ]
   },
@@ -889,13 +814,16 @@ export const DOCS_NAV = [
     "path": "docs/networking.md",
     "href": "networking.md",
     "title": "Networking and host-based addressing",
-    "description": "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline.",
+    "description": "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, reaching Overcast from sibling containers, and how VPCs isolate emulated compute.",
     "section": "Networking",
     "tags": [
+      "compose",
       "dns",
+      "docker",
       "docs",
       "guide",
-      "networking"
+      "networking",
+      "vpc"
     ],
     "headings": [
       {
@@ -929,9 +857,9 @@ export const DOCS_NAV = [
         "id": "the-localhost-overcast-sh-wildcard-dns-option"
       },
       {
-        "depth": 3,
-        "text": "Example: `docker compose` with a wildcard-DNS hostname",
-        "id": "example-docker-compose-with-a-wildcard-dns-hostname"
+        "depth": 2,
+        "text": "Docker Compose and sibling containers",
+        "id": "docker-compose-and-sibling-containers"
       },
       {
         "depth": 2,
@@ -989,7 +917,7 @@ export const DOCS_NAV = [
     "path": "docs/operation-manifest.md",
     "href": "operation-manifest.md",
     "title": "Overcast Operation Manifest",
-    "description": "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)",
+    "description": "Typed-dispatch operation registrations, per service, plus the services routed by path and method instead. A dispatch-mechanism inventory, not a coverage metric — the service index answers that.",
     "section": "Reference",
     "tags": [
       "docs",
@@ -1005,13 +933,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "acm — 10 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "acm-10-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
+        "text": "acm — 10 ops, modeled: 40, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "acm-10-ops-modeled-40-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "appregistry — 17 ops, modeled: 24, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "appregistry-17-ops-modeled-24-protocols-json10-json11-rpcv2cbor"
+        "text": "appregistry — 17 ops, modeled: 24",
+        "id": "appregistry-17-ops-modeled-24"
       },
       {
         "depth": 2,
@@ -1040,18 +968,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "cloudwatch-logs — 14 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cloudwatch-logs-14-ops-modeled-118-protocols-json10-json11-rpcv2cbor"
+        "text": "cloudwatch-logs — 17 ops, modeled: 118, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cloudwatch-logs-17-ops-modeled-118-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "cognito — 70 ops, modeled: 129, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "cognito-70-ops-modeled-129-protocols-json10-json11-rpcv2cbor"
+        "text": "cognito — 70 ops, modeled: 132, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "cognito-70-ops-modeled-132-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "dynamodb — 20 ops, modeled: 57, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "dynamodb-20-ops-modeled-57-protocols-json10-json11-rpcv2cbor"
+        "text": "dynamodb — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "dynamodb-20-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1060,13 +988,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "ec2 — 69 ops, modeled: 772, protocols: QueryXML",
-        "id": "ec2-69-ops-modeled-772-protocols-queryxml"
+        "text": "ec2 — 69 ops, modeled: 801, protocols: QueryXML",
+        "id": "ec2-69-ops-modeled-801-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "ecr — 20 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "ecr-20-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
+        "text": "ecr — 22 ops, modeled: 58, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "ecr-22-ops-modeled-58-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1075,13 +1003,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "efs — 28 ops, modeled: 31, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "efs-28-ops-modeled-31-protocols-json10-json11-rpcv2cbor"
+        "text": "efs — 28 ops, modeled: 31",
+        "id": "efs-28-ops-modeled-31"
       },
       {
         "depth": 2,
-        "text": "eks — 50 ops, modeled: 65, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eks-50-ops-modeled-65-protocols-json10-json11-rpcv2cbor"
+        "text": "eks — 50 ops, modeled: 70",
+        "id": "eks-50-ops-modeled-70"
       },
       {
         "depth": 2,
@@ -1090,13 +1018,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "elbv2 — 15 ops, modeled: 51, protocols: QueryXML",
-        "id": "elbv2-15-ops-modeled-51-protocols-queryxml"
+        "text": "elbv2 — 18 ops, modeled: 51, protocols: QueryXML",
+        "id": "elbv2-18-ops-modeled-51-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "eventbridge — 17 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "eventbridge-17-ops-modeled-108-protocols-json10-json11-rpcv2cbor"
+        "text": "eventbridge — 18 ops, modeled: 108, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "eventbridge-18-ops-modeled-108-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1105,18 +1033,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "glue — 11 ops, modeled: 297, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "glue-11-ops-modeled-297-protocols-json10-json11-rpcv2cbor"
+        "text": "glue — 11 ops, modeled: 299, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "glue-11-ops-modeled-299-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
-        "text": "iam — 74 ops, modeled: 176, protocols: QueryXML",
-        "id": "iam-74-ops-modeled-176-protocols-queryxml"
+        "text": "iam — 74 ops, modeled: 180, protocols: QueryXML",
+        "id": "iam-74-ops-modeled-180-protocols-queryxml"
       },
       {
         "depth": 2,
-        "text": "kinesis — 20 ops, modeled: 39, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "kinesis-20-ops-modeled-39-protocols-json10-json11-rpcv2cbor"
+        "text": "kinesis — 23 ops, modeled: 44, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "kinesis-23-ops-modeled-44-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1140,8 +1068,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "scheduler — 12 ops, modeled: 12, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "scheduler-12-ops-modeled-12-protocols-json10-json11-rpcv2cbor"
+        "text": "scheduler — 12 ops, modeled: 12",
+        "id": "scheduler-12-ops-modeled-12"
       },
       {
         "depth": 2,
@@ -1175,8 +1103,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "stepfunctions — 14 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR",
-        "id": "stepfunctions-14-ops-modeled-37-protocols-json10-json11-rpcv2cbor"
+        "text": "stepfunctions — 15 ops, modeled: 37, protocols: JSON10, JSON11, RPCv2CBOR",
+        "id": "stepfunctions-15-ops-modeled-37-protocols-json10-json11-rpcv2cbor"
       },
       {
         "depth": 2,
@@ -1257,37 +1185,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Client-perceived latency — where \"overcast feels slow\" actually goes",
         "id": "client-perceived-latency-where-overcast-feels-slow-actually-goes"
-      }
-    ]
-  },
-  {
-    "path": "docs/persistence.md",
-    "href": "persistence.md",
-    "title": "Persistence",
-    "description": "Configure OVERCAST_STATE and per-service storage overrides — which backend auto picks, how to mount a volume, and where the active configuration is visible at runtime.",
-    "section": "Storage \u0026 Performance",
-    "tags": [
-      "configuration",
-      "docs",
-      "persistence",
-      "state",
-      "storage"
-    ],
-    "headings": [
-      {
-        "depth": 1,
-        "text": "Persistence",
-        "id": "persistence"
-      },
-      {
-        "depth": 2,
-        "text": "Per-service storage overrides",
-        "id": "per-service-storage-overrides"
-      },
-      {
-        "depth": 2,
-        "text": "Where the active configuration is visible",
-        "id": "where-the-active-configuration-is-visible"
       }
     ]
   },
@@ -7029,12 +6926,13 @@ export const DOCS_NAV = [
   {
     "path": "docs/storage.md",
     "href": "storage.md",
-    "title": "Storage backends",
-    "description": "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with.",
+    "title": "Storage and persistence",
+    "description": "Pick and configure a storage backend: what auto resolves to, what survives a restart on each of memory/wal/persistent/hybrid, per-service overrides, and which backends each published artifact ships with.",
     "section": "Storage \u0026 Performance",
     "tags": [
       "docs",
       "durability",
+      "persistence",
       "slim",
       "state",
       "storage"
@@ -7042,8 +6940,8 @@ export const DOCS_NAV = [
     "headings": [
       {
         "depth": 1,
-        "text": "Storage backends",
-        "id": "storage-backends"
+        "text": "Storage and persistence",
+        "id": "storage-and-persistence"
       },
       {
         "depth": 2,
@@ -7062,13 +6960,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "What survives a restart or crash, per backend",
-        "id": "what-survives-a-restart-or-crash-per-backend"
+        "text": "What survives a restart or crash",
+        "id": "what-survives-a-restart-or-crash"
       },
       {
         "depth": 2,
-        "text": "Choosing a backend",
-        "id": "choosing-a-backend"
+        "text": "Per-service storage overrides",
+        "id": "per-service-storage-overrides"
+      },
+      {
+        "depth": 2,
+        "text": "Where the active configuration is visible",
+        "id": "where-the-active-configuration-is-visible"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
       }
     ]
   },
@@ -7152,7 +7060,7 @@ export const DOCS_NAV = [
     "path": "docs/troubleshooting.md",
     "href": "troubleshooting.md",
     "title": "Troubleshooting",
-    "description": "Startup preflight warnings, what each one means, and the fix — Overcast logs one actionable WARN the moment a symptom appears, never a wall of output on a healthy setup.",
+    "description": "Start here when something is wrong: a symptom-to-guide index, then every startup warning and runtime advisory Overcast raises, with what each one means and the fix.",
     "section": "Troubleshooting",
     "tags": [
       "debugging",
@@ -7169,8 +7077,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Startup preflight",
-        "id": "startup-preflight"
+        "text": "Startup warnings",
+        "id": "startup-warnings"
+      },
+      {
+        "depth": 2,
+        "text": "Runtime advisories",
+        "id": "runtime-advisories"
       }
     ]
   }

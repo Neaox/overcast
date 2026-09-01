@@ -1,6 +1,6 @@
 ---
 title: "Documentation"
-description: "This directory contains the full Overcast documentation. For a quick overview, see the root README."
+description: "Every Overcast guide and reference, routed by what you are trying to do — first run, wiring an SDK, deploying a CDK stack, tuning storage, or debugging something that went wrong."
 section: "Getting Started"
 tags:
   - docs
@@ -9,37 +9,39 @@ tags:
 
 # Documentation
 
-This directory contains the full Overcast documentation. For a quick overview,
-see the [root README](../README.md).
+Start with the [root README](../README.md) for what Overcast is and the one
+command that runs it. Everything else is below.
 
-## Contents
+## Get running
 
-### Getting started
+| Guide | For |
+| --- | --- |
+| [Using AWS SDKs and CLI](./sdk-cli.md) | Pointing the AWS CLI, Node.js, Python, Go, Java, .NET, Rust or Terraform at Overcast |
+| [CLI reference](./cli.md) | Every `overcast` subcommand — background instances, introspection, AWS helpers, mDNS and TLS |
+| [Using AWS CDK](./cdk.md) | `cdk bootstrap`, `cdk deploy`, which resource types provision for real |
+| [Local VPCs for CDK](./cdk/local-vpc.md) | Letting a local stack create the VPC instead of looking up IDs that change every teardown |
+| [Testcontainers](./testcontainers.md) | Starting Overcast from integration tests |
+| [Migrating from LocalStack](./migration-from-localstack.md) | Swapping the image and keeping your environment block |
 
-- [Using AWS SDKs and CLI](./sdk-cli.md) — configure the AWS CLI (`--endpoint-url`), Node.js, Python, Go, Java, .NET, Rust, Terraform
-- [CLI reference](./cli.md) — every `overcast` subcommand: background instances, introspection, AWS environment helpers, networking and TLS
-- [Using AWS CDK](./cdk.md) — `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting
-- [CDK guides](./cdk/) — focused CDK workflow guides
-- [Local VPCs for CDK](./cdk/local-vpc.md) — local resources stack that creates the VPC, environment-agnostic application stacks, CDK context cache behavior
-- [Networking and host-based addressing](./networking.md) — path-style vs. Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS setup
-- [Multi-container networking](./multi-container-networking.md) — `OVERCAST_HOSTNAME` for Docker Compose sibling containers
-- [The inner loop](./local-dev.md) — edit a file and see it take effect: `cdk watch`, Lambda and ECS hot reload, and a Laravel-on-Fargate walkthrough
-- [Testcontainers](./testcontainers.md) — start Overcast from integration tests with the Go module; options, port-mapping caveats
-- [Migrating from LocalStack](./migration-from-localstack.md) — drop-in replacement guide
+## Build against it
 
-### Reference
+| Guide | For |
+| --- | --- |
+| [Service reference](./services/README.md) | What each AWS service supports, operation by operation |
+| [Networking and host-based addressing](./networking.md) | Host-routed endpoints, wildcard DNS, sibling containers, VPC isolation |
+| [The inner loop](./local-dev.md) | Editing a file and seeing it take effect — `cdk watch`, Lambda and ECS hot reload |
+| [HTTPS and HTTP/2](./https.md) | Browser-trusted TLS in two commands, and why the console needs it |
 
-- [Service emulation reference](./services/README.md) — per-service endpoint coverage tables
-- [Configuration reference](./configuration.md) — all ~90 environment variables, service names, log levels
-- [Persistence](./persistence.md) — storage backend configuration; see [Storage backends](./storage.md) for the durability comparison
-- [HTTPS / TLS](./https.md) — browser-trusted HTTPS and HTTP/2 in two commands
-- [Debug endpoints](./debug-endpoints.md) — health, metrics, state dump, request tracing, pprof
-- [Troubleshooting](./troubleshooting.md) — startup preflight warnings and what they mean
+## Tune and inspect
 
-### Storage and performance
-
-- [Performance](./performance.md) — startup expectations, storage tuning, and where "feels slow" time actually goes
-- [Storage backends](./storage.md) — durability comparison and what survives a restart, per backend
+| Guide | For |
+| --- | --- |
+| [Configuration reference](./configuration.md) | Every environment variable, its default, and the LocalStack aliases |
+| [Storage and persistence](./storage.md) | Choosing a backend and knowing what survives a restart |
+| [Performance](./performance.md) | Startup and memory expectations, storage tuning, where "feels slow" time goes |
+| [Debug endpoints](./debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
+| [Troubleshooting](./troubleshooting.md) | A symptom, and where its answer lives |
+| [Operation manifest](./operation-manifest.md) | Which services dispatch by target header and which by path — an internals inventory |
 
 ---
 
@@ -54,20 +56,8 @@ Every endpoint in the service docs carries one of these statuses:
 | 🚧 WIP         | Under active development. May be broken or incomplete.         |
 | ❌ Unsupported | Not implemented. Returns `501 Not Implemented`.                |
 
-### Service emulation tiers
-
-Each service also has an overall emulation tier, visible on the health
-endpoint (`/_overcast/health`) and the web dashboard:
-
-| Tier        | Meaning                                                                                                                                                                           |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Full**    | P1+P2 operations implemented. Real SDK clients can use it end-to-end.                                                                                                             |
-| **Partial** | P1 operations implemented. Basic workflows work.                                                                                                                                  |
-| **Inert**   | Full CRUD works — resources are created and stored — but no side-effects or enforcement occur. For example, IAM stores users, roles, and policies but never enforces permissions. |
-| **Stub**    | Registered so discovery works: at most a hardcoded, stateless answer to the service's describe call; every other operation returns `501 Not Implemented`.                        |
-
-Endpoints marked **Unsupported** return a well-formed AWS error response so
-that SDKs surface a clear error rather than a connection failure:
+An unsupported endpoint returns a well-formed AWS error, so SDKs surface a clear
+message rather than a connection failure:
 
 ```
 HTTP 501 Not Implemented
@@ -79,11 +69,23 @@ x-emulator-unsupported: true
 }
 ```
 
+### Service emulation tiers
+
+Each service also carries an overall tier, visible on `/_overcast/health` and in
+the web console:
+
+| Tier        | Meaning                                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Full**    | P1+P2 operations implemented. Real SDK clients can use it end-to-end.                                                                                                             |
+| **Partial** | P1 operations implemented. Basic workflows work.                                                                                                                                  |
+| **Inert**   | Full CRUD works — resources are created and stored — but no side-effects or enforcement occur. For example, IAM stores users, roles, and policies but never enforces permissions. |
+| **Stub**    | Registered so discovery works: at most a hardcoded, stateless answer to the service's describe call; every other operation returns `501 Not Implemented`.                        |
+
 ---
 
 ## Services
 
-For a shorter overview, start with the [service reference index](./services/README.md).
+Shorter overview: the [service reference index](./services/README.md).
 
 <!-- BEGIN overcast:service-index -->
 
@@ -148,18 +150,6 @@ in the repository.
 
 ---
 
-## HTTPS / TLS
-
-```bash
-overcast https enable            # once per machine: local CA → system trust store
-OVERCAST_TLS=auto overcast serve # both listeners now serve HTTPS + HTTP/2
-```
-
-Full guide, including Docker setup, offline behaviour, and bringing your own
-certificate: **[HTTPS and HTTP/2](./https.md)**.
-
----
-
 ## Event pipelines
 
 | Pipeline                          | Status       |
@@ -173,24 +163,29 @@ certificate: **[HTTPS and HTTP/2](./https.md)**.
 
 ## Web management console
 
-The full image (`ghcr.io/overcast-sh/overcast`) includes a web management console
-accessible at **http://localhost:4567** (configurable via `OVERCAST_UI_PORT`
-env var / `--ui-port` flag; `0` disables it). It is served in-process by the
-same binary — there is no separate console server to start or supervise — and
-the AWS API on port 4566 does not depend on it.
+The full image (`ghcr.io/overcast-sh/overcast`) serves a web management console
+on **http://localhost:4567** — in-process, from the same binary, so there is no
+second server to start and the AWS API on 4566 never depends on it. Set
+`OVERCAST_UI_PORT` (or `--ui-port`) to move it; `0` disables it. A tour with
+screenshots is at [overcast.sh/console](https://overcast.sh/console/).
 
 | Feature | What it does |
 | --- | --- |
-| Dashboard | Service cards with real-time status |
+| Dashboard | Service cards with live status and emulation tier |
 | Per-service UI | S3 browser, SQS message inspector, DynamoDB item editor, Lambda test/invoke, and more |
-| Live activity feed | Real-time stream of API calls — operation, resource, status code, latency |
-| Inbox | Capture inbox for outbound email/SMS from SES, SNS, and Cognito — browse, search, and inspect headers and body without a third-party mail catcher |
+| Live activity feed | Every API call as it happens — operation, resource, status code, latency |
+| Request traces | Full bodies, headers, log lines and internal hops for any call, searchable. Needs `OVERCAST_DEBUG=true` |
+| Inbox | Everything Overcast would have sent: SES mail, SNS email subscriptions and Cognito verification mail via the built-in SMTP server on `:1025`, plus SNS SMS, HTTP webhook and mobile-push deliveries — searchable, headers and bodies included, with no third-party mail catcher |
 | Topology map | Cross-service resource relationships |
 | Real-time updates | Server-sent events push changes as they happen |
 
 > [!TIP]
-> If the console feels sluggish or stops responding to clicks while many
-> Lambdas run or transfers are in flight, you are hitting the browser's
-> 6-connection HTTP/1.1 limit — the live feed and progress streams are
-> holding the sockets. Serve the console over HTTPS to unlock HTTP/2 and
-> keep it responsive under any load: see [HTTPS and HTTP/2](./https.md).
+> Request traces are the console's strongest debugging tool and the one thing it
+> cannot show by default. Start the daemon with `OVERCAST_DEBUG=true` and every
+> call gets a full trace — see [Debug endpoints](./debug-endpoints.md).
+
+> [!TIP]
+> If the console stops responding to clicks while many Lambdas run or transfers
+> are in flight, you are hitting the browser's 6-connection HTTP/1.1 limit — the
+> live feed and progress streams hold the sockets. Serving the console over
+> HTTPS unlocks HTTP/2 and fixes it: see [HTTPS and HTTP/2](./https.md).

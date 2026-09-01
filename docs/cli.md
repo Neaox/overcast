@@ -271,9 +271,8 @@ overcast import cognito-users \
 
 ## Networking and TLS
 
-These three have their own full guides — [HTTPS and HTTP/2](./https.md) for
-`https`/`trust`, and the [`overcast bridge` section of the README](../README.md#overcast-bridge)
-for platform-specific mDNS/port-80 setup. Summarized here:
+`https` and `trust` have a full guide of their own —
+[HTTPS and HTTP/2](./https.md). Summarized here:
 
 ### `overcast bridge`
 
@@ -294,6 +293,26 @@ overcast bridge                   # in a second terminal, alongside overcast ser
 overcast bridge --http-port 8080  # avoid needing root/admin for port 80
 overcast serve --bridge           # or run it inline with the daemon
 ```
+
+| URL                         | Routed to                            |
+| --------------------------- | ------------------------------------ |
+| `http://overcast.local`     | Emulator API (port 4566)             |
+| `http://overcast-app.local` | Web console (port 4567)              |
+| `http://api.myapp.local`    | Emulator (API Gateway custom domain) |
+
+> [!NOTE]
+> Port 80 is often held by a local web server, or needs elevated privileges. If
+> the bind fails, `bridge` logs a warning with platform-specific instructions and
+> carries on — mDNS still works, you just need the port in the URL
+> (`http://overcast.local:4566`). `--http-port 0` skips the proxy entirely.
+
+#### Platform setup for mDNS and port 80
+
+| Platform | mDNS needs | Binding port 80 |
+| --- | --- | --- |
+| macOS | Nothing — built-in `dns-sd` | `sudo overcast bridge`, or `--http-port 8080` |
+| Linux | avahi (`apt install avahi-daemon avahi-utils`, `dnf install avahi avahi-tools`) | `sudo setcap cap_net_bind_service+ep $(which overcast)`, then run as a normal user |
+| Windows | The DNS-SD service, built into Windows 10 1803+ and Server 2019+ (`Start-Service "DNS Client"`) | A one-off URL reservation in an elevated shell: `netsh http add urlacl url=http://+:80/ user=%USERNAME%` |
 
 ### `overcast https enable|disable|status`
 
