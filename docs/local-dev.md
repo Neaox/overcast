@@ -33,7 +33,7 @@ needs no tags, no flags, and no Docker file-sharing configuration, and it works
 with compiled runtimes and bundlers that hot reload cannot help:
 
 ```bash
-AWS_ENDPOINT_URL=http://localhost:2456 cdk watch
+AWS_ENDPOINT_URL=http://localhost:4566 cdk watch
 ```
 
 Reach for a bind mount when the redeploy cycle itself is the cost you want gone.
@@ -73,7 +73,7 @@ aws --endpoint-url http://localhost:4566 lambda create-function \
 ```
 
 Full detail, including CDK tagging and the TypeScript caveats, is in
-[lambda.md § Hot Reload](./services/lambda.md#hot-reload).
+[Lambda examples § Hot reload](./services/lambda/examples.md#hot-reload).
 
 ## ECS
 
@@ -97,7 +97,7 @@ deliberately left open.
 
 With exactly one redirectable volume you can drop the suffix and use the bare
 `overcast:hot-reload-path` — the same key Lambda takes. See
-[ecs.md § Hot reload](./services/ecs.md#hot-reload-editing-local-source-inside-a-task).
+[ECS examples § Hot reload](./services/ecs/examples.md#hot-reload).
 
 ## Worked example: Laravel on Fargate
 
@@ -185,7 +185,7 @@ pick up code changes at all — use `queue:listen` locally.
 carries an explicit `hostPort`, and Fargate mappings usually carry only
 `containerPort`. Front the service with `ApplicationLoadBalancedFargateService`
 and use the stack's `ServiceURL` output, which resolves to Overcast and forwards
-to the task — see [ecs.md § Load balancers](./services/ecs.md#load-balancers) —
+to the task — see [ECS examples § Load balancers](./services/ecs/examples.md#load-balancers) —
 or add a `hostPort` under the same local guard as the volume.
 
 ## When it does not work

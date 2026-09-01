@@ -216,22 +216,22 @@ as `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, built from
 `AWS::AccountId` and `AWS::Region` rather than read back from the repository.
 Overcast recognises that address as its own and pulls from the registry it
 serves, so the task or function runs the image the deploy published. See
-[ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
+[ECR](./services/ecr.md).
 
 Before building anything, cdk-assets asks ECR whether the asset's tag is
 already published and skips the push if it is, so that answer has to be right
 or the deploy publishes nothing and fails at pull time instead. Overcast
 answers it from the registry rather than from memory of an earlier run — see
-[ECR § Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published).
+[ECR § Asking whether an image is published](./services/ecr/limitations.md#asking-whether-an-image-is-published).
 The registry's storage is a named Docker volume, so a restarted Overcast still
 has the assets the last deploy pushed and the next one skips rebuilding them —
-see [ECR § Persistence](./services/ecr.md#persistence). Two cases still re-push:
+see [ECR § Persistence](./services/ecr/limitations.md#persistence). Two cases still re-push:
 a registry that fell back to an ephemeral port, and one started with
 `OVERCAST_ECR_REGISTRY_PERSIST=false`. That is a rebuild of a few seconds, not a
 failure.
 
 The registry publishes on a fixed port (`4510` by default, see
-[ECR § Repository URI](./services/ecr.md#repository-uri)) reachable at
+[ECR § The repository URI](./services/ecr/limitations.md#the-repository-uri)) reachable at
 `localhost` from the Docker daemon's own vantage — which is the vantage that
 matters, because `docker push` and every image pull are performed by the
 daemon, not by the client that asked. `repositoryUri` names `localhost` even

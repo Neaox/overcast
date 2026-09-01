@@ -164,7 +164,7 @@ emulated ECR are in a named Docker volume. Both are reclaimed by deleting them, 
 changing `OVERCAST_STATE`. The ECR one is the case worth knowing: images survive a restart
 on any backend, including `memory`, because the first read of a repository reconciles it
 against the registry and rediscovers what is there — so re-creating a repository is enough
-to get its images back. See [ECR § Persistence](./services/ecr.md#persistence).
+to get its images back. See [ECR § Persistence](./services/ecr/limitations.md#persistence).
 
 **If the underlying SQLite file becomes unreadable or corrupt**, `persistent` and `hybrid`
 log a warning and — for `hybrid` only — keep serving reads and writes in a degraded,
