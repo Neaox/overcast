@@ -104,22 +104,22 @@ All 89 listed operations are implemented. Back to [CloudFront](../cloudfront.md)
 
 ### Proxy
 
-| Operation      | Status       | Notes                                                                 | AWS Docs                                                                                 |
-| -------------- | ------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `ProxyRequest` | ✅ Supported | Emulator extension: forwards to configured origins with path matching | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ProxyRequest.html) |
+| Operation      | Status       | Notes                                                                                                                                                                                                                              | AWS Docs                                                                                 |
+| -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ProxyRequest` | ✅ Supported | Emulator extension: path-pattern matching, origin forwarding (dialled locally when Overcast answers for the origin), GET response caching, CloudFront Functions, origin-group failover, geo restriction and custom error responses | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ProxyRequest.html) |
 
 ### Functions
 
-| Operation          | Status       | Notes                                                 | AWS Docs                                                                                     |
-| ------------------ | ------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `CreateFunction`   | ✅ Supported | Stores code + config; Stage=DEVELOPMENT; returns ETag | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_CreateFunction.html)   |
-| `DescribeFunction` | ✅ Supported | Returns FunctionSummary with metadata                 | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DescribeFunction.html) |
-| `GetFunction`      | ✅ Supported | Returns raw function code (base64) with ETag          | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_GetFunction.html)      |
-| `UpdateFunction`   | ✅ Supported | Requires If-Match ETag; bumps version                 | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_UpdateFunction.html)   |
-| `DeleteFunction`   | ✅ Supported | Requires If-Match ETag                                | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DeleteFunction.html)   |
-| `ListFunctions`    | ✅ Supported | Filters by Stage query param; MaxItems pagination     | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListFunctions.html)    |
-| `TestFunction`     | ✅ Supported | Returns mock success result (no JS execution)         | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_TestFunction.html)     |
-| `PublishFunction`  | ✅ Supported | Promotes DEVELOPMENT → LIVE stage                     | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_PublishFunction.html)  |
+| Operation          | Status       | Notes                                                                                                                                         | AWS Docs                                                                                     |
+| ------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CreateFunction`   | ✅ Supported | Stores code + config; Stage=DEVELOPMENT; returns ETag                                                                                         | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_CreateFunction.html)   |
+| `DescribeFunction` | ✅ Supported | Returns FunctionSummary with metadata                                                                                                         | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DescribeFunction.html) |
+| `GetFunction`      | ✅ Supported | Returns raw function code (base64) with ETag                                                                                                  | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_GetFunction.html)      |
+| `UpdateFunction`   | ✅ Supported | Requires If-Match ETag; bumps version                                                                                                         | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_UpdateFunction.html)   |
+| `DeleteFunction`   | ✅ Supported | Requires If-Match ETag                                                                                                                        | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DeleteFunction.html)   |
+| `ListFunctions`    | ✅ Supported | Filters by Stage query param; MaxItems pagination                                                                                             | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_ListFunctions.html)    |
+| `TestFunction`     | ✅ Supported | Returns a fixed success result without running the code; a function attached to a behaviour does execute on requests through the distribution | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_TestFunction.html)     |
+| `PublishFunction`  | ✅ Supported | Promotes DEVELOPMENT → LIVE stage                                                                                                             | [docs](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_PublishFunction.html)  |
 
 ### Keys & Crypto
 

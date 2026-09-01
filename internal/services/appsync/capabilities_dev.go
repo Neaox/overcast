@@ -38,7 +38,7 @@ func init() {
 
 		// Data Sources
 		capabilities.Capability{Service: "appsync", Operation: "CreateDataSource", Category: "Data Sources",
-			Status: capabilities.StatusSupported, Notes: "AMAZON_DYNAMODB, AWS_LAMBDA, HTTP, AMAZON_OPENSEARCH_SERVICE, RELATIONAL_DATABASE, NONE, AMAZON_EVENTBRIDGE types"},
+			Status: capabilities.StatusSupported, Notes: "AMAZON_DYNAMODB, AWS_LAMBDA, HTTP and NONE resolve at execution time; AMAZON_OPENSEARCH_SERVICE, AMAZON_ELASTICSEARCH, RELATIONAL_DATABASE, AMAZON_EVENTBRIDGE and AMAZON_BEDROCK_RUNTIME are accepted and stored only"},
 		capabilities.Capability{Service: "appsync", Operation: "GetDataSource", Category: "Data Sources",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "appsync", Operation: "ListDataSources", Category: "Data Sources",

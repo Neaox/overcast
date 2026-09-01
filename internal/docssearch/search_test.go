@@ -62,12 +62,13 @@ func TestSearch_servicePageOutranksTheOperationManifest(t *testing.T) {
 // the English words inside its CamelCase name, which is what tokenize's
 // identifier splitting exists for.
 //
-// The answer is the service's operations page rather than its landing page:
-// since the per-operation tables moved to docs/services/<key>/operations.md,
-// that page is the only place in the corpus where StartLiveTail is written at
-// all. promoteServiceLandingPages does not fire here, and should not — it
-// reorders a landing page above its own sub-page only when the landing page
-// matched the query too, and "live tail" appears nowhere on it.
+// What is asserted is that the operations page is reachable by those words at
+// all, not that it ranks first: whether the landing page also matches is a
+// property of that page's prose, which is rewritten from time to time, and
+// promoteServiceLandingPages puts the landing above its own sub-page whenever
+// both are in the results. Pinning first place would make this test a fixture
+// check on one paragraph of CloudWatch Logs documentation rather than a check
+// on tokenize.
 func TestSearch_camelCaseOperationWords(t *testing.T) {
 	// Given: the generated docs index includes operation names.
 
@@ -78,9 +79,24 @@ func TestSearch_camelCaseOperationWords(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected search results")
 	}
-	if results[0].Href != "services/cloudwatch-logs/operations.md" {
-		t.Fatalf("expected the CloudWatch Logs operations page first, got %q", results[0].Href)
+	found := false
+	for _, r := range results {
+		if r.Href == "services/cloudwatch-logs/operations.md" {
+			found = true
+			break
+		}
 	}
+	if !found {
+		t.Fatalf("expected the CloudWatch Logs operations page in the results, got %v", hrefs(results))
+	}
+}
+
+func hrefs(results []Result) []string {
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = r.Href
+	}
+	return out
 }
 
 // TestSearch_serviceLandingPageOutranksItsOwnOperationsTable is the guard

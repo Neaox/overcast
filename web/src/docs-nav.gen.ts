@@ -1314,7 +1314,7 @@ export const DOCS_NAV = [
     "path": "docs/services/README.md",
     "href": "services/README.md",
     "title": "Service Reference",
-    "description": "Start here for Overcast service coverage, support tiers, and links to per-service endpoint compatibility tables.",
+    "description": "Index of every AWS service Overcast emulates, grouped by what you are building, with the coverage tiers and status tokens the service pages use.",
     "section": "Services",
     "tags": [
       "coverage",
@@ -1330,18 +1330,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Start Here",
-        "id": "start-here"
+        "text": "Where to start",
+        "id": "where-to-start"
       },
       {
         "depth": 2,
-        "text": "Common Workflows",
-        "id": "common-workflows"
+        "text": "Services",
+        "id": "services"
       },
       {
         "depth": 2,
-        "text": "Support Levels",
-        "id": "support-levels"
+        "text": "Coverage tiers",
+        "id": "coverage-tiers"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
       }
     ]
   },
@@ -1436,7 +1441,7 @@ export const DOCS_NAV = [
     "path": "docs/services/apigateway.md",
     "href": "services/apigateway.md",
     "title": "API Gateway — Amazon API Gateway",
-    "description": "API Gateway (REST v1 and HTTP v2) uses a REST API with path-based routing. REST API v1 is mounted at /restapis, HTTP API v2 at /v2/apis.",
+    "description": "Quick start, invoke URLs for REST v1 and HTTP v2, the integrations and authorizers that execute, and how usage plan throttling and quotas are measured.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -1454,8 +1459,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Known limitations",
-        "id": "known-limitations"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "Invoke URLs",
+        "id": "invoke-urls"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
@@ -1464,8 +1479,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Invoke URLs",
-        "id": "invoke-urls"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -1842,26 +1862,25 @@ export const DOCS_NAV = [
   {
     "path": "docs/services/appsync.md",
     "href": "services/appsync.md",
-    "title": "AppSync — endpoint support",
-    "description": "AppSync uses REST-JSON under the /v1/apis and /v2/apis path prefixes. Overcast implements GraphQL API management, schema upload, API key CRUD, data source CRUD, function CRUD,...",
+    "title": "AppSync — AWS AppSync",
+    "description": "Quick start, the GraphQL and realtime endpoint URLs, the data sources and authorization modes that execute for real, and the ones that are only stored.",
     "section": "Service Reference",
     "tags": [
       "appsync",
       "docs",
-      "endpoint",
-      "services",
-      "support"
+      "graphql",
+      "services"
     ],
     "headings": [
       {
         "depth": 1,
-        "text": "AppSync — endpoint support",
-        "id": "appsync-endpoint-support"
+        "text": "AppSync — AWS AppSync",
+        "id": "appsync-aws-appsync"
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
@@ -1870,8 +1889,73 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
+      },
+      {
+        "depth": 2,
         "text": "Operations",
         "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/appsync/limitations.md",
+    "href": "services/appsync/limitations.md",
+    "title": "AppSync limitations",
+    "description": "Where Overcast's AppSync diverges from AWS: which authorization modes are verified, which data source types execute, and what is stored without behaviour.",
+    "section": "Service Reference",
+    "tags": [
+      "appsync",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "AppSync limitations",
+        "id": "appsync-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Authorization",
+        "id": "authorization"
+      },
+      {
+        "depth": 2,
+        "text": "Data sources",
+        "id": "data-sources"
+      },
+      {
+        "depth": 2,
+        "text": "Stored without behaviour",
+        "id": "stored-without-behaviour"
+      },
+      {
+        "depth": 2,
+        "text": "Evaluation endpoints",
+        "id": "evaluation-endpoints"
+      },
+      {
+        "depth": 2,
+        "text": "Subscriptions",
+        "id": "subscriptions"
       },
       {
         "depth": 2,
@@ -2099,7 +2183,7 @@ export const DOCS_NAV = [
     "path": "docs/services/autoscaling.md",
     "href": "services/autoscaling.md",
     "title": "Auto Scaling — AWS Auto Scaling",
-    "description": "Auto Scaling groups really converge: a reconciler launches and terminates EC2 instances to match desired capacity, runs the lifecycle state machine, and executes scaling policies driven by CloudWatch alarms.",
+    "description": "Quick start, how a group converges on desired capacity, which scaling policies and lifecycle hooks run for real, and the configurations refused with 501.",
     "section": "Service Reference",
     "tags": [
       "auto",
@@ -2117,28 +2201,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Reconciliation",
-        "id": "reconciliation"
-      },
-      {
-        "depth": 2,
-        "text": "Scaling policies",
-        "id": "scaling-policies"
-      },
-      {
-        "depth": 2,
-        "text": "Lifecycle hooks",
-        "id": "lifecycle-hooks"
-      },
-      {
-        "depth": 2,
-        "text": "Not implemented — refused, not ignored",
-        "id": "not-implemented-refused-not-ignored"
+        "text": "Refused, not ignored",
+        "id": "refused-not-ignored"
       },
       {
         "depth": 2,
@@ -2592,7 +2666,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudfront.md",
     "href": "services/cloudfront.md",
     "title": "CloudFront — Amazon CloudFront",
-    "description": "CloudFront uses a REST API with XML request/response bodies. All endpoints use the /2020-05-31 path prefix.",
+    "description": "Quick start, the three ways to reach a distribution, what the origin proxy caches and executes, and the security features that are stored but never enforced.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2608,83 +2682,83 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Distribution operations",
-        "id": "distribution-operations"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Invalidation operations",
-        "id": "invalidation-operations"
+        "text": "Reaching a distribution",
+        "id": "reaching-a-distribution"
       },
       {
         "depth": 2,
-        "text": "Origin Access Control operations",
-        "id": "origin-access-control-operations"
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Origin Access Identity (legacy) operations",
-        "id": "origin-access-identity-legacy-operations"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
-        "text": "Tagging operations",
-        "id": "tagging-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Cache Policy operations",
-        "id": "cache-policy-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Origin Request Policy operations",
-        "id": "origin-request-policy-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Response Headers Policy operations",
-        "id": "response-headers-policy-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Origin Proxy (emulator extension)",
-        "id": "origin-proxy-emulator-extension"
-      },
-      {
-        "depth": 2,
-        "text": "CloudFront Functions operations",
-        "id": "cloudfront-functions-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Key Group \u0026 Public Key operations",
-        "id": "key-group-public-key-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Monitoring \u0026 Realtime operations",
-        "id": "monitoring-realtime-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Field-Level Encryption operations",
-        "id": "field-level-encryption-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Continuous Deployment Policy operations",
-        "id": "continuous-deployment-policy-operations"
-      },
-      {
-        "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
         "text": "Operations",
         "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudfront/limitations.md",
+    "href": "services/cloudfront/limitations.md",
+    "title": "CloudFront limitations",
+    "description": "Where Overcast's CloudFront diverges from AWS: what the origin proxy caches and ignores, which features are stored but never enforced, and how distribution state is scoped.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudfront",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudFront limitations",
+        "id": "cloudfront-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Not enforced",
+        "id": "not-enforced"
+      },
+      {
+        "depth": 2,
+        "text": "Caching",
+        "id": "caching"
+      },
+      {
+        "depth": 2,
+        "text": "Distributions",
+        "id": "distributions"
+      },
+      {
+        "depth": 2,
+        "text": "CloudFront Functions",
+        "id": "cloudfront-functions"
+      },
+      {
+        "depth": 2,
+        "text": "Scope and state",
+        "id": "scope-and-state"
       },
       {
         "depth": 2,
@@ -2782,7 +2856,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudtrail.md",
     "href": "services/cloudtrail.md",
     "title": "CloudTrail — AWS CloudTrail",
-    "description": "Metadata-only CloudTrail implementation for local development and CDK/Terraform compatibility.",
+    "description": "Quick start, the trail metadata and CloudFormation support that unblock a stack, and why nothing is ever audited.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -2798,13 +2872,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "What works",
         "id": "what-works"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -2857,7 +2936,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch-logs.md",
     "href": "services/cloudwatch-logs.md",
     "title": "CloudWatch Logs",
-    "description": "CloudWatch Logs accepts the AWS JSON 1.1 API over the shared root endpoint with X-Amz-Target: Logs_20140328.\u003cOperationName\u003e. It also accepts Smithy RPC v2 CBOR at...",
+    "description": "Quick start, filter patterns and retention enforcement, the input rules applied before anything is written, and the four operations that return 501.",
     "section": "Service Reference",
     "tags": [
       "cloudwatch",
@@ -2870,6 +2949,26 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "CloudWatch Logs",
         "id": "cloudwatch-logs"
+      },
+      {
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Validation",
+        "id": "validation"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
         "depth": 2,
@@ -2948,12 +3047,14 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch.md",
     "href": "services/cloudwatch.md",
     "title": "CloudWatch — Amazon CloudWatch",
-    "description": "Amazon CloudWatch (monitoring and alarms) answers all three protocols its model declares: the Query protocol, the JSON protocol the AWS CLI and SDKs send, and Smithy RPC v2 CBOR.",
+    "description": "Quick start, what the alarm evaluator reads and fires, the one-hour metric window, and the alarm shapes that are created but never evaluated.",
     "section": "Service Reference",
     "tags": [
+      "alarms",
       "amazon",
       "cloudwatch",
       "docs",
+      "metrics",
       "services"
     ],
     "headings": [
@@ -2964,36 +3065,71 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Notes",
-        "id": "notes"
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
         "depth": 2,
-        "text": "Alarm evaluation",
-        "id": "alarm-evaluation"
+        "text": "What works",
+        "id": "what-works"
       },
       {
-        "depth": 3,
-        "text": "What is evaluated",
-        "id": "what-is-evaluated"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
       },
       {
-        "depth": 3,
-        "text": "Optional parameters and their defaults",
-        "id": "optional-parameters-and-their-defaults"
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
-        "depth": 3,
-        "text": "What is created but not evaluated",
-        "id": "what-is-created-but-not-evaluated"
+        "depth": 2,
+        "text": "Operations",
+        "id": "operations"
       },
       {
-        "depth": 3,
-        "text": "What is refused",
-        "id": "what-is-refused"
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/cloudwatch/limitations.md",
+    "href": "services/cloudwatch/limitations.md",
+    "title": "CloudWatch limitations",
+    "description": "Which alarm configurations Overcast evaluates, which it accepts without evaluating, which it refuses, and the defaults PutMetricAlarm applies.",
+    "section": "Service Reference",
+    "tags": [
+      "cloudwatch",
+      "docs",
+      "limitations",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "CloudWatch limitations",
+        "id": "cloudwatch-limitations"
       },
       {
-        "depth": 3,
+        "depth": 2,
+        "text": "Created, but not evaluated",
+        "id": "created-but-not-evaluated"
+      },
+      {
+        "depth": 2,
+        "text": "Refused",
+        "id": "refused"
+      },
+      {
+        "depth": 2,
+        "text": "Defaults",
+        "id": "defaults"
+      },
+      {
+        "depth": 2,
         "text": "Deliberate divergences",
         "id": "deliberate-divergences"
       },
@@ -3001,11 +3137,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Tagging",
         "id": "tagging"
-      },
-      {
-        "depth": 2,
-        "text": "Operations",
-        "id": "operations"
       },
       {
         "depth": 2,
@@ -3455,7 +3586,7 @@ export const DOCS_NAV = [
     "path": "docs/services/ec2.md",
     "href": "services/ec2.md",
     "title": "EC2 — Elastic Compute Cloud",
-    "description": "EC2 uses the AWS Query protocol (form-encoded POST, XML responses). Operations are identified by the Action parameter with API version 2016-11-15.",
+    "description": "Quick start, the VPC behaviour CDK and SDK workflows depend on, and where the emulation stops: overlapping-CIDR strategies, strict filter matching, and what stays metadata.",
     "section": "Service Reference",
     "tags": [
       "cloud",
@@ -3463,7 +3594,8 @@ export const DOCS_NAV = [
       "docs",
       "ec2",
       "elastic",
-      "services"
+      "services",
+      "vpc"
     ],
     "headings": [
       {
@@ -3472,14 +3604,14 @@ export const DOCS_NAV = [
         "id": "ec2-elastic-compute-cloud"
       },
       {
-        "depth": 3,
-        "text": "The default VPC",
-        "id": "the-default-vpc"
+        "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
       },
       {
-        "depth": 3,
-        "text": "Docker network conventions",
-        "id": "docker-network-conventions"
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
       },
       {
         "depth": 2,
@@ -3487,79 +3619,65 @@ export const DOCS_NAV = [
         "id": "differences-from-aws"
       },
       {
-        "depth": 3,
-        "text": "Networking model",
-        "id": "networking-model"
-      },
-      {
-        "depth": 3,
-        "text": "Filters",
-        "id": "filters"
-      },
-      {
-        "depth": 3,
-        "text": "Security groups",
-        "id": "security-groups"
-      },
-      {
-        "depth": 3,
-        "text": "Instances",
-        "id": "instances"
-      },
-      {
-        "depth": 3,
-        "text": "Lambda VPC integration",
-        "id": "lambda-vpc-integration"
-      },
-      {
-        "depth": 3,
-        "text": "General",
-        "id": "general"
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
-        "text": "Advanced: VPC networking strategies",
-        "id": "advanced-vpc-networking-strategies"
+        "text": "Operations",
+        "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/ec2/limitations.md",
+    "href": "services/ec2/limitations.md",
+    "title": "EC2 / VPC limitations",
+    "description": "How Overcast maps VPCs onto Docker networks, what the OVERCAST_EC2_VPC_STRATEGY values do about overlapping CIDRs, and the exact filter rules Describe* operations apply.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "ec2",
+      "limitations",
+      "services",
+      "vpc"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "EC2 / VPC limitations",
+        "id": "ec2-vpc-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "The Docker backing",
+        "id": "the-docker-backing"
+      },
+      {
+        "depth": 2,
+        "text": "What the metadata does not do",
+        "id": "what-the-metadata-does-not-do"
+      },
+      {
+        "depth": 2,
+        "text": "VPC networking strategies",
+        "id": "vpc-networking-strategies"
       },
       {
         "depth": 3,
-        "text": "The problem",
-        "id": "the-problem"
+        "text": "Choosing one",
+        "id": "choosing-one"
       },
       {
         "depth": 3,
-        "text": "Strategies",
-        "id": "strategies"
-      },
-      {
-        "depth": 3,
-        "text": "shared` — the default",
-        "id": "shared-the-default"
-      },
-      {
-        "depth": 3,
-        "text": "strict",
-        "id": "strict"
-      },
-      {
-        "depth": 3,
-        "text": "remapped",
-        "id": "remapped"
-      },
-      {
-        "depth": 3,
-        "text": "netns` (planned, not implemented)",
-        "id": "netns-planned-not-implemented"
-      },
-      {
-        "depth": 3,
-        "text": "Picking a strategy",
-        "id": "picking-a-strategy"
-      },
-      {
-        "depth": 3,
-        "text": "Why `shared` is the default",
-        "id": "why-shared-is-the-default"
+        "text": "Edge behaviour under `shared",
+        "id": "edge-behaviour-under-shared"
       },
       {
         "depth": 3,
@@ -3568,8 +3686,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Operations",
-        "id": "operations"
+        "text": "Filters",
+        "id": "filters"
       },
       {
         "depth": 2,
@@ -4450,7 +4568,7 @@ export const DOCS_NAV = [
     "path": "docs/services/elb.md",
     "href": "services/elb.md",
     "title": "ELBv2 — Elastic Load Balancing v2 (ALB/NLB)",
-    "description": "ELBv2 is served as an AWS Query API (Action=..., Version=2015-12-01). A load balancer forwards requests arriving on its DNS name to the targets registered behind it.",
+    "description": "Quick start, how to reach a load balancer without DNS, what actually forwards to a target, and the listener features that are stored or refused.",
     "section": "Service Reference",
     "tags": [
       "alb",
@@ -4471,8 +4589,23 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
+        "text": "What works",
+        "id": "what-works"
+      },
+      {
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
@@ -6276,10 +6409,11 @@ export const DOCS_NAV = [
     "path": "docs/services/route53.md",
     "href": "services/route53.md",
     "title": "Route 53 — Amazon Route 53",
-    "description": "Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers zone queries — health check probes are still never sent.",
+    "description": "Quick start, the record types the built-in resolver answers, and the routing, health-check and VPC-scoping behaviour that is stored but never acted on.",
     "section": "Service Reference",
     "tags": [
       "amazon",
+      "dns",
       "docs",
       "route",
       "route53",
@@ -6293,23 +6427,83 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Quick start",
+        "id": "quick-start"
+      },
+      {
+        "depth": 2,
         "text": "DNS serving",
         "id": "dns-serving"
       },
       {
         "depth": 2,
-        "text": "Behavior Notes",
-        "id": "behavior-notes"
+        "text": "What works",
+        "id": "what-works"
       },
       {
-        "depth": 3,
-        "text": "Known divergences",
-        "id": "known-divergences"
+        "depth": 2,
+        "text": "Differences from AWS",
+        "id": "differences-from-aws"
+      },
+      {
+        "depth": 2,
+        "text": "Gotchas",
+        "id": "gotchas"
       },
       {
         "depth": 2,
         "text": "Operations",
         "id": "operations"
+      },
+      {
+        "depth": 2,
+        "text": "Related",
+        "id": "related"
+      }
+    ]
+  },
+  {
+    "path": "docs/services/route53/limitations.md",
+    "href": "services/route53/limitations.md",
+    "title": "Route 53 limitations",
+    "description": "Where Overcast's Route 53 diverges from AWS: unevaluated routing policies, unprobed health checks, private zones without VPC scoping, and the resolver's edge cases.",
+    "section": "Service Reference",
+    "tags": [
+      "docs",
+      "limitations",
+      "route53",
+      "services"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Route 53 limitations",
+        "id": "route-53-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "Not evaluated",
+        "id": "not-evaluated"
+      },
+      {
+        "depth": 2,
+        "text": "Private zones and VPCs",
+        "id": "private-zones-and-vpcs"
+      },
+      {
+        "depth": 2,
+        "text": "Change propagation",
+        "id": "change-propagation"
+      },
+      {
+        "depth": 2,
+        "text": "Resolver edge cases",
+        "id": "resolver-edge-cases"
+      },
+      {
+        "depth": 2,
+        "text": "Error messages",
+        "id": "error-messages"
       },
       {
         "depth": 2,

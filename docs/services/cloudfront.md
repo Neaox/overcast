@@ -1,6 +1,6 @@
 ---
 title: "CloudFront — Amazon CloudFront"
-description: "CloudFront uses a REST API with XML request/response bodies. All endpoints use the /2020-05-31 path prefix."
+description: "Quick start, the three ways to reach a distribution, what the origin proxy caches and executes, and the security features that are stored but never enforced."
 section: "Service Reference"
 tags:
   - amazon
@@ -11,189 +11,89 @@ tags:
 
 # CloudFront — Amazon CloudFront
 
-CloudFront uses a REST API with XML request/response bodies.
-All endpoints use the `/2020-05-31` path prefix.
+A distribution is not metadata alone: a request through one is matched against
+the cache behaviours, proxied to the origin, cached, and passed through any
+CloudFront Function attached to it.
 
----
+**Status:** ⚠️ Partial
 
-## Distribution operations
+## Quick start
 
-| Operation                  | Status | Notes                                                             |
-| -------------------------- | ------ | ----------------------------------------------------------------- |
-| CreateDistribution         | ✅     | CallerReference idempotency; Status always "Deployed"             |
-| GetDistribution            | ✅     | Returns ETag header                                               |
-| GetDistributionConfig      | ✅     | Returns DistributionConfig portion + ETag                         |
-| UpdateDistribution         | ✅     | Requires If-Match ETag; bumps version                             |
-| DeleteDistribution         | ✅     | Requires If-Match + Enabled=false; cascade TODO                   |
-| ListDistributions          | ✅     | Marker/MaxItems pagination via serviceutil.Paginate               |
-| CreateDistributionWithTags | ✅     | Creates distribution + tags atomically; `_custom_id_` tag support |
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+aws s3 mb s3://site && echo 'hello from the edge' > index.html
+aws s3 cp index.html s3://site/
 
-## Invalidation operations
+ID=$(aws cloudfront create-distribution --distribution-config '{
+  "CallerReference":"demo","Comment":"","Enabled":true,
+  "DefaultRootObject":"index.html",
+  "Origins":{"Quantity":1,"Items":[{"Id":"s3","DomainName":"site.s3.amazonaws.com",
+    "S3OriginConfig":{"OriginAccessIdentity":""}}]},
+  "DefaultCacheBehavior":{"TargetOriginId":"s3","ViewerProtocolPolicy":"allow-all"}
+}' --query Distribution.Id --output text)
 
-| Operation          | Status | Notes                                                   |
-| ------------------ | ------ | ------------------------------------------------------- |
-| CreateInvalidation | ✅     | Supports path and tag (#tag) invalidations; Status instantly "Completed" |
-| GetInvalidation    | ✅     | Returns invalidation by distribution + invalidation ID  |
-| ListInvalidations  | ✅     | Marker/MaxItems pagination                              |
+curl "http://localhost:4566/_overcast/cloudfront/distributions/$ID/"
+```
 
-## Origin Access Control operations
+An origin domain Overcast already answers for — `{bucket}.s3.…`, an API Gateway
+or Lambda function URL, any subdomain of the host you reached Overcast on — is
+dialled locally rather than out to AWS. Everything else is fetched for real.
 
-| Operation                 | Status | Notes                                 |
-| ------------------------- | ------ | ------------------------------------- |
-| CreateOriginAccessControl | ✅     | Generates ID, returns ETag            |
-| GetOriginAccessControl    | ✅     | Returns OAC by ID with ETag           |
-| UpdateOriginAccessControl | ✅     | Requires If-Match ETag; bumps version |
-| DeleteOriginAccessControl | ✅     | Requires If-Match ETag                |
-| ListOriginAccessControls  | ✅     | Marker/MaxItems pagination            |
+## Reaching a distribution
 
-## Origin Access Identity (legacy) operations
+| Form | URL |
+| --- | --- |
+| Path-style | `http://localhost:4566/_overcast/cloudfront/distributions/{ID}/{path}` |
+| Host header | `curl -H "Host: {DomainName}" http://localhost:4566/{path}` |
+| Resolvable name | `http://{DomainName}/{path}`, with `OVERCAST_HOSTNAME` set |
 
-| Operation                               | Status | Notes                                                 |
-| --------------------------------------- | ------ | ----------------------------------------------------- |
-| CreateCloudFrontOriginAccessIdentity    | ✅     | CallerReference required; generates S3CanonicalUserId |
-| GetCloudFrontOriginAccessIdentity       | ✅     | Returns OAI by ID with ETag                           |
-| GetCloudFrontOriginAccessIdentityConfig | ✅     | Returns config portion + ETag                         |
-| UpdateCloudFrontOriginAccessIdentity    | ✅     | Requires If-Match ETag; bumps version                 |
-| DeleteCloudFrontOriginAccessIdentity    | ✅     | Requires If-Match ETag                                |
-| ListCloudFrontOriginAccessIdentities    | ✅     | Marker/MaxItems pagination                            |
+`DomainName` is minted on the host you reached Overcast on —
+`{id}.cloudfront.localhost.overcast.sh:4566`, not `cloudfront.net` — so the
+name a stack output hands you is one you can dial. Set
+`OVERCAST_HOSTNAME=localhost.overcast.sh` to make it resolve on every OS; see
+[networking](../networking.md).
 
-## Tagging operations
+## What works
 
-| Operation           | Status | Notes                         |
-| ------------------- | ------ | ----------------------------- |
-| ListTagsForResource | ✅     | Returns tags by resource ARN  |
-| TagResource         | ✅     | Merges tags into existing set |
-| UntagResource       | ✅     | Removes specified tag keys    |
+| Area | Behaviour |
+| --- | --- |
+| Distributions, policies, keys | Full CRUD with `If-Match` ETags and `CallerReference` idempotency |
+| Origin routing | Cache-behaviour path patterns, `DefaultRootObject`, origin groups with failover, per-origin custom headers |
+| Caching | In-process response cache on `GET`, purged by `CreateInvalidation` |
+| Invalidations | Path and cache-tag (`#tag`) invalidations; `Status` is `Completed` immediately |
+| CloudFront Functions | Viewer-request and viewer-response functions execute for real, including URI rewrites and short-circuit responses |
+| Continuous deployment | `SingleWeight` and `SingleHeader` policies actually split traffic to the staging distribution |
+| Errors and geo | `CustomErrorResponses`, `ViewerProtocolPolicy`, and geo restriction on `CloudFront-Viewer-Country` |
+| Access logs | Written to the configured S3 bucket in W3C format when `Logging.Enabled` |
 
-## Cache Policy operations
+## Differences from AWS
 
-| Operation            | Status | Notes                                 |
-| -------------------- | ------ | ------------------------------------- |
-| CreateCachePolicy    | ✅     | Generates ID, returns ETag            |
-| GetCachePolicy       | ✅     | Returns policy by ID with ETag        |
-| GetCachePolicyConfig | ✅     | Returns config portion + ETag         |
-| UpdateCachePolicy    | ✅     | Requires If-Match ETag; bumps version |
-| DeleteCachePolicy    | ✅     | Requires If-Match ETag                |
-| ListCachePolicies    | ✅     | Marker/MaxItems pagination            |
+| Area | Overcast |
+| --- | --- |
+| Deployment | `Status` is `Deployed` on create — no propagation delay |
+| ETags | A quoted version counter (`"1"`, `"2"`), not a content hash |
+| Cache key | Path and query string only — headers, cookies and `Vary` are ignored |
+| Cache TTL | The behaviour's cache policy `DefaultTTL`, else 24 hours; origin `Cache-Control`, `MinTTL` and `MaxTTL` are ignored |
+| Signed URLs and cookies | Not verified; `ActiveTrustedKeyGroups` always reports disabled |
+| Origin access (OAC / OAI) | Stored, never enforced — origin requests are not signed |
+| Response headers and origin request policies | Stored and returned; the proxy applies neither |
+| Monitoring, real-time logs, field-level encryption | Metadata only |
 
-## Origin Request Policy operations
+The full list, with what each unenforced feature means for a stack that relies
+on it, is in [CloudFront limitations](cloudfront/limitations.md).
 
-| Operation                    | Status | Notes                                 |
-| ---------------------------- | ------ | ------------------------------------- |
-| CreateOriginRequestPolicy    | ✅     | Generates ID, returns ETag            |
-| GetOriginRequestPolicy       | ✅     | Returns policy by ID with ETag        |
-| GetOriginRequestPolicyConfig | ✅     | Returns config portion + ETag         |
-| UpdateOriginRequestPolicy    | ✅     | Requires If-Match ETag; bumps version |
-| DeleteOriginRequestPolicy    | ✅     | Requires If-Match ETag                |
-| ListOriginRequestPolicies    | ✅     | Marker/MaxItems pagination            |
+## Gotchas
 
-## Response Headers Policy operations
+> [!CAUTION]
+> A distribution is not an access boundary here. Trusted key groups, signed
+> cookies and origin access control are stored and none are enforced, so an
+> "OAC-protected" bucket stays directly readable and a signed URL is never
+> checked. Do not use Overcast to test whether private content is private.
 
-| Operation                      | Status | Notes                                 |
-| ------------------------------ | ------ | ------------------------------------- |
-| CreateResponseHeadersPolicy    | ✅     | Generates ID, returns ETag            |
-| GetResponseHeadersPolicy       | ✅     | Returns policy by ID with ETag        |
-| GetResponseHeadersPolicyConfig | ✅     | Returns config portion + ETag         |
-| UpdateResponseHeadersPolicy    | ✅     | Requires If-Match ETag; bumps version |
-| DeleteResponseHeadersPolicy    | ✅     | Requires If-Match ETag                |
-| ListResponseHeadersPolicies    | ✅     | Marker/MaxItems pagination            |
-
-## Origin Proxy (emulator extension)
-
-| Operation    | Status | Notes                                                                         |
-| ------------ | ------ | ----------------------------------------------------------------------------- |
-| ProxyRequest | ✅     | `/_overcast/cloudfront/distributions/{distId}/*` — forwards to configured origins with path matching |
-
-The origin proxy is an emulator-only extension (not part of the real CloudFront API). It forwards HTTP requests through a distribution's configured origins:
-
-- S3 origins are rewritten to the local emulator endpoint
-- Custom origins are forwarded to their configured domain
-- DefaultRootObject is applied for `/` requests
-- CacheBehavior path patterns are matched to select the correct origin
-- CloudFront response headers (X-Amz-Cf-Pop, X-Amz-Cf-Id, Via, X-Cache) are added
-
-## CloudFront Functions operations
-
-| Operation        | Status | Notes                                                 |
-| ---------------- | ------ | ----------------------------------------------------- |
-| CreateFunction   | ✅     | Stores code + config; Stage=DEVELOPMENT; returns ETag |
-| DescribeFunction | ✅     | Returns FunctionSummary with metadata                 |
-| GetFunction      | ✅     | Returns raw function code (base64) with ETag          |
-| UpdateFunction   | ✅     | Requires If-Match ETag; bumps version                 |
-| DeleteFunction   | ✅     | Requires If-Match ETag                                |
-| ListFunctions    | ✅     | Filters by Stage query param; MaxItems pagination     |
-| TestFunction     | ✅     | Returns mock success result (no JS execution)         |
-| PublishFunction  | ✅     | Promotes DEVELOPMENT → LIVE stage                     |
-
-## Key Group & Public Key operations
-
-| Operation          | Status | Notes                                      |
-| ------------------ | ------ | ------------------------------------------ |
-| CreateKeyGroup     | ✅     | Generates ID, returns ETag                 |
-| GetKeyGroup        | ✅     | Returns key group by ID with ETag          |
-| GetKeyGroupConfig  | ✅     | Returns config portion + ETag              |
-| UpdateKeyGroup     | ✅     | Requires If-Match ETag; bumps version      |
-| DeleteKeyGroup     | ✅     | Requires If-Match ETag                     |
-| ListKeyGroups      | ✅     | MaxItems pagination                        |
-| CreatePublicKey    | ✅     | CallerReference dedup; generates ID + ETag |
-| GetPublicKey       | ✅     | Returns public key by ID with ETag         |
-| GetPublicKeyConfig | ✅     | Returns config portion + ETag              |
-| UpdatePublicKey    | ✅     | Requires If-Match ETag; bumps version      |
-| DeletePublicKey    | ✅     | Requires If-Match ETag                     |
-| ListPublicKeys     | ✅     | MaxItems pagination                        |
-
-## Monitoring & Realtime operations
-
-| Operation                    | Status | Notes                                            |
-| ---------------------------- | ------ | ------------------------------------------------ |
-| CreateMonitoringSubscription | ✅     | Per-distribution; requires existing distribution |
-| GetMonitoringSubscription    | ✅     | Returns subscription by distribution ID          |
-| DeleteMonitoringSubscription | ✅     | Removes subscription for distribution            |
-| CreateRealtimeLogConfig      | ✅     | Name-based; generates ARN; duplicate name check  |
-| GetRealtimeLogConfig         | ✅     | Lookup by Name or ARN in request body            |
-| UpdateRealtimeLogConfig      | ✅     | Updates by Name in request body                  |
-| DeleteRealtimeLogConfig      | ✅     | Deletes by Name or ARN in request body           |
-| ListRealtimeLogConfigs       | ✅     | MaxItems pagination                              |
-
-## Field-Level Encryption operations
-
-| Operation                            | Status | Notes                                  |
-| ------------------------------------ | ------ | -------------------------------------- |
-| CreateFieldLevelEncryptionConfig     | ✅     | CallerReference required; generates ID |
-| GetFieldLevelEncryption              | ✅     | Returns FLE config by ID with ETag     |
-| GetFieldLevelEncryptionConfig        | ✅     | Returns config portion + ETag          |
-| UpdateFieldLevelEncryptionConfig     | ✅     | Requires If-Match ETag; bumps version  |
-| DeleteFieldLevelEncryption           | ✅     | Requires If-Match ETag                 |
-| ListFieldLevelEncryptionConfigs      | ✅     | MaxItems pagination                    |
-| CreateFieldLevelEncryptionProfile    | ✅     | CallerReference required; generates ID |
-| GetFieldLevelEncryptionProfile       | ✅     | Returns FLE profile by ID with ETag    |
-| GetFieldLevelEncryptionProfileConfig | ✅     | Returns config portion + ETag          |
-| UpdateFieldLevelEncryptionProfile    | ✅     | Requires If-Match ETag; bumps version  |
-| DeleteFieldLevelEncryptionProfile    | ✅     | Requires If-Match ETag                 |
-| ListFieldLevelEncryptionProfiles     | ✅     | MaxItems pagination                    |
-
-## Continuous Deployment Policy operations
-
-| Operation                           | Status | Notes                                 |
-| ----------------------------------- | ------ | ------------------------------------- |
-| CreateContinuousDeploymentPolicy    | ✅     | Generates ID, returns ETag            |
-| GetContinuousDeploymentPolicy       | ✅     | Returns policy by ID with ETag        |
-| GetContinuousDeploymentPolicyConfig | ✅     | Returns config portion + ETag         |
-| UpdateContinuousDeploymentPolicy    | ✅     | Requires If-Match ETag; bumps version |
-| DeleteContinuousDeploymentPolicy    | ✅     | Requires If-Match ETag                |
-| ListContinuousDeploymentPolicies    | ✅     | MaxItems pagination                   |
-
----
-
-## Notes
-
-- Error responses use the XML format matching the real CloudFront API.
-- Distributions set `Status: "Deployed"` immediately — no async provisioning delay.
-- DomainName is synthetic: `{id}.cloudfront.net` (not routable).
-- ETag is a quoted version counter (`"1"`, `"2"`, etc.) — not a hash.
-- CallerReference idempotency: same ref + identical config returns existing distribution.
-- Delete requires `Enabled: false` + matching ETag (`If-Match` header).
-- Tag-based invalidation: paths prefixed with `#` (e.g. `#product:electronics`) invalidate cached objects by cache tag. Tags are parsed from the origin response header specified in `CacheTagConfig.HeaderName` and must be ASCII visible characters (33-126), max 256 chars, no spaces/commas. Path and tag invalidations can be mixed in a single batch.
+> [!WARNING]
+> A CloudFront Function runs whether or not it has been published. The proxy
+> resolves the function by ARN and never checks its stage, so a `DEVELOPMENT`
+> version attached to a behaviour executes on live requests.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -206,6 +106,7 @@ Per-operation status, notes and AWS API links: [CloudFront operations](cloudfron
 
 ## Related
 
+- [CloudFront limitations](cloudfront/limitations.md) — the full divergence list
 - [AWS API reference](https://docs.aws.amazon.com/cloudfront/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
 - [Service names and state overrides](../configuration.md#service-names)

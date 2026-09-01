@@ -1,9 +1,10 @@
 ---
 title: "Route 53 — Amazon Route 53"
-description: "Hosted zones, record sets, tags, and health checks are real metadata with AWS-faithful validation, and Overcast's own DNS resolver actually answers zone queries — health check probes are still never sent."
+description: "Quick start, the record types the built-in resolver answers, and the routing, health-check and VPC-scoping behaviour that is stored but never acted on."
 section: "Service Reference"
 tags:
   - amazon
+  - dns
   - docs
   - route
   - route53
@@ -12,123 +13,91 @@ tags:
 
 # Route 53 — Amazon Route 53
 
-Route 53 is served as a REST-XML API under the `/2013-04-01/` path. Hosted
-zones, resource record sets, tags, and health checks are real metadata with
-AWS-faithful validation rules, error codes, defaults, auto-created child
-records, and pagination. Health check probes are still never sent — see
-"Known divergences" below — but DNS queries **are** answered: Overcast's own
-internal resolver (`internal/dns`, `OVERCAST_DNS`/`OVERCAST_DNS_PORT`) is
-authoritative for any hosted zone in the store, in addition to the
-split-horizon emulator hostnames it already served.
+Hosted zone records really answer queries: Overcast's own resolver is
+authoritative for every zone in the store. Routing policies are stored but not
+evaluated, and health checks never probe anything.
+
+**Status:** ⚠️ Partial
+
+## Quick start
+
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+ZONE=$(aws route53 create-hosted-zone --name example.internal --caller-reference "$RANDOM" \
+  --query 'HostedZone.Id' --output text)
+
+aws route53 change-resource-record-sets --hosted-zone-id "$ZONE" --change-batch '{
+  "Changes":[{"Action":"CREATE","ResourceRecordSet":{
+    "Name":"api.example.internal","Type":"A","TTL":60,
+    "ResourceRecords":[{"Value":"10.0.0.9"}]}}]}'
+
+dig +short @localhost api.example.internal
+```
+
+The resolver runs on port 53 by default (`OVERCAST_DNS`, `OVERCAST_DNS_PORT`).
+Failing to bind it is not fatal, so on a machine where something already owns
+port 53 the API still works and only DNS answers are missing.
 
 ## DNS serving
 
-- **What's served.** For a query whose name falls under a hosted zone (the
-  apex or any subdomain), the resolver answers from that zone's record sets:
-  `A`, `AAAA`, `CNAME` (chased across zones, up to 8 hops, with a cycle
-  terminating the chain rather than looping), `MX`, `TXT`, `NS`, and `SOA` —
-  including the apex `NS`/`SOA` records every zone gets on creation. One-label
-  wildcard records (`*.example.com`) are matched exactly as real AWS scopes
-  them: a wildcard replaces exactly one label, so `*.example.com` answers
-  `foo.example.com` but not `foo.bar.example.com`. TTLs come from the record's
-  own stored TTL, not the split-horizon default. `ALIAS` records resolve to
-  Overcast's own address — the one the calling container or host can actually
-  reach — since that is the only correct answer for an alias pointed at an
-  emulated ELB/CloudFront/S3-website/API Gateway hostname in this
-  environment; an `AAAA`-typed alias has no address to give (Overcast has no
-  IPv6 address) and answers NODATA. A name that exists in the zone but has no
-  record of the queried type is NODATA; a name absent from the zone entirely
-  is NXDOMAIN; both carry the zone's SOA in the authority section for
-  negative caching. `NAPTR`/`PTR`/`SRV`/`SPF`/`CAA`/`DS`/`TLSA`/`SSHFP`/`SVCB`/`HTTPS`
-  records can be stored via `ChangeResourceRecordSets` but are not served —
-  a query for one of them gets NODATA/NXDOMAIN like any other type absent at
-  that name.
-- **How a Route 53 zone interacts with the container-name resolver.** These
-  are two independent authorities the same resolver consults, checked in
-  order: a name some hosted zone in the store claims is answered from that
-  zone first and always authoritatively (never forwarded, even if it also
-  happens to fall under one of Overcast's own split-horizon domains); only a
-  name no hosted zone claims falls through to the split-horizon
-  zone/forwarding behaviour `internal/dns`'s package doc describes. A
-  container-endpoint name (an RDS endpoint, an ElastiCache node) is still
-  resolved by Docker's embedded resolver from the container's network
-  aliases before either authority is reached, so it is unaffected by this
-  feature either way.
-- **Private zones and VPC association.** Real Route 53 only serves a private
-  hosted zone's records to a resolver inside one of the zone's associated
-  VPCs. Overcast does not model "inside a VPC" as a property of a DNS query —
-  `AssociateVPCWithHostedZone`/`DisassociateVPCFromHostedZone` are not
-  implemented at all (see below) — so, kept deliberately honest and simple,
-  every container Overcast starts is answered from every private zone the
-  store holds, with no VPC filtering. When a public and a private zone share
-  the same name, the private zone wins. This can only make more names resolve
-  in the emulator than would on real AWS, never fewer, for a container
-  correctly associated with the zone's VPC.
-- **Public zones and host resolution.** The emulator's DNS resolver is
-  consulted only by the containers Overcast starts (pointed at it via
-  Docker's embedded resolver) and by a host that has explicitly pointed its
-  own resolution at Overcast. Overcast never attempts to become an
-  internet-reachable authority for a public zone's real domain name — there
-  is no NS delegation, no port 53 published to the internet, nothing that
-  would let it answer for anyone but its own containers and an opted-in host.
+A query whose name falls under a hosted zone — the apex or any subdomain — is
+answered from that zone's record sets.
 
-## Behavior Notes
+| Aspect | Behaviour |
+| --- | --- |
+| Types served | `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SOA`, including the apex `NS`/`SOA` every zone gets on creation |
+| `CNAME` | Chased across zones, up to 8 hops; a cycle terminates the chain rather than looping |
+| Wildcards | One label, as AWS scopes them: `*.example.com` answers `foo.example.com` but not `foo.bar.example.com` |
+| TTL | The record's own stored TTL, not the split-horizon default |
+| `ALIAS` | Resolves to Overcast's own address — the one the calling container or host can reach — since that is the only correct answer for an alias pointed at an emulated ELB, CloudFront, S3 website or API Gateway hostname |
+| Negative answers | A name in the zone with no record of that type is NODATA; a name absent from the zone is NXDOMAIN. Both carry the zone's SOA for negative caching |
 
-- Route 53 is treated as a global service in this emulator.
-- Hosted zone IDs are stored and returned in AWS-style path format, for example
-  `/hostedzone/Z123...`; change IDs likewise (`/change/C123...`).
-- Errors use Route 53's `ErrorResponse` envelope (`Type`/`Code`/`Message`),
-  not S3's bare `<Error>` shape.
-- `CreateHostedZone` requires a `CallerReference` and rejects a reused one with
-  `HostedZoneAlreadyExists` (HTTP 409). Each new zone gets the default apex
-  `NS` and `SOA` record sets and a four-server delegation set, derived
-  deterministically from the zone ID. The new zone's URL is returned in the
-  `Location` header, as on real AWS.
-- Domain and record names are canonicalised to lowercase with a trailing dot.
-- `ChangeResourceRecordSets` validates the whole batch atomically before
-  applying anything: `InvalidChangeBatch` for creating an existing record,
-  deleting a missing record or one whose provided values don't match, records
-  outside the zone, a CNAME at the zone apex, and deleting the default apex
-  NS/SOA records. Weighted/latency/failover/geolocation routing metadata
-  (`SetIdentifier`, `Weight`, `Region`, `Failover`, `GeoLocation`,
-  `MultiValueAnswer`, `HealthCheckId`) is stored and returned, but routing is
-  not evaluated — including at DNS-answer time: several record sets sharing a
-  name and type under different `SetIdentifier`s (weighted, multivalue,
-  failover) are all merged into the same answer rather than one being chosen.
-- `ListResourceRecordSets` returns records in DNS order (names compared with
-  labels reversed) and paginates with `name`/`type`/`identifier`/`maxitems`.
-- `DeleteHostedZone` returns `HostedZoneNotEmpty` while non-default records
-  exist; a successful delete cascades the default records and the zone's tags.
-- Health checks are metadata-only: configuration is stored with AWS defaults
-  (`RequestInterval` 30, `FailureThreshold` 3, port 80/443 by type) and
-  versioned by `UpdateHealthCheck`, but no endpoint is ever probed.
+Types that can be stored but are not served — a query gets NODATA or NXDOMAIN
+like any absent type: `NAPTR`, `PTR`, `SRV`, `SPF`, `CAA`, `DS`, `TLSA`,
+`SSHFP`, `SVCB`, `HTTPS`. An `AAAA`-typed alias answers NODATA, because
+Overcast has no IPv6 address to give.
 
-### Known divergences
+A hosted zone always wins over Overcast's split-horizon names: a name some zone
+claims is answered from that zone, authoritatively, and never forwarded. Only a
+name no zone claims falls through to the split-horizon and forwarding
+behaviour. A container endpoint — an RDS endpoint, an ElastiCache node — is
+resolved by Docker's embedded resolver from the container's network aliases
+before either authority is reached, so it is unaffected either way.
 
-- `ChangeResourceRecordSets` applies synchronously, so change status is
-  `INSYNC` immediately — there is no `PENDING` phase.
-- `GetChange` reports `INSYNC` for unknown change IDs instead of
-  `NoSuchChange`, so CDK/CLI waiters always converge (even across a store
-  reset).
-- Private hosted zones may be created without a VPC (real AWS requires one);
-  the VPC passed to `CreateHostedZone` is stored and returned, but
-  `AssociateVPCWithHostedZone`/`DisassociateVPCFromHostedZone` are not
-  implemented.
-- `InvalidChangeBatch`/`InvalidInput` message texts approximate AWS's wording;
-  codes and HTTP statuses match.
-- DNS serving has no notion of "inside a VPC": a private zone answers for
-  every container Overcast starts rather than only ones associated with the
-  zone's VPC (see "Private zones and VPC association" above).
-- Empty non-terminal names — a label with no records of its own but with
-  records below it (e.g. querying `mid.example.com` when only
-  `leaf.mid.example.com` has data) — are answered NXDOMAIN rather than the
-  strictly correct NODATA, since the resolver does not enumerate implicit
-  non-terminals; this only affects a query for the exact intermediate name,
-  which is rare in practice.
-- No compression is used in DNS answers beyond the question-name pointer the
-  split-horizon fast path already used; a Route 53 answer with many large
-  records could in principle exceed the 512-byte UDP-without-EDNS0 limit and
-  need the TCP retry, which is otherwise unaffected.
+## What works
+
+| Area | Behaviour |
+| --- | --- |
+| Hosted zones | `CreateHostedZone` requires a `CallerReference` and rejects a reused one with `HostedZoneAlreadyExists`. Each zone gets default apex `NS` and `SOA` records and a four-server delegation set derived from the zone ID, and the new zone's URL comes back in `Location` |
+| Record changes | `ChangeResourceRecordSets` validates the whole batch atomically before applying anything — `InvalidChangeBatch` for creating an existing record, deleting a missing one or one whose values do not match, records outside the zone, a CNAME at the apex, and deleting the default apex records |
+| Listing | `ListResourceRecordSets` returns records in DNS order (names compared with labels reversed) and paginates on `name`/`type`/`identifier`/`maxitems` |
+| Deletion | `DeleteHostedZone` returns `HostedZoneNotEmpty` while non-default records exist; a successful delete cascades the default records and the zone's tags |
+| Identifiers | Zone and change IDs are stored and returned in AWS's path format — `/hostedzone/Z123…`, `/change/C123…` |
+| Errors | Route 53's `ErrorResponse` envelope (`Type`/`Code`/`Message`), not S3's bare `<Error>` shape |
+| Health checks | Configuration is stored with AWS's defaults and versioned by `UpdateHealthCheck` |
+
+Route 53 is a global service here, and domain and record names are
+canonicalised to lowercase with a trailing dot.
+
+## Differences from AWS
+
+| Area | Overcast |
+| --- | --- |
+| Routing policies | Weighted, latency, failover, geolocation and multivalue metadata is stored and returned, but never evaluated — several record sets sharing a name and type are merged into one answer rather than one being chosen |
+| Health checks | No endpoint is ever probed. `GetHealthCheckStatus` and `GetHealthCheckLastFailureReason` return `501` |
+| Private zones | Served to every container Overcast starts, with no VPC filtering. `AssociateVPCWithHostedZone`, `DisassociateVPCFromHostedZone` and `ListHostedZonesByVPC` return `501` |
+| Change propagation | `ChangeResourceRecordSets` applies synchronously, so a change is `INSYNC` immediately — there is no `PENDING` phase |
+| Traffic policies | `CreateTrafficPolicy` returns `501` |
+
+The full list is in [Route 53 limitations](route53/limitations.md).
+
+## Gotchas
+
+> [!NOTE]
+> Overcast never becomes an internet-reachable authority for a public zone's
+> real domain. There is no NS delegation and nothing published to the internet —
+> the resolver answers the containers Overcast starts, and a host that has
+> explicitly pointed its own resolution here.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -141,6 +110,7 @@ Per-operation status, notes and AWS API links: [Route 53 operations](route53/ope
 
 ## Related
 
+- [Route 53 limitations](route53/limitations.md) — the full divergence list
+- [Networking and host-based addressing](../networking.md)
 - [AWS API reference](https://docs.aws.amazon.com/Route53/latest/APIReference/Welcome.html)
 - [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

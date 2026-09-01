@@ -1,193 +1,82 @@
 ---
 title: "CloudWatch — Amazon CloudWatch"
-description: "Amazon CloudWatch (monitoring and alarms) answers all three protocols its model declares: the Query protocol, the JSON protocol the AWS CLI and SDKs send, and Smithy RPC v2 CBOR."
+description: "Quick start, what the alarm evaluator reads and fires, the one-hour metric window, and the alarm shapes that are created but never evaluated."
 section: "Service Reference"
 tags:
+  - alarms
   - amazon
   - cloudwatch
   - docs
+  - metrics
   - services
 ---
 
 # CloudWatch — Amazon CloudWatch
 
-Amazon CloudWatch (monitoring and alarms) answers all three wire protocols its pinned model
-declares: the Query protocol — form-encoded POST requests with `Action` and
-`Version=2010-08-01` parameters — the JSON protocol the AWS CLI and the AWS SDKs send, and
-Smithy RPC v2 CBOR, which newer SDK majors negotiate for a service that declares it.
+Alarms are evaluated automatically against published metrics, move through
+`OK`/`ALARM`/`INSUFFICIENT_DATA`, and fire their actions. Metric datapoints are
+kept for about an hour.
 
----
+**Status:** ⚠️ Partial
 
-## Notes
+## Quick start
 
-- Query protocol: `POST / HTTP/1.1` with `Action=<Operation>&Version=2010-08-01` in the form body.
-- JSON protocol: `POST / HTTP/1.1` with `Content-Type: application/x-amz-json-1.0` and
-  `X-Amz-Target: GraniteServiceVersion20100801.<Operation>`. This is what the AWS CLI and the
-  SDKs send.
-- Smithy RPC v2 CBOR: `POST /service/GraniteServiceVersion20100801/operation/<Operation>` with
-  `Content-Type: application/cbor` and `Smithy-Protocol: rpc-v2-cbor`.
-- Every supported operation answers on all three, from one shared implementation per operation
-  — the same call returns the same result whichever protocol an SDK negotiates.
-- Unrecognized Query operations return an XML `501 Not Implemented` error response;
-  unrecognized JSON targets return `400 UnknownOperationException`, as on AWS; and an
-  unimplemented operation addressed over RPC v2 returns `501 Not Implemented` in CBOR.
-- PutMetricData appears in both Alarms and Metrics categories as it supports both use cases.
-- **Metric datapoint retention diverges from real AWS:** datapoints are retained for ~1 hour
-  (all storage backends), enforced by read-time filtering plus a periodic background sweep —
-  real CloudWatch retains metric data for up to 15 months at declining resolution. Overcast
-  only bounds local growth; it is not suitable for historical metric analysis. An alarm whose
-  `Period × EvaluationPeriods` reaches back further than that window sees the missing periods
-  and resolves them through `TreatMissingData`.
+```sh
+export AWS_ENDPOINT_URL=http://localhost:4566
+aws cloudwatch put-metric-data --namespace demo --metric-data 'MetricName=Errors,Value=5'
+aws cloudwatch put-metric-alarm --alarm-name errors --namespace demo \
+  --metric-name Errors --statistic Sum --period 60 --evaluation-periods 1 \
+  --threshold 1 --comparison-operator GreaterThanThreshold
 
-## Alarm evaluation
+aws cloudwatch describe-alarms --alarm-names errors \
+  --query 'MetricAlarms[0].[StateValue,StateReason]'
+```
 
-Alarms are evaluated automatically. A single background loop, driven by the injected clock,
-evaluates each alarm over the last `EvaluationPeriods` **closed** periods, aligned to the epoch
-the way real CloudWatch aligns them — so a datapoint published into the period still
-accumulating is not yet a datapoint to evaluate, and an alarm reacts to a breach within about
-one period.
+The alarm reacts within about one period: evaluation runs over **closed**
+periods, so a datapoint published into the period still accumulating is not yet
+a datapoint to evaluate.
 
-`StateValue` moves between `OK`, `ALARM` and `INSUFFICIENT_DATA` with AWS's `StateReason`
-sentence and `StateReasonData` JSON document. Every transition writes a `StateUpdate` item to
-`DescribeAlarmHistory`, publishes the `CloudWatch Alarm State Change` event to the default
-EventBridge bus (source `aws.cloudwatch`), and fires the actions configured for the state it
-moved into. Actions fire on a **transition only** — a re-evaluation landing on the same state
-fires nothing, exactly as on AWS.
+## What works
 
-### What is evaluated
-
-| Configuration | Behaviour |
+| Area | Behaviour |
 | --- | --- |
-| `Namespace` + `MetricName` + `Dimensions` | Evaluated. An alarm sees only its own dimension set |
-| `Statistic` — `Average`, `Sum`, `SampleCount`, `Minimum`, `Maximum` | Evaluated |
-| `Threshold` with `GreaterThanThreshold`, `GreaterThanOrEqualToThreshold`, `LessThanThreshold`, `LessThanOrEqualToThreshold` | Evaluated |
-| `Period`, `EvaluationPeriods`, `DatapointsToAlarm` | Evaluated, including the "M out of N" rule |
-| `TreatMissingData` — `missing`, `ignore`, `breaching`, `notBreaching` | Evaluated |
-| `AlarmActions` / `OKActions` / `InsufficientDataActions` naming an SNS topic | Delivered through the emulator's own SNS `Publish`, carrying real CloudWatch's notification body |
-| `ActionsEnabled`, `EnableAlarmActions`, `DisableAlarmActions` | Honoured |
-| `Unit` | Selects which datapoints the alarm sees — a metric published under several units evaluates separately per unit |
-| `Tags` | Applied when the alarm is created. Ignored on a `PutMetricAlarm` that updates an existing alarm, as on AWS — use `TagResource`/`UntagResource` |
-| `SetAlarmState` | Forces the state and fires that state's actions |
+| Metrics | `PutMetricData`, `ListMetrics`, `GetMetricStatistics` and `GetMetricData` |
+| Alarm evaluation | A background loop evaluates each alarm over the last `EvaluationPeriods` closed periods, epoch-aligned the way real CloudWatch aligns them |
+| What it reads | Namespace, metric name and dimension set; `Average`, `Sum`, `SampleCount`, `Minimum`, `Maximum`; the four threshold comparisons; `Period`, `EvaluationPeriods` and `DatapointsToAlarm` including the "M out of N" rule; `TreatMissingData`; `Unit` |
+| On transition | AWS's `StateReason` sentence and `StateReasonData` document, a `StateUpdate` item in `DescribeAlarmHistory`, a `CloudWatch Alarm State Change` event on the default EventBridge bus, and the state's actions. Actions fire on a transition only, exactly as on AWS |
+| Actions | An SNS topic ARN is delivered through the emulator's own `Publish`, carrying real CloudWatch's notification body. An Auto Scaling policy ARN executes the policy |
+| Controls | `ActionsEnabled`, `EnableAlarmActions`, `DisableAlarmActions` and `SetAlarmState` |
+| Tagging | Alarms only — `PutMetricAlarm` `Tags` at creation, then `TagResource` / `UntagResource` / `ListTagsForResource` |
+| Protocols | Query, AWS JSON, and Smithy RPC v2 CBOR, from one implementation per operation |
 
-### Optional parameters and their defaults
+## Differences from AWS
 
-`PutMetricAlarm` marks almost everything `Required: No`, but that is not the
-same as "has a default". Three parameters AWS documents a default for, and
-Overcast applies the same one:
-
-| Parameter | Default when omitted |
+| Area | Overcast |
 | --- | --- |
-| `ActionsEnabled` | `true` |
-| `DatapointsToAlarm` | `EvaluationPeriods` — "N out of N" |
-| `TreatMissingData` | `missing` |
+| Metric retention | About one hour, in every storage backend. Real CloudWatch keeps 15 months at declining resolution |
+| Alarm history | The most recent 100 items per alarm. Real CloudWatch keeps 14 days |
+| Metric math, anomaly detection, percentiles | The alarm is **created and says so**, but never evaluated |
+| `PutCompositeAlarm`, `PutAnomalyDetector`, PromQL `EvaluationCriteria` | `501 NotImplemented` |
+| Dashboards, metric streams, Contributor Insights | Not emulated. A tagging call naming one gets `ResourceNotFoundException` |
+| `SetAlarmState` | Held for one full evaluation range, rather than reverting at the next evaluation |
+| Unqualified datapoints | A datapoint published without a unit feeds an alarm that names one |
 
-Five more are optional only because a PromQL alarm carries them inside
-`EvaluationCriteria` instead. For an alarm on a metric they are required, and a
-request that omits one gets a `400 ValidationError` rather than a substituted
-value — `Statistic` (or `ExtendedStatistic`), `ComparisonOperator`, `Period`,
-`EvaluationPeriods` and `Threshold`. Overcast used to fill these in with
-`Average` / `GreaterThanThreshold` / 60s / 1 period / `0.0`, which is not a
-default so much as a different alarm from the one the caller half-described.
-`Threshold: 0` is a value, not an omission.
+The full list, with the defaults `PutMetricAlarm` applies and the ones it
+refuses to invent, is in [CloudWatch limitations](cloudwatch/limitations.md).
 
-`AlarmName` is required by `PutMetricAlarm` and optional on
-`AWS::CloudWatch::Alarm` — CloudFormation generates
-`{StackName}-{LogicalID}-{RANDOM}` when a template leaves it out, which is what
-CDK relies on.
+## Gotchas
 
-### What is created but not evaluated
+> [!WARNING]
+> An alarm whose `Period × EvaluationPeriods` reaches back further than the
+> one-hour metric window sees the missing periods and resolves them through
+> `TreatMissingData`. Long-window alarms are not a local test.
 
-An alarm whose configuration the evaluator cannot decide is created and says so, rather than
-being refused. An alarm that looks armed but is never watched is a real trap — the one the
-fidelity-risk veto exists to prevent — so it is never left silent; it is created and it declares
-itself, in all three places anyone looks:
-
-- **`StateValue`** stays `INSUFFICIENT_DATA` and **`StateReason`** says the state is not computed.
-- **`x-overcast-emulation-limitation`** on the `PutMetricAlarm` response names what is not
-  emulated, for anything reading the wire. Ordinary alarms carry no such header — it marks the
-  exceptions, and a header on every alarm would train people to ignore it.
-- **`ResourceStatusReason`** on the CloudFormation event, when the alarm came from a template,
-  so it appears as the deploy goes past (see [CloudFormation](./cloudformation.md)).
-
-| Configuration | Result |
-| --- | --- |
-| `Metrics` (metric math / multi-metric alarms) | created, not evaluated |
-| `ThresholdMetricId` (anomaly detection) | created, not evaluated |
-| `ExtendedStatistic` (`p99`, `tm99`, …) | created, not evaluated |
-| `LessThanLowerOrGreaterThanUpperThreshold`, `LessThanLowerThreshold`, `GreaterThanUpperThreshold` | created, not evaluated — anomaly-band operators |
-
-Refusing these used to fail the CloudFormation resource, and with it the stack and the whole
-deploy — a monitoring stack that builds one alarm per function took the environment down with it.
-The alarm's own defect is that Overcast will not act on it; that is not a reason to refuse
-everything standing behind it.
-
-### What is refused
-
-| Configuration | Response |
-| --- | --- |
-| `EvaluationCriteria` (PromQL alarms) | `501 NotImplemented` from `PutMetricAlarm` |
-| `PutCompositeAlarm`, `PutAnomalyDetector` | `501 NotImplemented` |
-| An action ARN with no sink — EC2 instance actions, Systems Manager OpsItems | The transition still happens and is still published; the undelivered action is logged and recorded as an `Action` history item saying it was **NOT executed** |
-
-A metric-math alarm that *also* names a `Namespace`/`MetricName` at the top level is one AWS
-itself rejects, and still gets `400 ValidationError`. Accepting the shapes Overcast cannot
-evaluate is not a reason to accept the ones AWS would not have.
-
-Values AWS itself rejects — an unknown `Statistic`, an unknown `ComparisonOperator`, an invalid
-`TreatMissingData`, a `Period` that is not 10, 20, 30 or a multiple of 60, or
-`DatapointsToAlarm` greater than `EvaluationPeriods` — get AWS's `400 ValidationError`, not a
-`501`. The two claims are different: one says the request is wrong, the other says Overcast is
-incomplete.
-
-### Deliberate divergences
-
-- **`SetAlarmState` is held longer than on AWS.** Real CloudWatch reverts a forced state at the
-  next evaluation, which can be almost immediately. Overcast protects it for one full evaluation
-  range (`Period × EvaluationPeriods`) so a forced state is actually observable in
-  `DescribeAlarms` and actually reaches its actions.
-- **No look-back beyond the evaluation range.** Real CloudWatch may reach further back in time to
-  fill an evaluation range short of real datapoints. Overcast evaluates exactly the configured
-  range and resolves the gaps through `TreatMissingData`.
-- **Alarm history is bounded by count, not age.** The most recent 100 items per alarm are kept;
-  real CloudWatch keeps 14 days.
-- **A datapoint published without a unit feeds an alarm that names one.** AWS files an
-  unqualified datapoint under `None`, so on AWS an alarm on `Count` never sees it and sits in
-  `INSUFFICIENT_DATA` — the trap the `PutMetricAlarm` docs warn about when they recommend
-  omitting `Unit`. Locally published metrics routinely omit the unit while the CDK construct
-  that created the alarm supplied one, so Overcast lets the unqualified datapoint count. A
-  datapoint that *does* name a unit is still held to it.
-- **`EvaluationWindow` is accepted and ignored.** Overcast always evaluates the period-aligned
-  window described above, rather than AWS's default sliding window.
-
-## Tagging
-
-AWS tags four CloudWatch resource types — alarms, dashboards, metric streams and Contributor
-Insights rules. Overcast emulates alarms only, so **the alarm is the whole taggable surface**;
-an ARN naming any of the other three is well-formed but refers to a resource that does not
-exist here, and is answered accordingly.
-
-| Resource | Tag on create | Tag after create |
-| --- | --- | --- |
-| Alarm (`arn:aws:cloudwatch:<region>:<account>:alarm:<name>`) | `PutMetricAlarm` `Tags` | `TagResource` / `UntagResource` / `ListTagsForResource` |
-| Dashboard, metric stream, Contributor Insights rule | not emulated | not emulated — `ResourceNotFoundException` |
-
-- **Tags apply at creation only.** `PutMetricAlarm` applies `Tags` when it creates the alarm and
-  ignores them when the same call updates an existing one, as on AWS. `TagResource` and
-  `UntagResource` are the only way to change an existing alarm's tags.
-- **Tags are deleted with the alarm.** `DeleteAlarms` drops the tags too, so an alarm recreated
-  under the same name starts untagged.
-- **An unknown resource is an error, not an empty tag set.** All three tagging operations return
-  `404 ResourceNotFoundException` for an ARN whose alarm does not exist, and
-  `400 InvalidParameterValue` (`InvalidParameterValueException` over the JSON protocol — the
-  model gives that shape a shorter `awsQueryError` code) for a `ResourceARN` that is not a
-  CloudWatch ARN, including an empty one.
-- **Tag sets are validated, on both entry points.** A resource is capped at 50 tags, a key must
-  be 1–128 characters and must not start with `aws:`, and a value must be 256 characters or
-  fewer. A rejected set is not written, and the same rules apply whether the tags arrive on
-  `TagResource` or on the `Tags` parameter of the `PutMetricAlarm` that creates the alarm — so a
-  create carrying an invalid tag set fails outright rather than leaving an untagged alarm behind.
-  The Query protocol's flattened member list ends at the first missing `Key`, so an empty tag key
-  can only be expressed — and only be rejected — over the JSON protocol.
+> [!TIP]
+> An alarm Overcast cannot evaluate never sits silently armed. It stays
+> `INSUFFICIENT_DATA` with a `StateReason` saying so, the `PutMetricAlarm`
+> response carries an `x-overcast-emulation-limitation` header naming what is
+> not emulated, and a CloudFormation-created one says the same in
+> `ResourceStatusReason` as the deploy goes past.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -200,6 +89,8 @@ Per-operation status, notes and AWS API links: [CloudWatch operations](cloudwatc
 
 ## Related
 
+- [CloudWatch limitations](cloudwatch/limitations.md) — evaluation rules, defaults and tagging
+- [CloudWatch Logs](cloudwatch-logs.md) — log groups, streams and retention
+- [Auto Scaling](autoscaling.md) — alarms that drive scaling policies
 - [AWS API reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/)
 - [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)
