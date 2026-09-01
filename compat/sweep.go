@@ -674,14 +674,23 @@ func sweepEFSFileSystems(ctx context.Context, client *http.Client, endpoint stri
 // ── Leaked-container detection ───────────────────────────────────────────────
 //
 // The emulator owns the containers it starts, and deleting a resource must
-// stop its container. When that fails — a delete landing while a container is
-// still starting is the recurring cause — the container outlives the run and
+// stop its container. When that fails, the container outlives the run and
 // quietly eats the host. The runner knows the run ID and knows when the run is
 // over, so it is the natural place to notice: anything overcast-prefixed that
 // mentions this run's ID (or the generic compat prefixes) should not exist
 // once the post-run sweep has deleted every resource.
 //
-// Strays are reported loudly AND removed: the report is the bug signal — a
+// "Should not exist" needs a grace period to be a fair test. The emulator's
+// deletes stop a container before they return but hand its *removal* to a
+// background queue (internal/docker's GC), so for a few seconds after the last
+// delete the daemon legitimately still lists the stopped container. A suite
+// run finishes in seconds, this check fires immediately after it, and reading
+// one `docker ps` snapshot here called that in-flight teardown a leak — three
+// ECS pause containers per suite on every CI run, all of them gone moments
+// later. The check therefore polls until the run's containers are gone or the
+// grace runs out, and reports only what survived it.
+//
+// Survivors are reported loudly AND removed: the report is the bug signal — a
 // leak here is an emulator defect, not housekeeping — and the removal keeps
 // CI and dev machines from accumulating orphans while the defect is fixed.
 
@@ -709,25 +718,41 @@ func leakedContainerNames(names []string, runID string) []string {
 	return out
 }
 
-// sweepLeakedContainers lists the Docker daemon's containers and reports and
-// removes any the emulator leaked for this run. Docker being unavailable is
-// not an error — the runner may be targeting a remote endpoint.
+// leakGracePeriod is how long the emulator's asynchronous teardown is given to
+// finish before a container still on the daemon is called leaked. The GC's
+// remove queue clears in single-digit seconds on a healthy daemon; a genuine
+// leak, by definition, is still there whenever anyone looks. A clean run pays
+// nothing (see settledLeakedContainers), a run whose teardown is in flight
+// pays a poll or two, and only a run about to report a real leak waits the
+// whole grace out.
+const leakGracePeriod = 30 * time.Second
+
+// leakGracePoll paces the re-listing while the grace period runs.
+const leakGracePoll = time.Second
+
+// sweepLeakedContainers reports and removes the containers the emulator leaked
+// for this run: the ones still on the daemon once the post-delete grace period
+// has passed. Docker being unavailable is not an error — the runner may be
+// targeting a remote endpoint.
 func sweepLeakedContainers(ctx context.Context, runID string, w io.Writer) {
 	dockerBin, err := exec.LookPath("docker")
 	if err != nil {
 		return
 	}
-	listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(listCtx, dockerBin, "ps", "--all", "--format", "{{.Names}}").Output()
-	if err != nil {
-		return
+	list := func() ([]string, error) {
+		listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(listCtx, dockerBin, "ps", "--all", "--format", "{{.Names}}").Output()
+		if err != nil {
+			return nil, err
+		}
+		return strings.Fields(string(out)), nil
 	}
-	leaked := leakedContainerNames(strings.Fields(string(out)), runID)
+	leaked := settledLeakedContainers(ctx, runID, list, leakGracePeriod, leakGracePoll)
 	if len(leaked) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "compat: LEAKED CONTAINERS: %d container(s) outlived their deleted resources — this is an emulator cleanup bug, not compat housekeeping:\n", len(leaked))
+	fmt.Fprintf(w, "compat: LEAKED CONTAINERS: %d container(s) outlived their deleted resources by more than %s — this is an emulator cleanup bug, not compat housekeeping:\n", len(leaked), leakGracePeriod)
 	for _, name := range leaked {
 		fmt.Fprintf(w, "compat:   leaked: %s\n", name)
 		// GitHub annotation so CI surfaces each leak on the PR.
@@ -741,4 +766,39 @@ func sweepLeakedContainers(ctx context.Context, runID string, w io.Writer) {
 		return
 	}
 	fmt.Fprintf(w, "compat: removed %d leaked container(s)\n", len(leaked))
+}
+
+// settledLeakedContainers names this run's containers still on the daemon once
+// the emulator's asynchronous teardown has had its chance: it re-lists on poll
+// until no candidate remains or grace runs out, and returns what survived.
+//
+// A clean first listing answers immediately — no candidates means nothing to
+// wait for. A listing that fails ends the wait with the candidates last seen:
+// they were present on the last read that worked, and a daemon that stops
+// answering mid-audit must not read as a clean run.
+func settledLeakedContainers(ctx context.Context, runID string, list func() ([]string, error), grace, poll time.Duration) []string {
+	names, err := list()
+	if err != nil {
+		return nil
+	}
+	leaked := leakedContainerNames(names, runID)
+	if len(leaked) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return leaked
+		case <-time.After(poll):
+		}
+		names, err = list()
+		if err != nil {
+			return leaked
+		}
+		if leaked = leakedContainerNames(names, runID); len(leaked) == 0 {
+			return nil
+		}
+	}
+	return leaked
 }

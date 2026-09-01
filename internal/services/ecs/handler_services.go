@@ -1160,8 +1160,12 @@ func (h *Handler) retireTaskContainers(ctx context.Context, task *Task) {
 			}
 		}
 	}
-	// Last: it is the namespace the containers above were running in.
-	h.retireTaskNamespaceContainer(ctx, task)
+	// Last: it is the namespace the containers above were running in. Removed
+	// inline like the containers above, not queued on the GC — this path's
+	// caller is a synchronous API call whose return is taken to mean the task
+	// is gone, and the compat post-run audit kept catching the queued removal
+	// still in flight.
+	h.retireTaskNamespaceContainerNow(ctx, task)
 }
 
 // reconcile drives a service toward the state its current deployment describes:

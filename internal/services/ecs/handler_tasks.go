@@ -336,12 +336,14 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		}
 		task.NetworkNamespaceID, namespaceID = id, id
 		defer func() {
-			// A task that could not be placed leaves nothing of itself running.
-			// The namespace container outlives its application containers by
-			// design, so unwinding a failed start is the one path that has to
-			// take it down explicitly.
+			// A task that could not be placed leaves nothing of itself running —
+			// by the time the failure is returned, not at the GC's leisure,
+			// which is also how unwindTaskContainers treats the application
+			// containers. The namespace container outlives them by design, so
+			// unwinding a failed start is the one path that has to take it down
+			// explicitly.
 			if retErr != nil {
-				h.retireTaskNamespaceContainer(ctx, task)
+				h.retireTaskNamespaceContainerNow(ctx, task)
 				task.NetworkNamespaceID = ""
 			}
 		}()

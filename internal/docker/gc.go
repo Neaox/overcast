@@ -14,7 +14,8 @@ import (
 //   - StopNow: fires immediately in a dedicated goroutine (non-blocking).
 //     A running container can still execute code — stop it ASAP.
 //   - ScheduleRemove: enqueued and processed at leisure by the background loop.
-//     Failures are re-enqueued for retry (up to 3 attempts).
+//     Failures are retried with backoff until the container is gone — see
+//     removeContainer.
 //
 // DrainAndSweep is called at shutdown: it drains the remove queue and then
 // removes this instance's managed containers (Docker-level sweep), catching

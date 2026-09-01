@@ -226,12 +226,18 @@ func (h *Handler) startTaskNamespaceContainer(ctx context.Context, task *Task, t
 }
 
 // retireTaskNamespaceContainer tears down the container holding a task's
-// network namespace.
+// network namespace, handing the removal to the container GC when one is
+// wired.
 //
 // It outlives the application containers that ran inside it, exactly as a
 // task's ENI outlives any one container on AWS, so nothing removes it as a side
-// effect of their exits: every path that ends a task has to call this. A task
-// that never had one — anything but awsvpc — is a no-op.
+// effect of their exits: every path that ends a task has to call this or its
+// synchronous sibling below. A task that never had one — anything but awsvpc —
+// is a no-op.
+//
+// This deferred form is for the paths whose application containers also go to
+// the GC: the exit notifier's die-event handling, and StopTask, which answers
+// before the teardown lands the way AWS's own asynchronous StopTask does.
 func (h *Handler) retireTaskNamespaceContainer(ctx context.Context, task *Task) {
 	if task == nil || task.NetworkNamespaceID == "" || !h.dockerReady.Load() {
 		return
@@ -242,6 +248,33 @@ func (h *Handler) retireTaskNamespaceContainer(ctx context.Context, task *Task) 
 		h.gc.ScheduleRemove(id)
 		return
 	}
+	h.removeTaskNamespaceContainerNow(ctx, id)
+}
+
+// retireTaskNamespaceContainerNow tears the namespace container down before
+// returning, GC or no GC.
+//
+// It is for the paths that already remove the task's application containers
+// inline — the service scheduler's retireTaskContainers and a failed launch's
+// unwind — where the namespace container was the one container still handed to
+// the GC's background queue. That asymmetry is what the compat runner's
+// post-run audit kept reporting: a suite finishes in seconds, the audit lists
+// the daemon before the GC's remove loop reaches the queue, and every service
+// task's pause container shows up as leaked while its application containers —
+// removed inline — do not. On a path that is already making Docker calls per
+// application container, one more round trip buys "the call returned" meaning
+// the task is actually gone.
+func (h *Handler) retireTaskNamespaceContainerNow(ctx context.Context, task *Task) {
+	if task == nil || task.NetworkNamespaceID == "" || !h.dockerReady.Load() {
+		return
+	}
+	h.removeTaskNamespaceContainerNow(ctx, task.NetworkNamespaceID)
+}
+
+// removeTaskNamespaceContainerNow stops and removes a namespace container on
+// the caller's goroutine, honouring ECSKeepContainers the way every other
+// teardown does.
+func (h *Handler) removeTaskNamespaceContainerNow(ctx context.Context, id string) {
 	if err := h.docker.StopContainer(ctx, id, taskNamespaceStopTimeout); err != nil {
 		h.log.WithRecorder(ctx).Debug("ecs: failed to stop a task's network namespace container",
 			zap.String("container", id), zap.Error(err))
