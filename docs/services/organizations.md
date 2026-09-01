@@ -17,12 +17,13 @@ Organizations is emulated at the inert tier: policy metadata is stored and
 returned faithfully — identifiers, ARNs, tags, pagination and the modeled
 errors — and nothing a policy describes ever takes effect.
 
-## Summary
+## What's covered
 
 Policies have a full CRUD and tagging surface. `DescribeOrganization` returns a
 fixed organization so that CDK bootstrap gets past it. Everything else —
 accounts, organizational units, roots, handshakes, delegated administrators —
-returns 501 Not Implemented.
+returns 501 Not Implemented. For the operation counts, see
+[Summary](#summary) at the bottom of this page.
 
 ## Behavior Notes
 

@@ -14,16 +14,8 @@ tags:
 
 > Generated for Overcast. See also: [AWS STS API Reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)
 
-## Summary
-
-| Category         | ✅ Supported | ❌ Unsupported |
-| ---------------- | ------------ | -------------- |
-| Identity         | 1            | 0              |
-| Temp credentials | 4            | 0              |
-| SAML/OpenID      | 0            | 2              |
-| Federation       | 0            | 1              |
-| Misc             | 0            | 3              |
-| **Total**        | **5**        | **6**          |
+For the operation counts by category, see [Summary](#summary) at the bottom of
+this page.
 
 ## Endpoint details
 

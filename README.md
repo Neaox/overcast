@@ -342,7 +342,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `OVERCAST_LISTEN`                | `0.0.0.0` containerised, `127.0.0.1` native | Interface to bind. Comma-separate to bind several, e.g. `127.0.0.1,172.17.0.1`. An explicit value always wins over the default, in either direction. Renamed from `OVERCAST_HOST`, which has been removed — a leftover `OVERCAST_HOST` fails at startup |
 | `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. `hybrid`/`persistent` need SQLite, which `overcastd` and the slim image do not have — see [Builds without SQLite](./docs/storage.md#builds-without-sqlite). |
 
-See the [configuration reference](./docs/README.md#configuration-reference) for the full list.
+See the [configuration reference](./docs/configuration.md) for the full list.
 
 The web console (`overcast` full binary only) is served on port 4567 and loads lazily on first request — no warm-up needed. Point a browser at `http://localhost:4567` after starting the server.
 
@@ -550,12 +550,13 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | [Using AWS CDK](./docs/cdk.md)                                      | `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting |
 | [Networking and host-based addressing](./docs/networking.md)        | Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS |
 | [Service reference](./docs/services/)                               | Per-service endpoint coverage matrices                                   |
-| [Configuration reference](./docs/README.md#configuration-reference) | All environment variables                                                |
-| [Persistence](./docs/README.md#persistence)                         | Storage backends: memory, hybrid, persistent, WAL                        |
-| [HTTPS / TLS](./docs/README.md#https--tls)                          | Self-signed certs for local HTTPS                                        |
+| [Configuration reference](./docs/configuration.md)                  | All environment variables                                                |
+| [Persistence](./docs/persistence.md)                                | Storage backends: memory, hybrid, persistent, WAL                        |
+| [HTTPS / TLS](./docs/https.md)                                      | Self-signed certs for local HTTPS                                        |
 | [Event pipelines](./docs/README.md#event-pipelines)                 | SNS→SQS, SQS→Lambda, DynamoDB Streams                                    |
 | [Web management console](./docs/README.md#web-management-console)   | Built-in dashboard on port 4567                                          |
-| [Debug endpoints](./docs/README.md#debug-endpoints)                 | Health, metrics, state dump, pprof                                       |
+| [Debug endpoints](./docs/debug-endpoints.md)                        | Health, metrics, state dump, pprof                                       |
+| [Troubleshooting](./docs/troubleshooting.md)                        | Startup preflight warnings and what they mean                            |
 | [Migrating from LocalStack](./docs/migration-from-localstack.md)    | Drop-in replacement guide                                                |
 | [Development setup](./docs/dev/development-setup.md)                | Building from source                                                     |
 

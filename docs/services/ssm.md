@@ -16,20 +16,14 @@ tags:
 
 > Generated for Overcast. See also: [AWS SSM Parameter Store API Reference](https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
 
-## Summary
-
 ## Protocol
 
 SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 `X-Amz-Target: AmazonSSM.<OperationName>` and Smithy RPC v2 CBOR requests at
 `/service/ssm/operation/<OperationName>` with `Smithy-Protocol: rpc-v2-cbor`.
 
-| Category      | ✅ Supported | ❌ Unsupported |
-| ------------- | ------------ | -------------- |
-| Parameters    | 8            | 2              |
-| Tags          | 2            | 1              |
-| Advanced/misc | 0            | 5              |
-| **Total**     | **10**       | **8**          |
+For the operation counts by category, see [Summary](#summary) at the bottom of
+this page.
 
 ## Endpoint details
 

@@ -16,8 +16,6 @@ tags:
 
 > Generated for Overcast. See also: [AWS Secrets Manager API Reference](https://docs.aws.amazon.com/secretsmanager/latest/apireference/Welcome.html)
 
-## Summary
-
 ## Protocol
 
 Secrets Manager accepts AWS JSON 1.1 requests via `X-Amz-Target:
@@ -25,14 +23,8 @@ secretsmanager.<Operation>` and Smithy RPC v2 CBOR requests via
 `/service/secretsmanager/operation/<Operation>` with `Smithy-Protocol:
 rpc-v2-cbor`.
 
-| Category    | ✅ Supported | ❌ Unsupported |
-| ----------- | ------------ | -------------- |
-| Secret CRUD | 9            | 0              |
-| Rotation    | 3            | 0              |
-| Tags        | 2            | 0              |
-| Password    | 1            | 0              |
-| Policy/Misc | 4            | 3              |
-| **Total**   | **19**       | **3**          |
+For the operation counts by category, see [Summary](#summary) at the bottom of
+this page.
 
 ## Endpoint details
 

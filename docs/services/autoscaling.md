@@ -21,13 +21,14 @@ group's owned instance set matches its `DesiredCapacity`, advances the lifecycle
 state machine, honours lifecycle hooks, replaces unhealthy instances, and
 records a scaling activity for everything it does.
 
-## Summary
+## What's covered
 
 Group, launch-configuration, scaling-policy, lifecycle-hook and tag CRUD, plus
 `SetDesiredCapacity`, `ExecutePolicy`, `TerminateInstanceInAutoScalingGroup`,
 `CompleteLifecycleAction`, `RecordLifecycleActionHeartbeat`,
 `SetInstanceHealth`, `SetInstanceProtection`, `DescribeAutoScalingInstances` and
-`DescribeScalingActivities`.
+`DescribeScalingActivities`. For the operation counts by category, see
+[Summary](#summary) at the bottom of this page.
 
 ## Reconciliation
 

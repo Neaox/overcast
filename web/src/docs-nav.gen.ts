@@ -70,43 +70,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Configuration reference",
-        "id": "configuration-reference"
-      },
-      {
-        "depth": 3,
-        "text": "Service names",
-        "id": "service-names"
-      },
-      {
-        "depth": 3,
-        "text": "Log levels",
-        "id": "log-levels"
-      },
-      {
-        "depth": 2,
-        "text": "Persistence",
-        "id": "persistence"
-      },
-      {
-        "depth": 3,
-        "text": "Per-service storage overrides",
-        "id": "per-service-storage-overrides"
-      },
-      {
-        "depth": 2,
         "text": "HTTPS / TLS",
         "id": "https-tls"
-      },
-      {
-        "depth": 2,
-        "text": "Multi-container networking",
-        "id": "multi-container-networking"
-      },
-      {
-        "depth": 2,
-        "text": "Debug endpoints",
-        "id": "debug-endpoints"
       },
       {
         "depth": 2,
@@ -117,16 +82,6 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Web management console",
         "id": "web-management-console"
-      },
-      {
-        "depth": 2,
-        "text": "Troubleshooting",
-        "id": "troubleshooting"
-      },
-      {
-        "depth": 3,
-        "text": "Startup preflight",
-        "id": "startup-preflight"
       }
     ]
   },
@@ -380,7 +335,7 @@ export const DOCS_NAV = [
     "href": "cli.md",
     "title": "CLI reference",
     "description": "Every overcast subcommand — starting and managing daemons, introspection, AWS environment helpers, and networking/TLS setup — with flags, defaults, and examples.",
-    "section": "Getting Started",
+    "section": "Reference",
     "tags": [
       "cli",
       "commands",
@@ -502,11 +457,69 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/configuration.md",
+    "href": "configuration.md",
+    "title": "Configuration reference",
+    "description": "Every OVERCAST_* and LAMBDA_*/ECS_*/RDS_*/... environment variable Overcast reads, with defaults, LocalStack compatibility aliases, and service names for per-service overrides.",
+    "section": "Reference",
+    "tags": [
+      "configuration",
+      "docs",
+      "environment",
+      "reference",
+      "variables"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Configuration reference",
+        "id": "configuration-reference"
+      },
+      {
+        "depth": 2,
+        "text": "Service names",
+        "id": "service-names"
+      },
+      {
+        "depth": 2,
+        "text": "Log levels",
+        "id": "log-levels"
+      }
+    ]
+  },
+  {
+    "path": "docs/debug-endpoints.md",
+    "href": "debug-endpoints.md",
+    "title": "Debug endpoints",
+    "description": "The /_overcast/debug/* namespace and always-on diagnostics: health, metrics, state dump, request tracing, pprof, and how long traces are retained.",
+    "section": "Reference",
+    "tags": [
+      "debug",
+      "debugging",
+      "docs",
+      "pprof",
+      "reference",
+      "tracing"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Debug endpoints",
+        "id": "debug-endpoints"
+      },
+      {
+        "depth": 2,
+        "text": "Trace retention",
+        "id": "trace-retention"
+      }
+    ]
+  },
+  {
     "path": "docs/https.md",
     "href": "https.md",
     "title": "HTTPS and HTTP/2",
     "description": "Serve the API and web console over browser-trusted HTTPS with two commands — unlocking HTTP/2 so the console stays responsive under load.",
-    "section": "Getting Started",
+    "section": "Networking",
     "tags": [
       "certificates",
       "docs",
@@ -852,11 +865,32 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/multi-container-networking.md",
+    "href": "multi-container-networking.md",
+    "title": "Multi-container networking",
+    "description": "Set OVERCAST_HOSTNAME to the Docker Compose service name so client-facing URLs (queue URLs, endpoints) resolve from sibling containers, not just the host.",
+    "section": "Networking",
+    "tags": [
+      "compose",
+      "docker",
+      "docs",
+      "hostname",
+      "networking"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Multi-container networking",
+        "id": "multi-container-networking"
+      }
+    ]
+  },
+  {
     "path": "docs/networking.md",
     "href": "networking.md",
     "title": "Networking and host-based addressing",
     "description": "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline.",
-    "section": "Getting Started",
+    "section": "Networking",
     "tags": [
       "dns",
       "docs",
@@ -956,7 +990,7 @@ export const DOCS_NAV = [
     "href": "operation-manifest.md",
     "title": "Overcast Operation Manifest",
     "description": "Typed-dispatch: 824 ops across 38 services; 12 more services are REST-routed or not yet migrated (see below)",
-    "section": "Getting Started",
+    "section": "Reference",
     "tags": [
       "docs",
       "manifest",
@@ -1171,7 +1205,7 @@ export const DOCS_NAV = [
     "href": "performance.md",
     "title": "Performance and memory guide",
     "description": "Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle, and low per-request overhead. CI pipelines should not wait for the emulator.",
-    "section": "Getting Started",
+    "section": "Storage \u0026 Performance",
     "tags": [
       "docs",
       "guide",
@@ -1223,6 +1257,37 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Client-perceived latency — where \"overcast feels slow\" actually goes",
         "id": "client-perceived-latency-where-overcast-feels-slow-actually-goes"
+      }
+    ]
+  },
+  {
+    "path": "docs/persistence.md",
+    "href": "persistence.md",
+    "title": "Persistence",
+    "description": "Configure OVERCAST_STATE and per-service storage overrides — which backend auto picks, how to mount a volume, and where the active configuration is visible at runtime.",
+    "section": "Storage \u0026 Performance",
+    "tags": [
+      "configuration",
+      "docs",
+      "persistence",
+      "state",
+      "storage"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Persistence",
+        "id": "persistence"
+      },
+      {
+        "depth": 2,
+        "text": "Per-service storage overrides",
+        "id": "per-service-storage-overrides"
+      },
+      {
+        "depth": 2,
+        "text": "Where the active configuration is visible",
+        "id": "where-the-active-configuration-is-visible"
       }
     ]
   },
@@ -1889,8 +1954,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
+        "text": "What's covered",
+        "id": "what-s-covered"
       },
       {
         "depth": 2,
@@ -1920,7 +1985,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -1954,8 +2019,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
+        "text": "What's covered",
+        "id": "what-s-covered"
       },
       {
         "depth": 2,
@@ -1965,7 +2030,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -2065,6 +2130,161 @@ export const DOCS_NAV = [
         "id": "notes"
       },
       {
+        "depth": 3,
+        "text": "JSON and YAML templates",
+        "id": "json-and-yaml-templates"
+      },
+      {
+        "depth": 3,
+        "text": "Bounded async provisioner",
+        "id": "bounded-async-provisioner"
+      },
+      {
+        "depth": 3,
+        "text": "Stacks are addressable by name or ARN — but a deleted stack only by ARN, as on AWS",
+        "id": "stacks-are-addressable-by-name-or-arn-but-a-deleted-stack-only-by-arn-as-on-aws"
+      },
+      {
+        "depth": 3,
+        "text": "How big a template may be",
+        "id": "how-big-a-template-may-be"
+      },
+      {
+        "depth": 3,
+        "text": "DependsOn",
+        "id": "dependson"
+      },
+      {
+        "depth": 3,
+        "text": "Status state machine",
+        "id": "status-state-machine"
+      },
+      {
+        "depth": 3,
+        "text": "Which state an operation may start from",
+        "id": "which-state-an-operation-may-start-from"
+      },
+      {
+        "depth": 3,
+        "text": "Where the rollback reason lives",
+        "id": "where-the-rollback-reason-lives"
+      },
+      {
+        "depth": 3,
+        "text": "Where the reason lives when nothing rolls back",
+        "id": "where-the-reason-lives-when-nothing-rolls-back"
+      },
+      {
+        "depth": 3,
+        "text": "Why a deploy failed, after the rollback deleted the evidence",
+        "id": "why-a-deploy-failed-after-the-rollback-deleted-the-evidence"
+      },
+      {
+        "depth": 3,
+        "text": "What an update rollback puts back",
+        "id": "what-an-update-rollback-puts-back"
+      },
+      {
+        "depth": 3,
+        "text": "Getting out of `UPDATE_ROLLBACK_FAILED",
+        "id": "getting-out-of-update-rollback-failed"
+      },
+      {
+        "depth": 3,
+        "text": "Tracing an event back to the request that caused it",
+        "id": "tracing-an-event-back-to-the-request-that-caused-it"
+      },
+      {
+        "depth": 3,
+        "text": "A limitation a resource carries is its `ResourceStatusReason",
+        "id": "a-limitation-a-resource-carries-is-its-resourcestatusreason"
+      },
+      {
+        "depth": 3,
+        "text": "Stub and inert-tier resources say so on the same channel",
+        "id": "stub-and-inert-tier-resources-say-so-on-the-same-channel"
+      },
+      {
+        "depth": 3,
+        "text": "A persistence flush is not a stack failure",
+        "id": "a-persistence-flush-is-not-a-stack-failure"
+      },
+      {
+        "depth": 3,
+        "text": "Fn::GetAtt",
+        "id": "fn-getatt"
+      },
+      {
+        "depth": 3,
+        "text": "Cross-stack references",
+        "id": "cross-stack-references"
+      },
+      {
+        "depth": 3,
+        "text": "Custom resources",
+        "id": "custom-resources"
+      },
+      {
+        "depth": 3,
+        "text": "Nested stacks",
+        "id": "nested-stacks"
+      },
+      {
+        "depth": 3,
+        "text": "Scheduled ECS/Fargate tasks",
+        "id": "scheduled-ecs-fargate-tasks"
+      },
+      {
+        "depth": 3,
+        "text": "S3 bucket sub-resources",
+        "id": "s3-bucket-sub-resources"
+      },
+      {
+        "depth": 3,
+        "text": "API Gateway properties",
+        "id": "api-gateway-properties"
+      },
+      {
+        "depth": 3,
+        "text": "EC2 VPC networking properties",
+        "id": "ec2-vpc-networking-properties"
+      },
+      {
+        "depth": 3,
+        "text": "AppSync stacks",
+        "id": "appsync-stacks"
+      },
+      {
+        "depth": 3,
+        "text": "Generated secrets",
+        "id": "generated-secrets"
+      },
+      {
+        "depth": 3,
+        "text": "Change sets",
+        "id": "change-sets"
+      },
+      {
+        "depth": 3,
+        "text": "Stack updates and drift",
+        "id": "stack-updates-and-drift"
+      },
+      {
+        "depth": 3,
+        "text": "DeletionPolicy",
+        "id": "deletionpolicy"
+      },
+      {
+        "depth": 3,
+        "text": "Teardown failure",
+        "id": "teardown-failure"
+      },
+      {
+        "depth": 3,
+        "text": "Legacy state compatibility",
+        "id": "legacy-state-compatibility"
+      },
+      {
         "depth": 2,
         "text": "Summary",
         "id": "summary"
@@ -2082,7 +2302,7 @@ export const DOCS_NAV = [
       {
         "depth": 3,
         "text": "Change sets",
-        "id": "change-sets"
+        "id": "change-sets-2"
       },
       {
         "depth": 3,
@@ -2143,11 +2363,6 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "CloudFront — Amazon CloudFront",
         "id": "cloudfront-amazon-cloudfront"
-      },
-      {
-        "depth": 2,
-        "text": "Summary",
-        "id": "summary"
       },
       {
         "depth": 2,
@@ -2227,7 +2442,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -2311,8 +2526,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
+        "text": "What's covered",
+        "id": "what-s-covered"
       },
       {
         "depth": 2,
@@ -2322,7 +2537,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -2493,11 +2708,6 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
-      },
-      {
-        "depth": 2,
         "text": "User Pool operations",
         "id": "user-pool-operations"
       },
@@ -2564,7 +2774,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -2754,11 +2964,6 @@ export const DOCS_NAV = [
         "id": "docker-network-conventions"
       },
       {
-        "depth": 3,
-        "text": "Advanced: VPC networking strategies",
-        "id": "advanced-vpc-networking-strategies"
-      },
-      {
         "depth": 2,
         "text": "Limitations and divergences from AWS",
         "id": "limitations-and-divergences-from-aws"
@@ -2796,7 +3001,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Advanced: VPC networking strategies",
-        "id": "advanced-vpc-networking-strategies-2"
+        "id": "advanced-vpc-networking-strategies"
       },
       {
         "depth": 3,
@@ -2815,18 +3020,18 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "strict` (planned)",
-        "id": "strict-planned"
+        "text": "strict",
+        "id": "strict"
       },
       {
         "depth": 3,
-        "text": "remapped` (planned)",
-        "id": "remapped-planned"
+        "text": "remapped",
+        "id": "remapped"
       },
       {
         "depth": 3,
-        "text": "netns` (planned, speculative)",
-        "id": "netns-planned-speculative"
+        "text": "netns` (planned, not implemented)",
+        "id": "netns-planned-not-implemented"
       },
       {
         "depth": 3,
@@ -4205,8 +4410,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
+        "text": "What's covered",
+        "id": "what-s-covered"
       },
       {
         "depth": 2,
@@ -4216,7 +4421,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -4721,11 +4926,6 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
-      },
-      {
-        "depth": 2,
         "text": "Protocol",
         "id": "protocol"
       },
@@ -4757,7 +4957,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -5070,11 +5270,6 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
-      },
-      {
-        "depth": 2,
         "text": "Protocol",
         "id": "protocol"
       },
@@ -5096,7 +5291,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -5204,11 +5399,6 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
-      },
-      {
-        "depth": 2,
         "text": "Endpoint details",
         "id": "endpoint-details"
       },
@@ -5225,7 +5415,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -5265,8 +5455,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Summary",
-        "id": "summary"
+        "text": "What's covered",
+        "id": "what-s-covered"
       },
       {
         "depth": 2,
@@ -5276,7 +5466,7 @@ export const DOCS_NAV = [
       {
         "depth": 2,
         "text": "Summary",
-        "id": "summary-2"
+        "id": "summary"
       },
       {
         "depth": 2,
@@ -5340,7 +5530,7 @@ export const DOCS_NAV = [
     "href": "storage.md",
     "title": "Storage backends",
     "description": "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with.",
-    "section": "Getting Started",
+    "section": "Storage \u0026 Performance",
     "tags": [
       "docs",
       "durability",
@@ -5454,6 +5644,32 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Using LocalStack's Testcontainers modules",
         "id": "using-localstack-s-testcontainers-modules"
+      }
+    ]
+  },
+  {
+    "path": "docs/troubleshooting.md",
+    "href": "troubleshooting.md",
+    "title": "Troubleshooting",
+    "description": "Startup preflight warnings, what each one means, and the fix — Overcast logs one actionable WARN the moment a symptom appears, never a wall of output on a healthy setup.",
+    "section": "Troubleshooting",
+    "tags": [
+      "debugging",
+      "docs",
+      "preflight",
+      "troubleshooting",
+      "warnings"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "Troubleshooting",
+        "id": "troubleshooting"
+      },
+      {
+        "depth": 2,
+        "text": "Startup preflight",
+        "id": "startup-preflight"
       }
     ]
   }

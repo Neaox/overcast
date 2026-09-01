@@ -15,9 +15,9 @@ tags:
 
 Metadata-only CloudTrail implementation for local development and CDK/Terraform compatibility.
 
-## Summary
+## What's covered
 
-Supports trail metadata CRUD and logging state toggles. `LookupEvents` is inert and always returns an empty result set.
+Supports trail metadata CRUD and logging state toggles. `LookupEvents` is inert and always returns an empty result set. For the operation count, see [Summary](#summary) at the bottom of this page.
 
 ## Behavior Notes
 

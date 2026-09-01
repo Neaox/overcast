@@ -1,7 +1,7 @@
 ---
 title: "Storage backends"
 description: "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with."
-section: "Getting Started"
+section: "Storage & Performance"
 tags:
   - docs
   - storage
@@ -16,7 +16,7 @@ Overcast supports four concrete storage backends, selected with `OVERCAST_STATE`
 (globally) or `OVERCAST_STATE_<SERVICE>` (per service). This page compares them by
 durability and what happens to your data across a restart or crash. For the full list of
 environment variables, Docker examples, and per-service override syntax, see
-[docs/README.md § Persistence](./README.md#persistence). For tuning guidance (bind
+[Persistence](./persistence.md). For tuning guidance (bind
 mounts, the `hybrid` flush knobs, storage-related startup warnings), see
 [docs/performance.md](./performance.md).
 
@@ -190,4 +190,4 @@ condition. This is a rare, unusual-environment case, not something to expect in 
   restart — it's the fastest backend by a wide margin.
 - **Mix backends per service** with `OVERCAST_STATE_<SERVICE>` — e.g. `hybrid` globally
   with `persistent` only for the one service under test. See
-  [docs/README.md § Per-service storage overrides](./README.md#per-service-storage-overrides).
+  [Persistence § Per-service storage overrides](./persistence.md#per-service-storage-overrides).

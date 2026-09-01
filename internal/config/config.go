@@ -717,13 +717,14 @@ type Config struct {
 	//   shared   (default) — overlapping VPCs share one Docker network.
 	//                        Fastest, isolation leaks between sharers.
 	//   strict              — reject overlapping CIDRs at CreateVpc; startup
-	//                        tolerates existing overlaps. (future)
+	//                        tolerates existing overlaps.
 	//   remapped            — allocate a shadow CIDR from 100.64.0.0/10
-	//                        when the requested range collides. (future)
-	//   netns               — per-VPC Linux netns for true overlap. (future)
+	//                        when the requested range collides.
+	//   netns               — per-VPC Linux netns for true overlap. (future;
+	//                        rejected at load time)
 	//
-	// Values other than "shared" currently fall back to "shared" with a
-	// startup warning. Corresponds to env var OVERCAST_EC2_VPC_STRATEGY.
+	// Unrecognized values fall back to "shared" with a startup warning.
+	// Corresponds to env var OVERCAST_EC2_VPC_STRATEGY.
 	EC2VPCNetworkStrategy string
 
 	// Debug enables the /_overcast/debug/* endpoint namespace.
@@ -1421,8 +1422,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           containers Overcast starts; failing to bind is not fatal)
 //	OVERCAST_DNS_PORT                  53      (Docker's --dns cannot express a port, so anything
 //	                                           other than 53 is only useful for tests)
-//	OVERCAST_EC2_VPC_STRATEGY          shared  (shared | strict | remapped; strict and remapped fall
-//	                                           back to shared with a startup warning, netns is rejected)
+//	OVERCAST_EC2_VPC_STRATEGY          shared  (shared | strict | remapped are all implemented;
+//	                                           netns is reserved for future work and rejected here)
 //	OVERCAST_ECR_REGISTRY_PORT         4510    (host port the shared registry container asks for;
 //	                                           0, or a port already taken, falls back to ephemeral)
 //	OVERCAST_ECR_REGISTRY_PERSIST      true    (back the fixed-port registry with a named Docker

@@ -1,7 +1,7 @@
 ---
 title: "HTTPS and HTTP/2"
 description: "Serve the API and web console over browser-trusted HTTPS with two commands — unlocking HTTP/2 so the console stays responsive under load."
-section: "Getting Started"
+section: "Networking"
 tags:
   - docs
   - guide

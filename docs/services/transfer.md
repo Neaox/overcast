@@ -16,9 +16,10 @@ tags:
 
 Metadata-only AWS Transfer Family implementation.
 
-## Summary
+## What's covered
 
-Supports Transfer Family server and user control-plane CRUD.
+Supports Transfer Family server and user control-plane CRUD. For the
+operation count, see [Summary](#summary) at the bottom of this page.
 
 ## Behavior Notes
 

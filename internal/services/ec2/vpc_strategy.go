@@ -64,14 +64,14 @@ const (
 	vpcNetworkStatusOK       = "ok"       // this VPC owns its Docker network
 	vpcNetworkStatusShared   = "shared"   // reuses a network owned by another VPC
 	vpcNetworkStatusUnbacked = "unbacked" // no Docker network (Docker unavailable, or deferred)
-	vpcNetworkStatusConflict = "conflict" // strict-mode collision (reserved)
-	vpcNetworkStatusRemapped = "remapped" // remapped-mode shadow CIDR (reserved)
+	vpcNetworkStatusConflict = "conflict" // strict-mode collision
+	vpcNetworkStatusRemapped = "remapped" // remapped-mode shadow CIDR
 )
 
 // resolveVPCNetworkStrategy returns a strategy for the configured name.
-// Names other than "shared" are accepted but fall back to the shared
-// strategy with a warning, so users can opt into future strategies via
-// config today without waiting for an implementation.
+// "shared" (or empty), "strict", and "remapped" resolve to their real
+// implementations. Anything else falls back to the shared strategy with a
+// warning ("netns" never reaches here — config.Load rejects it outright).
 func resolveVPCNetworkStrategy(name string, h *Handler) vpcNetworkStrategy {
 	requested := strings.ToLower(strings.TrimSpace(name))
 	shared := &sharedVPCStrategy{h: h}
@@ -82,12 +82,6 @@ func resolveVPCNetworkStrategy(name string, h *Handler) vpcNetworkStrategy {
 		return &strictVPCStrategy{h: h}
 	case "remapped":
 		return &remappedVPCStrategy{h: h, allocator: newShadowCIDRAllocator()}
-	case "netns":
-		h.log.Warn("netns strategy requested but not implemented — falling back to shared",
-			zap.String("requested", requested),
-			zap.String("using", shared.Name()),
-			zap.String("see", "docs/services/ec2.md"))
-		return shared
 	default:
 		h.log.Warn("unknown VPC network strategy — falling back to shared",
 			zap.String("requested", requested),

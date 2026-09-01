@@ -1,7 +1,7 @@
 ---
 title: "Networking and host-based addressing"
 description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, and what to use offline."
-section: "Getting Started"
+section: "Networking"
 tags:
   - docs
   - guide

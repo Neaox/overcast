@@ -16,23 +16,9 @@ tags:
 CloudFront uses a REST API with XML request/response bodies.
 All endpoints use the `/2020-05-31` path prefix.
 
----
-
-## Summary
-
-| Category      | ✅ Supported | ⚠️ Partial | 🚧 WIP | ❌ Unsupported |
-| ------------- | ------------ | ---------- | ------ | -------------- |
-| Distributions | 7            | 0          | 0      | 0              |
-| Invalidations | 3            | 0          | 0      | 0              |
-| OAC / OAI     | 11           | 0          | 0      | 0              |
-| Tagging       | 3            | 0          | 0      | 0              |
-| Policies      | 18           | 0          | 0      | 0              |
-| Proxy         | 1            | 0          | 0      | 0              |
-| Functions     | 8            | 0          | 0      | 0              |
-| Keys & Crypto | 12           | 0          | 0      | 0              |
-| Monitoring    | 8            | 0          | 0      | 0              |
-| FLE           | 12           | 0          | 0      | 0              |
-| Deployment    | 6            | 0          | 0      | 0              |
+For the operation counts by category, see [Summary](#summary) at the bottom of
+this page — it's generated from the capability registry, so it never drifts
+from what's actually implemented.
 
 ---
 
