@@ -20,7 +20,7 @@ see the [root README](../README.md).
 - [CLI reference](./cli.md) — every `overcast` subcommand: background instances, introspection, AWS environment helpers, networking and TLS
 - [Using AWS CDK](./cdk.md) — `cdk bootstrap`, `cdk deploy`, supported resource types, troubleshooting
 - [CDK guides](./cdk/) — focused CDK workflow guides
-- [Local VPCs for CDK](./cdk/local-vpc.md) — stable local VPC bootstrap, CDK context cache behavior, VPC provider pattern
+- [Local VPCs for CDK](./cdk/local-vpc.md) — local resources stack that creates the VPC, environment-agnostic application stacks, CDK context cache behavior
 - [Networking and host-based addressing](./networking.md) — path-style vs. Host-routed endpoints (API Gateway, Lambda function URLs, AppSync), wildcard DNS setup
 - [The inner loop](./local-dev.md) — edit a file and see it take effect: `cdk watch`, Lambda and ECS hot reload, and a Laravel-on-Fargate walkthrough
 - [Testcontainers](./testcontainers.md) — start Overcast from integration tests with the Go module; options, port-mapping caveats

@@ -308,7 +308,7 @@ export const DOCS_NAV = [
     "path": "docs/cdk/local-vpc.md",
     "href": "cdk/local-vpc.md",
     "title": "Local VPCs for CDK",
-    "description": "CDK VPC lookups are designed for stable AWS environments. Local Overcast VPCs are often torn down and recreated, so their generated vpc-*, subnet-*, and rtb-* IDs can change...",
+    "description": "CDK VPC lookups are designed for stable AWS environments. Local Overcast VPCs are torn down and recreated often, so their generated vpc-*, subnet-*, and rtb-* IDs change between deploys. The simplest way to avoid that churn is to let CDK create the local VPC...",
     "section": "CDK",
     "tags": [
       "cdk",
@@ -330,33 +330,38 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
-        "text": "Why Not `fromLookup` Locally?",
-        "id": "why-not-fromlookup-locally"
+        "text": "The Local Resources Stack",
+        "id": "the-local-resources-stack"
       },
       {
         "depth": 2,
-        "text": "Why Not Create the VPC at Stage Scope?",
+        "text": "Wiring It Up In The Stage",
+        "id": "wiring-it-up-in-the-stage"
+      },
+      {
+        "depth": 2,
+        "text": "Application Stacks Stay Environment-Agnostic",
+        "id": "application-stacks-stay-environment-agnostic"
+      },
+      {
+        "depth": 2,
+        "text": "Why Not Create The VPC At Stage Scope?",
         "id": "why-not-create-the-vpc-at-stage-scope"
       },
       {
         "depth": 2,
-        "text": "VPC Provider Pattern",
-        "id": "vpc-provider-pattern"
+        "text": "Availability Zones",
+        "id": "availability-zones"
       },
       {
         "depth": 2,
-        "text": "Local Metadata File",
-        "id": "local-metadata-file"
+        "text": "Importing A VPC Created Outside CDK",
+        "id": "importing-a-vpc-created-outside-cdk"
       },
       {
         "depth": 2,
-        "text": "Bootstrap Requirements",
-        "id": "bootstrap-requirements"
-      },
-      {
-        "depth": 2,
-        "text": "What Not To Do",
-        "id": "what-not-to-do"
+        "text": "Notes",
+        "id": "notes"
       },
       {
         "depth": 2,
