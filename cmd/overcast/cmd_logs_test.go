@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,6 +177,27 @@ func TestTailFile_MissingFile(t *testing.T) {
 	}
 }
 
+// syncBuffer is a mutex-guarded buffer for the follow tests, which read the
+// output while followLogFile is still writing it from another goroutine —
+// bytes.Buffer alone is not concurrency-safe, and the -race coverage job
+// caught exactly that (concurrent Write/String data race).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestFollowLogFile_StreamsAppendedBytes writes to a file after
 // followLogFile has started watching it and confirms the appended content
 // arrives, then cancels the context and confirms followLogFile returns.
@@ -191,7 +213,7 @@ func TestFollowLogFile_StreamsAppendedBytes(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	var out bytes.Buffer
+	var out syncBuffer
 	done := make(chan error, 1)
 	go func() { done <- followLogFile(ctx, &out, path, int64(len("initial\n"))) }()
 
@@ -246,7 +268,7 @@ func TestFollowLogFile_TruncationResetsOffset(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var out bytes.Buffer
+	var out syncBuffer
 	go func() { _ = followLogFile(ctx, &out, path, int64(len(longContent))) }()
 
 	time.Sleep(50 * time.Millisecond)
