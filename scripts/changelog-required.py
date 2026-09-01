@@ -102,6 +102,9 @@ EXEMPT_PREFIXES = (
     # release target in the Makefile and the Dockerfile builds ./cmd/overcast.
     "compat/",
     "cmd/compat/",
+    # Standalone entrypoint for the workspace MCP server — dev-only, `go run`
+    # only, and (like cmd/compat above) never built by a release target.
+    "cmd/overcast-mcp/",
     # Test-only. tests/ is the integration tree; *_test.go is the unit half,
     # which lives beside the code it tests.
     "tests/",
