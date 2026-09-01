@@ -26,7 +26,7 @@ export AWS_ENDPOINT_URL=http://localhost:4566
 KEY=$(aws kms create-key --query KeyMetadata.KeyId --output text)
 aws kms create-alias --alias-name alias/app --target-key-id "$KEY"
 
-aws kms encrypt --key-id alias/app --plaintext "$(echo -n secret | base64)" \
+aws kms encrypt --key-id alias/app --plaintext 'hunter2' \
   --query CiphertextBlob --output text
 ```
 
