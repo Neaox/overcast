@@ -80,7 +80,7 @@ describe("tokenizeToRanges", () => {
   })
 
   it("yields no spans for a language with no grammar, like the markup fallback", () => {
-    expect(tokenizeToRanges("SELECT 1", "sql")).toEqual([])
+    expect(tokenizeToRanges("SELECT 1", "fortran")).toEqual([])
   })
 
   it("round-trips through the packed wire form losslessly", () => {
@@ -113,6 +113,6 @@ describe("grammarTokenClasses", () => {
   })
 
   it("returns nothing for an unregistered language", () => {
-    expect(grammarTokenClasses("sql").size).toBe(0)
+    expect(grammarTokenClasses("fortran").size).toBe(0)
   })
 })
