@@ -5,9 +5,13 @@ import type { S3ObjectVersion } from "@/types"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
 import { formatPreviewText, isTextPreviewable } from "./object-preview-format"
 
-// Only the version listing is stubbed. `getObjectDownloadUrl` is the real one
-// throughout — the download-href assertions below are about what it builds.
-const api = vi.hoisted(() => ({ versions: [] as S3ObjectVersion[] }))
+// Only the version listing and the preview body are stubbed.
+// `getObjectDownloadUrl` is the real one throughout — the download-href
+// assertions below are about what it builds.
+const api = vi.hoisted(() => ({
+  versions: [] as S3ObjectVersion[],
+  preview: { text: "", truncated: false },
+}))
 
 vi.mock("@/services/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
@@ -17,6 +21,7 @@ vi.mock("@/services/api", async (importOriginal) => {
       ...actual.s3,
       listObjectVersions: () =>
         Promise.resolve({ versions: api.versions, prefixes: [], isTruncated: false }),
+      getObjectText: () => Promise.resolve(api.preview),
     },
   }
 })
@@ -230,6 +235,39 @@ describe("ObjectPreviewDialog > the current version", () => {
 
   it("shows no version row, there being no version to name", () => {
     expect(screen.queryByText("Version")).not.toBeInTheDocument()
+  })
+})
+
+describe("ObjectPreviewDialog > text preview", () => {
+  const renderText = (contentLength: number) =>
+    render(
+      <ObjectPreviewDialog
+        bucket="my-bucket"
+        objectKey="server.log"
+        metadata={{ ...metadata, contentType: "text/plain", contentLength }}
+        loading={false}
+        onSelectVersion={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+  it("previews a text-like object larger than the fetch window", async () => {
+    // The size of the *fetch* is capped by the Range request, not by refusing
+    // the object: a 5 MiB log previews as its first 1 MiB, labelled as such.
+    api.preview = { text: "first lines of a big log", truncated: true }
+    renderText(5 * 1024 * 1024)
+
+    expect(await screen.findByText("first lines of a big log")).toBeInTheDocument()
+    expect(await screen.findByText(/first 1 MiB/)).toBeInTheDocument()
+    expect(screen.queryByText(/Preview is available for/)).not.toBeInTheDocument()
+  })
+
+  it("does not claim truncation for an object shown whole", async () => {
+    api.preview = { text: "all twelve b.", truncated: false }
+    renderText(12)
+
+    expect(await screen.findByText("all twelve b.")).toBeInTheDocument()
+    expect(screen.queryByText(/first 1 MiB/)).not.toBeInTheDocument()
   })
 })
 

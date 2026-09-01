@@ -386,7 +386,14 @@ export const s3 = {
     if (!res.ok) {
       throw Object.assign(new Error(`Preview failed: HTTP ${res.status}`), { status: res.status })
     }
-    return { text: await res.text(), truncated: res.status === 206 }
+    // S3 answers 206 for any satisfiable range, a clamped one included, so the
+    // status alone cannot say whether bytes were left behind. Content-Range
+    // can: "bytes 0-35/36" served everything, "bytes 0-1048575/5242880" did
+    // not. A 206 whose header cannot be read counts as complete — a missing
+    // suffix on the label beats claiming a cut that may not have happened.
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get("content-range") ?? "")
+    const truncated = res.status === 206 && !!range && Number(range[2]) + 1 < Number(range[3])
+    return { text: await res.text(), truncated }
   },
 
   deleteObject: async (bucket: string, key: string) => {

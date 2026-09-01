@@ -24,8 +24,6 @@ import { formatBytes, formatDate } from "@/lib/format"
 import { describeObjectReadError } from "@/features/s3/object-read-error"
 import { formatPreviewText, isImagePreviewable, isTextPreviewable } from "./object-preview-format"
 
-const TEXT_PREVIEW_LIMIT = 1024 * 1024
-
 interface ObjectMetadata {
   contentType: string
   contentLength: number
@@ -108,11 +106,11 @@ export function ObjectPreviewDialog({
   })
   const previewUrl = objectKey ? s3.getObjectDownloadUrl(bucket, objectKey, versionId) : undefined
   const canPreviewImage = !!metadata && isImagePreviewable(metadata.contentType)
+  // No size gate: getObjectText fetches at most the first 1 MiB by Range, so
+  // a text-like object of any size previews — its opening window, labelled as
+  // such when the object holds more.
   const canPreviewText =
-    !!objectKey &&
-    !!metadata &&
-    metadata.contentLength <= TEXT_PREVIEW_LIMIT &&
-    isTextPreviewable(metadata.contentType, objectKey)
+    !!objectKey && !!metadata && isTextPreviewable(metadata.contentType, objectKey)
   const { data: previewText, isLoading: previewLoading } = useQuery({
     ...s3ObjectPreviewQueryOptions(bucket, objectKey ?? "", versionId),
     enabled: canPreviewText && !!previewUrl,
@@ -195,7 +193,7 @@ export function ObjectPreviewDialog({
       )}
       {objectKey && !canPreviewImage && !canPreviewText && (
         <div className="rounded-lg border border-border bg-bg-muted px-3 py-2 text-sm text-fg-muted">
-          Preview is available for common image files and text-like objects up to 1 MiB.
+          Preview is available for common image files and text-like objects.
         </div>
       )}
       {Object.keys(metadata.metadata).length > 0 && (
