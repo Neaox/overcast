@@ -102,7 +102,14 @@ func TestNotReady_MigratingRequest_JSONServiceReturnsJSON503(t *testing.T) {
 
 func TestNotReady_InternalPathsAreExempt(t *testing.T) {
 	store := &fakeNotReadyStore{notReady: true}
-	for _, path := range []string{"/_overcast/debug/state", "/_overcast/health", "/_overcast/info", "/_overcast/init"} {
+	// The last two are the compatibility roots. They matter here for a reason
+	// the namespaced paths do not: a 503 to a container healthcheck is read as
+	// "unhealthy", the orchestrator restarts the container, and restarting it
+	// mid-migration is what turns a slow start into a lost one.
+	for _, path := range []string{
+		"/_overcast/debug/state", "/_overcast/health", "/_overcast/info", "/_overcast/init",
+		LegacyHealthPath, LocalStackHealthPath,
+	} {
 		t.Run(path, func(t *testing.T) {
 			next, called := passThroughHandler()
 			handler := NotReady(store)(next)

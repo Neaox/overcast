@@ -33,6 +33,10 @@ var nonManifestRoutes = map[string]string{
 
 	"/{accountID:[0-9]+}/{queueName}": "SQS path-style queue URL. A real AWS shape, but the manifest models it as an endpoint rather than an operation URI, so no row can cover it.",
 
+	"/_health":            "Overcast's own health endpoint before phase 2 moved it into the namespace, kept as an alias. A URL already written into someone's compose healthcheck or Testcontainers wait strategy is not a URL we can migrate for them, and a 404 there reads as a dead container — so it is served rather than left to the S3 catch-all. Reserved by the same underscore rule as internalPrefix. See internal/router/health_compat.go.",
+	"/_localstack/health": "LocalStack's health endpoint — what a compose healthcheck or wait strategy carried over from LocalStack polls — served in LocalStack's own response shape. Same reason and same underscore guarantee as /_health above.",
+	"/_localstack/*":      "The remainder of LocalStack's operational namespace, answered with a 404 naming the Overcast endpoint instead of S3's NoSuchBucket. One route for the whole prefix, so the namespace is accounted for rather than only the paths that happen to be mapped today.",
+
 	"/restapis/{restApiId}/{stageName}/_user_request_/*": "LocalStack URL compatibility for API Gateway execute-api. The underscore mid-path is deliberate and must not be tidied into the namespace: the point is byte-identical compatibility with a URL LocalStack documents, and host-addressed callers already have the namespaced route. See docs/plans/non-canonical-url-namespace.md section 3.",
 	"/restapis/{restApiId}/{stageName}/_user_request_":   "The stage root of the route above — LocalStack's URL with an empty path. Same reason, registered separately because chi's wildcard does not match the empty remainder.",
 

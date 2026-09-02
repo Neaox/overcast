@@ -1100,7 +1100,18 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
-	r.Get("/_overcast/health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn))
+	healthHandler := newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn)
+	r.Get("/_overcast/health", healthHandler)
+
+	// The two health URLs Overcast answers that are not its own: /_health (its
+	// own, before #927) and /_localstack/health (LocalStack's). Both are what
+	// container healthchecks and Testcontainers wait strategies hard-code, and
+	// a 404 on either reads as a dead container — see health_compat.go for why
+	// that is worth serving rather than documenting.
+	compatHinter := &aliasHinter{logger: logger}
+	r.Get(middleware.LegacyHealthPath, newLegacyHealthHandler(healthHandler, compatHinter))
+	r.Get(middleware.LocalStackHealthPath, newLocalStackHealthHandler(cfg, enabledServiceNames, compatHinter))
+	r.HandleFunc(middleware.LocalStackPrefix+"*", newLocalStackNotFoundHandler(compatHinter))
 
 	// GET /_overcast/topology — full cross-region resource graph for the system map.
 	r.Get("/_overcast/topology", newTopologyHandler(cfg, store))
