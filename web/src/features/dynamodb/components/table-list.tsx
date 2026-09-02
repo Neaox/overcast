@@ -19,6 +19,7 @@ import { ResourceTable, type ResourceTableSort } from "@/components/ui/resource-
 import { Badge } from "@/components/ui/badge"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
+import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import type { DynamoTable } from "@/types"
 import { CreateTableDialog } from "./create-table-dialog"
 
@@ -80,7 +81,18 @@ export function TableList({ sort, onSortChange }: TableListProps = {}) {
         emptyIcon={Database}
         emptyTitle="No tables yet"
         emptyDescription="Create a table to start storing DynamoDB items."
-        emptyAction={<CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>}
+        emptyAction={
+          <div className="flex flex-col items-center gap-4">
+            <CreateAction onClick={() => setShowCreate(true)}>Create table</CreateAction>
+            {/* Same arrangement as the CloudFormation stack list: `ResourceTable`
+                owns its empty state, so the cross-region notice rides in the
+                action slot, with its sibling margins dropped and the wrapper
+                collapsed when the notice has nothing to say. */}
+            <div className="empty:hidden [&>div]:mt-0 [&>div]:mb-0">
+              <RegionElsewhereNotice kind="dynamodb-tables" noun="tables" />
+            </div>
+          </div>
+        }
         errorTitle="Failed to load tables"
         sort={sort}
         onSortChange={onSortChange}

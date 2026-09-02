@@ -8,7 +8,13 @@ import { apiFetch } from "./base"
  * than a quiet empty answer. Adding a page to this check therefore starts
  * there, and this union is what stops a typo reaching the network.
  */
-export type PreflightRegionKind = "cloudformation-stacks" | "sqs-queues" | "lambda-functions"
+export type PreflightRegionKind =
+  | "cloudformation-stacks"
+  | "sqs-queues"
+  | "lambda-functions"
+  | "dynamodb-tables"
+  | "sns-topics"
+  | "kinesis-streams"
 
 /** One other region that holds resources of the kind the page found none of. */
 export interface PreflightRegionElsewhere {

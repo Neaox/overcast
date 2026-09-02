@@ -130,6 +130,29 @@ var preflightRegionKinds = []preflightRegionKind{
 		kind:      "lambda-functions",
 		namespace: "lambda:functions",
 	},
+	// The three below were added together after the DynamoDB page was reported
+	// as "ListTables returns [] for tables the CLI just created against the
+	// same endpoint". The audit behind that report blamed an account split —
+	// signed requests landing in one account partition, the console's in
+	// another — and there is no such partition: nothing in the store keys on
+	// the credential's access key, and the console signs its own requests
+	// anyway. What the report actually described was this file's symptom,
+	// on a page this registry did not yet cover. The state itself behaves as
+	// on AWS: a table, topic or stream is regional, and each of these
+	// services deletes its record when the resource goes, so the bare count
+	// is the count the page would have shown.
+	{
+		kind:      "dynamodb-tables",
+		namespace: "dynamodb:tables",
+	},
+	{
+		kind:      "sns-topics",
+		namespace: "sns:topics",
+	},
+	{
+		kind:      "kinesis-streams",
+		namespace: "kinesis:streams",
+	},
 }
 
 // preflightRegionKindByName finds a kind by the name the console asked for.
