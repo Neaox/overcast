@@ -2344,6 +2344,97 @@ func TestLoad_protocolStrictEnabled(t *testing.T) {
 	}
 }
 
+// TestLoad_dockerHost covers the end-to-end wiring of DOCKER_HOST into the
+// Docker endpoint: it supplies the default, LAMBDA_DOCKER_SOCKET still wins,
+// and provenance is recorded either way so startup can say which one spoke.
+func TestLoad_dockerHost(t *testing.T) {
+	t.Run("supplies the endpoint when LAMBDA_DOCKER_SOCKET is unset", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("DOCKER_HOST", "unix:///home/dev/.colima/default/docker.sock")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaDockerSocket != "/home/dev/.colima/default/docker.sock" {
+			t.Fatalf("LambdaDockerSocket = %q, want the DOCKER_HOST socket path", cfg.LambdaDockerSocket)
+		}
+		if cfg.DockerSocketSource != "DOCKER_HOST" {
+			t.Fatalf("DockerSocketSource = %q, want DOCKER_HOST", cfg.DockerSocketSource)
+		}
+	})
+
+	t.Run("LAMBDA_DOCKER_SOCKET wins and claims no DOCKER_HOST provenance", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("DOCKER_HOST", "tcp://elsewhere:2375")
+		t.Setenv("LAMBDA_DOCKER_SOCKET", "/var/run/docker.sock")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaDockerSocket != "/var/run/docker.sock" {
+			t.Fatalf("LambdaDockerSocket = %q, want the explicit LAMBDA_DOCKER_SOCKET", cfg.LambdaDockerSocket)
+		}
+		if cfg.DockerSocketSource != "" {
+			t.Fatalf("DockerSocketSource = %q, want empty — DOCKER_HOST did not supply it", cfg.DockerSocketSource)
+		}
+	})
+
+	t.Run("an undialable transport is recorded, not silently swallowed", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("DOCKER_HOST", "ssh://dev@build-host")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaDockerSocket != config.DefaultDockerSocket() {
+			t.Fatalf("LambdaDockerSocket = %q, want the platform default", cfg.LambdaDockerSocket)
+		}
+		if cfg.DockerHostUnsupported != "ssh://dev@build-host" {
+			t.Fatalf("DockerHostUnsupported = %q, want the raw value so startup can warn", cfg.DockerHostUnsupported)
+		}
+	})
+
+	t.Run("unset keeps the platform default", func(t *testing.T) {
+		clearEnv(t)
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaDockerSocket != config.DefaultDockerSocket() {
+			t.Fatalf("LambdaDockerSocket = %q, want the platform default %q",
+				cfg.LambdaDockerSocket, config.DefaultDockerSocket())
+		}
+		if cfg.DockerSocketSource != "" || cfg.DockerHostUnsupported != "" {
+			t.Fatalf("provenance = (%q, %q), want both empty",
+				cfg.DockerSocketSource, cfg.DockerHostUnsupported)
+		}
+	})
+}
+
+// TestLoad_localStackVolumeUnmounted is the half of the /var/lib/localstack
+// adoption that holds on every platform: with nothing mounted anywhere, a
+// containerised run keeps the image's own /data and reports no adoption.
+// The mount-present cases are covered exhaustively, and platform-independently,
+// by TestAdoptLocalStackVolume.
+func TestLoad_localStackVolumeUnmounted(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_DATA_DIR", t.TempDir())
+	t.Setenv("OVERCAST_DATA_DIR_SOURCE", "image")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LocalStackVolumeDataDir != "" {
+		t.Fatalf("LocalStackVolumeDataDir = %q, want empty — nothing is mounted at /var/lib/localstack",
+			cfg.LocalStackVolumeDataDir)
+	}
+}
+
 func TestLoad_protocolStrictDisabledByDefault(t *testing.T) {
 	clearEnv(t)
 
@@ -2381,6 +2472,11 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",
 		"OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK",
+		// The Docker endpoint has two sources to isolate, not one: a
+		// developer running Colima or Rancher Desktop exports DOCKER_HOST,
+		// and without this the platform-default assertion below would fail on
+		// their machine and nowhere else.
+		"DOCKER_HOST", "LAMBDA_DOCKER_SOCKET",
 	}
 	for _, v := range awsEmuVars {
 		original := os.Getenv(v)

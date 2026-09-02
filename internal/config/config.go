@@ -233,6 +233,14 @@ type Config struct {
 	// than wonder why nothing changed.
 	IgnoredLocalStackVars []string
 
+	// LocalStackVolumeDataDir is set to LocalStackVolumeDir when DataDir was
+	// adopted from a LocalStack-shaped volume mount at /var/lib/localstack
+	// rather than from the image's own /data — see adoptLocalStackVolume.
+	// Empty in every other run. Drives one startup Info line, since a data
+	// directory that came from neither the environment nor the documented
+	// default is exactly the kind of thing an operator should be told about.
+	LocalStackVolumeDataDir string
+
 	// SplitHorizonHosts are extra hostnames that resolve to 127.0.0.1 in public
 	// DNS and are remapped to Overcast's address inside containers Overcast
 	// starts, so one URL is dialable from both the host and a sibling container.
@@ -466,14 +474,27 @@ type Config struct {
 	Network string
 
 	// LambdaDockerSocket is the path to the Docker daemon socket used to
-	// manage Lambda container siblings. Defaults to the platform Docker socket
-	// (/var/run/docker.sock on Linux/macOS, npipe:////./pipe/docker_engine on Windows).
+	// manage Lambda container siblings. Defaults to DOCKER_HOST when set,
+	// otherwise the platform Docker socket (/var/run/docker.sock on
+	// Linux/macOS, npipe:////./pipe/docker_engine on Windows).
 	//
 	// The per-service socket overrides below exist for unusual setups, but
 	// every one of them must address the *same* daemon: containers are attached
 	// to shared networks across service boundaries, which one daemon cannot do
 	// on another's behalf.
 	LambdaDockerSocket string
+
+	// DockerSocketSource is "DOCKER_HOST" when that variable supplied
+	// LambdaDockerSocket, and empty when LAMBDA_DOCKER_SOCKET or the platform
+	// default did. Internal provenance for the startup log only — see
+	// docker_host.go.
+	DockerSocketSource string
+
+	// DockerHostUnsupported carries the raw DOCKER_HOST value when it names a
+	// transport Overcast has no dialer for (ssh://, https://), so startup can
+	// warn that the platform default was used instead rather than leaving the
+	// operator to work out why their daemon was never reached.
+	DockerHostUnsupported string
 
 	// LambdaRuntimeAPIPort is the port on which Overcast exposes the Lambda
 	// Runtime API to containers. Each container connects back on this port.
@@ -1428,8 +1449,9 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           0, or a port already taken, falls back to ephemeral)
 //	OVERCAST_ECR_REGISTRY_PERSIST      true    (back the fixed-port registry with a named Docker
 //	                                           volume, so pushed images survive a restart)
-//	LAMBDA_DOCKER_SOCKET               (platform default) /var/run/docker.sock on Linux/macOS,
-//	                                           npipe:////./pipe/docker_engine on Windows. Every
+//	LAMBDA_DOCKER_SOCKET               DOCKER_HOST when set, else the platform default
+//	                                           (/var/run/docker.sock on Linux/macOS,
+//	                                           npipe:////./pipe/docker_engine on Windows). Every
 //	                                           per-service socket override below must address the
 //	                                           same daemon.
 //	LAMBDA_RUNTIME_API_PORT            9001    (port containers call back on for the Runtime API)
@@ -1628,6 +1650,16 @@ func Load() (*Config, error) {
 	dataDirEnvRaw, dataDirAliasSource, err := resolveStringAlias(dataDirAlias, dataDirNativeRaw, "OVERCAST_DATA_DIR")
 	if err != nil {
 		return nil, err
+	}
+	// A compose file migrated from LocalStack mounts its state volume where
+	// LocalStack's own documented compose puts it — /var/lib/localstack — and
+	// says nothing about /data. Nothing then fails: the mount is simply not
+	// where Overcast looks, OVERCAST_STATE=auto sees no volume at /data, and
+	// the run is silently ephemeral. Adopting the mount is the whole fix, and
+	// it is deliberately narrow — see adoptLocalStackVolume.
+	if adopted := adoptLocalStackVolume(dataDirEnvRaw, imageBakedDataDir); adopted != "" {
+		dataDirEnvRaw = adopted
+		cfg.LocalStackVolumeDataDir = adopted
 	}
 	if dataDirEnvRaw == "" {
 		dataDirEnvRaw = imageBakedDataDir
@@ -1874,8 +1906,16 @@ func Load() (*Config, error) {
 	// that VPC's network instead. ControlNetwork() derives the other plane.
 	cfg.Network = envOr("OVERCAST_NETWORK", "overcast")
 
-	// Lambda container runtime
-	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", DefaultDockerSocket())
+	// Lambda container runtime. LAMBDA_DOCKER_SOCKET wins; absent it,
+	// DOCKER_HOST — the Docker CLI's own convention, which every daemon not
+	// living at the platform default tells its users to set — supplies the
+	// endpoint. See docker_host.go.
+	dockerEndpoint, dockerEndpointSource, dockerHostUnsupported := resolveDockerEndpoint()
+	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", dockerEndpoint)
+	if os.Getenv("LAMBDA_DOCKER_SOCKET") == "" {
+		cfg.DockerSocketSource = dockerEndpointSource
+		cfg.DockerHostUnsupported = dockerHostUnsupported
+	}
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see

@@ -310,6 +310,57 @@ func resolveGatewayListenAlias(currentListenRaw, currentPortRaw string) (listenV
 	return listen, port, "GATEWAY_LISTEN", nil
 }
 
+// LocalStackVolumeDir is where LocalStack's own published docker-compose.yml
+// mounts its state volume ("${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack").
+// Overcast keeps state under OVERCAST_DATA_DIR (/data in the image), so a
+// compose file carried over unchanged mounts a volume Overcast never reads.
+const LocalStackVolumeDir = "/var/lib/localstack"
+
+// adoptLocalStackVolume reports the data directory to use when a
+// LocalStack-shaped volume mount is the only one present, or "" to leave the
+// resolution alone.
+//
+// The three conditions are all necessary, and together they make this
+// invisible to everyone who is not migrating:
+//
+//   - dataDirEnvRaw is empty and imageBakedDataDir is not: nobody configured a
+//     data directory at all, and we are running inside the Docker image, whose
+//     baked OVERCAST_DATA_DIR=/data is a default rather than user intent (see
+//     the carve-out in this file's package comment). A native run, or any run
+//     with OVERCAST_DATA_DIR/DATA_DIR set, is untouched.
+//   - the image's own /data is not itself a mount: someone who mounted a
+//     volume the Overcast way has already said where state goes, and that
+//     always wins.
+//   - /var/lib/localstack IS a mount: an unmounted directory is just a
+//     directory (the image creates it so a named volume inherits the right
+//     ownership), and adopting it would write state into the container layer
+//     for every volume-less run.
+//
+// The mountpoint test is the same one OVERCAST_STATE=auto uses to recognise a
+// volume at /data — see isMountpoint — so the two decisions cannot disagree
+// about what "a volume is mounted here" means.
+func adoptLocalStackVolume(dataDirEnvRaw, imageBakedDataDir string) string {
+	return adoptLocalStackVolumeWith(dataDirEnvRaw, imageBakedDataDir, isMountpoint)
+}
+
+// adoptLocalStackVolumeWith is adoptLocalStackVolume with the mountpoint test
+// injected, so the decision is a pure function of its inputs and testable on
+// any platform — isMountpoint is unconditionally false on native Windows (see
+// mountpoint_windows.go), which would otherwise leave every positive case
+// unexercised on the platform this repository is developed on.
+func adoptLocalStackVolumeWith(dataDirEnvRaw, imageBakedDataDir string, mounted func(string) bool) string {
+	if dataDirEnvRaw != "" || imageBakedDataDir == "" {
+		return ""
+	}
+	if mounted(imageBakedDataDir) {
+		return ""
+	}
+	if !mounted(LocalStackVolumeDir) {
+		return ""
+	}
+	return LocalStackVolumeDir
+}
+
 // ignoredLocalStackVars are LocalStack-documented variables Overcast
 // recognises but that have no effect: not silently missed, and not
 // rejected, just inert. Presence is logged once at startup (see

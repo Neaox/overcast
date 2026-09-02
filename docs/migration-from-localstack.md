@@ -56,6 +56,7 @@ Overcast spelling at your leisure, or never.
 | `DEBUG=1`                             | `OVERCAST_LOG_LEVEL=debug`          | Alias. `DEBUG=0` is a no-op                          |
 | `PERSISTENCE=1`                       | `OVERCAST_STATE=persistent`         | Alias. `PERSISTENCE=0` is a no-op                    |
 | `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT`  | `LAMBDA_INIT_TIMEOUT_SECONDS`       | Alias                                                |
+| `DOCKER_HOST`                         | `LAMBDA_DOCKER_SOCKET`              | Read directly; `LAMBDA_DOCKER_SOCKET` still wins     |
 | `SERVICES`                            | —                                   | Recognised, no effect: every service always runs     |
 | `LOCALSTACK_API_KEY` / `_AUTH_TOKEN`  | —                                   | Recognised, no effect: nothing is auth-gated         |
 
@@ -232,6 +233,18 @@ volume or bind mount is present at `OVERCAST_DATA_DIR` — or a database is alre
 there — and `memory` otherwise. Set `OVERCAST_STATE` explicitly for a specific
 backend regardless of what is mounted. See
 [Storage and persistence § The auto default](./storage.md#the-auto-default).
+
+A volume carried over at LocalStack's own path is read where it is. Overcast
+keeps state in `/data`, but a compose file migrated line by line still mounts
+`/var/lib/localstack` — so when that is the only volume mounted, it becomes the
+state directory and a startup line says so. Mount `/data`, or set
+`OVERCAST_DATA_DIR`, to choose otherwise; either wins.
+
+```yaml
+volumes:
+  - "./volume:/var/lib/localstack" # works unchanged
+  - "/var/run/docker.sock:/var/run/docker.sock"
+```
 
 > [!WARNING]
 > **Not true of the `overcast-slim` image or the `overcastd` binaries.** Both are

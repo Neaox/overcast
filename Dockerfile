@@ -196,7 +196,14 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 RUN apk add --no-cache ca-certificates su-exec
 
 RUN addgroup -S overcast && adduser -S overcast -G overcast
-RUN mkdir -p /data && chown overcast:overcast /data
+# /data is where Overcast keeps state. /var/lib/localstack is where
+# LocalStack's own published compose file mounts its state volume, and a
+# compose file migrated line by line still names it — so the directory exists
+# here, owned by the same user, and a named volume mounted there inherits that
+# ownership instead of arriving root-owned and unwritable. Overcast reads it
+# only when it is genuinely a mount and nothing else says where state goes;
+# see adoptLocalStackVolume in internal/config.
+RUN mkdir -p /data /var/lib/localstack && chown overcast:overcast /data /var/lib/localstack
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Back-compat: the script was previously installed as entrypoint-slim.sh;
