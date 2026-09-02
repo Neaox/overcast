@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/overcast-sh/overcast/internal/docker"
 )
 
@@ -328,7 +330,7 @@ func TestResolveListen_detailNamesEveryCandidateAndTheFix(t *testing.T) {
 
 func TestResolveListen_remembersAVerifiedAnswerAndSkipsTheProbeNextTime(t *testing.T) {
 	// Given: a state directory to remember it in, and a first run that probes.
-	path := filepath.Join(t.TempDir(), hintFileName)
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
 	dc := &fakeListenClient{network: networkWithGateway("overcast_control", "172.19.0.1")}
 	first := reachableFrom(dockerInternalHost)
 
@@ -364,9 +366,9 @@ func TestResolveListen_remembersAVerifiedAnswerAndSkipsTheProbeNextTime(t *testi
 
 func TestResolveListen_ignoresAHintFromAnotherDaemonOrPlane(t *testing.T) {
 	// Given: a hint written against one daemon and one plane.
-	path := filepath.Join(t.TempDir(), hintFileName)
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
 	writeHint(path, "daemon-1", "overcast_control",
-		Candidate{Mode: modeHost, ContainerHost: "10.0.0.9", BindHosts: []string{"10.0.0.9"}}, time.Now())
+		Candidate{Mode: modeHost, ContainerHost: "10.0.0.9", BindHosts: []string{"10.0.0.9"}}, time.Now(), zap.NewNop())
 
 	cases := map[string]struct {
 		daemon  string
@@ -403,9 +405,9 @@ func TestResolveListen_ignoresAHintFromAnotherDaemonOrPlane(t *testing.T) {
 func TestResolveListen_forgetsTheRememberedAnswerWhenNothingIsReachable(t *testing.T) {
 	// Given: a remembered answer, and a run in which nothing is reachable —
 	// the firewall posture changed under it.
-	path := filepath.Join(t.TempDir(), hintFileName)
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
 	writeHint(path, "daemon-9", "overcast_control",
-		Candidate{Mode: modeHost, ContainerHost: "10.0.0.9", BindHosts: []string{"10.0.0.9"}}, time.Now())
+		Candidate{Mode: modeHost, ContainerHost: "10.0.0.9", BindHosts: []string{"10.0.0.9"}}, time.Now(), zap.NewNop())
 	dc := &fakeListenClient{networkErr: errors.New("no such network")}
 	d := deps(onHost, "192.168.1.20", bindableExcept(), reachableFrom())
 	d.daemonID = func(context.Context) string { return "daemon-1" }
@@ -667,5 +669,126 @@ func TestBindableHost_answersFromAnActualBind(t *testing.T) {
 	// daemon, unbindable here — out of the candidate list.
 	if bindableHost("192.0.2.1") {
 		t.Error("bindableHost(192.0.2.1) = true, want false")
+	}
+}
+
+// unavailableProbe reports that the probe could not be run at all — an
+// air-gapped host with no cached busybox, or a daemon refusing creates.
+type unavailableProbe struct{ asked []string }
+
+func (u *unavailableProbe) fn(_ context.Context, c Candidate) Attempt {
+	u.asked = append(u.asked, c.Mode+"/"+c.ContainerHost)
+	return Attempt{
+		Mode: c.Mode, Host: c.ContainerHost,
+		Unavailable: true,
+		Error:       "probe could not run: pull busybox:1.36: no such host",
+	}
+}
+
+func TestResolveListen_aProbeThatCouldNotRunIsNotAnUnreachableAddress(t *testing.T) {
+	// Given: a host where every candidate comes back "could not ask" rather
+	// than "asked and got nothing".
+	dc := &fakeListenClient{network: networkWithGateway("overcast_control", "172.19.0.1")}
+	probe := &unavailableProbe{}
+	d := deps(onHost, "192.168.1.20", bindableExcept(), nil)
+	d.probe = probe.fn
+
+	// When: the listen set is resolved.
+	got := resolveListen(context.Background(), dc, ListenOptions{Network: "overcast_control"}, d)
+
+	// Then: nothing is reported broken. Calling this unreachable would fire the
+	// only critical advisory Overcast has, degrade health, append a firewall
+	// paragraph to every InitError, and silently widen the bind set to every
+	// interface — on a machine whose Lambda may work perfectly.
+	if got.Unreachable {
+		t.Error("Unreachable = true, want false — nothing was measured")
+	}
+	if got.Verified {
+		t.Error("Verified = true, want false — nothing was measured")
+	}
+	// And the ordering stands on its own, exactly as it does with no daemon:
+	// the best candidate, not the wildcard the failure path advertises.
+	if got.Mode != modeGateway || got.ContainerHost != "172.19.0.1" {
+		t.Errorf("Mode/host = %q/%q, want the ordering to stand", got.Mode, got.ContainerHost)
+	}
+	if slices.Contains(got.BindHosts, wildcardHost) {
+		t.Errorf("BindHosts = %v, must not silently widen to the wildcard", got.BindHosts)
+	}
+}
+
+func TestResolveListen_aProbeThatCouldNotRunKeepsTheRememberedAnswer(t *testing.T) {
+	// Given: an answer measured by an earlier run, and a run today that cannot
+	// probe at all — the daemon it would ask is a different one, so the hint
+	// does not short-circuit.
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
+	writeHint(path, "daemon-earlier", "overcast_control",
+		Candidate{Mode: modeHost, ContainerHost: "10.0.0.9", BindHosts: []string{"10.0.0.9"}},
+		time.Now(), zap.NewNop())
+	dc := &fakeListenClient{networkErr: errors.New("no such network")}
+	d := deps(onHost, "192.168.1.20", bindableExcept(), nil)
+	d.probe = (&unavailableProbe{}).fn
+	d.daemonID = func(context.Context) string { return "daemon-today" }
+
+	// When: the listen set is resolved.
+	resolveListen(context.Background(), dc,
+		ListenOptions{Network: "overcast_control", HintPath: path}, d)
+
+	// Then: the earlier measurement survives. A run that established nothing
+	// has no standing to discard what an earlier run actually measured.
+	if readHint(path, "daemon-earlier", "overcast_control") == nil {
+		t.Error("the remembered answer was discarded by a run that measured nothing")
+	}
+}
+
+func TestResolveListen_oneRealMeasurementIsEnoughToCallItUnreachable(t *testing.T) {
+	// Given: a host where one candidate was genuinely measured and refused, and
+	// the rest could not be asked.
+	dc := &fakeListenClient{network: networkWithGateway("overcast_control", "172.19.0.1")}
+	d := deps(onHost, "192.168.1.20", bindableExcept(), nil)
+	first := true
+	d.probe = func(_ context.Context, c Candidate) Attempt {
+		if first {
+			first = false
+			return Attempt{Mode: c.Mode, Host: c.ContainerHost, Error: "wget: download timed out"}
+		}
+		return Attempt{Mode: c.Mode, Host: c.ContainerHost, Unavailable: true, Error: "probe could not run: refused"}
+	}
+
+	// When: the listen set is resolved.
+	got := resolveListen(context.Background(), dc, ListenOptions{Network: "overcast_control"}, d)
+
+	// Then: it is a real verdict. The bar is evidence, not unanimity — a host
+	// that dropped the packets on the one address it could be asked about has
+	// told us something, and staying quiet about it is the bug this fixes.
+	if !got.Unreachable {
+		t.Error("Unreachable = false, want true — one candidate was measured and failed")
+	}
+}
+
+func TestResolveListen_anIncompleteWalkIsNotAVerdict(t *testing.T) {
+	// Given: a probe that measures the first candidate and then burns the whole
+	// budget, so later candidates never get their turn.
+	dc := &fakeListenClient{network: networkWithGateway("overcast_control", "172.19.0.1")}
+	d := deps(onHost, "192.168.1.20", bindableExcept(), nil)
+	d.budget = 50 * time.Millisecond
+	d.probe = func(ctx context.Context, c Candidate) Attempt {
+		// Exhaust the caller budget the way a hanging daemon call would.
+		if ctx.Err() == nil {
+			<-ctx.Done()
+		}
+		return Attempt{Mode: c.Mode, Host: c.ContainerHost, Error: "wget: download timed out"}
+	}
+
+	// When: the listen set is resolved.
+	got := resolveListen(context.Background(), dc, ListenOptions{Network: "overcast_control"}, d)
+
+	// Then: no verdict. Candidates left untried may well have answered, and one
+	// of them is the row that fixes the platform this whole change is for.
+	if got.Unreachable {
+		t.Errorf("Unreachable = true after only %d of the candidates were tried, want false",
+			len(got.Attempts))
+	}
+	if len(got.Attempts) == 0 {
+		t.Error("no candidate was attempted at all")
 	}
 }

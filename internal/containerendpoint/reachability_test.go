@@ -87,7 +87,10 @@ func TestProbeCandidate_doesNotTrustAContainerThatReachedSomethingElse(t *testin
 	// Given: a dial that reports success while nothing arrives here — a proxy,
 	// a captive portal, or an address some other process answered on.
 	c := Candidate{Mode: modeHost, ContainerHost: "192.168.8.19", BindHosts: []string{loopbackHost}}
-	dial := func(context.Context, string) (string, bool, error) { return "ok", false, nil }
+	// probeOutput drops the served body and the exit marker, so a clean success
+	// reaches probeCandidate with nothing to quote — which is what puts this
+	// case in the default arm rather than the "the container said why" one.
+	dial := func(context.Context, string) (string, bool, error) { return "", false, nil }
 
 	// When: it is probed.
 	got := probeCandidate(context.Background(), c, dial)
@@ -243,19 +246,34 @@ func TestHintPath_isEmptyWithoutADataDirectory(t *testing.T) {
 	// Given: memory mode, or no data directory configured.
 	// When/Then: there is nowhere to remember it, and that is not an error —
 	// the probe simply runs at every startup.
-	if got := HintPath(""); got != "" {
+	if got := HintPath("", "overcast_control"); got != "" {
 		t.Errorf("HintPath(empty) = %q, want empty", got)
 	}
-	if got := HintPath("/data"); got != filepath.Join("/data", hintFileName) {
+	if got := HintPath("/data", "overcast_control"); got != filepath.Join("/data", hintFileName("overcast_control")) {
 		t.Errorf("HintPath() = %q, want it under the data dir", got)
+	}
+	// Two instances sharing a data directory with different OVERCAST_NETWORK
+	// values is documented, and one file for both makes them overwrite each
+	// other's record and re-probe for ever.
+	if HintPath("/data", "a_control") == HintPath("/data", "b_control") {
+		t.Error("two planes share one hint file — they will thrash")
+	}
+	// A path separator in a network name must not escape the data directory:
+	// OVERCAST_NETWORK is free text.
+	got := HintPath("/data", "../../etc/x")
+	if filepath.Dir(got) != filepath.Clean("/data") {
+		t.Errorf("HintPath() = %q, want it inside the data dir", got)
+	}
+	if filepath.Clean(got) != got {
+		t.Errorf("HintPath() = %q, want a already-clean path with no traversal", got)
 	}
 }
 
 func TestHint_roundTripsAndRejectsWhatItCannotTrust(t *testing.T) {
-	path := filepath.Join(t.TempDir(), hintFileName)
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
 	c := Candidate{Mode: modeDockerInternal, ContainerHost: dockerInternalHost,
 		BindHosts: []string{loopbackHost, "192.168.8.19"}}
-	writeHint(path, "daemon-1", "overcast_control", c, time.Now())
+	writeHint(path, "daemon-1", "overcast_control", c, time.Now(), zap.NewNop())
 
 	// Given the matching daemon and plane: the candidate comes back whole, bind
 	// set included — the pair travels together or the answer is a silent
@@ -293,11 +311,11 @@ func TestHint_roundTripsAndRejectsWhatItCannotTrust(t *testing.T) {
 
 func TestWriteHint_keepsNothingItCannotKeyOn(t *testing.T) {
 	// Given: no daemon identity — a daemon whose /info could not be read.
-	path := filepath.Join(t.TempDir(), hintFileName)
+	path := filepath.Join(t.TempDir(), hintFileName("overcast_control"))
 
 	// When: a verified candidate is recorded.
 	writeHint(path, "", "overcast_control",
-		Candidate{Mode: modeHost, ContainerHost: "10.0.0.1", BindHosts: []string{"10.0.0.1"}}, time.Now())
+		Candidate{Mode: modeHost, ContainerHost: "10.0.0.1", BindHosts: []string{"10.0.0.1"}}, time.Now(), zap.NewNop())
 
 	// Then: nothing is written. A hint that cannot be keyed cannot be
 	// invalidated when the daemon changes, which makes it worse than no hint.
@@ -354,8 +372,22 @@ func TestReachability_live(t *testing.T) {
 	if got.Verified && got.Unreachable {
 		t.Error("Verified and Unreachable are both set")
 	}
+	// Neither is legitimate and must not fail the run: it is what a daemon that
+	// could not run the probe at all reports (no busybox and no registry, or
+	// creates refused), and the whole point of the Unavailable bit is that such
+	// a host keeps the ordering rather than being told no address works.
 	if !got.Verified && !got.Unreachable {
-		t.Error("neither verified nor unreachable — the probe did not run; check the daemon can pull busybox")
+		unavailable := 0
+		for _, a := range got.Attempts {
+			if a.Unavailable {
+				unavailable++
+			}
+		}
+		if unavailable == 0 && len(got.Attempts) == 0 {
+			t.Error("no candidate was attempted at all")
+		}
+		t.Logf("probe could not run on this daemon (%d/%d candidates unavailable) — ordering kept, nothing reported broken",
+			unavailable, len(got.Attempts))
 	}
 
 	// And nothing is left behind: the probe containers are removed even on the
@@ -370,5 +402,64 @@ func TestReachability_live(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestReachability_liveMeasuredFailure runs the failure branch of dockerDialer
+// against a real daemon, which nothing else does.
+//
+// TestReachability_live above only ever takes the *reachable* path on a healthy
+// host, and that is precisely how the probe command came to exit with the status
+// of its echo rather than its wget: the failure branch had never executed
+// anywhere but in a fake. The candidate here is the container own loopback —
+// bindable by this process, and from inside a container 127.0.0.1 is the
+// container itself, where nothing is listening. So it is a deterministic,
+// host-independent "measured failure" that produces a genuine busybox refusal.
+func TestReachability_liveMeasuredFailure(t *testing.T) {
+	if os.Getenv("OVERCAST_DOCKER_NETWORK_TESTS") == "" {
+		t.Skip("set OVERCAST_DOCKER_NETWORK_TESTS=1 to run the real-daemon failure-path probe " +
+			"(it starts a container and creates a Docker network)")
+	}
+	dc := docker.NewClient(config.DefaultDockerSocket(), zap.NewNop())
+	if !dc.Available(5 * time.Second) {
+		t.Skip("Docker not available, skipping the real-daemon failure-path probe")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	t.Cleanup(cancel)
+
+	network := fmt.Sprintf("overcast-reach-fail-%d", time.Now().UnixNano())
+	if _, err := dc.CreateNetwork(ctx, network); err != nil {
+		t.Skipf("could not create a test network: %v", err)
+	}
+	t.Cleanup(func() { _ = dc.RemoveNetwork(context.Background(), network) })
+
+	// When: a candidate no container can reach is probed for real.
+	c := Candidate{Mode: modeHost, ContainerHost: loopbackHost, BindHosts: []string{loopbackHost}}
+	got := probeCandidate(ctx, c, dockerDialer(dc, network, zap.NewNop()))
+	t.Logf("attempt: %s", got)
+
+	// Then: it is a measured failure, not an unreachable probe and not a
+	// success — the three states the whole design turns on.
+	if got.Reachable {
+		t.Fatal("Reachable = true, want false — nothing is listening inside the container")
+	}
+	if got.Unavailable {
+		t.Fatalf("Unavailable = true (%q), want false — the probe ran, the address failed", got.Error)
+	}
+
+	// And the container own words survive to be quoted. This is the assertion
+	// that would have caught the exit-code defect: with it, the reason read
+	// "the probe container connected to something, but not to this process",
+	// which is both false and points at proxies rather than at the network.
+	if got.Error == "" {
+		t.Fatal("Error is empty — the container reason was thrown away")
+	}
+	if strings.Contains(got.Error, "connected to something") {
+		t.Errorf("Error = %q, want the container own diagnosis, not the fallback", got.Error)
+	}
+	if !strings.Contains(strings.ToLower(got.Error), "refused") &&
+		!strings.Contains(strings.ToLower(got.Error), "timed out") &&
+		!strings.Contains(strings.ToLower(got.Error), "connect") {
+		t.Errorf("Error = %q, want a recognisable connection failure from wget", got.Error)
 	}
 }

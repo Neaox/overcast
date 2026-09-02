@@ -113,8 +113,10 @@ type ListenOptions struct {
 	PinnedHost string
 
 	// HintPath is where a verified answer is remembered across restarts, from
-	// HintPath(cfg.DataDir). Empty disables both reading and writing it, which
-	// is what memory mode gets.
+	// HintPath(cfg.DataDir, Network). Empty disables both reading and writing
+	// it — which is what a caller with no data directory at all gets, not what
+	// any particular state backend gets: cfg.DataDir is always set, and
+	// writeHint creates the directory rather than assuming a backend made it.
 	HintPath string
 
 	// Logger, optional.
@@ -160,6 +162,10 @@ type resolveDeps struct {
 	probe    func(context.Context, Candidate) Attempt
 	daemonID func(context.Context) string
 	now      func() time.Time
+	// budget caps the whole candidate walk. Zero means probeTotalBudget; a
+	// test sets it short so exercising the exhaustion path costs milliseconds
+	// rather than the real budget.
+	budget time.Duration
 }
 
 // resolveListen is ResolveListen with its environment probes injected.
@@ -207,9 +213,26 @@ func resolveListen(ctx context.Context, dc listenClient, opts ListenOptions, dep
 		return out
 	}
 
+	// One clock over the whole walk — see probeTotalBudget.
+	budget := deps.budget
+	if budget <= 0 {
+		budget = probeTotalBudget
+	}
+	probeCtx, cancelProbe := context.WithTimeout(ctx, budget)
+	defer cancelProbe()
+
 	attempts := make([]Attempt, 0, len(list))
-	for _, c := range list {
-		a := deps.probe(ctx, c)
+	for i, c := range list {
+		if i > 0 && probeCtx.Err() != nil {
+			if logger != nil {
+				logger.Warn("stopped probing Runtime API candidates — the budget ran out",
+					zap.Int("tried", len(attempts)),
+					zap.Int("candidates", len(list)),
+					zap.Duration("budget", budget))
+			}
+			break
+		}
+		a := deps.probe(probeCtx, c)
 		attempts = append(attempts, a)
 		if !a.Reachable {
 			if logger != nil {
@@ -227,14 +250,53 @@ func resolveListen(ctx context.Context, dc listenClient, opts ListenOptions, dep
 				zap.Strings("bind", c.BindHosts),
 				zap.Int("candidates_tried", len(attempts)))
 		}
-		writeHint(opts.HintPath, daemon, opts.Network, c, deps.now())
+		writeHint(opts.HintPath, daemon, opts.Network, c, deps.now(), logger)
 		return listenOf(c, true, attempts)
 	}
 
-	// Every candidate was tried and none answered. The last one is still what
-	// gets advertised — binding nothing would take Lambda from "broken with an
-	// explanation" to "absent" — but Unreachable says the address is not
-	// believed, and every surface that reports it says so too.
+	// Nothing answered. Before calling that a fault, check that anything was
+	// actually *asked*: a host with no cached busybox and no registry, or a
+	// daemon refusing creates, returns "unavailable" for every candidate, and
+	// that is a missing measurement rather than a broken host. Reporting it as
+	// the latter fires the loudest advisory Overcast has, degrades health,
+	// appends a firewall paragraph to every InitError, and — because the last
+	// candidate is the wildcard — silently widens the bind set, all on a
+	// machine whose Lambda may work perfectly.
+	measured := false
+	for _, a := range attempts {
+		if !a.Unavailable {
+			measured = true
+			break
+		}
+	}
+	// An incomplete walk is not a verdict either: the budget ran out before
+	// every candidate had its turn, so one of the ones left untried may well
+	// have answered.
+	complete := len(attempts) == len(list)
+	if !measured || !complete {
+		c := list[0]
+		if logger != nil {
+			reason := "the probe could not run"
+			if !complete {
+				reason = "the probe budget ran out before every candidate was tried"
+			}
+			logger.Warn("Runtime API address chosen without a reachability check — "+reason,
+				zap.String("mode", c.Mode),
+				zap.String("host", c.ContainerHost),
+				zap.Strings("tried", AttemptStrings(attempts)))
+		}
+		// Same answer as the no-daemon path: the ordering stands on its own,
+		// nothing claims it was established, and nothing is reported broken.
+		// The hint is left alone — a run that established nothing has no
+		// standing to discard what an earlier run measured.
+		return listenOf(c, false, attempts)
+	}
+
+	// Every candidate was tried, at least one for real, and none answered. The
+	// last one is still what gets advertised — binding nothing would take
+	// Lambda from "broken with an explanation" to "absent" — but Unreachable
+	// says the address is not believed, and every surface that reports it says
+	// so too.
 	last := list[len(list)-1]
 	out := listenOf(last, false, attempts)
 	out.Unreachable = true

@@ -284,6 +284,28 @@ func appendHostname(names []string, name string) []string {
 // The address is Overcast's own on this network, the same target ExtraHosts
 // uses; the server listens on every interface and answers each caller with the
 // address reachable from its side.
+//
+// **A name endpoint yields no resolver, deliberately.** When the endpoint is
+// `host.docker.internal` rather than an IP — which is what the Runtime API's
+// docker-internal and wildcard modes produce (see listen.go, whose result the
+// Lambda container runtime derives this endpoint from) — overcastHostAddress
+// returns Docker's "host-gateway" sentinel, which is meaningful to --add-host
+// and meaningless to --dns. Containers then keep Docker's own resolver and lose
+// only the wildcard claim, so virtual-hosted names ({bucket}.s3…,
+// {id}.execute-api…) fall back to public DNS inside functions.
+//
+// There is no safe fallback to the bind set, which is why this does not attempt
+// one: the bind addresses are addresses of *this host*, and the case that makes
+// a name win the probe in the first place is precisely one where a container
+// cannot open a connection to the host's own address. Pointing --dns at one
+// would replace a narrow resolution gap with total resolution failure, which is
+// the trade the paragraph above rules out.
+//
+// In practice the two conditions barely overlap: DNSListening needs
+// /etc/resolv.conf and a privileged port, so it is false on exactly the
+// Windows/macOS Docker Desktop hosts where docker-internal wins (see
+// internal/router/container_dns.go), and a native Linux host resolves the
+// gateway first, which is an IP. See TestDNSServers_nameEndpointYieldsNoResolver.
 func (m *Mapper) DNSServers() []string {
 	if m == nil || m.cfg == nil || !m.cfg.DNSListening {
 		return nil
