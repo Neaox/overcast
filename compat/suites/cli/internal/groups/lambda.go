@@ -276,6 +276,33 @@ func (g *lambdaGroup) UpdateFunctionCode(_ context.Context, t *harness.TestConte
 	if sha, _ := out["CodeSha256"].(string); sha == "" {
 		return fmt.Errorf("lambda UpdateFunctionCode: missing CodeSha256")
 	}
+	// LastUpdateStatus is what `aws lambda wait function-updated` polls, and
+	// what the SDK, CDK and SAM waiters read after a deploy. A response that
+	// omits it leaves every one of them polling until its attempt budget runs
+	// out, so both the field and the waiter over it are checked here.
+	switch status, _ := out["LastUpdateStatus"].(string); status {
+	case "InProgress", "Successful":
+	case "":
+		return fmt.Errorf("lambda UpdateFunctionCode: missing LastUpdateStatus")
+	default:
+		return fmt.Errorf("lambda UpdateFunctionCode: LastUpdateStatus=%q, want InProgress or Successful", status)
+	}
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"lambda", "wait", "function-updated",
+		"--function-name", g.currentFnName(t),
+	); err != nil {
+		return fmt.Errorf("lambda wait function-updated: %w", err)
+	}
+	settled, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"lambda", "get-function-configuration",
+		"--function-name", g.currentFnName(t),
+	)
+	if err != nil {
+		return err
+	}
+	if got, _ := settled["LastUpdateStatus"].(string); got != "Successful" {
+		return fmt.Errorf("lambda GetFunctionConfiguration after the waiter returned: LastUpdateStatus=%q, want Successful", got)
+	}
 	return nil
 }
 

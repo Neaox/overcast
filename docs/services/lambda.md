@@ -53,6 +53,7 @@ aws lambda invoke --function-name hello --payload '{"hi":1}' \
 | Metrics | `AWS/Lambda` `Invocations`, `Errors`, `Duration`, `Throttles` and `ConcurrentExecutions` are recorded for every invocation mechanism. |
 | Container images | `PackageType=Image` runs a real image from this account's [ECR](ecr.md), including CDK's `DockerImageFunction`. `ImageConfig` and `update-function-code --image-uri` both apply — see [Examples](lambda/examples.md#container-images). |
 | Hot reload | A local source directory bind-mounted read-only at `/var/task`, retiring the warm environment when the tree changes. |
+| Function lifecycle | `State` and `LastUpdateStatus` are both reported, so `aws lambda wait function-active`, `wait function-updated` and the SDK, CDK and SAM waiters over them return. |
 
 ## Differences from AWS
 

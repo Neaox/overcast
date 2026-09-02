@@ -4783,11 +4783,12 @@ var lambdaFunctionStatuses = statusVocabulary{
 // start, and would fail deploys that AWS completes.
 //
 // LastUpdateStatus is the other half of what real CloudFormation reads — the
-// update side of the same question, and AWS ships a separate FunctionUpdated
-// waiter for it. It is not read here because nothing in Overcast sets it, and a
-// wait on a field no service produces would hold every in-place function update
-// open for the whole budget. It belongs here the moment the Lambda service
-// reports it.
+// update side of the same question, which AWS ships a separate FunctionUpdated
+// waiter for — and the Lambda service now reports it (#1550), so it is folded
+// into the same wait: an update that is still landing keeps the resource open,
+// and one that failed fails the stack the way a failed create does. A function
+// that has never carried the field (created before it existed) reports nothing
+// there and is judged on State alone.
 //
 // See resourceStabilizer.
 func (h *lambdaFunctionHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
@@ -4808,9 +4809,12 @@ func (h *lambdaFunctionHandler) Stabilize(ctx context.Context, router http.Handl
 				return "", "", fmt.Errorf("lambda GetFunctionConfiguration: %s: %w", subject, err)
 			}
 			var resp struct {
-				State           string `json:"State"`
-				StateReason     string `json:"StateReason"`
-				StateReasonCode string `json:"StateReasonCode"`
+				State                      string `json:"State"`
+				StateReason                string `json:"StateReason"`
+				StateReasonCode            string `json:"StateReasonCode"`
+				LastUpdateStatus           string `json:"LastUpdateStatus"`
+				LastUpdateStatusReason     string `json:"LastUpdateStatusReason"`
+				LastUpdateStatusReasonCode string `json:"LastUpdateStatusReasonCode"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				return "", "", fmt.Errorf("lambda GetFunctionConfiguration: parse response: %w", err)
@@ -4821,6 +4825,20 @@ func (h *lambdaFunctionHandler) Stabilize(ctx context.Context, router http.Handl
 			reason := resp.StateReason
 			if reason == "" {
 				reason = resp.StateReasonCode
+			}
+			// An update in flight or failed is reported through the same
+			// vocabulary: "InProgress" is neither ready nor failed, so it keeps
+			// polling, and "Failed" is one of the terminal words.
+			switch resp.LastUpdateStatus {
+			case "InProgress":
+				return "UpdateInProgress", reason, nil
+			case "Failed":
+				if r := resp.LastUpdateStatusReason; r != "" {
+					reason = r
+				} else if r := resp.LastUpdateStatusReasonCode; r != "" {
+					reason = r
+				}
+				return "Failed", reason, nil
 			}
 			return resp.State, reason, nil
 		},

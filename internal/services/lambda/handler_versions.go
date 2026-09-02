@@ -206,6 +206,15 @@ func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A version is an immutable snapshot of code and configuration, so AWS
+	// refuses to take one while an update is still landing. The only such
+	// window in Overcast is the image pull an UpdateFunctionCode starts — see
+	// the update-lifecycle block in handler_functions.go.
+	if functionUpdateInProgress(fn) {
+		protocol.WriteJSONError(w, r, lambdaUpdateInProgressConflict(fn.ARN))
+		return
+	}
+
 	versionNum, err := h.ls.nextVersion(ctx, name)
 	if err != nil {
 		log.Error("publish version: next version", zap.String("function", name), zap.Error(err))
@@ -223,6 +232,12 @@ func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
 	// Stamp the publish time and a fresh revision ID for this version.
 	v.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
 	v.RevisionId = uuid.NewString()
+	// A published version is finished by definition — nothing can update it —
+	// so it reports Successful even when $LATEST was created without ever
+	// carrying the field.
+	v.LastUpdateStatus = lastUpdateSuccessful
+	v.LastUpdateStatusReason = ""
+	v.LastUpdateStatusReasonCode = ""
 
 	if aerr := h.ls.putVersion(ctx, v); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)

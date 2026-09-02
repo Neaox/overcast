@@ -167,12 +167,15 @@ aws lambda update-function-configuration --function-name my-fn \
 
 aws lambda update-function-code --function-name my-fn \
   --image-uri 000000000000.dkr.ecr.us-east-1.amazonaws.com/my-fn:v2
+
+aws lambda wait function-updated --function-name my-fn
 ```
 
-> [!NOTE]
-> `aws lambda wait function-updated` never returns, because Overcast does not
-> report `LastUpdateStatus`. The update is already applied when
-> `UpdateFunctionCode` answers, so drop the wait or poll `State` instead.
+The new image is pulled in the background, so `update-function-code` answers
+`LastUpdateStatus: InProgress` and the wait is the one that tells you the pull
+landed — or that it failed, with `ImageAccessDenied` or `InvalidImage` in
+`LastUpdateStatusReasonCode`. Every other update settles before the call
+returns; see [Limitations](limitations.md#other-divergences).
 
 CDK's `DockerImageFunction` with `DockerImageCode.fromImageAsset` needs none of
 this by hand: `cdk deploy` builds the image, pushes it to the repository
