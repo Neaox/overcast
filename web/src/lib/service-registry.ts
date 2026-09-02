@@ -1,3 +1,7 @@
+// Iconography here is a trademark rule, not a taste: every icon is a lucide (or original) glyph
+// and every colour resolves through the `--cat-*` ramp. Never AWS Architecture Icons, AWS logos,
+// or lookalikes — AWS's fair-use clause is plain text only and imitating its product icons is
+// prohibited. See https://brand.overcast.sh/brand-guidelines.html#third-party-marks
 /**
  * service-registry — single source of truth for all navigable AWS services.
  *
