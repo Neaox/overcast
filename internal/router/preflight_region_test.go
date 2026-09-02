@@ -178,6 +178,9 @@ var livingRecordPerKind = map[string]string{
 	"cloudformation-stacks": `{"StackName":"orders-api","StackStatus":"CREATE_COMPLETE"}`,
 	"sqs-queues":            `{"name":"orders","arn":"arn:aws:sqs:ap-southeast-2:000000000000:orders"}`,
 	"lambda-functions":      `{"name":"handler","arn":"arn:aws:lambda:ap-southeast-2:000000000000:function:handler"}`,
+	"dynamodb-tables":       `{"TableName":"orders","TableStatus":"ACTIVE","TableArn":"arn:aws:dynamodb:ap-southeast-2:000000000000:table/orders"}`,
+	"sns-topics":            `{"name":"orders","arn":"arn:aws:sns:ap-southeast-2:000000000000:orders","created_timestamp":1700000000}`,
+	"kinesis-streams":       `{"StreamName":"orders","StreamARN":"arn:aws:kinesis:ap-southeast-2:000000000000:stream/orders","StreamStatus":"ACTIVE"}`,
 }
 
 // Every kind in the registry has to be reachable by the name the console asks
