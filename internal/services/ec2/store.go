@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 
 	"github.com/overcast-sh/overcast/internal/events"
 	"github.com/overcast-sh/overcast/internal/middleware"
@@ -31,6 +32,7 @@ const (
 	nsDefaultVPC            = "ec2:default-vpc"
 	nsVPCIPTranslations     = "ec2:vpc-ip-translations"
 	nsVPCIPTranslationsReal = "ec2:vpc-ip-translations-real"
+	nsPlacements            = "ec2:placements"
 )
 
 // VPC represents an EC2 VPC resource.
@@ -91,6 +93,73 @@ type VPC struct {
 	// also given a public DNS hostname. Real AWS defaults this to false for
 	// VPCs created via CreateVpc, and true for the account's default VPC.
 	EnableDnsHostnames bool `json:"EnableDnsHostnames"`
+
+	// EgressNetworkID, EgressNetworkName and EgressCidrBlock describe the
+	// VPC's egress network under OVERCAST_VPC_EGRESS=routed: the routable
+	// bridge (config.VPCEgressNetwork) that carries the default route for the
+	// containers whose subnet's route table grants one. Created on the first
+	// placement that needs it, so all three are empty until then and in every
+	// other mode. The CIDR is the /24 carved from config.VPCEgressPool, kept
+	// so a restart recreates the same network rather than a neighbour of it.
+	EgressNetworkID   string `json:"EgressNetworkId,omitempty"`
+	EgressNetworkName string `json:"EgressNetworkName,omitempty"`
+	EgressCidrBlock   string `json:"EgressCidrBlock,omitempty"`
+}
+
+// vpcPlacement records which subnets a container Overcast placed in a VPC
+// asked for, so the egress decision those subnets' route tables produced can
+// be revisited when a route table changes (see reconcileVPCEgress). Written
+// by RecordPlacement under OVERCAST_VPC_EGRESS=routed; pruned when the
+// container is found gone.
+//
+// Keyed by container ID and not by region: a container is one thing on one
+// daemon, whichever region's VPC it sits in, and the VPC ID it carries is
+// what scopes it.
+type vpcPlacement struct {
+	ContainerID string   `json:"ContainerId"`
+	VpcID       string   `json:"VpcId"`
+	SubnetIDs   []string `json:"SubnetIds,omitempty"`
+	RecordedAt  int64    `json:"RecordedAt,omitempty"`
+}
+
+func (s *ec2Store) putPlacement(ctx context.Context, p *vpcPlacement) *protocol.AWSError {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsPlacements, p.ContainerID, string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *ec2Store) deletePlacement(ctx context.Context, containerID string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsPlacements, containerID); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// listPlacements returns every recorded placement, or only those in vpcID
+// when it is given, ordered by container ID.
+func (s *ec2Store) listPlacements(ctx context.Context, vpcID string) ([]*vpcPlacement, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsPlacements, "")
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	out := make([]*vpcPlacement, 0, len(pairs))
+	for _, p := range pairs {
+		var rec vpcPlacement
+		if err := json.Unmarshal([]byte(p.Value), &rec); err != nil {
+			continue
+		}
+		if vpcID != "" && rec.VpcID != vpcID {
+			continue
+		}
+		out = append(out, &rec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ContainerID < out[j].ContainerID })
+	return out, nil
 }
 
 // Subnet represents an EC2 Subnet resource.

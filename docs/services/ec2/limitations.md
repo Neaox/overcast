@@ -27,8 +27,15 @@ That isolation only bites when Overcast's control plane is internal too, since
 every container sits on both — and under the default `OVERCAST_VPC_EGRESS=open`
 it is not, so a gateway-less VPC's containers still reach the internet through
 the control plane. `OVERCAST_VPC_EGRESS=none` isolates every network Overcast
-creates, this one included, and is what actually withholds it. See
-[Networking § Egress modes](../../networking.md#egress-modes).
+creates, this one included, and is what actually withholds it.
+
+`OVERCAST_VPC_EGRESS=routed` is the third answer, and the only one that reads
+your template: every VPC plane is `--internal`, and a container joins a second,
+routable network per VPC — `overcast-vpc-<vpc-id>-egress` — only when its
+subnet's route table has a `0.0.0.0/0` route to an attached internet gateway or
+an available NAT gateway. See
+[Networking § Egress modes](../../networking.md#egress-modes) and
+[`routed`](../../networking.md#routed-egress-from-your-route-tables).
 
 | Label | Value |
 | --- | --- |
@@ -38,6 +45,7 @@ creates, this one included, and is what actually withholds it. See
 | `overcast.vpc-id` | The VPC ID |
 | `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's alone |
 | `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking.md#network-state-verification) |
+| `overcast.network.vpc-role` | `plane` for the VPC's own network, `egress` for the routable one beside it under `OVERCAST_VPC_EGRESS=routed`. Both carry the same VPC ID, so this is what tells them apart |
 
 Networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}` (`overcast-vpc-{vpcID}` by
 default). Docker network lifecycle events —
@@ -104,8 +112,9 @@ and the network is left alone.
 | Instances | IDs, state transitions, type, subnet and security group placement, tags | No VM or container is launched |
 | Security group rules | Ingress and egress `IpPermissions` | No packet is filtered. Containers on one network reach each other regardless |
 | Subnets | CIDR, AZ, `MapPublicIpOnLaunch`, tags | No address-space partitioning, no inter-subnet routing |
-| Route tables | Routes, associations, the main-table flag | `CreateRoute`, `AssociateRouteTable` and `DisassociateRouteTable` change no packet's path |
-| NAT gateways, VPN gateways, transit gateways | State and associations | No NAT, no tunnel |
+| Route tables | Routes, associations, the main-table flag | Under `open` and `none`, `CreateRoute`, `AssociateRouteTable` and `DisassociateRouteTable` change no packet's path. Under `routed` the `0.0.0.0/0` route decides whether the subnet's containers reach the internet, and nothing else about a route is applied |
+| NAT gateways | State, subnet, addresses | No address translation of its own. Under `routed` its existence and state decide whether a route to it is a route out or a blackhole |
+| VPN gateways, transit gateways | State and associations | No tunnel. A `0.0.0.0/0` route to one is not egress under `routed` either |
 | Elastic IPs | Allocation, association, release | The addresses are synthetic. Containers get Docker's own IPs |
 | VPC peering | `pending-acceptance` → `active` → `deleted` | No cross-network routing. Peered VPCs cannot communicate |
 | VPC endpoints | Gateway and interface types, always `available` | No private-link path |

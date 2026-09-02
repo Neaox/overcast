@@ -134,10 +134,28 @@ func (s *Service) VPCNetworkStatus(ctx context.Context, vpcID string) string {
 }
 
 // NetworkProblems reports the VPCs whose Docker network could not be brought
-// to the isolation their internet-gateway state calls for, ordered by VPC ID.
-// The router renders them as a health advisory.
+// to the isolation their internet-gateway state calls for, or whose
+// containers could not be given the egress their route tables call for
+// (OVERCAST_VPC_EGRESS=routed), ordered by VPC ID. The router renders them as
+// a health advisory.
 func (s *Service) NetworkProblems() []dataplane.VPCNetworkProblem {
 	return s.handler.networkProblems()
+}
+
+// EgressNetworkForSubnets satisfies dataplane.SubnetPlacer: under
+// OVERCAST_VPC_EGRESS=routed, the routable network a container placed in
+// these subnets of vpcID takes its default route from, created on demand —
+// or "" when none of the subnets' route tables grants a route out, and in
+// every other mode. See vpc_egress.go.
+func (s *Service) EgressNetworkForSubnets(ctx context.Context, vpcID string, subnetIDs []string) (string, error) {
+	return s.handler.egressNetworkForSubnets(ctx, vpcID, subnetIDs)
+}
+
+// RecordPlacement satisfies dataplane.PlacementRecorder: which subnets a
+// container was placed in, so a later route-table change can move it on or
+// off its VPC's egress network. A no-op outside `routed`.
+func (s *Service) RecordPlacement(ctx context.Context, containerID string, p dataplane.Placement) {
+	s.handler.recordPlacement(ctx, containerID, p)
 }
 
 // AllocatePrivateIPForSubnet returns the API-visible private IP for the given

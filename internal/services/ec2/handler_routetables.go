@@ -218,6 +218,8 @@ func (h *Handler) DeleteRouteTable(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Subnets it was associated with fall back to the main table.
+	h.reconcileVPCEgress(r.Context(), rt.VpcID)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteRouteTableResponse{
 		Xmlns:     ec2XMLNS,
@@ -261,6 +263,11 @@ func (h *Handler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// Under OVERCAST_VPC_EGRESS=routed a new 0.0.0.0/0 route is a route out
+	// for every container in the table's subnets, running ones included. The
+	// route is recorded first — AWS never refuses one for a reason like a
+	// daemon's — and a move that fails reaches the health advisories.
+	h.reconcileVPCEgress(r.Context(), rt.VpcID)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateRouteResponse{
 		Xmlns:     ec2XMLNS,
@@ -322,6 +329,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	h.reconcileVPCEgress(r.Context(), rt.VpcID)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteRouteResponse{
 		Xmlns:     ec2XMLNS,
@@ -364,6 +372,7 @@ func (h *Handler) AssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	h.reconcileVPCEgress(r.Context(), rt.VpcID)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAssociateRouteTableResponse{
 		Xmlns:         ec2XMLNS,
@@ -410,6 +419,7 @@ func (h *Handler) DisassociateRouteTable(w http.ResponseWriter, r *http.Request)
 					protocol.WriteEC2QueryXMLError(w, r, aerr)
 					return
 				}
+				h.reconcileVPCEgress(r.Context(), rt.VpcID)
 				found = true
 				break
 			}

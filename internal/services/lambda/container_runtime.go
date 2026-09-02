@@ -215,8 +215,9 @@ func (cr *ContainerRuntime) SetRemoteLayerFetcher(fetcher *RemoteLayerFetcher) {
 // container by name.
 func (cr *ContainerRuntime) connectDataPlane(ctx context.Context, containerID string, fn *Function) error {
 	var vpcID string
+	var subnetIDs []string
 	if fn.VpcConfig != nil {
-		vpcID = fn.VpcConfig.VpcId
+		vpcID, subnetIDs = fn.VpcConfig.VpcId, fn.VpcConfig.SubnetIds
 	}
 
 	// A nil pointer here means EC2 is not wired; the function then lands on the
@@ -227,7 +228,9 @@ func (cr *ContainerRuntime) connectDataPlane(ctx context.Context, containerID st
 		resolver = *rp
 	}
 
-	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	// The subnets go with the VPC: under OVERCAST_VPC_EGRESS=routed they are
+	// what decides whether the function gets a route out.
+	placement, err := dataplane.PlaceInSubnets(ctx, resolver, vpcID, subnetIDs)
 	if err != nil {
 		return fmt.Errorf("lambda %s: %w", fn.Name, err)
 	}
@@ -235,7 +238,8 @@ func (cr *ContainerRuntime) connectDataPlane(ctx context.Context, containerID st
 		cr.logger.Info("placing Lambda container on its VPC network",
 			zap.String("function", fn.Name),
 			zap.String("vpc", vpcID),
-			zap.String("network", placement.VPCNetwork))
+			zap.String("network", placement.VPCNetwork),
+			zap.String("egress_network", placement.EgressNetwork))
 	}
 
 	return dataplane.Attach(ctx, cr.docker, cr.cfg, containerID, placement)

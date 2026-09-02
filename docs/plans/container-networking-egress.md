@@ -3,7 +3,8 @@
 > **Status:** decided and shipped. `OVERCAST_VPC_EGRESS=open|routed|none`
 > (default `open`), the Runtime-API reachability probe decoupled from the egress
 > decision, and exact-state verification of every network Overcast reuses.
-> `routed` is refused at startup pending [#1571](https://github.com/overcast-sh/overcast/issues/1571).
+> `routed` decides egress per subnet from its route table, carried by a second
+> network per VPC, and landed in [#1571](https://github.com/overcast-sh/overcast/issues/1571).
 > **Scope:** `internal/config`, `internal/dataplane`, `internal/docker`
 > (`netspec.go`, `probe.go`), `internal/services/ec2` (network ownership),
 > `internal/router` (health, advisories), `cmd/overcast/cmd_network.go`,

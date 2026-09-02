@@ -87,14 +87,11 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
 
-// egressModeDocsPath deep-links the egress advisories to the section of the
+// egressModeDocsPath deep-links the egress advisory to the section of the
 // networking page that explains what each mode can and cannot deliver, and on
-// which hosts.
-//
-// One constant for every egress rule. `none` and `routed` fail on the same host
-// for the same reason and the page explains both in one section, so a second
-// constant with the same value would only be somewhere for the two to drift
-// apart — see controlPlaneRoutable, which exists for the same reason.
+// which hosts. `none` and `routed` are explained in one section because they
+// fail on the same host for the same reason — see checkEgressNotWithheld,
+// which is one rule for the same reason.
 const egressModeDocsPath = "networking.md#egress-modes"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
@@ -217,6 +214,17 @@ type advisoryInput struct {
 	// can fail to keep the promise, so `open` fires nothing.
 	VPCEgress config.VPCEgressMode
 
+	// PlacementEnforced is dataplane.PlacementEnforced(cfg): whether a
+	// resource that named a VPC is held to that VPC's network alone. False
+	// means it also joins the shared data plane.
+	//
+	// Read only under `routed`, and that asymmetry is the point. `none`
+	// isolates the shared plane too, so a container on it gains nothing there;
+	// `routed` leaves it routable — the resources that named no VPC have
+	// egress on AWS as well — so a VPC-placed container that also lands on it
+	// takes a default route its subnet's route table never granted.
+	PlacementEnforced bool
+
 	// ControlPlane is what this run resolved the control plane's isolation to,
 	// and why — docker.Status.Decisions, narrowed to cfg.ControlNetwork().
 	//
@@ -316,58 +324,104 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	return advisories
 }
 
-// checkEgressNotWithheld is warning-severity: OVERCAST_VPC_EGRESS=none is
-// configured, but on this host the containers Overcast starts still have a
-// route out.
+// checkEgressNotWithheld is warning-severity: a mode that promises to withhold
+// egress is configured, and on this host the containers Overcast starts have a
+// route out anyway.
 //
-// One thing does that, and it is a property of the host rather than of the
-// configuration: the control plane was left routable, because containers here
-// reach the Lambda Runtime API at the host's own address and `--internal` would
-// sever it — stranding every invocation at INIT. Overcast makes that trade
-// deliberately (dataplane.ControlPlaneMustStayRoutableWarning) and says so at
-// startup, once. Every container Overcast starts is on that network, so every
-// one of them keeps a default route through it, and `none` delivers every data
-// plane isolated and nothing else.
+// One rule for `none` and `routed` rather than one each. They promise
+// different things — `none` that nothing Overcast starts leaves the machine,
+// `routed` that a container leaves it exactly where its subnet's route table
+// says — but they fail for the same reason on the same hosts, and a second
+// copy of that reasoning is a second place for the two to drift. What differs
+// is stated once each, below.
 //
-// It is here rather than only in the startup log because of what `none` is for.
-// Nobody sets it to change how their stack feels; they set it to *prove* the
-// stack has no hidden external dependency — deterministic CI, an air-gapped
-// host, a compliance answer. A promise like that failing quietly, on the most
-// common developer platform there is, is the one case where a card on the
-// Metrics and Health page is worth more than a line that scrolled past at boot.
+// **Both modes: a routable control plane.** Containers here reach the Lambda
+// Runtime API at the host's own address, and `--internal` would sever it,
+// stranding every invocation at INIT. Overcast makes that trade deliberately
+// (dataplane.ControlPlaneMustStayRoutableWarning) and says so at startup,
+// once. Every container Overcast starts is on that network, so every one of
+// them keeps a default route through it. It can also be the operator's own
+// doing — the deprecated pin — which is a different fact with a different fix,
+// so the two are told apart rather than blamed on the host alike
+// (controlPlaneOverriddenByHost).
 //
-// Sibling of checkRoutedEgressNotEnforced (#1571), which asks the same question
-// of `routed` and has a second way to fail — unenforced VPC placement — that
-// `none` does not, because `none` isolates the shared data plane too. If both
-// rules land, they are worth folding into one.
+// **`routed` only: unenforced VPC placement.** `routed` leaves the shared data
+// plane routable, because the resources that named no VPC have egress on AWS
+// too. That is safe only while a VPC-placed container is held to its VPC's own
+// network; where Overcast's DNS resolver cannot start, it is not, and the
+// container takes a default route from the shared plane whatever its route
+// table said. `none` cannot fail this way: it isolates the shared plane as
+// well, so landing on it grants nothing.
+//
+// It is here rather than only in the startup log because of what these modes
+// are for. Nobody sets them to change how a stack feels; they set them to
+// *prove* something — that there is no hidden external dependency, or that the
+// template's own route tables are what decide. A promise like that failing
+// quietly, on the most common developer platform there is, is the one case
+// where a card on the Metrics and Health page is worth more than a line that
+// scrolled past at boot.
 func checkEgressNotWithheld(in advisoryInput) *Advisory {
-	if in.VPCEgress != config.VPCEgressNone || !controlPlaneRoutable(in) {
+	mode := in.VPCEgress
+	if mode != config.VPCEgressNone && mode != config.VPCEgressRouted {
 		return nil
 	}
-	name := in.ControlPlane.Network
-	why := "The control plane " + name + " was left routable, so every container Overcast starts " +
-		"takes a route out from it. "
-	fix := "Run Overcast in a container, or against a native Linux Docker daemon, for the whole of `none`."
-	if controlPlaneOverriddenByHost(in) {
-		why += "Containers on this host reach the Lambda Runtime API at the host's own address, which " +
-			"an internal network would sever, stranding every invocation at INIT, so Overcast left it " +
-			"routable rather than isolating it. "
-	} else {
-		// The operator pinned it. Naming the deprecated variable is the whole
-		// of the fix here, and the host has nothing to do with it — the pin is
-		// applied before the host is ever asked.
-		why += "That was asked for, not imposed: " + in.ControlPlane.Reason + ". "
-		fix = "Unset OVERCAST_CONTROL_PLANE_INTERNAL — it is deprecated, and it contradicts the egress " +
-			"mode you have set."
+	var why, fixes []string
+	if controlPlaneRoutable(in) {
+		w := "The control plane " + in.ControlPlane.Network + " was left routable, so every container " +
+			"Overcast starts takes a route out from it. "
+		if controlPlaneOverriddenByHost(in) {
+			w += "Containers on this host reach the Lambda Runtime API at the host's own address, which " +
+				"an internal network would sever, stranding every invocation at INIT, so Overcast left it " +
+				"routable rather than isolating it."
+			fixes = append(fixes, "Run Overcast in a container, or against a native Linux Docker daemon, "+
+				"for the whole of `"+string(mode)+"`.")
+		} else {
+			// The operator pinned it. Naming the deprecated variable is the
+			// whole of the fix here, and the host has nothing to do with it —
+			// the pin is applied before the host is ever asked.
+			w += "That was asked for, not imposed: " + in.ControlPlane.Reason + "."
+			fixes = append(fixes, "Unset OVERCAST_CONTROL_PLANE_INTERNAL — it is deprecated, and it "+
+				"contradicts the egress mode you have set.")
+		}
+		why = append(why, w)
+	}
+	if mode == config.VPCEgressRouted && !in.PlacementEnforced {
+		why = append(why, "VPC placement is not enforced on this host — Overcast's DNS resolver is not "+
+			"listening, so a resource that named a VPC also joins the shared data plane, which `routed` "+
+			"leaves routable.")
+		fixes = append(fixes, "Run Overcast in a container, or against a native Linux Docker daemon, "+
+			"for the whole of `routed`.")
+	}
+	if len(why) == 0 {
+		return nil
+	}
+	consequence := "Every data plane is isolated as asked, but this stack is NOT hermetic — a function " +
+		"can still reach the internet and real AWS endpoints. "
+	if mode == config.VPCEgressRouted {
+		consequence = "A subnet with no 0.0.0.0/0 route still reaches the internet, so the missing NAT " +
+			"gateway this mode exists to catch goes uncaught. "
 	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeEgressNotWithheld,
-		Title:    "OVERCAST_VPC_EGRESS=none cannot withhold egress on this host",
-		Detail: why + "Every data plane is isolated as asked, but this stack is NOT hermetic — a " +
-			"function can still reach the internet and real AWS endpoints. " + fix,
+		Title:    "OVERCAST_VPC_EGRESS=" + string(mode) + " cannot withhold egress on this host",
+		Detail:   strings.Join(why, " ") + " " + consequence + strings.Join(dedupe(fixes), " "),
 		DocsPath: egressModeDocsPath,
 	}
+}
+
+// dedupe drops repeats while keeping order — two shortfalls with the same fix
+// should not print it twice.
+func dedupe(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := in[:0:0]
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // checkNetworkStateMismatch is warning-severity: a Docker network that is not
@@ -478,17 +532,18 @@ func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory 
 	if rest := len(problems) - len(lines); rest > 0 {
 		listed += fmt.Sprintf("; and %d more", rest)
 	}
-	title := "A VPC's network does not match its internet gateway"
+	title := "A VPC's network does not match its internet gateway or route tables"
 	if len(problems) > 1 {
-		title = fmt.Sprintf("%d VPC networks do not match their internet gateways", len(problems))
+		title = fmt.Sprintf("%d VPC networks do not match their internet gateways or route tables", len(problems))
 	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeVPCNetworkIsolationStale,
 		Title:    title,
 		Detail: "Containers in these VPCs do not have the internet reachability DescribeInternetGateways " +
-			"implies. Overcast retries the repair at its next restart; until then, check the Docker " +
-			"daemon for the reason quoted, then detach and re-attach the gateway. " + listed,
+			"and DescribeRouteTables imply. Overcast retries the repair at its next restart; until then, " +
+			"check the Docker daemon for the reason quoted, then detach and re-attach the gateway, or " +
+			"delete and recreate the route. " + listed,
 		DocsPath: vpcNetworkDocsPath,
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
@@ -86,7 +87,8 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 		}
 	}
 
-	index := h.indexNetworks(ctx, listed, byRegion)
+	index, egress := h.indexNetworks(ctx, listed, byRegion)
+	egressIndex := newEgressNetworkIndex(egress)
 	for _, region := range regions {
 		rctx := middleware.ContextWithRegion(ctx, region)
 		h.adoptRegionNetworks(rctx, region, byRegion[region], index)
@@ -96,10 +98,16 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 		// its containers, which is a startup's to do and not a placement's
 		// (see ensureRegionReconciled).
 		h.reconcileVPCNetworkIsolation(rctx)
+		// Then the region's egress networks, and the placements whose route
+		// tables may have changed while Overcast was down. After the
+		// isolation repair, so a plane recreated under its containers is
+		// settled before their route out is revisited.
+		h.reconcileRegionEgressNetworks(rctx, byRegion[region], egressIndex)
 		h.joinRegionNetworks(rctx)
 	}
 	// Only now is a network known to be unclaimed: by no VPC in any region.
 	h.removeOrphanedNetworks(ctx, h.unrecorded(ctx, olderThanScan(index.unclaimed(), snapshot)), h.orphanLogPrefix())
+	h.sweepEgressNetworks(ctx, olderThanScan(egressIndex.unclaimed(), snapshot))
 	h.reconciledAll.Store(true)
 }
 
@@ -144,9 +152,14 @@ func olderThanScan(unclaimed map[string]*docker.NetworkSummary, snapshot []docke
 // narrowed to the networks this instance may act on, knowing every VPC the
 // store holds in every region. The instance identity is published first, so
 // that the narrowing has an identity to compare owners against.
-func (h *Handler) indexNetworks(ctx context.Context, networks []docker.NetworkSummary, byRegion map[string][]*VPC) *vpcNetworkIndex {
+func (h *Handler) indexNetworks(ctx context.Context, networks []docker.NetworkSummary, byRegion map[string][]*VPC) (*vpcNetworkIndex, []docker.NetworkSummary) {
 	h.publishInstanceIdentity(ctx)
-	return newVPCNetworkIndex(h.networksInScope(ctx, networks), byRegion)
+	// The index holds only the planes. A VPC's egress network
+	// (OVERCAST_VPC_EGRESS=routed) carries the same resource-id label and
+	// would be adopted as the plane, or swept as an orphan; it has its own
+	// pass — see splitVPCNetworks and reconcileRegionEgressNetworks.
+	planes, egress := splitVPCNetworks(h.networksInScope(ctx, networks))
+	return newVPCNetworkIndex(planes, byRegion), egress
 }
 
 // adoptRegionNetworks is one region's share of a pass: the strategy matches
@@ -257,7 +270,7 @@ func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	vpcs := byRegion[region]
 	log.Info("reconcile networks: region not covered since Docker appeared — reconciling it on first use",
 		zap.String("region", region), zap.Int("vpcs", len(vpcs)))
-	index := h.indexNetworks(ctx, networks, byRegion)
+	index, _ := h.indexNetworks(ctx, networks, byRegion)
 	h.adoptRegionNetworks(ctx, region, vpcs, index)
 	h.joinRegionNetworks(ctx)
 	h.reportVPCNetworks(ctx)
@@ -350,23 +363,37 @@ func (h *Handler) networksInScope(ctx context.Context, networks []docker.Network
 // serving. prefix names the strategy in the log, as each strategy's own
 // messages do.
 func (h *Handler) removeOrphanedNetworks(ctx context.Context, byID map[string]*docker.NetworkSummary, prefix string) {
+	h.sweepUnclaimed(ctx, byID, prefix, func(n *docker.NetworkSummary) {
+		if err := h.removeDockerVPCNetwork(ctx, n.ID); err != nil {
+			h.log.WithRecorder(ctx).Warn("reconcile networks: "+prefix+"remove orphaned network",
+				zap.String("network", n.ID),
+				zap.Error(err))
+		}
+	})
+}
+
+// sweepUnclaimed removes the networks in byID that this instance created, and
+// retains the rest, saying which it did either way. What "removes" means is
+// the caller's — a VPC plane and a VPC egress network are taken down
+// differently — but the ownership rule is not, and it is the part that must
+// not drift: a network whose owner cannot be established belongs to a run this
+// one knows nothing about, and absence of a label is never permission.
+func (h *Handler) sweepUnclaimed(ctx context.Context, byID map[string]*docker.NetworkSummary, prefix string, remove func(*docker.NetworkSummary)) {
 	log := h.log.WithRecorder(ctx)
 	domain := h.instanceDomain(ctx)
 	for id, n := range byID {
 		if domain == "" || n.Instance() != domain {
 			log.Info("reconcile networks: "+prefix+"retaining an unclaimed network whose owner cannot be established",
 				zap.String("vpc", n.ResourceID()),
-				zap.String("network", id))
+				zap.String("network", id),
+				zap.String("name", n.Name))
 			continue
 		}
 		log.Info("reconcile networks: "+prefix+"removing orphaned network",
 			zap.String("vpc", n.ResourceID()),
-			zap.String("network", id))
-		if err := h.removeDockerVPCNetwork(ctx, id); err != nil {
-			log.Warn("reconcile networks: "+prefix+"remove orphaned network",
-				zap.String("network", id),
-				zap.Error(err))
-		}
+			zap.String("network", id),
+			zap.String("name", n.Name))
+		remove(n)
 	}
 }
 
@@ -639,7 +666,9 @@ func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach boo
 	// The gateway is a fact about the template. Under `open` it still decides
 	// this network's `--internal` flag — what it no longer decides on its own is
 	// *egress*, because the container is also on the routable control plane.
-	// Under `none` the flag is true whatever the gateway says. See
+	// Under `none` the flag is true whatever the gateway says, and under
+	// `routed` so is it: there the gateway decides which *subnets* route out,
+	// which is a second network rather than this flag. See
 	// dataplane.VPCNetworkInternal and docs/networking.md § Egress modes.
 	internal := dataplane.VPCNetworkInternal(h.cfg, hasGateway)
 
@@ -650,11 +679,23 @@ func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach boo
 		// heals on its own.
 		if netID != vpc.DockerNetworkID {
 			h.noteNetworkProblem(vpc.VpcID, netID,
-				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", isolationWord(internal), err))
+				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", h.isolationWord(internal), err))
 		}
 		return vpcNetworkFlipError(attach, vpcID, err)
 	}
-	return record()
+	if aerr := record(); aerr != nil {
+		return aerr
+	}
+	// Under `routed` the gateway decides nothing about the plane — it stays
+	// internal — but everything about which subnets now route out through
+	// it. Still under the lock, and after the record, so the route tables
+	// read here see the attachment as it now stands.
+	if dataplane.Routed(h.cfg) {
+		if current, aerr := h.store.getVPC(ctx, vpcID); aerr == nil {
+			h.reconcileVPCEgressLocked(ctx, current)
+		}
+	}
+	return nil
 }
 
 // vpcNetworkFlipError is the answer when the VPC's Docker network could not be
@@ -833,7 +874,7 @@ func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, interna
 		})
 		return netID, nil
 	case errors.As(err, &rejoin):
-		detail := fmt.Sprintf("the Docker network was recreated %s, but %v", isolationWord(internal), rejoin.err)
+		detail := fmt.Sprintf("the Docker network was recreated %s, but %v", h.isolationWord(internal), rejoin.err)
 		for _, id := range moved {
 			h.noteNetworkProblem(id, netID, detail)
 		}
@@ -849,12 +890,19 @@ func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, interna
 	}
 }
 
-// isolationWord names a flag in a problem or advisory.
-func isolationWord(internal bool) string {
-	if internal {
+// isolationWord names a flag in a problem or advisory, with the reason the
+// mode gives for it.
+func (h *Handler) isolationWord(internal bool) string {
+	switch {
+	case !internal:
+		return "external (an internet gateway is attached)"
+	case dataplane.Routed(h.cfg):
+		return "--internal (OVERCAST_VPC_EGRESS=routed keeps every VPC plane internal; egress is a second network)"
+	case dataplane.EgressMode(h.cfg) == config.VPCEgressNone:
+		return "--internal (OVERCAST_VPC_EGRESS=none)"
+	default:
 		return "--internal (no internet gateway is attached)"
 	}
-	return "external (an internet gateway is attached)"
 }
 
 // flipDockerVPCNetworkInternal makes vpc's Docker network carry the given
@@ -1155,7 +1203,7 @@ func (h *Handler) reconcileVPCNetworkIsolation(ctx context.Context) {
 		netID, err := h.applyVPCNetworkInternal(ctx, vpc, internal, hasGateway)
 		if err != nil {
 			h.noteNetworkProblem(vpc.VpcID, netID,
-				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", isolationWord(internal), err))
+				fmt.Sprintf("the Docker network should be %s but could not be recreated: %v", h.isolationWord(internal), err))
 		}
 		checked[netID] = struct{}{}
 		unlock()
@@ -1238,6 +1286,7 @@ func (h *Handler) forgetVPCNetwork(ctx context.Context, vpc *VPC) {
 	if vpc.IsDefault || name == h.cfg.Network || netID == h.cfg.Network {
 		name = "" // the shared data plane outlives every VPC on it
 	}
+	h.forgetVPCEgress(ctx, vpc)
 	if h.vpcStrategy != nil {
 		h.vpcStrategy.OnDelete(ctx, vpc)
 	}
@@ -1279,7 +1328,16 @@ func (h *Handler) networkProblems() []dataplane.VPCNetworkProblem {
 		out = append(out, v.(dataplane.VPCNetworkProblem))
 		return true
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].VpcID < out[j].VpcID })
+	// By VPC, then by detail: one VPC can carry both a plane problem and an
+	// egress one (egressProblemKey), and sync.Map ranges in no order — an
+	// advisory that reordered itself between two health polls reads as two
+	// different faults.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].VpcID != out[j].VpcID {
+			return out[i].VpcID < out[j].VpcID
+		}
+		return out[i].Detail < out[j].Detail
+	})
 	return out
 }
 

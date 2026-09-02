@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/events"
 	"github.com/overcast-sh/overcast/internal/protocol"
 )
@@ -26,6 +27,12 @@ type awsvpcPlacement struct {
 	subnetID       string
 	networkID      string
 	subnetResolved bool
+
+	// placement is the dataplane's view of the same decision, carried for
+	// the two things the manual ENI attach in attachTaskENI does not do: the
+	// egress network the task's subnets earn under OVERCAST_VPC_EGRESS=routed,
+	// and recording the placement so a route-table change can revisit it.
+	placement dataplane.Placement
 	// remapped marks a VPC whose Docker network sits on a shadow CIDR rather
 	// than the one the API reports. The address a container really holds is
 	// then deliberately not the address AWS callers are shown, so the ENI

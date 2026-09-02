@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/protocol"
 )
@@ -102,6 +103,21 @@ func (h *Handler) resolveAwsvpcPlacement(
 		placement.subnetResolved = true
 		placement.remapped = status == "remapped"
 		placement.networkID = h.vpcResolver.DockerNetworkForVpc(ctx, vpcID)
+		// Every subnet the task named, not only the one that resolved the
+		// VPC: under `routed` any of them can be the one with the route out.
+		var subnetIDs []string
+		if a := networkConfiguration.AwsvpcConfiguration; a != nil {
+			subnetIDs = a.Subnets
+		}
+		p, err := dataplane.PlaceInSubnets(ctx, h.vpcResolver, vpcID, subnetIDs)
+		if err != nil {
+			return placement, &protocol.AWSError{
+				Code:       "InvalidParameterException",
+				Message:    fmt.Sprintf("VPC '%s' is not launchable for %s: %v.", vpcID, opName, err),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		placement.placement = p
 		return placement, nil
 	default:
 		placement.subnetResolved = true
@@ -156,6 +172,11 @@ func (h *Handler) attachTaskENI(ctx context.Context, task *Task, placement awsvp
 	}
 
 	if err := h.docker.ConnectNetwork(ctx, placement.networkID, dockerID); err != nil {
+		return err
+	}
+	// The route out, when the task's subnets have one (OVERCAST_VPC_EGRESS=
+	// routed), and the record that lets a later route-table change move it.
+	if err := dataplane.AttachEgress(ctx, h.docker, dockerID, placement.placement); err != nil {
 		return err
 	}
 	if !carriesENI || placement.remapped {

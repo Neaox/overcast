@@ -776,7 +776,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		// Re-attach: a container adopted from an earlier run may predate the
 		// current plane layout, or have been minted under a hostname the
 		// configuration no longer lists. Attaching is idempotent.
-		if placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID); err != nil {
+		if placement, err := dataplane.PlaceInSubnets(ctx, h.vpcResolver, inst.VpcID, h.instanceSubnets(ctx, inst)); err != nil {
 			h.log.Warn("RDS: reused container could not be placed in its VPC",
 				zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
 		} else {
@@ -810,7 +810,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 	// Resolve the plane before anything is created: a VPC that cannot take
 	// containers should fail here, not after an image pull and a port
 	// reservation that then have to be unwound.
-	placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID)
+	placement, err := dataplane.PlaceInSubnets(ctx, h.vpcResolver, inst.VpcID, h.instanceSubnets(ctx, inst))
 	if err != nil {
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
 		return fmt.Errorf("RDS %s: %w", inst.DBInstanceIdentifier, err)

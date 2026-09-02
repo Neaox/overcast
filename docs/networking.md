@@ -423,6 +423,8 @@ normally never have to think about either.
 | --- | --- |
 | `overcast` (`OVERCAST_NETWORK`) | The **data plane**: where resources reach each other. A Lambda function resolving an RDS endpoint, an ECS task reaching a cache node |
 | `overcast_control` | Overcast's own channel to the containers it starts — the Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls your function and task code make back into the emulator. Derived from `OVERCAST_NETWORK`; not separately configurable |
+| `overcast-vpc-<vpc-id>` | One VPC's **plane** — where the resources in that VPC reach each other |
+| `overcast-vpc-<vpc-id>-egress` | Only under `OVERCAST_VPC_EGRESS=routed`: that VPC's **route out**, joined by the containers whose subnet's route table has a `0.0.0.0/0` route. Created on the first placement that earns one — see [`routed`](#routed-egress-from-your-route-tables) |
 
 A resource created in a VPC joins that VPC's network (`overcast-vpc-<vpc-id>`,
 under your `OVERCAST_NETWORK` name)
@@ -454,7 +456,7 @@ anything outside your machine.
 | --- | --- | --- |
 | `open` (default) | Everything: other resources it is allowed to see, Overcast's own APIs, and the internet — including real AWS endpoints and third-party APIs | Normal development, and any stack whose functions call something outside the emulator. This is what LocalStack, Moto and SAM CLI do |
 | `none` | Its own plane, and Overcast's own APIs. Nothing outside the machine — outbound connections fail with `ENETUNREACH` | Deterministic CI, air-gapped hosts, and proving a stack has no hidden external dependency |
-| `routed` | Not implemented — refused at startup | — |
+| `routed` | Exactly what its subnet's route table says: a `0.0.0.0/0` route to an attached internet gateway or an available NAT gateway grants egress, and no default route withholds it — outbound connections then fail with `ENETUNREACH`. **Run Overcast in a container**: natively on Docker Desktop it cannot withhold, and says so | Catching a missing NAT gateway locally instead of in a deploy, and any stack whose public/private subnet split is the thing you are testing |
 
 **`none` applies to every container, not only the ones in a VPC.** It makes the
 shared data plane `--internal` too, so a Lambda function with no `VpcConfig`
@@ -478,6 +480,8 @@ control plane, which `open` leaves routable, so it has egress either way. The
 flag stays honest about your template instead of being flattened. What changed
 is that it no longer *decides* egress on its own — which is what used to make a
 private subnet behind a NAT gateway indistinguishable from an isolated one.
+Under `routed`, every VPC plane is `--internal` whatever the gateway says, and
+the route out is a second network per VPC.
 
 So `docker network inspect` can show `Internal: true` for a network whose
 containers plainly reach the internet. When that surprises you, three places say
@@ -505,13 +509,118 @@ hermetic, and you are not left to notice on your own. Every data plane *is*
 isolated. Run Overcast in a container, or against a native Linux Docker daemon,
 for the whole of `none`.
 
-**`routed` is the honest AWS answer and is not built yet.** It would grant
-egress exactly where the subnet's route table does — a `0.0.0.0/0` route to an
-internet or NAT gateway — and withhold it everywhere else. Overcast does not
-read route tables, so it fails at startup with that reason rather than
-approximating: `open` would grant egress the route tables withhold, `none`
-would withhold egress they grant, and either would quietly contradict your
-template.
+### `routed`: egress from your route tables
+
+`OVERCAST_VPC_EGRESS=routed` is the AWS-faithful mode. Egress is decided **per
+subnet**, from the route table associated with it — the one thing local
+emulation can offer here that LocalStack, Moto and SAM CLI do not, all of which
+give a VPC-attached function full egress and model no VPC networking at all.
+
+> [!IMPORTANT]
+> **Run Overcast in a container for this mode.** On Docker Desktop with
+> Overcast running natively — and on any native Windows or macOS host —
+> `routed` **cannot withhold egress**: every container has a route out
+> whatever its route table says, so a subnet with no `0.0.0.0/0` route still
+> reaches the internet and the missing NAT gateway this mode exists to catch
+> goes uncaught. Overcast says so rather than pretending: **two warnings in the
+> startup log**, which is where to look, and the `vpc-egress-not-withheld`
+> advisory on the console's **Metrics & Health** page — the same advisory
+> `none` raises, naming whichever mode you set. Running Overcast **in a
+> container**, or against a **native Linux Docker daemon**, is what makes the
+> mode enforceable.
+>
+> Two host limits cause it, and both the warnings and the advisory name
+> whichever applies:
+>
+> - The control plane cannot be isolated where containers reach the Lambda
+>   Runtime API at the host's own address — `--internal` would strand every
+>   invocation at INIT. The same limit [`none` has](#egress-modes).
+> - VPC placement is not enforced where Overcast's DNS resolver cannot start
+>   (no `/etc/resolv.conf` on those hosts), so a VPC-placed container also
+>   joins the routable shared data plane — see
+>   [Two things this does not restrict](#two-things-this-does-not-restrict).
+
+| The subnet's `0.0.0.0/0` route | What its containers get |
+| --- | --- |
+| → an internet gateway **attached to this VPC** | A route out |
+| → a NAT gateway that exists and is available | A route out |
+| → a gateway that is detached, deleted or gone | Nothing — a blackhole on AWS, and here |
+| → anything else (a virtual private gateway, a peering connection, an instance) | Nothing — none of those reaches the internet through anything Overcast runs |
+| absent | Nothing. Outbound connections fail with `ENETUNREACH` |
+
+A subnet with no explicit route-table association uses its VPC's main table,
+exactly as on AWS. A container placed in several subnets gets a route out when
+**any** of them grants one: on AWS such a function reaches the internet from
+some of its ENIs and not others, which is not a state one container can be in,
+and granting is the reading that does not make a working stack fail locally.
+
+**How it is carried.** The VPC's plane stays one `--internal` bridge that every
+container in the VPC joins, whatever its subnets route to — an isolated
+database and a NAT-routed function in one VPC reach each other on AWS, and they
+could not if each egress class were its own bridge. A container whose subnet
+grants egress *also* joins a second, routable bridge,
+`overcast-vpc-<vpc-id>-egress`, and takes its default route from there.
+
+That shape is what makes a route-table change safe on a hot path:
+
+- **A container placed after the change** gets the answer its route table gives
+  now. Nothing to restart.
+- **A container already running** is moved on or off the egress network in
+  place, by one `docker network connect` or `disconnect`. Its plane, its
+  address, its DNS names and its control-plane connection are all untouched, so
+  an in-flight invocation keeps its Runtime API. That is the AWS shape too: a
+  route-table change reroutes an ENI in place.
+
+`CreateRoute`, `DeleteRoute`, `AssociateRouteTable`, `DisassociateRouteTable`,
+`DeleteRouteTable`, `CreateNatGateway`, `DeleteNatGateway`, `AttachInternetGateway`
+and `DetachInternetGateway` each revisit every container in the VPC. Each move
+is logged with the subnet and the route table that decided it. A move Docker
+refuses does not fail the API call — AWS never refuses a route for a reason
+like a daemon's — but is logged at `error`, raised as an advisory in
+`GET /_overcast/debug/metrics` (with `OVERCAST_DEBUG=true`), and retried at the
+next start.
+
+**Resources outside a VPC are unaffected.** They sit on the shared data plane,
+which `routed` leaves routable, because that is what they get on AWS. So does
+anything in a **default VPC**, whose subnets are public on AWS.
+
+> [!NOTE]
+> `routed` isolates the control plane, as `none` does. A routable control plane
+> would hand every container a route out whatever its route table said — which
+> is exactly what the measurements behind
+> [#1571](https://github.com/overcast-sh/overcast/issues/1571) found.
+
+### The address-pool ceiling
+
+`routed` needs a second Docker network per VPC, and Docker's own default
+address pools stretch to about **31 networks in total** on a stock daemon —
+shared with every other tool on the machine. Doubling the per-VPC count against
+that ceiling is how a run ends in `all predefined address pools have been fully
+subnetted`.
+
+So the egress networks never draw on those pools. Each is pinned to a `/24`
+carved from `OVERCAST_VPC_EGRESS_POOL`, which defaults to `198.18.0.0/16` — the
+RFC 2544 benchmarking range, never routed on the internet, and untouched by
+both Docker's defaults and the `remapped` VPC strategy's `100.64.0.0/10`.
+
+| | |
+| --- | --- |
+| VPCs with egress the default pool supports | **256** |
+| Address per VPC | One `/24`, allocated once and kept on the VPC's record, so a restart brings the network back at the same range |
+| When one is created | On the first placement whose subnet grants a route out. A VPC whose subnets all route nowhere never gets one |
+| When one is removed | With its VPC, and at startup when no VPC names it — including every one left behind by a `routed` run after you switch back to `open` or `none` |
+
+Set a wider range if you need more:
+
+```sh
+OVERCAST_VPC_EGRESS_POOL=198.18.0.0/15   # 512 VPCs
+```
+
+It must be an IPv4 CIDR between `/8` and `/24`, and is validated at startup in
+every mode — so a pool written for a `routed` deployment is not found to be
+malformed on the day you switch to it. Running out names the pool and how to
+widen it, and **fails the placement** rather than quietly starting a container
+without the egress its template grants.
 
 ### Control-plane isolation
 
@@ -680,13 +789,12 @@ what a VPC lets *through* is not modelled:
 - **Security groups and NACLs.** Stored and returned; never applied. There is no
   port- or source-level filtering between two containers that share a network.
 - **Subnets within a VPC.** One flat network per VPC — no public/private
-  distinction, no per-subnet routing. Everything in a VPC reaches everything
-  else in it.
-- **Subnet-level internet access.** Egress is one setting for the whole stack,
-  not a property of a subnet or its route table — see
-  [Egress modes](#egress-modes). A private subnet behind a NAT gateway and a
-  fully isolated one get the same answer, because Overcast does not read route
-  tables. `routed` is the mode that would, and it is not built yet.
+  distinction. Everything in a VPC reaches everything else in it, whichever
+  subnets they are in.
+- **Subnet-level internet access**, unless you ask for it. Under the default
+  `open` a private subnet behind a NAT gateway and a fully isolated one get the
+  same answer. Set [`OVERCAST_VPC_EGRESS=routed`](#routed-egress-from-your-route-tables)
+  to have each subnet's route table decide.
 - **Two VPCs with the same CIDR**, under the default `shared` strategy, are one
   Docker network and therefore not isolated from each other. `strict` and
   `remapped` give real separation — see

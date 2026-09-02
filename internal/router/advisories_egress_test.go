@@ -128,12 +128,14 @@ func TestCheckEgressNotWithheld_firesWithoutInventingACause(t *testing.T) {
 }
 
 // Only a mode that promises to withhold egress can fail to keep the promise.
-// `open` promises the opposite, and `routed` has its own rule (#1571).
-func TestCheckEgressNotWithheld_onlyFiresForNone(t *testing.T) {
-	for _, mode := range []config.VPCEgressMode{config.VPCEgressOpen, config.VPCEgressRouted, ""} {
+// `open` promises the opposite, so it fires nothing however the host is
+// arranged — and neither does the zero value, which Load never produces and
+// dataplane.EgressMode reads as `open`.
+func TestCheckEgressNotWithheld_neverFiresForOpen(t *testing.T) {
+	for _, mode := range []config.VPCEgressMode{config.VPCEgressOpen, ""} {
 		t.Run(string(mode), func(t *testing.T) {
 			in := noneOnDockerDesktop()
-			in.VPCEgress = mode
+			in.VPCEgress, in.PlacementEnforced = mode, false
 			if a := checkEgressNotWithheld(in); a != nil {
 				t.Fatalf("advisory = %+v, want none for mode %q", a, mode)
 			}
@@ -202,4 +204,155 @@ func TestComputeAdvisories_includesTheEgressRule(t *testing.T) {
 		}
 	}
 	t.Fatalf("advisories = %+v, want %s among them", got, advisoryCodeEgressNotWithheld)
+}
+
+// ── `routed`, the other withholding mode (#1571) ─────────────────────────────
+//
+// It fails the same way `none` does — a control plane that could not be
+// isolated — and one way `none` cannot: `routed` leaves the shared data plane
+// routable, so a VPC-placed container that also lands on it takes a default
+// route its subnet's route table never granted. One rule answers both, which
+// is why the cases live beside `none`'s.
+
+// routedOnDockerDesktop is what a native Windows or macOS host produces: the
+// control plane overridden, and no resolver, so placement is not enforced.
+func routedOnDockerDesktop() advisoryInput {
+	return advisoryInput{
+		VPCEgress:         config.VPCEgressRouted,
+		PlacementEnforced: false,
+		ControlPlane: docker.NetworkDecision{
+			Network:  "overcast_control",
+			Internal: false,
+			Reason: "OVERCAST_VPC_EGRESS=routed, overridden: an internal control plane would sever " +
+				"the Runtime API on this host",
+		},
+	}
+}
+
+func TestCheckEgressNotWithheld_routedNamesBothShortfalls(t *testing.T) {
+	a := checkEgressNotWithheld(routedOnDockerDesktop())
+	if a == nil {
+		t.Fatal("no advisory: `routed` withheld nothing and said nothing")
+	}
+	if a.Code != advisoryCodeEgressNotWithheld {
+		t.Errorf("Code = %q, want the one code both egress rules share", a.Code)
+	}
+	if a.Title != "OVERCAST_VPC_EGRESS=routed cannot withhold egress on this host" {
+		t.Errorf("Title = %q; it must name the mode the operator set", a.Title)
+	}
+	for _, want := range []string{
+		"overcast_control",   // which network
+		"on this host reach", // and that the host imposed it
+		"DNS resolver",       // the second shortfall, which is `routed`-only
+		"0.0.0.0/0",          // what it costs
+		"NAT gateway",
+		"native Linux", // and the way out
+	} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("Detail does not mention %q: %s", want, a.Detail)
+		}
+	}
+	// One fix, once: both shortfalls have the same remedy here.
+	if n := strings.Count(a.Detail, "Run Overcast in a container"); n != 1 {
+		t.Errorf("the remedy is printed %d times, want once: %s", n, a.Detail)
+	}
+	if a.DocsPath != egressModeDocsPath {
+		t.Errorf("DocsPath = %q, want the shared egress-modes path", a.DocsPath)
+	}
+}
+
+// A host that can deliver `routed` delivers it and hears nothing — the case
+// the live matrix in #1594 ran against, with Overcast in a container.
+func TestCheckEgressNotWithheld_silentWhereRoutedCanKeepItsPromise(t *testing.T) {
+	in := routedOnDockerDesktop()
+	in.PlacementEnforced = true
+	in.ControlPlane = docker.NetworkDecision{
+		Network: "overcast_control", Internal: true, Reason: "OVERCAST_VPC_EGRESS=routed",
+	}
+	if a := checkEgressNotWithheld(in); a != nil {
+		t.Fatalf("advisory = %+v, want none: the control plane is isolated and placement is enforced", a)
+	}
+}
+
+// Each shortfall stands alone, and neither invents the other.
+func TestCheckEgressNotWithheld_routedFiresOnEitherShortfallAlone(t *testing.T) {
+	t.Run("placement only", func(t *testing.T) {
+		// A native Linux daemon with no resolver: the control plane is fine.
+		in := routedOnDockerDesktop()
+		in.ControlPlane = docker.NetworkDecision{
+			Network: "overcast_control", Internal: true, Reason: "OVERCAST_VPC_EGRESS=routed",
+		}
+		a := checkEgressNotWithheld(in)
+		if a == nil {
+			t.Fatal("an unenforced placement fired nothing")
+		}
+		if strings.Contains(a.Detail, "left routable") {
+			t.Errorf("Detail blames the control plane, which was isolated: %s", a.Detail)
+		}
+		if !strings.Contains(a.Detail, "DNS resolver") {
+			t.Errorf("Detail does not name the shortfall that fired: %s", a.Detail)
+		}
+	})
+
+	t.Run("control plane only", func(t *testing.T) {
+		in := routedOnDockerDesktop()
+		in.PlacementEnforced = true
+		a := checkEgressNotWithheld(in)
+		if a == nil {
+			t.Fatal("a routable control plane fired nothing")
+		}
+		if strings.Contains(a.Detail, "DNS resolver") {
+			t.Errorf("Detail blames placement, which was enforced: %s", a.Detail)
+		}
+	})
+}
+
+// The asymmetry, asserted rather than assumed: `none` isolates the shared data
+// plane too, so a container landing on it gains nothing and unenforced
+// placement is not a shortfall there. Only `routed` reads the field.
+func TestCheckEgressNotWithheld_noneIgnoresUnenforcedPlacement(t *testing.T) {
+	in := noneOnDockerDesktop()
+	in.PlacementEnforced = false
+	in.ControlPlane = docker.NetworkDecision{
+		Network: "overcast_control", Internal: true, Reason: "OVERCAST_VPC_EGRESS=none",
+	}
+	if a := checkEgressNotWithheld(in); a != nil {
+		t.Fatalf("advisory = %+v; unenforced placement is not a shortfall under `none`", a)
+	}
+}
+
+// The operator pin, under `routed`, alongside the placement shortfall: the
+// pin's fix is named without blaming the host for it, and the placement half
+// still gets the remedy that actually addresses it.
+func TestCheckEgressNotWithheld_routedSeparatesAPinFromTheHost(t *testing.T) {
+	in := routedOnDockerDesktop()
+	in.ControlPlane = docker.NetworkDecision{
+		Network: "overcast_control", Internal: false, Reason: "OVERCAST_CONTROL_PLANE_INTERNAL=false",
+	}
+
+	a := checkEgressNotWithheld(in)
+	if a == nil {
+		t.Fatal("no advisory: egress is not withheld, whatever chose that")
+	}
+	if strings.Contains(a.Detail, "on this host reach") {
+		t.Errorf("Detail blames the host for a decision it was never asked about: %s", a.Detail)
+	}
+	if !strings.Contains(a.Detail, "asked for, not imposed") ||
+		!strings.Contains(a.Detail, "OVERCAST_CONTROL_PLANE_INTERNAL") {
+		t.Errorf("Detail does not name the setting that decided this: %s", a.Detail)
+	}
+	// The placement shortfall is unrelated to the pin and keeps its own fix.
+	if !strings.Contains(a.Detail, "native Linux") {
+		t.Errorf("Detail drops the remedy for the placement shortfall: %s", a.Detail)
+	}
+}
+
+// The generator has to call it for `routed` too.
+func TestComputeAdvisories_includesTheEgressRuleForRouted(t *testing.T) {
+	for _, a := range computeAdvisories(routedOnDockerDesktop()) {
+		if a.Code == advisoryCodeEgressNotWithheld {
+			return
+		}
+	}
+	t.Fatal("computeAdvisories did not include the egress rule under `routed`")
 }

@@ -105,6 +105,9 @@ func (h *Handler) CreateNatGateway(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	// A route to this gateway written before it existed was a blackhole
+	// until now (OVERCAST_VPC_EGRESS=routed).
+	h.reconcileVPCEgress(r.Context(), sub.VpcID)
 
 	addrs := []xmlNatGWAddr{{
 		AllocationID: allocID,
@@ -223,6 +226,8 @@ func (h *Handler) DeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 	ngw.State = "deleted"
 	_ = h.store.putNatGateway(r.Context(), ngw)
 	_ = h.store.deleteNatGateway(r.Context(), natID)
+	// Every route to it is a blackhole from here on.
+	h.reconcileVPCEgress(r.Context(), ngw.VpcID)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteNatGatewayResponse{
 		Xmlns:        ec2XMLNS,

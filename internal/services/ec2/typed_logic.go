@@ -1631,6 +1631,8 @@ func (h *Handler) deleteRouteTableTyped(ctx context.Context, req *deleteRouteTab
 	if aerr := h.store.deleteRouteTable(ctx, req.RouteTableID); aerr != nil {
 		return nil, aerr
 	}
+	// Subnets it was associated with fall back to the main table.
+	h.reconcileVPCEgress(ctx, rt.VpcID)
 	return &deleteRouteTableResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1655,6 +1657,11 @@ func (h *Handler) createRouteTyped(ctx context.Context, req *createRouteReq) (*c
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 		return nil, aerr
 	}
+	// Under OVERCAST_VPC_EGRESS=routed a new 0.0.0.0/0 route is a route out
+	// for every container in the table's subnets, running ones included. The
+	// route is recorded first — AWS never refuses one for a reason like a
+	// daemon's — and a move that fails reaches the health advisories.
+	h.reconcileVPCEgress(ctx, rt.VpcID)
 	return &createRouteResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1686,6 +1693,7 @@ func (h *Handler) deleteRouteTyped(ctx context.Context, req *deleteRouteReq) (*d
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 		return nil, aerr
 	}
+	h.reconcileVPCEgress(ctx, rt.VpcID)
 	return &deleteRouteResp{
 		Xmlns:     ec2XMLNS,
 		RequestID: protocol.RequestIDFromContext(ctx),
@@ -1711,6 +1719,7 @@ func (h *Handler) associateRouteTableTyped(ctx context.Context, req *associateRo
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 		return nil, aerr
 	}
+	h.reconcileVPCEgress(ctx, rt.VpcID)
 	return &associateRouteTableResp{
 		Xmlns:         ec2XMLNS,
 		RequestID:     protocol.RequestIDFromContext(ctx),
@@ -1736,6 +1745,7 @@ func (h *Handler) disassociateRouteTableTyped(ctx context.Context, req *disassoc
 				if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 					return nil, aerr
 				}
+				h.reconcileVPCEgress(ctx, rt.VpcID)
 				return &disassociateRouteTableResp{
 					Xmlns:     ec2XMLNS,
 					RequestID: protocol.RequestIDFromContext(ctx),
@@ -2158,6 +2168,9 @@ func (h *Handler) createNatGatewayTyped(ctx context.Context, req *createNatGatew
 	if aerr := h.putResourceTags(ctx, natID, tags); aerr != nil {
 		return nil, aerr
 	}
+	// A route to this gateway written before it existed was a blackhole
+	// until now (OVERCAST_VPC_EGRESS=routed).
+	h.reconcileVPCEgress(ctx, sub.VpcID)
 	addrs := []typedNatGWAddrXML{{AllocationID: req.AllocationID, PublicIP: publicIP, PrivateIP: ngw.PrivateIP}}
 	return &createNatGatewayResp{
 		Xmlns:     ec2XMLNS,
@@ -2189,6 +2202,8 @@ func (h *Handler) deleteNatGatewayTyped(ctx context.Context, req *deleteNatGatew
 	ngw.State = "deleted"
 	_ = h.store.putNatGateway(ctx, ngw)
 	_ = h.store.deleteNatGateway(ctx, req.NatGatewayID)
+	// Every route to it is a blackhole from here on.
+	h.reconcileVPCEgress(ctx, ngw.VpcID)
 	return &deleteNatGatewayResp{
 		Xmlns:        ec2XMLNS,
 		RequestID:    protocol.RequestIDFromContext(ctx),

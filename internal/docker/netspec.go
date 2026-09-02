@@ -69,6 +69,20 @@ const (
 	// Absent on a network created before this label existed, which the CLI reads
 	// as "this fact is not knowable from here" rather than as "false".
 	LabelGatewayAttached = "overcast.network.gateway"
+
+	// LabelVPCRole tells a VPC's two networks apart: VPCRolePlane is the
+	// `--internal` plane every container in the VPC joins (config.VPCNetwork),
+	// VPCRoleEgress the routable bridge that carries the default route for the
+	// containers whose subnet's route table grants one, under
+	// OVERCAST_VPC_EGRESS=routed (config.VPCEgressNetwork). Both carry the same
+	// resource-id and vpc-id labels, so without this a reader that indexes by
+	// resource — the startup reconcile, `overcast network status` — would take
+	// one for the other. Absent on a plane created before the label, which is
+	// read as VPCRolePlane: there was no other kind.
+	LabelVPCRole = "overcast.network.vpc-role"
+
+	VPCRolePlane  = "plane"
+	VPCRoleEgress = "egress"
 )
 
 // Bridge driver options Overcast sets explicitly rather than inheriting.
