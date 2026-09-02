@@ -1761,41 +1761,65 @@ var safeServiceName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 // internal/docsindex), and a run that never opens the console docs should not
 // pay it at boot. A parse failure is kept rather than retried — the input is
 // fixed at compile time, so a second attempt cannot differ.
-type docsIndex struct {
-	entries func() ([]docsindex.Entry, error)
-	search  func() *docssearch.Index
+// docsData is everything the docs endpoints serve, in the form they serve it:
+// the navigation already encoded, and the search index already inverted.
+//
+// Both are derived from an immutable input — the docs compiled into this
+// binary — so they are computed once and then only read. The navigation is
+// held as bytes rather than as []docsindex.Entry because every request would
+// otherwise re-project and re-encode the same 128 KB of JSON: measured at
+// ~0.4ms of CPU and ~176 KB of garbage per request, for a body that cannot
+// change until the binary does.
+//
+// Keeping the encoded form is also what lets the parsed corpus go. []Doc
+// carries every page's raw Markdown, extracted prose and code spans — 2.6 MB
+// that nothing reads once the navigation and the postings exist.
+type docsData struct {
+	navJSON []byte
+	search  *docssearch.Index
+	err     error
 }
 
-func newDocsIndex(docsFS fs.FS) *docsIndex {
-	collect := sync.OnceValues(func() ([]docsindex.Doc, error) {
-		if docsFS == nil {
-			return nil, errors.New("no documentation is embedded in this build")
-		}
-		return docsindex.Collect(docsFS)
-	})
-	return &docsIndex{
-		entries: func() ([]docsindex.Entry, error) {
-			docs, err := collect()
-			if err != nil {
-				return nil, err
-			}
-			// An empty corpus is a failure, not an empty page list: a slim
-			// build embeds no docs, and answering 200 with [] would render an
-			// empty sidebar that looks like a working one.
-			if len(docs) == 0 {
-				return nil, errors.New("no documentation is embedded in this build")
-			}
-			return docsindex.Entries(docs), nil
-		},
-		search: sync.OnceValue(func() *docssearch.Index {
-			docs, err := collect()
-			if err != nil {
-				return docssearch.Unavailable(err)
-			}
-			return docssearch.NewIndex(docsindex.SearchEntries(docs))
-		}),
-	}
+type docsIndex struct {
+	get func() *docsData
 }
+
+// newDocsIndex prepares the docs endpoints without doing any of their work.
+//
+// Deliberately lazy rather than warmed in a background goroutine: building
+// costs ~100ms of CPU, and a process that never opens the console docs — every
+// CI run, every scripted use of the emulator — should not spend it. It is off
+// the startup path either way, but a background build would still compete for
+// CPU with startup on a single-core container. The cost lands instead on the
+// first docs request of a process that asked for docs.
+func newDocsIndex(docsFS fs.FS) *docsIndex {
+	return &docsIndex{get: sync.OnceValue(func() *docsData {
+		if docsFS == nil {
+			return &docsData{err: errNoDocs}
+		}
+		docs, err := docsindex.Collect(docsFS)
+		if err != nil {
+			return &docsData{err: err}
+		}
+		// An empty corpus is a failure, not an empty page list: a slim build
+		// embeds no docs, and answering 200 with [] would render an empty
+		// sidebar and a search box over nothing, both of which look like
+		// working features.
+		if len(docs) == 0 {
+			return &docsData{err: errNoDocs}
+		}
+		navJSON, err := json.Marshal(map[string]any{"entries": docsindex.Entries(docs)})
+		if err != nil {
+			return &docsData{err: err}
+		}
+		return &docsData{
+			navJSON: navJSON,
+			search:  docssearch.NewIndex(docsindex.SearchEntries(docs)),
+		}
+	})}
+}
+
+var errNoDocs = errors.New("no documentation is embedded in this build")
 
 // handleDocsNav serves the docs sidebar and per-page table of contents: one
 // entry per published doc, in path order. The console used to import this as a
@@ -1803,14 +1827,14 @@ func newDocsIndex(docsFS fs.FS) *docsIndex {
 // now, from the same binary it already fetches every doc body from.
 func handleDocsNav(docs *docsIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entries, err := docs.entries()
-		if err != nil {
-			http.Error(w, "docs navigation unavailable ("+err.Error()+").",
+		data := docs.get()
+		if data.err != nil {
+			http.Error(w, "docs navigation unavailable ("+data.err.Error()+").",
 				http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries})
+		w.Write(data.navJSON) //nolint:errcheck // best-effort HTTP write.
 	}
 }
 
@@ -1824,17 +1848,23 @@ func handleDocsSearch(docs *docsIndex) http.HandlerFunc {
 				limit = parsed
 			}
 		}
-		idx := docs.search()
+		data := docs.get()
 		// An index that failed to build must not look like a corpus with no
 		// matches: every query would answer "no results" and the console would
 		// show a working search box over nothing. Say the index is missing, the
 		// way a binary built without an SPA says so instead of 404ing.
-		if err := idx.Err(); err != nil {
+		// data.err first, and separately: on the failure path there is no
+		// index to ask, so the two cannot be folded into one expression.
+		err := data.err
+		if err == nil {
+			err = data.search.Err()
+		}
+		if err != nil {
 			http.Error(w, "docs search index unavailable ("+err.Error()+"). "+
 				"The docs pages themselves are unaffected.", http.StatusServiceUnavailable)
 			return
 		}
-		results := idx.Search(query, limit)
+		results := data.search.Search(query, limit)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"query":   query,
