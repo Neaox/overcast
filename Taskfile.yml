@@ -343,6 +343,11 @@ tasks:
         platforms: [windows]
         ignore_error: true
 
+  docker-clean-test-networks:
+    desc: Remove the overcast_*_test_* networks a killed test run left behind (empty, older than 15 minutes; never a shared instance's planes)
+    cmds:
+      - go run ./scripts/docker-clean-test-networks.go
+
   docker-compose:
     desc: Start with docker compose (rebuilds image)
     cmds:

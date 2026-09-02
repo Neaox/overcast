@@ -301,6 +301,7 @@ All three tools produce identical results:
 | Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` (uncapped — prefer the targets) |
 | Docker image   | `make docker-console`   | `task docker-console`   | `docker build -t "overcast:$(sh scripts/image-tag.sh)" .`  |
 | Drop the image | `make docker-clean`     | `task docker-clean`     | `docker image rm "overcast:$(sh scripts/image-tag.sh)"`     |
+| Sweep test networks | `make docker-clean-test-networks` | `task docker-clean-test-networks` | `go run ./scripts/docker-clean-test-networks.go`  |
 
 `make build` and `make build-slim` depend on `lambda-init`, so you only run it
 directly after a bare `go build`. It cross-compiles the in-container Lambda init
@@ -313,6 +314,40 @@ so two checkouts cannot build into one name and silently run each other's code.
 `scripts/image-tag.sh` derives the tag and `OVERCAST_IMAGE_TAG` overrides it; see
 [CONTRIBUTING.md § Docker image tags are per-branch](../../CONTRIBUTING.md#docker-image-tags-are-per-branch).
 An image per branch adds up — `make docker-clean` removes the current one.
+
+### Docker networks left behind by tests
+
+Every Docker-backed test server mints a pair of networks of its own —
+`overcast_ecs_test_<nanotime>` and its `_control` twin, `overcast_rds_master_test_<id>`
+and its twin — and removes them in `t.Cleanup`, after the containers on them,
+logging anything the daemon still refuses. A test process that is killed, or
+that `go test -timeout` panics out of, runs no cleanups at all, and the pair
+stays for the life of the daemon. That is not merely untidy: a daemon subnets
+its networks out of a finite address pool (Docker Desktop's defaults stretch to
+roughly thirty), and once it is spent every `docker network create` fails, which
+the emulator reports as "Docker not available" and every container test fails
+for a reason unrelated to the code under test.
+
+`make docker-clean-test-networks` (or `task docker-clean-test-networks`) sweeps
+them. What it touches, exactly:
+
+- networks named `overcast_<suite>_test_<id>` or that plus `_control`, where the
+  id is a nanotime or a hex suffix — the rule is `dockertest.IsTestNetwork`;
+- with **no container attached**, whatever their age;
+- created **longer than 15 minutes ago**, so a suite still running cannot lose
+  a plane it has not yet put a container on (`-min-age 0` overrides, when you
+  know nothing is running).
+
+It never matches `overcast`, `overcast_control`, or any network without a
+`_test_` segment, so a live instance's planes — yours, or another agent's with
+its own `OVERCAST_NETWORK` — are not candidates. Do not name a long-lived
+instance's network in the per-test shape. Every removal and every retention is
+printed with its reason; `-dry-run` prints without removing. To see what is
+there first:
+
+```sh
+docker network ls --filter name=overcast_ --format '{{.Name}}'
+```
 
 ## Step debugging
 

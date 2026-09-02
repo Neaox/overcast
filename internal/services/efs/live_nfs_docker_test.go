@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker/dockertest"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -67,28 +69,24 @@ func newDockerNFSService(t *testing.T, dc *docker.Client, portBase int, network 
 	// creating anything. The removal used to live in cleanupFileSystem, which
 	// the caller invokes several statements later — so a t.Fatalf in the loop
 	// below, or in the CreateFileSystem between the two calls, left both planes
-	// behind for the life of the daemon; helpers.WithECSDocker explains why
-	// that compounds into "Docker not available" for every later container
-	// test. Registering first also means the planes go last, after the exports
-	// and the service have released the containers holding them.
+	// behind for the life of the daemon; dockertest explains why that compounds
+	// into "Docker not available" for every later container test. Registering
+	// first also means the planes go last, after the exports and the service
+	// have released the containers holding them.
+	//
+	// RemoveOwned skips a plane the loop never reached, removes any export
+	// container Stop left behind, and — when the test itself runs in a
+	// container, which exportProbeAddr attaches to the control plane — detaches
+	// that container rather than removing it, since it is not Overcast's. It
+	// finds it by the network's own endpoint list, which the hostname-based
+	// disconnect this replaced could miss. Data plane first, control last.
 	planes := dataplane.Networks(cfg, dataplane.Placement{})
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		// When the test itself runs in a container, exportProbeAddr attached us
-		// to the control plane — Docker refuses to remove a network with
-		// endpoints, so detach first.
-		hostname, hostErr := os.Hostname()
-		for i := len(planes) - 1; i >= 0; i-- {
-			if hostErr == nil && hostname != "" {
-				_ = dc.DisconnectNetwork(cctx, planes[i], hostname) //nolint:errcheck
-			}
-			// Not-found is the expected answer for a plane the loop below never
-			// got to, so it is not worth a line in the log.
-			if err := dc.RemoveNetwork(cctx, planes[i]); err != nil && !docker.IsNotFound(err) {
-				t.Logf("cleanup: remove network %s: %v", planes[i], err)
-			}
-		}
+		reversed := slices.Clone(planes)
+		slices.Reverse(reversed)
+		dockertest.RemoveOwned(cctx, dc, reversed, t.Logf)
 	})
 	for _, plane := range planes {
 		if _, err := dc.CreateNetwork(context.Background(), plane); err != nil {

@@ -173,6 +173,21 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		}
 	}
 
+	// Registered before router.New, which is where the Docker supervisor
+	// creates the planes and where ECR claims its registry volume: a Fatal or a
+	// panic anywhere between creation and a later registration would leak them
+	// for the life of the daemon. Registered first also means they run last —
+	// t.Cleanup is LIFO — after the server's own cleanup has released the
+	// containers holding them, without which the daemon refuses the removal.
+	if so.ownsNetworks {
+		networks := []string{so.cfg.Network, so.cfg.ControlNetwork()}
+		t.Cleanup(func() { removeTestNetworks(t, networks) })
+	}
+	if so.ownsRegistryVolume {
+		port := so.cfg.ECRRegistryPort
+		t.Cleanup(func() { removeTestRegistryVolume(port) })
+	}
+
 	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, so.initRunner)
 	srv.Config.Handler = handler
 	srv.Start()
@@ -192,17 +207,6 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		Config:   so.cfg,
 		Clock:    so.mock,
 		shutdown: cleanup,
-	}
-	// Registered first so they run last: neither the networks nor the registry
-	// volume can go until the containers holding them have, which the server's
-	// own cleanup does.
-	if so.ownsNetworks {
-		networks := []string{so.cfg.Network, so.cfg.ControlNetwork()}
-		t.Cleanup(func() { removeTestNetworks(networks) })
-	}
-	if so.ownsRegistryVolume {
-		port := so.cfg.ECRRegistryPort
-		t.Cleanup(func() { removeTestRegistryVolume(port) })
 	}
 	// t.Cleanup runs in LIFO order: close the server first, then drain
 	// any in-flight async work (e.g. SNS fan-out goroutines).
@@ -340,13 +344,20 @@ func TestDockerSocket() string {
 // The network is named per test run because the containers are: two packages
 // running in parallel must not share, or race to remove, one another's. Being
 // per-run, they are also this server's to remove — see the cleanup in
-// NewTestServer. A Docker daemon has a finite address pool (Docker Desktop
-// subnets roughly thirty networks out of its default pools), so a suite that
-// mints a pair per test server and never removes them exhausts it after a few
-// dozen runs, and every later `docker network create` fails — which the
-// emulator reports as "Docker not available", leaving ECS metadata-only and
+// NewTestServer, registered before the planes exist and run after the server
+// has released its containers. A Docker daemon has a finite address pool
+// (Docker Desktop subnets roughly thirty networks out of its default pools), so
+// a suite that mints a pair per test server and never removes them exhausts it
+// after a few dozen runs, and every later `docker network create` fails — which
+// the emulator reports as "Docker not available", leaving ECS metadata-only and
 // every container test failing for a reason that has nothing to do with the
 // code under test.
+//
+// The name's shape is load-bearing: dockertest.IsTestNetwork recognises
+// overcast_<suite>_test_<nanotime-or-hex> and its _control twin as a per-test
+// network, which is what lets `make docker-clean-test-networks` sweep the pairs
+// a killed test process could not remove without touching a shared instance's
+// planes. Change the shape and change the rule with it.
 func WithECSDocker() Option {
 	return func(so *serverOptions) {
 		so.cfg.ECSDockerSocket = TestDockerSocket()

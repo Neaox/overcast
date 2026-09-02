@@ -53,7 +53,7 @@ SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
+        bench bench-startup lint lint-go lint-web lint-actions lint-encoding fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean docker-clean-test-networks clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
         generate-caps check-caps generate-ts check-ts generate-aws-operations aws-models-check docs docs-lint docs-check supportmeta-check check-binary-symbols
 
@@ -324,6 +324,13 @@ docker-run:
 ## docker-clean: remove this branch's images (run this when you are done with them)
 docker-clean:
 	-docker image rm $(CONSOLE_IMAGE) $(SLIM_IMAGE)
+
+## docker-clean-test-networks: remove the overcast_*_test_* networks a killed test run left behind
+# Only per-test networks (overcast_<suite>_test_<id> and its _control twin) with
+# no container attached and older than 15 minutes; never overcast, overcast_control
+# or any other instance's planes. `-dry-run` lists, `-min-age 0` includes younger ones.
+docker-clean-test-networks:
+	$(GO) run ./scripts/docker-clean-test-networks.go
 
 ## clean: remove build artefacts
 clean:
