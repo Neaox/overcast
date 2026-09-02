@@ -147,7 +147,7 @@ func excludedServices(root string, included []serviceOps) ([]string, error) {
 // it's missing instead of just naming it.
 type excludedInfo struct {
 	name      string
-	modelled   int
+	modelled  int
 	protocols []string
 }
 
