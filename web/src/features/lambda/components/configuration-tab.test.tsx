@@ -58,17 +58,18 @@ describe("ConfigurationTab", () => {
     )
   })
 
-  // VPC placement is real connectivity here but restricts nothing, and security
-  // groups are never applied — so a test that "proves" the VPC wiring works
-  // passes locally whether or not it is correct. The notice is what stops that
-  // being a silent divergence, and it is shown only where someone could be
-  // relying on it: on a function that actually has a VPC configured.
+  // VPC placement is enforced here, but nothing finer is: security groups,
+  // NACLs and the public/private subnet distinction are stored and never
+  // applied — so a test that "proves" the security-group wiring works passes
+  // locally whether or not it is correct. The notice is what stops that being a
+  // silent divergence, and it is shown only where someone could be relying on
+  // it: on a function that actually has a VPC configured.
   describe("the VPC-not-enforced notice", () => {
     it("appears when the function is in a VPC", async () => {
       renderTab(TabWithVpc)
       expect(await screen.findByText("Placement is enforced — filtering is not")).toBeInTheDocument()
       expect(
-        screen.getByText(/Security groups are stored and returned but never applied/),
+        screen.getByText(/are stored and returned but never applied/),
       ).toBeInTheDocument()
     })
 
@@ -83,7 +84,7 @@ describe("ConfigurationTab", () => {
       // The empty state still carries the divergence, so someone about to add a
       // VPC config learns before they do — and awaiting it proves the tab
       // rendered, which is what makes the absence below meaningful.
-      expect(await screen.findByText(/on AWS it could not/)).toBeInTheDocument()
+      expect(await screen.findByText(/cannot reach resources inside one/)).toBeInTheDocument()
       expect(screen.queryByText("Placement is enforced — filtering is not")).not.toBeInTheDocument()
     })
   })
