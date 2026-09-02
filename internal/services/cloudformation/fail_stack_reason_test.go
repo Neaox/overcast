@@ -78,7 +78,7 @@ func TestCreateStack_disableRollbackReasonNamesTheFailedResources(t *testing.T) 
 	if failed.Status != ResourceCreateFailed || !strings.Contains(failed.StatusReason, "never came up") {
 		t.Errorf("MyBucket = %+v, want CREATE_FAILED carrying the underlying error", failed)
 	}
-	assertStackResourceEvent(t, p, stack.StackName, "MyBucket", ResourceCreateFailed, "never came up")
+	assertStackResourceEvent(t, p, stack.StackID, "MyBucket", ResourceCreateFailed, "never came up")
 
 	// And: the summary is what a restart reads back.
 	persisted, err := p.store.getStack(context.Background(), stack.StackName)

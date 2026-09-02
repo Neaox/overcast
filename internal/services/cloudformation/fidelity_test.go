@@ -284,7 +284,7 @@ func TestProvisionStackResources_recordsFidelityReasonOnStackResourceAndEvent(t 
 
 	// And: the reason rides the CREATE_COMPLETE event too, not only the
 	// resource record — this is the deploy-path signal the issue asks for.
-	stackEvents, err := p.store.getStackEvents(context.Background(), stack.StackName)
+	stackEvents, err := p.store.getStackEvents(context.Background(), stack.StackID)
 	if err != nil {
 		t.Fatalf("getStackEvents: %v", err)
 	}

@@ -2196,7 +2196,7 @@ func (p *provisioner) recordEvent(ctx context.Context, stack *Stack, logicalID, 
 		Timestamp:            p.clk.Now(),
 		ClientRequestToken:   stack.ClientRequestToken,
 	}
-	if err := p.store.appendStackEvent(ctx, stack.StackName, event); err != nil {
+	if err := p.store.appendStackEvent(ctx, stack.StackID, event); err != nil {
 		log.Error("cfn: failed to persist stack event", zap.Error(err))
 	}
 	if err := p.store.putStack(ctx, stack); err != nil {
