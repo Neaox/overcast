@@ -99,6 +99,7 @@ func (t *Tracker) Snapshot() Status {
 type NetworkReporter interface {
 	RecordInstance(id string)
 	RecordNetworks(networks []NetworkStatus)
+	ForgetNetwork(name string)
 }
 
 // RecordInstance records this Overcast's sweep-domain identity, once it is
@@ -131,6 +132,35 @@ func (t *Tracker) RecordNetworks(networks []NetworkStatus) {
 		}
 		if !replaced {
 			t.status.Networks = append(t.status.Networks, n)
+		}
+	}
+}
+
+// ForgetNetwork drops one network from the report.
+//
+// A recorded status is a statement about a network that exists. Once it does
+// not — its VPC was deleted, or `overcast network reset` removed it to rebuild
+// it — keeping the last thing Overcast knew turns the report into a memory,
+// and a memory is exactly the wrong shape for this field: an operator who runs
+// the `overcast network reset` the advisory told them to run, watches it
+// succeed, and then sees the same advisory still standing has been given no
+// way to tell a fix that did not work from a report that did not move (#1583).
+//
+// Forgetting rather than re-verifying is the conservative half of that. An
+// absent network reports nothing, and nothing is what the rest of this file
+// already means by absence — see the Networks field, and advisoryInput.Networks:
+// "no networks reported" is indistinguishable from "no Docker", so it fires
+// nothing. The next probe re-establishes the truth.
+func (t *Tracker) ForgetNetwork(name string) {
+	if name == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, existing := range t.status.Networks {
+		if existing.Name == name {
+			t.status.Networks = append(t.status.Networks[:i], t.status.Networks[i+1:]...)
+			return
 		}
 	}
 }

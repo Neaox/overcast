@@ -1209,7 +1209,7 @@ func (h *Handler) reportVPCNetworks(ctx context.Context) {
 			status.Mismatch = diffs
 			status.Drift = fmt.Sprintf("adopted as found on first use of its region; not in the configured state (%s) — the next startup reconcile repairs it",
 				strings.Join(docker.DiffStrings(diffs), "; "))
-			status.Fix = "overcast network reset " + info.Name
+			status.Fix = vpcNetworkFix(info)
 		}
 		h.recordNetworkStatus(status)
 	}
@@ -1231,9 +1231,44 @@ func (h *Handler) forgetVPCNetwork(ctx context.Context, vpc *VPC) {
 		return
 	}
 	h.netProblems.Delete(vpc.VpcID)
+	// Read before OnDelete: the strategy may clear the record's network fields
+	// on its way out, and this is the last moment the name is knowable.
+	name, netID := h.vpcNetworkLockKey(vpc), vpc.DockerNetworkID
+	if vpc.IsDefault || name == h.cfg.Network || netID == h.cfg.Network {
+		name = "" // the shared data plane outlives every VPC on it
+	}
 	if h.vpcStrategy != nil {
 		h.vpcStrategy.OnDelete(ctx, vpc)
 	}
+	h.forgetVPCNetworkStatus(ctx, name, netID)
+}
+
+// forgetVPCNetworkStatus drops name from /_overcast/health once the strategy
+// has decided what happens to the network, and only when the network is
+// actually gone.
+//
+// The check is what makes this safe under the `shared` strategy, where several
+// VPCs name one bridge: deleting one of them removes a record, not necessarily
+// a network, and forgetting on the record alone would take a live network out
+// of the report the moment any sharer was deleted.
+//
+// It asks by id rather than by name, because the id is what the deleted record
+// pointed at. Under `shared` the survivors keep that same id, so the question
+// "is the thing this record named still here" is answered exactly.
+//
+// A daemon that cannot be asked forgets anyway. There is nothing to report
+// while Docker is down, and forgetting is the direction that cannot invent a
+// problem — the next probe re-establishes whatever is true.
+func (h *Handler) forgetVPCNetworkStatus(ctx context.Context, name, netID string) {
+	if name == "" {
+		return
+	}
+	if h.dockerReady.Load() && h.docker != nil && netID != "" {
+		if info, err := h.docker.InspectNetwork(ctx, netID); err == nil && info != nil {
+			return
+		}
+	}
+	h.forgetNetworkStatus(name)
 }
 
 // networkProblems returns the recorded problems, ordered by VPC ID.
@@ -1245,4 +1280,25 @@ func (h *Handler) networkProblems() []dataplane.VPCNetworkProblem {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].VpcID < out[j].VpcID })
 	return out
+}
+
+// vpcNetworkFix names the command that actually resolves this network's drift.
+//
+// Not always `overcast network reset`. That command reads the internet-gateway
+// fact off the network itself (docker.LabelGatewayAttached) and declines every
+// network that does not carry one, because a VPC network from before the label
+// existed gives it no way to tell an isolated bridge from a gateway-attached
+// one — and rebuilding on a guess would write a state nothing chose. So for
+// exactly the population an upgrade produces, naming that command sends an
+// operator to a refusal (#1584). The repair for those is the startup reconcile,
+// which has the store to ask.
+func vpcNetworkFix(info *docker.NetworkInspect) string {
+	if info == nil {
+		return ""
+	}
+	if _, recorded := info.Labels[docker.LabelGatewayAttached]; !recorded {
+		return "restart Overcast — its startup reconcile rebuilds this network; " +
+			"`overcast network reset` cannot, because the network predates the recorded gateway state"
+	}
+	return "overcast network reset " + info.Name
 }

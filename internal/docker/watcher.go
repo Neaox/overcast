@@ -166,6 +166,21 @@ func (w *Watcher) recordTrackerEvent(de *dockerEvent) {
 		return
 	}
 	w.tracker.RecordDockerEvent(de.Type+":"+de.Action, time.Unix(de.Time, 0))
+
+	// A network that has been destroyed has no state left to report, so the
+	// last thing the startup probe knew about it stops being a fact and starts
+	// being a memory. `overcast network reset` runs in another process and
+	// removes the network before rebuilding it, so without this the drift it
+	// was run to fix keeps its advisory standing for the life of this daemon —
+	// the operator does the thing they were told to do, watches it succeed, and
+	// nothing they can see changes (#1583).
+	//
+	// Only the destroy. The create that follows it is not verified from here:
+	// this goroutine has no spec to compare against, and creating or repairing
+	// on an event would race the very command that is mid-rebuild.
+	if de.Type == "network" && de.Action == "destroy" {
+		w.tracker.ForgetNetwork(de.Actor.Attributes["name"])
+	}
 }
 
 // dispatchContainer handles container lifecycle events.

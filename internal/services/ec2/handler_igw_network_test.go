@@ -133,7 +133,18 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/networks/"):
 		rest := strings.TrimPrefix(path, "/networks/")
 		id, action, _ := strings.Cut(rest, "/")
+		// The real Engine API accepts a name or an id at every /networks/{id}
+		// endpoint, and the code under test legitimately uses either. A fake
+		// that only understands ids makes correct code look broken.
 		n := f.networks[id]
+		if n == nil {
+			for _, candidate := range f.networks {
+				if candidate.name == id {
+					n = candidate
+					break
+				}
+			}
+		}
 		if n == nil {
 			http.Error(w, `{"message":"network `+id+` not found"}`, http.StatusNotFound)
 			return

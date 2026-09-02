@@ -47,3 +47,19 @@ func (h *Handler) recordNetworkStatus(status docker.NetworkStatus) {
 	}
 	h.networkReporter.RecordNetworks([]docker.NetworkStatus{status})
 }
+
+// forgetNetworkStatus drops a VPC network from the report, for a network that
+// no longer exists.
+//
+// The problem entry and the status entry are two separate records of the same
+// network and both have to go with it: netProblems already did (see
+// forgetVPCNetwork), and without this the network stays listed in
+// /_overcast/health as though it were still there — with whatever drift it last
+// carried, and therefore whatever advisory that drift raised, for the life of
+// the daemon (#1583).
+func (h *Handler) forgetNetworkStatus(name string) {
+	if h.networkReporter == nil || name == "" {
+		return
+	}
+	h.networkReporter.ForgetNetwork(name)
+}

@@ -39,6 +39,7 @@ const (
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
 	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
+	advisoryCodeEgressNotWithheld         = "vpc-egress-not-withheld"
 	advisoryCodeLambdaInitVolumeForeign   = "lambda-init-volume-foreign"
 	advisoryCodeRuntimeAPIUnreachable     = "lambda-runtime-api-unreachable"
 )
@@ -85,6 +86,11 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // Docker network and what a failed flip leaves behind. The fragment is the
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
+
+// egressModeDocsPath deep-links the vpc-egress-not-withheld advisory to the
+// section of the networking page that explains what each egress mode can and
+// cannot deliver, and on which hosts.
+const egressModeDocsPath = "networking.md#egress-modes"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
 // to the section of the Lambda limitations page explaining why a foreign
@@ -200,6 +206,17 @@ type advisoryInput struct {
 	// or startup still in flight — which is an absence rather than a problem
 	// and fires nothing.
 	RuntimeAPI containerendpoint.Listen
+
+	// VPCEgress is cfg.VPCEgress, the configured egress mode — drives
+	// vpc-egress-not-withheld. Only a mode that promises to *withhold* egress
+	// can fail to keep the promise, so `open` fires nothing.
+	VPCEgress config.VPCEgressMode
+
+	// ControlNetwork is cfg.ControlNetwork(), so the rule below can find that
+	// network's live isolation in Networks. A routable control plane is how a
+	// withholding mode fails to withhold: every container Overcast starts is
+	// on it, and takes its default route from it.
+	ControlNetwork string
 }
 
 // computeAdvisories is the single generator function behind the
@@ -250,7 +267,62 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkRuntimeAPIUnreachable(in.RuntimeAPI); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkEgressNotWithheld(in); a != nil {
+		advisories = append(advisories, *a)
+	}
 	return advisories
+}
+
+// checkEgressNotWithheld is warning-severity: OVERCAST_VPC_EGRESS=none is
+// configured, but on this host the containers Overcast starts still have a
+// route out.
+//
+// One thing does that, and it is a property of the host rather than of the
+// configuration: the control plane was left routable, because containers here
+// reach the Lambda Runtime API at the host's own address and `--internal` would
+// sever it — stranding every invocation at INIT. Overcast makes that trade
+// deliberately (dataplane.ControlPlaneMustStayRoutableWarning) and says so at
+// startup, once. Every container Overcast starts is on that network, so every
+// one of them keeps a default route through it, and `none` delivers every data
+// plane isolated and nothing else.
+//
+// It is here rather than only in the startup log because of what `none` is for.
+// Nobody sets it to change how their stack feels; they set it to *prove* the
+// stack has no hidden external dependency — deterministic CI, an air-gapped
+// host, a compliance answer. A promise like that failing quietly, on the most
+// common developer platform there is, is the one case where a card on the
+// Metrics and Health page is worth more than a line that scrolled past at boot.
+//
+// Sibling of checkRoutedEgressNotEnforced (#1571), which asks the same question
+// of `routed` and has a second way to fail — unenforced VPC placement — that
+// `none` does not, because `none` isolates the shared data plane too. If both
+// rules land, they are worth folding into one.
+func checkEgressNotWithheld(in advisoryInput) *Advisory {
+	if in.VPCEgress != config.VPCEgressNone || in.ControlNetwork == "" {
+		return nil
+	}
+	routable := false
+	for _, n := range in.Networks {
+		if n.Name == in.ControlNetwork && !n.Internal {
+			routable = true
+			break
+		}
+	}
+	if !routable {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeEgressNotWithheld,
+		Title:    "OVERCAST_VPC_EGRESS=none cannot withhold egress on this host",
+		Detail: "The control plane " + in.ControlNetwork + " was left routable, so every container " +
+			"Overcast starts takes a route out from it: containers on this host reach the Lambda " +
+			"Runtime API at the host's own address, which an internal network would sever, stranding " +
+			"every invocation at INIT. Every data plane is isolated as asked, but this stack is NOT " +
+			"hermetic — a function can still reach the internet and real AWS endpoints. Run Overcast " +
+			"in a container, or against a native Linux Docker daemon, for the whole of `none`.",
+		DocsPath: egressModeDocsPath,
+	}
 }
 
 // checkNetworkStateMismatch is warning-severity: a Docker network that is not
@@ -283,7 +355,15 @@ func checkNetworkStateMismatch(networks []docker.NetworkStatus) *Advisory {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		fmt.Fprintf(&b, "%s (%s).", n.Name, strings.Join(docker.DiffStrings(n.Mismatch), "; "))
+		// The field list when there is one, and the network's own summary when
+		// there is not. A network Overcast could not read carries a Drift and
+		// no Mismatch, and "ocrev ()." would be this advisory telling an
+		// operator nothing at the moment it has something to say.
+		if len(n.Mismatch) > 0 {
+			fmt.Fprintf(&b, "%s (%s).", n.Name, strings.Join(docker.DiffStrings(n.Mismatch), "; "))
+		} else {
+			fmt.Fprintf(&b, "%s: %s.", n.Name, n.Drift)
+		}
 		if len(n.Attached) > 0 {
 			fmt.Fprintf(&b, " Attached: %s.", strings.Join(n.Attached, ", "))
 		}
@@ -300,12 +380,20 @@ func checkNetworkStateMismatch(networks []docker.NetworkStatus) *Advisory {
 			fix = n.Fix
 		}
 	}
-	detail := "Docker cannot change these settings on an existing network, and the networks below have " +
-		"containers attached or belong to another instance, so Overcast left them as they are. " +
-		"Until they are rebuilt, what a container can reach is not what this configuration says. " +
-		b.String()
+	detail := "Overcast left these networks as they are: Docker cannot change these settings on an " +
+		"existing network, and each of them either has containers attached, belongs to another " +
+		"instance, or could not be read. Until that is resolved, what a container can reach is not " +
+		"what this configuration says. " + b.String()
 	if fix != "" {
-		detail += " Fix: `" + fix + "` (add --dry-run to see what it would do first)."
+		detail += " Fix: `" + fix + "`"
+		// Only the rebuild takes --dry-run, and only the rebuild changes
+		// anything. Offering the flag beside a read-only command would send an
+		// operator to a usage error, which is the same class of mistake as
+		// naming a command that will refuse them (#1584).
+		if strings.HasPrefix(fix, "overcast network reset") {
+			detail += " (add --dry-run to see what it would do first)"
+		}
+		detail += "."
 	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,

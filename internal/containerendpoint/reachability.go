@@ -140,11 +140,16 @@ const (
 	// there is no daemon to probe with.
 	probeTotalBudget = 45 * time.Second
 
-	// probeImagePullTimeout bounds fetching busybox, and is spent *outside* the
-	// per-candidate budget below. Nesting it inside would make it unreachable:
-	// a cold pull on a slow link would be cut off at probeContainerTimeout, then
-	// retried and re-truncated once per candidate, so the image would never
-	// arrive however long this said.
+	// probeImagePullTimeout bounds fetching busybox, and is spent outside every
+	// other clock here — outside probeContainerTimeout, and outside
+	// probeTotalBudget. Nesting it inside either makes it unreachable: a cold
+	// pull on a slow link cut off at 20 s would be retried and re-truncated once
+	// per candidate, and one cut off at 45 s exhausts the whole walk, so the
+	// image never arrives however long this says. It was nested inside the total
+	// budget until #1586, which is why the 60 s could not be reached.
+	//
+	// The pull therefore happens once, before the walk, against the caller's own
+	// context — see prepareProbe in listen.go.
 	probeImagePullTimeout = 60 * time.Second
 
 	// probeAcceptGrace is how long the accept side is given after the probe
@@ -339,13 +344,10 @@ func dockerDialer(dc runnerClient, network string, logger *zap.Logger) dialFromC
 		if dc == nil {
 			return "", true, errors.New("no Docker client")
 		}
-		// The image first, on its own budget and against the caller's context
-		// — see probeImagePullTimeout. Only then the per-candidate clock, so a
-		// slow pull cannot eat the time the candidate itself needs.
-		if err := ensureProbeImage(ctx, dc); err != nil {
-			return "", true, err
-		}
-
+		// The image is already here: resolveListen pulls it once, before the
+		// walk's clock starts, so nothing in this function competes with the
+		// pull for the candidate's time. See prepareProbe and
+		// probeImagePullTimeout.
 		ctx, cancel := context.WithTimeout(ctx, probeContainerTimeout)
 		defer cancel()
 

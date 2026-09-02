@@ -129,10 +129,12 @@ type ListenOptions struct {
 // not by asking whether this process can bind it.
 func ResolveListen(ctx context.Context, dc listenClient, opts ListenOptions) Listen {
 	var probe func(context.Context, Candidate) Attempt
+	var prepare func(context.Context) error
 	var info infoClient
 	if dc != nil {
 		dial := dockerDialer(dc, opts.Network, opts.Logger)
 		probe = func(c context.Context, cand Candidate) Attempt { return probeCandidate(c, cand, dial) }
+		prepare = func(c context.Context) error { return ensureProbeImage(c, dc) }
 		info = dc
 	}
 	return resolveListen(ctx, dc, opts, resolveDeps{
@@ -140,6 +142,7 @@ func ResolveListen(ctx context.Context, dc listenClient, opts ListenOptions) Lis
 		hostIP:      hostReachableIP,
 		bindable:    bindableHost,
 		probe:       probe,
+		prepare:     prepare,
 		daemonID:    func(c context.Context) string { return daemonIdentity(c, info) },
 		now:         time.Now,
 	})
@@ -159,7 +162,13 @@ type resolveDeps struct {
 	bindable    func(string) bool
 	// probe binds one candidate and asks a container to connect to it,
 	// returning what happened. Nil when there is no daemon to run it on.
-	probe    func(context.Context, Candidate) Attempt
+	probe func(context.Context, Candidate) Attempt
+	// prepare fetches whatever the probe needs before the walk's clock starts —
+	// today, the busybox image. It runs against the caller's context rather
+	// than the walk's, which is the whole point: a pull nested inside the walk
+	// budget can never use its own, longer one (#1586). Nil means nothing to
+	// prepare, which is also what a caller with no daemon gets.
+	prepare  func(context.Context) error
 	daemonID func(context.Context) string
 	now      func() time.Time
 	// budget caps the whole candidate walk. Zero means probeTotalBudget; a
@@ -211,6 +220,23 @@ func resolveListen(ctx context.Context, dc listenClient, opts ListenOptions, dep
 		out := listenOf(*c, true, nil)
 		out.Mode = modeHinted + ":" + c.Mode
 		return out
+	}
+
+	// Whatever the probe needs, fetched before the walk's clock starts. A pull
+	// that cannot finish is not a verdict about any address, so a failure here
+	// lands exactly where a daemon that cannot run the probe lands: the
+	// ordering stands on its own, nothing claims it was established, and
+	// nothing is reported broken.
+	if deps.prepare != nil {
+		if err := deps.prepare(ctx); err != nil {
+			c := list[0]
+			if logger != nil {
+				logger.Warn("Runtime API address chosen without a reachability check — the probe image "+
+					"could not be fetched",
+					zap.String("mode", c.Mode), zap.String("host", c.ContainerHost), zap.Error(err))
+			}
+			return listenOf(c, false, nil)
+		}
 	}
 
 	// One clock over the whole walk — see probeTotalBudget.
