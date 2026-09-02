@@ -260,6 +260,10 @@ can be applied mechanically rather than reconstructed from memory.
   Docker never applies `--internal` retroactively, so a plane created before alpha.37 silently kept egress forever — the machine that "still worked" in the report that prompted this
   a network that still has containers attached is left alone and warned about at WARN, naming the `overcast network reset` that fixes it; both planes are checked, not just the control plane
 
+- [networking] a network Overcast creates is now verified afterwards, whichever way it got there.
+  a create issued after "no such network" was returned on without a second look, and Docker resolves a name conflict by handing back the existing network *unchanged* — so a network another process created between the two calls was reported as freshly built to this configuration, drift and all. The unreadable-inspect path was fixed in the previous release; this is the same hole reached by the other route
+  it costs one inspect per network per start, and finds nothing on the ordinary path
+
 - [ec2] one Overcast instance no longer deletes another's VPC networks.
   the reconcile sweep removed every network labelled `overcast.service=ec2` that its own store did not claim, which on a shared daemon is a neighbour's live VPC network. Every network now carries `overcast.instance`, the identity of the instance that created it, and an instance removes only its own
   networks created before this release carry no label; they are still adopted, and never removed. VPC networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}`, unchanged at the default
