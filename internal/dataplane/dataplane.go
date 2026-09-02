@@ -222,8 +222,10 @@ func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) d
 // gateway machinery that keeps it true stays exercised (#1570), and `routed`
 // inherits a bit that already means something. What changed is that the flag no
 // longer *decides* egress on its own, which is what made a private-with-NAT
-// subnet indistinguishable from an isolated one: the mode decides, and today
-// both implemented modes answer for every network alike.
+// subnet indistinguishable from an isolated one: the mode decides that, and
+// today both implemented modes answer it for every network alike. The flag
+// itself still differs per network under `open`, which is the point of keeping
+// it.
 func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
 	if egressMode(cfg) == config.VPCEgressNone {
 		return true

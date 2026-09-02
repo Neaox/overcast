@@ -216,6 +216,10 @@ existing network unchanged, so a network made by an older Overcast or a
 different `OVERCAST_VPC_EGRESS` keeps its original settings while looking
 present and correct. Reads only.
 
+**It exits non-zero when anything differs**, so it works as a CI gate: run it
+after an upgrade to catch a machine that has drifted between releases. Exit `0`
+means every network it could judge is in the state your configuration asks for.
+
 ```bash
 overcast network status
 ```
@@ -253,7 +257,25 @@ overcast network reset overcast_control   # just that one
 ```
 
 Restart Overcast afterwards, along with anything that was stopped — containers
-rejoin on their next start. Background: [Network state verification](./networking.md#network-state-verification).
+rejoin on their next start.
+
+**The daemon stops reporting the network rather than reporting the new state.**
+It sees the removal and drops the entry, so the drift and its advisory clear —
+but nothing re-inspects, so the network is simply absent from
+`/_overcast/health` until the next startup or Docker reconnect. Absence there
+means "nothing to say", not "nothing is wrong": `overcast network status`
+confirms the rebuild in the meantime. Reporting a positive result instead is
+[#1599](https://github.com/overcast-sh/overcast/issues/1599).
+
+**One class of network it will not rebuild:** a per-VPC network created before
+Overcast recorded the internet-gateway state on it (`overcast.network.gateway`).
+Without that label there is no way to tell an isolated bridge from a
+gateway-attached one, and rebuilding on a guess would write a state nothing
+chose — so it says so and changes nothing, `--force` included. Restart Overcast
+instead: its startup reconcile has the state store to ask. You will only meet
+this on the first start after upgrading.
+
+Background: [Network state verification](./networking.md#network-state-verification).
 
 ---
 

@@ -101,9 +101,12 @@ Two causes, in order of likelihood:
   network as the functions and takes the host route out of the picture.
 - **The `_control` network was created `internal`.** An internal network has no
   route off the bridge at all. Overcast warns at startup when the existing
-  network's isolation differs from what it wants — remove it while nothing is
-  attached (`docker network rm overcast_control`) and it is recreated, or point
-  this instance at its own with `OVERCAST_NETWORK`.
+  network's isolation differs from what it wants, and rebuilds it itself when
+  nothing is attached. When something is, run `overcast network reset
+  overcast_control` — it stops the containers Overcast started, disconnects the
+  ones it did not and leaves them running, then rebuilds the network to spec.
+  Add `--dry-run` to see the plan first. Or point this instance at its own
+  network with `OVERCAST_NETWORK`.
 
 To check it by hand, against the network Overcast starts containers on:
 
