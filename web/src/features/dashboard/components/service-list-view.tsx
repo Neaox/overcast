@@ -1,5 +1,6 @@
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
+import { useServiceIconColor } from "@/hooks/use-service-icon-color"
 import type { ServiceTierEntry } from "../service-defs"
 import { TIER_BADGE } from "../tiers"
 import type { SectionTone } from "./dashboard-section"
@@ -81,6 +82,7 @@ function ServiceListRow({
 }) {
   const { service, tier } = entry
   const Icon = service.icon
+  const { enabled: colorEnabled } = useServiceIconColor()
   return (
     <ServiceTile
       entry={entry}
@@ -90,7 +92,10 @@ function ServiceListRow({
       interactiveClassName="transition-colors hover:bg-accent-muted focus-visible:outline-accent"
     >
       <span role="cell">
-        <Icon className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        <Icon
+          className={cn("h-4 w-4", colorEnabled ? service.color : "text-accent")}
+          strokeWidth={1.75}
+        />
       </span>
       <span role="cell" className="truncate font-mono text-[13px] font-bold text-fg">
         {service.label}

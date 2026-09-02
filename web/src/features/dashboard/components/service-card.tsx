@@ -2,6 +2,7 @@ import { useState } from "react"
 import { BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ServiceDocsModal } from "@/features/docs/service-docs-modal"
+import { ServiceIconTile } from "@/components/service/service-icon-tile"
 import type { ServiceTierEntry } from "../service-defs"
 import { ServiceTile } from "./service-tile"
 import { TierBadge } from "./tier-badge"
@@ -14,7 +15,6 @@ export function ServiceCard({
   onNavigate: (key: string) => void
 }) {
   const { service, tier } = entry
-  const Icon = service.icon
   const [docsOpen, setDocsOpen] = useState(false)
 
   return (
@@ -26,9 +26,7 @@ export function ServiceCard({
         interactiveClassName="transition-colors hover:border-accent focus-visible:outline-accent"
       >
         <div className="relative flex h-[30px] items-center justify-between">
-          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-control bg-accent-muted text-accent">
-            <Icon className="h-[17px] w-[17px]" strokeWidth={1.75} />
-          </span>
+          <ServiceIconTile service={service} />
           <span className={cn("transition-opacity", service.docKey && "group-hover:opacity-0")}>
             <TierBadge tier={tier} />
           </span>

@@ -9,6 +9,7 @@ import { ServiceFavicon } from "./service-favicon"
 import { ConnectionStatusProvider } from "@/hooks/use-connection-status"
 import { FavouritesProvider } from "@/hooks/use-favourites"
 import { useEventStreamSubscription } from "@/hooks/use-event-stream"
+import { ServiceIconColorProvider } from "@/hooks/use-service-icon-color"
 import { SidebarCollapseProvider } from "./use-sidebar-collapse"
 
 interface AppShellProps {
@@ -19,16 +20,18 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <ConnectionStatusProvider>
       <ServiceFavicon />
-      <SidebarCollapseProvider>
-        {/* Nothing behind the gate mounts — no SSE, no queries — until the
-            emulator has actually answered. FavouritesProvider reads the
-            emulator's enabled services, so it belongs behind the gate too. */}
-        <ConnectionGate>
-          <FavouritesProvider>
-            <AppShellInner>{children}</AppShellInner>
-          </FavouritesProvider>
-        </ConnectionGate>
-      </SidebarCollapseProvider>
+      <ServiceIconColorProvider>
+        <SidebarCollapseProvider>
+          {/* Nothing behind the gate mounts — no SSE, no queries — until the
+              emulator has actually answered. FavouritesProvider reads the
+              emulator's enabled services, so it belongs behind the gate too. */}
+          <ConnectionGate>
+            <FavouritesProvider>
+              <AppShellInner>{children}</AppShellInner>
+            </FavouritesProvider>
+          </ConnectionGate>
+        </SidebarCollapseProvider>
+      </ServiceIconColorProvider>
     </ConnectionStatusProvider>
   )
 }

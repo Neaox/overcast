@@ -1,3 +1,4 @@
+import { ServiceIconTile } from "@/components/service/service-icon-tile"
 import type { ServiceTierEntry } from "../service-defs"
 import { ServiceTile } from "./service-tile"
 import { TierMeta } from "./tier-badge"
@@ -10,7 +11,6 @@ export function AvailableServiceCard({
   onNavigate: (key: string) => void
 }) {
   const { service, tier } = entry
-  const Icon = service.icon
 
   return (
     <ServiceTile
@@ -19,9 +19,7 @@ export function AvailableServiceCard({
       className="flex items-center gap-2.5 rounded-card border border-border p-3"
       interactiveClassName="transition-colors hover:border-accent hover:bg-bg-elevated focus-visible:outline-accent"
     >
-      <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-control border border-border text-fg-subtle">
-        <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
-      </span>
+      <ServiceIconTile service={service} variant="outline" size={26} iconSize={15} />
       <span className="flex min-w-0 flex-col gap-px">
         <span className="truncate font-mono text-xs font-bold text-fg-muted">{service.label}</span>
         <TierMeta tier={tier} />

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { createTestQueryClient, renderWithRouter, screen, within } from "@/test/render"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FavouritesProvider } from "@/hooks/use-favourites"
+import { ServiceIconColorProvider } from "@/hooks/use-service-icon-color"
 import type { HealthResponse } from "@/types/common"
 import { Dashboard } from "./dashboard"
 
@@ -28,9 +29,11 @@ const HEALTH: HealthResponse = {
 function DashboardOnly() {
   return (
     <TooltipProvider>
-      <FavouritesProvider>
-        <Dashboard />
-      </FavouritesProvider>
+      <ServiceIconColorProvider>
+        <FavouritesProvider>
+          <Dashboard />
+        </FavouritesProvider>
+      </ServiceIconColorProvider>
     </TooltipProvider>
   )
 }

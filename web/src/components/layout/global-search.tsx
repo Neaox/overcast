@@ -16,6 +16,8 @@ import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { useFavourites } from "@/hooks/use-favourites"
 import { useSearch } from "@/hooks/use-search"
+import { useServiceIconColor } from "@/hooks/use-service-icon-color"
+import { ServiceIconTile } from "@/components/service/service-icon-tile"
 import {
   ALL_SERVICES,
   CATEGORY_LABELS,
@@ -47,9 +49,6 @@ const starVariants = cva("rounded p-0.5 transition-colors", {
   },
   defaultVariants: { active: false, placement: "card" },
 })
-
-const iconTileClass =
-  "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-control bg-accent-muted text-accent"
 
 function pinLabel(label: string, isFavourite: boolean) {
   return isFavourite ? `Unpin ${label} from sidebar` : `Pin ${label} to sidebar`
@@ -90,7 +89,6 @@ function ServiceCard({
   onToggleFavourite: (key: string, e: React.MouseEvent) => void
   onSelect: (service: ServiceDefinition) => void
 }) {
-  const Icon = service.icon
   const pin = pinLabel(service.label, isFavourite)
   return (
     <div
@@ -109,9 +107,7 @@ function ServiceCard({
       />
 
       <div className="flex items-center justify-between">
-        <span className={iconTileClass}>
-          <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
-        </span>
+        <ServiceIconTile service={service} size={26} iconSize={15} />
         {service.favouritable !== false && (
           <button
             onClick={(e) => onToggleFavourite(service.key, e)}
@@ -245,6 +241,7 @@ function ResultRow({
   const service = ALL_SERVICES.find((s) => s.key === result.serviceKey)
   const isDocsResult = result.serviceKey === "/docs"
   const Icon = service?.icon ?? (isDocsResult ? BookOpen : LayoutDashboard)
+  const { enabled: colorEnabled } = useServiceIconColor()
 
   return (
     <a
@@ -272,7 +269,11 @@ function ResultRow({
       <Icon
         className={cn(
           "h-4 w-4 shrink-0",
-          service?.color ?? (isDocsResult ? "text-accent" : "text-fg-muted"),
+          colorEnabled && service?.color
+            ? service.color
+            : isDocsResult
+              ? "text-accent"
+              : "text-fg-muted",
         )}
       />
       <Tooltip
@@ -326,6 +327,7 @@ function SearchResults({
   onSelectCatalogEntry: (id: string) => void
 }) {
   const { isFavourite, toggleFavourite } = useFavourites()
+  const { enabled: colorEnabled } = useServiceIconColor()
 
   // Matching services, with the current route's service promoted to the front.
   const matchedServices = ALL_SERVICES.filter((s) =>
@@ -387,7 +389,7 @@ function SearchResults({
                     "hover:border-accent",
                   )}
                 >
-                  <Icon className={cn("h-4 w-4 shrink-0", s.color)} />
+                  <Icon className={cn("h-4 w-4 shrink-0", colorEnabled ? s.color : "text-fg-muted")} />
                   <span className="text-sm font-medium whitespace-nowrap text-fg">{s.label}</span>
                   {s.favouritable !== false && (
                     <span
@@ -432,7 +434,11 @@ function SearchResults({
               <Icon
                 className={cn(
                   "h-3.5 w-3.5",
-                  service?.color ?? (isDocsSection ? "text-accent" : "text-fg-muted"),
+                  colorEnabled && service?.color
+                    ? service.color
+                    : isDocsSection
+                      ? "text-accent"
+                      : "text-fg-muted",
                 )}
               />
               {service?.label ?? (isDocsSection ? "Documentation" : serviceKey)}
