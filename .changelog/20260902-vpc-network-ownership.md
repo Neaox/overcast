@@ -1,2 +1,0 @@
-* [ec2] Startup reconciliation no longer removes VPC networks that another Overcast instance on the same daemon created
-  VPC networks now carry the `overcast.instance` label, and the orphan pass removes only networks stamped with this instance's identity. A test server or a second instance sharing Docker Desktop used to delete a live instance's `overcast-vpc-*` networks, because their VPCs were not in its own store. Networks created before this release carry no label; they are still adopted, and never removed.

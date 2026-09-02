@@ -1,4 +1,0 @@
-* [lambda] a container that dies during INIT is now explained: the log names its Runtime API endpoint, whether anything reached it, and what it printed.
-  only the INIT *timeout* asked for that evidence, so the other way INIT ends — `lambda container exited during init (exit code 139)` — arrived with nothing beside it, including in the case it identifies outright, a container that cannot route back to the host
-~ [lambda] documented the container-image deployment path end to end, and pinned it with an ECR-push-to-invoke integration test.
-  `docs/services/lambda/examples.md` carries the minimal `PackageType=Image` recipe — push to `repositoryUri`, deploy the `amazonaws.com` `ImageUri`, override with `ImageConfig` — troubleshooting gains a section on containers that cannot reach the Runtime API, and limitations records that `aws lambda wait function-updated` never returns because `LastUpdateStatus` is not reported (#1550)
