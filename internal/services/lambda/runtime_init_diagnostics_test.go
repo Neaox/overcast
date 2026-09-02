@@ -2,8 +2,11 @@ package lambda
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/overcast-sh/overcast/internal/clock"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/events"
 )
 
@@ -321,5 +325,137 @@ func TestContainerInstance_initExitIsDiagnosedWithTheSameEvidence(t *testing.T) 
 	}
 	if _, ok := fields["container_output"]; !ok {
 		t.Errorf("the diagnostic carries no container_output: %v", fields)
+	}
+}
+
+func TestContainerInstance_initExitCarriesTheReachabilityVerdict(t *testing.T) {
+	// Given: an environment on a host where the reachability probe already
+	// established that no address works (#1572). Everything below is what the
+	// exit-139 line was missing: the number names the runtime, and the cause is
+	// the network.
+	srv, logs := newObservedRuntimeAPIServer(t, zap.WarnLevel)
+	listener, err := srv.AddContainerListener()
+	if err != nil {
+		t.Fatalf("AddContainerListener() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	reach := containerendpoint.Listen{
+		ContainerHost: "192.168.8.19",
+		Mode:          "wildcard",
+		Unreachable:   true,
+		Attempts: []containerendpoint.Attempt{
+			{Mode: "docker-internal", Host: "host.docker.internal", Error: "wget: download timed out"},
+			{Mode: "host", Host: "192.168.8.19", Error: "wget: download timed out"},
+		},
+	}
+	ci := &containerInstance{
+		id:           "0123456789abcdef",
+		functionName: "diag",
+		containerIP:  "172.18.0.2",
+		rapiListener: listener,
+		logger:       srv.logger,
+		reach:        reach,
+	}
+
+	// When: the exit is diagnosed.
+	ci.logInitExit("139")
+
+	// Then: the line says how the address was chosen, that nothing was ever
+	// seen to reach it, which candidates were tried, and what to do.
+	entries := logs.FilterMessageSnippet("exited during INIT").All()
+	if len(entries) != 1 {
+		t.Fatalf("INIT-exit log lines = %d, want 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if got := fields["runtime_api_mode"]; got != "wildcard" {
+		t.Errorf("runtime_api_mode = %v, want wildcard", got)
+	}
+	if got := fields["runtime_api_container_verified"]; got != false {
+		t.Errorf("runtime_api_container_verified = %v, want false", got)
+	}
+	candidates := fmt.Sprint(fields["runtime_api_candidates"])
+	for _, want := range []string{"host.docker.internal", "192.168.8.19"} {
+		if !strings.Contains(candidates, want) {
+			t.Errorf("runtime_api_candidates = %s, want %q among them", candidates, want)
+		}
+	}
+	diagnosis, _ := fields["runtime_api_diagnosis"].(string)
+	if !strings.Contains(diagnosis, "LAMBDA_RUNTIME_API_HOST") {
+		t.Errorf("runtime_api_diagnosis does not name the override:\n%s", diagnosis)
+	}
+}
+
+func TestContainerInstance_initExitHintExplainsA139ToTheCaller(t *testing.T) {
+	// Given: the same host. The user's Invoke gets a Runtime.InitError, and for
+	// many of them it is the only place they will look — "exit code 139" alone
+	// reads as SIGSEGV in the runtime, which is the wrong subsystem.
+	unreachable := &containerInstance{reach: containerendpoint.Listen{
+		Unreachable: true,
+		Attempts:    []containerendpoint.Attempt{{Mode: "host", Host: "192.168.8.19", Error: "wget: download timed out"}},
+	}}
+	if got := unreachable.initExitHint(); !strings.Contains(got, "192.168.8.19") {
+		t.Errorf("initExitHint() = %q, want the address in it", got)
+	}
+
+	// And on a host where the address was established, the error stays the
+	// terse one: appending a network diagnosis to an exit that has nothing to
+	// do with the network would send the next reader down the wrong path.
+	verified := &containerInstance{reach: containerendpoint.Listen{
+		ContainerHost: "172.19.0.1", Verified: true}}
+	if got := verified.initExitHint(); got != "" {
+		t.Errorf("initExitHint() = %q, want empty on a verified address", got)
+	}
+}
+
+func TestContainerInstance_forgetsARememberedAddressThisContainerDisproved(t *testing.T) {
+	dir := t.TempDir()
+	path := containerendpoint.HintPath(dir)
+
+	newInstance := func(t *testing.T, mode string) (*containerInstance, *containerListener) {
+		t.Helper()
+		srv, _ := newObservedRuntimeAPIServer(t, zap.WarnLevel)
+		listener, err := srv.AddContainerListener()
+		if err != nil {
+			t.Fatalf("AddContainerListener() error = %v", err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		return &containerInstance{
+			functionName:  "diag",
+			rapiListener:  listener,
+			logger:        srv.logger,
+			reachHintPath: path,
+			reach:         containerendpoint.Listen{Mode: mode, ContainerHost: "10.0.0.9", Verified: true},
+		}, listener
+	}
+
+	// Given: an address taken from the remembered probe result, and a container
+	// that died during INIT having opened no connection to it.
+	writeTestHint(t, path)
+	hinted, _ := newInstance(t, "hinted:host")
+	hinted.logInitExit("139")
+
+	// Then: the file is gone, so the next startup probes again rather than
+	// inheriting an answer this container just disproved.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the remembered address survived a container that could not reach it (stat err = %v)", err)
+	}
+
+	// And: an address this run probed for itself is left alone. Deleting a file
+	// neither the probe nor a pin reads would only hide which of them happened.
+	writeTestHint(t, path)
+	probed, _ := newInstance(t, "gateway")
+	probed.logInitExit("139")
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("a hint was dropped for an address this run probed itself: %v", err)
+	}
+}
+
+// writeTestHint puts a file where the remembered probe result lives. Its
+// contents do not matter here — what is under test is whether the file survives.
+func writeTestHint(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(`{"daemon":"d","network":"n","mode":"host","containerHost":"10.0.0.9","bindHosts":["10.0.0.9"]}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

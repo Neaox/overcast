@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -760,5 +761,95 @@ func TestCheckLambdaInitVolumeOwnership_capsTheListedVolumes(t *testing.T) {
 	}
 	if !strings.HasPrefix(a.Title, "7 Lambda init volumes") {
 		t.Errorf("title = %q, want the full count", a.Title)
+	}
+}
+
+// ---- lambda-runtime-api-unreachable ---------------------------------------
+
+func TestCheckRuntimeAPIUnreachable_firesOnlyOnAMeasuredFailure(t *testing.T) {
+	cases := map[string]struct {
+		in   containerendpoint.Listen
+		want bool
+	}{
+		// The zero value: Lambda never probed — no Docker, a service subset
+		// without Lambda, or startup still in flight. An absence, not a fault.
+		"never probed": {in: containerendpoint.Listen{}},
+		// A working stack, established by a container actually connecting.
+		"verified": {in: containerendpoint.Listen{
+			ContainerHost: "172.19.0.1", Verified: true, Mode: "gateway"}},
+		// The probe could not run at all (no busybox, a daemon refusing
+		// creates). An unmeasured address is not an unreachable one, and a
+		// critical card for "we did not check" is the noise that gets a whole
+		// panel ignored.
+		"unmeasured": {in: containerendpoint.Listen{
+			ContainerHost: "192.168.8.19", Verified: false}},
+		// Measured, and nothing worked. While this holds, no Lambda can run.
+		"unreachable": {
+			in: containerendpoint.Listen{
+				ContainerHost: "192.168.8.19",
+				Unreachable:   true,
+				Attempts: []containerendpoint.Attempt{
+					{Mode: "docker-internal", Host: "host.docker.internal", Error: "wget: download timed out"},
+					{Mode: "host", Host: "192.168.8.19", Error: "wget: download timed out"},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := checkRuntimeAPIUnreachable(tc.in)
+			if (got != nil) != tc.want {
+				t.Fatalf("checkRuntimeAPIUnreachable() = %+v, want fired=%v", got, tc.want)
+			}
+			if got == nil {
+				return
+			}
+			// It is the one critical rule in this file, and it earns it: while
+			// it holds, every invocation strands at INIT and exits 139.
+			if got.Severity != advisorySeverityCritical {
+				t.Errorf("Severity = %q, want %q", got.Severity, advisorySeverityCritical)
+			}
+			if got.Code != advisoryCodeRuntimeAPIUnreachable {
+				t.Errorf("Code = %q, want %q", got.Code, advisoryCodeRuntimeAPIUnreachable)
+			}
+			// And the card carries every address tried, so the reader does not
+			// have to go and find out what was even attempted.
+			for _, want := range []string{"host.docker.internal", "192.168.8.19", "timed out"} {
+				if !strings.Contains(got.Detail, want) {
+					t.Errorf("Detail does not mention %q:\n%s", want, got.Detail)
+				}
+			}
+			if got.DocsPath == "" {
+				t.Error("DocsPath is empty — the remediation page is the point of the card")
+			}
+		})
+	}
+}
+
+func TestComputeAdvisories_includesTheRuntimeAPIRule(t *testing.T) {
+	// Given: an otherwise healthy stack whose Runtime API nothing can reach.
+	in := advisoryInput{
+		StateBackend: config.StateBackendHybrid,
+		RuntimeAPI: containerendpoint.Listen{
+			ContainerHost: "192.168.8.19",
+			Unreachable:   true,
+			Attempts:      []containerendpoint.Attempt{{Mode: "host", Host: "192.168.8.19", Error: "timed out"}},
+		},
+	}
+
+	// When: advisories are computed.
+	advisories := computeAdvisories(in)
+
+	// Then: the rule is wired into the generator, not merely written.
+	found := false
+	for _, a := range advisories {
+		if a.Code == advisoryCodeRuntimeAPIUnreachable {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("advisories = %+v, want %s among them", advisories, advisoryCodeRuntimeAPIUnreachable)
 	}
 }

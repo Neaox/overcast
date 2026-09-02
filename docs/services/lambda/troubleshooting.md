@@ -35,29 +35,54 @@ Back to [Lambda](../lambda.md).
 
 ## Containers cannot reach the Runtime API
 
-Every function fails the same way, zip and container image alike, and Overcast's
-log carries a warning naming the endpoint and how many connections reached it:
+Overcast establishes this address rather than assuming it. At startup it tries
+each candidate in turn — best first — by binding it and running a throwaway
+`busybox` container that connects back, and keeps the first one a container
+actually reaches:
+
+| # | Candidate | When it wins |
+| --- | --- | --- |
+| 1 | Overcast's own address on the control plane | Overcast is itself a container |
+| 2 | The control plane's gateway | A native Linux Docker daemon |
+| 3 | `host.docker.internal` | Docker Desktop — the VM-side route a host firewall does not filter |
+| 4 | The host's own routable interface address | Everything else |
+| 5 | Every interface (`0.0.0.0`), advertising `host.docker.internal` | Last resort |
+
+The result is remembered per Docker daemon in your data directory
+(`runtime-api-host.json`), so only the first startup against a given daemon pays
+for the probe. It is dropped automatically when a container later dies during
+INIT without having reached the address.
+
+The startup log says which candidate won:
 
 ```
-lambda container exited during INIT   runtime_api=192.168.1.20:54254 runtime_api_connections=0
-container_output=[overcast-init] runtime API proxy error: GET /2018-06-01/runtime/invocation/next: dial tcp 192.168.1.20:54254: i/o timeout
+lambda: Runtime API address   addr=host.docker.internal:9001 mode=docker-internal container_verified=true
 ```
 
-`runtime_api_connections=0` with an `i/o timeout` in the container's output is
-the signature: the address Overcast bound is not reachable from containers.
-Confirm it directly, against the network Overcast starts them on:
+### When nothing is reachable
 
-```bash
-docker run --rm --network overcast_control busybox \
-  wget -T 4 -qO- http://192.168.1.20:4566/_overcast/health
+`/_overcast/health` goes degraded with the Runtime API listener in state
+`unreachable`, a **critical** advisory appears on the console's Metrics & Health
+page, and one error is logged naming every address tried:
+
 ```
+no Runtime API address is reachable from a container — every Lambda invocation will fail during INIT
+tried=["gateway 172.19.0.1: could not bind 172.19.0.1", "docker-internal host.docker.internal: wget: download timed out",
+       "host 192.168.8.19: wget: download timed out", "wildcard host.docker.internal: wget: download timed out"]
+```
+
+The observed error is the diagnosis: `Connection refused` means nothing was
+listening there, a timeout means the packets were dropped on the way in.
 
 Two causes, in order of likelihood:
 
-- **A host firewall blocks the Docker subnet.** On Docker Desktop, Overcast binds
-  the host's own interface address, and containers reach it through the daemon's
-  VM — which a firewall rule for the private network profile can drop. Allow the
-  Docker subnet inbound, or run Overcast itself as a container
+- **A host firewall blocks inbound connections to the Overcast binary.** On
+  Windows this is the default for a binary with no allow rule — a freshly built
+  `overcast.exe` is blocked until someone clicks Allow, and the rule follows the
+  *exact path* of the binary, so a rebuild somewhere else is blocked again. Add
+  an allow rule for that path, or set
+  `LAMBDA_RUNTIME_API_HOST=host.docker.internal` to pin the candidate that does
+  not take the filtered path, or run Overcast itself as a container
   (`overcast start --docker --mount-docker-socket`), which puts it on the same
   network as the functions and takes the host route out of the picture.
 - **The `_control` network was created `internal`.** An internal network has no
@@ -65,6 +90,29 @@ Two causes, in order of likelihood:
   network's isolation differs from what it wants — remove it while nothing is
   attached (`docker network rm overcast_control`) and it is recreated, or point
   this instance at its own with `OVERCAST_NETWORK`.
+
+To check it by hand, against the network Overcast starts containers on:
+
+```bash
+docker run --rm --network overcast_control busybox \
+  wget -T 4 -qO- http://192.168.1.20:4566/_overcast/health
+```
+
+### The exit-139 signature
+
+An unreachable address used to present only as this, and the number points at
+the wrong subsystem — the Node runtime segfaults because `invocation/next` never
+answers, not because the init binary is broken:
+
+```
+lambda container exited during INIT   runtime_api=192.168.1.20:54254 runtime_api_connections=0
+runtime_api_mode=host runtime_api_container_verified=false
+container_output=[overcast-init] runtime API proxy error: GET /2018-06-01/runtime/invocation/next: dial tcp 192.168.1.20:54254: i/o timeout
+```
+
+`runtime_api_connections=0` beside `runtime_api_container_verified=false` is the
+signature. When the probe established the failure in advance, the
+`Runtime.InitError` returned to the caller carries the same explanation.
 
 ## Working out why a warm environment went away
 

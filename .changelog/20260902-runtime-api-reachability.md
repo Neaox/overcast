@@ -1,0 +1,4 @@
+* [lambda] The Lambda Runtime API address is now chosen by container reachability, not bindability.
+  Overcast binds each candidate and has a throwaway container connect back, keeping the first one that actually answers — `host.docker.internal` now outranks the host's own interface address. On a Windows host whose firewall blocks a freshly built binary, that address bound fine and no container could reach it, so every invocation stranded at INIT and exited 139 with nothing saying why
+  When no candidate is reachable, `/_overcast/health` reports the Runtime API listener `unreachable`, a critical console advisory names every address tried and the observed error, and the `Runtime.InitError` carries the same explanation. The verdict is remembered per Docker daemon, so only the first startup pays for the probe
++ [lambda] `LAMBDA_RUNTIME_API_HOST=auto|<address>` pins the address containers dial for the Runtime API, skipping the probe.

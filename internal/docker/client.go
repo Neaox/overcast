@@ -741,6 +741,13 @@ type SystemInfo struct {
 	NCPU int `json:"NCPU"`
 	// MemTotal is the total memory available to the daemon, in bytes.
 	MemTotal int64 `json:"MemTotal"`
+	// ID is the daemon's own identity — stable across its restarts, and
+	// different for every daemon this process might be pointed at. It is what
+	// a cached fact *about a daemon* has to be keyed on: the same binary
+	// against Docker Desktop and then against a native daemon is two different
+	// questions, and a cache keyed on the host would answer the second with
+	// the first. See containerendpoint's remembered Runtime API address.
+	ID string `json:"ID"`
 }
 
 // Info returns the daemon's system information (GET /info).

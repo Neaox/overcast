@@ -651,6 +651,21 @@ type Config struct {
 	// is reported by /_overcast/health.
 	LambdaRuntimeAPIPort int
 
+	// LambdaRuntimeAPIHost pins the address Lambda containers are told to dial
+	// for the Runtime API. Corresponds to env var LAMBDA_RUNTIME_API_HOST;
+	// empty (the default, spelled `auto`) means Overcast establishes it by
+	// having a container connect to each candidate in turn — see
+	// containerendpoint.ResolveListen.
+	//
+	// The escape hatch exists because the probe costs one container start and
+	// can be wrong in ways this machine cannot see (a daemon that refuses
+	// container creates, an air-gapped host with no busybox). Setting it skips
+	// both the ordering and the probe. `host.docker.internal` is the value that
+	// fixes a Docker Desktop host whose firewall blocks the binary's own
+	// address (#1572); an IP literal is right for a remote or DinD daemon that
+	// reaches this process on one particular interface.
+	LambdaRuntimeAPIHost string
+
 	// LambdaDockerMaxConcurrentStarts bounds concurrent Docker-backed Lambda
 	// environment starts. This is local Docker backpressure, not an AWS-facing
 	// Lambda concurrency quota. Corresponds to env var
@@ -1664,6 +1679,10 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           falls back to an ephemeral port when busy; any other
 //	                                           value is pinned — see docs/configuration.md § Running
 //	                                           two instances on one host)
+//	LAMBDA_RUNTIME_API_HOST            auto    (the address containers dial for the Runtime API.
+//	                                           auto: established by having a container connect to
+//	                                           each candidate. Set an address — host.docker.internal,
+//	                                           or an IP — to pin it and skip the probe)
 //	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
 //	                                           4 when Docker /info is unavailable
 //	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
@@ -2212,6 +2231,12 @@ func Load() (*Config, error) {
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", DefaultLambdaRuntimeAPIPort)
 	if cfg.LambdaRuntimeAPIPort < 0 || cfg.LambdaRuntimeAPIPort > 65535 {
 		return nil, fmt.Errorf("config: LAMBDA_RUNTIME_API_PORT %d is not a valid port number (0-65535; 0 = ephemeral)", cfg.LambdaRuntimeAPIPort)
+	}
+	// "auto" is the default and means "probe it"; anything else is an address
+	// taken as given. Normalised to "" here so every reader tests one thing.
+	cfg.LambdaRuntimeAPIHost = strings.TrimSpace(envOr("LAMBDA_RUNTIME_API_HOST", "auto"))
+	if strings.EqualFold(cfg.LambdaRuntimeAPIHost, "auto") {
+		cfg.LambdaRuntimeAPIHost = ""
 	}
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see

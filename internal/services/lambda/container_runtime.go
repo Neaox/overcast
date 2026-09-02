@@ -54,22 +54,32 @@ type ContainerRuntime struct {
 	gc               *docker.GC // async container cleanup with retries
 	runtimeAPI       *RuntimeAPIServer
 	logger           *zap.Logger
-	network          string                               // control plane — containers are created here, then attached to a data plane
-	overcastEndpoint string                               // http://host:port — AWS_ENDPOINT_URL for containers
-	endpoint         *containerendpoint.Mapper            // rewrites resource URLs and /etc/hosts for sibling containers
-	pullOnce         sync.Map                             // image name → *sync.Once — ensures each image is pulled only once
-	logWriter        events.LogWriter                     // nil until InitLogWriter is called
-	bus              atomic.Pointer[events.Bus]           // nil until SetBus is called
-	images           atomic.Pointer[docker.ImageResolver] // nil until SetImageResolver is called
-	exitNotify       *exitNotifier                        // routes Docker watcher die events to per-container channels
-	vpcResolver      atomic.Pointer[VPCNetworkResolver]   // resolves subnet → VPC → Docker network
-	efsResolver      atomic.Pointer[EFSVolumeResolver]    // resolves EFS access point → Docker volume
-	layerFetcher     LayerContentFetcher                  // resolves a layer ARN to zip bytes for /opt injection
-	remoteFetcher    *RemoteLayerFetcher                  // optional — fetches layers from real AWS
-	codeFetcher      CodeFetcher                          // populates fn.CodeZip at cold start; nil in tests
-	tarCache         *tarCache                            // pre-built code/layer tars; nil = disabled
-	imageVerified    sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
-	imageConfigs     sync.Map                             // pull key → docker.ImageConfig: the image's own ENTRYPOINT/CMD, which the init now has to reproduce
+	network          string                    // control plane — containers are created here, then attached to a data plane
+	overcastEndpoint string                    // http://host:port — AWS_ENDPOINT_URL for containers
+	endpoint         *containerendpoint.Mapper // rewrites resource URLs and /etc/hosts for sibling containers
+	// reach is how the Runtime API address was established — which candidate
+	// won and whether a container proved it reachable. An INIT death is the
+	// moment that verdict has to be repeated: "exit 139" names the runtime,
+	// and the cause is almost always this. See SetRuntimeAPIReachability.
+	reach containerendpoint.Listen
+	// reachHintPath is where the probe result is remembered. A container that
+	// died during INIT having opened no connection at all disproves the
+	// remembered answer, so it is deleted and the next startup probes again
+	// rather than inheriting a verdict this run just refuted.
+	reachHintPath string
+	pullOnce      sync.Map                             // image name → *sync.Once — ensures each image is pulled only once
+	logWriter     events.LogWriter                     // nil until InitLogWriter is called
+	bus           atomic.Pointer[events.Bus]           // nil until SetBus is called
+	images        atomic.Pointer[docker.ImageResolver] // nil until SetImageResolver is called
+	exitNotify    *exitNotifier                        // routes Docker watcher die events to per-container channels
+	vpcResolver   atomic.Pointer[VPCNetworkResolver]   // resolves subnet → VPC → Docker network
+	efsResolver   atomic.Pointer[EFSVolumeResolver]    // resolves EFS access point → Docker volume
+	layerFetcher  LayerContentFetcher                  // resolves a layer ARN to zip bytes for /opt injection
+	remoteFetcher *RemoteLayerFetcher                  // optional — fetches layers from real AWS
+	codeFetcher   CodeFetcher                          // populates fn.CodeZip at cold start; nil in tests
+	tarCache      *tarCache                            // pre-built code/layer tars; nil = disabled
+	imageVerified sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
+	imageConfigs  sync.Map                             // pull key → docker.ImageConfig: the image's own ENTRYPOINT/CMD, which the init now has to reproduce
 	// The in-container init is delivered in a named volume seeded once per
 	// process and architecture, rather than copied into every container — see
 	// init_volume.go. initVolumes holds one seeding attempt per volume name,
@@ -1036,6 +1046,8 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		readyCh:        cr.runtimeAPI.ReadyChan(containerIP),
 		endpoint:       cr.endpoint,
 		rapiListener:   rapiListener,
+		reach:          cr.reach,
+		reachHintPath:  cr.reachHintPath,
 	}
 	ci.forgetInitBurst = func() { cr.clearInitBurst(id) }
 	return ci
@@ -1418,6 +1430,8 @@ type containerInstance struct {
 	readyCh        <-chan struct{}
 	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
 	rapiListener   *containerListener        // this environment's own Runtime API endpoint
+	reach          containerendpoint.Listen  // how the Runtime API address was established — see ContainerRuntime.reach
+	reachHintPath  string                    // the remembered probe result, dropped when this container disproves it
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 
@@ -1467,7 +1481,7 @@ func (ci *containerInstance) AwaitReady(ctx context.Context) error {
 	case exitCode := <-exitCh:
 		ci.healthy = false
 		ci.logInitExit(exitCode)
-		return fmt.Errorf("lambda container exited during init (exit code %s)", exitCode)
+		return fmt.Errorf("lambda container exited during init (exit code %s)%s", exitCode, ci.initExitHint())
 	case <-ctx.Done():
 		// Only the budget running out is a fault worth explaining. The caller
 		// giving up — an abandoned invoke, a shutdown — cancels this same
@@ -1538,6 +1552,81 @@ func (ci *containerInstance) logInitExit(exitCode string) {
 	}
 	fields := append(ci.initDiagnosticFields(), zap.String("exit_code", exitCode))
 	ci.logger.Warn("lambda container exited during INIT", fields...)
+	ci.forgetReachabilityHint()
+}
+
+// initExitHint is the sentence that goes into the caller's own error when the
+// exit is one the reachability probe already predicted.
+//
+// It reaches a user as the `Runtime.InitError` on their Invoke, which is the
+// only place many of them will look. "exit code 139" alone points at the
+// runtime — SIGSEGV, so a corrupt init binary is the obvious reading, and it is
+// wrong. The truth is that the Node runtime segfaults when the Runtime API
+// never answers `invocation/next`, and this says so where the number does not.
+func (ci *containerInstance) initExitHint() string {
+	if !ci.reach.Unreachable {
+		return ""
+	}
+	return ": " + containerendpoint.RuntimeAPIUnreachableDetail(ci.reach.Attempts)
+}
+
+// reachabilityFields say how the Runtime API address in the line above was
+// arrived at.
+//
+// Without them the diagnostic names an address and a connection count and
+// stops, which is where #1572 hid: the count was 0, the address was the host's
+// own routable interface, and nothing said that address had only ever been
+// tested for bindability. Now the line carries the mode that chose it, whether
+// a container was ever seen to reach it, and — when the probe found nothing
+// reachable at all — every candidate it tried and what each one did.
+func (ci *containerInstance) reachabilityFields() []zap.Field {
+	if ci.reach.ContainerHost == "" {
+		return nil
+	}
+	fields := []zap.Field{
+		zap.String("runtime_api_mode", ci.reach.Mode),
+		zap.Bool("runtime_api_container_verified", ci.reach.Verified),
+	}
+	if len(ci.reach.Attempts) > 0 {
+		fields = append(fields, zap.Strings("runtime_api_candidates", containerendpoint.AttemptStrings(ci.reach.Attempts)))
+	}
+	if ci.reach.Unreachable {
+		fields = append(fields, zap.String("runtime_api_diagnosis",
+			containerendpoint.RuntimeAPIUnreachableDetail(ci.reach.Attempts)))
+	}
+	return fields
+}
+
+// forgetReachabilityHint drops the remembered probe result when this container
+// is the evidence against it: it died during INIT without ever opening a
+// connection to its Runtime API endpoint, which is what an unreachable address
+// looks like from here.
+//
+// Only when the address was *remembered* rather than probed this run. A probe
+// that ran and chose an address, and a pinned address, are both answers this
+// run already stands behind — deleting a file neither of them reads would only
+// hide which of the two happened.
+func (ci *containerInstance) forgetReachabilityHint() {
+	if ci.reachHintPath == "" || !strings.HasPrefix(ci.reach.Mode, "hinted") {
+		return
+	}
+	if ci.rapiListener != nil && ci.rapiListener.Accepted() > 0 {
+		return
+	}
+	containerendpoint.ForgetHint(ci.reachHintPath)
+	if ci.logger != nil {
+		ci.logger.Warn("the remembered Runtime API address did not work — the next startup will probe again",
+			zap.String("runtime_api", ci.rapiListener.Addr()),
+			zap.String("mode", ci.reach.Mode))
+	}
+}
+
+// SetRuntimeAPIReachability records how the Runtime API address was
+// established, so an INIT failure can quote the verdict rather than leaving the
+// reader to guess at the one number the runtime gives them.
+func (cr *ContainerRuntime) SetRuntimeAPIReachability(l containerendpoint.Listen, hintPath string) {
+	cr.reach = l
+	cr.reachHintPath = hintPath
 }
 
 // initDiagnosticFields is the evidence both INIT failures are explained with:
@@ -1550,6 +1639,7 @@ func (ci *containerInstance) initDiagnosticFields() []zap.Field {
 		zap.String("runtime_api", ci.rapiListener.Addr()),
 		zap.Int64("runtime_api_connections", ci.rapiListener.Accepted()),
 	}
+	fields = append(fields, ci.reachabilityFields()...)
 	if ci.id != "" {
 		fields = append(fields, zap.String("container", shortContainerID(ci.id)))
 	}
