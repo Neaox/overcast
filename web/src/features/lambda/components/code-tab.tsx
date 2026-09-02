@@ -65,7 +65,7 @@ export function CodeTab({
  */
 function PlaceholderSourceNotice() {
   return (
-    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
+    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-muted px-3 py-2 text-sm text-fg-muted">
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
       <span>
         This is an example, not this function&rsquo;s code. No readable deployment package is stored

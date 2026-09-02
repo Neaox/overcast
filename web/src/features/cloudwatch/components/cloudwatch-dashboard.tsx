@@ -291,7 +291,7 @@ export function CloudwatchDashboard() {
                     />
 
                     {(statisticsQuery.data?.datapoints.length ?? 0) > 0 && (
-                      <div className="overflow-x-auto">
+                      <div tabIndex={0} className="overflow-x-auto">
                         <table className="w-full font-mono text-xs">
                           <thead>
                             <tr

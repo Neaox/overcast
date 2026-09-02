@@ -69,7 +69,7 @@ export function ExportMenu({ events, hasMore, baseName }: Props) {
         variant="ghost"
         disabled={events.length === 0}
         onClick={() => setOpen((v) => !v)}
-        className="h-7 px-2 text-[10px] uppercase"
+        className="h-7 px-2 text-2xs uppercase"
         // Loaded events only, and it says so — never implying full history.
         title={
           hasMore
@@ -83,14 +83,14 @@ export function ExportMenu({ events, hasMore, baseName }: Props) {
       {open && (
         <div className="absolute top-full right-0 z-20 mt-1 flex w-44 flex-col overflow-hidden rounded-md border border-border bg-bg-elevated py-1 shadow-lg">
           {hasMore && (
-            <span className="px-3 py-1 text-[10px] text-fg-muted">
+            <span className="px-3 py-1 text-2xs text-fg-muted">
               Newer events are not loaded and will not be included.
             </span>
           )}
           <button
             type="button"
             onClick={() => exportAs("csv")}
-            className="px-3 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-muted"
+            className="px-3 py-1.5 text-left font-mono text-2xs text-fg hover:bg-bg-muted"
           >
             CSV
             <span className="ml-1.5 text-fg-muted">timestamp, stream, message</span>
@@ -98,7 +98,7 @@ export function ExportMenu({ events, hasMore, baseName }: Props) {
           <button
             type="button"
             onClick={() => exportAs("json")}
-            className="px-3 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-muted"
+            className="px-3 py-1.5 text-left font-mono text-2xs text-fg hover:bg-bg-muted"
           >
             JSON
             <span className="ml-1.5 text-fg-muted">raw fields</span>

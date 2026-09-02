@@ -150,7 +150,7 @@ const ToastTitle = React.forwardRef<
 ))
 ToastTitle.displayName = "ToastTitle"
 
-const toastDescriptionVariants = cva("text-[11px] text-fg-muted", {
+const toastDescriptionVariants = cva("text-2xs text-fg-muted", {
   variants: {
     kind: {
       identifier: "truncate font-mono",

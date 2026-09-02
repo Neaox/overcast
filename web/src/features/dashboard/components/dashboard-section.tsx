@@ -27,9 +27,9 @@ export function DashboardSection({
     <section aria-label={title} className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <span className={cn(sectionLabel, TONE_CLASS[tone])}>{title}</span>
-        <span className="font-mono text-[10px] text-fg-subtle">{count}</span>
+        <span className="font-mono text-2xs text-fg-subtle">{count}</span>
         <span className="h-px flex-1 bg-border" />
-        {note && <span className="font-mono text-[10px] text-fg-subtle">{note}</span>}
+        {note && <span className="font-mono text-2xs text-fg-subtle">{note}</span>}
       </div>
       {children}
     </section>

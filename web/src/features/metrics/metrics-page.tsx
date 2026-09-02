@@ -74,8 +74,15 @@ function MetricCard({ title, value, sub, info, sparkData, color }: MetricCardPro
           <p className={cn(fieldLabel, "text-fg-muted")}>{title}</p>
           {info && (
             <Tooltip content={info}>
-              <button type="button" className="text-fg-muted transition-colors hover:text-fg">
-                <Info size={12} />
+              {/* A tooltip is not a label: it is not read until the control is hovered
+                  or focused, and this button holds nothing but an icon — so it needs a
+                  name of its own, and a 24px hit area (WCAG 2.5.8) around a 12px glyph. */}
+              <button
+                type="button"
+                aria-label={`About ${title}`}
+                className="-m-1.5 flex h-6 w-6 items-center justify-center rounded text-fg-muted transition-colors hover:text-fg"
+              >
+                <Info size={12} aria-hidden />
               </button>
             </Tooltip>
           )}
@@ -116,12 +123,12 @@ export function MetricsPage() {
         description="Storage health, advisories, and live Go runtime statistics — sampled every 3 seconds."
         actions={
           latest ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 font-mono text-xs font-medium text-success">
+            <div className="flex items-center gap-1.5 rounded-full bg-success-muted px-2.5 py-1 font-mono text-xs font-medium text-success">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
               Live
             </div>
           ) : error ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1 font-mono text-xs font-medium text-danger">
+            <div className="flex items-center gap-1.5 rounded-full bg-danger-muted px-2.5 py-1 font-mono text-xs font-medium text-danger">
               <AlertCircle className="h-3 w-3" />
               Disconnected
             </div>
@@ -135,7 +142,7 @@ export function MetricsPage() {
       />
 
       {error && (
-        <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+        <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger-muted px-4 py-3 text-sm text-danger">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </div>

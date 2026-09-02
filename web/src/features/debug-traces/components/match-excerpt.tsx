@@ -27,7 +27,7 @@ function FieldIcon({ field }: { field: TraceMatchField }) {
 export function MatchBadge({ match }: { match: TraceMatch }) {
   return (
     <span
-      className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-muted"
+      className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-2xs text-fg-muted"
       title={match.label}
     >
       <FieldIcon field={match.field} />
@@ -53,7 +53,7 @@ export function MatchBadge({ match }: { match: TraceMatch }) {
 export function MatchExcerpt({ match, className }: { match: TraceMatch; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-0.5 pl-3 border-l-2 border-border", className)}>
-      <div className="text-[11px] text-fg-muted">{match.label}</div>
+      <div className="text-2xs text-fg-muted">{match.label}</div>
       {match.binary ? (
         <div className="font-mono text-xs text-fg-muted italic">
           matched inside a non-text body, at byte {match.offset ?? 0}

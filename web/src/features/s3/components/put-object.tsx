@@ -255,7 +255,7 @@ export function PutObject() {
           onDrop={onDrop}
           className={[
             "flex items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 transition-colors",
-            dropActive ? "border-accent bg-accent/5" : "border-border hover:border-accent",
+            dropActive ? "border-accent bg-accent-muted" : "border-border hover:border-accent",
           ].join(" ")}
         >
           <div className="flex flex-col items-center gap-2 text-center">
@@ -552,7 +552,7 @@ function Section({
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
         <h2 className="font-mono text-sm font-semibold text-fg">{title}</h2>
         {count !== undefined && (
-          <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-xs font-medium text-accent">
+          <span className="rounded-full bg-accent-muted px-2 py-0.5 font-mono text-xs font-medium text-accent">
             {count}
           </span>
         )}

@@ -31,7 +31,7 @@ export function DockerBanner({ forService }: DockerBannerProps) {
   return (
     <div
       role="alert"
-      className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/5 p-4 text-warning sm:flex-row sm:items-start sm:gap-3"
+      className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning-muted p-4 text-warning sm:flex-row sm:items-start sm:gap-3"
     >
       <AlertCircle size={18} className="mt-0.5 shrink-0" />
       <div className="flex flex-col gap-1">
@@ -45,7 +45,7 @@ export function DockerBanner({ forService }: DockerBannerProps) {
       </div>
       <Link
         to="/events"
-        className="mt-1 flex shrink-0 items-center gap-1.5 self-start rounded-md border border-warning/30 px-3 py-1.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10 sm:mt-0 sm:ml-auto"
+        className="mt-1 flex shrink-0 items-center gap-1.5 self-start rounded-md border border-warning/30 px-3 py-1.5 text-xs font-medium text-warning transition-colors hover:bg-warning-muted sm:mt-0 sm:ml-auto"
       >
         <Boxes size={14} />
         View Docker events

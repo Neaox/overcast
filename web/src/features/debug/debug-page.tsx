@@ -604,7 +604,7 @@ function KeyTree({
                 data-selected={isLeaf && node.key === activeKey}
                 className={cn(
                   "flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left font-mono text-xs hover:bg-bg-muted",
-                  isLeaf ? "text-fg data-[selected=true]:bg-accent/10" : "text-fg-muted",
+                  isLeaf ? "text-fg data-[selected=true]:bg-accent-muted" : "text-fg-muted",
                 )}
                 style={{ paddingLeft: `${depth * 0.75 + 0.5}rem` }}
                 onClick={() => {
@@ -807,7 +807,7 @@ function StateValueViewer({
         </div>
       </div>
       {stateKey ? (
-        <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-fg">
+        <pre tabIndex={0} className="min-h-0 flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-fg">
           {parsed.note ? <span className="mb-3 block text-fg-muted">{parsed.note}</span> : null}
           {parsed.isJSON && parsed.highlight ? (
             <HighlightedJSON text={parsed.text} />

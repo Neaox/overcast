@@ -7,10 +7,12 @@ import { flatChildren, isGroup } from "./nav-children"
 interface SidebarSubNavProps {
   items: SubNavChild[]
   pathname: string
+  /** Target of the parent row's `aria-controls`. */
+  id?: string
 }
 
 /** Nested routes of an expanded service item. */
-export function SidebarSubNav({ items, pathname }: SidebarSubNavProps) {
+export function SidebarSubNav({ items, pathname, id }: SidebarSubNavProps) {
   const activeTo = flatChildren(items)
     .filter((child) => pathname.startsWith(child.to))
     .sort((a, b) => b.to.length - a.to.length)[0]?.to
@@ -26,6 +28,7 @@ export function SidebarSubNav({ items, pathname }: SidebarSubNavProps) {
             ? "font-bold text-accent"
             : "text-fg-muted hover:bg-sidebar-item-hover hover:text-accent",
         )}
+        aria-current={child.to === activeTo ? "page" : undefined}
       >
         {child.label}
       </Link>
@@ -33,7 +36,7 @@ export function SidebarSubNav({ items, pathname }: SidebarSubNavProps) {
   }
 
   return (
-    <div className="mt-px ml-4 flex flex-col gap-px border-l border-border pl-2">
+    <div id={id} className="mt-px ml-4 flex flex-col gap-px border-l border-border pl-2">
       {items.map((child, index) =>
         isGroup(child) ? (
           <div key={child.group} className="flex flex-col gap-px">

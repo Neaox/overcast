@@ -294,15 +294,17 @@ function TracesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-fg-muted text-left">
-                  <th className="px-3 py-2 font-medium">Time</th>
-                  <th className="px-3 py-2 font-medium">Method</th>
-                  <th className="px-3 py-2 font-medium">Path</th>
-                  <th className="px-3 py-2 font-medium">Service</th>
-                  <th className="px-3 py-2 font-medium">Op</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Duration</th>
-                  <th className="px-3 py-2 font-medium">Request ID</th>
-                  <th className="px-3 py-2 font-medium w-10" />
+                  <th scope="col" className="px-3 py-2 font-medium">Time</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Method</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Path</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Service</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Op</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Duration</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Request ID</th>
+                  {/* A <td>, not a <th>: the chevron column has no name, and a header
+                      that names nothing announces "blank" ahead of every row. */}
+                  <td className="w-10 px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -362,7 +364,7 @@ function TracesPage() {
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           <Badge variant="outline" className="text-xs" style={{ borderColor: serviceColor(t.service || "") }}>{t.service || "—"}</Badge>
-                          {t.hopCount ? <span className="inline-flex items-center gap-0.5 text-[10px] text-fg-muted" title={`${t.hopCount} hop${t.hopCount !== 1 ? "s" : ""}`}><GitFork className="h-3 w-3" />{t.hopCount}</span> : null}
+                          {t.hopCount ? <span className="inline-flex items-center gap-0.5 text-2xs text-fg-muted" title={`${t.hopCount} hop${t.hopCount !== 1 ? "s" : ""}`}><GitFork className="h-3 w-3" />{t.hopCount}</span> : null}
                         </div>
                       </td>
                       <td className="px-3 py-2 text-fg-muted text-xs">{t.operation ?? "—"}</td>

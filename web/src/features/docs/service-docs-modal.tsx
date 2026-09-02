@@ -159,7 +159,7 @@ export function ServiceDocsModal({ service, label, open, onClose }: ServiceDocsM
                   },
                   // Style tables
                   table: ({ node: _n, children, ...props }) => (
-                    <div className="overflow-x-auto">
+                    <div tabIndex={0} className="overflow-x-auto">
                       <table
                         className="w-full border-collapse text-xs [&_td:nth-child(2)]:whitespace-nowrap [&_th:nth-child(2)]:whitespace-nowrap"
                         {...props}

@@ -127,7 +127,7 @@ function DashboardFooter({ data }: { data: HealthResponse }) {
   const overrideCount = Object.keys(overrides).length
 
   return (
-    <p className="mt-6 text-center font-mono text-[11px] text-fg-subtle">
+    <p className="mt-6 text-center font-mono text-2xs text-fg-subtle">
       Emulator {data.version} &middot; {ALL_SERVICES.length} services
       &middot; storage: {data.storage.default}
       {overrideCount > 0 && (

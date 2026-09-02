@@ -233,9 +233,7 @@ describe("ServiceNode resource interactions", () => {
       />,
     )
 
-    const nodeButton = screen.getByText("edge-acl").closest('[role="button"]')
-    if (!nodeButton) throw new Error("expected WAF node button wrapper")
-    fireEvent.click(nodeButton)
+    fireEvent.click(screen.getByRole("button", { name: "edge-acl" }))
 
     expect(navigateMock).toHaveBeenCalledWith({
       to: "/waf/$scope/$webAclId/$name",
@@ -260,11 +258,7 @@ describe("ServiceNode resource interactions", () => {
       />,
     )
 
-    const nodeButton = screen.getByText("backend/api").closest('[role="button"]')
-    if (!nodeButton) {
-      throw new Error("expected node button wrapper")
-    }
-    fireEvent.click(nodeButton)
+    fireEvent.click(screen.getByRole("button", { name: "backend/api" }))
 
     expect(navigateMock).toHaveBeenCalledWith({
       to: "/ecr/$repositoryName",
@@ -348,7 +342,7 @@ describe("ServiceNode ECS navigation", () => {
       />,
     )
 
-    fireEvent.click(screen.getByText("web").closest('[role="button"]')!)
+    fireEvent.click(screen.getByRole("button", { name: "web" }))
 
     expect(navigateMock).toHaveBeenCalledWith({
       to: "/ecs/$cluster",
@@ -375,7 +369,7 @@ describe("ServiceNode ECS navigation", () => {
       />,
     )
 
-    fireEvent.click(screen.getByText("task-1").closest('[role="button"]')!)
+    fireEvent.click(screen.getByRole("button", { name: "task-1" }))
 
     expect(navigateMock).toHaveBeenCalledWith({
       to: "/ecs/$cluster/tasks/$taskId",

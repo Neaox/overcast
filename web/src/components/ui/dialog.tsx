@@ -211,7 +211,7 @@ function DialogFooter({ className, children, hint, ...props }: DialogFooterProps
  */
 function DialogKeyHint({ action = "confirm", className }: { action?: string; className?: string }) {
   return (
-    <span className={cn("font-mono text-[10px] text-fg-subtle", className)}>
+    <span className={cn("font-mono text-2xs text-fg-subtle", className)}>
       ⏎ to {action} · esc to cancel
     </span>
   )
@@ -240,7 +240,7 @@ function DialogDescription({
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>) {
   return (
     <DialogPrimitive.Description
-      className={cn("text-[11px] text-fg-subtle", className)}
+      className={cn("text-2xs text-fg-subtle", className)}
       {...props}
     />
   )

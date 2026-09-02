@@ -45,6 +45,8 @@ export function Sidebar() {
 
   return (
     <aside
+      id="sidebar"
+      aria-label="Services"
       className={cn(
         "flex shrink-0 flex-col border-r border-border bg-sidebar-bg transition-all duration-200",
         collapsed ? "w-14 py-3" : "w-57 pt-3",
@@ -53,6 +55,7 @@ export function Sidebar() {
       {!collapsed && <SidebarBrand />}
 
       <nav
+        aria-label="Services"
         className={cn(
           "flex flex-1 flex-col overflow-x-hidden overflow-y-auto",
           collapsed ? "items-center gap-0.5" : "gap-px px-2",

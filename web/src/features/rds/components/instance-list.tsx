@@ -529,7 +529,7 @@ function CreateInstanceDialog({
                         placeholder="Search engines…"
                       />
                       {isUnsupported && (
-                        <div className="mt-2 flex items-start gap-2 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg">
+                        <div className="mt-2 flex items-start gap-2 rounded border border-warning/40 bg-warning-muted px-3 py-2 text-xs text-fg">
                           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                           <span>
                             {UNSUPPORTED_MESSAGES[selectedEntry.reason]}{" "}

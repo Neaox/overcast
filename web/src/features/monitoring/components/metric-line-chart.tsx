@@ -287,7 +287,7 @@ export function MetricLineChart({
         {[0, 25, 50, 75, 100].map((pct) => (
           <span
             key={pct}
-            className="pointer-events-none absolute left-1.5 z-[1] font-mono text-[9px] leading-none text-fg-subtle"
+            className="pointer-events-none absolute left-1.5 z-[1] font-mono text-2xs leading-none text-fg-subtle"
             style={{
               top: `calc(0.75rem + ${pct / 100} * (100% - 1.5rem))`,
               transform:
@@ -402,7 +402,7 @@ export function MetricLineChart({
       {/* X-axis readout: the window's start, quarter marks, and end. Kept
           outside the plot so labels never sit under data; the middle three
           line up with the vertical gridlines above. */}
-      <div className="flex justify-between font-mono text-[9px] leading-none text-fg-subtle">
+      <div className="flex justify-between font-mono text-2xs leading-none text-fg-subtle">
         {[0, 25, 50, 75, 100].map((pct) => (
           <span key={pct}>
             {formatTimestamp(

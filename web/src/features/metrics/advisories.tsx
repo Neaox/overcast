@@ -23,7 +23,7 @@ type SeverityStyle = { icon: typeof Info; iconClass: string; badgeClass: string;
 const DEFAULT_STYLE: SeverityStyle = {
   icon: Info,
   iconClass: "text-accent",
-  badgeClass: "bg-accent/15 text-accent",
+  badgeClass: "bg-accent-muted text-accent",
   label: "Info",
 }
 
@@ -40,7 +40,7 @@ const SEVERITY_STYLES: Partial<Record<AdvisorySeverity, SeverityStyle>> = {
   warning: {
     icon: AlertTriangle,
     iconClass: "text-warning",
-    badgeClass: "bg-warning/15 text-warning",
+    badgeClass: "bg-warning-muted text-warning",
     label: "Warning",
   },
   info: DEFAULT_STYLE,
@@ -57,7 +57,7 @@ function AdvisoryCard({ advisory }: { advisory: Advisory }) {
           <p className="text-sm font-medium text-fg">{advisory.title}</p>
           <span
             className={cn(
-              "rounded-control px-1.5 py-0.5 font-mono text-[10px] tracking-[0.12em] uppercase",
+              "rounded-control px-1.5 py-0.5 font-mono text-2xs tracking-[0.12em] uppercase",
               style.badgeClass,
             )}
           >

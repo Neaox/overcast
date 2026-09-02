@@ -79,14 +79,14 @@ export const IgwNode = memo(function IgwNode({ data }: NodeProps) {
       {/* Label + status */}
       <div className="min-w-0 pr-1">
         <p className="truncate text-xs leading-tight font-semibold">{label}</p>
-        <p className={cn("text-[10px] leading-tight", isAttached ? "text-cat-7" : "text-fg-muted")}>
+        <p className={cn("text-2xs leading-tight", isAttached ? "text-cat-7" : "text-fg-muted")}>
           {isAttached ? "attached" : "detached"}
         </p>
       </div>
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold text-fg-on-accent tabular-nums">
+        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-2xs font-bold text-fg-on-accent tabular-nums">
           {(eventCount ?? 0) > 99 ? "99+" : eventCount}
         </span>
       )}

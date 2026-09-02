@@ -169,7 +169,7 @@ export function ExecutionDetail({ name, execution }: Props) {
           // trade a full-width code panel for a column-width one. Revisit if
           // #1327 ever adopts row expansion; the rest of this table is an
           // ordinary `ResourceTable` shape.
-          <div className="overflow-x-auto">
+          <div tabIndex={0} className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>

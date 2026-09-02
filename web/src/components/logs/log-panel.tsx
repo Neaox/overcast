@@ -184,7 +184,7 @@ export function LogPanel({
               value={timeToken}
               onChange={(e) => setTimeToken(e.target.value as RelativeLogWindowToken)}
               className={cn(
-                "h-6 shrink-0 rounded border border-border bg-transparent px-1.5 font-mono text-[10px] text-fg-muted uppercase",
+                "h-6 shrink-0 rounded border border-border bg-transparent px-1.5 font-mono text-2xs text-fg-muted uppercase",
                 showPatternInput && "ml-auto",
               )}
               aria-label="Time range"
@@ -211,7 +211,7 @@ export function LogPanel({
       />
 
       {events.length > 0 && (
-        <p className="text-right text-[10px] text-fg-muted">
+        <p className="text-right text-2xs text-fg-muted">
           Showing last {formatCount(events.length)} event{events.length !== 1 ? "s" : ""}
           {refreshIntervalMs
             ? ` · auto-refreshes every ${Math.round(refreshIntervalMs / 1000)}s`

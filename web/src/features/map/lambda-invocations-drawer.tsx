@@ -201,7 +201,7 @@ export function LambdaInvocationsDrawer({
             <div>
               <h2 className="font-mono font-semibold text-fg">{functionName}</h2>
               {instanceId && (
-                <p className="mt-1 font-mono text-[10px] text-fg-muted">{instanceId}</p>
+                <p className="mt-1 font-mono text-2xs text-fg-muted">{instanceId}</p>
               )}
               <p className={cn(sectionLabel, "mt-2 text-fg-muted")}>
                 {invocations.length} {invocations.length === 1 ? "Invocation" : "Invocations"}
@@ -223,7 +223,7 @@ export function LambdaInvocationsDrawer({
             <div className="w-40 shrink-0 overflow-y-auto border-r border-border">
               {invocations.length === 0 ? (
                 <div className="flex h-full items-center justify-center">
-                  <p className="text-[11px] text-fg-muted">No invocations yet</p>
+                  <p className="text-2xs text-fg-muted">No invocations yet</p>
                 </div>
               ) : (
                 <div>
@@ -243,21 +243,21 @@ export function LambdaInvocationsDrawer({
                           onClick={() => setSelectedKey(inv.key)}
                           className={cn(
                             "nodrag nopan pointer-events-auto w-full border-b border-border px-3 py-3 text-left transition-colors",
-                            "hover:bg-accent/5 active:bg-accent/10",
+                            "hover:bg-accent-muted active:bg-accent-muted",
                             activeSelectedKey === inv.key
-                              ? "border-accent/50 bg-accent/15"
+                              ? "border-accent/50 bg-accent-muted"
                               : idx === 0
                                 ? "bg-bg-elevated"
                                 : "bg-bg",
                           )}
                         >
                           <div className="flex items-baseline justify-between gap-2">
-                            <div className="font-mono text-[10px] font-semibold text-fg-subtle">
+                            <div className="font-mono text-2xs font-semibold text-fg-subtle">
                               {fmtTime(inv.acquiredAt)}
                             </div>
                             <div
                               className={cn(
-                                "font-mono text-[10px] tracking-[0.12em] uppercase",
+                                "font-mono text-2xs tracking-[0.12em] uppercase",
                                 inv.durationMs
                                   ? inv.durationMs > 5000
                                     ? "text-warning"
@@ -272,7 +272,7 @@ export function LambdaInvocationsDrawer({
                               )}
                             </div>
                           </div>
-                          <div className="mt-1 text-[9px] text-fg-muted">
+                          <div className="mt-1 text-2xs text-fg-muted">
                             {rowStatus === "running"
                               ? "Running"
                               : rowStatus === "failed"
@@ -282,7 +282,7 @@ export function LambdaInvocationsDrawer({
                                   : "Unknown"}
                           </div>
                           {inv.instanceId && (
-                            <div className="mt-0.5 font-mono text-[8px] text-fg-muted/80">
+                            <div className="mt-0.5 font-mono text-2xs text-fg-muted/80">
                               {inv.instanceId.slice(0, 8)}
                             </div>
                           )}
@@ -297,7 +297,7 @@ export function LambdaInvocationsDrawer({
             {/* Detail panel */}
             {selected && (
               <div className="flex-1 overflow-y-auto border-l border-border bg-bg px-3 py-2">
-                <div className="space-y-3 text-[10px]">
+                <div className="space-y-3 text-2xs">
                   <div>
                     <div className="font-mono font-semibold text-fg-muted uppercase">Started</div>
                     <div className="mt-1 font-mono text-fg">{fmtTime(selected.acquiredAt)}</div>
@@ -340,7 +340,7 @@ export function LambdaInvocationsDrawer({
                       <div className="font-mono font-semibold text-fg-muted uppercase">
                         Trigger Event
                       </div>
-                      <div className="mt-1 max-h-96 overflow-auto rounded bg-bg-elevated p-2 font-mono text-[9px] text-fg-muted">
+                      <div className="mt-1 max-h-96 overflow-auto rounded bg-bg-elevated p-2 font-mono text-2xs text-fg-muted">
                         <TriggerEventViewer event={selectedTriggerEvent} />
                       </div>
                     </div>
@@ -349,14 +349,14 @@ export function LambdaInvocationsDrawer({
                     <div className="font-mono font-semibold text-fg-muted uppercase">Logs</div>
                     {Number.isFinite(selectedStartMs) && (
                       <>
-                        <div className="mt-1 font-mono text-[9px] text-fg-muted">
+                        <div className="mt-1 font-mono text-2xs text-fg-muted">
                           emitted window: {new Date(selectedStartMs).toISOString()}
                           {selectedEndMs != null
                             ? ` -> ${new Date(selectedEndMs).toISOString()}`
                             : " -> running"}
                         </div>
                         {selected.outcomeStatus === "failed" && selected.outcomeReason && (
-                          <div className="mt-0.5 font-mono text-[9px] text-danger/90">
+                          <div className="mt-0.5 font-mono text-2xs text-danger/90">
                             reason: {selected.outcomeReason}
                           </div>
                         )}
@@ -385,7 +385,7 @@ export function LambdaInvocationsDrawer({
                           defaultMode="plain"
                         />
                       ) : (
-                        <div className="rounded bg-bg-elevated p-3 text-[10px] text-fg-muted">
+                        <div className="rounded bg-bg-elevated p-3 text-2xs text-fg-muted">
                           No log stream is attached to this invocation.
                         </div>
                       )}

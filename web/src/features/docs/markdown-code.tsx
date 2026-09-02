@@ -78,7 +78,14 @@ const CODE_BLOCK_CLASSES =
  */
 export function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   const code = fencedCode(children)
-  if (code === null) return <pre className={CODE_BLOCK_CLASSES}>{children}</pre>
+  // tabIndex: a long line scrolls sideways inside the block, and only a focusable
+  // container can be scrolled by keyboard.
+  if (code === null)
+    return (
+      <pre tabIndex={0} className={CODE_BLOCK_CLASSES}>
+        {children}
+      </pre>
+    )
   return (
     <HighlightedCode
       // Fenced content always carries the fence's trailing newline; rendering

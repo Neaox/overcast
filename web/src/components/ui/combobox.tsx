@@ -9,7 +9,7 @@
  * Focus is managed at the container level: the dropdown only closes when focus
  * moves outside the wrapper div entirely, not when moving between input and list.
  */
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useId, useRef, useState } from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
 import { ChevronDown, ChevronsUpDown, Loader2, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -41,6 +41,14 @@ interface ComboboxBaseProps<T> {
   /** When true, renders a disabled input with a spinner instead of the full combobox. */
   isLoading?: boolean
   id?: string
+  /**
+   * What the field is for. A combobox is an <input> with no visible caption in most of
+   * the console, so without this it is announced as an unnamed edit field — and a
+   * placeholder is not a name: it is gone the moment anything is typed. Pass
+   * `aria-labelledby` instead when a visible label already names the field.
+   */
+  "aria-label"?: string
+  "aria-labelledby"?: string
   placeholder?: string
   className?: string
   inputClassName?: string
@@ -250,6 +258,8 @@ function useMultiCombobox<T>(
 // ─── Shared dropdown list ─────────────────────────────────────────────────────
 
 function DropdownList<T>({
+  listId,
+  optionId,
   filtered,
   activeIdx,
   isSelected,
@@ -266,6 +276,8 @@ function DropdownList<T>({
   popoverWidth,
   allowFreeText,
 }: {
+  listId: string
+  optionId: (index: number) => string
   filtered: T[]
   activeIdx: number
   isSelected: (item: T) => boolean
@@ -307,7 +319,7 @@ function DropdownList<T>({
           </p>
         )
       ) : (
-        <ul ref={listRef} role="listbox" className="max-h-64 overflow-y-auto py-1">
+        <ul id={listId} ref={listRef} role="listbox" className="max-h-64 overflow-y-auto py-1">
           {filtered.map((item, i) => {
             const disabledReason = isItemDisabled?.(item)
             const isDisabled = !!disabledReason
@@ -316,6 +328,7 @@ function DropdownList<T>({
               <React.Fragment key={getItemValue(item)}>
                 {separator}
                 <li
+                  id={optionId(i)}
                   role="option"
                   aria-selected={isSelected(item)}
                   aria-disabled={isDisabled}
@@ -369,6 +382,8 @@ function SingleComboboxImpl<T>({
   className,
   inputClassName,
   popoverWidth = "w-full",
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
 }: ComboboxPropsSingle<T>) {
   const {
     open,
@@ -384,6 +399,8 @@ function SingleComboboxImpl<T>({
     handleContainerBlur,
   } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom, allowFreeText)
 
+  const listId = `${useId()}-listbox`
+  const optionId = (index: number) => `${listId}-option-${index}`
   const containerRef = useRef<HTMLDivElement>(null)
 
   if (isLoading) {
@@ -414,6 +431,10 @@ function SingleComboboxImpl<T>({
             role="combobox"
             aria-expanded={open}
             aria-autocomplete="list"
+            aria-label={ariaLabel}
+            aria-labelledby={ariaLabelledBy}
+            aria-controls={open ? listId : undefined}
+            aria-activedescendant={open && activeIdx >= 0 ? optionId(activeIdx) : undefined}
             value={open ? query : value}
             placeholder={open ? value : (placeholder ?? "")}
             spellCheck={false}
@@ -438,6 +459,8 @@ function SingleComboboxImpl<T>({
       {open && (
         <PopoverPrimitive.Portal>
           <DropdownList
+            listId={listId}
+            optionId={optionId}
             filtered={filtered}
             activeIdx={activeIdx}
             isSelected={(item) => getItemValue(item) === value}
@@ -477,6 +500,8 @@ function MultiComboboxImpl<T>({
   placeholder,
   className,
   popoverWidth = "w-full",
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
 }: ComboboxPropsMultiple<T>) {
   const {
     open,
@@ -492,6 +517,9 @@ function MultiComboboxImpl<T>({
     handleKeyDown,
     handleContainerBlur,
   } = useMultiCombobox(values, onChange, items, filterFn, getItemValue, allowCustom)
+
+  const listId = `${useId()}-listbox`
+  const optionId = (index: number) => `${listId}-option-${index}`
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -520,7 +548,7 @@ function MultiComboboxImpl<T>({
             {values.map((v) => (
               <span
                 key={v}
-                className="flex items-center gap-1 rounded bg-accent/15 px-2 py-0.5 text-xs font-medium text-fg"
+                className="flex items-center gap-1 rounded bg-accent-muted px-2 py-0.5 text-xs font-medium text-fg"
               >
                 {v}
                 <button
@@ -539,6 +567,10 @@ function MultiComboboxImpl<T>({
               role="combobox"
               aria-expanded={open}
               aria-autocomplete="list"
+              aria-label={ariaLabel}
+              aria-labelledby={ariaLabelledBy}
+              aria-controls={open ? listId : undefined}
+              aria-activedescendant={open && activeIdx >= 0 ? optionId(activeIdx) : undefined}
               value={query}
               placeholder={values.length === 0 ? (placeholder ?? "") : ""}
               spellCheck={false}
@@ -556,6 +588,8 @@ function MultiComboboxImpl<T>({
       {open && (
         <PopoverPrimitive.Portal>
           <DropdownList
+            listId={listId}
+            optionId={optionId}
             filtered={filtered}
             activeIdx={activeIdx}
             isSelected={(item) => values.includes(getItemValue(item))}
@@ -611,6 +645,8 @@ export function ComboboxCompact<T>({
   leadingIcon: LeadingIcon,
   inputClassName,
   popoverWidth = "w-64",
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
 }: Omit<ComboboxPropsSingle<T>, "id" | "placeholder" | "className"> & {
   /** Rendered muted at the head of the value cell. */
   leadingIcon?: LucideIcon
@@ -629,6 +665,8 @@ export function ComboboxCompact<T>({
     handleContainerBlur,
   } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom, allowFreeText)
 
+  const listId = `${useId()}-listbox`
+  const optionId = (index: number) => `${listId}-option-${index}`
   const containerRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -657,6 +695,10 @@ export function ComboboxCompact<T>({
             role="combobox"
             aria-expanded={open}
             aria-autocomplete="list"
+            aria-label={ariaLabel}
+            aria-labelledby={ariaLabelledBy}
+            aria-controls={open ? listId : undefined}
+            aria-activedescendant={open && activeIdx >= 0 ? optionId(activeIdx) : undefined}
             value={open ? query : value}
             placeholder={open ? value : ""}
             spellCheck={false}
@@ -685,6 +727,8 @@ export function ComboboxCompact<T>({
       {open && (
         <PopoverPrimitive.Portal>
           <DropdownList
+            listId={listId}
+            optionId={optionId}
             filtered={filtered}
             activeIdx={activeIdx}
             isSelected={(item) => getItemValue(item) === value}

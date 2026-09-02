@@ -39,7 +39,7 @@ export function ServiceCard({
                 e.stopPropagation()
                 setDocsOpen(true)
               }}
-              className="absolute top-1/2 right-0 flex -translate-y-1/2 items-center gap-1.5 rounded-control border border-accent px-2 py-1 font-mono text-[11px] text-accent opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+              className="absolute top-1/2 right-0 flex -translate-y-1/2 items-center gap-1.5 rounded-control border border-accent px-2 py-1 font-mono text-2xs text-accent opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
             >
               <BookOpen className="h-[13px] w-[13px]" strokeWidth={1.75} />
               Docs
@@ -48,7 +48,7 @@ export function ServiceCard({
         </div>
         <div className="flex min-w-0 flex-col gap-px">
           <span className="truncate font-mono text-[13px] font-bold text-fg">{service.label}</span>
-          <span className="line-clamp-2 text-[11px] text-fg-subtle">{service.description}</span>
+          <span className="line-clamp-2 text-2xs text-fg-subtle">{service.description}</span>
         </div>
       </ServiceTile>
       {service.docKey && (

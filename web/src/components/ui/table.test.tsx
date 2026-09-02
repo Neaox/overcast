@@ -106,7 +106,7 @@ describe("TableHead > typesetting", () => {
     )
 
     const head = screen.getByRole("columnheader")
-    expect(head).toHaveClass("text-[9px]", "tracking-[0.14em]", "uppercase")
+    expect(head).toHaveClass("text-2xs", "tracking-[0.14em]", "uppercase")
     expect(head).not.toHaveClass("tracking-[0.16em]")
   })
 })

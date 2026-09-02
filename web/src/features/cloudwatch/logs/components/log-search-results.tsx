@@ -97,7 +97,7 @@ export function LogSearchResults({ events, filterPattern, onOpenEvent }: Props) 
 
   return (
     <div className="overflow-hidden rounded-md border border-border">
-      <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
+      <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-2xs font-medium text-fg-muted">
         <div className="w-40 shrink-0 px-2">Timestamp</div>
         <div className="min-w-0 flex-1 px-1">Message</div>
         {/* On the right, as the AWS console places it: the message is what a
@@ -129,7 +129,7 @@ export function LogSearchResults({ events, filterPattern, onOpenEvent }: Props) 
                   })
                 }
               >
-                <div className="w-40 shrink-0 px-2 py-1.5 font-mono text-[10px] whitespace-nowrap text-fg-muted">
+                <div className="w-40 shrink-0 px-2 py-1.5 font-mono text-2xs whitespace-nowrap text-fg-muted">
                   {formatLogDate(evt.timestamp)}
                 </div>
                 <div className="min-w-0 flex-1 px-1 py-1.5">
@@ -144,7 +144,7 @@ export function LogSearchResults({ events, filterPattern, onOpenEvent }: Props) 
                   />
                 </div>
                 <div
-                  className="w-44 shrink-0 truncate px-1 py-1.5 font-mono text-[10px] text-fg-muted"
+                  className="w-44 shrink-0 truncate px-1 py-1.5 font-mono text-2xs text-fg-muted"
                   title={evt.logStreamName}
                 >
                   {evt.logStreamName}

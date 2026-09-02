@@ -142,10 +142,11 @@ function StatusRow({ label, children }: { label: string; children: React.ReactNo
 function StepHeading({ n, title }: { n: number; title: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/10 font-mono text-[11px] font-bold text-accent">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-muted font-mono text-2xs font-bold text-accent">
         {n}
       </span>
-      <h4 className="font-mono text-[13px] font-semibold text-fg">{title}</h4>
+      {/* h3, not h4: the card this sits in is titled with an h2, so an h4 skipped a level. */}
+      <h3 className="font-mono text-[13px] font-semibold text-fg">{title}</h3>
     </div>
   )
 }
@@ -179,7 +180,7 @@ function trustBadge(status: HttpsStatus) {
 function DurableCANotice({ status }: { status: HttpsStatus }) {
   if (!status.caEphemeral || !status.caShareCommand) return null
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+    <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning-muted p-3">
       <p className="flex items-center gap-1.5 text-[13px] font-semibold text-warning">
         <AlertCircle size={14} /> This CA dies with the container
       </p>

@@ -553,7 +553,7 @@ export function ResourceTable<T extends RowData>({
                 )}
               >
                 <table.FlexRender header={header} />
-                <span className={cn("text-[9px] leading-none", !sorted && "opacity-0")} aria-hidden>
+                <span className={cn("text-2xs leading-none", !sorted && "opacity-0")} aria-hidden>
                   {sorted === "asc" ? "▲" : "▼"}
                 </span>
               </button>

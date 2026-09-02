@@ -8,7 +8,7 @@ import { AlertTriangle } from "lucide-react"
  */
 export function MetadataOnlyNotice() {
   return (
-    <div className="flex gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+    <div className="flex gap-3 rounded-lg border border-warning/40 bg-warning-muted p-4 text-sm text-warning">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
         <p className="font-semibold">Metadata only — Web ACL rules are not enforced</p>

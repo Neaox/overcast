@@ -282,7 +282,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
                   className={cn(
                     "px-2 py-1 text-xs rounded border transition-colors",
                     hopView === v
-                      ? "border-accent text-accent bg-accent/10"
+                      ? "border-accent text-accent bg-accent-muted"
                       : "border-border text-fg-muted hover:text-fg",
                   )}
                 >
@@ -291,7 +291,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
               ))}
             </div>
           </div>
-          <div className="overflow-x-auto">
+          <div tabIndex={0} className="overflow-x-auto">
             {hopView === "sequence" && (
               <SequenceDiagram
                 hops={hops}
@@ -757,7 +757,7 @@ function ErrorsTab({ trace }: { trace: TraceEntry }) {
       {hasEntryError && (
         <div>
           <h3 className="text-sm font-medium text-fg-muted mb-2">Request Error</h3>
-          <div className="rounded-lg border border-danger/30 bg-danger/10 p-4">
+          <div className="rounded-lg border border-danger/30 bg-danger-muted p-4">
             <div className="flex items-center gap-2 mb-1">
               <AlertCircle className="h-4 w-4 text-danger" />
               <span className="font-mono text-sm text-danger">{trace.awsErrorCode}</span>

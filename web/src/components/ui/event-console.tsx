@@ -296,7 +296,7 @@ function JsonString({ value, path }: { value: string; path: string }) {
           // turns --accent-muted on hover, and the "showing decoded" fill has
           // to stay visible against both surfaces.
           "border border-accent/40 text-accent hover:bg-accent/25",
-          !showRaw && "bg-accent/15",
+          !showRaw && "bg-accent-muted",
         )}
         onClick={(event) => {
           event.stopPropagation()

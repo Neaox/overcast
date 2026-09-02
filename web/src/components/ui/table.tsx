@@ -4,7 +4,10 @@ import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="relative w-full overflow-auto">
+    // `tabIndex={0}` on the scroller: a container that scrolls but cannot be focused is
+    // reachable by trackpad and by nothing else, and these tables scroll sideways
+    // whenever the columns outrun the pane (WCAG 2.1.1).
+    <div tabIndex={0} className="relative w-full overflow-auto focus-visible:outline-2">
       <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
     </div>
   )
@@ -53,17 +56,28 @@ function TableRow({
   )
 }
 
-/** Column header: the field-label spec on the recessed `bg-bg` strip, 8px/16px. */
-function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+/**
+ * Column header: the field-label spec on the recessed `bg-bg` strip.
+ *
+ * `scope="col"` is stated rather than left to be inferred, and an empty header —
+ * the blank cell above a checkbox or an actions column — renders as a `<td>`: a
+ * header that names nothing is not a header, and announcing "blank, column one"
+ * ahead of every row is worse than announcing nothing.
+ */
+function TableHead({ className, children, scope, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  const styles = cn(
+    fieldLabel,
+    "px-4 py-2 text-left align-middle whitespace-nowrap text-fg-subtle",
+    className,
+  )
+  const names = React.Children.toArray(children).some(
+    (child) => typeof child !== "string" || child.trim() !== "",
+  )
+  if (!names) return <td className={styles} {...props} />
   return (
-    <th
-      className={cn(
-        fieldLabel,
-        "px-4 py-2 text-left align-middle whitespace-nowrap text-fg-subtle",
-        className,
-      )}
-      {...props}
-    />
+    <th scope={scope ?? "col"} className={styles} {...props}>
+      {children}
+    </th>
   )
 }
 

@@ -108,7 +108,7 @@ function SkeletonRows({ rows = 5, noun = "data", className }: SkeletonRowsProps)
           <Skeleton depth="3" className="h-[9px] w-[46px]" />
         </div>
       ))}
-      <p className="flex items-center justify-center gap-2 p-[10px] font-mono text-[11px] text-fg-subtle">
+      <p className="flex items-center justify-center gap-2 p-[10px] font-mono text-2xs text-fg-subtle">
         <span>{`loading ${noun}`}</span>
         <BlinkingCursor />
       </p>

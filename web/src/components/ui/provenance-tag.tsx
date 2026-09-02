@@ -89,7 +89,7 @@ export function ProvenanceTag({
         type="button"
         className={cn(
           "inline-flex cursor-help items-center gap-1 rounded-control border px-1.5 py-0.5",
-          "font-mono text-[10px] tracking-[0.08em] whitespace-nowrap uppercase",
+          "font-mono text-2xs tracking-[0.08em] whitespace-nowrap uppercase",
           tier.className,
           className,
         )}

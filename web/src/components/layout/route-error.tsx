@@ -100,8 +100,8 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
           className={cn(
             "mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border",
             kind === "connection"
-              ? "border-warning/40 bg-warning/10 text-warning"
-              : "border-danger/40 bg-danger/10 text-danger",
+              ? "border-warning/40 bg-warning-muted text-warning"
+              : "border-danger/40 bg-danger-muted text-danger",
           )}
         >
           <Icon className="h-8 w-8" aria-hidden="true" />
@@ -123,7 +123,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
       {/* The message itself, verbatim — the one thing every reader wants. */}
       <div className="mt-6 overflow-hidden rounded-card border border-border bg-bg-elevated">
         <div className="flex items-start justify-between gap-2 border-b border-border-muted px-3 py-2">
-          <span className="font-mono text-[10px] tracking-[0.14em] text-fg-subtle uppercase">
+          <span className="font-mono text-2xs tracking-[0.14em] text-fg-subtle uppercase">
             {err.name || "Error"}
           </span>
           <CopyButton
@@ -133,7 +133,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
             className="mt-0.5"
           />
         </div>
-        <pre className="max-h-40 overflow-auto px-3 py-2 font-mono text-xs wrap-break-word whitespace-pre-wrap text-fg">
+        <pre tabIndex={0} className="max-h-40 overflow-auto px-3 py-2 font-mono text-xs wrap-break-word whitespace-pre-wrap text-fg">
           {err.message || "No message"}
         </pre>
       </div>
@@ -165,7 +165,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
           <summary className="cursor-pointer px-3 py-2 font-mono text-xs text-fg-muted select-none hover:text-fg">
             Stack trace
           </summary>
-          <pre className="max-h-64 overflow-auto border-t border-border-muted px-3 py-2 font-mono text-[11px] leading-relaxed text-fg-subtle">
+          <pre tabIndex={0} className="max-h-64 overflow-auto border-t border-border-muted px-3 py-2 font-mono text-2xs leading-relaxed text-fg-subtle">
             {err.stack}
           </pre>
         </details>
@@ -173,7 +173,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
 
       {/* Which page this was — the shell's breadcrumb is gone if the root
           route is what failed, and a bug report is worth more with it. */}
-      <p className="mt-4 text-center font-mono text-[11px] text-fg-subtle">{pathname}</p>
+      <p className="mt-4 text-center font-mono text-2xs text-fg-subtle">{pathname}</p>
     </div>
   )
 }

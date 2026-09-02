@@ -68,7 +68,7 @@ export function LevelBadge({ level }: { level: LogLevel }) {
   return (
     <span
       className={cn(
-        "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
+        "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-2xs font-bold uppercase",
         logLevelBadgeClass[level],
       )}
     >
@@ -97,7 +97,7 @@ export const LogMessage = memo(function LogMessage({
   hideLevel = false,
   collapsed = false,
   defer = false,
-  sizeClassName = "text-[11px]",
+  sizeClassName = "text-2xs",
 }: {
   prefix?: string
   message: string

@@ -50,7 +50,7 @@ export const CollapsedStackNode = memo(function CollapsedStackNode({
       <Layers className="h-4 w-4 shrink-0 text-cat-6" />
       <span className="min-w-0 truncate text-xs font-semibold text-cat-6">{stackName}</span>
       {resourceCount > 0 && (
-        <span className="ml-auto shrink-0 rounded-full border border-cat-6/40 bg-bg-elevated px-1.5 py-0.5 font-mono text-[10px] font-medium text-cat-6 tabular-nums">
+        <span className="ml-auto shrink-0 rounded-full border border-cat-6/40 bg-bg-elevated px-1.5 py-0.5 font-mono text-2xs font-medium text-cat-6 tabular-nums">
           {resourceCount}
         </span>
       )}

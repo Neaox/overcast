@@ -39,7 +39,7 @@ export function BodyOmissionNotice({ reason, hasBody, ownRequestId }: Props) {
   const notice = describeOmission(reason, hasBody, !!ownRequestId)
   if (!notice || notice.partial) return null
   return (
-    <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+    <div className="rounded-md border border-warning/30 bg-warning-muted px-3 py-2 text-sm text-warning">
       <span className="font-medium">{notice.label}</span> — {notice.detail}
       {notice.seeOwnTrace && ownRequestId && (
         <>

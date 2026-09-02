@@ -58,7 +58,7 @@ export function SidebarFavourites({
 
   if (favourites.length === 0) {
     return collapsed ? null : (
-      <p className="px-2.5 py-2 font-mono text-[11px] text-fg-subtle">
+      <p className="px-2.5 py-2 font-mono text-2xs text-fg-subtle">
         Star a service to pin it here
       </p>
     )

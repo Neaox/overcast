@@ -212,7 +212,7 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
         <div
           className={cn(
             "rounded-md border p-3 text-[13px]",
-            failed ? "border-danger/40 bg-danger/10 text-danger" : "border-border bg-bg-muted",
+            failed ? "border-danger/40 bg-danger-muted text-danger" : "border-border bg-bg-muted",
           )}
         >
           <span className="font-medium">Failure reason</span>
@@ -248,7 +248,7 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
  * (`DescribeEvents`); the console's failure UI is the same feed rendered.
  *
  * ResourceTable didn't fit because a failure event tints its whole row
- * (`bg-danger/5`) — that is the panel's entire point, and `ResourceTable`
+ * (`bg-danger-muted`) — that is the panel's entire point, and `ResourceTable`
  * has no per-row class/tone hook: it renders `<TableRow key>` and styling is
  * declared per *column* (`cellClassName`), which cannot reach the row. Cell
  * backgrounds do not fill the `<td>` padding, so faking it would leave gaps
@@ -295,7 +295,7 @@ function EventsPanel({ instanceId }: { instanceId: string }) {
               const categories = event.EventCategories ?? []
               const isFailure = categories.some((c) => c.toLowerCase() === "failure")
               return (
-                <TableRow key={index} className={cn(isFailure && "bg-danger/5")}>
+                <TableRow key={index} className={cn(isFailure && "bg-danger-muted")}>
                   <TableCell className="text-fg-muted">{formatDate(event.Date)}</TableCell>
                   <TableCell>
                     <span className="flex flex-wrap gap-1">

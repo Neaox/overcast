@@ -106,7 +106,7 @@ export function SidebarNavItem({
     const target = children?.length ? flatChildren(children)[0].to : to
     return (
       <SidebarTooltip label={label}>
-        <Link to={target} className={rowCls} aria-label={label}>
+        <Link to={target} className={rowCls} aria-label={label} aria-current={active ? "page" : undefined}>
           <Icon className={iconCls} />
           {badgeNode}
         </Link>
@@ -115,6 +115,10 @@ export function SidebarNavItem({
   }
 
   if (children?.length) {
+    // The disclosed list is a sibling of the trigger, so the relationship has to be
+    // stated: without aria-controls, aria-expanded announces "collapsed" with nothing
+    // named as the thing that is collapsed.
+    const subNavId = `sidebar-subnav-${to.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}`
     return (
       <div>
         <div
@@ -132,6 +136,8 @@ export function SidebarNavItem({
             }}
             className={cn(rowHitArea, "text-left")}
             aria-expanded={expanded}
+            aria-controls={subNavId}
+            aria-current={active ? "page" : undefined}
           >
             <Icon className={iconCls} />
             <span className="flex-1 truncate">{label}</span>
@@ -140,7 +146,7 @@ export function SidebarNavItem({
             />
           </button>
         </div>
-        {expanded && <SidebarSubNav items={children} pathname={pathname} />}
+        {expanded && <SidebarSubNav id={subNavId} items={children} pathname={pathname} />}
       </div>
     )
   }
@@ -158,6 +164,7 @@ export function SidebarNavItem({
         to={to}
         className={rowHitArea}
         draggable={false}
+        aria-current={active ? "page" : undefined}
       >
         <Icon className={iconCls} />
         <span className="truncate">{label}</span>

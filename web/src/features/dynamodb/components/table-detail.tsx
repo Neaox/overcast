@@ -519,8 +519,13 @@ export function TableDetail({ tableName }: Props) {
               {/* Index selector */}
               {indexOptions.length > 1 && (
                 <div className="flex flex-col gap-1">
-                  <label className={cn(fieldLabel, "text-fg-muted")}>Index</label>
+                  {/* A <label> next to a control is not attached to it — the pair needs
+                      an htmlFor/id or an aria-label. */}
+                  <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="ddb-index-select">
+                    Index
+                  </label>
                   <select
+                    id="ddb-index-select"
                     className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg"
                     value={selectedIndex}
                     onChange={(e) => {
@@ -608,6 +613,7 @@ export function TableDetail({ tableName }: Props) {
                     </label>
                     <div className="flex items-center gap-1.5">
                       <select
+                        aria-label={`${activeSortKey.attributeName} comparator`}
                         className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg"
                         value={sortKeyOp}
                         onChange={(e) => setSortKeyOp(e.target.value as SortKeyOp)}
@@ -1136,11 +1142,16 @@ function ItemsTable({
       <Table>
         <TableHeader>
           <TableRow>
+            {/* The header cell holds the select-all box, so it is a real header with a
+                name — an empty <th> announces "blank" ahead of every row. The box gets
+                its own label because a wrapping <label> with no text names nothing. */}
             <TableHead className="w-10">
+              <span className="sr-only">Select</span>
               <label className="flex cursor-pointer items-center justify-center">
                 <input
                   type="checkbox"
-                  className="h-4 w-4 rounded accent-accent"
+                  aria-label="Select every listed item"
+                  className="h-6 w-6 rounded accent-accent"
                   checked={allSelected}
                   ref={(el) => {
                     if (el) el.indeterminate = someSelected && !allSelected
@@ -1168,7 +1179,7 @@ function ItemsTable({
                 key={i}
                 className={cn(
                   hasMore && "cursor-pointer",
-                  selectedKeys.has(getItemKey(item)) && "bg-accent/5",
+                  selectedKeys.has(getItemKey(item)) && "bg-accent-muted",
                 )}
                 onClick={() => hasMore && onToggleExpand(i)}
               >
@@ -1179,7 +1190,8 @@ function ItemsTable({
                   >
                     <input
                       type="checkbox"
-                      className="h-4 w-4 rounded accent-accent"
+                      aria-label={`Select item ${getItemKey(item)}`}
+                      className="h-6 w-6 rounded accent-accent"
                       checked={selectedKeys.has(getItemKey(item))}
                       onChange={() => onToggleSelect(item)}
                     />
@@ -1242,13 +1254,14 @@ function ItemsTable({
                     <Button
                       size="sm"
                       variant="ghost"
+                      aria-label="Delete item"
                       className="h-7 w-7 p-0 text-fg-muted hover:text-danger"
                       onClick={(e) => {
                         e.stopPropagation()
                         onDelete(item)
                       }}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 aria-hidden className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </TableCell>

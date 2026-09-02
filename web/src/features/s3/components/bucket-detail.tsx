@@ -511,7 +511,7 @@ export function BucketDetail() {
       onDrop={handleDrop}
     >
       {isDragOver && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-[2px]">
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent-muted backdrop-blur-[2px]">
           <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent bg-bg-elevated/90 px-16 py-12 shadow-xl">
             <Upload className="h-10 w-10 text-accent" />
             <p className="text-lg font-semibold text-accent">Drop files to upload</p>

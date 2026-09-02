@@ -88,7 +88,7 @@ export function ConnectingScreen({
                 aria-label="Change endpoint"
                 className={cn(
                   "flex items-center gap-2 rounded-control border border-border bg-bg-elevated px-3 py-[7px]",
-                  "font-mono text-[11px] text-fg-subtle transition-colors",
+                  "font-mono text-2xs text-fg-subtle transition-colors",
                   "hover:border-accent hover:text-accent",
                   "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
                 )}
@@ -102,7 +102,7 @@ export function ConnectingScreen({
                 aria-label="Retry connecting"
                 className={cn(
                   "flex items-center gap-2 rounded-control border border-border bg-bg-elevated px-3 py-[7px]",
-                  "font-mono text-[11px] text-fg-subtle transition-colors",
+                  "font-mono text-2xs text-fg-subtle transition-colors",
                   "hover:border-accent hover:text-accent",
                   "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
                 )}

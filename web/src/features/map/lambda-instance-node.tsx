@@ -354,9 +354,9 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
     idle: "bg-fg-muted/40",
   }[instance.status]
   const statusBadgeClass = {
-    running: "bg-success/20 text-success",
-    starting: "bg-warning/20 text-warning",
-    initializing: "bg-accent/20 text-accent",
+    running: "bg-success-muted text-success",
+    starting: "bg-warning-muted text-warning",
+    initializing: "bg-accent-muted text-accent",
     idle: "bg-fg-muted/15 text-fg-muted",
   }[instance.status]
 
@@ -372,7 +372,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
     >
       <div
         className={cn(
-          "relative flex flex-col gap-1 rounded border px-2 pt-1.5 pb-4.5 text-[11px] shadow-sm",
+          "relative flex flex-col gap-1 rounded border px-2 pt-1.5 pb-4.5 text-2xs shadow-sm",
           "overflow-hidden border-cat-9/30 bg-bg-elevated",
           isExpired && "opacity-55",
         )}
@@ -389,7 +389,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           </span>
           {isProvisioned && (
             <span
-              className="rounded bg-cat-9/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-cat-9 uppercase"
+              className="rounded bg-cat-9/20 px-1 py-0.5 font-mono text-2xs font-semibold text-cat-9 uppercase"
               title="Provisioned concurrency — kept warm, exempt from the idle timeout"
             >
               prov
@@ -397,7 +397,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           )}
           {instance.initOrigin === "proactive" && (
             <span
-              className="rounded bg-cat-5/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-cat-5 uppercase"
+              className="rounded bg-cat-5/20 px-1 py-0.5 font-mono text-2xs font-semibold text-cat-5 uppercase"
               title="Proactively initialized after a deploy settled — created ahead of traffic, mirroring AWS proactive initialization"
             >
               proactive
@@ -405,7 +405,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           )}
           {isGhost && evictedReason ? (
             <span
-              className="rounded bg-fg-muted/15 px-1 py-0.5 font-mono text-[9px] font-semibold text-fg-muted uppercase"
+              className="rounded bg-fg-muted/15 px-1 py-0.5 font-mono text-2xs font-semibold text-fg-muted uppercase"
               title={`Evicted — ${EVICTED_REASON_LABELS[evictedReason]}`}
             >
               {EVICTED_REASON_LABELS[evictedReason]}
@@ -413,7 +413,7 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
           ) : (
             <span
               className={cn(
-                "rounded px-1 py-0.5 font-mono text-[9px] font-semibold uppercase",
+                "rounded px-1 py-0.5 font-mono text-2xs font-semibold uppercase",
                 statusBadgeClass,
               )}
             >
@@ -463,7 +463,10 @@ export const LambdaInstanceCard = memo(function LambdaInstanceCard({
         <div className="absolute right-0 bottom-0 left-0 overflow-hidden rounded-b">
           {/* label above pills */}
           <div className="flex items-center justify-center pt-0.5">
-            <span className="font-mono text-[7px] font-normal tracking-widest text-fg-muted/50">
+            {/* At the scale floor and at full --fg-muted: 7px mono at half opacity was
+                the smallest and faintest text in the console, and it is a countdown a
+                reader is meant to follow. */}
+            <span className="font-mono text-2xs font-normal tracking-widest text-fg-muted">
               {isProvisioned ? "reserved" : fmtRemaining(remainingMs)}
             </span>
           </div>
@@ -516,12 +519,12 @@ function TriggerRow({
   }
 
   return (
-    <div className="nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded bg-transparent text-[9px] text-fg-muted/55">
+    <div className="nodrag nopan pointer-events-auto flex w-full items-center gap-1.5 rounded bg-transparent text-2xs text-fg-muted/55">
       <span className="flex min-w-0 flex-1 items-center gap-1">
         {TriggerIcon ? <TriggerIcon className="h-2.5 w-2.5 shrink-0" /> : <span>⚡</span>}
         {trigger.arn ? (
           <span className="nodrag nopan pointer-events-auto min-w-0 truncate">
-            <ArnLink arn={trigger.arn} label={trigger.arn} className="truncate text-[9px]" />
+            <ArnLink arn={trigger.arn} label={trigger.arn} className="truncate text-2xs" />
           </span>
         ) : (
           <span className="truncate">src:{trigger.label}</span>
@@ -558,7 +561,7 @@ function MetricBar({
           style={{ width: `${Math.round(frac * 100)}%` }}
         />
       </div>
-      <span className="w-9 text-right font-mono text-[9px] text-fg-muted/70 tabular-nums">
+      <span className="w-9 text-right font-mono text-2xs text-fg-muted/70 tabular-nums">
         {value}
         {unit}
       </span>

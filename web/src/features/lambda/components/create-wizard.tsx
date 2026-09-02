@@ -717,7 +717,7 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
                     </>
                   )}
                 </FormRow>
-                <p className="text-[11px] text-fg-subtle">
+                <p className="text-2xs text-fg-subtle">
                   {logFormat === "JSON"
                     ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
                     : "Plain text START / END / REPORT lines, unfiltered."}

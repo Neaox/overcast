@@ -110,8 +110,11 @@ export function FilterBuilder({
             </datalist>
           </div>
 
-          {/* Comparator */}
+          {/* Comparator — every control in this row is icon- or option-only, so each
+              carries its own name: a filter row otherwise reads as "combo box, combo
+              box, edit, combo box, button". */}
           <select
+            aria-label="Comparator"
             className="rounded border border-border bg-bg px-2 py-1.5 text-sm text-fg"
             value={cond.comparator}
             onChange={(e) => updateCondition(cond.id, { comparator: e.target.value as Comparator })}
@@ -134,6 +137,7 @@ export function FilterBuilder({
 
           {/* Value type */}
           <select
+            aria-label="Value type"
             className="rounded border border-border bg-bg px-2 py-1.5 text-xs text-fg-muted"
             value={cond.valueType}
             onChange={(e) =>
@@ -149,10 +153,11 @@ export function FilterBuilder({
           <Button
             size="sm"
             variant="ghost"
+            aria-label="Remove condition"
             className="h-7 w-7 shrink-0 p-0 text-fg-muted hover:text-danger"
             onClick={() => removeCondition(cond.id)}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 aria-hidden className="h-3.5 w-3.5" />
           </Button>
         </div>
       ))}
