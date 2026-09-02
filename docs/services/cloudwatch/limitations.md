@@ -128,4 +128,4 @@ protocol.
 ## Related
 
 - [CloudWatch](../cloudwatch.md) — quick start and what works
-- [CloudWatch operations](operations.md) — per-operation status
+- [CloudWatch operations](./operations.md) — per-operation status

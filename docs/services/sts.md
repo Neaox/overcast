@@ -1,6 +1,6 @@
 ---
 title: "STS — Security Token Service"
-description: "Temporary credentials on demand: every call mints fresh ASIA-prefixed fake credentials without verifying anything. AssumeRole records the session for opt-in IAM enforcement."
+description: "Quick start, what each credential call returns, how AssumeRole feeds opt-in IAM enforcement, and why nothing is ever verified."
 section: "Service Reference"
 tags:
   - docs
@@ -19,7 +19,7 @@ Nothing is verified — not the role, not the identity, not the token.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws sts get-caller-identity
@@ -30,7 +30,7 @@ aws sts assume-role \
 
 ## What works
 
-| Call                        | Returns                                                          |
+| Area                        | Behaviour                                                        |
 | --------------------------- | ---------------------------------------------------------------- |
 | `GetCallerIdentity`         | A fixed account, user ID and root ARN                            |
 | `GetSessionToken`           | Temporary credentials (default 12 hours)                         |
@@ -43,18 +43,18 @@ AWS. `DurationSeconds` is honoured wherever it is accepted.
 
 > [!NOTE]
 > `AssumeRole` records the minted access key against the role ARN, which is how
-> opt-in [IAM enforcement](iam.md#request-time-enforcement-opt-in) resolves a caller to
+> opt-in [IAM enforcement](./iam.md#request-time-enforcement-opt-in) resolves a caller to
 > a role's policies. With enforcement off, nothing reads it.
 
 ## Differences from AWS
 
-| Behaviour           | On AWS                                                  | Here                                                   |
-| ------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
-| `AssumeRole`        | The role must exist and its trust policy must allow you | Any `RoleArn` is accepted, existing or not              |
-| `GetCallerIdentity` | Reports the actual signing principal                    | Always the account root ARN, whoever called             |
-| Web identity tokens | The OIDC token is validated against the provider        | Not parsed; a fixed subject is returned                 |
-| Credential expiry   | Expired credentials are refused                         | Never checked — no credential is ever verified          |
-| SAML, `AssumeRoot`, `DecodeAuthorizationMessage`, `GetAccessKeyInfo` | Full API                | Not implemented — `NotImplemented`     |
+| Area                                                                 | On AWS                                                  | Overcast                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- |
+| `AssumeRole`                                                         | The role must exist and its trust policy must allow you | Any `RoleArn` is accepted, existing or not     |
+| `GetCallerIdentity`                                                  | Reports the actual signing principal                    | Always the account root ARN, whoever called    |
+| Web identity tokens                                                  | The OIDC token is validated against the provider        | Not parsed; a fixed subject is returned        |
+| Credential expiry                                                    | Expired credentials are refused                         | Never checked — no credential is ever verified |
+| SAML, `AssumeRoot`, `DecodeAuthorizationMessage`, `GetAccessKeyInfo` | Full API                                                | Not implemented — `NotImplemented`             |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -67,7 +67,7 @@ Per-operation status, notes and AWS API links: [STS operations](sts/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)
-- [IAM](iam.md) — where an assumed role's policies live
-- [All service pages](README.md)
+- [IAM](./iam.md) — where an assumed role's policies live
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/STS/latest/APIReference/welcome.html)

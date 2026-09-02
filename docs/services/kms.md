@@ -16,11 +16,11 @@ tags:
 Encryption here is real: `Encrypt` returns AES-256-GCM ciphertext that only
 `Decrypt` can read back. The keys are local and unprotected.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 KEY=$(aws kms create-key --query KeyMetadata.KeyId --output text)
@@ -46,16 +46,18 @@ without being told which one to use — as on AWS.
 
 ## Differences from AWS
 
-| Behaviour            | On AWS                                                | Here                                                     |
-| -------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| `EncryptionContext`  | Bound into the ciphertext; a mismatch fails `Decrypt`  | Not bound — a `Decrypt` with a different context succeeds |
-| Key policies         | Evaluated on every call                               | Validated and stored; never evaluated                     |
-| Grants               | Constrain what a grantee may do                        | Stored and listed; never evaluated                        |
+| Area                  | On AWS                                                | Overcast                                                                           |
+| --------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `EncryptionContext`   | Bound into the ciphertext; a mismatch fails `Decrypt` | Not bound — a `Decrypt` with a different context succeeds                          |
+| Key policies          | Evaluated on every call                               | Validated and stored; never evaluated                                              |
+| Grants                | Constrain what a grantee may do                       | Stored and listed; never evaluated                                                 |
 | `ScheduleKeyDeletion` | The key is destroyed when the window elapses          | The key goes to `PendingDeletion` and stays there; `CancelKeyDeletion` still works |
-| `ListKeys`           | Paginated                                              | Returns everything except `PendingDeletion` keys, `Truncated: false` |
-| Multi-Region keys    | `MultiRegion=true` replicates                          | Rejected at `CreateKey` rather than silently ignored      |
-| External key material | `Origin=EXTERNAL` / `AWS_CLOUDHSM`                    | Rejected at `CreateKey`; only `AWS_KMS` is emulated       |
-| Automatic rotation   | `EnableKeyRotation` and friends                        | Not implemented — `501 Not Implemented`                   |
+| `ListKeys`            | Paginated                                             | Returns everything except `PendingDeletion` keys, `Truncated: false`               |
+| Multi-Region keys     | `MultiRegion=true` replicates                         | Rejected at `CreateKey` rather than silently ignored                               |
+| External key material | `Origin=EXTERNAL` / `AWS_CLOUDHSM`                    | Rejected at `CreateKey`; only `AWS_KMS` is emulated                                |
+| Automatic rotation    | `EnableKeyRotation` and friends                       | Not implemented — `501 Not Implemented`                                            |
+
+## Gotchas
 
 > [!CAUTION]
 > Key material is stored in emulator state, not an HSM, and nothing gates
@@ -72,7 +74,7 @@ Per-operation status, notes and AWS API links: [KMS operations](kms/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/kms/latest/APIReference/Welcome.html)
-- [Secrets Manager](secretsmanager.md) — records `KmsKeyId`, but does not encrypt through it
-- [All service pages](README.md)
+- [Secrets Manager](./secretsmanager.md) — records `KmsKeyId`, but does not encrypt through it
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/kms/latest/APIReference/Welcome.html)

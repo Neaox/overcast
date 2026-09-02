@@ -1,5 +1,5 @@
 ---
-title: "DynamoDB Streams"
+title: "DynamoDB Streams — Amazon DynamoDB Streams"
 description: "Change records for DynamoDB tables, read through shard iterators. One shard per stream, records are never trimmed, and a stream belongs to its table's region."
 section: "Service Reference"
 tags:
@@ -10,12 +10,12 @@ tags:
   - streams
 ---
 
-# DynamoDB Streams
+# DynamoDB Streams — Amazon DynamoDB Streams
 
 Every write to a stream-enabled table produces a change record. A stream has one
 shard, and its records are never trimmed.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
@@ -46,12 +46,12 @@ aws dynamodbstreams get-records --shard-iterator "$ITER"
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| One shard per stream | The shard id is derived from the table name and never rolls over, so shard-splitting and parent/child traversal cannot be exercised |
-| Nothing is trimmed | AWS discards stream records after 24 hours; here they survive for the life of the table, so `TRIM_HORIZON` always replays from the first write |
-| Region-scoped ARNs | A stream ARN from another region answers `ResourceNotFoundException` on `DescribeStream` and `GetShardIterator`, as AWS's regional endpoints do |
-| No cross-region triggers | A Lambda event source mapping or pipe naming one region's stream is not fired by writes to a same-named table in another region |
+| Area                     | Overcast                                                                                                                                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| One shard per stream     | The shard id is derived from the table name and never rolls over, so shard-splitting and parent/child traversal cannot be exercised             |
+| Nothing is trimmed       | AWS discards stream records after 24 hours; here they survive for the life of the table, so `TRIM_HORIZON` always replays from the first write  |
+| Region-scoped ARNs       | A stream ARN from another region answers `ResourceNotFoundException` on `DescribeStream` and `GetShardIterator`, as AWS's regional endpoints do |
+| No cross-region triggers | A Lambda event source mapping or pipe naming one region's stream is not fired by writes to a same-named table in another region                 |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -64,8 +64,8 @@ Per-operation status, notes and AWS API links: [DynamoDB Streams operations](dyn
 
 ## Related
 
-- [DynamoDB](dynamodb.md) — where streams are enabled
-- [Kinesis Data Streams](kinesis.md)
-- [AWS API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations_Amazon_DynamoDB_Streams.html)
-- [All service pages](README.md)
+- [DynamoDB](./dynamodb.md) — where streams are enabled
+- [Kinesis Data Streams](./kinesis.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations_Amazon_DynamoDB_Streams.html)

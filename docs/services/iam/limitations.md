@@ -12,7 +12,7 @@ tags:
 # IAM limitations
 
 What the policy evaluator covers, and where it stops. The summary is on the
-[IAM service page](../iam.md).
+[IAM](../iam.md).
 
 ## What the evaluator covers
 

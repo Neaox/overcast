@@ -1,6 +1,6 @@
 ---
 title: "EFS — Amazon Elastic File System"
-description: "File systems, mount targets and access points, each file system backed by a real Docker volume that Lambda functions and ECS tasks mount and genuinely share."
+description: "Quick start, the Docker volume behind each file system, access points and mount targets, the live and mock modes, and the network fields and policies that are synthetic."
 section: "Service Reference"
 tags:
   - amazon
@@ -18,7 +18,7 @@ tags:
 Every file system is backed by a real Docker volume, so a Lambda function and an
 ECS task mounting it share the same bytes — no NFS hop required.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
@@ -46,20 +46,20 @@ docker volume ls --filter name=overcast-efs-"$FS"
 | Mount targets | One per availability zone/subnet per file system (`MountTargetConflict`), up to 5 security groups |
 | Config surface | File-system policies, lifecycle and backup policies, account preferences, and both the current and legacy tag APIs |
 | CloudFormation | `AWS::EFS::FileSystem`, `AWS::EFS::MountTarget` and `AWS::EFS::AccessPoint`, including policies and the property changes that force replacement on AWS |
-| Optional NFS | `OVERCAST_EFS_NFS=true` gives every mount target a mountable NFSv4 export — see [EFS examples](efs/examples.md) |
+| Optional NFS | `OVERCAST_EFS_NFS=true` gives every mount target a mountable NFSv4 export — see [EFS examples](./efs/examples.md) |
 | Bindings | AWS's own `/2015-02-01/` REST-JSON paths, so SDKs and `aws efs …` work unmodified |
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| Synthetic network fields | `DescribeMountTargets.IpAddress`, availability zone and ENI id are derived from the subnet id; the address is never what an export is reached on |
-| No data plane without Docker | In `mock` mode — and in `live` mode while no Docker daemon is reachable — mount targets are metadata and there is no storage behind them |
-| Policies are not enforced | A file-system policy is JSON-validated, stored and echoed, never applied to a request |
-| Security groups are not checked | They are stored, not validated against EC2 or enforced |
-| Backup policy has no states | `PutBackupPolicy` stores `ENABLED`/`DISABLED` with no `ENABLING`/`DISABLING`, and there is no AWS Backup integration |
-| No replication | The replication configuration operations answer `501` |
-| Long ids always | Resource ids are always long-form (`fs-`/`fsmt-`/`fsap-` plus 17 hex characters), whatever the account preference says |
+| Area                            | Overcast                                                                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Synthetic network fields        | `DescribeMountTargets.IpAddress`, availability zone and ENI id are derived from the subnet id; the address is never what an export is reached on |
+| No data plane without Docker    | In `mock` mode — and in `live` mode while no Docker daemon is reachable — mount targets are metadata and there is no storage behind them         |
+| Policies are not enforced       | A file-system policy is JSON-validated, stored and echoed, never applied to a request                                                            |
+| Security groups are not checked | They are stored, not validated against EC2 or enforced                                                                                           |
+| Backup policy has no states     | `PutBackupPolicy` stores `ENABLED`/`DISABLED` with no `ENABLING`/`DISABLING`, and there is no AWS Backup integration                             |
+| No replication                  | The replication configuration operations answer `501`                                                                                            |
+| Long ids always                 | Resource ids are always long-form (`fs-`/`fsmt-`/`fsap-` plus 17 hex characters), whatever the account preference says                           |
 
 ## Modes
 
@@ -93,8 +93,8 @@ Per-operation status, notes and AWS API links: [EFS operations](efs/operations.m
 
 ## Related
 
-- [EFS examples](efs/examples.md) — mounting a file system over NFS
+- [EFS examples](./efs/examples.md) — mounting a file system over NFS
+- [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [Networking § Lambda, ECS and VPCs](../networking.md)
 - [Storage and persistence](../storage.md)
-- [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

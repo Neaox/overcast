@@ -16,7 +16,7 @@ tags:
 Records are really stored, routed by partition-key hash and read back through
 shard iterators; nothing is ever trimmed.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
@@ -45,15 +45,15 @@ aws kinesis get-records --shard-iterator "$ITER"
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
+| Area                      | Overcast                                                                                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Retention is not enforced | `IncreaseStreamRetentionPeriod` and `DecreaseStreamRetentionPeriod` store and echo the value; no record is ever expired, so a shard keeps everything until the stream is deleted |
-| Writes never fail | `PutRecords` always reports `FailedRecordCount: 0` — throughput throttling and `ProvisionedThroughputExceededException` are not simulated |
-| Encryption is metadata | `StartStreamEncryption` stores `EncryptionType` and `KeyId` and `Describe*` echoes them; records are stored unencrypted |
-| Capacity modes are inert | `UpdateStreamMode` is recorded; on-demand capacity is not enforced |
-| No pagination | `ListStreams` returns every stream name and `ListShards` every open shard in one page |
-| No enhanced fan-out | Consumers are not emulated — `SubscribeToShard` and the consumer registration APIs are absent, and a consumer ARN is refused by `TagResource` |
-| Closed shards are hidden | `ListShards` returns open shards only, so a split parent disappears from the list |
+| Writes never fail         | `PutRecords` always reports `FailedRecordCount: 0` — throughput throttling and `ProvisionedThroughputExceededException` are not simulated                                        |
+| Encryption is metadata    | `StartStreamEncryption` stores `EncryptionType` and `KeyId` and `Describe*` echoes them; records are stored unencrypted                                                          |
+| Capacity modes are inert  | `UpdateStreamMode` is recorded; on-demand capacity is not enforced                                                                                                               |
+| No pagination             | `ListStreams` returns every stream name and `ListShards` every open shard in one page                                                                                            |
+| No enhanced fan-out       | Consumers are not emulated — `SubscribeToShard` and the consumer registration APIs are absent, and a consumer ARN is refused by `TagResource`                                    |
+| Closed shards are hidden  | `ListShards` returns open shards only, so a split parent disappears from the list                                                                                                |
 
 ## Gotchas
 
@@ -74,8 +74,8 @@ Per-operation status, notes and AWS API links: [Kinesis operations](kinesis/oper
 
 ## Related
 
-- [Firehose](firehose.md)
-- [DynamoDB Streams](dynamodbstreams.md)
-- [AWS API reference](https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [Firehose](./firehose.md)
+- [DynamoDB Streams](./dynamodbstreams.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html)

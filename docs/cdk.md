@@ -1,6 +1,6 @@
 ---
 title: "Using AWS CDK with Overcast"
-description: "Overcast supports cdk deploy and cdk destroy for stacks that use supported resource types. This page explains how to configure CDK to target Overcast and what to expect."
+description: "Bootstrap and deploy a CDK stack against Overcast: the environment CDK needs, the supported resource types, Fn::GetAtt coverage, and the Windows asset-upload fix."
 section: "Getting Started"
 tags:
   - aws
@@ -324,7 +324,8 @@ With this configuration, CDK constructs a bucket hostname like
 which resolves via public DNS to `127.0.0.1` and is rewritten by Overcast's
 S3 virtual-host middleware to the correct path-style route.
 
-> **Note:** This fix also works on Linux and macOS, so
+> [!NOTE]
+> This fix also works on Linux and macOS, so
 > `OVERCAST_HOSTNAME=localhost.overcast.sh` is safe to use in a shared CI/CD
 > environment where developers are on different host operating systems.
 >

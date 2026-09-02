@@ -1,6 +1,6 @@
 ---
 title: "AppConfigData — AWS AppConfig Data Plane"
-description: "The AppConfig runtime data plane: a poll-based session that hands back the latest configuration content, with single-use rotating tokens."
+description: "Quick start, the two AWS bindings, single-use token rotation and the poll interval, and the response headers and deployment behaviour that are not modelled."
 section: "Service Reference"
 tags:
   - appconfig
@@ -48,11 +48,11 @@ version is readable as soon as it is created.
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| `Version-Label` response header | Never sent, even for a hosted version that has one | Sent when the version is labelled |
-| Deployments | Not modelled, so `GetLatestConfiguration` returns the newest hosted version rather than the deployed one | Returns what the deployment has rolled out |
-| Encryption and KMS | Not modelled | Supported |
+| Area                            | On AWS                                     | Overcast                                                                                                 |
+| ------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `Version-Label` response header | Sent when the version is labelled          | Never sent, even for a hosted version that has one                                                       |
+| Deployments                     | Returns what the deployment has rolled out | Not modelled, so `GetLatestConfiguration` returns the newest hosted version rather than the deployed one |
+| Encryption and KMS              | Supported                                  | Not modelled                                                                                             |
 
 ## Gotchas
 
@@ -80,6 +80,6 @@ Per-operation status, notes and AWS API links: [AppConfigData operations](appcon
 ## Related
 
 - [AppConfig](./appconfig.md) — the control plane that stores the configuration
-- [AWS API reference](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/)

@@ -1,6 +1,6 @@
 ---
 title: "Using AWS SDKs and CLI with Overcast"
-description: "Overcast is a drop-in local AWS endpoint. Point any AWS SDK or the AWS CLI at http://localhost:4566 and use it exactly as you would against real AWS."
+description: "Pointing the AWS CLI, Node.js, Python, Go, Java, .NET, Rust and Terraform at Overcast, plus overcast env and overcast aws, S3 addressing styles, and the credential and region defaults."
 section: "Getting Started"
 tags:
   - aws
@@ -129,14 +129,10 @@ Virtual-hosted style needs the bucket subdomain to resolve. `*.localhost` does
 that on Linux and macOS but **not on Windows**, so set
 `OVERCAST_HOSTNAME=localhost.overcast.sh`, whose every subdomain resolves to
 `127.0.0.1` on every OS. See
-[networking.md](./networking.md) for the full rule and the offline fallbacks,
-and the [CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
+[networking.md](./networking.md) for the full rule, the reserved service labels
+a bucket name cannot carry in the bare form, and the offline fallbacks, and the
+[CDK S3 asset upload troubleshooting](./cdk.md#s3-asset-upload-fails-on-windows)
 for the CDK-specific case.
-
-> A bucket name whose second-or-later dot segment is a reserved service label
-> (`execute-api`, `lambda-url`, `appsync-api`, `appsync-realtime-api`,
-> `cloudfront`) is a service address in the bare form — use path-style or the
-> `.s3.` form for those. Overcast warns at `CreateBucket` when you create one.
 
 ---
 

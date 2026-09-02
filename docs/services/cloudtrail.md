@@ -1,6 +1,6 @@
 ---
 title: "CloudTrail — AWS CloudTrail"
-description: "Quick start, the trail metadata and CloudFormation support that unblock a stack, and why nothing is ever audited."
+description: "Quick start, the trail, logging-state and CloudFormation coverage, and why every operation is inert: nothing is recorded, delivered or looked up."
 section: "Service Reference"
 tags:
   - aws
@@ -19,7 +19,7 @@ delivered.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws s3 mb s3://audit
 aws cloudtrail create-trail --name main --s3-bucket-name audit
@@ -47,6 +47,8 @@ aws cloudtrail get-trail-status --name main
 | Event data stores, channels, Insights | Not emulated. Tagging operations accept trail ARNs only |
 | Region scoping | Trails are global to the emulator; `HomeRegion` always reports the configured default region |
 
+## Gotchas
+
 > [!NOTE]
 > Every CloudTrail operation is 🧊 Inert: the call is accepted and answered
 > correctly, and nothing happens as a result. The point is to unblock stacks
@@ -63,6 +65,6 @@ Per-operation status, notes and AWS API links: [CloudTrail operations](cloudtrai
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/Welcome.html)

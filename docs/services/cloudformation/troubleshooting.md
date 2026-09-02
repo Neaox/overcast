@@ -16,7 +16,7 @@ Back to [CloudFormation](../cloudformation.md).
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `AlreadyExistsException` on a stack you thought was gone | The stack is in `ROLLBACK_COMPLETE`, which is delete-only | `DeleteStack`, then create again — this is what the CDK CLI does for you |
-| `Stack:<arn> is in <status> state and can not be updated.` | The stack is not in a last-known-stable state | See [which state an operation may start from](limitations.md#which-state-an-operation-may-start-from) |
+| `Stack:<arn> is in <status> state and can not be updated.` | The stack is not in a last-known-stable state | See [which state an operation may start from](./limitations.md#which-state-an-operation-may-start-from) |
 | Every update refused, stack in `UPDATE_ROLLBACK_FAILED` | The update failed and its rollback failed too | Clear the blocker, then `ContinueUpdateRollback` — below |
 | `DescribeStacks` says a stack does not exist, but you just deleted it | A `DELETE_COMPLETE` stack resolves by ARN only, as on AWS | Poll by the ARN `CreateStack` returned |
 | Stack `DELETE_FAILED` with a resource still listed | A teardown refusal — a non-empty bucket, an IAM `DeleteConflict`, an EC2 `DependencyViolation`, RDS deletion protection, or a failed child stack | Clear the cause and call `DeleteStack` again; it resumes from what is left |

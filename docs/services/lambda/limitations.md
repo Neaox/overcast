@@ -246,16 +246,16 @@ invocations.
 ## Runtimes
 
 Every runtime identifier comes from one table, so request validation, the
-runtime-to-image mapping, AWS's deprecation dates and the web UI's create wizard
-cannot disagree. Runtime identifiers are the modeled `Runtime` enum from the
+runtime-to-image mapping, AWS's deprecation dates and the web console's create wizard
+cannot disagree. Runtime identifiers are the modelled `Runtime` enum from the
 pinned AWS Smithy model; deprecation, block-create and block-update dates come
 from AWS's published runtime lifecycle table.
 
 | Situation | Response |
 | --- | --- |
-| Not a value of the modeled `Runtime` enum, and not a runtime-version ARN | `400 InvalidParameterValueException` listing every modeled value |
-| Modeled, but past AWS's deprecation phase for the operation | `400 InvalidParameterValueException` naming the recommended successor |
-| Modeled and accepted by AWS, but Overcast has no execution image for it | `501 NotImplemented` — an honest emulator gap; nothing is persisted |
+| Not a value of the modelled `Runtime` enum, and not a runtime-version ARN | `400 InvalidParameterValueException` listing every modelled value |
+| Modelled, but past AWS's deprecation phase for the operation | `400 InvalidParameterValueException` naming the recommended successor |
+| Modelled and accepted by AWS, but Overcast has no execution image for it | `501 NotImplemented` — an honest emulator gap; nothing is persisted |
 
 The third case is the important one: a missing execution image is **not** a bad
 request, so Overcast never invents a `400` for it. (The check applies to `Zip`

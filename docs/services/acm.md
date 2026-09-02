@@ -1,6 +1,6 @@
 ---
 title: "ACM — AWS Certificate Manager"
-description: "Certificate records for stacks that need an ARN. A requested certificate is ISSUED immediately — no DNS or email validation, and no key material is generated."
+description: "Quick start, the certificate and tag operations that work, and what a request skips: no validation round trip, no key material, no import or renewal."
 section: "Service Reference"
 tags:
   - acm
@@ -21,7 +21,7 @@ return.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 CERT=$(aws acm request-certificate \
@@ -42,11 +42,13 @@ aws acm describe-certificate --certificate-arn "$CERT"
 
 ## Differences from AWS
 
-| Behaviour            | On AWS                                                       | Here                                            |
-| -------------------- | ------------------------------------------------------------ | ----------------------------------------------- |
-| Validation           | DNS or email round-trip; `PENDING_VALIDATION` first           | Skipped; the certificate is `ISSUED` on return  |
-| Certificate material | A real X.509 chain is issued                                  | No key or chain is generated                    |
-| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `501 Not Implemented`          |
+| Area                 | On AWS                                                       | Overcast                                       |
+| -------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
+| Validation           | DNS or email round-trip; `PENDING_VALIDATION` first          | Skipped; the certificate is `ISSUED` on return |
+| Certificate material | A real X.509 chain is issued                                 | No key or chain is generated                   |
+| Import and renewal   | `ImportCertificate`, `RenewCertificate`, `ExportCertificate` | Not implemented — `501 Not Implemented`        |
+
+## Gotchas
 
 > [!TIP]
 > ACM issues nothing you can actually serve. For browser-trusted TLS in front
@@ -63,6 +65,6 @@ Per-operation status, notes and AWS API links: [ACM operations](acm/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/acm/latest/APIReference/)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/acm/latest/APIReference/)

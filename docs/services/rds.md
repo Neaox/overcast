@@ -1,6 +1,6 @@
 ---
 title: "RDS — Relational Database Service"
-description: "DB instances and Aurora clusters backed by real MySQL, PostgreSQL and MariaDB containers. An instance reports available only once its engine accepts connections."
+description: "Quick start, the engines and Aurora shapes started for real, readiness and failure reporting, per-caller endpoints, and the backups, replicas and failover that are absent."
 section: "Service Reference"
 tags:
   - database
@@ -16,7 +16,7 @@ tags:
 `CreateDBInstance` starts a real database container, and the instance reports
 `available` only once that engine is genuinely accepting connections.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
@@ -55,18 +55,18 @@ directory before it accepts anything.
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
+| Area                                  | Overcast                                                                                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | The reader endpoint serves the writer | Every member has its own storage, so a reader endpoint spread across replicas would answer from an empty database. Reads are not distributed; replica lag cannot be reproduced |
-| Recorded, not enforced | Backup windows, maintenance windows, parameter groups, security groups and log exports are stored and reported, never acted on |
-| No backups or snapshots | Snapshot, restore and point-in-time operations are not implemented |
-| Engine version substitution | Any `EngineVersion` is accepted; one with no image of its own is served by the nearest in its family, and the substitution is logged |
-| Not every engine | SQL Server, Oracle and Db2 are not emulated — see [RDS limitations](rds/limitations.md) |
-| No failover API | There is no `FailoverDBCluster`; deleting the writer is the only way to trigger a promotion |
+| Recorded, not enforced                | Backup windows, maintenance windows, parameter groups, security groups and log exports are stored and reported, never acted on                                                 |
+| No backups or snapshots               | Snapshot, restore and point-in-time operations are not implemented                                                                                                             |
+| Engine version substitution           | Any `EngineVersion` is accepted; one with no image of its own is served by the nearest in its family, and the substitution is logged                                           |
+| Not every engine                      | SQL Server, Oracle and Db2 are not emulated — see [RDS limitations](./rds/limitations.md)                                                                                        |
+| No failover API                       | There is no `FailoverDBCluster`; deleting the writer is the only way to trigger a promotion                                                                                    |
 
 Full engine matrix, cluster-setting behaviour and master-account boundaries:
-[RDS limitations](rds/limitations.md). Symptoms and fixes:
-[RDS troubleshooting](rds/troubleshooting.md).
+[RDS limitations](./rds/limitations.md). Symptoms and fixes:
+[RDS troubleshooting](./rds/troubleshooting.md).
 
 ## Gotchas
 
@@ -93,9 +93,9 @@ Per-operation status, notes and AWS API links: [RDS operations](rds/operations.m
 
 ## Related
 
-- [RDS limitations](rds/limitations.md)
-- [RDS troubleshooting](rds/troubleshooting.md)
+- [RDS limitations](./rds/limitations.md)
+- [RDS troubleshooting](./rds/troubleshooting.md)
+- [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [Networking § data-plane endpoints](../networking.md#data-plane-endpoints-rds-and-anything-else-that-is-a-container)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

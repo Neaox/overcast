@@ -99,5 +99,5 @@ store is not.
 ## Related
 
 - [CloudFront](../cloudfront.md) — quick start and what works
-- [CloudFront operations](operations.md) — per-operation status
+- [CloudFront operations](./operations.md) — per-operation status
 - [Networking and host-based addressing](../../networking.md)

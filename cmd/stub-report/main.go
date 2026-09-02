@@ -65,7 +65,7 @@ func main() {
 	}
 
 	total := 0
-	modeled := modeledOperationCounts()
+	modelled := modelledOperationCounts()
 	fmt.Println("# Overcast Operation Manifest")
 	fmt.Println()
 	fmt.Println("This manifest counts **typed-dispatch operation registrations** — one row " +
@@ -80,7 +80,7 @@ func main() {
 	fmt.Println()
 	for _, s := range svcs {
 		total += len(s.ops)
-		pstr := fmt.Sprintf(", modeled: %d", modeled[s.name])
+		pstr := fmt.Sprintf(", modelled: %d", modelled[s.name])
 		if len(s.protos) > 0 {
 			pstr += fmt.Sprintf(", protocols: %s", strings.Join(s.protos, ", "))
 		}
@@ -96,23 +96,23 @@ func main() {
 	fmt.Println()
 	fmt.Printf("The %d service(s) below implement operations through the REST router or a "+
 		"not-yet-migrated legacy dispatcher, so they have no `typed_ops.go` and get no "+
-		"section above. Their modeled operation counts (from the pinned AWS model corpus) "+
+		"section above. Their modelled operation counts (from the pinned AWS model corpus) "+
 		"are shown for reference; see docs/generated/service-support.json for what Overcast "+
 		"actually implements per service.\n", len(details))
 	fmt.Println()
-	fmt.Println("| Service | Modeled ops | Why excluded |")
+	fmt.Println("| Service | Modelled ops | Why excluded |")
 	fmt.Println("|---|---|---|")
 	for _, d := range details {
-		fmt.Printf("| %s | %d | %s |\n", d.name, d.modeled, exclusionReason(d.protocols))
+		fmt.Printf("| %s | %d | %s |\n", d.name, d.modelled, exclusionReason(d.protocols))
 	}
 	fmt.Println()
 
-	modeledTotal := 0
-	for _, count := range modeled {
-		modeledTotal += count
+	modelledTotal := 0
+	for _, count := range modelled {
+		modelledTotal += count
 	}
 	fmt.Printf("---\nModel corpus: %d operations across %d services; typed registrations: %d across %d services (%d services outside typed dispatch, listed above)\n",
-		modeledTotal, len(modeled), total, len(svcs), len(details))
+		modelledTotal, len(modelled), total, len(svcs), len(details))
 }
 
 // excludedServices returns the sorted names of top-level directories under
@@ -147,13 +147,13 @@ func excludedServices(root string, included []serviceOps) ([]string, error) {
 // it's missing instead of just naming it.
 type excludedInfo struct {
 	name      string
-	modeled   int
+	modelled   int
 	protocols []string
 }
 
-// excludedServiceDetails looks up each excluded service's modeled operation
+// excludedServiceDetails looks up each excluded service's modelled operation
 // count and protocol set in the pinned AWS model corpus (the same corpus
-// modeledOperationCounts reads), so the reason a service is excluded is
+// modelledOperationCounts reads), so the reason a service is excluded is
 // derived from data rather than a hand-maintained list that can go stale the
 // same way the manifest itself did.
 func excludedServiceDetails(names []string) []excludedInfo {
@@ -183,16 +183,16 @@ func excludedServiceDetails(names []string) []excludedInfo {
 			protos = append(protos, p)
 		}
 		sort.Strings(protos)
-		out = append(out, excludedInfo{name: n, modeled: counts[n], protocols: protos})
+		out = append(out, excludedInfo{name: n, modelled: counts[n], protocols: protos})
 	}
 	return out
 }
 
-// exclusionReason turns a service's modeled protocol set into a plain-English
-// reason it has no typed_ops.go. Services modeled with a REST protocol are
+// exclusionReason turns a service's modelled protocol set into a plain-English
+// reason it has no typed_ops.go. Services modelled with a REST protocol are
 // routed by chi on path/method rather than a target header, which is the
 // architectural reason typed dispatch does not apply to them; everything else
-// with modeled operations is a service that could migrate to typed dispatch
+// with modelled operations is a service that could migrate to typed dispatch
 // but has not yet.
 func exclusionReason(protocols []string) string {
 	for _, p := range protocols {
@@ -206,10 +206,10 @@ func exclusionReason(protocols []string) string {
 	return "no protocol data in the pinned model corpus"
 }
 
-// modeledOperationCounts reads the generated AWS corpus rather than treating
+// modelledOperationCounts reads the generated AWS corpus rather than treating
 // typed_ops.go as the operation universe. Typed source remains a registration
-// signal only; every other modeled operation is owned by the router fallback.
-func modeledOperationCounts() map[string]int {
+// signal only; every other modelled operation is owned by the router fallback.
+func modelledOperationCounts() map[string]int {
 	counts := make(map[string]int)
 	awsapi.WalkOperations(func(op awsapi.Operation) bool {
 		counts[awsapi.ServiceKey(op.Service)]++

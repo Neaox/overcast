@@ -21,7 +21,7 @@ evaluated, and health checks never probe anything.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 ZONE=$(aws route53 create-hosted-zone --name example.internal --caller-reference "$RANDOM" \
   --query 'HostedZone.Id' --output text)
@@ -89,7 +89,7 @@ canonicalised to lowercase with a trailing dot.
 | Change propagation | `ChangeResourceRecordSets` applies synchronously, so a change is `INSYNC` immediately — there is no `PENDING` phase |
 | Traffic policies | `CreateTrafficPolicy` returns `501` |
 
-The full list is in [Route 53 limitations](route53/limitations.md).
+The full list is in [Route 53 limitations](./route53/limitations.md).
 
 ## Gotchas
 
@@ -110,7 +110,7 @@ Per-operation status, notes and AWS API links: [Route 53 operations](route53/ope
 
 ## Related
 
-- [Route 53 limitations](route53/limitations.md) — the full divergence list
+- [Route 53 limitations](./route53/limitations.md) — the full divergence list
+- [All service pages](./README.md)
 - [Networking and host-based addressing](../networking.md)
 - [AWS API reference](https://docs.aws.amazon.com/Route53/latest/APIReference/Welcome.html)
-- [All service pages](README.md)

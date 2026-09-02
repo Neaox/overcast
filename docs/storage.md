@@ -67,7 +67,7 @@ persistence, in this order:
    volume or bind mount at `OVERCAST_DATA_DIR` (the container's `/data` by
    default) is durable by construction — mounting it is itself the signal.
 2. **`OVERCAST_DATA_DIR` was explicitly configured.** Setting it yourself
-   (native installs, or a Docker image customization) is evidence you intend
+   (native installs, or a Docker image customisation) is evidence you intend
    that directory to be used, whether or not it happens to be a mount.
 3. **An existing Overcast database is already in the resolved data directory.**
    A regression guard: state persisted there by a previous run is never

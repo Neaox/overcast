@@ -1,6 +1,6 @@
 ---
 title: "ElastiCache — Managed In-Memory Cache"
-description: "Cache clusters, replication groups and serverless caches backed by real Redis, Valkey or Memcached containers, promoted to available only once the engine answers."
+description: "Quick start, the engines started per cache, how readiness and failure are reported, VPC placement and per-caller endpoints, and the scaling and snapshot gaps."
 section: "Service Reference"
 tags:
   - cache
@@ -51,15 +51,15 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey**
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| One node, always | A replication group starts a single primary container — no replicas, no cluster mode, no failover |
-| Endpoints cannot be told apart | A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry the same endpoint, because there is nothing to distinguish cluster-mode-enabled from disabled |
-| No parameter groups applied | `CacheParameterGroupName` is recorded and echoed, never pushed into the engine; `SecurityGroupIds` are dropped entirely |
-| No snapshots | Snapshot, backup and restore operations are not implemented |
-| No scaling | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers |
-| Create-only subnet group | `CacheSubnetGroupName` is not returned on the `ReplicationGroup` shape, because AWS does not return it either |
-| CloudFormation names differ | `AWS::ElastiCache::CacheCluster` takes `ClusterName`, not `CacheClusterId`; omit it and the name is generated from the stack, the logical id and a suffix, lowercased and capped at 50 characters |
+| Area                           | Overcast                                                                                                                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One node, always               | A replication group starts a single primary container — no replicas, no cluster mode, no failover                                                                                                 |
+| Endpoints cannot be told apart | A replication group's `PrimaryEndPoint` and `ConfigurationEndPoint` both carry the same endpoint, because there is nothing to distinguish cluster-mode-enabled from disabled                      |
+| No parameter groups applied    | `CacheParameterGroupName` is recorded and echoed, never pushed into the engine; `SecurityGroupIds` are dropped entirely                                                                           |
+| No snapshots                   | Snapshot, backup and restore operations are not implemented                                                                                                                                       |
+| No scaling                     | `ModifyCacheCluster` node-count changes and `IncreaseReplicaCount` do not add containers                                                                                                          |
+| Create-only subnet group       | `CacheSubnetGroupName` is not returned on the `ReplicationGroup` shape, because AWS does not return it either                                                                                     |
+| CloudFormation names differ    | `AWS::ElastiCache::CacheCluster` takes `ClusterName`, not `CacheClusterId`; omit it and the name is generated from the stack, the logical id and a suffix, lowercased and capped at 50 characters |
 
 ## Gotchas
 
@@ -86,8 +86,8 @@ Per-operation status, notes and AWS API links: [ElastiCache operations](elastica
 
 ## Related
 
-- [Networking § Lambda, ECS and VPCs](../networking.md)
-- [RDS](rds.md) — the same Docker-backed lifecycle for databases
-- [AWS API reference](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [RDS](./rds.md) — the same Docker-backed lifecycle for databases
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [Networking § Lambda, ECS and VPCs](../networking.md)
+- [AWS API reference](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/Welcome.html)

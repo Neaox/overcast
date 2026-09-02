@@ -17,11 +17,11 @@ Auto Scaling groups converge: a reconciler launches and terminates EC2
 instances until each group matches its `DesiredCapacity`, running the lifecycle
 state machine and recording an activity for everything it does.
 
-**Status:** ✅ Supported
+**Status:** ⚠️ Partial
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws autoscaling create-launch-configuration --launch-configuration-name web \
   --image-id ami-12345678 --instance-type t3.micro
@@ -72,7 +72,7 @@ operation rather than stored and quietly disregarded.
 | `HealthCheckType=ELB` | Accepted and echoed, but load-balancer target health is not a health source. Only `SetInstanceHealth` marks an instance unhealthy. `HealthCheckGracePeriod` is stored and echoed |
 | Lifecycle hooks | AWS runs every hook watching a transition; Overcast parks the instance on the first matching hook by name |
 | Region | Groups are global to the emulator, and the reconciler launches into the configured default region |
-| Instances | EC2 instances are metadata — the group converges on records, not on running compute. See [EC2](ec2.md) |
+| Instances | EC2 instances are metadata — the group converges on records, not on running compute. See [EC2](./ec2.md) |
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -85,7 +85,7 @@ Per-operation status, notes and AWS API links: [Auto Scaling operations](autosca
 
 ## Related
 
-- [EC2 / VPC](ec2.md) — what an instance record does and does not do
-- [CloudWatch](cloudwatch.md) — the alarms that drive scaling policies
+- [EC2 / VPC](./ec2.md) — what an instance record does and does not do
+- [CloudWatch](./cloudwatch.md) — the alarms that drive scaling policies
+- [All service pages](./README.md)
 - [AWS API reference](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/Welcome.html)
-- [All service pages](README.md)

@@ -1,6 +1,6 @@
 ---
 title: "IAM — Identity and Access Management"
-description: "Users, roles, groups, policies and instance profiles for IaC compatibility, plus a real policy simulator. Enforcement is off by default and covers identity policies only."
+description: "Quick start, the entities and policy simulator that work, what OVERCAST_ENFORCE_IAM evaluates and the action prefixes it uses, and what is never enforced."
 section: "Service Reference"
 tags:
   - access
@@ -20,7 +20,7 @@ stacks provision. Nothing is enforced unless you switch enforcement on.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws iam create-role --role-name app \
@@ -90,22 +90,22 @@ documentation gives. Ten services differ from their Overcast service key:
 
 ## Differences from AWS
 
-| Behaviour             | On AWS                                          | Here                                                       |
-| --------------------- | ----------------------------------------------- | ------------------------------------------------------------ |
-| Enforcement           | Always on                                       | Off unless `OVERCAST_ENFORCE_IAM=true`; identity policies only |
-| Credentials           | Verified against the signing key                | Accepted without verification                               |
-| Policy versions       | Every version is retained and retrievable       | A counter only — no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion` |
-| Login profiles, MFA devices, SSH keys, signing certificates, Git credentials | Full API | Not modelled              |
+| Area                                                                         | On AWS                                    | Overcast                                                                              |
+| ---------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------- |
+| Enforcement                                                                  | Always on                                 | Off unless `OVERCAST_ENFORCE_IAM=true`; identity policies only                        |
+| Credentials                                                                  | Verified against the signing key          | Accepted without verification                                                         |
+| Policy versions                                                              | Every version is retained and retrievable | A counter only — no `GetPolicyVersion`, `ListPolicyVersions` or `DeletePolicyVersion` |
+| Login profiles, MFA devices, SSH keys, signing certificates, Git credentials | Full API                                  | Not modelled                                                                          |
 
 The policy language the evaluator does and does not cover is in
-[Limitations](iam/limitations.md).
+[Limitations](./iam/limitations.md).
 
 ## Gotchas
 
 > [!WARNING]
 > A teardown script that deletes an IAM entity without unwinding it first now
 > gets a `409 DeleteConflict`, as it would against real AWS. See
-> [Troubleshooting](iam/troubleshooting.md).
+> [Troubleshooting](./iam/troubleshooting.md).
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -118,8 +118,9 @@ Per-operation status, notes and AWS API links: [IAM operations](iam/operations.m
 
 ## Related
 
-- [IAM limitations](iam/limitations.md) · [IAM troubleshooting](iam/troubleshooting.md)
-- [AWS API reference](https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)
-- [STS](sts.md) — where an assumed-role session comes from
-- [All service pages](README.md)
+- [IAM limitations](./iam/limitations.md)
+- [IAM troubleshooting](./iam/troubleshooting.md)
+- [STS](./sts.md) — where an assumed-role session comes from
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)

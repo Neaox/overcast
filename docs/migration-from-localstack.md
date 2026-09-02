@@ -1,6 +1,6 @@
 ---
 title: "Migrating from LocalStack"
-description: "Overcast is a drop-in replacement for LocalStack Community Edition: same port, same init-hook layout, and LocalStack's own environment variables honoured directly. Usually nothing but the image changes."
+description: "The LocalStack environment variables Overcast reads directly, the endpoint and init-hook mapping, the behavioural differences worth knowing, and where current coverage is listed."
 section: "Getting Started"
 tags:
   - docs

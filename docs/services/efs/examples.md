@@ -12,7 +12,7 @@ tags:
 
 # EFS examples
 
-Worked setups past the [EFS quick start](../efs.md). Both assume `live` mode
+Worked setups past the [EFS quick start](../efs.md#quick-start). Both assume `live` mode
 (the default) and a reachable Docker daemon.
 
 ## Sharing a file system with Lambda and ECS

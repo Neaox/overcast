@@ -1,5 +1,5 @@
 ---
-title: "CloudWatch Logs"
+title: "CloudWatch Logs — Amazon CloudWatch Logs"
 description: "Quick start, filter patterns and retention enforcement, the input rules applied before anything is written, and the four operations that return 501."
 section: "Service Reference"
 tags:
@@ -9,7 +9,7 @@ tags:
   - services
 ---
 
-# CloudWatch Logs
+# CloudWatch Logs — Amazon CloudWatch Logs
 
 Log groups, streams and events are stored and queryable, and retention is
 enforced for real. Lambda writes its own output here, so `aws logs tail` works
@@ -19,7 +19,7 @@ the way it does on AWS.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 aws logs create-log-group --log-group-name /custom/demo
 aws logs create-log-stream --log-group-name /custom/demo --log-stream-name run-1
@@ -81,7 +81,7 @@ Per-operation status, notes and AWS API links: [CloudWatch Logs operations](clou
 
 ## Related
 
-- [CloudWatch](cloudwatch.md) — metrics and alarms
-- [Lambda](lambda.md) — function logging configuration
+- [CloudWatch](./cloudwatch.md) — metrics and alarms
+- [Lambda](./lambda.md) — function logging configuration
+- [All service pages](./README.md)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html)
-- [All service pages](README.md)

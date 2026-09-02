@@ -1,6 +1,6 @@
 ---
 title: "OpenSearch — Amazon OpenSearch Service"
-description: "OpenSearch domain records and their tags, served at AWS's own /2021-01-01/ bindings. No cluster is provisioned, so a domain's endpoint serves nothing."
+description: "Quick start, the domain and tag operations that work, and why the domain endpoint answers nothing: no cluster, no cluster settings, no configuration changes."
 section: "Service Reference"
 tags:
   - amazon
@@ -41,13 +41,13 @@ aws opensearch list-domain-names
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| No cluster | Nothing is indexed or queried; the domain endpoint is a name, not a service |
-| Partial `DomainStatus` | Only `DomainId`, `DomainName`, `ARN`, `EngineVersion`, `Endpoint` and the `Created`/`Deleted`/`Processing` flags come back |
+| Area                         | Overcast                                                                                                                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No cluster                   | Nothing is indexed or queried; the domain endpoint is a name, not a service                                                                                                   |
+| Partial `DomainStatus`       | Only `DomainId`, `DomainName`, `ARN`, `EngineVersion`, `Endpoint` and the `Created`/`Deleted`/`Processing` flags come back                                                    |
 | Cluster settings are dropped | `ClusterConfig`, `EBSOptions`, `VPCOptions`, access policies and the other ~25 `CreateDomain` members are accepted and ignored — they configure a cluster that does not exist |
-| No configuration changes | `UpdateDomainConfig`, upgrades, package association and the auto-tune APIs are not implemented |
-| No cross-cluster search | Outbound and inbound connections are not modelled |
+| No configuration changes     | `UpdateDomainConfig`, upgrades, package association and the auto-tune APIs are not implemented                                                                                |
+| No cross-cluster search      | Outbound and inbound connections are not modelled                                                                                                                             |
 
 ## Gotchas
 
@@ -68,6 +68,6 @@ Per-operation status, notes and AWS API links: [OpenSearch operations](opensearc
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/)
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/)

@@ -16,7 +16,7 @@ Back to [ECS](../ecs.md).
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `CreateService` succeeds but no task is ever placed | The task definition is `awsvpc` and the service has no `networkConfiguration` | Supply it. The requirement follows the task definition's `networkMode`, not `launchType` |
-| `was unable to place a task. Reason: … port is already allocated` | A `hostPort` mapping, and both deployments are alive at once | Set `maximumPercent: 100` / `minimumHealthyPercent: 0` — see [Limitations](limitations.md#how-many-tasks-a-rollout-runs-at-once) |
+| `was unable to place a task. Reason: … port is already allocated` | A `hostPort` mapping, and both deployments are alive at once | Set `maximumPercent: 100` / `minimumHealthyPercent: 0` — see [Limitations](./limitations.md#how-many-tasks-a-rollout-runs-at-once) |
 | Task `STOPPED` with `CannotPullContainerError` | The image is not in the registry, or the address is not this account's ECR | Push it, or check the `repositoryUri` in [ECR](../ecr.md) |
 | Task `STOPPED` with `ResourceInitializationError` | The task's network namespace or ENI could not be set up | Check the VPC's Docker network exists and that Overcast can reach it |
 | Task `STOPPED` with `CannotStartContainerError` naming host paths | Docker refused a bind mount | Allow the directory in Docker Desktop's File Sharing settings |

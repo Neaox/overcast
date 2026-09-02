@@ -40,20 +40,20 @@ aws firehose put-record \
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
-| Records are discarded | Nothing reaches S3, Redshift, OpenSearch or an HTTP endpoint — a bucket wired as a destination stays empty |
+| Area                        | Overcast                                                                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Records are discarded       | Nothing reaches S3, Redshift, OpenSearch or an HTTP endpoint — a bucket wired as a destination stays empty                          |
 | Destinations are not stored | `S3DestinationConfiguration` and its siblings are ignored, and `DescribeDeliveryStream` always reports an empty `Destinations` list |
-| No transformation | Lambda processors, dynamic partitioning, format conversion and compression are not applied |
-| No buffering | There is no buffer interval or size, so nothing is ever flushed |
-| No updates | `UpdateDestination` is not implemented |
+| No transformation           | Lambda processors, dynamic partitioning, format conversion and compression are not applied                                          |
+| No buffering                | There is no buffer interval or size, so nothing is ever flushed                                                                     |
+| No updates                  | `UpdateDestination` is not implemented                                                                                              |
 
 ## Gotchas
 
 > [!WARNING]
 > A test that writes to Firehose and then asserts on objects in the
-> destination bucket will never pass here. Write to [S3](s3.md) directly, or
-> use [Kinesis](kinesis.md), whose records are really stored and readable.
+> destination bucket will never pass here. Write to [S3](./s3.md) directly, or
+> use [Kinesis](./kinesis.md), whose records are really stored and readable.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -66,7 +66,7 @@ Per-operation status, notes and AWS API links: [Firehose operations](firehose/op
 
 ## Related
 
-- [Kinesis Data Streams](kinesis.md)
-- [AWS API reference](https://docs.aws.amazon.com/firehose/latest/APIReference/)
-- [All service pages](README.md)
+- [Kinesis Data Streams](./kinesis.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/firehose/latest/APIReference/)

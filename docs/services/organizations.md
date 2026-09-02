@@ -1,6 +1,6 @@
 ---
 title: "Organizations — AWS Organizations"
-description: "Policy CRUD and tagging, stored and returned faithfully. DescribeOrganization is a fixed stub; nothing is ever attached, and no policy takes effect."
+description: "Quick start, the policy CRUD, tagging and stable IDs that work, and what a policy never does: nothing is attached, and nothing is enforced."
 section: "Service Reference"
 tags:
   - aws
@@ -12,13 +12,13 @@ tags:
 # Organizations — AWS Organizations
 
 Policy metadata is stored and returned faithfully — identifiers, ARNs, tags,
-pagination, modeled errors. Nothing a policy describes ever takes effect.
+pagination, modelled errors. Nothing a policy describes ever takes effect.
 
 **Status:** ⚠️ Partial
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws organizations create-policy \
@@ -40,13 +40,15 @@ aws organizations list-policies --filter SERVICE_CONTROL_POLICY
 
 ## Differences from AWS
 
-| Behaviour           | On AWS                                            | Here                                                          |
-| ------------------- | ------------------------------------------------- | -------------------------------------------------------------- |
-| Policy enforcement  | An attached SCP constrains member accounts        | Nothing is attached; `AttachPolicy` / `DetachPolicy` return 501 |
-| `DeletePolicy`      | `PolicyInUseException` while attached             | Never in use, so never refused                                  |
-| Renaming a policy   | The old name becomes free again                   | The old name stays taken — recreating it is `DuplicatePolicyException` |
-| Tagging a root/OU/account | Succeeds                                    | `TargetNotFoundException` — those entities are not stored       |
-| Accounts, OUs, roots, handshakes, delegated administrators | Full API   | Not implemented — `501 Not Implemented`                        |
+| Area                                                       | On AWS                                     | Overcast                                                               |
+| ---------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| Policy enforcement                                         | An attached SCP constrains member accounts | Nothing is attached; `AttachPolicy` / `DetachPolicy` return 501        |
+| `DeletePolicy`                                             | `PolicyInUseException` while attached      | Never in use, so never refused                                         |
+| Renaming a policy                                          | The old name becomes free again            | The old name stays taken — recreating it is `DuplicatePolicyException` |
+| Tagging a root/OU/account                                  | Succeeds                                   | `TargetNotFoundException` — those entities are not stored              |
+| Accounts, OUs, roots, handshakes, delegated administrators | Full API                                   | Not implemented — `501 Not Implemented`                                |
+
+## Gotchas
 
 > [!NOTE]
 > A policy's ID comes from its name, which is why a rename keeps its ARN
@@ -63,7 +65,7 @@ Per-operation status, notes and AWS API links: [Organizations operations](organi
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html)
-- [IAM](iam.md) — the policy language that is actually evaluated here
-- [All service pages](README.md)
+- [IAM](./iam.md) — the policy language that is actually evaluated here
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/organizations/latest/APIReference/Welcome.html)

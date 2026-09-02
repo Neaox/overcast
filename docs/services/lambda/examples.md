@@ -61,7 +61,7 @@ Invoke, edit files in that path, invoke again.
 | Rule | Detail |
 | --- | --- |
 | Absolute paths only | A relative path is refused |
-| Windows paths normalized | `C:\Users\you\app` becomes `/c/Users/you/app` |
+| Windows paths normalised | `C:\Users\you\app` becomes `/c/Users/you/app` |
 | Read-only | Mounted at `/var/task:ro` |
 | Permissions | Host files must be readable by the runtime user in the container |
 
@@ -213,7 +213,7 @@ Telemetry API validates `schemaVersion` — `2022-07-01`, `2022-12-13` or
 `2025-01-29` — and refuses an unknown one rather than half-honouring it.
 
 Both surfaces deliver HTTP destinations for `platform`, `function` and `extension`
-records. Function stdout and stderr arrive as `function` records; the synthesized
+records. Function stdout and stderr arrive as `function` records; the synthesised
 invocation records arrive as `platform` ones. From `schemaVersion: 2022-12-13` a
 `LogFormat: JSON` function's line is embedded as the JSON object it already is;
 older schemas, the Logs API, Text-format functions and non-object lines receive

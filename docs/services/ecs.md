@@ -1,6 +1,6 @@
 ---
 title: "ECS — Elastic Container Service"
-description: "ECS runs real Docker containers for standalone tasks and for services, with AWS's deployment, rollout and awsvpc networking semantics."
+description: "Quick start, what the task and service scheduler runs for real, awsvpc networking, volumes, secrets and logs, and the health checks and IAM that are never enforced."
 section: "Service Reference"
 tags:
   - container
@@ -48,16 +48,16 @@ aws ecs list-tasks --cluster dev
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Health checks | None. Staying `RUNNING` for a settle window is the only evidence of health. | Container and target-group health checks |
-| Circuit breaker rollback | `rollback` is accepted and echoed, never acted on | Redeploys the last known-good deployment |
-| IAM | Task and execution roles are stored, never enforced | Enforced |
-| Port collisions | A `hostPort` is published on the one Docker host, so two deployments contend for it | Each `awsvpc` task has its own ENI |
-| Capacity providers, placement constraints, service discovery | Accepted and ignored | Enforced |
+| Area                                                         | On AWS                                   | Overcast                                                                            |
+| ------------------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| Health checks                                                | Container and target-group health checks | None. Staying `RUNNING` for a settle window is the only evidence of health.         |
+| Circuit breaker rollback                                     | Redeploys the last known-good deployment | `rollback` is accepted and echoed, never acted on                                   |
+| IAM                                                          | Enforced                                 | Task and execution roles are stored, never enforced                                 |
+| Port collisions                                              | Each `awsvpc` task has its own ENI       | A `hostPort` is published on the one Docker host, so two deployments contend for it |
+| Capacity providers, placement constraints, service discovery | Enforced                                 | Accepted and ignored                                                                |
 
 Rollout arithmetic, the settle window, the circuit breaker, volume rules and
-what a VPC placement restricts: [Limitations](ecs/limitations.md).
+what a VPC placement restricts: [Limitations](./ecs/limitations.md).
 
 ## Gotchas
 
@@ -66,7 +66,7 @@ what a VPC placement restricts: [Limitations](ecs/limitations.md).
 > defaults (`maximumPercent: 200`), because the replacement needs the port the
 > old task still holds. Set `maximumPercent: 100` with `minimumHealthyPercent: 0`
 > to deploy stop-then-start instead — see
-> [Limitations](ecs/limitations.md#how-many-tasks-a-rollout-runs-at-once).
+> [Limitations](./ecs/limitations.md#how-many-tasks-a-rollout-runs-at-once).
 
 > [!IMPORTANT]
 > `networkConfiguration` is required whenever the **task definition's**
@@ -85,10 +85,11 @@ Per-operation status, notes and AWS API links: [ECS operations](ecs/operations.m
 
 ## Related
 
-- [Limitations](ecs/limitations.md) — rollouts, volumes, networking
-- [Examples](ecs/examples.md) — hot reload, ECR images, secrets, logs
-- [Troubleshooting](ecs/troubleshooting.md) — tasks that will not start or stay up
+- [ECS limitations](./ecs/limitations.md) — rollouts, volumes, networking
+- [ECS troubleshooting](./ecs/troubleshooting.md) — tasks that will not start or stay up
+- [ECS examples](./ecs/examples.md) — hot reload, ECR images, secrets, logs
 - [ECR](./ecr.md) — where task images come from
-- [AWS API reference](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [ELBv2](./elb.md) — where a service registers its tasks as targets
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/Welcome.html)

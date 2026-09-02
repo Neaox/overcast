@@ -1,6 +1,6 @@
 ---
 title: "SES — Simple Email Service"
-description: "Send mail with the v1 or v2 API and read it in the console's Inbox. Nothing leaves the machine, and every identity is verified the moment it is created."
+description: "Quick start, what lands in the console Inbox and how to read it, the v1 and v2 sending surface, and the verification, quotas and configuration sets that are skipped."
 section: "Service Reference"
 tags:
   - docs
@@ -20,7 +20,7 @@ instead of a mailbox. Nothing is delivered off the machine.
 
 ## Quick start
 
-```sh
+```bash
 export AWS_ENDPOINT_URL=http://localhost:4566
 
 aws ses verify-email-identity --email-address app@example.com
@@ -63,14 +63,16 @@ real server instead of capturing.
 
 ## Differences from AWS
 
-| Behaviour            | On AWS                                                | Here                                                     |
-| -------------------- | ----------------------------------------------------- | ---------------------------------------------------------- |
-| Delivery             | The message reaches the recipient                     | Captured in the Inbox; nothing is sent                     |
-| Identity verification | A DNS or email round-trip, then `Pending` → `Success` | Auto-verified; `GetIdentityVerificationAttributes` always says `Success` |
-| Unverified senders   | `MessageRejected`                                     | Accepted — the sending identity is not checked             |
-| Sandbox and quotas   | Enforced; `GetSendQuota` reports real limits          | Unlimited quota, empty send statistics                     |
-| DKIM, MAIL FROM, notification topics | Configurable per identity             | Not implemented — `501 Not Implemented`                     |
-| Configuration sets and receipt rules | Full API                              | Not implemented — `501 Not Implemented`                     |
+| Area                                 | On AWS                                                | Overcast                                                                 |
+| ------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| Delivery                             | The message reaches the recipient                     | Captured in the Inbox; nothing is sent                                   |
+| Identity verification                | A DNS or email round-trip, then `Pending` → `Success` | Auto-verified; `GetIdentityVerificationAttributes` always says `Success` |
+| Unverified senders                   | `MessageRejected`                                     | Accepted — the sending identity is not checked                           |
+| Sandbox and quotas                   | Enforced; `GetSendQuota` reports real limits          | Unlimited quota, empty send statistics                                   |
+| DKIM, MAIL FROM, notification topics | Configurable per identity                             | Not implemented — `501 Not Implemented`                                  |
+| Configuration sets and receipt rules | Full API                                              | Not implemented — `501 Not Implemented`                                  |
+
+## Gotchas
 
 > [!NOTE]
 > The console's SES page manages identities only. Sent mail is in the Inbox,
@@ -87,8 +89,8 @@ Per-operation status, notes and AWS API links: [SES operations](ses/operations.m
 
 ## Related
 
-- [AWS API reference](https://docs.aws.amazon.com/ses/latest/APIReference/Welcome.html)
-- [SNS](sns.md) — email, SMS and webhook subscriptions land in the same Inbox
-- [Cognito](cognito.md) — user pool mail lands there too
-- [All service pages](README.md)
+- [SNS](./sns.md) — email, SMS and webhook subscriptions land in the same Inbox
+- [Cognito](./cognito.md) — user pool mail lands there too
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/ses/latest/APIReference/Welcome.html)

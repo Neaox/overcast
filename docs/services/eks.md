@@ -1,6 +1,6 @@
 ---
 title: "EKS — Amazon Elastic Kubernetes Service"
-description: "EKS control-plane metadata by default, or a real k3s control plane per cluster with OVERCAST_EKS_MODE=live. Nodegroups never start compute in either mode."
+description: "Quick start, the control-plane coverage in both modes, what OVERCAST_EKS_MODE=live provisions with k3s, and why nodegroups never start worker compute."
 section: "Service Reference"
 tags:
   - docs
@@ -31,7 +31,7 @@ aws eks describe-cluster --name dev --query 'cluster.status'
 In the default `mock` mode the cluster is `ACTIVE` immediately, with synthetic
 endpoint and CA fields. Set `OVERCAST_EKS_MODE=live` to have `CreateCluster`
 launch a k3s control-plane container instead — see
-[Live mode](eks/limitations.md).
+[Live mode](./eks/limitations.md).
 
 ## What works
 
@@ -46,15 +46,15 @@ launch a k3s control-plane container instead — see
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Worker compute | None. Nodegroups and Fargate profiles are metadata in both modes. | Real EC2 and Fargate capacity |
-| Control plane | Absent in `mock`; k3s in `live` | Managed Kubernetes |
-| IAM, access policies, pod identity | Stored, never enforced | Enforced |
-| Cluster records across modes | A `mock`-created cluster is refused with `501` by nearly every live-mode operation | Not applicable |
+| Area                               | On AWS                        | Overcast                                                                           |
+| ---------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
+| Worker compute                     | Real EC2 and Fargate capacity | None. Nodegroups and Fargate profiles are metadata in both modes.                  |
+| Control plane                      | Managed Kubernetes            | Absent in `mock`; k3s in `live`                                                    |
+| IAM, access policies, pod identity | Enforced                      | Stored, never enforced                                                             |
+| Cluster records across modes       | Not applicable                | A `mock`-created cluster is refused with `501` by nearly every live-mode operation |
 
 The full mode-boundary rules, the failure vocabulary and the live-mode non-goals
-are in [Limitations](eks/limitations.md).
+are in [Limitations](./eks/limitations.md).
 
 ## Gotchas
 
@@ -80,7 +80,8 @@ Per-operation status, notes and AWS API links: [EKS operations](eks/operations.m
 
 ## Related
 
-- [Limitations](eks/limitations.md) — live mode, mode boundaries, non-goals
+- [EKS limitations](./eks/limitations.md) — live mode, mode boundaries, non-goals
 - [ECS](./ecs.md) — the container service that does run real tasks
-- [All service pages](README.md)
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/eks/latest/APIReference/Welcome.html)

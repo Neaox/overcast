@@ -1,6 +1,6 @@
 ---
 title: "EventBridge — Amazon EventBridge"
-description: "Event buses, rules and targets, with matched events delivered in-process to eight target types. Event patterns match on exact values only."
+description: "Quick start, the eight target types delivery reaches, input shaping, retries and dead-lettering, and why a content-filtering event pattern never matches."
 section: "Service Reference"
 tags:
   - docs
@@ -55,14 +55,14 @@ in-memory ring that does not survive a restart.
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| Event patterns | Exact value matching only | `prefix`, `suffix`, `numeric`, `anything-but`, `exists`, `cidr`, `wildcard` |
-| Target types | Eight; anything else is refused by `PutTargets` | ~20 |
-| Retry timing | Immediate, capped at 5 retries | Exponential backoff over up to 24 hours |
-| Bus-to-bus forwarding | Nested in-process call, capped at 4 hops | Independent delivery, no hop budget |
-| Archives, replay, API destinations | Not implemented | Supported |
-| Service-originated events | Six publishers | Substantially more |
+| Area                               | On AWS                                                                      | Overcast                                        |
+| ---------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------- |
+| Event patterns                     | `prefix`, `suffix`, `numeric`, `anything-but`, `exists`, `cidr`, `wildcard` | Exact value matching only                       |
+| Target types                       | ~20                                                                         | Eight; anything else is refused by `PutTargets` |
+| Retry timing                       | Exponential backoff over up to 24 hours                                     | Immediate, capped at 5 retries                  |
+| Bus-to-bus forwarding              | Independent delivery, no hop budget                                         | Nested in-process call, capped at 4 hops        |
+| Archives, replay, API destinations | Supported                                                                   | Not implemented                                 |
+| Service-originated events          | Substantially more                                                          | Six publishers                                  |
 
 A target ARN naming an unsupported service comes back in `PutTargets`'s
 `FailedEntries` with `ErrorCode: UnsupportedTargetType`. That is deliberately
@@ -96,6 +96,7 @@ Per-operation status, notes and AWS API links: [EventBridge operations](eventbri
 
 - [Scheduler](./scheduler.md) — the same target dispatcher, on a clock
 - [Pipes](./pipes.md) — point-to-point source → target wiring
-- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
+- [Step Functions](./stepfunctions.md) — one of the eight target types
+- [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
+- [AWS API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/Welcome.html)

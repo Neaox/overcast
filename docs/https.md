@@ -1,6 +1,6 @@
 ---
 title: "HTTPS and HTTP/2"
-description: "Serve the API and web console over browser-trusted HTTPS with two commands — unlocking HTTP/2 so the console stays responsive under load."
+description: "Two-command TLS setup, the Docker and WSL arrangements that keep a trust install durable, what HTTP/2 fixes in the web console, and how to install the CA by hand."
 section: "Networking"
 tags:
   - docs
@@ -133,8 +133,8 @@ volumes:
   overcast-ca:
 ```
 
-Both images work the same way: the **console** image serves the web UI on
-4567 and the API on 4566 over TLS + HTTP/2; the **slim** image has no web UI
+Both images work the same way: the **console** image serves the web console on
+4567 and the API on 4566 over TLS + HTTP/2; the **slim** image has no web console
 but its API listener does TLS + HTTP/2 identically (skip the `4567` port
 mapping). Both images' health checks handle TLS.
 
@@ -170,7 +170,7 @@ answers TLS and retries over https (unverified for this one bootstrap fetch;
 the payload is validated as a CA certificate, and the endpoint must be
 loopback — see below) — it just costs you a confusing line in the log. The
 daemon logs the correct command at startup when it detects it is
-containerized.
+containerised.
 
 How the `--endpoint` flow works, precisely:
 
@@ -376,7 +376,7 @@ Overcast at any cert/key pair (mkcert output, a corporate-issued cert, …):
 OVERCAST_TLS_CERT=/certs/cert.pem OVERCAST_TLS_KEY=/certs/key.pem overcast serve
 ```
 
-This serves both the API and the web UI, exactly like `auto` mode. Put the
+This serves both the API and the web console, exactly like `auto` mode. Put the
 full chain in the cert file if a private CA issued it — the web console's
 backend verifies against that file plus the system roots.
 `OVERCAST_TLS=auto` and `OVERCAST_TLS_CERT`/`KEY` are mutually exclusive.

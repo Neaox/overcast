@@ -1,6 +1,6 @@
 ---
 title: "CloudFormation — AWS CloudFormation"
-description: "Stack lifecycle, change sets and real resource provisioning through the emulated services — the entry point for CDK and IaC-driven deployments."
+description: "Quick start, template and intrinsic coverage, the stack lifecycle and change sets, per-resource drift on update, and where an Overcast-prefixed status reason comes from."
 section: "Service Reference"
 tags:
   - cloudformation
@@ -46,7 +46,7 @@ aws cloudformation describe-stacks --stack-name demo --query 'Stacks[0].Outputs'
 | Change sets | Create, describe, execute and list. `ExecuteChangeSet` advances `ExecutionStatus` to `EXECUTE_COMPLETE`/`EXECUTE_FAILED` when the stack reaches a terminal status. |
 | Updates | Per-resource drift by hash of the resolved properties. Unchanged resources are skipped; changed ones are updated in place where the handler supports it, and replaced otherwise. |
 | Rollback | Automatic on failure, plus `RollbackStack` and `ContinueUpdateRollback` (including `ResourcesToSkip`, with AWS's nested `Stack.Logical` paths). An update rollback restores the template, parameters and tags as well as the resources. |
-| Resources that wait | Twelve types stabilize before completing — RDS instances and clusters, ECS services, three ElastiCache types, MSK, EKS, three EFS types and Lambda functions — so `CREATE_COMPLETE` means settled, not merely accepted. |
+| Resources that wait | Twelve types stabilise before completing — RDS instances and clusters, ECS services, three ElastiCache types, MSK, EKS, three EFS types and Lambda functions — so `CREATE_COMPLETE` means settled, not merely accepted. |
 | Nested stacks and custom resources | `AWS::CloudFormation::Stack` fetches and provisions the child synchronously; `Custom::*` invokes the Lambda named by `ServiceToken` and reads back `PhysicalResourceId` and `Data`. |
 | Cross-stack references | `Fn::ImportValue` resolves exports from other active stacks in the same region; `ListExports` and `ListImports` return the index. |
 
@@ -58,20 +58,20 @@ Intrinsics: `Ref`, `Fn::Sub`, `Fn::Join`, `Fn::Select`, `Fn::GetAtt`, `Fn::If`,
 
 ## Differences from AWS
 
-| Area | Overcast | AWS |
-| --- | --- | --- |
-| `AWS::NoValue` | Substitutes the empty string | Removes the property |
-| `{{resolve:s3:...}}` | Not resolved; fails the resource | Resolved |
-| SSM dynamic-reference versions | An explicit version resolves to the current value, with a warning | Version-selected |
-| `ssm-secure` | Accepted in any resource property except a custom resource's | Restricted to an enumerated list of properties |
-| Unknown resource types | Accepted with a synthetic stub ID, a warning, and an `Overcast:`-prefixed `ResourceStatusReason` | Rejected |
-| `DeleteStack`'s `RetainResources` | Not implemented | Supported |
-| `DeletionPolicy: Snapshot` | Treated as `Retain`; no snapshot is taken | Snapshots |
-| Drift detection, StackSets, stack policies, imports | Not implemented | Supported |
+| Area                                                | On AWS                                         | Overcast                                                                                         |
+| --------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `AWS::NoValue`                                      | Removes the property                           | Substitutes the empty string                                                                     |
+| `{{resolve:s3:...}}`                                | Resolved                                       | Not resolved; fails the resource                                                                 |
+| SSM dynamic-reference versions                      | Version-selected                               | An explicit version resolves to the current value, with a warning                                |
+| `ssm-secure`                                        | Restricted to an enumerated list of properties | Accepted in any resource property except a custom resource's                                     |
+| Unknown resource types                              | Rejected                                       | Accepted with a synthetic stub ID, a warning, and an `Overcast:`-prefixed `ResourceStatusReason` |
+| `DeleteStack`'s `RetainResources`                   | Supported                                      | Not implemented                                                                                  |
+| `DeletionPolicy: Snapshot`                          | Snapshots                                      | Treated as `Retain`; no snapshot is taken                                                        |
+| Drift detection, StackSets, stack policies, imports | Supported                                      | Not implemented                                                                                  |
 
 The status machine, what an update rollback puts back, what happens when a
 teardown fails, and how `DeletionPolicy` interacts with each of them are in
-[Limitations](cloudformation/limitations.md).
+[Limitations](./cloudformation/limitations.md).
 
 ## Gotchas
 
@@ -101,9 +101,9 @@ Per-operation status, notes and AWS API links: [CloudFormation operations](cloud
 
 ## Related
 
-- [Limitations](cloudformation/limitations.md) — status machine, rollback, teardown, dynamic references
-- [Troubleshooting](cloudformation/troubleshooting.md) — stuck stacks and failed deploys
+- [CloudFormation limitations](./cloudformation/limitations.md) — status machine, rollback, teardown, dynamic references
+- [CloudFormation troubleshooting](./cloudformation/troubleshooting.md) — stuck stacks and failed deploys
+- [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [CDK](../cdk.md) — the supported resource types and how to point CDK here
 - [AWS API reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

@@ -1,6 +1,6 @@
 ---
 title: "Performance and memory guide"
-description: "Overcast aims to be fast and lean: sub-50ms startup, under 15 MiB at idle, and low per-request overhead. CI pipelines should not wait for the emulator."
+description: "Startup and memory targets with per-backend measurements, storage flush tuning, why a Docker Desktop bind mount is the wrong home for /data, and where client-side wall time goes."
 section: "Storage & Performance"
 tags:
   - docs
@@ -20,7 +20,7 @@ and low per-request overhead. CI pipelines should not wait for the emulator.
 | ----------------------------------------- | --------------------------------------------- |
 | Startup time                              | < 50ms (currently ~22ms p50, hybrid backend) |
 | Idle memory                               | < 15 MiB                                     |
-| Docker image (slim)                       | < 40 MiB — Go binary only, no web UI         |
+| Docker image (slim)                       | < 40 MiB — Go binary only, no web console         |
 | Docker image (console)                    | < 100 MiB — includes web management console  |
 | Request overhead (emulator-added latency) | < 1ms for simple operations                  |
 
@@ -109,7 +109,7 @@ host, export it explicitly instead of bind-mounting it.
 
 The ideal setup with `docker run`:
 
-```sh
+```bash
 docker volume create overcast-data
 docker run -d --name overcast \
   -p 4566:4566 -p 4567:4567 \
@@ -138,7 +138,7 @@ volumes:
 When you need the state on the host (backup, inspection), export it
 explicitly rather than bind-mounting:
 
-```sh
+```bash
 docker cp overcast:/data ./overcast-data-backup
 ```
 
@@ -227,12 +227,12 @@ exceeded shutdown timeout` log line), not because data is at risk.
 
 ---
 
-## Client-perceived latency — where "overcast feels slow" actually goes
+## Client-perceived latency — where "Overcast feels slow" actually goes
 
 Fast request handling does not guarantee a fast-*feeling* workflow.
-When a tool like the CDK drives overcast, most of the wall-clock time
+When a tool like the CDK drives Overcast, most of the wall-clock time
 the user experiences is spent in the client, not the emulator. Before
-assuming overcast itself is slow, establish which side owns the time —
+assuming Overcast itself is slow, establish which side owns the time —
 the request log (every real AWS API call is logged at `INFO` by default —
 see [`OVERCAST_LOG_LEVEL`](./configuration.md#log-levels)) with
 `docker logs --timestamps` shows every request's duration and, by omission,
@@ -240,16 +240,16 @@ every gap where the emulator was idle.
 
 Worked example, measured 2026-07-19 (Docker Desktop on Windows 11 /
 WSL2, hybrid backend; a CDK v2 bootstrap-and-deploy of four application
-stacks that took ~45 s wall-clock while every overcast response completed
+stacks that took ~45 s wall-clock while every Overcast response completed
 in <200 ms):
 
 | Segment                      | Wall time | Owner    | Notes                                                                 |
 | ----------------------------- | --------- | -------- | --------------------------------------------------------------------- |
-| CDK CLI (Node.js) startup    | ~5 s      | client   | before the first request reaches overcast                             |
+| CDK CLI (Node.js) startup    | ~5 s      | client   | before the first request reaches Overcast                             |
 | Toolkit stack check/deploy   | ~5.4 s    | client   | dominated by CDK poll intervals; responses <200 ms                    |
 | `cdk synth`                  | ~8.4 s    | client   | zero requests hit the emulator during this gap                        |
 | 4 × app stack deploy         | ~21 s     | client   | ~5.1 s per stack = one SDK waiter `minDelay`; see below               |
-| Emulator processing (total)  | <2 s      | overcast | sum of all request durations across the entire window                 |
+| Emulator processing (total)  | <2 s      | Overcast | sum of all request durations across the entire window                 |
 
 **The SDK-waiter tax.** Stack provisioning is asynchronous: `CreateStack`
 / `ExecuteChangeSet` return `*_IN_PROGRESS` and a goroutine provisions
@@ -267,4 +267,4 @@ waiter's first check on a fast stack already sees the terminal status — see
 **What the emulator cannot fix:** CDK CLI startup, `cdk synth`, and any
 other client-side work show up as request-log silence. Report those
 upstream or restructure the workflow (e.g. `cdk deploy --concurrency`);
-no overcast change will touch them.
+no Overcast change will touch them.

@@ -1,6 +1,6 @@
 ---
-title: "DynamoDB"
-description: "Tables, items, expressions, indexes and transactions, stored in DynamoDB's own wire format. Tables are region-scoped, GSIs are immediately consistent, and PartiQL is out of scope."
+title: "DynamoDB — Amazon DynamoDB"
+description: "Quick start, item, expression, index and transaction coverage, the metrics recorded, and the divergences: immediately consistent GSIs, swept TTL, no PartiQL, no global tables."
 section: "Service Reference"
 tags:
   - docs
@@ -8,7 +8,7 @@ tags:
   - services
 ---
 
-# DynamoDB
+# DynamoDB — Amazon DynamoDB
 
 Full item, expression, index and transaction support, with tables scoped to a
 region exactly as on AWS.
@@ -41,20 +41,20 @@ aws dynamodb get-item --table-name orders --key '{"id": {"S": "o-1"}}'
 | Transactions | `TransactGetItems` and `TransactWriteItems`, all-or-nothing, with `ConditionCheck` |
 | Billing modes | An omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and every GSI; `PAY_PER_REQUEST` rejects it |
 | Data types | Every attribute type; items are stored in DynamoDB's JSON wire format, so nothing is lost to a round trip |
-| Streams | `StreamSpecification` on create and update — see [DynamoDB Streams](dynamodbstreams.md) |
+| Streams | `StreamSpecification` on create and update — see [DynamoDB Streams](./dynamodbstreams.md) |
 | Metrics | `SuccessfulRequestLatency`, `ConsumedRead`/`WriteCapacityUnits` and `UserErrors`/`SystemErrors` are recorded to CloudWatch, transactional operations at AWS's 2× weighting |
 | Protocols | AWS JSON 1.0 (`X-Amz-Target: DynamoDB_20120810.<Operation>`) and Smithy RPC v2 CBOR |
 
 ## Differences from AWS
 
-| Difference | Detail |
-| --- | --- |
+| Area                            | Overcast                                                                                                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GSIs are immediately consistent | An item is visible to a GSI query the instant it is written. `ConsistentRead=true` with an `IndexName` is still rejected, exactly as AWS rejects it, so code cannot come to depend on a read mode AWS will not serve |
-| TTL is swept, not lazy | Expired items are deleted by an hourly sweeper rather than being hidden on read, so an expired item can still be returned |
-| No PartiQL | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` are out of scope |
-| No global tables | Overcast emulates one region per request; the global-table operations answer `501` |
-| No backups | Backups, exports, imports, restores, resource policies and contributor insights answer `501` |
-| Throughput is not enforced | Provisioned capacity is recorded and reported; nothing is throttled |
+| TTL is swept, not lazy          | Expired items are deleted by an hourly sweeper rather than being hidden on read, so an expired item can still be returned                                                                                            |
+| No PartiQL                      | `ExecuteStatement`, `ExecuteTransaction` and `BatchExecuteStatement` are out of scope                                                                                                                                |
+| No global tables                | Overcast emulates one region per request; the global-table operations answer `501`                                                                                                                                   |
+| No backups                      | Backups, exports, imports, restores, resource policies and contributor insights answer `501`                                                                                                                         |
+| Throughput is not enforced      | Provisioned capacity is recorded and reported; nothing is throttled                                                                                                                                                  |
 
 Unimplemented-but-modelled operations answer `501 Not Implemented` with
 `x-emulator-unsupported: true`, in DynamoDB's own error envelope. An
@@ -82,8 +82,8 @@ Per-operation status, notes and AWS API links: [DynamoDB operations](dynamodb/op
 
 ## Related
 
-- [DynamoDB Streams](dynamodbstreams.md)
+- [DynamoDB Streams](./dynamodbstreams.md)
+- [All service pages](./README.md)
+- [Service names and state overrides](../configuration.md#service-names)
 - [Storage and persistence](../storage.md#what-survives-a-restart-or-crash) — where table data lives between restarts
 - [AWS API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/Welcome.html)
-- [All service pages](README.md)
-- [Service names and state overrides](../configuration.md#service-names)

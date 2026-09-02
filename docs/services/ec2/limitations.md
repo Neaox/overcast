@@ -133,7 +133,7 @@ and on `/_overcast/debug/ec2/vpcs` alongside `DockerNetworkID` and
 Every `Describe*` refuses a filter name it does not implement, with AWS's
 `InvalidParameterValue: The filter '<name>' is invalid`. The error names every
 filter that operation does support, and the same sets are in the Notes column of
-the [operations table](operations.md).
+the [operations table](./operations.md).
 
 That is stricter than AWS in one direction: AWS refuses a name it does not
 model, and Overcast additionally refuses a name AWS models but Overcast has not
@@ -149,7 +149,7 @@ refused, because real EC2 refuses it too.
 A filter **value** is a pattern, as on AWS: `*` stands for any run of characters
 including none, `?` for exactly one, and a backslash escapes either.
 
-```sh
+```bash
 aws ec2 describe-vpcs    --filters 'Name=tag:Name,Values=overcast-*'
 aws ec2 describe-images  --filters 'Name=name,Values=Amazon Linux 2*'
 aws ec2 describe-subnets --filters 'Name=availability-zone,Values=us-east-1?'
@@ -161,6 +161,6 @@ Filters are AND-ed with each other, values within one are OR-ed, and a
 ## Related
 
 - [EC2 / VPC](../ec2.md) — quick start and what works
-- [EC2 / VPC operations](operations.md) — per-operation status and supported filters
+- [EC2 / VPC operations](./operations.md) — per-operation status and supported filters
 - [Local VPCs for CDK](../../cdk/local-vpc.md)
 - [Configuration reference](../../configuration.md)
