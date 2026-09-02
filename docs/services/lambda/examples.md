@@ -1,6 +1,6 @@
 ---
 title: "Lambda examples"
-description: "Hot-reloading local source into a running function, supplying layers from a cache or from real AWS, and running extensions that call back into Overcast."
+description: "Hot-reloading local source into a running function, deploying a container image through the emulated ECR, supplying layers from a cache or from real AWS, and running extensions that call back into Overcast."
 section: "Service Reference"
 tags:
   - docs
@@ -120,6 +120,64 @@ same size are one change, and the second is not seen until something else change
 
 If none of that suits your project — a very large tree, a slow file share, or
 dependencies you edit directly — use `cdk watch` instead.
+
+## Container images
+
+A `PackageType=Image` function runs from an image you pushed to Overcast's
+[ECR](../ecr.md). Build on an AWS Lambda base image exactly as you would for real
+AWS — the base image's Runtime Interface Client is what Overcast drives.
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+
+cat > Dockerfile <<'EOF'
+FROM public.ecr.aws/lambda/nodejs:20
+COPY app.js ${LAMBDA_TASK_ROOT}/
+CMD ["app.handler"]
+EOF
+
+URI=$(aws ecr create-repository --repository-name my-fn \
+  --query 'repository.repositoryUri' --output text)   # localhost:4510/000000000000/my-fn
+
+docker build -t my-fn .
+aws ecr get-login-password | docker login --username AWS --password-stdin "${URI%%/*}"
+docker tag my-fn "$URI:v1"
+docker push "$URI:v1"
+
+aws lambda create-function --function-name my-fn --package-type Image \
+  --role arn:aws:iam::000000000000:role/lambda-role \
+  --code ImageUri=000000000000.dkr.ecr.us-east-1.amazonaws.com/my-fn:v1
+
+aws lambda invoke --function-name my-fn --payload '{}' \
+  --cli-binary-format raw-in-base64-out out.json && cat out.json
+```
+
+**Push to `repositoryUri`, deploy the `amazonaws.com` URI.** Both addresses name
+the same repository: the first is where the Docker daemon can reach the registry,
+the second is what AWS and CDK write, and Overcast resolves it back to the
+registry serving it. Either form works in `ImageUri` — the `amazonaws.com` one is
+what a template that also deploys to AWS will contain.
+
+`ImageConfig` overrides the image's own `ENTRYPOINT`, `CMD` and `WORKDIR`, and
+`update-function-code --image-uri` moves the function onto a new tag or digest:
+
+```bash
+aws lambda update-function-configuration --function-name my-fn \
+  --image-config 'Command=["other.handler"]'
+
+aws lambda update-function-code --function-name my-fn \
+  --image-uri 000000000000.dkr.ecr.us-east-1.amazonaws.com/my-fn:v2
+```
+
+> [!NOTE]
+> `aws lambda wait function-updated` never returns, because Overcast does not
+> report `LastUpdateStatus`. The update is already applied when
+> `UpdateFunctionCode` answers, so drop the wait or poll `State` instead.
+
+CDK's `DockerImageFunction` with `DockerImageCode.fromImageAsset` needs none of
+this by hand: `cdk deploy` builds the image, pushes it to the repository
+`cdk bootstrap` created, and writes the `amazonaws.com` URI itself. See
+[CDK § Container assets](../../cdk.md#container-assets-are-served-from-overcast-s-own-registry).
 
 ## Layers
 

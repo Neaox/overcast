@@ -1445,6 +1445,7 @@ func (ci *containerInstance) AwaitReady(ctx context.Context) error {
 		return nil
 	case exitCode := <-exitCh:
 		ci.healthy = false
+		ci.logInitExit(exitCode)
 		return fmt.Errorf("lambda container exited during init (exit code %s)", exitCode)
 	case <-ctx.Done():
 		// Only the budget running out is a fault worth explaining. The caller
@@ -1494,12 +1495,39 @@ func (ci *containerInstance) logInitTimeout() {
 	if connections == 0 {
 		msg = "lambda INIT timed out — the container never reached its Runtime API endpoint; it is either still initialising or cannot route back to this host"
 	}
+	ci.logger.Warn(msg, ci.initDiagnosticFields()...)
+}
 
+// logInitExit explains an execution environment whose container died before it
+// was ready — the other way INIT ends, and until it was given this the only one
+// with no account of itself.
+//
+// The caller gets "lambda container exited during init (exit code 139)", which
+// is a number and a function name. Everything that would identify the cause —
+// what the container printed, whether it ever reached its Runtime API endpoint
+// — is already held here, and was being dropped on the floor because only the
+// timeout branch asked for it. A container that cannot route back to this host
+// is the case that costs most: its own [overcast-init] output names the address
+// and the i/o timeout, but that output travels over the very connection that is
+// broken, so the daemon's copy is the only place it survives — and nothing was
+// reading it.
+func (ci *containerInstance) logInitExit(exitCode string) {
+	if ci.logger == nil {
+		return
+	}
+	fields := append(ci.initDiagnosticFields(), zap.String("exit_code", exitCode))
+	ci.logger.Warn("lambda container exited during INIT", fields...)
+}
+
+// initDiagnosticFields is the evidence both INIT failures are explained with:
+// which environment, where its container was told to call back, whether
+// anything ever arrived there, and what the container printed.
+func (ci *containerInstance) initDiagnosticFields() []zap.Field {
 	fields := []zap.Field{
 		zap.String("function", ci.functionName),
 		zap.String("container_ip", ci.containerIP),
 		zap.String("runtime_api", ci.rapiListener.Addr()),
-		zap.Int64("runtime_api_connections", connections),
+		zap.Int64("runtime_api_connections", ci.rapiListener.Accepted()),
 	}
 	if ci.id != "" {
 		fields = append(fields, zap.String("container", shortContainerID(ci.id)))
@@ -1517,7 +1545,7 @@ func (ci *containerInstance) logInitTimeout() {
 	default:
 		fields = append(fields, zap.String("container_output", output))
 	}
-	ci.logger.Warn(msg, fields...)
+	return fields
 }
 
 // initOutput is a bounded tail of what the container printed before its first
