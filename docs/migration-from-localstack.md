@@ -54,16 +54,35 @@ Overcast spelling at your leisure, or never.
 | `DATA_DIR`                            | `OVERCAST_DATA_DIR`                 | Alias. Counts as an explicit data dir for `auto`     |
 | `DEFAULT_REGION`                      | `OVERCAST_DEFAULT_REGION`           | Alias                                                |
 | `DEBUG=1`                             | `OVERCAST_LOG_LEVEL=debug`          | Alias. `DEBUG=0` is a no-op                          |
+| `LS_LOG`                              | `OVERCAST_LOG_LEVEL`                | Alias. `trace-internal` → `trace`, `warning` → `warn` |
 | `PERSISTENCE=1`                       | `OVERCAST_STATE=persistent`         | Alias. `PERSISTENCE=0` is a no-op                    |
+| `ENFORCE_IAM`                         | `OVERCAST_ENFORCE_IAM`              | Alias                                                |
 | `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT`  | `LAMBDA_INIT_TIMEOUT_SECONDS`       | Alias                                                |
+| `LAMBDA_REMOVE_CONTAINERS=0`          | `LAMBDA_KEEP_CONTAINERS=true`       | Alias, inverted. Same default either way             |
+| `DNS_ADDRESS=0`                       | `OVERCAST_DNS=false`                | Alias. A bind address is a no-op                     |
 | `DOCKER_HOST`                         | `LAMBDA_DOCKER_SOCKET`              | Read directly; `LAMBDA_DOCKER_SOCKET` still wins     |
-| `SERVICES`                            | —                                   | Recognised, no effect: every service always runs     |
-| `LOCALSTACK_API_KEY` / `_AUTH_TOKEN`  | —                                   | Recognised, no effect: nothing is auth-gated         |
+
+Everything else LocalStack documents is **recognised and inert**: never
+rejected, never silently missed, and named in a startup log line with the
+reason it does nothing — so you can drop it once you have seen it.
+
+| Recognised, no effect                                     | Why                                             |
+| --------------------------------------------------------- | ----------------------------------------------- |
+| `SERVICES`, `EAGER_SERVICE_LOADING`                       | Every service is always loaded                  |
+| `LOCALSTACK_AUTH_TOKEN`, `LOCALSTACK_API_KEY`, `ACTIVATE_PRO` | Nothing here is auth-gated                  |
+| `SQS_ENDPOINT_STRATEGY`                                   | Queue URLs follow the caller — see below        |
+| `S3_SKIP_SIGNATURE_VALIDATION`                            | Signature checking is server-wide, not S3-only  |
+| `IAM_SOFT_MODE`                                           | Policies are stored, never enforced, by default |
+| `DISABLE_CORS_CHECKS` and the other CORS knobs            | CORS is already unconditionally permissive      |
+| `LAMBDA_DOCKER_NETWORK`                                   | Adjacent concept, opposite default — see below  |
+| `LAMBDA_KEEPALIVE_MS`                                     | Idle-container lifetime is a fixed 15 minutes   |
+| `LAMBDA_DOCKER_FLAGS`, `LAMBDA_RUNTIME_EXECUTOR`          | No flag pass-through; Docker is the only executor |
+| `SNAPSHOT_*`                                              | Persistence here is incremental, not snapshot-based |
+| `PROVIDER_OVERRIDE_*`                                     | One implementation per service                  |
+| `MAIN_CONTAINER_NAME`, `DISABLE_EVENTS`, `SKIP_SSL_CERT_DOWNLOAD`, `ALLOW_NONSTANDARD_REGIONS`, `ENABLE_CONFIG_UPDATES` | Nothing to name, send, download, allow or update |
 
 The mappings came out of a full compatibility audit tracked in
-[#1190](https://github.com/overcast-sh/overcast/issues/1190). The two
-"recognised, no effect" rows are never rejected — a startup log line names them
-as seen, so you can drop them once you have noticed.
+[#1190](https://github.com/overcast-sh/overcast/issues/1190).
 
 ### When an alias and its Overcast name disagree
 
@@ -81,18 +100,7 @@ rather than user intent — so `DATA_DIR` overrides it instead of conflicting wi
 it, and a LocalStack `environment:` block carried over unchanged never trips a
 conflict against something the image itself shipped.
 
-### Not aliased
-
-These were checked and deliberately left unmapped — half-mapping them would be a
-false-friend trap:
-
-| LocalStack                                  | Why not                                                          |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| `LAMBDA_DOCKER_NETWORK`                     | Adjacent concept, opposite default — see below                    |
-| `LAMBDA_KEEPALIVE_MS`                       | Idle-container lifetime is a fixed 15 minutes here, not a setting |
-| `DISABLE_CORS_CHECKS` and the other CORS knobs | CORS is already unconditionally permissive; nothing to relax   |
-| `EAGER_SERVICE_LOADING`                     | No lazy loading to make eager: every service is always loaded     |
-| `SNAPSHOT_*`                                | Persistence here is incremental, not snapshot-based               |
+### Why `LAMBDA_DOCKER_NETWORK` is inert rather than aliased
 
 `LAMBDA_DOCKER_NETWORK` is the one worth a sentence. It names a network Lambda
 containers join, defaulting to Docker's built-in `bridge`; Overcast's

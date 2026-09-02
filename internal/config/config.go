@@ -1857,8 +1857,17 @@ func Load() (*Config, error) {
 	// SigV4 validation
 	cfg.SigV4Validate = envBool("OVERCAST_SIGV4_VALIDATE", false)
 
-	// Optional IAM enforcement middleware (default off).
-	cfg.EnforceIAM = envBool("OVERCAST_ENFORCE_IAM", false)
+	// Optional IAM enforcement middleware (default off). LocalStack's
+	// ENFORCE_IAM is the same switch under another name — see enforceIAMAlias.
+	enforceIAMRaw, enforceIAMAliasSource, err := resolveStringAlias(
+		enforceIAMAlias, canonicalBool(os.Getenv("OVERCAST_ENFORCE_IAM")), "OVERCAST_ENFORCE_IAM")
+	if err != nil {
+		return nil, err
+	}
+	cfg.EnforceIAM = parseBoolOr(enforceIAMRaw, false)
+	if enforceIAMAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_ENFORCE_IAM"] = enforceIAMAliasSource
+	}
 
 	// Optional API Gateway usage-plan throttle/quota rejection (default off:
 	// limits are measured and reported, but never turned into a 429).
@@ -1884,14 +1893,26 @@ func Load() (*Config, error) {
 		cfg.StepFunctionsExecutionTimeout = time.Second
 	}
 
-	// Logging — LocalStack's DEBUG=1 (#1190) maps to OVERCAST_LOG_LEVEL=debug.
+	// Logging — LocalStack's DEBUG=1 (#1190) maps to OVERCAST_LOG_LEVEL=debug,
+	// and LS_LOG names a level outright. LS_LOG is resolved second because
+	// LocalStack documents it as overriding DEBUG; here that means the two
+	// disagreeing (DEBUG=1 with LS_LOG=error) fails naming both, rather than
+	// one silently winning.
 	logLevelRaw, debugAliasSource, err := resolveStringAlias(debugLogLevelAlias, os.Getenv("OVERCAST_LOG_LEVEL"), "OVERCAST_LOG_LEVEL")
 	if err != nil {
 		return nil, err
 	}
-	cfg.LogLevel = strings.ToLower(orDefault(logLevelRaw, "info"))
+	logLevelLabel := "OVERCAST_LOG_LEVEL"
 	if debugAliasSource != "" {
-		cfg.LocalStackAliasesUsed["OVERCAST_LOG_LEVEL"] = debugAliasSource
+		logLevelLabel = debugAliasSource
+	}
+	logLevelRaw, lsLogAliasSource, err := resolveStringAlias(lsLogLevelAlias, logLevelRaw, logLevelLabel)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LogLevel = strings.ToLower(orDefault(logLevelRaw, "info"))
+	if source := joinNonEmpty(debugAliasSource, lsLogAliasSource); source != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_LOG_LEVEL"] = source
 	}
 
 	// Shutdown timeout
@@ -1957,7 +1978,17 @@ func Load() (*Config, error) {
 	if lambdaInitAliasSource != "" {
 		cfg.LocalStackAliasesUsed["LAMBDA_INIT_TIMEOUT_SECONDS"] = lambdaInitAliasSource
 	}
-	cfg.LambdaKeepContainers = envBool("LAMBDA_KEEP_CONTAINERS", false)
+	// LocalStack's LAMBDA_REMOVE_CONTAINERS is this switch with the opposite
+	// polarity, and the same default — see lambdaRemoveContainersAlias.
+	keepContainersRaw, keepContainersAliasSource, err := resolveStringAlias(
+		lambdaRemoveContainersAlias, canonicalBool(os.Getenv("LAMBDA_KEEP_CONTAINERS")), "LAMBDA_KEEP_CONTAINERS")
+	if err != nil {
+		return nil, err
+	}
+	cfg.LambdaKeepContainers = parseBoolOr(keepContainersRaw, false)
+	if keepContainersAliasSource != "" {
+		cfg.LocalStackAliasesUsed["LAMBDA_KEEP_CONTAINERS"] = keepContainersAliasSource
+	}
 	cfg.LambdaTarCacheMB = envInt("LAMBDA_TAR_CACHE_MB", 256)
 	if cfg.LambdaTarCacheMB < 0 {
 		cfg.LambdaTarCacheMB = 0
@@ -1979,7 +2010,17 @@ func Load() (*Config, error) {
 	// out of the box a Lambda must be able to reach Overcast by every name
 	// Overcast advertises, including the subdomain forms /etc/hosts cannot
 	// express. Failing to bind is not fatal — see DNSListening.
-	cfg.DNSEnabled = envBool("OVERCAST_DNS", true)
+	// LocalStack's DNS_ADDRESS=0 is the documented way to turn its resolver
+	// off, and maps here — see dnsAddressAlias for why other values do not.
+	dnsEnabledRaw, dnsAliasSource, err := resolveStringAlias(
+		dnsAddressAlias, canonicalBool(os.Getenv("OVERCAST_DNS")), "OVERCAST_DNS")
+	if err != nil {
+		return nil, err
+	}
+	cfg.DNSEnabled = parseBoolOr(dnsEnabledRaw, true)
+	if dnsAliasSource != "" {
+		cfg.LocalStackAliasesUsed["OVERCAST_DNS"] = dnsAliasSource
+	}
 	cfg.DNSPort = envInt("OVERCAST_DNS_PORT", 53)
 
 	// ECS container runtime — defaults fall back to Lambda socket
