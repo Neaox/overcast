@@ -193,6 +193,22 @@ func (s *ec2Store) listVPCs(ctx context.Context) ([]*VPC, *protocol.AWSError) {
 	return vpcs, nil
 }
 
+// vpcsByRegion returns every VPC in the store, grouped by the region it is
+// stored under. The startup reconcile uses it instead of listVPCs: with no
+// request region the context resolves to the default region, and a list made
+// through it silently covers that region alone.
+func (s *ec2Store) vpcsByRegion(ctx context.Context) (map[string][]*VPC, *protocol.AWSError) {
+	regioned, err := serviceutil.ScanRegions[VPC](ctx, s.store, nsVPCs, s.defaultRegion)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	byRegion := make(map[string][]*VPC)
+	for _, r := range regioned {
+		byRegion[r.Region] = append(byRegion[r.Region], r.Value)
+	}
+	return byRegion, nil
+}
+
 func (s *ec2Store) deleteVPC(ctx context.Context, id string) *protocol.AWSError {
 	if _, aerr := s.getVPC(ctx, id); aerr != nil {
 		return aerr

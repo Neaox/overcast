@@ -11,7 +11,6 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
-	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -267,7 +266,7 @@ func (s *recordingStrategy) AllocatePrivateIP(context.Context, *VPC) (string, er
 	return "10.0.0.1", nil
 }
 
-func (s *recordingStrategy) Reconcile(_ context.Context, vpcs []*VPC, _ []docker.NetworkSummary) {
+func (s *recordingStrategy) Reconcile(_ context.Context, vpcs []*VPC, _ *vpcNetworkIndex) {
 	s.reconciled = vpcs
 }
 

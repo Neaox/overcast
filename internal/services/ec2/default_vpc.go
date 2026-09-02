@@ -7,7 +7,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/protocol"
 )
 
@@ -249,7 +248,7 @@ func (g *defaultVPCGuard) AllocatePrivateIP(ctx context.Context, vpc *VPC) (stri
 // backing network instead. Passing one through would have it adopt a labelled
 // EC2 network or create a fresh `overcast-vpc-*` bridge, and either way the
 // record would stop naming the plane its containers are actually on.
-func (g *defaultVPCGuard) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+func (g *defaultVPCGuard) Reconcile(ctx context.Context, vpcs []*VPC, networks *vpcNetworkIndex) {
 	rest := make([]*VPC, 0, len(vpcs))
 	for _, vpc := range vpcs {
 		if vpc == nil || !vpc.IsDefault {
@@ -262,7 +261,7 @@ func (g *defaultVPCGuard) Reconcile(ctx context.Context, vpcs []*VPC, existing [
 			_ = g.h.store.putVPC(ctx, vpc)
 		}
 	}
-	g.inner.Reconcile(ctx, rest, existing)
+	g.inner.Reconcile(ctx, rest, networks)
 }
 
 // OnDelete drops the record and leaves the network. AWS lets you delete a
