@@ -99,7 +99,7 @@ reason it does nothing — so you can drop it once you have seen it.
 | `S3_SKIP_SIGNATURE_VALIDATION`                            | Signature checking is server-wide, not S3-only  |
 | `IAM_SOFT_MODE`                                           | Policies are stored, never enforced, by default |
 | `DISABLE_CORS_CHECKS` and the other CORS knobs            | CORS is already unconditionally permissive      |
-| `LAMBDA_DOCKER_NETWORK`                                   | Adjacent concept, opposite default — see below  |
+| `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK`            | Adjacent concept, opposite default — see below  |
 | `LAMBDA_KEEPALIVE_MS`                                     | Idle-container lifetime is a fixed 15 minutes   |
 | `LAMBDA_DOCKER_FLAGS`, `ECS_DOCKER_FLAGS`, `EC2_DOCKER_FLAGS`, `BATCH_DOCKER_FLAGS`, `LAMBDA_RUNTIME_EXECUTOR` | No flag pass-through; Docker is the only executor |
 | `SNAPSHOT_*`                                              | Persistence here is incremental, not snapshot-based |
@@ -134,6 +134,24 @@ joins so they can reach each other by name. Aliasing them would strip Lambda
 containers of that network the moment a migrated compose file's
 `LAMBDA_DOCKER_NETWORK: bridge` carried over. Set `OVERCAST_NETWORK` directly if
 you deliberately want a non-default network.
+
+`MAIN_DOCKER_NETWORK` is the same concept from LocalStack's other side — the
+network LocalStack itself is on, which it also falls back to for Lambda — and
+is inert here for the same reason.
+
+### One networking behaviour that is not the same
+
+LocalStack never isolates a Docker network, so a Lambda in a VPC with no NAT or
+internet gateway still reaches the internet there. Overcast models that missing
+gateway for real, and on some hosts does so by default — the same call can come
+back `ENETUNREACH`.
+
+Pin `OVERCAST_CONTROL_PLANE_INTERNAL=false` to keep LocalStack's behaviour, or
+read [Control-plane isolation](./networking.md#control-plane-isolation) for what
+it costs either way. It is deliberately a setting rather than something inferred
+from the LocalStack variables you have set: an alias maps a name to a name, and
+a networking behaviour that changes because of an unrelated variable is exactly
+what this setting exists to prevent.
 
 ---
 

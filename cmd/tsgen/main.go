@@ -110,6 +110,7 @@ var manifest = []target{
 	{"internal/router", "EmulationTier", "EmulationTier"},
 	{"internal/docker", "Status", "DockerHealth"},
 	{"internal/docker", "ServiceHealth", "DockerServiceHealth"},
+	{"internal/docker", "NetworkStatus", "DockerNetworkStatus"},
 	{"internal/listenstatus", "Status", "ListenerStatus"},
 	{"internal/listenstatus", "State", "ListenerState"},
 

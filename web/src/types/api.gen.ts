@@ -174,6 +174,15 @@ export type EmulationTier = "full" | "partial" | "inert" | "stub" | "unsupported
 export interface DockerHealth {
   available: boolean
   services: DockerServiceHealth[]
+  /**
+   * Networks is the planes Overcast ensured at startup and the isolation
+   * each ended up with. It is reported because "is the control plane
+   * internal, and why" is a runtime topology fact that decides whether
+   * compute in a gateway-less VPC reaches the internet — and until #1564 the
+   * only way to find out was `docker network inspect` plus a guess at the
+   * reason.
+   */
+  networks?: DockerNetworkStatus[]
   lastEvent?: string
   lastEventAt?: string
 }
@@ -189,6 +198,38 @@ export interface DockerServiceHealth {
   connected: boolean
   error?: string
   lastSeen?: string
+}
+
+/**
+ * NetworkStatus is one plane's isolation as it actually stands, as reported by
+ * /_overcast/health under `docker.networks`.
+ *
+ * Generated from Go `docker.NetworkStatus` (internal/docker/probe.go).
+ */
+export interface DockerNetworkStatus {
+  name: string
+  /**
+   * Internal is what the network *is*, not what this run asked for. Those
+   * differ only in the drift case below, and reporting the ask there would
+   * repeat #1564's original lie in a new place: an engineer reading
+   * `internal: false` while their function gets ENETUNREACH is exactly the
+   * confusion this field exists to end.
+   */
+  internal: boolean
+  /**
+   * Reason names what this run decided and why — "auto: Overcast is
+   * containerised", "OVERCAST_CONTROL_PLANE_INTERNAL=false". Empty for a
+   * plane whose isolation is a constant of the model rather than a decision.
+   */
+  reason?: string
+  /**
+   * Drift is set when the network's actual isolation is not what this run
+   * decided, and says why it could not be applied. Docker never retroactively
+   * applies `--internal`, so a plane created by an older version keeps the
+   * isolation it was born with; Overcast recreates it when nothing is
+   * attached, which leaves this empty. Empty is the normal case.
+   */
+  drift?: string
 }
 
 /**
