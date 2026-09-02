@@ -41,10 +41,15 @@ type vpcNetworkStrategy interface {
 	// container-side consumers can resolve the backing Docker-network address.
 	AllocatePrivateIP(ctx context.Context, vpc *VPC) (string, error)
 
-	// Reconcile synchronises stored VPC state with the set of Docker networks
-	// that actually exist. It is called once per Docker readiness transition
-	// and any time the watcher reconnects, so it must be idempotent.
-	Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary)
+	// Reconcile synchronises one region's stored VPCs with the Docker networks
+	// that actually exist: each record adopts the network that backs it from
+	// the index, and one that has none gets one created. It is called once per
+	// region on every Docker readiness transition and whenever the watcher
+	// reconnects, so it must be idempotent. The index is shared by every
+	// region of one pass — a network adopted here is gone from it for the next
+	// region — and what no region claims is removed afterwards by the Handler,
+	// not here; see Handler.reconcileNetworks.
+	Reconcile(ctx context.Context, vpcs []*VPC, networks *vpcNetworkIndex)
 
 	// OnDelete is called from DeleteVpc after the VPC has been removed from
 	// the store. Strategies that share networks only tear down the Docker
@@ -231,7 +236,7 @@ func (s *strictVPCStrategy) AllocatePrivateIP(ctx context.Context, vpc *VPC) (st
 	return ip, nil
 }
 
-func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, networks *vpcNetworkIndex) {
 	log := s.h.log.WithRecorder(ctx)
 
 	// Sort deterministically: earliest creation wins, VpcID as tiebreaker.
@@ -243,20 +248,6 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 		}
 		return vpcs[i].VpcID < vpcs[j].VpcID
 	})
-
-	byID := make(map[string]*docker.NetworkSummary, len(existing))
-	byResourceID := make(map[string]*docker.NetworkSummary, len(existing))
-	bySubnet := make(map[string]*docker.NetworkSummary, len(existing))
-	for i := range existing {
-		n := &existing[i]
-		byID[n.ID] = n
-		if rid := n.ResourceID(); rid != "" {
-			byResourceID[rid] = n
-		}
-		if sub := n.Subnet(); sub != "" {
-			bySubnet[sub] = n
-		}
-	}
 
 	// cidrOwner tracks the VPC that claimed the network for a given CIDR in
 	// this reconcile pass. Subsequent VPCs with the same CIDR are conflicted.
@@ -285,7 +276,7 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 		}
 
 		// Try to adopt an existing Docker network for this VPC.
-		netID, ok := adoptExistingNetwork(vpc, byID, byResourceID, bySubnet)
+		netID, ok := networks.adopt(vpc)
 		if ok {
 			if vpc.DockerNetworkID != netID || vpc.NetworkStatus != vpcNetworkStatusOK {
 				vpc.DockerNetworkID = netID
@@ -317,9 +308,6 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 			zap.String("vpc", vpc.VpcID),
 			zap.String("network", netID))
 	}
-
-	// Remove any Docker network of ours not claimed by any VPC.
-	s.h.removeOrphanedNetworks(ctx, byID, "strict: ")
 }
 
 func (s *strictVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
@@ -427,7 +415,7 @@ func (s *remappedVPCStrategy) AllocatePrivateIP(ctx context.Context, vpc *VPC) (
 	return fake, nil
 }
 
-func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, networks *vpcNetworkIndex) {
 	log := s.h.log.WithRecorder(ctx)
 
 	// Sort deterministically: earliest creation wins, VpcID as tiebreaker.
@@ -437,20 +425,6 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 		}
 		return vpcs[i].VpcID < vpcs[j].VpcID
 	})
-
-	byID := make(map[string]*docker.NetworkSummary, len(existing))
-	byResourceID := make(map[string]*docker.NetworkSummary, len(existing))
-	bySubnet := make(map[string]*docker.NetworkSummary, len(existing))
-	for i := range existing {
-		n := &existing[i]
-		byID[n.ID] = n
-		if rid := n.ResourceID(); rid != "" {
-			byResourceID[rid] = n
-		}
-		if sub := n.Subnet(); sub != "" {
-			bySubnet[sub] = n
-		}
-	}
 
 	assigned := make([]*VPC, 0, len(vpcs))
 	for _, vpc := range vpcs {
@@ -474,7 +448,7 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 			vpc.NetworkStatus = vpcNetworkStatusOK
 		}
 
-		netID, ok := adoptExistingNetwork(vpc, byID, byResourceID, bySubnet)
+		netID, ok := networks.adopt(vpc)
 		if ok {
 			if vpc.DockerNetworkID != netID {
 				vpc.DockerNetworkID = netID
@@ -502,8 +476,6 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 		_ = s.h.store.putVPC(ctx, vpc)
 		assigned = append(assigned, vpc)
 	}
-
-	s.h.removeOrphanedNetworks(ctx, byID, "remapped: ")
 }
 
 func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
@@ -522,43 +494,128 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
 
-// adoptExistingNetwork is the shared network-adoption logic used by both
-// strategies' Reconcile passes. It mutates the three index maps by removing
-// the matched entry so each network is adopted by at most one VPC.
-// adoptExistingNetwork also records the adopted network's name on the record.
-// The flip lock keys on that name and must not have to ask Docker for it — see
-// Handler.vpcNetworkLockKey — and under the shared strategy the name belongs to
-// whichever VPC created the network, which no sharer can derive.
-func adoptExistingNetwork(
-	vpc *VPC,
-	byID map[string]*docker.NetworkSummary,
-	byResourceID map[string]*docker.NetworkSummary,
-	bySubnet map[string]*docker.NetworkSummary,
-) (string, bool) {
-	if vpc.DockerNetworkID != "" {
-		if n, ok := byID[vpc.DockerNetworkID]; ok {
-			delete(byResourceID, n.ResourceID())
-			delete(bySubnet, n.Subnet())
-			delete(byID, n.ID)
-			vpc.DockerNetworkName = n.Name
-			return n.ID, true
+// vpcNetworkIndex is the set of Docker networks one reconcile pass may adopt,
+// indexed by ID (liveness), by the resource-id label (original owner) and by
+// IPAM subnet (label drift), which is the order adopt tries them in.
+//
+// One index serves every region of a pass, and that is what makes the pass
+// safe to run per region. The store keys VPCs by region while the daemon
+// knows nothing of regions, so a region reconciled against a private view of
+// the daemon would take every other region's network for litter — which is
+// what happened while only the default region was reconciled at all: its pass
+// removed the ap-southeast-2 VPC's network as unclaimed. Adopting deletes the
+// network from all three maps, so a network claimed by a VPC in one region
+// cannot be claimed again by one in another, and what is left when the last
+// region has run is what no VPC anywhere names. A nil index adopts nothing,
+// which is what a caller with no daemon snapshot passes.
+//
+// Regions run in turn, so the index also has to know which VPCs exist at all
+// (reserve): a region whose VPC lost its network runs before the region whose
+// VPC on the same subnet still has one, and the fallback that adopts by subnet
+// would otherwise hand the second's network to the first. One CIDR reused
+// across regions is the common case, not a corner — CDK's default puts every
+// region on 10.0.0.0/16.
+type vpcNetworkIndex struct {
+	byID         map[string]*docker.NetworkSummary
+	byResourceID map[string]*docker.NetworkSummary
+	bySubnet     map[string]*docker.NetworkSummary
+	// reserved is every VPC ID the store holds, in any region. A network
+	// labelled for one of them is that VPC's to adopt by ID or label, never
+	// another VPC's to take by subnet.
+	reserved map[string]struct{}
+}
+
+// newVPCNetworkIndex indexes existing. The maps point into the slice.
+func newVPCNetworkIndex(existing []docker.NetworkSummary) *vpcNetworkIndex {
+	ix := &vpcNetworkIndex{
+		byID:         make(map[string]*docker.NetworkSummary, len(existing)),
+		byResourceID: make(map[string]*docker.NetworkSummary, len(existing)),
+		bySubnet:     make(map[string]*docker.NetworkSummary, len(existing)),
+		reserved:     make(map[string]struct{}),
+	}
+	for i := range existing {
+		n := &existing[i]
+		ix.byID[n.ID] = n
+		if rid := n.ResourceID(); rid != "" {
+			ix.byResourceID[rid] = n
+		}
+		if sub := n.Subnet(); sub != "" {
+			ix.bySubnet[sub] = n
 		}
 	}
-	if n, ok := byResourceID[vpc.VpcID]; ok {
-		delete(byID, n.ID)
-		delete(bySubnet, n.Subnet())
-		delete(byResourceID, vpc.VpcID)
-		vpc.DockerNetworkName = n.Name
-		return n.ID, true
+	return ix
+}
+
+// reserve records vpcs as existing, for every region, before any region's
+// pass runs. See the type comment.
+func (ix *vpcNetworkIndex) reserve(vpcs []*VPC) {
+	if ix == nil {
+		return
 	}
-	if n, ok := bySubnet[preferredDockerSubnet(vpc)]; ok {
-		delete(byID, n.ID)
-		delete(byResourceID, n.ResourceID())
-		delete(bySubnet, preferredDockerSubnet(vpc))
-		vpc.DockerNetworkName = n.Name
-		return n.ID, true
+	for _, vpc := range vpcs {
+		if vpc != nil && vpc.VpcID != "" {
+			ix.reserved[vpc.VpcID] = struct{}{}
+		}
+	}
+}
+
+// adopt finds the network vpc should be backed by — the one its record names,
+// else the one labelled with its ID, else the one on its subnet — and claims
+// it, so each network is adopted by at most one VPC. It also records the
+// adopted network's name on the record: the flip lock keys on that name and
+// must not have to ask Docker for it — see Handler.vpcNetworkLockKey — and
+// under the shared strategy the name belongs to whichever VPC created the
+// network, which no sharer can derive.
+//
+// The subnet fallback is for label drift and for a network whose VPC is gone.
+// It does not take a network labelled for a VPC that still exists — that VPC
+// adopts it by ID or label when its own region's turn comes — so a record that
+// lost its network is left to create one, and Docker's refusal of the
+// overlapping pool lands on the VPC that actually has no network.
+func (ix *vpcNetworkIndex) adopt(vpc *VPC) (string, bool) {
+	if ix == nil {
+		return "", false
+	}
+	if vpc.DockerNetworkID != "" {
+		if n, ok := ix.byID[vpc.DockerNetworkID]; ok {
+			return ix.claim(vpc, n), true
+		}
+	}
+	if n, ok := ix.byResourceID[vpc.VpcID]; ok {
+		return ix.claim(vpc, n), true
+	}
+	if n, ok := ix.bySubnet[preferredDockerSubnet(vpc)]; ok && !ix.belongsElsewhere(n, vpc) {
+		return ix.claim(vpc, n), true
 	}
 	return "", false
+}
+
+// belongsElsewhere reports whether n is labelled for a VPC other than vpc
+// that the store still holds, in any region.
+func (ix *vpcNetworkIndex) belongsElsewhere(n *docker.NetworkSummary, vpc *VPC) bool {
+	rid := n.ResourceID()
+	if rid == "" || rid == vpc.VpcID {
+		return false
+	}
+	_, live := ix.reserved[rid]
+	return live
+}
+
+// claim takes n out of every index for vpc and returns its ID.
+func (ix *vpcNetworkIndex) claim(vpc *VPC, n *docker.NetworkSummary) string {
+	delete(ix.byID, n.ID)
+	delete(ix.byResourceID, n.ResourceID())
+	delete(ix.bySubnet, n.Subnet())
+	vpc.DockerNetworkName = n.Name
+	return n.ID
+}
+
+// unclaimed returns, by ID, the networks no VPC adopted.
+func (ix *vpcNetworkIndex) unclaimed() map[string]*docker.NetworkSummary {
+	if ix == nil {
+		return nil
+	}
+	return ix.byID
 }
 
 func preferredDockerSubnet(vpc *VPC) string {
@@ -676,7 +733,7 @@ func (s *remappedVPCStrategy) releaseShadowCIDR(cidr string) {
 	s.allocator.Release(cidr)
 }
 
-func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, networks *vpcNetworkIndex) {
 	log := s.h.log.WithRecorder(ctx)
 
 	// Sort for deterministic owner selection: earliest creation wins,
@@ -687,23 +744,6 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 		}
 		return vpcs[i].VpcID < vpcs[j].VpcID
 	})
-
-	// Index existing Docker networks by ID (for liveness checks), by the
-	// resource-id label (original owner), and by IPAM subnet (for label-drift
-	// adoption). Keys map to the underlying slice element.
-	byID := make(map[string]*docker.NetworkSummary, len(existing))
-	byResourceID := make(map[string]*docker.NetworkSummary, len(existing))
-	bySubnet := make(map[string]*docker.NetworkSummary, len(existing))
-	for i := range existing {
-		n := &existing[i]
-		byID[n.ID] = n
-		if rid := n.ResourceID(); rid != "" {
-			byResourceID[rid] = n
-		}
-		if sub := n.Subnet(); sub != "" {
-			bySubnet[sub] = n
-		}
-	}
 
 	// cidrOwner tracks which VPC claimed the Docker network for a given CIDR
 	// during this reconcile pass. Later VPCs with the same CIDR reuse it and
@@ -726,7 +766,7 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 			continue
 		}
 
-		if netID, ok := adoptExistingNetwork(vpc, byID, byResourceID, bySubnet); ok {
+		if netID, ok := networks.adopt(vpc); ok {
 			if vpc.DockerNetworkID != netID || vpc.NetworkStatus != vpcNetworkStatusOK {
 				vpc.DockerNetworkID = netID
 				vpc.NetworkStatus = vpcNetworkStatusOK
@@ -757,9 +797,6 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 			zap.String("vpc", vpc.VpcID),
 			zap.String("network", netID))
 	}
-
-	// Whatever is left in byID was not adopted by any VPC — remove it, if ours.
-	s.h.removeOrphanedNetworks(ctx, byID, "")
 }
 
 func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {

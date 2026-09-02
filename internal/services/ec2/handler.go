@@ -55,6 +55,18 @@ type Handler struct {
 	// advisories; cleared when a later flip succeeds or the VPC is deleted.
 	netProblems sync.Map // vpcID -> dataplane.VPCNetworkProblem
 
+	// reconcileMu serialises the network reconcile passes: the startup one
+	// over every region, and the per-region one a placement triggers
+	// (ensureRegionReconciled). Two passes interleaving would adopt and
+	// create against each other's view of the daemon.
+	reconcileMu sync.Mutex
+	// reconciledRegions holds the regions whose VPC networks have been
+	// reconciled since this process started. A region absent from it gets a
+	// pass on first use, so a VPC the startup pass could not see — its record
+	// written while that pass ran, or the store unreadable at the time — is
+	// still backed before anything is placed in it.
+	reconciledRegions sync.Map // region → struct{}
+
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
 	defaultVPCLocks sync.Map // region → *sync.Mutex

@@ -106,7 +106,11 @@ func (s *Service) AvailabilityZoneForSubnet(ctx context.Context, subnetID string
 
 // DockerNetworkForVpc returns the Docker network ID for the given VPC.
 // Returns empty string if the VPC is not found or has no Docker network.
+//
+// The region is reconciled first if no pass has covered it since start, so
+// the answer names a network the daemon has rather than one a restart lost.
 func (s *Service) DockerNetworkForVpc(ctx context.Context, vpcID string) string {
+	s.handler.ensureRegionReconciled(ctx)
 	vpc, aerr := s.handler.store.getVPC(ctx, vpcID)
 	if aerr != nil {
 		return ""
@@ -115,8 +119,10 @@ func (s *Service) DockerNetworkForVpc(ctx context.Context, vpcID string) string 
 }
 
 // VPCNetworkStatus returns the current network status for the given VPC.
-// Empty string means the VPC was not found.
+// Empty string means the VPC was not found. As for DockerNetworkForVpc, the
+// region is reconciled first when no pass has covered it since start.
 func (s *Service) VPCNetworkStatus(ctx context.Context, vpcID string) string {
+	s.handler.ensureRegionReconciled(ctx)
 	vpc, aerr := s.handler.store.getVPC(ctx, vpcID)
 	if aerr != nil {
 		return ""

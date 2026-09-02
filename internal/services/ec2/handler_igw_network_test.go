@@ -118,6 +118,18 @@ func (f *fakeVPCDocker) serve(w http.ResponseWriter, r *http.Request) {
 		f.networks[n.id] = n
 		_ = json.NewEncoder(w).Encode(map[string]string{"Id": n.id})
 
+	case r.Method == http.MethodGet && path == "/networks":
+		// The list endpoint, as the reconcile's lazy pass sees it. The daemon
+		// applies the label filter; every network here is an EC2 one.
+		out := make([]docker.NetworkSummary, 0, len(f.networks))
+		for _, n := range f.networks {
+			out = append(out, docker.NetworkSummary{
+				ID: n.id, Name: n.name, Labels: n.labels, Internal: n.internal, Driver: n.driver,
+				IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.subnet}}},
+			})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+
 	case strings.HasPrefix(path, "/networks/"):
 		rest := strings.TrimPrefix(path, "/networks/")
 		id, action, _ := strings.Cut(rest, "/")
