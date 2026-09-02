@@ -547,6 +547,25 @@ func (s *Service) setRuntimeAPIListen(status listenstatus.Status) {
 	s.mu.Unlock()
 }
 
+// InitVolumeProblems returns every Lambda init volume this instance has
+// reused that turned out to be labelled for a different Overcast instance, or
+// not labelled with an owner at all — see ContainerRuntime.InitVolumeProblems
+// and issue #1573. Consumed by the router's debug/advisory endpoint, which is
+// why this returns the lambda package's own type rather than a router one —
+// see debugLambdaProvider in internal/router/debug.go.
+//
+// Empty before Docker has been probed (there is no ContainerRuntime yet to
+// have reused anything), same as a genuinely clean instance.
+func (s *Service) InitVolumeProblems() []InitVolumeProblem {
+	s.mu.Lock()
+	cr := s.containerRuntime
+	s.mu.Unlock()
+	if cr == nil {
+		return nil
+	}
+	return cr.InitVolumeProblems()
+}
+
 // InitLogWriter wires the CloudWatch Logs writer so Lambda invocations can
 // write START/log/END/REPORT lines without importing the logs package.
 // Called by the router after all services are constructed.

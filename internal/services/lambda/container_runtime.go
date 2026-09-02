@@ -79,7 +79,11 @@ type ContainerRuntime struct {
 	initVolumes      sync.Map // volume name → *initVolumeState
 	initVolumeWarned sync.Map // volume name → struct{}
 	initVolumePruned atomic.Bool
-	coldStartSem     chan struct{} // bounds concurrent container creation/INIT bursts
+	// initVolumeProblems holds one InitVolumeProblem per init volume this
+	// instance has reused that carries a different (or absent) ownership
+	// label — see noteInitVolumeProblem and InitVolumeProblems.
+	initVolumeProblems sync.Map      // volume name → InitVolumeProblem
+	coldStartSem       chan struct{} // bounds concurrent container creation/INIT bursts
 	// instances stamps each runtime container with this instance's identity, so
 	// the GC's sweeps can tell them from another Overcast's on the same daemon.
 	// The same value must reach the GC — see NewContainerRuntime.

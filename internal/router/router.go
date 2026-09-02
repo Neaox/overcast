@@ -301,12 +301,22 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// above — see docs/dev/performance.md § Startup budget.
 	logsSvc := logs.New(cfg, store, logger, clk)
 	prof.mark("  new: logs")
+	// lambdaSvc is constructed here (ahead of its usual place in the service
+	// registry order below), same reason as logsSvc above: the debug
+	// namespace's advisories need it as a debugLambdaProvider (see
+	// checkLambdaInitVolumeOwnership in advisories.go) before the debug
+	// routes are registered a few lines down. Its constructor has no startup
+	// side-effects beyond spawning the background Docker probe it always
+	// spawns regardless of where it's constructed — see docs/dev/performance.md
+	// § Startup budget.
+	lambdaSvc := lambda.New(cfg, store, logger, clk)
+	prof.mark("  new: lambda")
 	// debugProviders is built unconditionally: /_overcast/reset (always-on,
 	// below) needs it regardless of cfg.Debug, and it's used again for the
 	// debug-gated block right after.
 	debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
 	if cfg.Debug {
-		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
+		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, lambdaSvc, debugProviders, traceBuf))
 	}
 	// ---- Reset (always available) ------------------------------------------
 	// Unlike the rest of the /_overcast/debug namespace above, reset is not
@@ -321,8 +331,6 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	resetAll := resetHandler(store, debugProviders)
 	r.Post("/_overcast/reset", resetAll)
 	r.Post("/_overcast/reset/{service}", resetServiceHandler(store, debugProviders))
-	lambdaSvc := lambda.New(cfg, store, logger, clk)
-	prof.mark("  new: lambda")
 	pipesSvc := pipes.New(cfg, store, logger, clk)
 	prof.mark("  new: pipes")
 	smSvc := secretsmanager.New(cfg, store, logger, clk)

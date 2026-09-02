@@ -17,6 +17,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
+	"github.com/overcast-sh/overcast/internal/services/lambda"
 	"github.com/overcast-sh/overcast/internal/state"
 	"github.com/overcast-sh/overcast/internal/trace"
 )
@@ -30,6 +31,15 @@ type debugEC2Provider interface {
 	// advisories.go): VPCs whose Docker network could not be brought to the
 	// isolation their internet-gateway state calls for.
 	NetworkProblems() []dataplane.VPCNetworkProblem
+}
+
+// debugLambdaProvider is the subset of the Lambda service needed by the
+// debug namespace, mirroring debugEC2Provider.
+type debugLambdaProvider interface {
+	// InitVolumeProblems feeds the lambda-init-volume-foreign advisory (see
+	// advisories.go): init volumes matching this build's content hash that
+	// this instance reused but does not own, per docker.LabelInstance.
+	InitVolumeProblems() []lambda.InitVolumeProblem
 }
 
 // DebugStateProvider is implemented by services with data outside the
@@ -67,13 +77,13 @@ type DebugStateProvider interface {
 //   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, lambdaSvc debugLambdaProvider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc))
+		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, lambdaSvc))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -476,11 +486,15 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, lambdaSvc debugLambdaProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var networkProblems []dataplane.VPCNetworkProblem
 		if vpcs != nil {
 			networkProblems = vpcs.NetworkProblems()
+		}
+		var initVolumeProblems []lambda.InitVolumeProblem
+		if lambdaSvc != nil {
+			initVolumeProblems = lambdaSvc.InitVolumeProblems()
 		}
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
@@ -491,14 +505,15 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider) 
 		}
 		health, hasHealth := state.PersistentHealthSnapshot(store)
 		advisories := computeAdvisories(advisoryInput{
-			StateBackend:       cfg.State,
-			StateSource:        cfg.StateSource,
-			SQLiteAvailable:    config.SQLiteSupported(),
-			Stores:             snapshots,
-			Health:             health,
-			HasHealth:          hasHealth,
-			ExistingDatabase:   config.HasExistingDatabase(cfg.DataDir),
-			VPCNetworkProblems: networkProblems,
+			StateBackend:             cfg.State,
+			StateSource:              cfg.StateSource,
+			SQLiteAvailable:          config.SQLiteSupported(),
+			Stores:                   snapshots,
+			Health:                   health,
+			HasHealth:                hasHealth,
+			ExistingDatabase:         config.HasExistingDatabase(cfg.DataDir),
+			VPCNetworkProblems:       networkProblems,
+			LambdaInitVolumeProblems: initVolumeProblems,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

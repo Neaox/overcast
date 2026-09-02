@@ -27,6 +27,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -133,7 +134,22 @@ func (cr *ContainerRuntime) ensureInitVolume(ctx context.Context, binary []byte,
 	}
 	switch {
 	case found && vol.Labels[docker.LabelLambdaInitVersion] != "":
-		// Ours, and holding this exact init.
+		// Holding this exact init, whichever instance seeded it. The content
+		// is immutable and addressed by the hash already in this volume's own
+		// name (initVolumeName), so mounting it read-only is safe no matter
+		// who created it — reuse is never gated on docker.LabelInstance.
+		//
+		// Ownership still matters for what this instance is allowed to do to
+		// the volume later: pruneStaleInitVolumes and forgetInitVolume may
+		// only remove a volume this instance can prove it created, so a
+		// volume found here with a different (or absent) instance label is
+		// noted for the health/advisory machinery — see
+		// noteInitVolumeProblem and issue #1573.
+		if domain := cr.instances.Resolve(ctx); domain != "" && vol.Instance() == domain {
+			cr.clearInitVolumeProblem(name)
+		} else {
+			cr.noteInitVolumeProblem(name, vol.Instance())
+		}
 		return name, nil
 	case found:
 		// A volume of our name that we did not label. The daemon creates one
@@ -180,6 +196,16 @@ func (cr *ContainerRuntime) seedInitVolume(ctx context.Context, name string, bin
 		docker.LabelService:           "lambda",
 		docker.LabelLambdaInitVersion: initVolumeVersion(name),
 		docker.LabelLambdaInitArch:    goarch,
+	}
+	// Stamp ownership so a later prune (pruneStaleInitVolumes) or
+	// start-failure cleanup (forgetInitVolume), from this process or a
+	// future one reading the same store, can tell this volume apart from one
+	// another Overcast instance on the same daemon is still using — see
+	// docker.LabelInstance and issue #1573. Omitted when the identity cannot
+	// be resolved, matching serviceutil.InstanceDomain.ManagedLabels: an
+	// empty value would claim an ownership nothing actually established.
+	if domain := cr.instances.Resolve(ctx); domain != "" {
+		labels[docker.LabelInstance] = domain
 	}
 	if err := cr.docker.CreateVolumeWithOptions(ctx, name, docker.VolumeOptions{Labels: labels}); err != nil {
 		return fmt.Errorf("create init volume: %w", err)
@@ -232,8 +258,8 @@ func initSeedTar(binary []byte) []byte {
 	return buf.Bytes()
 }
 
-// pruneStaleInitVolumes removes init volumes this Overcast built for an older
-// init, once per process, when the current one is first seeded.
+// pruneStaleInitVolumes removes init volumes this Overcast *instance* built
+// for an older init, once per process, when the current one is first seeded.
 //
 // It is safe from every other service's sweep and every other service's sweep
 // is safe from it. ListUnusedVolumes filters on LabelManaged plus
@@ -243,8 +269,31 @@ func initSeedTar(binary []byte) []byte {
 // removes volumes carrying LabelLambdaInitVersion, which nothing else stamps.
 // `dangling=true` leaves anything a container still references alone, so a
 // container kept by LAMBDA_KEEP_CONTAINERS keeps its init volume with it.
+//
+// It is also safe from every *other Overcast instance* sharing this daemon,
+// and their prunes are safe from it — issue #1573. `dangling=true` on its own
+// is not enough: a warm environment can sit idle between invocations with its
+// containers already retired, leaving its init volume genuinely unreferenced
+// (and so "dangling") right up until the next cold start needs it again. A
+// second instance running a different build, seeding its own volume for the
+// first time in this process, would see that idle volume as unused litter and
+// remove it out from under the first — the exact class of bug
+// docker.LabelInstance exists to close (see its doc comment). So a volume is
+// only ever removed here when it carries this instance's own identity;
+// unlabelled (predates the fix) or foreign (another instance's) volumes are
+// left alone and logged at debug, never treated as ours to sweep just because
+// nothing currently mounts them.
 func (cr *ContainerRuntime) pruneStaleInitVolumes(ctx context.Context, keep string) {
 	if !cr.initVolumePruned.CompareAndSwap(false, true) {
+		return
+	}
+	domain := cr.instances.Resolve(ctx)
+	if domain == "" {
+		// Cannot prove ownership of anything right now — a store that is
+		// briefly unavailable must not make every init volume on the daemon
+		// look like fair game. The next process to seed a new build tries
+		// again.
+		cr.logger.Debug("lambda: init volume prune skipped — this instance's identity could not be resolved")
 		return
 	}
 	volumes, err := cr.docker.ListUnusedVolumes(ctx, "lambda")
@@ -254,6 +303,11 @@ func (cr *ContainerRuntime) pruneStaleInitVolumes(ctx context.Context, keep stri
 	}
 	for _, v := range volumes {
 		if v.Name == keep || v.Labels[docker.LabelLambdaInitVersion] == "" {
+			continue
+		}
+		if v.Instance() != domain {
+			cr.logger.Debug("lambda: leaving a superseded init volume owned by another instance (or none)",
+				zap.String("volume", v.Name), zap.String("owner", v.Instance()))
 			continue
 		}
 		if err := cr.docker.RemoveVolume(ctx, v.Name, false); err != nil {
@@ -266,24 +320,119 @@ func (cr *ContainerRuntime) pruneStaleInitVolumes(ctx context.Context, keep stri
 	}
 }
 
-// forgetInitVolume drops a volume from the seeded set and from the daemon, so
-// the next cold start inspects and re-seeds it. Called only when a container
-// failed to start because the init was not at the path its entrypoint names,
-// which is what an empty volume looks like from here.
+// forgetInitVolume drops a volume from the seeded set and, if this instance
+// owns it, from the daemon too — so the next cold start inspects and
+// re-seeds it. Called only when a container failed to start because the init
+// was not at the path its entrypoint names, which is what an empty volume
+// looks like from here.
 //
-// Removing it is best-effort by design: Docker refuses to remove a volume any
-// container still references, so warm environments holding this one keep it and
-// the removal simply does not happen — which is the right answer, since a
-// volume those containers started from is not the empty one.
+// The daemon-side removal is best-effort by design: Docker refuses to remove
+// a volume any container still references, so warm environments holding this
+// one keep it and the removal simply does not happen — which is the right
+// answer, since a volume those containers started from is not the empty one.
+//
+// It is also ownership-gated (issue #1573): the volume named here may have
+// been reused from another instance's build-matching copy rather than seeded
+// by this process (see the reuse branch of ensureInitVolume), and a start
+// failure is not proof that copy is broken for its owner too — only that
+// *this* attempt didn't find the init where it expected it, which can equally
+// be a transient daemon issue. Removing another instance's volume on that
+// evidence would be exactly the cross-instance deletion this fix exists to
+// stop, so this only ever force-removes a volume this instance's own
+// identity is stamped on; anything else is left alone and logged as a
+// problem for the health/advisory machinery to surface.
 func (cr *ContainerRuntime) forgetInitVolume(ctx context.Context, name string) {
 	if name == "" {
 		return
 	}
 	cr.initVolumes.Delete(name)
+	if !cr.ownsInitVolume(ctx, name) {
+		return
+	}
 	if err := cr.docker.RemoveVolume(ctx, name, true); err != nil {
 		cr.logger.Debug("lambda: could not remove the init volume after a container failed to start",
 			zap.String("volume", name), zap.Error(err))
 	}
+}
+
+// ownsInitVolume reports whether this instance created the named init
+// volume, per docker.LabelInstance. Used to gate the one place besides
+// pruneStaleInitVolumes that deletes an init volume outright
+// (forgetInitVolume) behind the same "absence is not permission" rule.
+//
+// A volume that no longer exists is reported as not owned — there is nothing
+// left to prove ownership of, and the caller's removal would be a no-op
+// anyway (RemoveVolume already tolerates a missing volume). An inspect error
+// is treated the same way: a daemon that will not answer is not evidence this
+// instance may act on the volume.
+func (cr *ContainerRuntime) ownsInitVolume(ctx context.Context, name string) bool {
+	vol, found, err := cr.docker.InspectVolume(ctx, name)
+	if err != nil || !found {
+		return false
+	}
+	domain := cr.instances.Resolve(ctx)
+	if domain != "" && vol.Instance() == domain {
+		cr.clearInitVolumeProblem(name)
+		return true
+	}
+	cr.noteInitVolumeProblem(name, vol.Instance())
+	return false
+}
+
+// InitVolumeProblem is a Lambda init volume this instance reused — because
+// its name already carries the content hash of the init this instance is
+// about to run, and reuse is safe regardless of who seeded it (see
+// ensureInitVolume) — that turned out to be labelled for a different Overcast
+// instance, or not labelled with an owner at all.
+//
+// That is not itself a sign of trouble: it is the expected shape of two
+// Overcast instances sharing a daemon and a build (docs/services/lambda —
+// see the changelog for #1573). What it does mean is that this instance's own
+// cleanup (pruneStaleInitVolumes, forgetInitVolume) will never remove the
+// volume, because neither may touch one it cannot prove it created — so it
+// only ever goes away once its own creating instance prunes it, or an
+// operator removes it by hand (`docker volume rm`, or `docker volume prune
+// --filter label=overcast.managed=true`). Surfacing it here is the only way
+// an operator learns it exists at all.
+type InitVolumeProblem struct {
+	// Volume is the volume's name.
+	Volume string
+	// Owner is the value of docker.LabelInstance on the volume, or "" when it
+	// carries no owner label at all — seeded by a build of Overcast that
+	// predates this label, or by a daemon-native volume operation Overcast
+	// never labelled.
+	Owner string
+}
+
+// noteInitVolumeProblem records that name is currently not provably this
+// instance's, for InitVolumeProblems to report. Overwrites any previous
+// entry for the same name — the owner can change between calls if the
+// volume was removed and recreated by someone else in between.
+func (cr *ContainerRuntime) noteInitVolumeProblem(name, owner string) {
+	cr.initVolumeProblems.Store(name, InitVolumeProblem{Volume: name, Owner: owner})
+}
+
+// clearInitVolumeProblem drops a prior InitVolumeProblem for name, once this
+// instance has confirmed (or reclaimed, by re-seeding after the foreign copy
+// was gone) ownership of it.
+func (cr *ContainerRuntime) clearInitVolumeProblem(name string) {
+	cr.initVolumeProblems.Delete(name)
+}
+
+// InitVolumeProblems returns every init volume this instance has reused that
+// is labelled for a different instance, or not labelled with an owner at
+// all — sorted by volume name for stable output. Read by the health/advisory
+// machinery (see lambda.Service.InitVolumeProblems). Empty once every such
+// volume is either pruned by its own owner or reseeded (and so reclaimed) by
+// this one.
+func (cr *ContainerRuntime) InitVolumeProblems() []InitVolumeProblem {
+	var out []InitVolumeProblem
+	cr.initVolumeProblems.Range(func(_, v any) bool {
+		out = append(out, v.(InitVolumeProblem))
+		return true
+	})
+	slices.SortFunc(out, func(a, b InitVolumeProblem) int { return strings.Compare(a.Volume, b.Volume) })
+	return out
 }
 
 // goarchForLambda maps a function's Architectures value to the GOARCH its init

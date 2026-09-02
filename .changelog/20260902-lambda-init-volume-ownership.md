@@ -1,0 +1,2 @@
+* [lambda] the init volume no longer gets deleted by another Overcast instance sharing the daemon
+  It now carries `overcast.instance`, the same identity #1570/#1575 stamp on VPC networks and containers. Reuse across instances of the same build is unaffected — the volume's name is already content-addressed — but pruning a superseded build's volume, or removing an empty one after a failed start, now happens only for a volume this instance created. A foreign or unlabelled volume matching this build's hash is left alone and surfaced as an advisory instead.
