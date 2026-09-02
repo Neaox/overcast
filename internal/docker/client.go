@@ -39,7 +39,7 @@ type Client struct {
 	sem        chan struct{} // bounds concurrent mutating Docker operations
 
 	// apiVersion is the daemon's highest supported API version, read once
-	// from GET /version and held for the life of the client â€” see
+	// from GET /version and held for the life of the client — see
 	// APIVersionAtLeast. Empty until the first call that needs it.
 	apiVersionMu sync.Mutex
 	apiVersion   string
@@ -47,8 +47,14 @@ type Client struct {
 
 // apiVersionPinned is the API version every request path here carries. It is
 // the floor: a daemon older than this (Docker 26) is not supported, and a
-// request that needs something newer negotiates it â€” see APIVersionAtLeast â€”
+// request that needs something newer negotiates it — see APIVersionAtLeast —
 // rather than raising the floor for every call.
+//
+// The other request paths in this file still spell "/v1.45/" literally. They
+// are not wrong, and rewriting all 37 of them to interpolate this constant is
+// a change to every Docker call in the codebase for no behavioural gain — so
+// it is deliberately not done here, where the subject is one connect. A
+// mechanical sweep is welcome on its own.
 const apiVersionPinned = "1.45"
 
 // apiVersionGatewayPriority is the first Docker API version whose network
@@ -80,6 +86,12 @@ const maxDockerConns = 64
 //
 // Use the package-level defaultDockerSocket constant for the platform default.
 func NewClient(endpoint string, logger *zap.Logger) *Client {
+	// Defaulted rather than assumed: the API-version negotiation below is the
+	// first code here to dereference this, so a caller that passed nil — every
+	// one of them was fine until now — would newly panic on a network connect.
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	dialFn, host := dialEndpoint(endpoint)
 	transport := &http.Transport{
 		MaxConnsPerHost:       maxDockerConns,
@@ -288,7 +300,7 @@ type EndpointSettings struct {
 	//
 	// Honoured by Docker 28.0+ (API 1.48): ConnectNetworkWithConfig sends a
 	// non-zero value under that version when the daemon supports it and drops
-	// it, with a log line, when it does not â€” see APIVersionAtLeast.
+	// it, with a log line, when it does not — see APIVersionAtLeast.
 	GwPriority int `json:"GwPriority,omitempty"`
 }
 
@@ -1896,7 +1908,7 @@ func (d *Client) ConnectNetworkWithConfig(ctx context.Context, networkID, contai
 	// network as a default-route source: that field only exists from 1.48, and
 	// a daemon that speaks it is asked under it. One that does not gets the
 	// same connect without the ranking, and Docker's name-order tie-break
-	// decides the route â€” said once here, since nothing else will say it.
+	// decides the route — said once here, since nothing else will say it.
 	version := apiVersionPinned
 	if cfg != nil && cfg.GwPriority != 0 {
 		if d.APIVersionAtLeast(ctx, apiVersionGatewayPriority) {

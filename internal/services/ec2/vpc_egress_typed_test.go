@@ -143,26 +143,61 @@ func TestTypedAssociationMutations_moveRunningContainers(t *testing.T) {
 	}
 }
 
+// routeMutations maps each EC2 operation that changes what a subnet routes to
+// onto the two bodies that answer it: the legacy handler and the typed twin.
+//
+// The typed names are derived from the operation, not written out, so the
+// coverage check below can start from ec2TypedOps rather than from this list
+// — a mutation registered for typed dispatch without an entry here fails
+// TestRouteMutations_coverEveryTypedRouteOperation.
+var routeMutations = map[string]struct{ legacyFile, legacy, typed string }{
+	"CreateRoute":            {"handler_routetables.go", "CreateRoute", "createRouteTyped"},
+	"DeleteRoute":            {"handler_routetables.go", "DeleteRoute", "deleteRouteTyped"},
+	"AssociateRouteTable":    {"handler_routetables.go", "AssociateRouteTable", "associateRouteTableTyped"},
+	"DisassociateRouteTable": {"handler_routetables.go", "DisassociateRouteTable", "disassociateRouteTableTyped"},
+	"DeleteRouteTable":       {"handler_routetables.go", "DeleteRouteTable", "deleteRouteTableTyped"},
+	"CreateNatGateway":       {"handler_natgw.go", "CreateNatGateway", "createNatGatewayTyped"},
+	"DeleteNatGateway":       {"handler_natgw.go", "DeleteNatGateway", "deleteNatGatewayTyped"},
+}
+
+// A route or NAT operation that EC2 dispatches to a typed body must be in
+// routeMutations, so a mutation added later cannot escape the hook check by
+// simply not being listed. Attach and detach of an internet gateway are
+// deliberately absent: both dispatch paths funnel through changeVPCGateway,
+// which reconciles under the lock it already holds.
+func TestRouteMutations_coverEveryTypedRouteOperation(t *testing.T) {
+	for op := range ec2TypedOps {
+		routes := strings.Contains(op, "Route") || strings.Contains(op, "NatGateway")
+		if !routes || strings.HasPrefix(op, "Describe") {
+			continue
+		}
+		if op == "CreateRouteTable" {
+			continue // creates an empty table associated with nothing
+		}
+		if _, ok := routeMutations[op]; !ok {
+			t.Errorf("%s is dispatched to a typed body and changes route-table state, but is not in "+
+				"routeMutations — add it there so both its bodies are checked for the "+
+				"reconcileVPCEgress hook, or say here why it cannot change what a subnet routes to", op)
+		}
+	}
+}
+
 // Every operation that changes what a subnet routes to has to revisit the
 // VPC's placements on *both* dispatch paths. A source check rather than a
 // behavioural one because the failure it guards against is a hook missing
 // from the body a request actually reaches, which no test of the other body
 // can see. Fix a miss by adding the call, never by editing the list.
 func TestEveryRouteMutation_revisitsPlacementsOnBothDispatchPaths(t *testing.T) {
-	for _, tc := range []struct {
-		file  string
-		funcs []string
-	}{
-		{"handler_routetables.go", []string{
-			"CreateRoute", "DeleteRoute", "AssociateRouteTable", "DisassociateRouteTable", "DeleteRouteTable",
-		}},
-		{"handler_natgw.go", []string{"CreateNatGateway", "DeleteNatGateway"}},
-		{"typed_logic.go", []string{
-			"createRouteTyped", "deleteRouteTyped", "associateRouteTableTyped",
-			"disassociateRouteTableTyped", "deleteRouteTableTyped",
-			"createNatGatewayTyped", "deleteNatGatewayTyped",
-		}},
-	} {
+	byFile := map[string][]string{}
+	for _, m := range routeMutations {
+		byFile[m.legacyFile] = append(byFile[m.legacyFile], m.legacy)
+		byFile["typed_logic.go"] = append(byFile["typed_logic.go"], m.typed)
+	}
+	for file, funcs := range byFile {
+		tc := struct {
+			file  string
+			funcs []string
+		}{file, funcs}
 		src, err := os.ReadFile(tc.file)
 		if err != nil {
 			t.Fatalf("read %s: %v", tc.file, err)

@@ -38,7 +38,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 
 	"go.uber.org/zap"
 
@@ -180,8 +179,12 @@ func (v *egressView) subnetEgress(subnetID string) egressDecision {
 		switch {
 		case route.NatGatewayID != "":
 			d.Via = route.NatGatewayID
+			// "available" only. On AWS a route to a NAT gateway that is still
+			// pending drops packets, and Overcast writes no other state
+			// (handler_natgw.go, typed_logic.go) — so anything else is a
+			// gateway that is going away, or one this region does not have.
 			switch v.natState[route.NatGatewayID] {
-			case "available", "pending":
+			case "available":
 				d.Routable = true
 				d.Reason = fmt.Sprintf("subnet %s routes 0.0.0.0/0 to NAT gateway %s in %s", subnetID, route.NatGatewayID, rt.RouteTableID)
 			case "":
@@ -273,6 +276,19 @@ func (h *Handler) egressNetworkForSubnets(ctx context.Context, vpcID string, sub
 		return "", nil
 	}
 
+	// The record already names one: hand it back without re-verifying. What
+	// verifies an egress network is the startup reconcile, exactly as for the
+	// VPC's plane — DockerNetworkForVpc returns vpc.DockerNetworkID from the
+	// record too, and the region it belongs to has been reconciled by the
+	// time this runs (PlaceInSubnets asks for the plane first). Re-running
+	// the whole ensure per placement bought nothing and put a Docker round
+	// trip on every Lambda cold start.
+	if vpc.EgressNetworkID != "" {
+		log.Info("vpc egress: route out granted — the container also joins the VPC's egress network",
+			zap.String("vpc", vpcID), zap.String("network", vpc.EgressNetworkID), zap.String("reason", d.Reason))
+		return vpc.EgressNetworkID, nil
+	}
+
 	// Under the plane's lock, for the record write: a gateway flip in flight
 	// rewrites every record on the network, and one that raced this would
 	// drop the egress fields it did not know about.
@@ -294,14 +310,59 @@ func (h *Handler) egressNetworkForSubnets(ctx context.Context, vpcID string, sub
 // recordPlacement is Service.RecordPlacement: which subnets a container was
 // placed in, so reconcileVPCEgress can revisit the decision when a route table
 // changes. Only under `routed`, where the record has a reader.
+//
+// It also closes the window the placement opens. EgressNetworkForSubnets read
+// the route tables before this container existed, and Attach joined the egress
+// network before saying so here — so a route mutation in between reconciled a
+// VPC that did not yet know about this container, and left it on the wrong
+// side of its own route table with nothing to converge it until the next
+// mutation or a restart. Writing the record and re-reading the decision under
+// the VPC's lock makes the two orderings equivalent: a mutation either lands
+// before this and is seen by the re-read, or after it and finds the record.
 func (h *Handler) recordPlacement(ctx context.Context, containerID string, p dataplane.Placement) {
 	if !dataplane.Routed(h.cfg) || containerID == "" || p.VPCID == "" {
 		return
 	}
+	log := h.log.WithRecorder(ctx)
+	vpc, unlock, aerr := h.lockVPCNetwork(ctx, p.VPCID)
+	if aerr != nil {
+		log.Warn("vpc egress: could not lock the VPC to record a placement — a later route-table change will not move this container",
+			zap.String("container", containerID), zap.String("vpc", p.VPCID), zap.String("error", aerr.Message))
+		return
+	}
+	defer unlock()
+
 	rec := &vpcPlacement{ContainerID: containerID, VpcID: p.VPCID, SubnetIDs: p.SubnetIDs, RecordedAt: h.clk.Now().UnixMilli()}
 	if aerr := h.store.putPlacement(ctx, rec); aerr != nil {
-		h.log.WithRecorder(ctx).Warn("vpc egress: could not record a placement — a later route-table change will not move this container",
+		log.Warn("vpc egress: could not record a placement — a later route-table change will not move this container",
 			zap.String("container", containerID), zap.String("vpc", p.VPCID), zap.String("error", aerr.Message))
+		return
+	}
+	if !h.dockerReady.Load() || vpc.IsDefault || vpc.DockerNetworkID == "" {
+		return
+	}
+	view, aerr := h.egressView(ctx)
+	if aerr != nil {
+		log.Warn("vpc egress: could not re-read the route tables after recording a placement",
+			zap.String("container", containerID), zap.String("vpc", p.VPCID), zap.String("error", aerr.Message))
+		return
+	}
+	want := view.placementEgress(p.SubnetIDs)
+	egressID, egressName := vpc.EgressNetworkID, vpc.EgressNetworkName
+	if want.Routable && egressID == "" {
+		// The route tables granted egress while this container was being
+		// attached, and the VPC has no network to carry it yet.
+		id, err := h.ensureVPCEgressNetwork(ctx, vpc.VpcID)
+		if err != nil {
+			h.noteEgressProblem(vpc.VpcID, "", want.Reason+", but the VPC's egress network could not be created: "+err.Error())
+			return
+		}
+		egressID, egressName = id, h.cfg.VPCEgressNetwork(vpc.VpcID)
+	}
+	if failure := h.movePlacementLocked(ctx, vpc, egressID, egressName, containerID, want); failure != "" {
+		h.noteEgressProblem(vpc.VpcID, egressID, "a container could not be moved to match its route tables: "+failure)
+		log.Error("vpc egress: a container could not be settled on the side of the egress network its route tables put it on",
+			zap.String("container", containerID), zap.String("vpc", p.VPCID), zap.String("failure", failure))
 	}
 }
 
@@ -316,11 +377,6 @@ func (h *Handler) recordPlacement(ctx context.Context, containerID string, p dat
 // rebuilt. The /24 is allocated once and kept on the record, so the network
 // comes back at the same address after a restart or a rebuild.
 func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (string, error) {
-	// One allocation at a time across VPCs: two placements in two VPCs that
-	// both allocate see the same records and would pick the same /24.
-	h.egressMu.Lock()
-	defer h.egressMu.Unlock()
-
 	vpc, aerr := h.store.getVPC(ctx, vpcID)
 	if aerr != nil {
 		return "", errors.New(aerr.Message)
@@ -332,7 +388,7 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 		if err != nil {
 			return "", err
 		}
-		cidr = allocated
+		cidr, vpc.EgressCidrBlock = allocated, allocated
 	}
 	spec := dataplane.VPCEgressNetworkSpec(h.cfg, dataplane.VPCEgressNetwork{
 		VPCID:  vpc.VpcID,
@@ -370,6 +426,14 @@ func (h *Handler) ensureVPCEgressNetwork(ctx context.Context, vpcID string) (str
 // /16 — and running into it is the one failure this mode has that `open` does
 // not. The error names the pool and how to widen it.
 func (h *Handler) allocateEgressCIDR(ctx context.Context) (string, error) {
+	// One allocation at a time across VPCs, and no wider: two placements in
+	// two VPCs that both allocate would otherwise read the same records and
+	// pick the same /24. Everything after the allocation — the Docker work
+	// that dominates the cost — is per-VPC and serialised by the VPC's own
+	// network lock, so it does not belong under a process-global one.
+	h.egressMu.Lock()
+	defer h.egressMu.Unlock()
+
 	pool := h.cfg.VPCEgressPool
 	if pool == "" {
 		pool = config.DefaultVPCEgressPool
@@ -433,12 +497,21 @@ func (h *Handler) allocateEgressCIDR(ctx context.Context) (string, error) {
 // refuses, and the record is already written. Nothing about a failed move
 // heals on its own, and the startup reconcile retries it.
 func (h *Handler) reconcileVPCEgress(ctx context.Context, vpcID string) {
-	h.log.WithRecorder(ctx).Debug("vpc egress: revisiting placements",
-		zap.String("vpc", vpcID), zap.Bool("routed", dataplane.Routed(h.cfg)),
-		zap.Bool("docker_ready", h.dockerReady.Load()))
-	if !dataplane.Routed(h.cfg) || !h.dockerReady.Load() {
+	// Guard before logging: every route-table mutation reaches this, in every
+	// mode, and under the default `open` there is nothing to say.
+	if !dataplane.Routed(h.cfg) {
 		return
 	}
+	h.log.WithRecorder(ctx).Debug("vpc egress: revisiting placements",
+		zap.String("vpc", vpcID), zap.Bool("docker_ready", h.dockerReady.Load()))
+	if !h.dockerReady.Load() {
+		return
+	}
+	// The route is already written and the API answer does not wait on this,
+	// so a client that hangs up mid-CreateRoute must not leave half the VPC's
+	// containers moved. The request's values — its region above all — are
+	// kept; only its cancellation is dropped.
+	ctx = context.WithoutCancel(ctx)
 	vpc, unlock, aerr := h.lockVPCNetwork(ctx, vpcID)
 	if aerr != nil {
 		h.log.WithRecorder(ctx).Error("vpc egress: lock the VPC's network to revisit placements",
@@ -463,6 +536,10 @@ func (h *Handler) reconcileVPCEgressLocked(ctx context.Context, vpc *VPC) {
 	}
 	log.Debug("vpc egress: placements to revisit", zap.String("vpc", vpc.VpcID), zap.Int("count", len(placements)))
 	if len(placements) == 0 {
+		// Nothing left to be wrong about. Cleared here rather than at the end
+		// so a VPC whose containers all went away does not keep an advisory
+		// about a move that can no longer be attempted.
+		h.netProblems.Delete(egressProblemKey(vpc.VpcID))
 		return
 	}
 	view, aerr := h.egressView(ctx)
@@ -491,36 +568,8 @@ func (h *Handler) reconcileVPCEgressLocked(ctx context.Context, vpc *VPC) {
 
 	var failures []string
 	for i, p := range placements {
-		want := decisions[i]
-		c, err := h.docker.InspectContainer(ctx, p.ContainerID)
-		if err != nil {
-			if docker.IsNotFound(err) {
-				_ = h.store.deletePlacement(ctx, p.ContainerID) // gone; nothing to move, nothing to keep
-				continue
-			}
-			failures = append(failures, fmt.Sprintf("inspect container %s: %v", p.ContainerID, err))
-			continue
-		}
-		on := egressID != "" && containerOnNetwork(c, egressID, egressName)
-		switch {
-		case want.Routable && !on:
-			err := h.docker.ConnectNetworkWithConfig(ctx, egressID, p.ContainerID,
-				&docker.EndpointSettings{GwPriority: dataplane.EgressGatewayPriority})
-			if err != nil {
-				failures = append(failures, fmt.Sprintf("container %s could not join the egress network: %v", p.ContainerID, err))
-				continue
-			}
-			log.Info("vpc egress: route out granted to a running container",
-				zap.String("vpc", vpc.VpcID), zap.String("container", p.ContainerID),
-				zap.String("network", egressName), zap.String("reason", want.Reason))
-		case !want.Routable && on:
-			if err := h.docker.DisconnectNetwork(ctx, egressID, p.ContainerID); err != nil {
-				failures = append(failures, fmt.Sprintf("container %s could not leave the egress network: %v", p.ContainerID, err))
-				continue
-			}
-			log.Info("vpc egress: route out withdrawn from a running container",
-				zap.String("vpc", vpc.VpcID), zap.String("container", p.ContainerID),
-				zap.String("network", egressName), zap.String("reason", want.Reason))
+		if failure := h.movePlacementLocked(ctx, vpc, egressID, egressName, p.ContainerID, decisions[i]); failure != "" {
+			failures = append(failures, failure)
 		}
 	}
 	if len(failures) > 0 {
@@ -530,6 +579,48 @@ func (h *Handler) reconcileVPCEgressLocked(ctx context.Context, vpc *VPC) {
 		return
 	}
 	h.netProblems.Delete(egressProblemKey(vpc.VpcID))
+}
+
+// movePlacementLocked brings one container to the side of the egress network
+// its subnets' route tables put it on, and returns what stood in the way, or
+// "" when nothing did. The caller holds the VPC's network lock.
+//
+// A container Docker no longer has is not a failure: its placement is dropped
+// and the pass moves on. Everything else is reported so it reaches the health
+// advisories rather than being logged and lost.
+func (h *Handler) movePlacementLocked(ctx context.Context, vpc *VPC, egressID, egressName, containerID string, want egressDecision) string {
+	log := h.log.WithRecorder(ctx)
+	c, err := h.docker.InspectContainer(ctx, containerID)
+	if err != nil {
+		if docker.IsNotFound(err) {
+			_ = h.store.deletePlacement(ctx, containerID) // gone; nothing to move, nothing to keep
+			return ""
+		}
+		return fmt.Sprintf("inspect container %s: %v", containerID, err)
+	}
+	on := egressID != "" && containerOnNetwork(c, egressID, egressName)
+	switch {
+	case want.Routable && !on:
+		if egressID == "" {
+			return fmt.Sprintf("container %s needs a route out but the VPC has no egress network", containerID)
+		}
+		err := h.docker.ConnectNetworkWithConfig(ctx, egressID, containerID,
+			&docker.EndpointSettings{GwPriority: dataplane.EgressGatewayPriority})
+		if err != nil {
+			return fmt.Sprintf("container %s could not join the egress network: %v", containerID, err)
+		}
+		log.Info("vpc egress: route out granted to a running container",
+			zap.String("vpc", vpc.VpcID), zap.String("container", containerID),
+			zap.String("network", egressName), zap.String("reason", want.Reason))
+	case !want.Routable && on:
+		if err := h.docker.DisconnectNetwork(ctx, egressID, containerID); err != nil {
+			return fmt.Sprintf("container %s could not leave the egress network: %v", containerID, err)
+		}
+		log.Info("vpc egress: route out withdrawn from a running container",
+			zap.String("vpc", vpc.VpcID), zap.String("container", containerID),
+			zap.String("network", egressName), zap.String("reason", want.Reason))
+	}
+	return ""
 }
 
 // containerOnNetwork reports whether a container's attachments include the
@@ -643,14 +734,14 @@ func (ix *egressNetworkIndex) unclaimed() map[string]*docker.NetworkSummary {
 // it is exactly the leak the mode exists to close, and a container adopted
 // from the previous run keeps its attachments until something takes them
 // away.
-func (h *Handler) reconcileRegionEgressNetworks(ctx context.Context, ix *egressNetworkIndex) {
+// The region's VPCs are handed in rather than re-listed, as the plane pass
+// does (Handler.adoptRegionNetworks). A list of its own would have an error
+// path, and the only thing a region can do on that path is claim nothing —
+// after which the end sweep removes every egress network in the region and
+// disconnects the containers on them. There is no reading of a transient
+// store error that should cost a running container its route out.
+func (h *Handler) reconcileRegionEgressNetworks(ctx context.Context, vpcs []*VPC, ix *egressNetworkIndex) {
 	log := h.log.WithRecorder(ctx)
-
-	vpcs, aerr := h.store.listVPCs(ctx)
-	if aerr != nil {
-		log.Error("reconcile networks: list VPCs for the egress pass", zap.String("error", aerr.Message))
-		return
-	}
 
 	if !dataplane.Routed(h.cfg) {
 		for _, vpc := range vpcs {
@@ -705,11 +796,44 @@ func (h *Handler) reconcileRegionEgressNetworks(ctx context.Context, ix *egressN
 	}
 }
 
+// unrecordedEgress narrows sweep to the egress networks no VPC's record names
+// now, on a second store read across every region — the egress counterpart of
+// Handler.unrecorded, and fail-closed for the same reason: when the store
+// cannot be read, nothing is swept. An egress network left behind costs a /24
+// from a pool of 256; one removed in error takes the route out from under
+// every container on it.
+//
+// It is also what covers the VPCs a region could not lock, which claim
+// nothing and would otherwise be swept on a lock failure alone.
+func (h *Handler) unrecordedEgress(ctx context.Context, sweep map[string]*docker.NetworkSummary) map[string]*docker.NetworkSummary {
+	if len(sweep) == 0 {
+		return sweep
+	}
+	byRegion, aerr := h.store.vpcsByRegion(ctx)
+	if aerr != nil {
+		h.log.WithRecorder(ctx).Error("reconcile networks: list VPCs before the egress sweep; sweeping nothing",
+			zap.String("error", aerr.Message))
+		return nil
+	}
+	for _, vpcs := range byRegion {
+		for _, vpc := range vpcs {
+			delete(sweep, vpc.EgressNetworkID)
+		}
+	}
+	return sweep
+}
+
 // sweepEgressNetworks removes the egress networks no VPC in any region
 // claimed — orphans of a deleted VPC, and, outside `routed`, every one the
 // mode no longer has a use for. Only this instance's: one whose owner cannot
 // be established belongs to a run this one knows nothing about.
+//
+// What it removes is narrowed twice, because removing one disconnects every
+// container on it: by the claims the regions made, and then by a second store
+// read that drops anything a record still names — see unrecordedEgress, which
+// sweeps nothing at all when that read fails.
 func (h *Handler) sweepEgressNetworks(ctx context.Context, byID map[string]*docker.NetworkSummary) {
+	byID = h.unrecordedEgress(ctx, byID)
 	if len(byID) == 0 {
 		return
 	}
@@ -776,7 +900,3 @@ func (h *Handler) forgetVPCEgress(ctx context.Context, vpc *VPC) {
 	defer docker.LockNetwork(h.cfg.VPCEgressNetwork(vpc.VpcID))()
 	h.removeEgressNetwork(ctx, vpc.EgressNetworkID)
 }
-
-// egressMuGuard is the type of Handler.egressMu, named so the field's purpose
-// reads at the declaration: one CIDR allocation at a time.
-type egressMuGuard = sync.Mutex

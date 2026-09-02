@@ -302,6 +302,9 @@ func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
 	case config.VPCEgressOpen:
 		return !hasInternetGateway
 	default:
+		// Unreachable: Load rejects any other value at startup. Spelled out
+		// rather than folded into the case above so the exhaustiveness check
+		// keeps a mode added later from silently inheriting `open`'s answer.
 		return !hasInternetGateway
 	}
 }

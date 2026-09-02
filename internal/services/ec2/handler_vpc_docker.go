@@ -102,7 +102,7 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 		// tables may have changed while Overcast was down. After the
 		// isolation repair, so a plane recreated under its containers is
 		// settled before their route out is revisited.
-		h.reconcileRegionEgressNetworks(rctx, egressIndex)
+		h.reconcileRegionEgressNetworks(rctx, byRegion[region], egressIndex)
 		h.joinRegionNetworks(rctx)
 	}
 	// Only now is a network known to be unclaimed: by no VPC in any region.
@@ -157,7 +157,7 @@ func (h *Handler) indexNetworks(ctx context.Context, networks []docker.NetworkSu
 	// The index holds only the planes. A VPC's egress network
 	// (OVERCAST_VPC_EGRESS=routed) carries the same resource-id label and
 	// would be adopted as the plane, or swept as an orphan; it has its own
-	// pass — see splitVPCNetworks and reconcileEgressNetworks.
+	// pass — see splitVPCNetworks and reconcileRegionEgressNetworks.
 	planes, egress := splitVPCNetworks(h.networksInScope(ctx, networks))
 	return newVPCNetworkIndex(planes, byRegion), egress
 }
@@ -649,9 +649,11 @@ func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach boo
 				zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID))
 		}
 	}
-	// The gateway is a fact about the template; whether it decides isolation is
-	// a question for the egress mode. Under `open` and `none` it does not —
-	// those answer for every network alike — and under `routed` it will. See
+	// The gateway is a fact about the template; whether it decides isolation
+	// is a question for the egress mode. Under `open` it does. Under `none`
+	// and `routed` it does not — both isolate every VPC plane alike, and
+	// under `routed` what the gateway decides is which *subnets* route out,
+	// which is a second network rather than this flag. See
 	// dataplane.VPCNetworkInternal and docs/networking.md § Egress modes.
 	internal := dataplane.VPCNetworkInternal(h.cfg, hasGateway)
 

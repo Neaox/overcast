@@ -6,9 +6,11 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/overcast-sh/overcast/internal/config"
@@ -789,4 +791,194 @@ func egressLabels(vpcID, owner, role string) map[string]string {
 	labels[docker.LabelVPCRole] = role
 	labels[docker.LabelInstance] = owner
 	return labels
+}
+
+// A sweep that disconnects containers must fail closed. When the store cannot
+// be read at sweep time, nothing is removed: an egress network left behind
+// costs a /24 from a pool of 256, while one removed in error takes the route
+// out from under every container on it.
+func TestSweepEgressNetworks_sweepsNothingWhenTheStoreCannotBeRead(t *testing.T) {
+	f := newFakeVPCDocker(t)
+	store := &failingScanStore{Store: state.NewMemoryStore()}
+	h := vpcDockerHandlerOn(t, f, "shared", store)
+	h.cfg.VPCEgress = config.VPCEgressRouted
+	ctx := context.Background()
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+	subnetID := createSubnet(t, h, vpcID, "10.9.1.0/24")
+	placeContainer(t, h, f, vpcID, "ctr-fn", "10.9.1.5", subnetID)
+	natID := createNAT(t, h, subnetID)
+	createRoute(t, h, mainRouteTableID(t, h, vpcID), url.Values{"NatGatewayId": {natID}})
+	egressID := storedVPC(t, h, vpcID).EgressNetworkID
+	if egressID == "" {
+		t.Fatalf("setup: no egress network")
+	}
+
+	// When: the sweep runs over an unclaimed egress network while the store
+	// read that would vouch for it fails.
+	store.failScans.Store(true)
+	h.sweepEgressNetworks(ctx, map[string]*docker.NetworkSummary{
+		egressID: {ID: egressID, Name: h.cfg.VPCEgressNetwork(vpcID), Labels: map[string]string{
+			docker.LabelInstance: h.instances.Resolve(ctx),
+		}},
+	})
+
+	// Then: it is still there, and its container is still on it.
+	if !f.has(egressID) {
+		t.Fatalf("the egress network was swept on a store read that failed")
+	}
+	if _, on := f.endpoint(egressID, "ctr-fn"); !on {
+		t.Errorf("ctr-fn was disconnected by a sweep that should not have run")
+	}
+}
+
+// A VPC whose record still names its egress network is never swept, however
+// it came to be unclaimed — a region that could not take the VPC's lock, or
+// one whose pass did not run. Claiming is not the only thing standing between
+// a live network and removal.
+func TestSweepEgressNetworks_keepsANetworkAVPCRecordStillNames(t *testing.T) {
+	f := newFakeVPCDocker(t)
+	h := routedHandler(t, f)
+	ctx := context.Background()
+	vpcID := createVPC(t, h, "10.9.0.0/16")
+	subnetID := createSubnet(t, h, vpcID, "10.9.1.0/24")
+	placeContainer(t, h, f, vpcID, "ctr-fn", "10.9.1.5", subnetID)
+	natID := createNAT(t, h, subnetID)
+	createRoute(t, h, mainRouteTableID(t, h, vpcID), url.Values{"NatGatewayId": {natID}})
+	egressID := storedVPC(t, h, vpcID).EgressNetworkID
+	if egressID == "" {
+		t.Fatalf("setup: no egress network")
+	}
+
+	// When: the sweep is handed it as unclaimed, owned by this instance —
+	// which is all the sweep used to need.
+	h.sweepEgressNetworks(ctx, map[string]*docker.NetworkSummary{
+		egressID: {ID: egressID, Name: h.cfg.VPCEgressNetwork(vpcID), Labels: map[string]string{
+			docker.LabelInstance: h.instances.Resolve(ctx),
+		}},
+	})
+
+	// Then: the record vouches for it and it stays, containers attached.
+	if !f.has(egressID) {
+		t.Fatalf("an egress network a live VPC record names was swept")
+	}
+	if _, on := f.endpoint(egressID, "ctr-fn"); !on {
+		t.Errorf("ctr-fn was disconnected from a network that should not have been swept")
+	}
+
+	// And an orphan alongside it — named by no record — still goes.
+	orphan := f.add("overcast-vpc-vpc-deadbeef-egress", "198.18.99.0/24", map[string]string{
+		docker.LabelInstance: h.instances.Resolve(ctx),
+	})
+	h.sweepEgressNetworks(ctx, map[string]*docker.NetworkSummary{
+		orphan: {ID: orphan, Name: "overcast-vpc-vpc-deadbeef-egress", Labels: map[string]string{
+			docker.LabelInstance: h.instances.Resolve(ctx),
+		}},
+	})
+	if f.has(orphan) {
+		t.Errorf("the sweep kept a network no record names — it now sweeps nothing at all")
+	}
+}
+
+// failingScanStore is a store whose namespace scans can be made to fail
+// between calls — the transient read the sweep has to survive.
+type failingScanStore struct {
+	state.Store
+	failScans atomic.Bool
+}
+
+func (s *failingScanStore) Scan(ctx context.Context, namespace, prefix string) ([]state.KV, error) {
+	if s.failScans.Load() {
+		return nil, errors.New("scan: the store is unavailable")
+	}
+	return s.Store.Scan(ctx, namespace, prefix)
+}
+
+// The window between deciding a placement and recording it. The decision is
+// read before the container exists; a route mutation landing after it
+// reconciles a VPC that does not yet know about this container. Recording the
+// placement re-reads the decision under the VPC's lock, so the container ends
+// up where its route table puts it whichever order the two arrive in.
+func TestRecordPlacement_settlesAContainerAgainstARouteThatChangedMidPlacement(t *testing.T) {
+	t.Run("a route withdrawn mid-placement takes the route out away again", func(t *testing.T) {
+		f := newFakeVPCDocker(t)
+		h := routedHandler(t, f)
+		ctx := context.Background()
+		vpcID := createVPC(t, h, "10.9.0.0/16")
+		subnetID := createSubnet(t, h, vpcID, "10.9.1.0/24")
+		rtID := mainRouteTableID(t, h, vpcID)
+		natID := createNAT(t, h, subnetID)
+		createRoute(t, h, rtID, url.Values{"NatGatewayId": {natID}})
+
+		// The placement decides while the route is there, and the container
+		// joins the egress network — as dataplane.Attach would.
+		egressID, err := h.egressNetworkForSubnets(ctx, vpcID, []string{subnetID})
+		if err != nil || egressID == "" {
+			t.Fatalf("egressNetworkForSubnets = %q, %v; want the VPC's egress network", egressID, err)
+		}
+		vpc := storedVPC(t, h, vpcID)
+		f.attach(vpc.DockerNetworkID, "ctr-fn", "10.9.1.5")
+		f.attach(egressID, "ctr-fn", "198.18.0.9")
+
+		// The route goes away before the placement is on record, so the
+		// reconcile it triggers has nothing to move.
+		deleteRoute(t, h, rtID)
+		if _, on := f.endpoint(egressID, "ctr-fn"); !on {
+			t.Fatalf("setup: the reconcile moved a container it could not have known about")
+		}
+
+		// When: the placement is recorded.
+		h.recordPlacement(ctx, "ctr-fn", dataplane.Placement{
+			VPCNetwork: vpc.DockerNetworkID, VPCID: vpcID, SubnetIDs: []string{subnetID}, EgressNetwork: egressID,
+		})
+
+		// Then: the container is taken off the egress network its route table
+		// no longer grants, and is left on its plane.
+		if _, on := f.endpoint(egressID, "ctr-fn"); on {
+			t.Errorf("ctr-fn kept a route out its route table withdrew while it was being placed")
+		}
+		if _, still := f.endpoint(vpc.DockerNetworkID, "ctr-fn"); !still {
+			t.Errorf("ctr-fn left the plane")
+		}
+	})
+
+	t.Run("a route granted mid-placement gives the route out", func(t *testing.T) {
+		f := newFakeVPCDocker(t)
+		h := routedHandler(t, f)
+		ctx := context.Background()
+		vpcID := createVPC(t, h, "10.9.0.0/16")
+		subnetID := createSubnet(t, h, vpcID, "10.9.1.0/24")
+		public := createSubnet(t, h, vpcID, "10.9.0.0/24")
+		rtID := mainRouteTableID(t, h, vpcID)
+
+		// The placement decides while the subnet routes nowhere.
+		egressID, err := h.egressNetworkForSubnets(ctx, vpcID, []string{subnetID})
+		if err != nil || egressID != "" {
+			t.Fatalf("egressNetworkForSubnets = %q, %v; want none", egressID, err)
+		}
+		vpc := storedVPC(t, h, vpcID)
+		f.attach(vpc.DockerNetworkID, "ctr-fn", "10.9.1.5")
+
+		// A NAT gateway and a route arrive before the placement is recorded.
+		natID := createNAT(t, h, public)
+		createRoute(t, h, rtID, url.Values{"NatGatewayId": {natID}})
+
+		// When: the placement is recorded.
+		h.recordPlacement(ctx, "ctr-fn", dataplane.Placement{
+			VPCNetwork: vpc.DockerNetworkID, VPCID: vpcID, SubnetIDs: []string{subnetID},
+		})
+
+		// Then: the VPC has an egress network and the container is on it,
+		// ranked as its default-route source.
+		after := storedVPC(t, h, vpcID)
+		if after.EgressNetworkID == "" {
+			t.Fatalf("no egress network was created for a route that arrived mid-placement")
+		}
+		ep, on := f.endpoint(after.EgressNetworkID, "ctr-fn")
+		if !on {
+			t.Fatalf("ctr-fn did not get the route out its route table granted mid-placement")
+		}
+		if ep.gwPriority != dataplane.EgressGatewayPriority {
+			t.Errorf("gwPriority = %d, want %d", ep.gwPriority, dataplane.EgressGatewayPriority)
+		}
+	})
 }

@@ -497,12 +497,14 @@ give a VPC-attached function full egress and model no VPC networking at all.
 > `routed` **cannot withhold egress**: every container has a route out
 > whatever its route table says, so a subnet with no `0.0.0.0/0` route still
 > reaches the internet and the missing NAT gateway this mode exists to catch
-> goes uncaught. Overcast says so rather than pretending: two warnings at
-> startup, and the `routed-egress-not-enforced` advisory in
-> `/_overcast/health`. Running Overcast **in a container**, or against a
-> **native Linux Docker daemon**, is what makes the mode enforceable.
+> goes uncaught. Overcast says so rather than pretending: **two warnings in the
+> startup log**, which is where to look, and a `routed-egress-not-enforced`
+> advisory in `GET /_overcast/debug/metrics` when `OVERCAST_DEBUG=true`.
+> Running Overcast **in a container**, or against a **native Linux Docker
+> daemon**, is what makes the mode enforceable.
 >
-> Two host limits cause it, and the advisory names whichever applies:
+> Two host limits cause it, and both the warnings and the advisory name
+> whichever applies:
 >
 > - The control plane cannot be isolated where containers reach the Lambda
 >   Runtime API at the host's own address — `--internal` would strand every
@@ -548,7 +550,8 @@ That shape is what makes a route-table change safe on a hot path:
 and `DetachInternetGateway` each revisit every container in the VPC. Each move
 is logged with the subnet and the route table that decided it. A move Docker
 refuses does not fail the API call — AWS never refuses a route for a reason
-like a daemon's — but is reported in `/_overcast/health` and retried at the
+like a daemon's — but is logged at `error`, raised as an advisory in
+`GET /_overcast/debug/metrics` (with `OVERCAST_DEBUG=true`), and retried at the
 next start.
 
 **Resources outside a VPC are unaffected.** They sit on the shared data plane,
