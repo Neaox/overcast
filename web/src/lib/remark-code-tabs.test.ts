@@ -50,12 +50,22 @@ describe("remarkCodeTabs", () => {
     expect(group.children).toHaveLength(2)
     expect(group.children![0].data).toEqual({
       hName: "code-tabs-panel",
-      hProperties: { dataLabel: "Node.js (AWS SDK v3)", dataTabId: "node-js-aws-sdk-v3" },
+      hProperties: { dataLabel: "Node.js (AWS SDK v3)", dataTabId: "nodejs-aws-sdk-v3" },
     })
     expect(group.children![0].children).toEqual([code("const a = 1")])
     expect(group.children![1].data!.hProperties).toEqual({
       dataLabel: "Python (boto3)",
       dataTabId: "python-boto3",
+    })
+  })
+
+  it("keeps the anchor id remark-heading-ids already gave a folded heading", () => {
+    const numbered = { ...h3("Python"), data: { hProperties: { id: "python-1" } } }
+    const tree = fold(root(html(BEGIN), numbered, code("x"), html(END)))
+
+    expect(tree.children[0].children![0].data!.hProperties).toEqual({
+      dataLabel: "Python",
+      dataTabId: "python-1",
     })
   })
 

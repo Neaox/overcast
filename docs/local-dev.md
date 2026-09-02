@@ -166,7 +166,7 @@ request. The `app-vendor` scratch volume above shadows the host's `vendor/`, and
 Docker's copy-up populates it from the image on first mount. Re-run
 `composer install` in the image, not on the host, when dependencies change. Same
 reasoning as
-[performance.md § Data dir placement](./performance.md#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop).
+[performance.md § Data dir placement](./performance.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop).
 
 **Overlay the writable paths.** `storage/` and `bootstrap/cache` get the same
 treatment: writes stay out of your working tree, and copy-up hands the

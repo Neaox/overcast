@@ -72,7 +72,7 @@ func main() {
 	if frontmatterChanges > 0 {
 		fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter", frontmatterChanges))
 	}
-	for _, checkFn := range []func([]docsindex.Doc) error{checkAnchors, checkExcludedRefs, checkServiceDocStructure} {
+	for _, checkFn := range []func([]docsindex.Doc) error{checkAnchors, checkHeadingIDs, checkExcludedRefs, checkServiceDocStructure} {
 		if err := checkFn(docs); err != nil {
 			fatal(err)
 		}
@@ -223,9 +223,29 @@ func checkGeneratedDocsAreTracked() error {
 	return fmt.Errorf("untracked files under %s/services; run make docs, then commit them:\n\t%s", docsRoot, strings.Join(untracked, "\n\t"))
 }
 
+// checkHeadingIDs rejects a heading whose id ends in a hyphen — one that ends
+// in a space and a symbol, "## Ports —". GitHub keeps that hyphen and the
+// public site's renderer (Astro) trims it, so no one link could satisfy both;
+// the fix is to reword the heading.
+func checkHeadingIDs(docs []docsindex.Doc) error {
+	problems := []string{}
+	for _, doc := range docs {
+		for _, h := range doc.Entry.Headings {
+			if strings.HasSuffix(h.ID, "-") {
+				problems = append(problems, fmt.Sprintf("%s: heading %q gets id #%s; GitHub keeps the trailing hyphen and the public site drops it, so reword the heading", doc.Entry.Path, h.Text, h.ID))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("heading ids GitHub and the public site disagree on:\n\t%s", strings.Join(problems, "\n\t"))
+	}
+	return nil
+}
+
 // suggestHeading names the heading a broken anchor most likely meant: one
-// whose id differs only in its hyphens, which is what a GitHub-shaped anchor
-// pasted into a published doc looks like.
+// whose id differs only in its hyphens — the shape of a link that folded a
+// punctuation run into one hyphen by hand, or that predates the ids matching
+// GitHub's.
 func suggestHeading(headings []docsindex.Heading, fragment string) string {
 	want := strings.ReplaceAll(fragment, "-", "")
 	for _, h := range headings {

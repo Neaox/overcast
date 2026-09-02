@@ -97,5 +97,5 @@ Per-operation status, notes and AWS API links: [RDS operations](rds/operations.m
 - [RDS troubleshooting](./rds/troubleshooting.md)
 - [All service pages](./README.md)
 - [Service names and state overrides](../configuration.md#service-names)
-- [Networking § data-plane endpoints](../networking.md#data-plane-endpoints-rds-and-anything-else-that-is-a-container)
+- [Networking § data-plane endpoints](../networking.md#data-plane-endpoints--rds-and-anything-else-that-is-a-container)
 - [AWS API reference](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/Welcome.html)

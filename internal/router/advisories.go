@@ -46,11 +46,13 @@ const (
 const performanceDocsPath = "performance.md"
 
 // dataDirDocsPath deep-links the slow-filesystem advisory straight to the
-// relevant section. The fragment is the docs browser's heading slug (see
-// web/src/routes/docs.tsx `slug`: lowercase, non-alphanumeric runs → "-")
-// for "Data dir placement — avoid host bind mounts on Docker Desktop" in
-// docs/performance.md; the UI splits DocsPath on "#" into path + hash.
-const dataDirDocsPath = performanceDocsPath + "#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop"
+// relevant section. The fragment is the heading's id — GitHub's slug, which
+// internal/docsindex.Slug and web/src/lib/slug.ts both produce: lowercase,
+// punctuation dropped, each space a hyphen, so the " — " in "Data dir
+// placement — avoid host bind mounts on Docker Desktop" (docs/performance.md)
+// is the "--". web/src/routes/docs.slug.test.ts pins this literal to that
+// heading; the UI splits DocsPath on "#" into path + hash.
+const dataDirDocsPath = performanceDocsPath + "#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop"
 
 // storageDocsPath is the docs-browser-relative path (see performanceDocsPath
 // for how these resolve) for the storage backends guide — the page that
