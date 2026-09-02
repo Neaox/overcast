@@ -1,17 +1,5 @@
 ---
 title: "EC2 / VPC limitations"
-description: "EC2 / VPC limitations"
-section: "Service Reference"
-tags:
-  - docs
-  - ec2
-  - limitations
-  - services
-  - vpc
----
-
----
-title: "EC2 / VPC limitations"
 description: "How Overcast maps VPCs onto Docker networks, what the OVERCAST_EC2_VPC_STRATEGY values do about overlapping CIDRs, and the exact filter rules Describe* operations apply."
 section: "Service Reference"
 tags:

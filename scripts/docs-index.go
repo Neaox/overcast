@@ -123,6 +123,17 @@ func checkAnchors(docs []docsindex.Doc) error {
 			}
 		}
 	}
+	// A second frontmatter block is invisible to every other check here: only
+	// the first is parsed, so a stacked stub renders as literal text and silently
+	// replaces the authored metadata. Two pages shipped that way after a merge.
+	for _, doc := range docs {
+		if docsindex.HasStrayFrontmatter(doc.RawBody) {
+			problems = append(problems, fmt.Sprintf("%s: a second `---` frontmatter block sits above the "+
+				"first heading. Only the first is parsed, so the rest render as a literal rule and raw "+
+				"`title:`/`tags:` text and the page keeps the wrong metadata. Delete the duplicates — "+
+				"they are usually a merge artefact", doc.Entry.Path))
+		}
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("broken in-page anchor links:\n\t%s", strings.Join(problems, "\n\t"))
 	}

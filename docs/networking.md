@@ -1,29 +1,5 @@
 ---
 title: "Networking and host-based addressing"
-description: "Networking and host-based addressing"
-section: "Getting Started"
-tags:
-  - addressing
-  - based
-  - docs
-  - host
-  - networking
----
-
----
-title: "Networking and host-based addressing"
-description: "Networking and host-based addressing"
-section: "Getting Started"
-tags:
-  - addressing
-  - based
-  - docs
-  - host
-  - networking
----
-
----
-title: "Networking and host-based addressing"
 description: "Path-style vs Host-routed AWS endpoints, the *.localhost.overcast.sh wildcard DNS option, reaching Overcast from sibling containers, and how VPCs isolate emulated compute."
 section: "Networking"
 tags:
