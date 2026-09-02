@@ -326,7 +326,7 @@ function LogsPane({
   const virtualizer = useVirtualizer({
     count: logEvents.length,
     getScrollElement: () => scrollRef.current,
-    // One unwrapped line at text-[11px] leading-relaxed; wrapped lines are
+    // One unwrapped line at text-2xs leading-relaxed; wrapped lines are
     // corrected by measurement.
     estimateSize: () => 18,
     overscan: 20,
@@ -489,18 +489,18 @@ function LogsPane({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-[11px] leading-relaxed"
+        className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-2xs leading-relaxed"
       >
         {/* Top sentinel — triggers loading older pages when scrolled into view */}
         <div ref={topSentinelRef} />
         {loadingMore && (
-          <div className="py-2 text-center text-[11px] text-fg-muted">Loading older logs…</div>
+          <div className="py-2 text-center text-2xs text-fg-muted">Loading older logs…</div>
         )}
         {!loadingMore && !hasMore && (
-          <div className="py-2 text-center text-[11px] text-fg-muted">No earlier logs</div>
+          <div className="py-2 text-center text-2xs text-fg-muted">No earlier logs</div>
         )}
         {tailOverflowed > 0 && (
-          <div className="py-1 text-center text-[11px] text-warning">
+          <div className="py-1 text-center text-2xs text-warning">
             {tailOverflowed.toLocaleString()} older live events dropped — the stream is faster than
             the buffer
           </div>
@@ -527,7 +527,7 @@ function LogsPane({
           })}
         </div>
         {loadingNewer && (
-          <div className="py-2 text-center text-[11px] text-fg-muted">Loading newer logs…</div>
+          <div className="py-2 text-center text-2xs text-fg-muted">Loading newer logs…</div>
         )}
       </div>
 
@@ -536,7 +536,7 @@ function LogsPane({
         <button
           type="button"
           onClick={() => scrollToBottom("smooth")}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 font-mono text-[11px] font-medium text-fg-on-accent shadow-lg hover:bg-accent-hover"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 font-mono text-2xs font-medium text-fg-on-accent shadow-lg hover:bg-accent-hover"
         >
           ↓ New logs
         </button>
@@ -554,7 +554,7 @@ function TriggerPane({ triggerEvent }: { triggerEvent: unknown }) {
     )
   }
   return (
-    <div className="m-0 p-4 font-mono text-[11px] leading-relaxed text-fg">
+    <div className="m-0 p-4 font-mono text-2xs leading-relaxed text-fg">
       <TriggerEventViewer event={triggerEvent} />
     </div>
   )

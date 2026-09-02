@@ -340,7 +340,7 @@ const SqsStatsBar = memo(function SqsStatsBar({
       <span
         className={cn(
           "flex items-center gap-0.5 rounded px-1.5 py-0.5",
-          visible > 0 ? "bg-success/15 text-success" : "bg-fg-muted/15 text-fg-muted",
+          visible > 0 ? "bg-success-muted text-success" : "bg-fg-muted/15 text-fg-muted",
         )}
         title="Visible messages"
       >
@@ -357,7 +357,7 @@ const SqsStatsBar = memo(function SqsStatsBar({
       <span
         className={cn(
           "flex items-center gap-0.5 rounded px-1.5 py-0.5",
-          inFlight > 0 ? "bg-warning/15 text-warning" : "bg-fg-muted/15 text-fg-muted",
+          inFlight > 0 ? "bg-warning-muted text-warning" : "bg-fg-muted/15 text-fg-muted",
         )}
         title="In-flight messages (received, not yet deleted)"
       >
@@ -503,7 +503,7 @@ const SqsMessageList = memo(function SqsMessageList({
               {/* Receive count badge — shown first so it's immediately visible */}
               <span
                 className={cn(
-                  "shrink-0 rounded bg-fg-muted/20 px-1 py-px font-mono text-[9px] font-bold text-fg-muted tabular-nums",
+                  "shrink-0 rounded bg-fg-muted/20 px-1 py-px font-mono text-2xs font-bold text-fg-muted tabular-nums",
                   isDone && "line-through",
                 )}
                 title={`Received ${msg.approximateReceiveCount} time(s)`}
@@ -513,14 +513,14 @@ const SqsMessageList = memo(function SqsMessageList({
               {/* Status badge */}
               <span
                 className={cn(
-                  "inline-flex shrink-0 items-center rounded px-1 py-px font-mono text-[9px] leading-none font-bold uppercase",
+                  "inline-flex shrink-0 items-center rounded px-1 py-px font-mono text-2xs leading-none font-bold uppercase",
                   visualPhase === "done"
-                    ? "bg-danger/15 text-danger"
+                    ? "bg-danger-muted text-danger"
                     : visualPhase === "delayed"
-                      ? "bg-accent/15 text-accent"
+                      ? "bg-accent-muted text-accent"
                       : visualPhase === "inflight"
-                        ? "bg-warning/15 text-warning"
-                        : "bg-success/15 text-success",
+                        ? "bg-warning-muted text-warning"
+                        : "bg-success-muted text-success",
                 )}
               >
                 {visualPhase === "done"
@@ -663,18 +663,18 @@ const LogStreamList = memo(function LogStreamList({
 const RdsStatusBadge = memo(function RdsStatusBadge({ status }: { status: string }) {
   const colourClass =
     status === "available"
-      ? "bg-success/15 text-success"
+      ? "bg-success-muted text-success"
       : status === "stopped"
         ? "bg-fg-muted/20 text-fg-muted"
         : status === "stopping" || status === "starting"
-          ? "bg-warning/15 text-warning"
+          ? "bg-warning-muted text-warning"
           : status === "deleting" || status === "failed"
-            ? "bg-danger/15 text-danger"
-            : "bg-accent/15 text-accent"
+            ? "bg-danger-muted text-danger"
+            : "bg-accent-muted text-accent"
   return (
     <span
       className={cn(
-        "mt-0.5 inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase",
+        "mt-0.5 inline-flex items-center rounded px-1.5 py-0.5 font-mono text-2xs font-semibold uppercase",
         colourClass,
       )}
     >
@@ -735,10 +735,10 @@ function SqsMessageModal({
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <span
                 className={cn(
-                  "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase",
+                  "rounded px-1.5 py-0.5 font-mono text-2xs font-bold uppercase",
                   isInflight(displayMsg)
-                    ? "bg-warning/15 text-warning"
-                    : "bg-success/15 text-success",
+                    ? "bg-warning-muted text-warning"
+                    : "bg-success-muted text-success",
                 )}
               >
                 {isInflight(displayMsg) ? "In-flight" : "Visible"}
@@ -913,7 +913,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
 
   if (q) {
     return (
-      <pre className="max-h-80 overflow-auto rounded border border-border bg-bg p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+      <pre tabIndex={0} className="max-h-80 overflow-auto rounded border border-border bg-bg p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
         <HighlightedText text={recordSearchText(event)} query={q} />
       </pre>
     )
@@ -935,7 +935,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
       <div className="grid grid-cols-2 gap-2 text-xs text-fg-muted @md:grid-cols-4">
         {typeof record.eventID === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-2xs font-semibold text-fg-subtle uppercase">
               Event ID
             </span>
             <span className="break-all text-fg">{record.eventID}</span>
@@ -943,7 +943,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof record.eventVersion === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-2xs font-semibold text-fg-subtle uppercase">
               Version
             </span>
             <span className="text-fg">{record.eventVersion}</span>
@@ -951,7 +951,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof record.awsRegion === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-2xs font-semibold text-fg-subtle uppercase">
               Region
             </span>
             <span className="text-fg">{record.awsRegion}</span>
@@ -959,7 +959,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
         )}
         {typeof dynamodb?.SequenceNumber === "string" && (
           <div className="rounded bg-bg px-2 py-1">
-            <span className="block font-mono text-[10px] font-semibold text-fg-subtle uppercase">
+            <span className="block font-mono text-2xs font-semibold text-fg-subtle uppercase">
               Sequence
             </span>
             <span className="break-all text-fg">{dynamodb.SequenceNumber}</span>
@@ -972,7 +972,7 @@ function ESMRecordDetails({ event, query }: { event: ESMDecisionEvent; query: st
             <div className={cn(sectionLabel, "border-b border-border px-3 py-2 text-fg-muted")}>
               {label}
             </div>
-            <pre className="max-h-56 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+            <pre tabIndex={0} className="max-h-56 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
               {stringifyRecordSection(value)}
             </pre>
           </div>
@@ -1032,7 +1032,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
       >
         <Filter className="h-7 w-7 transition-transform group-hover:rotate-12" />
         {total > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full border border-cat-3/40 bg-bg-elevated px-1 font-mono text-[10px] font-black text-cat-3 tabular-nums shadow">
+          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full border border-cat-3/40 bg-bg-elevated px-1 font-mono text-2xs font-black text-cat-3 tabular-nums shadow">
             {total > 99 ? "99+" : total}
           </span>
         )}
@@ -1098,7 +1098,7 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                   <span className="text-xs text-fg-muted">{patterns.length} patterns</span>
                 )}
               </div>
-              <pre className="max-h-32 overflow-auto rounded-lg border border-cat-3/15 bg-cat-3/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
+              <pre tabIndex={0} className="max-h-32 overflow-auto rounded-lg border border-cat-3/15 bg-cat-3/6 p-3 text-xs leading-relaxed whitespace-pre-wrap text-fg">
                 {filterPatternText}
               </pre>
             </div>
@@ -1169,21 +1169,21 @@ function ESMFilterPanel({ esmId, patterns }: { esmId: string; patterns: string[]
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg/60 px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="rounded-md bg-bg-elevated px-2 py-1 font-mono text-[10px] font-bold text-fg-muted tabular-nums">
+                            <span className="rounded-md bg-bg-elevated px-2 py-1 font-mono text-2xs font-bold text-fg-muted tabular-nums">
                               #{receipt}
                             </span>
                             <span
                               className={cn(
-                                "rounded-md px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase",
+                                "rounded-md px-2 py-1 font-mono text-2xs tracking-[0.12em] uppercase",
                                 didMatch
-                                  ? "bg-success/15 text-success"
-                                  : "bg-danger/15 text-danger",
+                                  ? "bg-success-muted text-success"
+                                  : "bg-danger-muted text-danger",
                               )}
                             >
                               {didMatch ? "Filtered in" : "Filtered out"}
                             </span>
                             {event.payload?.eventName && (
-                              <span className="rounded-md bg-fg-muted/10 px-2 py-1 text-[10px] font-semibold text-fg-muted">
+                              <span className="rounded-md bg-fg-muted/10 px-2 py-1 text-2xs font-semibold text-fg-muted">
                                 {event.payload.eventName}
                               </span>
                             )}
@@ -1355,25 +1355,16 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     )
   }
 
+  // The card is not itself a button. It holds the drawer triggers, the log peek and
+  // React Flow's own connection handles, and an element with a widget role may not
+  // contain focusable descendants — a screen reader announces one control where there
+  // are four, and Tab lands inside something already claiming to be a button. The whole
+  // surface still navigates on click, which is what a canvas node wants from a pointer;
+  // the keyboard route is the node's title, which is a real <button> below.
   return (
     <div
-      role={route ? "button" : undefined}
-      tabIndex={route ? 0 : undefined}
       onClick={handleClick}
       onMouseDown={handleMouseDown}
-      onKeyDown={
-        route
-          ? (e) => {
-              // React portals bubble events through the React tree, so ignore
-              // key presses originating from dialog inputs rendered by this node.
-              if (e.target !== e.currentTarget) return
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                handleClick()
-              }
-            }
-          : undefined
-      }
       className={cn(
         "relative flex flex-col rounded-lg border px-3 py-2 shadow-sm transition-colors",
         "bg-bg-elevated text-fg",
@@ -1425,7 +1416,20 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
 
         <div className="min-w-0 flex-1">
           <Tooltip content={<span className="break-all">{label}</span>}>
-            <p className="truncate text-base leading-tight font-semibold">{label}</p>
+            {route ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  handleClick()
+                }}
+                className="block w-full truncate text-left text-base leading-tight font-semibold hover:underline"
+              >
+                {label}
+              </button>
+            ) : (
+              <p className="truncate text-base leading-tight font-semibold">{label}</p>
+            )}
           </Tooltip>
           {service === "sqs" ? (
             <SqsStatsBar visible={visibleCount} inFlight={inFlightCount} />
@@ -1433,7 +1437,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             <RdsStatusBadge status={status} />
           ) : service === "apigateway" ? (
             <div className="flex items-center gap-1.5">
-              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-2xs font-semibold text-fg-muted uppercase">
                 {protocolType ?? "API"}
               </span>
               {routeCount != null && (
@@ -1449,7 +1453,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             </div>
           ) : service === "appsync" ? (
             <div className="flex items-center gap-1.5">
-              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-2xs font-semibold text-fg-muted uppercase">
                 {authenticationType ?? "GraphQL"}
               </span>
               {dataSourceCount != null && (
@@ -1465,7 +1469,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
             </div>
           ) : service === "waf" ? (
             <div className="flex items-center gap-1.5">
-              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-2xs font-semibold text-fg-muted uppercase">
                 {scope ?? "WAF"}
               </span>
               {ruleCount != null && (
@@ -1564,7 +1568,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       {(eventCount ?? 0) > 0 && (
         <span
           className={cn(
-            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
+            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-2xs font-bold tabular-nums",
             "bg-accent text-fg-on-accent",
           )}
         >
@@ -1576,7 +1580,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
       {(writeBurstCount ?? 0) > 1 && (
         <span
           className={cn(
-            "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
+            "absolute -right-1.5 -bottom-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-2xs font-bold tabular-nums",
             "border border-current bg-bg-elevated",
             meta.color,
           )}
@@ -1957,7 +1961,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
               e.stopPropagation()
               setShowInvocations(true)
             }}
-            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-accent/15 hover:text-accent"
+            className="flex h-5 w-5 items-center justify-center rounded text-fg-muted transition-colors hover:bg-accent-muted hover:text-accent"
             title={`${invocations.length} invocations`}
           >
             <Clock className="h-3 w-3" />
@@ -1985,7 +1989,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
         ))}
       </div>
       {allInstances.length > LAMBDA_GROUP_MAX_VISIBLE && (
-        <div className="pointer-events-none absolute right-2 bottom-1 rounded bg-bg-elevated/90 px-1 font-mono text-[9px] text-fg-muted">
+        <div className="pointer-events-none absolute right-2 bottom-1 rounded bg-bg-elevated/90 px-1 font-mono text-2xs text-fg-muted">
           +{allInstances.length - LAMBDA_GROUP_MAX_VISIBLE} more · scroll
         </div>
       )}
@@ -1994,7 +1998,7 @@ export const LambdaGroupNode = memo(function LambdaGroupNode({ data }: NodeProps
       {(eventCount ?? 0) > 0 && (
         <span
           className={cn(
-            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold tabular-nums",
+            "absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-2xs font-bold tabular-nums",
             "bg-accent text-fg-on-accent",
           )}
         >

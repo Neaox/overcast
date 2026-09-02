@@ -129,7 +129,7 @@ export const VpcNetworkNode = memo(function VpcNetworkNode({ data }: NodeProps) 
           {subnetCount} subnet{subnetCount !== 1 ? "s" : ""}
         </span>
         {status && status !== "available" && (
-          <span className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
+          <span className="rounded bg-warning-muted px-1.5 py-0.5 font-medium text-warning">
             {status}
           </span>
         )}
@@ -137,7 +137,7 @@ export const VpcNetworkNode = memo(function VpcNetworkNode({ data }: NodeProps) 
 
       {/* Event counter badge */}
       {(eventCount ?? 0) > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold text-fg-on-accent tabular-nums">
+        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-2xs font-bold text-fg-on-accent tabular-nums">
           {(eventCount ?? 0) > 99 ? "99+" : eventCount}
         </span>
       )}

@@ -12,7 +12,7 @@ import { ServiceTile } from "./service-tile"
 // coverage does — filled + solid (fully emulated), unfilled + solid
 // (partially), unfilled + dashed (not emulated).
 const CHIP_CLASS =
-  "flex items-center gap-[7px] rounded-control border border-dashed border-border px-2.5 py-1.5 font-mono text-[11px] text-fg-subtle"
+  "flex items-center gap-[7px] rounded-control border border-dashed border-border px-2.5 py-1.5 font-mono text-2xs text-fg-subtle"
 
 export function NotEmulatedChips({ entries }: { entries: ServiceTierEntry[] }) {
   return (
@@ -60,8 +60,8 @@ function OtherServicesExpander() {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
-        <span className="font-mono text-[11px] text-fg-muted">Other AWS Services</span>
-        <span className="font-mono text-[11px] text-fg-subtle">{CATALOG.length}</span>
+        <span className="font-mono text-2xs text-fg-muted">Other AWS Services</span>
+        <span className="font-mono text-2xs text-fg-subtle">{CATALOG.length}</span>
         <ChevronDown
           className={cn(
             "ml-auto h-3.5 w-3.5 text-fg-subtle transition-transform",

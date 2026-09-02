@@ -41,6 +41,7 @@
   --color-warning: var(--warning);
   --color-warning-muted: var(--warning-muted);
   --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
 
   --color-sidebar-bg: var(--sidebar-bg);
   --color-sidebar-fg: var(--sidebar-fg);
@@ -81,6 +82,30 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
     "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  /* The bottom of the type scale, and the floor under it.
+     ────────────────────────────────────────────────────────────────────────
+     `text-2xs` is the smallest size anything on the console is set at. It
+     replaces the 8px, 9px and 10px one-off `text-[Npx]` values the micro-labels
+     used to carry, for two reasons.
+
+     One is rem. The root font steps up to 17/19/22px on large displays (see the
+     breakpoints below) so the UI does not shrink away on a 4K panel — but an
+     arbitrary `text-[9px]` is frozen in px and does not come with it, so the
+     bigger the display, the wider the gap between the body text and the labels
+     that name it. Expressed in rem, the floor scales with everything else.
+
+     The other is that 8-10px mono uppercase in --fg-subtle is the exact case a
+     high-DPI panel renders worst: the glyphs get real sub-pixel stems rather
+     than being snapped to whole pixels, so the strokes go thin and grey instead
+     of sharp. Weight is not an available lever — the JetBrains Mono webfont
+     ships 400 and 700 and nothing between — which leaves size and colour.
+
+     `text-xs` (12px) stays where it is: it is the size every table cell, input
+     and button label is set at, this is a dense tool, and 12px at --fg is not
+     the readability problem. */
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-2xs--line-height: 1.45;
 
   /* The design's `--oc-hover`: every state change an interactive surface makes
      — hover, focus, press, selection — runs at 120ms ease-out. Set as
@@ -127,6 +152,13 @@
   border-radius: 0.25rem;
   padding: 0.15em 0.4em;
 }
+/* The plugin's em-relative sizes compound: a table cell is 0.875em, and inline code
+   inside one is another 0.875em, so `cdk deploy` in a docs table came out at 10.3px —
+   the smallest text anywhere in the console, and set in mono. Inside a cell, code
+   matches the cell. */
+.prose :is(th, td) code {
+  font-size: 1em;
+}
 /* The plugin wraps inline code in decorative backticks by default; our pill
    background above makes those redundant. */
 .prose :not(pre) > code::before,
@@ -152,22 +184,33 @@
 
   --fg: #16222e; /* heading text */
   --fg-muted: #33465a; /* body text */
-  --fg-subtle: #54718a; /* muted text */
+  --fg-subtle: #506b83; /* muted text — a step down from the brand #54718A, which
+                           lands at 4.24:1 on --bg-muted and 4.41:1 on the sidebar's
+                           active row, and carries almost every label on the page */
   --fg-on-accent: #ffffff;
 
   --border: #d5e2ee; /* hairline */
   --border-muted: #e2ecf5; /* derived: one step lighter than --border, same hue */
 
-  --accent: #1273c4;
+  /* Accent and the three semantic colours are pitched a step below the brand values,
+     for the same reason the categorical ramp below is pinned to one OKLCH lightness:
+     each is used as *text* — status pills, response codes, callout copy, chart labels
+     — and the brand tones do not clear WCAG AA there. On white the brand amber reads
+     3.04:1 and the green 3.38:1, and every one of them drops further on the tinted
+     chip its own colour paints. The values below clear 4.5:1 on --bg, --bg-subtle,
+     --bg-muted, --bg-elevated, --accent-muted and on a 10-15% tint of themselves, in
+     both themes; `pnpm a11y` fails the build if that stops being true. */
+  --accent: #1069b2;
   --accent-hover: #3e97df; /* accent-glow */
   --accent-muted: #e3f0fb; /* accent-soft */
   --accent-glow: #3e97df; /* glow / cursor block */
 
-  --danger: #c9564a;
+  --danger: #a9483e;
   --danger-muted: #f9e9e7; /* derived: soft tint of --danger */
-  --warning: #c08a2d;
+  --warning: #86611f;
   --warning-muted: #f7ecd6; /* derived: soft tint of --warning */
-  --success: #2e9e6b;
+  --success: #22754f;
+  --success-muted: #deeae5; /* derived: soft tint of --success */
 
   /* Brand mark (cloud logo) */
   --cloud: #c4d8ea;
@@ -179,7 +222,7 @@
   --sidebar-fg-strong: #16222e; /* heading text */
   --sidebar-item-hover: #eaf3fa; /* derived: whisper between accent-soft and page bg */
   --sidebar-item-active: #e3f0fb; /* accent-soft — active nav is accent-on-accent-soft */
-  --sidebar-item-active-fg: #1273c4; /* accent */
+  --sidebar-item-active-fg: #1069b2; /* accent */
 
   /* Categorical identity ramp — one hue per slot, all at the same OKLCH
      lightness so no slot is quietly weaker than its neighbours. At L=0.5 every
@@ -233,11 +276,15 @@
   --_dark-accent-muted: #1a2e42; /* accent-soft */
   --_dark-accent-glow: #8fd0ff; /* glow / cursor block */
 
-  --_dark-danger: #c9564a;
+  /* The three semantic colours had no dark values at all — the light tones carried
+     through, and on a dark chip tinted with their own colour they land at 3.0-4.2:1.
+     Each hue steps back up here, to the same 4.5:1 floor as the light theme. */
+  --_dark-danger: #d8847b;
   --_dark-danger-muted: #34201e; /* derived: soft tint of --danger on dark */
-  --_dark-warning: #c08a2d;
+  --_dark-warning: #c4923c;
   --_dark-warning-muted: #3d2f14; /* derived: soft tint of --warning on dark */
-  --_dark-success: #2e9e6b;
+  --_dark-success: #4dad81;
+  --_dark-success-muted: #1e373a; /* derived: soft tint of --success on dark */
 
   /* Brand mark (cloud logo) */
   --_dark-cloud: #33536f;
@@ -300,6 +347,7 @@
     --danger-muted: var(--_dark-danger-muted);
     --warning: var(--_dark-warning);
     --warning-muted: var(--_dark-warning-muted);
+    --success-muted: var(--_dark-success-muted);
     --success: var(--_dark-success);
 
     --cloud: var(--_dark-cloud);
@@ -357,6 +405,7 @@
   --warning: var(--_dark-warning);
   --warning-muted: var(--_dark-warning-muted);
   --success: var(--_dark-success);
+  --success-muted: var(--_dark-success-muted);
 
   --cloud: var(--_dark-cloud);
   --cloud-stroke: var(--_dark-cloud-stroke);
@@ -390,11 +439,14 @@
     box-sizing: border-box;
   }
 
+  /* No font-smoothing override. `antialiased` / `grayscale` skip the platform's own
+     stem darkening, which thins every stroke — and the console's smallest type is mono
+     uppercase in the muted colour, exactly the case that cannot afford it. It reads as
+     "crisper" on a 1x panel and as grey and washed on a high-DPI one, which is where
+     this UI mostly runs. The browser default is the right default. */
   html {
     height: 100%;
     font-size: 16px; /* base — override per breakpoint below */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
 
   /* Scale up on larger/higher-density displays so the UI doesn't feel tiny. */

@@ -213,7 +213,7 @@ describe("Sidebar collapse state", () => {
   it("persists the collapse state across refreshes", async () => {
     const { user, unmount } = renderScreen(SidebarOnly)
 
-    await user.click(await screen.findByRole("button", { name: "Collapse" }))
+    await user.click(await screen.findByRole("button", { name: "Collapse sidebar" }))
     expect(localStorage.getItem(SIDEBAR_COLLAPSED_WIDE_STORAGE_KEY)).toBe("true")
     expect(localStorage.getItem(SIDEBAR_COLLAPSED_NARROW_STORAGE_KEY)).toBeNull()
 
@@ -236,13 +236,13 @@ describe("Sidebar collapse state", () => {
     mockNarrowViewport(false)
     renderScreen(SidebarOnly)
 
-    expect(await screen.findByRole("button", { name: "Collapse" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument()
   })
 
   it("shows immediate UI tooltips for collapsed icon links", async () => {
     const { user } = renderScreen(SidebarOnly)
 
-    await user.click(await screen.findByRole("button", { name: "Collapse" }))
+    await user.click(await screen.findByRole("button", { name: "Collapse sidebar" }))
     const dashboardLink = await screen.findByRole("link", { name: "Dashboard" })
     expect(dashboardLink).not.toHaveAttribute("title")
 

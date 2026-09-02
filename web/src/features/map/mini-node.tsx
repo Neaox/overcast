@@ -43,7 +43,7 @@ export const MiniNode = memo(function MiniNode({ data }: NodeProps) {
       {/* Service dot with letter */}
       <span
         className={cn(
-          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold",
+          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-2xs font-bold",
           meta.bg,
           meta.color,
         )}
@@ -52,7 +52,7 @@ export const MiniNode = memo(function MiniNode({ data }: NodeProps) {
       </span>
 
       {/* Label — truncated */}
-      <span className="min-w-0 flex-1 truncate text-[10px] leading-tight font-medium text-fg">
+      <span className="min-w-0 flex-1 truncate text-2xs leading-tight font-medium text-fg">
         {label}
       </span>
 

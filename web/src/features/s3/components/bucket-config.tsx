@@ -203,7 +203,7 @@ function AddNotificationDialog({
             <p className={cn(sectionLabel, "text-fg-muted")}>Destination</p>
 
             {/* Destination type — SQS only for now */}
-            <div className="flex items-center gap-2 rounded-lg border border-accent bg-accent/10 px-3 py-2 text-sm font-medium text-fg">
+            <div className="flex items-center gap-2 rounded-lg border border-accent bg-accent-muted px-3 py-2 text-sm font-medium text-fg">
               <span className="flex h-5 w-5 items-center justify-center rounded bg-cat-3/10">
                 <MessagesSquare className="h-3 w-3 text-cat-3" />
               </span>
@@ -526,7 +526,7 @@ function LifecycleRules({
         <div className="flex flex-col gap-3 px-4 py-3">
           <ConfigRow label="Default minimum transition size">
             <span className="flex flex-wrap items-center gap-2">
-              <Badge variant="default" className="font-mono text-[10px]">
+              <Badge variant="default" className="font-mono text-2xs">
                 {transitionDefaultMinimumObjectSize}
               </Badge>
               <span className="text-xs text-fg-subtle">
@@ -547,7 +547,7 @@ function LifecycleRules({
               <span className="truncate font-mono text-sm text-fg">{rule.id}</span>
               <Badge
                 variant={rule.status === "Enabled" ? "accent" : "default"}
-                className="ml-auto shrink-0 text-[10px]"
+                className="ml-auto shrink-0 text-2xs"
               >
                 {rule.status}
               </Badge>
@@ -563,7 +563,7 @@ function LifecycleRules({
               ) : (
                 <div className="flex flex-wrap gap-1">
                   {actions.map((action) => (
-                    <Badge key={action} variant="default" className="font-mono text-[10px]">
+                    <Badge key={action} variant="default" className="font-mono text-2xs">
                       {action}
                     </Badge>
                   ))}
@@ -669,7 +669,7 @@ function BadgeList({ values }: { values: string[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {values.map((value) => (
-        <Badge key={value} variant="default" className="font-mono text-[10px]">
+        <Badge key={value} variant="default" className="font-mono text-2xs">
           {value}
         </Badge>
       ))}
@@ -683,7 +683,7 @@ function EventList({ events }: { events: string[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {events.map((ev) => (
-        <Badge key={ev} variant="accent" className="font-mono text-[10px]">
+        <Badge key={ev} variant="accent" className="font-mono text-2xs">
           {ev}
         </Badge>
       ))}
@@ -696,7 +696,7 @@ function FilterList({ rules }: { rules: NotificationFilterRule[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {rules.map((r, i) => (
-        <Badge key={i} variant="default" className="font-mono text-[10px]">
+        <Badge key={i} variant="default" className="font-mono text-2xs">
           {r.name}={r.value}
         </Badge>
       ))}
@@ -721,7 +721,7 @@ function QueueRow({
         <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
         <ArnLink arn={q.queueArn} />
         {q.id && (
-          <Badge variant="default" className="ml-auto shrink-0 text-[10px]">
+          <Badge variant="default" className="ml-auto shrink-0 text-2xs">
             {q.id}
           </Badge>
         )}
@@ -763,7 +763,7 @@ function TopicRow({ config: t }: { config: TopicNotificationConfig }) {
         <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
         <ArnLink arn={t.topicArn} />
         {t.id && (
-          <Badge variant="default" className="ml-auto shrink-0 text-[10px]">
+          <Badge variant="default" className="ml-auto shrink-0 text-2xs">
             {t.id}
           </Badge>
         )}
@@ -785,7 +785,7 @@ function LambdaRow({ config: l }: { config: LambdaNotificationConfig }) {
         <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
         <ArnLink arn={l.functionArn} />
         {l.id && (
-          <Badge variant="default" className="ml-auto shrink-0 text-[10px]">
+          <Badge variant="default" className="ml-auto shrink-0 text-2xs">
             {l.id}
           </Badge>
         )}

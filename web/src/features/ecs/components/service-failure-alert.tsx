@@ -52,7 +52,7 @@ export function ServiceFailureAlert({
       role={recovered ? "status" : "alert"}
       className={cn(
         "shadow-none",
-        recovered ? "border-warning/40 bg-warning/10" : "border-danger/40 bg-danger-muted",
+        recovered ? "border-warning/40 bg-warning-muted" : "border-danger/40 bg-danger-muted",
       )}
     >
       <CardContent className="space-y-3">

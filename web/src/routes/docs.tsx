@@ -111,8 +111,10 @@ function DocsPage() {
   }, [data])
 
   return (
-    <main className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 px-6 py-6 lg:grid-cols-[18rem_minmax(0,1fr)_14rem]">
-      <aside className="hidden min-h-0 lg:block">
+    /* A <div>, not a second <main>: the app shell already owns the page's one main
+       landmark, and this route renders inside it. */
+    <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 px-6 py-6 lg:grid-cols-[18rem_minmax(0,1fr)_14rem]">
+      <aside aria-label="Documentation" className="hidden min-h-0 lg:block">
         <div className="sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-3">
           <div className="mb-3 flex items-center gap-2 px-2 text-sm font-medium text-fg">
             <BookOpen className="h-4 w-4 text-accent" />
@@ -231,7 +233,7 @@ function DocsPage() {
                     )
                   },
                   table: ({ node: _node, children, ...props }) => (
-                    <div className="overflow-x-auto">
+                    <div tabIndex={0} className="overflow-x-auto">
                       <table className="w-full border-collapse text-xs" {...props}>
                         {children}
                       </table>
@@ -260,7 +262,7 @@ function DocsPage() {
         </article>
       </div>
 
-      <aside className="hidden xl:block">
+      <aside aria-label="On this page" className="hidden xl:block">
         <div className="sticky top-6 rounded-xl border border-border bg-bg-elevated p-3">
           <div className="mb-2 font-mono text-xs font-medium text-fg-subtle">On this page</div>
           <div className="space-y-1">
@@ -282,7 +284,7 @@ function DocsPage() {
           </div>
         </div>
       </aside>
-    </main>
+    </div>
   )
 }
 

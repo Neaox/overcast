@@ -126,7 +126,7 @@ function ServiceCard({
 
       <div className="flex min-w-0 flex-col gap-px">
         <span className="truncate font-mono text-[12px] font-bold text-fg">{service.label}</span>
-        <span className="truncate text-[10px] leading-[14px] text-fg-subtle">
+        <span className="truncate text-2xs leading-[14px] text-fg-subtle">
           {service.description}
         </span>
       </div>
@@ -184,7 +184,7 @@ function MegaMenu({ onSelectService }: { onSelectService: (service: ServiceDefin
           if (services.length === 0) return null
           return (
             <section key={cat} className="flex flex-col gap-2">
-              <h3 className="font-mono text-[11px] font-bold text-fg-muted">
+              <h3 className="font-mono text-2xs font-bold text-fg-muted">
                 {CATEGORY_LABELS[cat]}
               </h3>
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
@@ -218,7 +218,7 @@ function CatalogChip({ entry, onSelect }: { entry: CatalogEntry; onSelect: () =>
     >
       <BookOpen className="h-4 w-4 shrink-0 text-fg-subtle" />
       <span className="text-sm font-medium whitespace-nowrap text-fg-muted">{entry.label}</span>
-      <span className="shrink-0 rounded-full border border-border-muted px-1.5 py-0.5 text-[10px] text-fg-subtle">
+      <span className="shrink-0 rounded-full border border-border-muted px-1.5 py-0.5 text-2xs text-fg-subtle">
         {entry.tier === "stub" ? "Stub" : "Unsupported"}
       </span>
     </button>
@@ -583,7 +583,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
-            <kbd className="shrink-0 rounded border border-border px-[7px] py-0.5 font-mono text-[10px] text-fg-subtle">
+            <kbd className="shrink-0 rounded border border-border px-[7px] py-0.5 font-mono text-2xs text-fg-subtle">
               esc
             </kbd>
           </div>
@@ -634,7 +634,7 @@ export function GlobalSearchTrigger({ onClick }: { onClick: () => void }) {
       >
         <Search className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-left">Search resources, ARNs, keys…</span>
-        <kbd className="shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px]">
+        <kbd className="shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 font-mono text-2xs">
           ⌘K
         </kbd>
       </button>

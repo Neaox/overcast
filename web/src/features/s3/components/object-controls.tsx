@@ -143,7 +143,7 @@ function ScopeButton({
         aria-pressed={active}
         onClick={onClick}
         className={cn(
-          "inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 font-mono text-[11px] transition-colors",
+          "inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 font-mono text-2xs transition-colors",
           active ? "bg-accent-muted text-fg" : "text-fg-muted hover:bg-bg-muted hover:text-fg",
         )}
       >
@@ -179,14 +179,14 @@ function ScanSummary({
 }) {
   if (!filtered && !isScanning && !capped) {
     return (
-      <span className="font-mono text-[11px] whitespace-nowrap text-fg-subtle">
+      <span className="font-mono text-2xs whitespace-nowrap text-fg-subtle">
         {formatCount(scanned)} {noun}
       </span>
     )
   }
 
   return (
-    <span className="flex items-center gap-1.5 font-mono text-[11px] whitespace-nowrap text-fg-muted">
+    <span className="flex items-center gap-1.5 font-mono text-2xs whitespace-nowrap text-fg-muted">
       {isScanning && <Spinner className="h-3 w-3" />}
       {filtered ? (
         <>
@@ -238,7 +238,7 @@ export function SortHead({ column, label, sort, onSort, className }: SortHeadPro
         title={`Sort by ${label.toLowerCase()}`}
       >
         {label}
-        <span className={cn("text-[9px] leading-none", !active && "opacity-0")} aria-hidden>
+        <span className={cn("text-2xs leading-none", !active && "opacity-0")} aria-hidden>
           {sort.direction === "asc" ? "▲" : "▼"}
         </span>
       </button>
@@ -293,15 +293,21 @@ export function RowCheckbox({ checked, indeterminate = false, onChange, label }:
   }, [indeterminate])
 
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className="h-4 w-4 cursor-pointer rounded accent-accent"
-      checked={checked}
-      aria-label={label}
-      onChange={onChange}
-      onClick={(e) => e.stopPropagation()}
-    />
+    // 24px, not 16: WCAG 2.5.8 measures the control's own box, so padding on a wrapper
+    // does not count. The rows are already taller than this, so the only cost is 8px in
+    // one narrow selection column — and 24px is the size a checkbox wants on a touch
+    // screen anyway.
+    <label className="inline-flex cursor-pointer items-center justify-center">
+      <input
+        ref={ref}
+        type="checkbox"
+        className="h-6 w-6 cursor-pointer rounded accent-accent"
+        checked={checked}
+        aria-label={label}
+        onChange={onChange}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </label>
   )
 }
 
@@ -335,7 +341,7 @@ export function SelectionBar({
       <span className="font-medium">
         {formatCount(count)} object{count === 1 ? "" : "s"} selected
       </span>
-      <span className="font-mono text-[11px] text-fg-muted">{formatBytes(bytes)}</span>
+      <span className="font-mono text-2xs text-fg-muted">{formatBytes(bytes)}</span>
       <div className="ml-auto flex items-center gap-2">
         {blockedReason && <span className="text-xs text-warning">{blockedReason}</span>}
         <Button size="sm" onClick={onDownload} disabled={!!blockedReason}>

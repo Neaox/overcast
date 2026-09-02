@@ -328,7 +328,7 @@ export function CreatePipeDialog({
                   }
                 >
                   {sourceCandidates.length === 0 && !resourcesLoading ? (
-                    <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
+                    <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning-muted px-3 py-2 text-sm text-fg-muted">
                       <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
                       No sources found. Create a DynamoDB table with streams enabled, a Kinesis
                       stream or an SQS queue first.

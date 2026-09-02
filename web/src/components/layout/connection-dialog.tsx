@@ -190,7 +190,7 @@ export function ConnectionForm({
   return (
     <>
       {inDocker && endpointUnknown && (
-        <div className="mb-5 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-muted px-4 py-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <p className="text-sm text-fg-muted">
             Running inside Docker with remapped ports, but the Docker socket is not mounted.
@@ -293,7 +293,7 @@ export function ConnectionDialogContent({ onSubmitted }: { onSubmitted?: () => v
   return (
     <div className="w-full max-w-md rounded-xl border border-border bg-bg-elevated p-8 shadow-2xl">
       <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-muted">
           <Server className="h-5 w-5 text-accent" />
         </div>
         <div>

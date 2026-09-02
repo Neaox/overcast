@@ -57,10 +57,25 @@ function AppShellInner({ children }: AppShellProps) {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* The first tab stop on every page. The sidebar is forty-odd links deep, so
+          without this a keyboard user walks the whole service list to reach the content
+          again after every navigation. `tabIndex={-1}` on <main> is what makes the jump
+          move focus rather than only the viewport. */}
+      <a
+        href="#main-content"
+        className="sr-only font-mono text-xs focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-control focus:border focus:border-accent focus:bg-bg-elevated focus:px-3 focus:py-2 focus:text-accent focus:shadow-sm"
+      >
+        Skip to content
+      </a>
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onSearchOpen={() => setSearchOpen(true)} />
-        <main ref={mainRef} className="flex-1 overflow-auto bg-bg p-6">
+        <main
+          ref={mainRef}
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 overflow-auto bg-bg p-6 focus:outline-none"
+        >
           {children}
         </main>
       </div>

@@ -267,9 +267,9 @@ export function TestTab({ name }: { name: string }) {
         )}
 
         {!isPending && invokeError && (
-          <div className="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger/5 p-4">
+          <div className="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger-muted p-4">
             <p className="font-mono text-sm font-medium text-danger">Invocation failed</p>
-            <pre className="max-h-48 overflow-auto rounded-md border border-danger/20 bg-bg-elevated p-3 font-mono text-xs text-fg">
+            <pre tabIndex={0} className="max-h-48 overflow-auto rounded-md border border-danger/20 bg-bg-elevated p-3 font-mono text-xs text-fg">
               {invokeError}
             </pre>
           </div>
@@ -280,8 +280,8 @@ export function TestTab({ name }: { name: string }) {
             className={cn(
               "flex flex-col gap-3 rounded-lg border p-4",
               result.functionError
-                ? "border-danger/30 bg-danger/5"
-                : "border-success/30 bg-success/5",
+                ? "border-danger/30 bg-danger-muted"
+                : "border-success/30 bg-success-muted",
             )}
           >
             <div className="flex items-center gap-2">
@@ -302,7 +302,7 @@ export function TestTab({ name }: { name: string }) {
 
             <div className="flex flex-col gap-1">
               <span className="font-mono text-xs font-medium text-fg-muted">Response</span>
-              <pre className="max-h-64 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
+              <pre tabIndex={0} className="max-h-64 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
                 {parsedPayload ?? "null"}
               </pre>
             </div>

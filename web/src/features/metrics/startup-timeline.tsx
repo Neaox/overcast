@@ -216,7 +216,7 @@ function TimeAxis({ viewStart, viewEnd }: { viewStart: number; viewEnd: number }
   }
 
   return (
-    <div className="relative h-6 border-b border-border/30 text-[9px] text-fg-muted select-none">
+    <div className="relative h-6 border-b border-border/30 text-2xs text-fg-muted select-none">
       {ticks.map((t) => {
         const pct = ((t - viewStart) / span) * 100
         if (pct < 0 || pct > 100) return null
@@ -554,7 +554,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
         <p className={cn(fieldLabel, "text-fg-muted")}>Per-phase timeline</p>
         <div className="flex items-center gap-2">
           {isZoomed && (
-            <span className="font-mono text-[10px] text-fg-muted tabular-nums">
+            <span className="font-mono text-2xs text-fg-muted tabular-nums">
               {viewStart.toFixed(1)}–{viewEnd.toFixed(1)} ms · {zoomLevel.toFixed(1)}×
             </span>
           )}
@@ -577,7 +577,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
             {isZoomed && (
               <button
                 onClick={resetZoom}
-                className="flex h-5 items-center rounded border border-border px-1.5 text-[10px] text-fg-muted hover:bg-bg-muted hover:text-fg"
+                className="flex h-5 items-center rounded border border-border px-1.5 text-2xs text-fg-muted hover:bg-bg-muted hover:text-fg"
                 title="Reset zoom (Esc)"
               >
                 Reset
@@ -627,12 +627,12 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
                     starts at {p.start_ms.toFixed(2)} ms
                   </div>
                   {desc && (
-                    <div className="max-w-65 border-t border-border/50 pt-1.5 text-[10px] leading-relaxed text-fg-muted">
+                    <div className="max-w-65 border-t border-border/50 pt-1.5 text-2xs leading-relaxed text-fg-muted">
                       {desc}
                     </div>
                   )}
                   {!desc && (
-                    <div className="text-[10px] text-fg-muted/50 italic">Click to zoom in</div>
+                    <div className="text-2xs text-fg-muted/50 italic">Click to zoom in</div>
                   )}
                 </div>
               )
@@ -664,7 +664,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
                       )}
                     >
                       {widthPct > 3 && (
-                        <span className="truncate text-[10px] leading-none font-medium text-white/90 select-none">
+                        <span className="truncate text-2xs leading-none font-medium text-white/90 select-none">
                           {p.name.trim()}
                         </span>
                       )}
@@ -678,7 +678,7 @@ function FlameGraph({ phases, totalMs }: FlameGraphProps) {
       </div>
 
       {/* Hint row */}
-      <p className="text-[10px] text-fg-muted/60">
+      <p className="text-2xs text-fg-muted/60">
         Ctrl+scroll to zoom · drag to pan · click a bar to focus &nbsp;
         {isZoomed ? "· Esc or Reset to zoom out" : "· ← → keys to pan when zoomed"}
       </p>
@@ -718,7 +718,7 @@ function SortHeader({ col, active, dir, onClick }: SortHeaderProps) {
       <span className="inline-flex items-center gap-0.5">
         {col.label}
         <span
-          className={cn("text-[9px] leading-none", active ? "opacity-100" : "opacity-0")}
+          className={cn("text-2xs leading-none", active ? "opacity-100" : "opacity-0")}
           aria-hidden
         >
           {dir === "asc" ? "▲" : "▼"}
@@ -817,7 +817,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
         {totalMs.toFixed(0)} ms
       </span>
       {environmentMs !== undefined && environmentMs > 0 && (
-        <span className="font-mono text-[10px] text-fg-muted tabular-nums">
+        <span className="font-mono text-2xs text-fg-muted tabular-nums">
           + {environmentMs.toFixed(0)} ms pre-Go
         </span>
       )}
@@ -838,7 +838,7 @@ export function StartupCard({ totalMs, preInitMs, phases }: StartupCardProps) {
           {totalMs.toFixed(0)} ms
         </span>
         {environmentMs !== undefined && environmentMs > 0 && (
-          <span className="font-mono text-[10px] text-fg-muted tabular-nums">
+          <span className="font-mono text-2xs text-fg-muted tabular-nums">
             + {environmentMs.toFixed(0)} ms pre-Go
           </span>
         )}

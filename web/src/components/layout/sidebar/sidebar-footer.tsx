@@ -23,10 +23,16 @@ export function SidebarFooter({
   const items = BOTTOM_ITEMS.filter((item) => !item.debugOnly || debugEnabled)
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar"
 
+  // The label is stated in both states rather than left to the visible "Collapse":
+  // expanded, the button's own text says what it does but not what it acts on, and
+  // collapsed there is no text at all. `aria-expanded` + `aria-controls` are what tie
+  // it to the sidebar, so "collapsed" is announced about something named.
   const toggle = (
     <button
       onClick={onToggleCollapsed}
-      aria-label={collapsed ? toggleLabel : undefined}
+      aria-label={toggleLabel}
+      aria-expanded={!collapsed}
+      aria-controls="sidebar"
       className={cn(
         "mt-1 flex items-center rounded-control font-mono text-xs text-fg-subtle transition-colors",
         "hover:bg-sidebar-item-hover hover:text-accent",

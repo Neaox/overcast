@@ -56,7 +56,7 @@ import { ExportMenu } from "@/features/cloudwatch/logs/components/export-menu"
 
 /**
  * A collapsed row's height, exactly: `py-1.5` (12px) around one
- * `text-[11px] leading-relaxed` line (18px). Collapsed rows carry a fixed
+ * `text-2xs leading-relaxed` line (18px). Collapsed rows carry a fixed
  * height and are never measured — a constant estimate with no measurement
  * churn is the point of the mode — so this must match what the CSS produces.
  */
@@ -731,7 +731,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
   // Newest-first — wherever the oldest edge actually is — and keeps a
   // constant height so its text changing never nudges the rows mid-restore.
   const oldestEdgeMarker = (
-    <div className="flex h-7 shrink-0 items-center justify-center text-center font-mono text-[10px] text-fg-muted">
+    <div className="flex h-7 shrink-0 items-center justify-center text-center font-mono text-2xs text-fg-muted">
       {isFetchingPreviousPage
         ? "Loading older events…"
         : hasPreviousPage
@@ -840,7 +840,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             size="sm"
             variant={displayMode === "table" ? "default" : "ghost"}
             onClick={() => setPref("displayMode", "table")}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
           >
             Table
           </Button>
@@ -849,11 +849,11 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             size="sm"
             variant={displayMode === "plain" ? "default" : "ghost"}
             onClick={() => setPref("displayMode", "plain")}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
           >
             Plaintext
           </Button>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={formatted}
@@ -862,7 +862,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             />
             Format
           </label>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={syntaxHighlight}
@@ -871,7 +871,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             />
             Syntax
           </label>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={wrapLines}
@@ -881,7 +881,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             Wrap
           </label>
           <label
-            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
+            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
             title="Show every row as one line — click a row to expand it"
           >
             <input
@@ -897,7 +897,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             size="sm"
             variant={utc ? "default" : "ghost"}
             onClick={() => setPref("utc", !utc)}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
             title={
               utc
                 ? "Timestamps are shown in UTC — switch to local time"
@@ -907,7 +907,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             UTC
           </Button>
           <label
-            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
+            className="flex cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-1.5 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10"
             title="Show the time elapsed since the previous event beside each timestamp"
           >
             <input
@@ -923,7 +923,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             size="sm"
             variant={tailMode ? "default" : "ghost"}
             onClick={() => setTailMode((v) => !v)}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
             title={
               tail.status === "error"
                 ? "The live tail session ended unexpectedly — toggle to reconnect"
@@ -943,7 +943,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             variant="ghost"
             onClick={clearBuffer}
             disabled={events.length === 0}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
             title="Clear the events on screen — the tail keeps running, so only newer events appear"
           >
             <Eraser className="mr-1 h-3 w-3" />
@@ -955,7 +955,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
               size="sm"
               variant="ghost"
               onClick={restoreCleared}
-              className="h-7 px-2 text-[10px] uppercase"
+              className="h-7 px-2 text-2xs uppercase"
               title="Bring the cleared events back"
             >
               <Undo2 className="mr-1 h-3 w-3" />
@@ -967,14 +967,14 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             size="sm"
             variant="ghost"
             onClick={() => setPref("sortAsc", !sortAsc)}
-            className="h-7 px-2 text-[10px] uppercase"
+            className="h-7 px-2 text-2xs uppercase"
           >
             <ArrowDownUp className="mr-1 h-3 w-3" />
             {sortAsc ? "Oldest" : "Newest"}
           </Button>
           <ExportMenu events={events} hasMore={!!hasNextPage} baseName={streamName ?? groupName} />
           <span
-            className="ml-1 font-mono text-[10px] text-fg-muted tabular-nums"
+            className="ml-1 font-mono text-2xs text-fg-muted tabular-nums"
             // "+" while a nextToken remains: the server caps a page at 10,000
             // events, and a bare count would read as the whole result set.
             title={
@@ -991,7 +991,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             // same honesty here — a capped buffer must say it dropped, not
             // quietly show a window and let it read as everything.
             <span
-              className="font-mono text-[10px] text-warning tabular-nums"
+              className="font-mono text-2xs text-warning tabular-nums"
               title="The live tail buffer is full, so the oldest events were dropped from view. Narrow the filter to keep up with the stream."
             >
               {tail.overflowed.toLocaleString()} dropped
@@ -1030,7 +1030,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
       ) : (
         <div className="relative min-h-0 flex-1">
           {displayMode === "table" && (
-            <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-[10px] font-medium text-fg-muted">
+            <div className="flex border-b border-border bg-bg-elevated px-1 py-1.5 text-2xs font-medium text-fg-muted">
               <div className="w-10 shrink-0 px-1 text-center">#</div>
               <div className={cn("shrink-0 px-1", showDeltas ? "w-36" : "w-20")}>Time</div>
               {!streamName && <div className="w-44 shrink-0 px-1">Stream</div>}
@@ -1119,7 +1119,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                       // The anchored row is the one the deep link came for; its
                       // marking outranks the level tint.
                       isAnchor
-                        ? "border-l-accent bg-accent/10"
+                        ? "border-l-accent bg-accent-muted"
                         : meta.level && logLevelRowClass[meta.level],
                     )}
                     style={{
@@ -1129,12 +1129,12 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                   >
                     {displayMode === "table" ? (
                       <>
-                        <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 font-mono text-[9px] text-fg-muted/40 tabular-nums select-none">
+                        <div className="flex w-10 shrink-0 items-start justify-center pt-1.5 font-mono text-2xs text-fg-muted/40 tabular-nums select-none">
                           {virtualRow.index + 1}
                         </div>
                         <div
                           className={cn(
-                            "flex shrink-0 items-start gap-1.5 px-1 pt-1.5 font-mono text-[10px] text-fg-muted tabular-nums",
+                            "flex shrink-0 items-start gap-1.5 px-1 pt-1.5 font-mono text-2xs text-fg-muted tabular-nums",
                             showDeltas ? "w-36" : "w-20",
                           )}
                         >
@@ -1154,7 +1154,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                           // overflow of its own, so it used to spill across the
                           // message — over the level badge first.
                           <div
-                            className="w-44 shrink-0 truncate px-1 pt-1.5 font-mono text-[10px] text-fg-muted"
+                            className="w-44 shrink-0 truncate px-1 pt-1.5 font-mono text-2xs text-fg-muted"
                             title={evt.logStreamName}
                           >
                             {evt.logStreamName}
@@ -1210,7 +1210,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
                 the oldest edge of the loaded window, so it carries the
                 oldest-edge marker there instead (the mirrored reasoning). */}
             {sortAsc ? (
-              <div className="py-2 text-center font-mono text-[10px] text-fg-muted">
+              <div className="py-2 text-center font-mono text-2xs text-fg-muted">
                 {isFetchingNextPage
                   ? "Loading more events…"
                   : hasNextPage
@@ -1231,7 +1231,7 @@ export function LogEventsViewer({ groupName, streamName, anchor }: Props) {
             <button
               type="button"
               onClick={scrollToBottom}
-              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 font-mono text-[10px] font-medium text-fg-muted shadow-lg transition-colors hover:border-accent hover:text-accent"
+              className="absolute right-4 bottom-4 z-10 flex items-center gap-1 rounded-full border border-border bg-bg-elevated px-3 py-1.5 font-mono text-2xs font-medium text-fg-muted shadow-lg transition-colors hover:border-accent hover:text-accent"
             >
               <ArrowDown className="h-3 w-3" />
               Latest

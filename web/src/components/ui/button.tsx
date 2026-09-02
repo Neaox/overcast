@@ -45,7 +45,7 @@ const buttonVariants = cva(
       // Toolbar controls are 30px/mono-11, dialog controls 32px/mono-12 — the
       // two button sizes the design actually draws.
       size: {
-        sm: "h-7 px-2.5 text-[11px]",
+        sm: "h-7 px-2.5 text-2xs",
         md: "h-8 px-3.5 text-xs",
         lg: "h-10 px-5 text-sm",
         icon: "h-8 w-8 p-0",

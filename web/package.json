@@ -14,7 +14,9 @@
     "lint:fix": "oxlint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "a11y": "node scripts/a11y-audit.mjs",
+    "type-audit": "node scripts/type-audit.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-api-gateway": "^3.1028.0",
@@ -103,6 +105,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@tanstack/devtools-vite": "^0.8.0",
     "@tanstack/eslint-plugin-query": "^5.97.0",
     "@tanstack/react-devtools": "^0.10.0",
@@ -118,6 +121,7 @@
     "msw": "^2.13.5",
     "oxlint": "1.79.0",
     "oxlint-tsgolint": "7.0.2001",
+    "playwright": "^1.62.1",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "typescript": "~7.0.2",

@@ -21,8 +21,14 @@ function FieldLabel({ className, ...props }: React.HTMLAttributes<HTMLSpanElemen
  * what makes it read as a heading, so it must never appear at 9px. Colour is
  * left to the caller — dashboard sections carry their tier's colour.
  */
-function SectionLabel({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn(sectionLabel, "text-fg-subtle", className)} {...props} />
+function SectionLabel({
+  className,
+  as: Heading = "h2",
+  ...props
+}: React.HTMLAttributes<HTMLHeadingElement> & { as?: "h2" | "h3" | "h4" }) {
+  // `<h2>` by default for the same reason as CardTitle: the page's own <h1> is the only
+  // level above, so an <h3> here skips a level. `as` covers the nested case.
+  return <Heading className={cn(sectionLabel, "text-fg-subtle", className)} {...props} />
 }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────
@@ -236,7 +242,7 @@ function PageHeader({ title, count, meta, description, actions, className }: Pag
           )}
         </div>
         {/* 3b's meta line — `4 objects · 28.2 KB · created 25 Jul 2026` — is mono 11. */}
-        {meta && <p className="font-mono text-[11px] text-fg-subtle">{meta}</p>}
+        {meta && <p className="font-mono text-2xs text-fg-subtle">{meta}</p>}
         {description && <p className="text-[13px] text-fg-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
@@ -255,7 +261,10 @@ function Code({ children, className }: { children: React.ReactNode; className?: 
 
 function CodeBlock({ children, className }: { children: string; className?: string }) {
   return (
+    // Focusable: the block scrolls in both axes, and a scroll container that cannot be
+    // focused is reachable by pointer and by nothing else (WCAG 2.1.1).
     <pre
+      tabIndex={0}
       className={cn(
         "overflow-auto rounded-md border border-border bg-bg-muted p-3 font-mono text-xs text-fg",
         className,

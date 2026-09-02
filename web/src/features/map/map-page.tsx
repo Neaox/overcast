@@ -781,7 +781,7 @@ export function MapPage({ focusRegion }: { focusRegion?: string }) {
 
         {/* Legend */}
         {!isLoading && hasRealResources && (
-          <div className="absolute bottom-24 left-3 rounded-lg border border-border bg-bg-elevated/90 p-3 text-[11px] backdrop-blur-sm">
+          <div className="absolute bottom-24 left-3 rounded-lg border border-border bg-bg-elevated/90 p-3 text-2xs backdrop-blur-sm">
             <p className={cn(sectionLabel, "mb-2 text-fg-muted")}>Connection type</p>
             <div className="flex flex-col gap-1.5">
               {Object.values(EDGE_THEME)

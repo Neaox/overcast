@@ -128,7 +128,7 @@ export function StackList({ sort, onSortChange }: StackListProps = {}) {
             cell: (stack) => (
               <ResourceName icon={Layers} name={stack.StackName ?? ""}>
                 {stack.ParentId && (
-                  <Badge variant="outline" className="text-[10px] font-normal">
+                  <Badge variant="outline" className="text-2xs font-normal">
                     Nested
                   </Badge>
                 )}

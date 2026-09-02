@@ -3,14 +3,20 @@ import { join } from "node:path"
 import { fieldLabel, sectionLabel } from "./typography"
 
 describe("label specs", () => {
-  it("sets a field label at the narrower 9px/.14em", () => {
-    expect(fieldLabel).toContain("text-[9px]")
+  it("sets a field label at the scale floor and the narrower .14em", () => {
+    expect(fieldLabel).toContain("text-2xs")
     expect(fieldLabel).toContain("tracking-[0.14em]")
   })
 
-  it("sets a section heading at the wider 10px/.16em", () => {
-    expect(sectionLabel).toContain("text-[10px]")
+  it("sets a section heading at the scale floor and the wider .16em", () => {
+    expect(sectionLabel).toContain("text-2xs")
     expect(sectionLabel).toContain("tracking-[0.16em]")
+  })
+
+  it("puts neither below the floor — an arbitrary px value would not scale with the root", () => {
+    for (const spec of [fieldLabel, sectionLabel]) {
+      expect(spec).not.toMatch(/text-\[\d+px\]/)
+    }
   })
 
   it("keeps the two apart, because the tracking is what makes a heading a heading", () => {
@@ -28,27 +34,26 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc
 }
 
-/* The failure this catches has already happened twice — `not-emulated-chips`
-   and `service-list-view` both shipped heading tracking at column-header size,
-   which is exactly the combination that erases the two roles' difference. */
-describe("label specs > hand-written combinations", () => {
-  it("finds no 9px label carrying section-heading tracking", () => {
+/* A guard over hand-written sizes, for a failure that has already happened: the sizes
+   kept drifting below the scale. An arbitrary `text-[Npx]` does not scale with the root
+   font — which steps up on large displays — so the smaller the value, the wider the gap
+   between the body text and the labels naming it on a 4K panel. 8-10px mono uppercase
+   in the muted colour is also the exact case a high-DPI display renders thin and grey
+   rather than sharp, and the webfont has no weight between 400 and 700 to lean on. */
+describe("label specs > hand-written sizes", () => {
+  it("finds nothing set at or below the floor as a raw px value", () => {
     const offenders: string[] = []
     for (const file of sourceFiles("src")) {
       if (file.endsWith("typography.test.ts")) continue
       readFileSync(file, "utf8")
         .split("\n")
         .forEach((line, i) => {
-          if (
-            /text-\[9px\][^"']*tracking-\[0\.16em\]|tracking-\[0\.16em\][^"']*text-\[9px\]/.test(
-              line,
-            )
-          ) {
-            offenders.push(`${file}:${i + 1}`)
-          }
+          // 11px and below: everything at or under the floor belongs to `text-2xs`,
+          // which is a rem and therefore scales with the root font on large displays.
+          if (/text-\[(?:[0-9]|10|11)px\]/.test(line)) offenders.push(`${file}:${i + 1}`)
         })
     }
 
-    expect(offenders, `9px at heading tracking:\n${offenders.join("\n")}`).toEqual([])
+    expect(offenders, `below the 11px floor:\n${offenders.join("\n")}`).toEqual([])
   })
 })

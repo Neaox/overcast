@@ -36,7 +36,7 @@ interface LogViewerProps {
 
 /**
  * A collapsed table row's height, exactly: `py-1` (8px) around one
- * `text-[10px] leading-relaxed` line (18px), plus the 2px border. Collapsed
+ * `text-2xs leading-relaxed` line (18px), plus the 2px border. Collapsed
  * rows carry a fixed height and are never measured — the same trade the
  * flagship stream viewer makes in `log-events-viewer.tsx`'s collapse mode,
  * and for the same reason: skipping `measureElement` is what keeps a table
@@ -147,9 +147,9 @@ export function LogViewer({
             type="button"
             onClick={() => setMode("plain")}
             className={cn(
-              "rounded border px-2 py-1 font-mono text-[10px] font-medium uppercase",
+              "rounded border px-2 py-1 font-mono text-2xs font-medium uppercase",
               mode === "plain"
-                ? "border-accent/50 bg-accent/15 text-fg"
+                ? "border-accent/50 bg-accent-muted text-fg"
                 : "border-border text-fg-muted hover:bg-fg-muted/10",
             )}
           >
@@ -159,15 +159,15 @@ export function LogViewer({
             type="button"
             onClick={() => setMode("table")}
             className={cn(
-              "rounded border px-2 py-1 font-mono text-[10px] font-medium uppercase",
+              "rounded border px-2 py-1 font-mono text-2xs font-medium uppercase",
               mode === "table"
-                ? "border-accent/50 bg-accent/15 text-fg"
+                ? "border-accent/50 bg-accent-muted text-fg"
                 : "border-border text-fg-muted hover:bg-fg-muted/10",
             )}
           >
             Table
           </button>
-          <label className="flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
+          <label className="flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 font-mono text-2xs font-medium text-fg-muted uppercase select-none hover:bg-fg-muted/10">
             <input
               type="checkbox"
               checked={formatted}
@@ -181,15 +181,15 @@ export function LogViewer({
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto rounded bg-bg-elevated p-2">
         {loading && events.length === 0 && (
-          <div className="py-4 text-center text-[10px] text-fg-muted">Loading logs...</div>
+          <div className="py-4 text-center text-2xs text-fg-muted">Loading logs...</div>
         )}
 
         {!loading && error && (
-          <div className="py-4 text-center text-[10px] text-danger">{error}</div>
+          <div className="py-4 text-center text-2xs text-danger">{error}</div>
         )}
 
         {!loading && !error && events.length === 0 && (
-          <div className="py-4 text-center text-[10px] text-fg-muted">{emptyMessage}</div>
+          <div className="py-4 text-center text-2xs text-fg-muted">{emptyMessage}</div>
         )}
 
         {events.length > 0 && (
@@ -241,7 +241,7 @@ export function LogViewer({
         )}
 
         {isFetchingMore && (
-          <div className="pt-2 text-center text-[10px] text-fg-muted">Loading more...</div>
+          <div className="pt-2 text-center text-2xs text-fg-muted">Loading more...</div>
         )}
 
         {!isFetchingMore && canLoadMore && (
@@ -249,7 +249,7 @@ export function LogViewer({
         )}
 
         {!isFetchingMore && !hasMore && events.length > 0 && (
-          <div className="pt-2 text-center text-[10px] text-fg-muted">End of logs</div>
+          <div className="pt-2 text-center text-2xs text-fg-muted">End of logs</div>
         )}
       </div>
     </div>
@@ -293,14 +293,14 @@ const LogViewerRow = memo(function LogViewerRow({
       level={level}
       hideLevel
       defer={defer}
-      sizeClassName="text-[10px]"
+      sizeClassName="text-2xs"
     />
   )
 
   return (
     <div
       className={cn(
-        "flex gap-2 border-l-2 border-l-transparent py-0.5 font-mono text-[10px] text-fg-subtle",
+        "flex gap-2 border-l-2 border-l-transparent py-0.5 font-mono text-2xs text-fg-subtle",
         level && logLevelRowClass[level],
       )}
     >
@@ -370,7 +370,7 @@ const TableRow = memo(function TableRow({
       level={meta.level}
       collapsed={collapsed}
       defer={defer}
-      sizeClassName="text-[10px]"
+      sizeClassName="text-2xs"
     />
   )
 
@@ -385,7 +385,7 @@ const TableRow = memo(function TableRow({
     >
       {/* px-1 on both sides: the left edge is the level-tint border, and
           text flush against a 2px colored bar reads as a glyph. */}
-      <div className="w-20 shrink-0 px-1 py-1 font-mono text-[10px] text-fg-muted tabular-nums">
+      <div className="w-20 shrink-0 px-1 py-1 font-mono text-2xs text-fg-muted tabular-nums">
         {formatLogTime(event.timestamp)}
       </div>
       <div className="min-w-0 flex-1 px-1 py-1">{body}</div>

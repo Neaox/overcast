@@ -26,7 +26,7 @@ export function StepDot({
     <div className="flex items-center gap-1.5">
       <div
         className={cn(
-          "flex h-5 w-5 items-center justify-center rounded-full font-mono text-[10px] font-bold",
+          "flex h-5 w-5 items-center justify-center rounded-full font-mono text-2xs font-bold",
           done
             ? "bg-accent text-fg-on-accent"
             : active
@@ -68,7 +68,7 @@ export function WizardOptionCard({
       className={cn(
         "flex flex-1 flex-col gap-1 rounded-md border px-3 py-2.5 text-left text-sm transition-colors",
         active
-          ? "border-accent bg-accent/10 text-accent"
+          ? "border-accent bg-accent-muted text-accent"
           : "border-border text-fg-muted hover:border-fg-subtle",
       )}
     >

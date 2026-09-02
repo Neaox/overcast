@@ -171,7 +171,7 @@ function MinimapCanvas({
       <button
         type="button"
         onClick={onExpand}
-        className="absolute right-2 bottom-2 z-10 flex items-center gap-1 rounded-md border border-border bg-bg-elevated/90 px-2 py-1 text-[11px] font-medium text-fg-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-bg-muted hover:text-fg"
+        className="absolute right-2 bottom-2 z-10 flex items-center gap-1 rounded-md border border-border bg-bg-elevated/90 px-2 py-1 text-2xs font-medium text-fg-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-bg-muted hover:text-fg"
         title="Open full system map"
       >
         <Maximize2 className="h-3 w-3" />
@@ -241,7 +241,7 @@ export function MapMinimap() {
 
       {/* Stats bar — visible when there are resources */}
       {topologyNodes.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-[11px] text-fg-muted">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-2xs text-fg-muted">
           {/* Region info */}
           {regions.length > 0 && (
             <span>{regions.length <= 3 ? regions.join(", ") : `${regions.length} regions`}</span>
@@ -262,7 +262,7 @@ export function MapMinimap() {
 
           {/* Connections */}
           {topologyEdges.length > 0 && (
-            <span className="rounded-full bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-medium text-accent">
+            <span className="rounded-full bg-accent-muted px-1.5 py-0.5 font-mono text-2xs font-medium text-accent">
               {topologyEdges.length} connection{topologyEdges.length !== 1 ? "s" : ""}
             </span>
           )}

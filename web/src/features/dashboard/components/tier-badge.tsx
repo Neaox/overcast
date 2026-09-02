@@ -11,7 +11,7 @@ export function TierBadge({ tier, className }: { tier: EmulationTier; className?
     <Tooltip content={TIER_DESCRIPTIONS[tier]} side="top">
       <span
         className={cn(
-          "cursor-default rounded-full border px-2 py-0.5 font-mono text-[10px] leading-none",
+          "cursor-default rounded-full border px-2 py-0.5 font-mono text-2xs leading-none",
           badge.className,
           className,
         )}
@@ -31,7 +31,7 @@ export function TierMeta({ tier, className }: { tier: EmulationTier; className?:
     <Tooltip content={TIER_DESCRIPTIONS[tier]} side="top">
       <span
         className={cn(
-          "cursor-default font-mono text-[10px] tracking-[0.12em] text-fg-subtle uppercase",
+          "cursor-default font-mono text-2xs tracking-[0.12em] text-fg-subtle uppercase",
           className,
         )}
       >

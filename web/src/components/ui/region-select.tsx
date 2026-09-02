@@ -112,6 +112,7 @@ export function RegionSelect({ value, onChange, id, className }: RegionSelectPro
       renderCustomFooter={renderCustomFooter}
       allowCustom
       id={id}
+      aria-label="AWS region"
       placeholder="us-east-1"
       className={className}
       inputClassName="font-mono"
@@ -134,6 +135,7 @@ export function RegionSelectCompact({
       renderItem={renderRegion}
       renderCustomFooter={renderCustomFooter}
       allowCustom
+      aria-label="AWS region"
       leadingIcon={Globe}
       popoverWidth="w-72"
     />

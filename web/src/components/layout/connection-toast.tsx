@@ -106,13 +106,13 @@ function ReconnectingToast({ host }: { host: string }) {
         {/* There is always a stamp to show — the card is only ever up because
             a live connection dropped, and the open before it recorded one. The
             other arm is for a state the worker should not be able to report. */}
-        <p aria-hidden className="truncate text-[11px] text-fg-subtle">
+        <p aria-hidden className="truncate text-2xs text-fg-subtle">
           {lastConnectedAt
             ? `Cached at ${formatTimeOfDay(lastConnectedAt)} · writes paused`
             : "Writes paused until reconnected"}
         </p>
 
-        <div className="mt-1.5 flex items-center gap-3 font-mono text-[11px]">
+        <div className="mt-1.5 flex items-center gap-3 font-mono text-2xs">
           <button type="button" onClick={retryNow} className={LINK}>
             retry now
           </button>
@@ -145,7 +145,7 @@ function RetrySchedule({ attempt, dueAt }: { attempt: number; dueAt: number | nu
   const schedule = dueAt !== null && secondsLeft > 0 ? `next in ${secondsLeft}s` : "connecting…"
 
   return (
-    <p aria-hidden className="truncate font-mono text-[11px] text-fg-muted tabular-nums">
+    <p aria-hidden className="truncate font-mono text-2xs text-fg-muted tabular-nums">
       {attempt > 0 ? `Attempt ${attempt} · ${schedule}` : schedule}
     </p>
   )

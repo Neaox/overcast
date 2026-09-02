@@ -51,7 +51,7 @@ export function EnforcementNotice() {
   if (enforcing) {
     return (
       <div
-        className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning"
+        className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-muted px-4 py-3 text-sm text-warning"
         data-testid="iam-enforcement-notice"
       >
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -67,7 +67,7 @@ export function EnforcementNotice() {
 
   return (
     <div
-      className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-accent"
+      className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent-muted px-4 py-3 text-sm text-accent"
       data-testid="iam-enforcement-notice"
     >
       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />

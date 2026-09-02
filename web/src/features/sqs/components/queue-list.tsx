@@ -385,7 +385,7 @@ function CreateQueueDialog({
                     className={cn(
                       "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
                       !field.state.value
-                        ? "border-accent bg-accent/10 text-accent"
+                        ? "border-accent bg-accent-muted text-accent"
                         : "border-border text-fg-muted hover:border-fg-muted",
                     )}
                     onClick={() => field.handleChange(false)}
@@ -397,7 +397,7 @@ function CreateQueueDialog({
                     className={cn(
                       "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
                       field.state.value
-                        ? "border-accent bg-accent/10 text-accent"
+                        ? "border-accent bg-accent-muted text-accent"
                         : "border-border text-fg-muted hover:border-fg-muted",
                     )}
                     onClick={() => field.handleChange(true)}

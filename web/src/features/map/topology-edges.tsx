@@ -125,7 +125,7 @@ export const TopologyEdge = memo(function TopologyEdge({
           <div
             className={cn(
               "nodrag nopan pointer-events-none absolute rounded border px-1.5 py-0.5",
-              "text-[9px] leading-tight font-medium",
+              "text-2xs leading-tight font-medium",
               isStopped
                 ? "border-transparent bg-bg-muted text-fg-subtle"
                 : isDlq
@@ -147,7 +147,7 @@ export const TopologyEdge = memo(function TopologyEdge({
       {(burstCount ?? 0) > 1 && !isStopped && !isESMFilter && (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan pointer-events-none absolute flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold tabular-nums"
+            className="nodrag nopan pointer-events-none absolute flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-2xs font-bold tabular-nums"
             style={{
               transform: `translate(-50%, calc(-50% - ${(isPipe || isDlq) && label ? 16 : 0}px)) translate(${labelX}px,${labelY}px)`,
               zIndex: 11,

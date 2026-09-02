@@ -777,7 +777,7 @@ export function RestApiDetail({ apiId }: Props) {
                         <summary className="cursor-pointer font-medium text-fg-muted">
                           Response Headers
                         </summary>
-                        <pre className="mt-1 max-h-32 overflow-auto rounded-md bg-bg p-2 font-mono text-fg-muted">
+                        <pre tabIndex={0} className="mt-1 max-h-32 overflow-auto rounded-md bg-bg p-2 font-mono text-fg-muted">
                           {Object.entries(testResponse.headers)
                             .map(([k, v]) => `${k}: ${v}`)
                             .join("\n")}
@@ -790,7 +790,7 @@ export function RestApiDetail({ apiId }: Props) {
                       <div className="mb-1 font-mono text-xs font-medium text-fg-muted">
                         Response Body
                       </div>
-                      <pre className="max-h-64 overflow-auto rounded-md bg-bg p-3 font-mono text-xs text-fg">
+                      <pre tabIndex={0} className="max-h-64 overflow-auto rounded-md bg-bg p-3 font-mono text-xs text-fg">
                         {tryFormatJson(testResponse.body)}
                       </pre>
                     </div>
@@ -1336,7 +1336,7 @@ function MethodDetails({
                             search: { apiId },
                           })
                         }}
-                        className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-xs text-warning hover:bg-warning/20"
+                        className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning-muted px-1.5 py-0.5 font-mono text-xs text-warning hover:bg-warning-muted"
                       >
                         <KeyRound className="h-3 w-3" />
                         API key required

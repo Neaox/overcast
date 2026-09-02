@@ -161,7 +161,7 @@ function EditVersioningDialog({
               className={cn(
                 "flex cursor-pointer gap-2 rounded-lg border p-3 text-sm",
                 choice === c.value
-                  ? "border-accent bg-accent/10"
+                  ? "border-accent bg-accent-muted"
                   : "border-border hover:bg-bg-muted",
               )}
             >

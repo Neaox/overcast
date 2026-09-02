@@ -141,7 +141,7 @@ export function PipeDetail({ pipeName }: Props) {
             the detail view exists.
           */}
           {wiring && !wiring.Wired && (
-            <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-fg">
+            <div className="rounded-lg border border-danger/40 bg-danger-muted p-3 text-sm text-fg">
               <p className="font-medium">Stored, but not running</p>
               <p className="mt-1 text-fg-muted">
                 Overcast cannot run this pipe&apos;s configuration, so nothing flows through it

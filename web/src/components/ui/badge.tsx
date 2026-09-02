@@ -10,18 +10,23 @@ import { cn } from "@/lib/utils"
 const badgeVariants = cva(
   cn(
     "inline-flex items-center rounded-control px-1.5 py-0.5 transition-colors",
-    "font-mono text-[10px] tracking-[0.12em] whitespace-nowrap uppercase",
+    "font-mono text-2xs tracking-[0.12em] whitespace-nowrap uppercase",
   ),
   {
     variants: {
       variant: {
         default: "bg-bg-muted text-fg-muted border border-border",
         outline: "border border-border text-fg-muted bg-transparent",
+        // Opaque `-muted` surfaces, never `/15`: a translucent tint takes its
+        // lightness from whatever the badge is sitting on, so the same pill read
+        // 4.8:1 on a card and 3.8:1 on the recessed strip behind a table. Each
+        // `-muted` token is that colour mixed into --bg-elevated once, which is what
+        // lets the foreground be tuned against it and stay tuned.
         accent: "bg-accent-muted text-accent",
-        success: "bg-success/15 text-success",
-        warning: "bg-warning/15 text-warning",
+        success: "bg-success-muted text-success",
+        warning: "bg-warning-muted text-warning",
         danger: "bg-danger-muted text-danger",
-        info: "bg-accent/15 text-accent",
+        info: "bg-accent-muted text-accent",
       },
     },
     defaultVariants: { variant: "default" },

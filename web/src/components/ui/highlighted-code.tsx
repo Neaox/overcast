@@ -77,13 +77,17 @@ export const HighlightedCode = memo(function HighlightedCode({
     // un-highlighted until it settles. Identical element and classes in
     // every case, so no swap can move a measured row.
     return (
-      <pre ref={highlighted && ranges ? preRef : undefined} className={className}>
+      // tabIndex on every branch, for the same reason the classes are identical on
+      // every branch: a code block scrolls sideways, and a scroll container that cannot
+      // take focus is reachable by pointer alone (WCAG 2.1.1).
+      <pre tabIndex={0} ref={highlighted && ranges ? preRef : undefined} className={className}>
         {text}
       </pre>
     )
   }
   return (
     <pre
+      tabIndex={0}
       className={className}
       dangerouslySetInnerHTML={{ __html: highlightCode(text, language) }}
     />

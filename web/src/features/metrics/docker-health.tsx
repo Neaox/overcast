@@ -44,7 +44,7 @@ export function DockerHealthPanel() {
       {disconnected.length > 0 && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning"
+          className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-muted p-3 text-sm text-warning"
         >
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
           <div>
@@ -83,7 +83,7 @@ export function DockerHealthPanel() {
                     footer below. */}
                 <td className="hidden px-3 py-2 text-fg-muted sm:table-cell">
                   {svc.socket ? (
-                    <span className="font-mono text-[10px]">{svc.socket}</span>
+                    <span className="font-mono text-2xs">{svc.socket}</span>
                   ) : (
                     <span className="text-fg-subtle">—</span>
                   )}

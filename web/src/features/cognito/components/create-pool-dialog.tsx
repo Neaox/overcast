@@ -263,7 +263,7 @@ function SignInCard({
       className={cn(
         "flex flex-col gap-1 rounded-md border px-3 py-2.5 text-left text-sm transition-colors",
         active
-          ? "border-accent bg-accent/10 text-accent"
+          ? "border-accent bg-accent-muted text-accent"
           : "border-border text-fg-muted hover:border-fg-subtle",
       )}
     >
