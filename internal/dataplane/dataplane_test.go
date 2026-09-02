@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/overcast-sh/overcast/internal/config"
@@ -350,6 +351,74 @@ func TestControlPlaneInternal_pinnedOverridesTheHostProbe(t *testing.T) {
 					t.Errorf("Reason = %q, want %q", got.Reason, pin.wantReason)
 				}
 			})
+		}
+	}
+}
+
+// Isolating the plane costs egress, and the cost lands a long way from its
+// cause — ENETUNREACH inside somebody's application code, minutes later. The
+// decision is the only place that knows it is coming, so every path that comes
+// out internal has to carry the warning, and no path that comes out routable
+// may carry it.
+//
+// Measured on a Docker Desktop host: a container on an `--internal` VPC
+// network plus a routable control plane takes its default route from the
+// control plane and reaches the internet; make the control plane internal too
+// and it has no default route at all.
+func TestControlPlaneInternal_warnsWheneverItIsolatesThePlane(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+
+	cases := map[string]struct {
+		mode          config.ControlPlaneInternalMode
+		containerised bool
+		native        bool
+		wantWarning   bool
+	}{
+		"pinned true":                  {config.ControlPlaneInternalTrue, false, false, true},
+		"pinned false":                 {config.ControlPlaneInternalFalse, true, true, false},
+		"auto on a containerised host": {config.ControlPlaneInternalAuto, true, false, true},
+		"auto on a native Linux host":  {config.ControlPlaneInternalAuto, false, true, true},
+		"auto on Docker Desktop":       {config.ControlPlaneInternalAuto, false, false, false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			runningInContainer = func() bool { return tc.containerised }
+			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
+
+			cfg := testConfig()
+			cfg.ControlPlaneInternal = tc.mode
+			got := ControlPlaneInternal(cfg)(context.Background(), nil)
+
+			hasWarning := slices.Contains(got.Warnings, ControlPlaneEgressWarning)
+			if hasWarning != tc.wantWarning {
+				t.Errorf("egress warning present = %v, want %v (decision %+v)",
+					hasWarning, tc.wantWarning, got)
+			}
+			if got.Internal != hasWarning {
+				t.Errorf("Internal = %v but warning present = %v — the warning must track isolation exactly",
+					got.Internal, hasWarning)
+			}
+		})
+	}
+}
+
+// The warning has to name the symptom an operator will actually search for and
+// the setting that undoes it, or it is noise on an already busy startup.
+func TestControlPlaneEgressWarning_namesTheSymptomAndTheFix(t *testing.T) {
+	for _, want := range []string{
+		"ENETUNREACH",
+		"OVERCAST_CONTROL_PLANE_INTERNAL=false",
+		"NAT gateway",
+		"route tables are metadata only",
+	} {
+		if !strings.Contains(ControlPlaneEgressWarning, want) {
+			t.Errorf("ControlPlaneEgressWarning does not mention %q:\n%s", want, ControlPlaneEgressWarning)
 		}
 	}
 }

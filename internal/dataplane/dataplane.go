@@ -138,19 +138,61 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 	return func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 		switch cfg.ControlPlaneInternal {
 		case config.ControlPlaneInternalTrue:
-			return docker.InternalDecision{
+			return withEgressWarning(docker.InternalDecision{
 				Internal: true,
 				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=true",
-			}
+			})
 		case config.ControlPlaneInternalFalse:
 			return docker.InternalDecision{
 				Internal: false,
 				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=false",
 			}
+		case config.ControlPlaneInternalAuto:
+			return withEgressWarning(autoControlPlaneInternal(ctx, dc))
 		default:
-			return autoControlPlaneInternal(ctx, dc)
+			// Unreachable: config.Load rejects every other value, and a Config
+			// built directly leaves the field empty. Both land on auto.
+			return withEgressWarning(autoControlPlaneInternal(ctx, dc))
 		}
 	}
+}
+
+// ControlPlaneEgressWarning is what isolating this plane actually costs, and
+// it is stated in full because the cost lands a long way from its cause: a
+// function that cannot reach an external API fails minutes later, inside
+// somebody's application code, as ENETUNREACH.
+//
+// Isolating the plane is what makes a VPC with no internet gateway genuinely
+// withhold the internet, which is good fidelity. What Overcast does not yet do
+// is the half of AWS's model that *grants* egress. Route tables, their
+// `0.0.0.0/0` entries and NAT gateways are stored and returned as metadata and
+// consulted nowhere (docs/services/ec2/limitations.md); the only thing that
+// takes a VPC's own network out of `--internal` is an attached internet
+// gateway, and that toggle needs to remove and recreate the network, which
+// Docker refuses while containers are on it. A VPC network created before its
+// gateway was attached — the ordering every CDK and CloudFormation deploy
+// uses — can therefore stay `--internal` for the life of the run.
+//
+// When it does, this plane is the only egress path its containers have. That
+// is measurable, not theoretical: a container on an `--internal` VPC network
+// plus a routable control plane takes its default route from the control
+// plane and reaches the internet; make the control plane internal too and it
+// reaches nothing.
+const ControlPlaneEgressWarning = "control plane network: internal=true — a container in a VPC whose own " +
+	"network is also internal then has NO egress at all, including to real AWS endpoints, and fails with " +
+	"ENETUNREACH. Overcast does not emulate NAT gateway or internet gateway routing: route tables are " +
+	"metadata only, so a private-with-egress subnet is not distinguished from an isolated one " +
+	"(docs/services/ec2/limitations.md). Set OVERCAST_CONTROL_PLANE_INTERNAL=false to restore egress"
+
+// withEgressWarning attaches ControlPlaneEgressWarning to a decision that came
+// out internal, whichever value produced it. Under `auto` the isolation is
+// still inferred from the host, so this is the one line that tells an operator
+// their machine opted them in.
+func withEgressWarning(d docker.InternalDecision) docker.InternalDecision {
+	if d.Internal {
+		d.Warnings = append(d.Warnings, ControlPlaneEgressWarning)
+	}
+	return d
 }
 
 // autoControlPlaneInternal is OVERCAST_CONTROL_PLANE_INTERNAL=auto: the host

@@ -72,10 +72,19 @@ type InternalDecision struct {
 	// Internal is the answer applied to the network.
 	Internal bool
 
-	// Reason is a short phrase naming what decided it, safe to print: a probe
-	// outcome ("auto: native Linux Docker daemon") or the setting that pinned
-	// it ("OVERCAST_CONTROL_PLANE_INTERNAL=true").
+	// Reason is a short phrase naming what decided it, safe to print: the
+	// setting that pinned it ("OVERCAST_CONTROL_PLANE_INTERNAL=true"), or what
+	// the default resolved to and why.
 	Reason string
+
+	// Warnings are consequences of this decision the operator has to be told
+	// without having to ask — logged at WARN by Probe, once, at startup.
+	//
+	// Isolating the control plane is the kind of choice whose cost lands a long
+	// way from its cause: a function that cannot reach an external API fails
+	// minutes later, inside somebody's application code, as ENETUNREACH. The
+	// moment of decision is the only place that knows it is coming.
+	Warnings []string
 }
 
 // NetworkSpec is one network the supervisor ensures at startup.
@@ -166,6 +175,9 @@ func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*Prob
 				zap.String("network", spec.Name),
 				zap.Bool("internal", internal),
 				zap.String("reason", reason))
+			for _, warning := range decision.Warnings {
+				logger.Warn(warning, zap.String("network", spec.Name))
+			}
 		}
 		_, err := dc.CreateNetworkWithOptions(ctx, CreateNetworkOptions{
 			Name:     spec.Name,
