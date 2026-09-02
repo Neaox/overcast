@@ -358,6 +358,7 @@ make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
 make docker-console    # build the image, tagged after the current branch
 make docker-clean      # remove this branch's images when you are done
+make docker-clean-test-networks  # sweep overcast_*_test_* networks a killed test run left
 ```
 
 ### Docker image tags are per-branch
@@ -386,6 +387,12 @@ tag, so it stays on `overcast:dev` unless you export `OVERCAST_IMAGE_TAG`.
 **Clean up after yourself.** A tag per branch means an image per branch, and
 they are not small. `make docker-clean` (or `task docker-clean`) removes the
 current branch's pair.
+
+Docker-backed tests mint a network pair per test server and remove it on
+cleanup, but a killed or timed-out test process runs no cleanups, and enough
+leaked pairs exhaust the daemon's address pool. `make docker-clean-test-networks`
+sweeps the empty `overcast_*_test_*` pairs and nothing else — see
+[docs/dev/development-setup.md § Docker networks left behind by tests](docs/dev/development-setup.md#docker-networks-left-behind-by-tests).
 
 ### Reproducing CI locally
 

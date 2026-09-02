@@ -2,6 +2,7 @@ package rds
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker/dockertest"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/state"
 )
@@ -149,19 +151,21 @@ func newRealRDSTestService(t *testing.T, image string) (*Service, *docker.Client
 	// one, so a failure partway through the loop below is a t.Fatalf with the
 	// earlier planes already created — and a cleanup registered after the loop
 	// is never registered at all, leaking them for the life of the daemon.
-	// helpers.WithECSDocker explains why a leaked network is worse than untidy:
-	// the daemon's address pool is small enough that leaks compound into
-	// "Docker not available" for every later container test.
-	// Removing a plane the loop never reached is not an error — RemoveNetwork
-	// reports not-found, which the loop below already tolerates.
+	// dockertest explains why a leaked network is worse than untidy: the
+	// daemon's address pool is small enough that leaks compound into "Docker
+	// not available" for every later container test.
+	//
+	// RemoveOwned skips a plane the loop never reached, removes any container
+	// of ours the service's Stop left behind before the network it holds, waits
+	// out the daemon's asynchronous endpoint release, and logs whatever it
+	// still could not remove. Data plane first, control last: the order the
+	// containers were attached in, reversed.
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cleanupCancel()
-		for i := len(planes) - 1; i >= 0; i-- {
-			if err := dc.RemoveNetwork(cleanupCtx, planes[i]); err != nil && !docker.IsNotFound(err) {
-				t.Logf("cleanup: remove network %s: %v", planes[i], err)
-			}
-		}
+		reversed := slices.Clone(planes)
+		slices.Reverse(reversed)
+		dockertest.RemoveOwned(cleanupCtx, dc, reversed, t.Logf)
 	})
 	for _, plane := range planes {
 		if _, err := dc.CreateNetwork(ctx, plane); err != nil {

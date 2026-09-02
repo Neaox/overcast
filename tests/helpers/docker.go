@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/docker/dockertest"
 )
 
 // ReserveTCPPort returns a host port that was free a moment ago, for a test
@@ -209,20 +210,19 @@ func dockerUsesCredentialHelper() bool {
 }
 
 // removeTestNetworks deletes the Docker networks a test server minted for
-// itself, best-effort: a daemon that never answered created none, and one that
-// still holds a container on a network refuses to remove it, which the next
-// run's sweep of exited containers resolves. Neither is worth failing a test
-// that has already made its assertions.
-func removeTestNetworks(names []string) {
+// itself, best-effort but not silent: a daemon that never answered created
+// none, which is skipped; one still holding a container of ours on a network
+// has the container removed first, then the network, with a short wait for the
+// daemon's asynchronous endpoint release. Whatever is still refused is logged
+// against the test, naming the sweep that finishes the job — the previous
+// version discarded the error, and a machine came to hold twenty-two empty
+// networks with no line anywhere saying why. None of it fails the test, which
+// has already made its assertions.
+func removeTestNetworks(t *testing.T, names []string) {
 	dc := docker.NewClient(TestDockerSocket(), zap.NewNop())
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		_ = dc.RemoveNetwork(ctx, name)
-	}
+	dockertest.RemoveOwned(ctx, dc, names, t.Logf)
 }
 
 // removeTestRegistryVolume deletes the storage volume a fixed-port registry

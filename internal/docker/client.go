@@ -405,6 +405,12 @@ func (c *ContainerInspect) HasOvercastLabels(service, resourceID string) bool {
 // set). See LabelInstance.
 func (c *ContainerInspect) Instance() string { return c.labels()[LabelInstance] }
 
+// Managed reports whether the container carries overcast.managed=true — one
+// some Overcast instance created, as opposed to a developer's own container
+// (or the container the emulator itself runs in) that happens to share a
+// network with it.
+func (c *ContainerInspect) Managed() bool { return c.labels()[LabelManaged] == "true" }
+
 // labels returns the container's labels, preferring the modern inspect shape.
 func (c *ContainerInspect) labels() map[string]string {
 	if len(c.Config.Labels) > 0 {
@@ -417,6 +423,7 @@ func (c *ContainerInspect) labels() map[string]string {
 type NetworkInspect struct {
 	ID       string            `json:"Id"`
 	Name     string            `json:"Name"`
+	Created  time.Time         `json:"Created"`
 	Internal bool              `json:"Internal"`
 	Labels   map[string]string `json:"Labels"`
 	IPAM     NetworkIPAM       `json:"IPAM"`
@@ -450,10 +457,11 @@ type NetworkIPAMConfig struct {
 
 // NetworkSummary is a lightweight network representation used by ListNetworks.
 type NetworkSummary struct {
-	ID     string            `json:"Id"`
-	Name   string            `json:"Name"`
-	Labels map[string]string `json:"Labels"`
-	IPAM   NetworkIPAM       `json:"IPAM"`
+	ID      string            `json:"Id"`
+	Name    string            `json:"Name"`
+	Created time.Time         `json:"Created"`
+	Labels  map[string]string `json:"Labels"`
+	IPAM    NetworkIPAM       `json:"IPAM"`
 }
 
 // Subnet returns the first IPAM subnet for the network, or empty if unset.
@@ -1710,9 +1718,12 @@ func (d *Client) RemoveNetwork(ctx context.Context, nameOrID string) error {
 	if err != nil {
 		return fmt.Errorf("remove network %s: %w", nameOrID, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("remove network %s: status %d", nameOrID, resp.StatusCode)
+		// The body carries the daemon's reason — "has active endpoints" is the
+		// one a cleanup needs to tell from every other refusal.
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("remove network %s: status %d: %s", nameOrID, resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 	return nil
 }
@@ -1733,6 +1744,27 @@ func (d *Client) ListNetworks(ctx context.Context, service string) ([]NetworkSum
 	var networks []NetworkSummary
 	if err := d.doJSON(ctx, http.MethodGet, path, nil, &networks); err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
+	}
+	return networks, nil
+}
+
+// ListNetworksNamed returns every network whose name contains fragment,
+// managed or not. The daemon's name filter is a substring match (a regular
+// expression, in fact), so callers wanting an exact set must check the names
+// they get back — this cannot express "starts with".
+//
+// Unlike ListNetworks it does not require the managed label: the planes
+// docker.Probe creates carry none, and neither do the per-test twins the
+// suites mint, which is what dockertest.Sweep is looking for.
+func (d *Client) ListNetworksNamed(ctx context.Context, fragment string) ([]NetworkSummary, error) {
+	filterJSON, err := json.Marshal(map[string][]string{"name": {fragment}})
+	if err != nil {
+		return nil, fmt.Errorf("list networks named %s: marshal filters: %w", fragment, err)
+	}
+	path := "/v1.45/networks?filters=" + url.QueryEscape(string(filterJSON))
+	var networks []NetworkSummary
+	if err := d.doJSON(ctx, http.MethodGet, path, nil, &networks); err != nil {
+		return nil, fmt.Errorf("list networks named %s: %w", fragment, err)
 	}
 	return networks, nil
 }
