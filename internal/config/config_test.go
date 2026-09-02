@@ -2140,6 +2140,69 @@ func TestLoad_serviceMetricsRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+// OVERCAST_CONTROL_PLANE_INTERNAL exists so that a pinned Overcast version
+// gives the same control-plane isolation on every machine (#1564). The default
+// has to stay the host probe, so that unset means auto — anything else would
+// change behaviour for everyone who never sets it.
+func TestLoad_controlPlaneInternalDefaultsToAuto(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ControlPlaneInternal != config.ControlPlaneInternalAuto {
+		t.Fatalf("ControlPlaneInternal: expected %q, got %q",
+			config.ControlPlaneInternalAuto, cfg.ControlPlaneInternal)
+	}
+}
+
+func TestLoad_controlPlaneInternalAcceptsEachValue(t *testing.T) {
+	// Case and surrounding whitespace are tolerated the way every other
+	// enum-valued variable tolerates them — a compose file's `"True"` is a
+	// pin, not a typo.
+	for raw, want := range map[string]config.ControlPlaneInternalMode{
+		"auto":   config.ControlPlaneInternalAuto,
+		"true":   config.ControlPlaneInternalTrue,
+		"false":  config.ControlPlaneInternalFalse,
+		" True ": config.ControlPlaneInternalTrue,
+		"FALSE":  config.ControlPlaneInternalFalse,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_CONTROL_PLANE_INTERNAL", raw)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ControlPlaneInternal != want {
+				t.Fatalf("ControlPlaneInternal: expected %q, got %q", want, cfg.ControlPlaneInternal)
+			}
+		})
+	}
+}
+
+// A typo must not fall back to auto. Silently keeping the inferred behaviour
+// is precisely the surprise this variable was added to end, and it would be
+// worse here — the operator believes they pinned it.
+func TestLoad_controlPlaneInternalRejectsInvalidValues(t *testing.T) {
+	for _, raw := range []string{"yes", "1", "internal", "off"} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("OVERCAST_CONTROL_PLANE_INTERNAL", raw)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("expected error for invalid OVERCAST_CONTROL_PLANE_INTERNAL, got nil")
+			}
+			if got := err.Error(); !containsAll(got, "OVERCAST_CONTROL_PLANE_INTERNAL", "auto", "true", "false") {
+				t.Fatalf("unexpected error message: %q", got)
+			}
+		})
+	}
+}
+
 func TestLoad_efsModeRejectsInvalidValues(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_EFS_MODE", "nfs")
@@ -2476,7 +2539,7 @@ func clearEnv(t *testing.T) {
 		"DISABLE_EVENTS", "SKIP_SSL_CERT_DOWNLOAD", "DISABLE_CORS_CHECKS", "DISABLE_CORS_HEADERS",
 		"EXTRA_CORS_ALLOWED_ORIGINS", "EXTRA_CORS_ALLOWED_HEADERS", "SQS_ENDPOINT_STRATEGY",
 		"S3_SKIP_SIGNATURE_VALIDATION", "IAM_SOFT_MODE", "LAMBDA_KEEPALIVE_MS",
-		"LAMBDA_DOCKER_NETWORK", "LAMBDA_DOCKER_FLAGS", "LAMBDA_RUNTIME_EXECUTOR",
+		"LAMBDA_DOCKER_NETWORK", "MAIN_DOCKER_NETWORK", "LAMBDA_DOCKER_FLAGS", "LAMBDA_RUNTIME_EXECUTOR",
 		"SNAPSHOT_SAVE_STRATEGY", "SNAPSHOT_LOAD_STRATEGY", "SNAPSHOT_FLUSH_INTERVAL",
 		"ALLOW_NONSTANDARD_REGIONS", "ENABLE_CONFIG_UPDATES",
 		"PROVIDER_OVERRIDE_APIGATEWAY", "PROVIDER_OVERRIDE_CLOUDWATCH",
@@ -2484,7 +2547,7 @@ func clearEnv(t *testing.T) {
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",
 		"OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
-		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK",
+		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK", "OVERCAST_CONTROL_PLANE_INTERNAL",
 		// The Docker endpoint has two sources to isolate, not one: a
 		// developer running Colima or Rancher Desktop exports DOCKER_HOST,
 		// and without this the platform-default assertion below would fail on

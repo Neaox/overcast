@@ -21,6 +21,13 @@ Each non-default VPC is backed by a real Docker bridge network. The VPC's CIDR
 becomes the Docker subnet, and the network's isolation mode (`--internal`)
 reflects whether an internet gateway is attached.
 
+That isolation only bites when Overcast's control plane is internal too, since
+every container sits on both. `OVERCAST_CONTROL_PLANE_INTERNAL` decides it, and
+by default it is decided from the host — so whether a gateway-less VPC actually
+withholds the internet can differ between two machines running the same
+Overcast. See
+[Networking § Control-plane isolation](../../networking.md#control-plane-isolation).
+
 | Label | Value |
 | --- | --- |
 | `overcast.managed` | `true` |

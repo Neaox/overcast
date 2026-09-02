@@ -533,6 +533,7 @@ var ignoredLocalStackVars = []string{
 	"IAM_SOFT_MODE",
 	"LAMBDA_KEEPALIVE_MS",
 	"LAMBDA_DOCKER_NETWORK",
+	"MAIN_DOCKER_NETWORK",
 	"LAMBDA_DOCKER_FLAGS",
 	"ECS_DOCKER_FLAGS",
 	"EC2_DOCKER_FLAGS",
@@ -610,7 +611,7 @@ func IgnoredLocalStackReason(name string) string {
 		return "IAM policies are stored and never enforced unless OVERCAST_ENFORCE_IAM is set, which is soft mode's outcome"
 	case "LAMBDA_KEEPALIVE_MS":
 		return "idle-container lifetime is a fixed 15 minutes here, not a setting"
-	case "LAMBDA_DOCKER_NETWORK":
+	case "LAMBDA_DOCKER_NETWORK", "MAIN_DOCKER_NETWORK":
 		return "adjacent concept, opposite default -- set OVERCAST_NETWORK, which every container Overcast starts joins"
 	case "LAMBDA_DOCKER_FLAGS", "ECS_DOCKER_FLAGS", "EC2_DOCKER_FLAGS", "BATCH_DOCKER_FLAGS":
 		// The Java LocalStack Testcontainers module sets all four inside the

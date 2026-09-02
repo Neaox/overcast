@@ -98,6 +98,9 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 			entry = &probeEntry{result: pr, err: err}
 			probeCache[cfg.Socket] = entry
 			if err == nil {
+				if s.tracker != nil {
+					s.tracker.RecordNetworks(pr.Networks)
+				}
 				keep := make([]string, 0, len(networks))
 				for _, spec := range networks {
 					keep = append(keep, spec.Name)

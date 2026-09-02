@@ -45,7 +45,7 @@ The API is small on purpose:
 | `dataplane.AttachAdopted(...)` | The same for a container reused after a restart — joins the control plane too, since one adopted from an earlier version was never created there |
 | `dataplane.Hostnames(cfg, name, advertised...)` | The alias set: `name` applied to every base an endpoint could be minted under, plus what the record already advertises |
 | `dataplane.ContainerAddr(ctx, dc, cfg, id)` | The address *Overcast itself* dials a managed container on, or `""` meaning "use the published port on loopback" |
-| `dataplane.ControlPlaneInternal(ctx, dc)` | Whether the control plane can be created `--internal` — see § 1a; wired in as `docker.NetworkSpec.InternalMode` so it runs once `docker.Probe` has a live client, before either plane is created |
+| `dataplane.ControlPlaneInternal(cfg)` | Returns the function that decides whether the control plane is created `--internal`, **and the reason** — see § 1a; wired in as `docker.NetworkSpec.InternalMode` so it runs once `docker.Probe` has a live client, before either plane is created |
 
 **Historical note, because the shape of the old bug is instructive.** There used
 to be one network per emulator service — `overcast_lambda`, `overcast_rds`,
@@ -111,6 +111,17 @@ inspect the control plane itself to decide this, since a first run has not
 created it yet, so it asks the same bindability question of Docker's
 always-present default `bridge` network instead
 (`containerendpoint.NativeLinuxDaemon`).
+
+That whole probe is `OVERCAST_CONTROL_PLANE_INTERNAL=auto`, the default.
+`true` and `false` skip it, because a probe of the *host* is the wrong shape
+for a decision a team needs to be identical across hosts — see
+[docs/networking.md § Control-plane isolation](../networking.md#control-plane-isolation)
+and issue #1564. Whichever branch fires names itself: the decision carries a
+reason string, which `docker.Probe` logs at info on every startup and reports
+under `docker.networks` in `/_overcast/health`. `docker.Probe` also repairs a
+pre-existing plane whose isolation disagrees, when nothing is attached to it —
+Docker will not change the flag in place, so an old network otherwise pins an
+answer forever.
 
 ### 1b. …and a container's source address is not its identity
 

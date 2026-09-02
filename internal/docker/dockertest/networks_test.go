@@ -236,9 +236,9 @@ func (fd *fakeDaemon) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		info := docker.NetworkInspect{ID: "id-" + name, Name: name, Created: n.created,
-			Containers: map[string]docker.NetworkContainer{}}
+			Containers: map[string]docker.NetworkEndpoint{}}
 		for id, c := range n.containers {
-			info.Containers[id] = docker.NetworkContainer{Name: c.name}
+			info.Containers[id] = docker.NetworkEndpoint{Name: c.name}
 		}
 		_ = json.NewEncoder(w).Encode(info)
 

@@ -427,14 +427,21 @@ type NetworkInspect struct {
 	Internal bool              `json:"Internal"`
 	Labels   map[string]string `json:"Labels"`
 	IPAM     NetworkIPAM       `json:"IPAM"`
-	// Containers is keyed by container ID and holds the endpoints the daemon
-	// still has live on the network — the set that makes it refuse a removal.
-	Containers map[string]NetworkContainer `json:"Containers"`
+
+	// Containers is the endpoints currently attached, keyed by container ID.
+	// Only its emptiness is load-bearing today: a network with nothing on it
+	// can be removed and recreated to apply a setting Docker will not change in
+	// place, and one with something on it cannot — see
+	// docker.reconcileInternalDrift.
+	Containers map[string]NetworkEndpoint `json:"Containers"`
 }
 
-// NetworkContainer is one entry of NetworkInspect.Containers.
-type NetworkContainer struct {
-	Name string `json:"Name"`
+// NetworkEndpoint is one container's attachment to a network, as reported by
+// network inspect.
+type NetworkEndpoint struct {
+	Name        string `json:"Name"`
+	EndpointID  string `json:"EndpointID"`
+	IPv4Address string `json:"IPv4Address"`
 }
 
 // NetworkIPAM describes IP address management for a Docker network.

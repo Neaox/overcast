@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/overcast-sh/overcast/internal/config"
@@ -246,12 +247,16 @@ func TestAttach_wrapsTheDaemonError(t *testing.T) {
 	}
 }
 
-// TestControlPlaneInternal covers the three-row table of
+// TestControlPlaneInternal_auto covers the three-row table of
 // docs/plans/container-network-topology.md § 5: containerised is always
 // on-link and safe, a native Linux host's gateway stays on-link on an
 // `--internal` bridge, and Docker Desktop's host address does not — plus the
 // case the table does not name, where the daemon probe cannot tell.
-func TestControlPlaneInternal(t *testing.T) {
+//
+// Every row also has to name itself. The reason is the reportable half of
+// #1564: two engineers on one pinned version got different isolation, and
+// nothing anywhere said which probe had fired.
+func TestControlPlaneInternal_auto(t *testing.T) {
 	restoreContainer := runningInContainer
 	restoreDaemon := nativeLinuxDaemon
 	t.Cleanup(func() {
@@ -263,16 +268,122 @@ func TestControlPlaneInternal(t *testing.T) {
 		containerised bool
 		native        bool
 		want          bool
+		wantReason    string
 	}{
 		"containerised is always internal, even if the daemon probe would say no": {
-			containerised: true, native: false, want: true,
+			containerised: true, native: false,
+			want: true, wantReason: "auto: Overcast is containerised",
 		},
 		"native Linux host: the gateway stays on-link": {
-			containerised: false, native: true, want: true,
+			containerised: false, native: true,
+			want: true, wantReason: "auto: native Linux Docker daemon",
 		},
 		"Docker Desktop host: the daemon probe declines": {
-			containerised: false, native: false, want: false,
+			containerised: false, native: false,
+			want: false, wantReason: "auto: Docker Desktop, or a daemon this host could not probe",
 		},
+	}
+
+	cfg := testConfig()
+	cfg.ControlPlaneInternal = config.ControlPlaneInternalAuto
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			runningInContainer = func() bool { return tc.containerised }
+			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
+
+			got := ControlPlaneInternal(cfg)(context.Background(), nil)
+			if got.Internal != tc.want {
+				t.Errorf("Internal = %v, want %v", got.Internal, tc.want)
+			}
+			if got.Reason != tc.wantReason {
+				t.Errorf("Reason = %q, want %q", got.Reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestControlPlaneInternal_pinnedOverridesTheHostProbe is the point of #1564:
+// an explicit OVERCAST_CONTROL_PLANE_INTERNAL settles the answer whatever the
+// host looks like, so one pinned version behaves the same on every machine.
+//
+// Both pinned values are exercised against *both* hosts the probe can tell
+// apart, since a setting that only won on the host that already agreed with it
+// would be no setting at all.
+func TestControlPlaneInternal_pinnedOverridesTheHostProbe(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+
+	hosts := []struct {
+		name          string
+		containerised bool
+		native        bool
+	}{
+		{"containerised, where auto would say internal", true, false},
+		{"Docker Desktop, where auto would say not internal", false, false},
+	}
+	pins := []struct {
+		mode       config.ControlPlaneInternalMode
+		want       bool
+		wantReason string
+	}{
+		{config.ControlPlaneInternalTrue, true, "OVERCAST_CONTROL_PLANE_INTERNAL=true"},
+		{config.ControlPlaneInternalFalse, false, "OVERCAST_CONTROL_PLANE_INTERNAL=false"},
+	}
+
+	for _, host := range hosts {
+		for _, pin := range pins {
+			t.Run(host.name+"/"+string(pin.mode), func(t *testing.T) {
+				runningInContainer = func() bool { return host.containerised }
+				nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return host.native }
+
+				cfg := testConfig()
+				cfg.ControlPlaneInternal = pin.mode
+
+				got := ControlPlaneInternal(cfg)(context.Background(), nil)
+				if got.Internal != pin.want {
+					t.Errorf("Internal = %v, want %v", got.Internal, pin.want)
+				}
+				if got.Reason != pin.wantReason {
+					t.Errorf("Reason = %q, want %q", got.Reason, pin.wantReason)
+				}
+			})
+		}
+	}
+}
+
+// Isolating the plane costs egress, and the cost lands a long way from its
+// cause — ENETUNREACH inside somebody's application code, minutes later. The
+// decision is the only place that knows it is coming, so every path that comes
+// out internal has to carry the warning, and no path that comes out routable
+// may carry it.
+//
+// Measured on a Docker Desktop host: a container on an `--internal` VPC
+// network plus a routable control plane takes its default route from the
+// control plane and reaches the internet; make the control plane internal too
+// and it has no default route at all.
+func TestControlPlaneInternal_warnsWheneverItIsolatesThePlane(t *testing.T) {
+	restoreContainer := runningInContainer
+	restoreDaemon := nativeLinuxDaemon
+	t.Cleanup(func() {
+		runningInContainer = restoreContainer
+		nativeLinuxDaemon = restoreDaemon
+	})
+
+	cases := map[string]struct {
+		mode          config.ControlPlaneInternalMode
+		containerised bool
+		native        bool
+		wantWarning   bool
+	}{
+		"pinned true":                  {config.ControlPlaneInternalTrue, false, false, true},
+		"pinned false":                 {config.ControlPlaneInternalFalse, true, true, false},
+		"auto on a containerised host": {config.ControlPlaneInternalAuto, true, false, true},
+		"auto on a native Linux host":  {config.ControlPlaneInternalAuto, false, true, true},
+		"auto on Docker Desktop":       {config.ControlPlaneInternalAuto, false, false, false},
 	}
 
 	for name, tc := range cases {
@@ -280,10 +391,52 @@ func TestControlPlaneInternal(t *testing.T) {
 			runningInContainer = func() bool { return tc.containerised }
 			nativeLinuxDaemon = func(context.Context, *docker.Client) bool { return tc.native }
 
-			if got := ControlPlaneInternal(context.Background(), nil); got != tc.want {
-				t.Errorf("ControlPlaneInternal() = %v, want %v", got, tc.want)
+			cfg := testConfig()
+			cfg.ControlPlaneInternal = tc.mode
+			got := ControlPlaneInternal(cfg)(context.Background(), nil)
+
+			hasWarning := slices.Contains(got.Warnings, ControlPlaneEgressWarning)
+			if hasWarning != tc.wantWarning {
+				t.Errorf("egress warning present = %v, want %v (decision %+v)",
+					hasWarning, tc.wantWarning, got)
+			}
+			if got.Internal != hasWarning {
+				t.Errorf("Internal = %v but warning present = %v — the warning must track isolation exactly",
+					got.Internal, hasWarning)
 			}
 		})
+	}
+}
+
+// The warning has to name the symptom an operator will actually search for and
+// the setting that undoes it, or it is noise on an already busy startup.
+func TestControlPlaneEgressWarning_namesTheSymptomAndTheFix(t *testing.T) {
+	for _, want := range []string{
+		"ENETUNREACH",
+		"OVERCAST_CONTROL_PLANE_INTERNAL=false",
+		"NAT gateway",
+		"route tables are metadata only",
+	} {
+		if !strings.Contains(ControlPlaneEgressWarning, want) {
+			t.Errorf("ControlPlaneEgressWarning does not mention %q:\n%s", want, ControlPlaneEgressWarning)
+		}
+	}
+}
+
+// An empty ControlPlaneInternal is the zero value of a Config built directly
+// rather than through config.Load — which is what every test helper and
+// embedding caller in the tree does — and it has to mean auto rather than
+// "pinned to nothing".
+func TestControlPlaneInternal_zeroValueMeansAuto(t *testing.T) {
+	restoreContainer := runningInContainer
+	t.Cleanup(func() { runningInContainer = restoreContainer })
+	runningInContainer = func() bool { return true }
+
+	cfg := testConfig()
+	cfg.ControlPlaneInternal = ""
+
+	if got := ControlPlaneInternal(cfg)(context.Background(), nil); !got.Internal {
+		t.Errorf("zero-value mode = %+v, want the auto probe's answer (internal)", got)
 	}
 }
 
@@ -313,8 +466,8 @@ func TestPlaneSpecs_defersTheControlPlaneDecisionToInternalMode(t *testing.T) {
 	t.Cleanup(func() { runningInContainer = restoreContainer })
 	runningInContainer = func() bool { return true }
 
-	if !control.InternalMode(context.Background(), nil) {
-		t.Error("control plane InternalMode(containerised) = false, want true")
+	if got := control.InternalMode(context.Background(), nil); !got.Internal {
+		t.Errorf("control plane InternalMode(containerised) = %+v, want Internal=true", got)
 	}
 }
 

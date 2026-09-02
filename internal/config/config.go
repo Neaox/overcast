@@ -106,6 +106,47 @@ const (
 	ServiceMetricsDisabled ServiceMetricsMode = "disabled"
 )
 
+// ControlPlaneInternalMode decides whether the control plane Docker network
+// (Config.ControlNetwork) is created `--internal` — cut off from everything
+// Docker did not put on it.
+//
+// It exists because the answer used to be inferred from the runtime
+// environment alone, which made the same pinned Overcast version behave
+// differently on two machines with nothing saying why (#1564). The probe is
+// still the default, but it is now one of three values a team can pin, and
+// whichever one applies is named in the startup log.
+type ControlPlaneInternalMode string
+
+const (
+	// ControlPlaneInternalAuto keeps the runtime probe: internal when Overcast
+	// is itself containerised or is talking to a native Linux daemon, not
+	// internal otherwise. The default, because it is what alpha.37 shipped and
+	// it is right for most machines — but it is a property of the *host*, so
+	// two machines on one pinned version can legitimately differ. Pin true or
+	// false when that matters. See dataplane.ControlPlaneInternal.
+	ControlPlaneInternalAuto ControlPlaneInternalMode = "auto"
+
+	// ControlPlaneInternalTrue always creates the control plane `--internal`.
+	// This is what makes a VPC with no internet gateway actually withhold the
+	// internet: without it the VPC's own `--internal` network is decoration,
+	// because every container is also on the control plane and would reach the
+	// world through that.
+	//
+	// It costs a Docker Desktop host every Lambda invocation — containers
+	// there dial the host's routable address, which `--internal` severs — so
+	// pin it only where containers reach Overcast on-link (Overcast
+	// containerised, or a native Linux daemon), which is exactly the set auto
+	// detects.
+	ControlPlaneInternalTrue ControlPlaneInternalMode = "true"
+
+	// ControlPlaneInternalFalse never creates the control plane `--internal`.
+	// The pre-alpha.37 behaviour, and the one to pin when compute in a
+	// gateway-less VPC is expected to reach the internet anyway — including
+	// for parity with LocalStack, which isolates no network of its own
+	// (docs/localstack-compatibility.md).
+	ControlPlaneInternalFalse ControlPlaneInternalMode = "false"
+)
+
 // DefaultEFSNFSImage is the digest-pinned NFS-Ganesha image used for
 // mount-target exports when OVERCAST_EFS_NFS is on. Pinned rather than
 // floating so an upstream retag cannot change what a mount target runs.
@@ -483,6 +524,14 @@ type Config struct {
 	//
 	// Corresponds to env var OVERCAST_NETWORK. Defaults to "overcast".
 	Network string
+
+	// ControlPlaneInternal decides whether ControlNetwork is created
+	// `--internal`: "auto" (probe the host), "true" (always), "false" (never).
+	//
+	// Corresponds to env var OVERCAST_CONTROL_PLANE_INTERNAL. Defaults to
+	// "auto", which is alpha.37's behaviour. See ControlPlaneInternalMode for
+	// what each value costs, and docs/networking.md § Control-plane isolation.
+	ControlPlaneInternal ControlPlaneInternalMode
 
 	// LambdaDockerSocket is the path to the Docker daemon socket used to
 	// manage Lambda container siblings. Defaults to DOCKER_HOST when set,
@@ -1512,6 +1561,12 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           ECS_NETWORK, RDS_NETWORK, ELASTICACHE_NETWORK,
 //	                                           MSK_NETWORK, EKS_NETWORK and EFS_NETWORK are gone
 //	                                           and are no longer read.)
+//	OVERCAST_CONTROL_PLANE_INTERNAL    auto  (auto|true|false — whether the control plane network
+//	                                           is created `--internal`. auto probes the host, which
+//	                                           is what alpha.37 shipped; pin true or false for a
+//	                                           deterministic answer across machines. The decision
+//	                                           and its reason are logged at startup and reported by
+//	                                           /_overcast/health. See #1564.)
 //	ECS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
 //	ECS_KEEP_CONTAINERS                false
 //	OVERCAST_ECS_HOT_RELOAD            <OVERCAST_HOT_RELOAD>
@@ -1868,6 +1923,22 @@ func Load() (*Config, error) {
 	cfg.RDSMode = RDSMode(rawRDSMode)
 	if cfg.RDSMode != RDSModeMock && cfg.RDSMode != RDSModeLive {
 		return nil, fmt.Errorf("config: OVERCAST_RDS_MODE %q is invalid (expected mock or live)", rawRDSMode)
+	}
+
+	// Control-plane isolation (#1564). Three values rather than a bool: the
+	// default has to stay the host probe, and "auto" is the only honest name
+	// for a value whose meaning depends on the machine. Invalid values fail
+	// startup rather than falling back to auto — a typo that silently kept the
+	// inferred behaviour is exactly the surprise this variable exists to end.
+	rawControlPlaneInternal := strings.ToLower(strings.TrimSpace(
+		envOr("OVERCAST_CONTROL_PLANE_INTERNAL", string(ControlPlaneInternalAuto))))
+	cfg.ControlPlaneInternal = ControlPlaneInternalMode(rawControlPlaneInternal)
+	switch cfg.ControlPlaneInternal {
+	case ControlPlaneInternalAuto, ControlPlaneInternalTrue, ControlPlaneInternalFalse:
+	default:
+		return nil, fmt.Errorf(
+			"config: OVERCAST_CONTROL_PLANE_INTERNAL %q is invalid (expected auto, true, or false)",
+			rawControlPlaneInternal)
 	}
 
 	// Service metrics collection (docs/plans/service-metrics-platform.md).
