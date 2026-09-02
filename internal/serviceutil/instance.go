@@ -2,6 +2,7 @@ package serviceutil
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -10,9 +11,42 @@ import (
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
-// instanceKey is the key InstanceIdentity stores the identity under, within
+// InstanceKey is the key InstanceIdentity stores the identity under, within
 // whatever namespace the caller passes.
-const instanceKey = "id"
+//
+// Exported so the reset path can recognise and preserve it. See
+// IsInstanceNamespace.
+const InstanceKey = "id"
+
+// instanceKey is InstanceKey under the name the rest of this file uses.
+const instanceKey = InstanceKey
+
+// InstanceNamespaceSuffix is what every namespace holding a sweep-domain
+// identity ends in: "ec2:instance", "lambda:instance", and so on for each
+// service that stamps docker.LabelInstance.
+const InstanceNamespaceSuffix = ":instance"
+
+// IsInstanceNamespace reports whether a namespace holds a sweep-domain
+// identity rather than emulated state.
+//
+// It exists for one caller: the reset path, which must leave these alone. A
+// reset wipes what the emulator has been *asked to remember* — every bucket,
+// queue, function and VPC. The identity is not that. It names the instance
+// doing the remembering, and it is stamped on Docker networks, containers and
+// volumes that outlive any single reset.
+//
+// Wiping it made every one of those resources unclaimable: the next start
+// minted a fresh identity, and the sweep — which removes only what carries
+// *this* instance's label — could no longer prove it had created them, so it
+// left them alone for ever. One leaked Docker network per VPC per reset, which
+// on a CI loop exhausts Docker's address pools (#1605).
+//
+// The label stays honest through a reset precisely because the identity does:
+// the reset's own leftovers are still stamped as ours, no record claims them
+// any more, and the next reconcile's orphan sweep removes them for that reason.
+func IsInstanceNamespace(namespace string) bool {
+	return strings.HasSuffix(namespace, InstanceNamespaceSuffix)
+}
 
 // InstanceIdentity returns the identity that scopes this instance's sweeps of
 // shared Docker resources, minting and recording one on first use. It is the
