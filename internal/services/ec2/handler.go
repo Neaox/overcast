@@ -60,11 +60,19 @@ type Handler struct {
 	// (ensureRegionReconciled). Two passes interleaving would adopt and
 	// create against each other's view of the daemon.
 	reconcileMu sync.Mutex
-	// reconciledRegions holds the regions whose VPC networks have been
-	// reconciled since this process started. A region absent from it gets a
-	// pass on first use, so a VPC the startup pass could not see — its record
-	// written while that pass ran, or the store unreadable at the time — is
-	// still backed before anything is placed in it.
+	// reconciledAll is set when a full pass (reconcileNetworks) has covered
+	// every region the store held, and cleared when the next one starts —
+	// the router runs one on every Docker readiness transition, and a
+	// network lost with the daemon is not something an earlier pass can
+	// vouch for. While it is set the backstop below is a single load: a VPC
+	// created after a full pass was backed against the live daemon by
+	// EnsureNetwork and needs no healing.
+	reconciledAll atomic.Bool
+	// reconciledRegions holds the regions a per-region pass has covered
+	// since the last full pass started, for when that full pass could not
+	// run to the end (the store unreadable at the time). A region absent from
+	// both gets a pass on first use, so a VPC the startup pass could not see
+	// is still backed before anything is placed in it.
 	reconciledRegions sync.Map // region → struct{}
 
 	// defaultVPCLocks serialises default-VPC seeding per region, so two

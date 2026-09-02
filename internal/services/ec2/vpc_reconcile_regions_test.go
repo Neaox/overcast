@@ -203,6 +203,34 @@ func TestReconcileNetworks_staleRecordDoesNotTakeAnotherRegionsNetworkOnItsSubne
 	}
 }
 
+func TestReconcileNetworks_sameRegionSameCIDRStillAdoptsBySubnet(t *testing.T) {
+	// Given: in one region, VPC A created while Docker was down (unbacked)
+	// and VPC B created on the same CIDR after Docker came back — B, finding
+	// no live sharer, owns the network. A sorts first.
+	f := newFakeVPCDocker(t)
+	h := vpcDockerHandler(t, f, "shared")
+	a := &VPC{VpcID: "vpc-00000000", CidrBlock: "10.0.0.0/16", State: "available", NetworkStatus: vpcNetworkStatusUnbacked}
+	if aerr := h.store.putVPC(context.Background(), a); aerr != nil {
+		t.Fatalf("putVPC: %s", aerr.Message)
+	}
+	b := createVPCIn(t, h, "us-east-1", "10.0.0.0/16")
+	bNet := storedVPC(t, h, b).DockerNetworkID
+
+	// When: the startup reconcile runs.
+	h.reconcileNetworks(context.Background(), f.summaries())
+
+	// Then: as before regions were iterated, A adopts the network on its
+	// subnet and B shares it — the cross-region guard does not apply within
+	// a region, where the strategy's own sharing rules decide.
+	gotA, gotB := storedVPC(t, h, a.VpcID), storedVPC(t, h, b)
+	if gotA.DockerNetworkID != bNet || !dataplane.Launchable(gotA.NetworkStatus) {
+		t.Errorf("A: network %q status %q, want %q and launchable", gotA.DockerNetworkID, gotA.NetworkStatus, bNet)
+	}
+	if gotB.DockerNetworkID != bNet || gotB.NetworkStatus != vpcNetworkStatusShared {
+		t.Errorf("B: network %q status %q, want %q and shared", gotB.DockerNetworkID, gotB.NetworkStatus, bNet)
+	}
+}
+
 func TestReconcileNetworks_recreateInAnotherRegionWaitsForTheNetworkLock(t *testing.T) {
 	// Given: a VPC in ap-southeast-2 whose network is gone, and the lock on
 	// that network's name held — as `overcast network reset` holds it.
@@ -256,6 +284,15 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 		t.Fatalf("VPCNetworkStatus = %q, want launchable", status)
 	}
 	got := svc.DockerNetworkForVpc(regionCtx(otherRegion), otherVPCID)
+	lists := 0
+	for _, c := range f.calls {
+		if c == "GET /v1.45/networks" {
+			lists++
+		}
+	}
+	if lists != 1 {
+		t.Errorf("the daemon was listed %d times across two placements in one region, want once", lists)
+	}
 
 	// Then: the network was recreated first, and the answer names it — not
 	// the network that is gone.

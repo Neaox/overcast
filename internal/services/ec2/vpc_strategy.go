@@ -509,20 +509,27 @@ func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 // region has run is what no VPC anywhere names. A nil index adopts nothing,
 // which is what a caller with no daemon snapshot passes.
 //
-// Regions run in turn, so the index also has to know which VPCs exist at all
-// (reserve): a region whose VPC lost its network runs before the region whose
-// VPC on the same subnet still has one, and the fallback that adopts by subnet
-// would otherwise hand the second's network to the first. One CIDR reused
-// across regions is the common case, not a corner — CDK's default puts every
-// region on 10.0.0.0/16.
+// Regions run in turn, so the index also has to know which VPCs exist in
+// which region (reserve): a region whose VPC lost its network runs before the
+// region whose VPC on the same subnet still has one, and the fallback that
+// adopts by subnet would otherwise hand the second's network to the first.
+// One CIDR reused across regions is the common case, not a corner — CDK's
+// default puts every region on 10.0.0.0/16. Within a region the fallback is
+// unchanged: two same-CIDR VPCs there are sharers or a conflict by the
+// strategy's own rules, and the earlier one adopting the later one's network
+// by subnet is how a VPC created while Docker was down gets backed.
 type vpcNetworkIndex struct {
 	byID         map[string]*docker.NetworkSummary
 	byResourceID map[string]*docker.NetworkSummary
 	bySubnet     map[string]*docker.NetworkSummary
-	// reserved is every VPC ID the store holds, in any region. A network
-	// labelled for one of them is that VPC's to adopt by ID or label, never
-	// another VPC's to take by subnet.
-	reserved map[string]struct{}
+	// reserved maps every VPC ID the store holds to the region it lives in.
+	// A network labelled for a VPC in another region is that VPC's to adopt
+	// by ID or label when its turn comes, never this region's to take by
+	// subnet.
+	reserved map[string]string
+	// region is the one whose pass is running, set by the Handler before each
+	// region's Reconcile. The passes are sequential, so one field suffices.
+	region string
 }
 
 // newVPCNetworkIndex indexes existing. The maps point into the slice.
@@ -531,7 +538,7 @@ func newVPCNetworkIndex(existing []docker.NetworkSummary) *vpcNetworkIndex {
 		byID:         make(map[string]*docker.NetworkSummary, len(existing)),
 		byResourceID: make(map[string]*docker.NetworkSummary, len(existing)),
 		bySubnet:     make(map[string]*docker.NetworkSummary, len(existing)),
-		reserved:     make(map[string]struct{}),
+		reserved:     make(map[string]string),
 	}
 	for i := range existing {
 		n := &existing[i]
@@ -546,16 +553,23 @@ func newVPCNetworkIndex(existing []docker.NetworkSummary) *vpcNetworkIndex {
 	return ix
 }
 
-// reserve records vpcs as existing, for every region, before any region's
-// pass runs. See the type comment.
-func (ix *vpcNetworkIndex) reserve(vpcs []*VPC) {
+// reserve records vpcs as existing in region, for every region, before any
+// region's pass runs. See the type comment.
+func (ix *vpcNetworkIndex) reserve(region string, vpcs []*VPC) {
 	if ix == nil {
 		return
 	}
 	for _, vpc := range vpcs {
 		if vpc != nil && vpc.VpcID != "" {
-			ix.reserved[vpc.VpcID] = struct{}{}
+			ix.reserved[vpc.VpcID] = region
 		}
+	}
+}
+
+// enter names the region whose pass is about to run.
+func (ix *vpcNetworkIndex) enter(region string) {
+	if ix != nil {
+		ix.region = region
 	}
 }
 
@@ -567,11 +581,12 @@ func (ix *vpcNetworkIndex) reserve(vpcs []*VPC) {
 // under the shared strategy the name belongs to whichever VPC created the
 // network, which no sharer can derive.
 //
-// The subnet fallback is for label drift and for a network whose VPC is gone.
-// It does not take a network labelled for a VPC that still exists — that VPC
-// adopts it by ID or label when its own region's turn comes — so a record that
-// lost its network is left to create one, and Docker's refusal of the
-// overlapping pool lands on the VPC that actually has no network.
+// The subnet fallback is for label drift, for a network whose VPC is gone,
+// and for a same-region VPC on the same CIDR. It does not take a network
+// labelled for a VPC that still exists in another region — that VPC adopts it
+// by ID or label when its own region's turn comes — so a record that lost its
+// network is left to create one, and Docker's refusal of the overlapping pool
+// lands on the VPC that actually has no network.
 func (ix *vpcNetworkIndex) adopt(vpc *VPC) (string, bool) {
 	if ix == nil {
 		return "", false
@@ -591,14 +606,14 @@ func (ix *vpcNetworkIndex) adopt(vpc *VPC) (string, bool) {
 }
 
 // belongsElsewhere reports whether n is labelled for a VPC other than vpc
-// that the store still holds, in any region.
+// that the store still holds in a region other than the one being reconciled.
 func (ix *vpcNetworkIndex) belongsElsewhere(n *docker.NetworkSummary, vpc *VPC) bool {
 	rid := n.ResourceID()
 	if rid == "" || rid == vpc.VpcID {
 		return false
 	}
-	_, live := ix.reserved[rid]
-	return live
+	region, live := ix.reserved[rid]
+	return live && region != ix.region
 }
 
 // claim takes n out of every index for vpc and returns its ID.
