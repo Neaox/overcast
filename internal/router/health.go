@@ -7,6 +7,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/listenstatus"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -23,6 +24,13 @@ type healthResponse struct {
 	ServiceGoalTiers map[string]EmulationTier `json:"serviceGoalTiers"`
 	Storage          healthStorage            `json:"storage"`
 	Docker           *docker.Status           `json:"docker,omitempty"`
+	// Listeners reports the auxiliary listeners that bind beside the AWS API —
+	// the Lambda Runtime API and the SMTP capture server: whether each is
+	// bound, where, whether it fell back from a busy default port, and, when
+	// it failed, why and what to change. Omitted until one has reported; the
+	// Runtime API reports only once Docker has been probed. A failed listener
+	// makes Status "degraded".
+	Listeners map[string]listenstatus.Status `json:"listeners,omitempty"`
 }
 
 // healthStorage describes the active storage configuration.
@@ -63,7 +71,8 @@ type persistentHealth struct {
 // enabledTiers maps each enabled service name to its emulation tier.
 // enabledGoalTiers maps each enabled service name to its goal emulation tier.
 // dockerStatus, when non-nil, supplies the per-service Docker connectivity snapshot.
-func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string, dockerStatus func() *docker.Status) http.HandlerFunc {
+// listeners, when non-nil, supplies the auxiliary listeners' bind outcomes.
+func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string, dockerStatus func() *docker.Status, listeners func() map[string]listenstatus.Status) http.HandlerFunc {
 	// Build the storage section once — it's static for the process lifetime.
 	storage := healthStorage{Default: string(cfg.State), Configured: cfg.StateConfigured}
 	if len(cfg.ServiceStates) > 0 {
@@ -76,8 +85,12 @@ func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []s
 	return func(w http.ResponseWriter, r *http.Request) {
 		currentStorage := storage
 		currentStorage.Persistent = persistentHealthSnapshot(store)
+		var listenerStatuses map[string]listenstatus.Status
+		if listeners != nil {
+			listenerStatuses = listeners()
+		}
 		status := "ok"
-		if currentStorage.Persistent != nil && !currentStorage.Persistent.Healthy {
+		if (currentStorage.Persistent != nil && !currentStorage.Persistent.Healthy) || listenstatus.Degraded(listenerStatuses) {
 			status = "degraded"
 		}
 		resp := &healthResponse{
@@ -88,6 +101,7 @@ func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []s
 			ServiceTiers:     enabledTiers,
 			ServiceGoalTiers: enabledGoalTiers,
 			Storage:          currentStorage,
+			Listeners:        listenerStatuses,
 		}
 		if dockerStatus != nil {
 			resp.Docker = dockerStatus()

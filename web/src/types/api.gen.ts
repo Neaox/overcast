@@ -100,6 +100,15 @@ export interface HealthResponse {
   serviceGoalTiers: Record<string, EmulationTier>
   storage: HealthStorage
   docker?: DockerHealth
+  /**
+   * Listeners reports the auxiliary listeners that bind beside the AWS API —
+   * the Lambda Runtime API and the SMTP capture server: whether each is
+   * bound, where, whether it fell back from a busy default port, and, when
+   * it failed, why and what to change. Omitted until one has reported; the
+   * Runtime API reports only once Docker has been probed. A failed listener
+   * makes Status "degraded".
+   */
+  listeners?: Record<string, ListenerStatus>
 }
 
 /**
@@ -181,6 +190,33 @@ export interface DockerServiceHealth {
   error?: string
   lastSeen?: string
 }
+
+/**
+ * Status is one listener's outcome.
+ *
+ * Generated from Go `listenstatus.Status` (internal/listenstatus/listenstatus.go).
+ */
+export interface ListenerStatus {
+  state: ListenerState
+  /** Addr is the bound address when State is Listening. */
+  addr?: string
+  /**
+   * FellBack is true when the default port was busy and an ephemeral one
+   * was taken instead: the listener works, just not where the docs say.
+   */
+  fellBack?: boolean
+  /** Error is the bind error when State is Failed. */
+  error?: string
+  /** Fix names the environment variable to change and how. */
+  fix?: string
+}
+
+/**
+ * State is what became of a listener's bind.
+ *
+ * Generated from Go `listenstatus.State` (internal/listenstatus/listenstatus.go).
+ */
+export type ListenerState = "listening" | "failed"
 
 /**
  * debugMetricsResponse is the JSON body for GET /_overcast/debug/metrics

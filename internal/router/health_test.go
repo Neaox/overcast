@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/listenstatus"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -83,7 +84,7 @@ func TestHealthHandler_reportsAutoStateProvenance(t *testing.T) {
 		StateConfigured: "auto",
 		StateSource:     config.StateSourceAuto,
 	}
-	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -117,7 +118,7 @@ func TestHealthHandler_omitsConfiguredWhenNotPopulated(t *testing.T) {
 		AccountID: "000000000000",
 		State:     config.StateBackendMemory,
 	}
-	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -140,4 +141,85 @@ func responseOmitsConfiguredKey(body []byte) bool {
 	}
 	_, present := raw.Storage["configured"]
 	return !present
+}
+
+// TestHealthHandler_reportsListenersAndDegradesOnABindFailure covers the
+// listeners section: the SMTP capture server bound after falling back from a
+// busy default, and the Lambda Runtime API failed to bind — the second Overcast
+// on one host shape. Anyone polling health sees the failure, the reason and
+// the fix, and the overall status turns degraded.
+func TestHealthHandler_reportsListenersAndDegradesOnABindFailure(t *testing.T) {
+	// Given: one listener fell back and one failed
+	reported := map[string]listenstatus.Status{
+		listenstatus.SMTP:             {State: listenstatus.Listening, Addr: "127.0.0.1:49152", FellBack: true},
+		listenstatus.LambdaRuntimeAPI: {State: listenstatus.Failed, Error: "address already in use", Fix: "set LAMBDA_RUNTIME_API_PORT to a free port, or 0 for an ephemeral one"},
+	}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", State: config.StateBackendMemory}
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil, func() map[string]listenstatus.Status { return reported })
+	rec := httptest.NewRecorder()
+
+	// When: health is polled
+	handler(rec, httptest.NewRequest(http.MethodGet, "/_overcast/health", nil))
+
+	// Then: still 200 — the API is serving — but degraded, with both outcomes echoed
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got healthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != "degraded" {
+		t.Errorf("status = %q, want %q", got.Status, "degraded")
+	}
+	if l := got.Listeners[listenstatus.SMTP]; l.State != listenstatus.Listening || !l.FellBack || l.Addr != "127.0.0.1:49152" {
+		t.Errorf("listeners.smtp = %+v, want listening on the fallback port", l)
+	}
+	if l := got.Listeners[listenstatus.LambdaRuntimeAPI]; l.State != listenstatus.Failed || l.Error == "" || l.Fix == "" {
+		t.Errorf("listeners.lambdaRuntimeApi = %+v, want failed with a reason and a fix", l)
+	}
+}
+
+// TestHealthHandler_omitsListenersUntilOneReports verifies the additive shape:
+// with nothing reported the key is absent, not an empty object, and a fallback
+// alone (the listener works, just elsewhere) does not degrade the status.
+func TestHealthHandler_omitsListenersUntilOneReports(t *testing.T) {
+	// Given: no listener has reported
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", State: config.StateBackendMemory}
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil, func() map[string]listenstatus.Status { return nil })
+	rec := httptest.NewRecorder()
+
+	// When: health is polled
+	handler(rec, httptest.NewRequest(http.MethodGet, "/_overcast/health", nil))
+
+	// Then: the key is absent and the status is ok
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, present := raw["listeners"]; present {
+		t.Errorf("expected listeners to be omitted, got %s", raw["listeners"])
+	}
+	var status string
+	if err := json.Unmarshal(raw["status"], &status); err != nil || status != "ok" {
+		t.Errorf("status = %s, want ok", raw["status"])
+	}
+
+	// Given: a listener bound on a fallback port
+	fellBack := map[string]listenstatus.Status{listenstatus.SMTP: {State: listenstatus.Listening, Addr: "127.0.0.1:49152", FellBack: true}}
+	handler = newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil, func() map[string]listenstatus.Status { return fellBack })
+	rec = httptest.NewRecorder()
+
+	// When/Then: that is reported, but it is not a degradation
+	handler(rec, httptest.NewRequest(http.MethodGet, "/_overcast/health", nil))
+	var got healthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != "ok" {
+		t.Errorf("status = %q after a fallback, want %q", got.Status, "ok")
+	}
+	if !got.Listeners[listenstatus.SMTP].FellBack {
+		t.Errorf("listeners.smtp = %+v, want fellBack", got.Listeners[listenstatus.SMTP])
+	}
 }

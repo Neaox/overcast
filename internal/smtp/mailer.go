@@ -318,3 +318,19 @@ func BuildMessage(from string, to []string, subject, body, html string, extraHea
 	sb.WriteString("--" + boundary + "--\r\n")
 	return []byte(sb.String())
 }
+
+// Unavailable returns a Mailer whose every send fails with err. It stands in
+// for the mock capture server when that server could not bind, so a send is
+// answered with the reason and the fix rather than parked waiting for a server
+// that is never coming.
+func Unavailable(err error) Mailer { return unavailableMailer{err: err} }
+
+type unavailableMailer struct{ err error }
+
+func (m unavailableMailer) Send(context.Context, string, []string, string, string, string) error {
+	return m.err
+}
+
+func (m unavailableMailer) SendRaw(context.Context, string, []string, []byte) error {
+	return m.err
+}

@@ -34,8 +34,8 @@ Open <http://localhost:4567/inbox> to read it.
 
 ## What lands in the Inbox
 
-Overcast runs an SMTP server on port `1025` and captures everything sent
-through it, plus deliveries that never touch SMTP at all:
+Overcast runs an SMTP server on port `1025` (`OVERCAST_SMTP_PORT`) and captures
+everything sent through it, plus deliveries that never touch SMTP at all:
 
 | Source                                | Appears as                        |
 | ------------------------------------- | --------------------------------- |
@@ -77,6 +77,13 @@ real server instead of capturing.
 > [!NOTE]
 > The console's SES page manages identities only. Sent mail is in the Inbox,
 > not on that page.
+
+A second Overcast on the same host finds `1025` taken and moves its capture
+server to an ephemeral port; the Inbox follows, and the startup log says where
+it went. Only a pinned `OVERCAST_SMTP_PORT` that is taken leaves capture
+unavailable — sends then fail naming the variable, and `/_overcast/health`
+reports the failed listener. See
+[Running two instances on one host](../configuration.md#running-two-instances-on-one-host).
 
 <!-- BEGIN overcast:capabilities -->
 
