@@ -534,6 +534,9 @@ var ignoredLocalStackVars = []string{
 	"LAMBDA_KEEPALIVE_MS",
 	"LAMBDA_DOCKER_NETWORK",
 	"LAMBDA_DOCKER_FLAGS",
+	"ECS_DOCKER_FLAGS",
+	"EC2_DOCKER_FLAGS",
+	"BATCH_DOCKER_FLAGS",
 	"LAMBDA_RUNTIME_EXECUTOR",
 	"SNAPSHOT_SAVE_STRATEGY",
 	"SNAPSHOT_LOAD_STRATEGY",
@@ -609,8 +612,13 @@ func IgnoredLocalStackReason(name string) string {
 		return "idle-container lifetime is a fixed 15 minutes here, not a setting"
 	case "LAMBDA_DOCKER_NETWORK":
 		return "adjacent concept, opposite default -- set OVERCAST_NETWORK, which every container Overcast starts joins"
-	case "LAMBDA_DOCKER_FLAGS":
-		return "Overcast does not pass through arbitrary docker run flags -- see the configuration reference for the settings it does expose"
+	case "LAMBDA_DOCKER_FLAGS", "ECS_DOCKER_FLAGS", "EC2_DOCKER_FLAGS", "BATCH_DOCKER_FLAGS":
+		// The Java LocalStack Testcontainers module sets all four inside the
+		// container so its reaper can find sibling containers by label (#1546).
+		// Overcast labels the containers it starts itself, so there is nothing
+		// for these to add -- but they arrive on a plain `LocalStackContainer`
+		// run, so they are recognised rather than silently unknown.
+		return "Overcast does not pass through arbitrary docker run flags -- it labels the containers it starts itself; see the configuration reference for the settings it does expose"
 	case "LAMBDA_RUNTIME_EXECUTOR":
 		return "Docker is the only executor; without it invocations degrade to a built-in Node.js runtime"
 	case "SNAPSHOT_SAVE_STRATEGY", "SNAPSHOT_LOAD_STRATEGY", "SNAPSHOT_FLUSH_INTERVAL":

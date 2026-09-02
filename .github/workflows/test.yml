@@ -978,6 +978,23 @@ jobs:
             exit 1
           fi
 
+          # #1546: what the LocalStack Testcontainers modules need from the
+          # image, which no Go test can see. Java, Node and Python block on
+          # this exact line (cmd/overcast/readiness.go); Java also replaces the
+          # entrypoint and execs LocalStack's path from a #!/bin/bash script.
+          # Checked on slim only — stage 5 of the Dockerfile is shared, so the
+          # console image cannot differ.
+          if ! docker logs oc-smoke 2>&1 | grep -qx 'Ready\.'; then
+            echo "image did not print the LocalStack-compatible readiness line 'Ready.' — see cmd/overcast/readiness.go and docs/testcontainers.md" >&2
+            docker logs oc-smoke 2>&1 | tail -20 >&2
+            exit 1
+          fi
+          if ! docker run --rm --entrypoint sh "$TAG" \
+              -c 'test -x /usr/local/bin/docker-entrypoint.sh && command -v bash >/dev/null'; then
+            echo "image is missing /usr/local/bin/docker-entrypoint.sh or bash — the Java LocalStack Testcontainers module needs both (#1546)" >&2
+            exit 1
+          fi
+
       # The Testcontainers Go module (testcontainers/go), exercised against
       # the image built from this pull request rather than a published tag —
       # so a change that breaks the module's contract (the health endpoint,

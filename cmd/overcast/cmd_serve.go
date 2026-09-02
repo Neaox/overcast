@@ -392,14 +392,19 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	// reading once shutdown has started.
 	serverErr := make(chan error, len(lns))
 	for _, listener := range lns {
-		go func() {
-			logger.Info("overcast listening",
-				zap.String("addr", listener.Addr().String()),
-				zap.String("protocol", proto),
-				zap.String("state", string(cfg.State)),
-				zap.Bool("debug", cfg.Debug),
-			)
+		// Logged here rather than inside the goroutine below: listenAll has
+		// already bound the socket, so the line is true the moment it is
+		// written, and writing it on this goroutine keeps the per-listener
+		// lines ahead of the readiness marker that follows the loop instead of
+		// racing it.
+		logger.Info("overcast listening",
+			zap.String("addr", listener.Addr().String()),
+			zap.String("protocol", proto),
+			zap.String("state", string(cfg.State)),
+			zap.Bool("debug", cfg.Debug),
+		)
 
+		go func() {
 			// Kept local rather than assigned to the enclosing err, which the
 			// pre-list single-listener version did: with the main goroutine
 			// still reading err below that was a race even with one listener,
@@ -417,6 +422,13 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 			}
 		}()
 	}
+
+	// Every listener is bound and serving: announce it, and print the
+	// LocalStack-compatible readiness marker the log-line Testcontainers
+	// modules wait for (#1546, see readiness.go). Ahead of the READY hooks
+	// below for the same reason those run asynchronously -- the emulator is
+	// answering requests now, and a hook is a user script that may not be.
+	emitReady(logger, os.Stderr, lns)
 
 	// READY hooks run asynchronously after the port is bound so the server
 	// can accept requests while init scripts execute (matches LocalStack).
