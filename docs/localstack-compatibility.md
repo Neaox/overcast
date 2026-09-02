@@ -48,7 +48,10 @@ Full mapping in
 | `POST /_localstack/state/reset` | Aliased | Returns `{"status":"reset"}`; LocalStack returns nothing |
 | `/_localstack/info`, `/diagnose`, `/config`, `/usage`, `/plugins` | No equivalent | The 404 names the `/_overcast/debug/*` endpoint to use instead |
 | `/_localstack/state/save`, `/load` | No equivalent | Persistence is incremental, not snapshot-based |
-| `/_aws/ses`, `/_aws/sqs/messages`, `/_aws/sns/*`, `/_aws/lambda/runtimes` | Gap | [#1545](https://github.com/overcast-sh/overcast/issues/1545). Overcast has the data under `/_overcast/` |
+| `GET`/`DELETE /_aws/ses` | Aliased | LocalStack's shape, from the same inbox as `/_overcast/ses/inbox/messages`; `Region` and `RawData` are omitted — the capture does not hold them |
+| `/_aws/sqs/messages` | Aliased | XML `ReceiveMessageResponse`, or JSON under `Accept: application/json`; `?QueueUrl=`, `?QueueName=&QueueRegion=` and the `/{region}/{account}/{queue}` path form; `ShowInvisible`, `ShowDelayed` |
+| `/_aws/sns/sms-messages`, `/platform-endpoint-messages`, `/_aws/lambda/runtimes` | Gap | [#1545](https://github.com/overcast-sh/overcast/issues/1545). The 404 names the `/_overcast/` endpoint that has the data |
+| `/_aws/sns/subscription-tokens/{arn}`, `DELETE /_aws/dynamodb/expired` | No equivalent | The token is not exposed; TTL expiry has no manual trigger. Split out of [#1545](https://github.com/overcast-sh/overcast/issues/1545) |
 | `/restapis/{id}/{stage}/_user_request_/` | Works | LocalStack's API Gateway invoke URL, served verbatim |
 | `/_aws/execute-api/{id}/{stage}/` | Gap | [#1545](https://github.com/overcast-sh/overcast/issues/1545). The host-routed form below usually makes it unnecessary |
 

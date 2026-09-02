@@ -105,10 +105,12 @@ func TestNotReady_InternalPathsAreExempt(t *testing.T) {
 	// The last two are the compatibility roots. They matter here for a reason
 	// the namespaced paths do not: a 503 to a container healthcheck is read as
 	// "unhealthy", the orchestrator restarts the container, and restarting it
-	// mid-migration is what turns a slow start into a lost one.
+	// mid-migration is what turns a slow start into a lost one. /_aws/ is
+	// exempt for the plainer reason that it is a read of captured state, and
+	// a test suite polling it deserves the same answer as /_overcast/ would give.
 	for _, path := range []string{
 		"/_overcast/debug/state", "/_overcast/health", "/_overcast/info", "/_overcast/init",
-		LegacyHealthPath, LocalStackHealthPath,
+		LegacyHealthPath, LocalStackHealthPath, AWSCompatPrefix + "ses",
 	} {
 		t.Run(path, func(t *testing.T) {
 			next, called := passThroughHandler()

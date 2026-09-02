@@ -30,6 +30,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/events"
+	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/protocol/codec"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
@@ -296,11 +297,33 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// GET: non-AWS peek endpoint — read-only, no state changes, all messages visible.
 	r.Get("/{accountID:[0-9]+}/{queueName}", s.handler.PeekMessages)
 
+	// /_aws/sqs/messages, LocalStack's name for the same peek, is registered
+	// by the router rather than here (internal/router/aws_compat.go) and reads
+	// through PeekQueue below — it belongs to the compatibility layer, not to
+	// this service's API, and lives outside /_overcast/ for the reason
+	// middleware.AWSCompatPrefix gives.
+
 	// Emulator-specific: the web UI Monitor tab's metrics read-through
 	// (docs/plans/service-metrics-platform.md phase 3). Lives under
 	// /_overcast/, not the AWS-shaped path above — see
 	// docs/plans/non-canonical-url-namespace.md.
 	r.Get("/_overcast/sqs/queues/{name}/metrics", s.handler.GetQueueMetrics)
+}
+
+// PeekQueue returns every message in queueName without touching any state —
+// no receive count, no visibility timeout — the same read GET
+// /{accountID}/{queueName} serves. region names the region to look in; ""
+// means whatever ctx already carries, falling back to the configured default.
+//
+// This is the seam the LocalStack-compatible /_aws/sqs/messages alias reads
+// through (internal/router/aws_compat.go). The alias takes its region from the
+// queue URL it is handed rather than from the request's own headers, which is
+// why region is a parameter here rather than something read off ctx alone.
+func (s *Service) PeekQueue(ctx context.Context, region, queueName string) ([]PeekedMessage, *protocol.AWSError) {
+	if region != "" {
+		ctx = middleware.ContextWithRegion(ctx, region)
+	}
+	return s.handler.peekQueue(ctx, queueName)
 }
 
 // Enqueuer returns an events.MessageEnqueuer backed by this service's store.

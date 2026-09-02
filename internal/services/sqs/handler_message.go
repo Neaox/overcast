@@ -1520,8 +1520,16 @@ func (h *Handler) ChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Re
 
 // ---- PeekMessages ----------------------------------------------------------
 
-// peekMessage is the response element for the non-AWS PeekMessages endpoint.
-type peekMessage struct {
+// PeekedMessage is one message as the non-AWS peek reports it: the message
+// as stored, plus the visibility facts a ReceiveMessage would have acted on
+// (Inflight, Delayed, VisibleAfter) reported rather than applied.
+//
+// Exported because the peek has two readers — GET /{accountID}/{queueName}
+// below, and the LocalStack-compatible /_aws/sqs/messages alias in
+// internal/router/aws_compat.go, which renders the same slice in LocalStack's
+// ReceiveMessageResponse shape. Both go through Service.PeekQueue, so there is
+// one definition of "what is in the queue" rather than two that could drift.
+type PeekedMessage struct {
 	MessageID               string                      `json:"MessageId"`
 	ReceiptHandle           string                      `json:"ReceiptHandle"`
 	Body                    string                      `json:"Body"`
@@ -1540,20 +1548,31 @@ type peekMessage struct {
 //
 // Route: GET /{accountID}/{queueName}.
 func (h *Handler) PeekMessages(w http.ResponseWriter, r *http.Request) {
-	queueName := chi.URLParam(r, "queueName")
-
-	if _, aerr := h.store.getQueue(r.Context(), queueName); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	msgs, aerr := h.store.listMessages(r.Context(), queueName)
+	result, aerr := h.peekQueue(r.Context(), chi.URLParam(r, "queueName"))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Messages": result})
+}
 
-	result := make([]peekMessage, 0, len(msgs))
+// peekQueue is the read behind PeekMessages and Service.PeekQueue: every
+// message in the queue named by queueName in ctx's region, with no state
+// touched. The queue is looked up first so an unknown queue is reported as
+// NonExistentQueue rather than as empty — the difference between "nothing has
+// been sent yet" and "you are looking in the wrong region", which is the
+// mistake a peek is usually reached for to diagnose.
+func (h *Handler) peekQueue(ctx context.Context, queueName string) ([]PeekedMessage, *protocol.AWSError) {
+	if _, aerr := h.store.getQueue(ctx, queueName); aerr != nil {
+		return nil, aerr
+	}
+
+	msgs, aerr := h.store.listMessages(ctx, queueName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	result := make([]PeekedMessage, 0, len(msgs))
 	for _, m := range msgs {
 		inflight := !m.IsVisible(h.clk)
 		// A message is delayed when it is not yet visible and has never been
@@ -1564,7 +1583,7 @@ func (h *Handler) PeekMessages(w http.ResponseWriter, r *http.Request) {
 		if inflight {
 			visibleAfterMs = m.VisibleAfter.UnixMilli()
 		}
-		result = append(result, peekMessage{
+		result = append(result, PeekedMessage{
 			MessageID:               m.MessageID,
 			ReceiptHandle:           m.ReceiptHandle,
 			Body:                    m.Body,
@@ -1577,6 +1596,5 @@ func (h *Handler) PeekMessages(w http.ResponseWriter, r *http.Request) {
 			ApproximateReceiveCount: m.ApproximateReceiveCount,
 		})
 	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Messages": result})
+	return result, nil
 }

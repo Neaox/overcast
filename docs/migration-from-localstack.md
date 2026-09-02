@@ -117,7 +117,7 @@ you deliberately want a non-default network.
 
 ## Endpoint mapping
 
-Four LocalStack paths are **served as-is** — leave those callers alone. The
+Six LocalStack paths are **served as-is** — leave those callers alone. The
 rest have an Overcast endpoint to point at.
 
 | LocalStack                       | Overcast                  | Availability                   |
@@ -126,6 +126,8 @@ rest have an Overcast endpoint to point at.
 | `/_localstack/init`              | **served as-is**, or `/_overcast/init` | Always            |
 | `/_localstack/init/{stage}`      | **served as-is**, or `/_overcast/init/{stage}` | Always    |
 | `POST /_localstack/state/reset`  | **served as-is**, or `/_overcast/reset` | Always           |
+| `GET`/`DELETE /_aws/ses`         | **served as-is**, or `/_overcast/ses/inbox/messages` | Always |
+| `/_aws/sqs/messages`             | **served as-is**, or `GET /{account}/{queue}` | Always |
 | `/_localstack/health` (detailed) | `/_overcast/debug/health` | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/info`              | `/_overcast/debug/config` | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/state`             | `/_overcast/debug/state`  | Requires `OVERCAST_DEBUG=true` |
@@ -133,6 +135,11 @@ rest have an Overcast endpoint to point at.
 | `/_localstack/config`            | `/_overcast/debug/config` | Read-only: configuration is fixed for the process |
 | `/_localstack/usage`             | `/_overcast/metrics`      | Always                         |
 | `/_localstack/state/save`, `/load` | —                       | Persistence is incremental, not snapshot-based |
+| `/_aws/sns/sms-messages`         | `/_overcast/ses/inbox/messages`, entries with `"kind": "sms"` | Always |
+| `/_aws/sns/platform-endpoint-messages` | `/_overcast/ses/inbox/messages`, entries with `"kind": "push"` | Always |
+| `/_aws/lambda/runtimes`          | `/_overcast/lambda/runtimes` | Always; Overcast's shape carries more per runtime |
+| `/_aws/execute-api/{id}/{stage}/…` | `/restapis/{id}/{stage}/_user_request_/…`, or the host form | Always |
+| `/_aws/sns/subscription-tokens/{arn}`, `DELETE /_aws/dynamodb/expired` | — | The token is not exposed; TTL expiry has no manual trigger |
 
 The init pair needs no translation. Overcast's own status endpoint already
 answers in LocalStack's shape — the same `BOOT`/`START`/`READY`/`SHUTDOWN`
@@ -141,13 +148,18 @@ stages, the same `UNKNOWN`/`RUNNING`/`SUCCESSFUL`/`ERROR` script states — so a
 `{"status":"reset"}` where LocalStack returns an empty body; nothing checking
 the status code notices.
 
-Every other path under `/_localstack/` answers 404 with the Overcast endpoint
-that replaces it, so a missed one says so instead of returning an S3 error.
-LocalStack's `/_aws/*` inspection endpoints — `/_aws/ses`,
-`/_aws/sqs/messages`, `/_aws/sns/platform-endpoint-messages` and the rest — are
-not served yet
-([#1545](https://github.com/overcast-sh/overcast/issues/1545)); Overcast's
-equivalents are in the [debug endpoints reference](./debug-endpoints.md).
+The `/_aws/` pair is the one a test suite hits: `curl localhost:4566/_aws/ses`
+after a send, `/_aws/sqs/messages?QueueUrl=…` to peek a queue without
+consuming it. Both answer in LocalStack's shape, over the same store Overcast's
+own endpoint reads — see the
+[debug endpoints reference](./debug-endpoints.md#compatibility-aliases) for
+the parameters and the two SES fields (`Region`, `RawData`) that are omitted
+because the capture does not hold them.
+
+Every other path under `/_localstack/` or `/_aws/` answers 404 with the
+Overcast endpoint that replaces it, so a missed one says so instead of
+returning an S3 error. The remaining `/_aws/*` aliases are tracked in
+[#1545](https://github.com/overcast-sh/overcast/issues/1545).
 
 ---
 

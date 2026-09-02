@@ -82,6 +82,32 @@ func (s *MailStore) Clear() {
 	s.messages = s.messages[:0]
 }
 
+// DeleteWhere removes every message keep reports false for, and returns how
+// many were removed. Order among the survivors is preserved.
+//
+// It exists for the callers that own one kind of message in a store shared by
+// several — the LocalStack-compatible DELETE /_aws/ses clears the emails and
+// must leave the SMS and webhook captures beside them alone, which Clear
+// cannot do and a Delete-per-ID loop would do under n separate locks.
+func (s *MailStore) DeleteWhere(keep func(*CapturedMessage) bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.messages[:0]
+	for _, m := range s.messages {
+		if keep(m) {
+			kept = append(kept, m)
+		}
+	}
+	removed := len(s.messages) - len(kept)
+	// Drop the references the compaction left behind the new length, so a
+	// deleted message is collectable rather than pinned by the backing array.
+	for i := len(kept); i < len(s.messages); i++ {
+		s.messages[i] = nil
+	}
+	s.messages = kept
+	return removed
+}
+
 // Len returns the current number of stored messages.
 func (s *MailStore) Len() int {
 	s.mu.RLock()

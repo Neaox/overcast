@@ -123,6 +123,15 @@ var registeredRouteClassification = map[string]string{
 	// service.
 	"/_health":     "internal",
 	"/_localstack": "internal",
+	// The third compatibility root, LocalStack's /_aws/ inspection namespace:
+	// what a test suite carried over from LocalStack reads to assert on the
+	// emails SES captured or the messages sitting in a queue. Served for the
+	// same reason as /_localstack above — the URL is already written into
+	// someone's assertions — and recorded in router.nonManifestRoutes
+	// likewise. "internal" rather than ses/sqs: the paths belong to the
+	// compatibility layer, which translates into the owning service's store
+	// but is not that service's API.
+	"/_aws": "internal",
 
 	// Undated literals the prefix switch claims. /applications is shared by
 	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which
