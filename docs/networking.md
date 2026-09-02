@@ -444,7 +444,7 @@ anything outside your machine.
 | --- | --- | --- |
 | `open` (default) | Everything: other resources in its VPC, Overcast's own APIs, and the internet — including real AWS endpoints and third-party APIs | Normal development, and any stack whose functions call something outside the emulator. This is what LocalStack, Moto and SAM CLI do |
 | `none` | Its VPC, and Overcast's own APIs. Nothing outside the machine — outbound connections fail with `ENETUNREACH` | Deterministic CI, air-gapped hosts, and proving a stack has no hidden external dependency |
-| `routed` | Exactly what its subnet's route table says: a `0.0.0.0/0` route to an attached internet gateway or an available NAT gateway grants egress, and no default route withholds it — outbound connections then fail with `ENETUNREACH` | Catching a missing NAT gateway locally instead of in a deploy, and any stack whose public/private subnet split is the thing you are testing |
+| `routed` | Exactly what its subnet's route table says: a `0.0.0.0/0` route to an attached internet gateway or an available NAT gateway grants egress, and no default route withholds it — outbound connections then fail with `ENETUNREACH`. **Run Overcast in a container**: natively on Docker Desktop it cannot withhold, and says so | Catching a missing NAT gateway locally instead of in a deploy, and any stack whose public/private subnet split is the thing you are testing |
 
 It is one setting for the whole topology rather than a flag per network,
 because a container sits on two Docker networks at once and takes its default
@@ -490,6 +490,27 @@ Docker daemon, for the whole of `none`.
 subnet**, from the route table associated with it — the one thing local
 emulation can offer here that LocalStack, Moto and SAM CLI do not, all of which
 give a VPC-attached function full egress and model no VPC networking at all.
+
+> [!IMPORTANT]
+> **Run Overcast in a container for this mode.** On Docker Desktop with
+> Overcast running natively — and on any native Windows or macOS host —
+> `routed` **cannot withhold egress**: every container has a route out
+> whatever its route table says, so a subnet with no `0.0.0.0/0` route still
+> reaches the internet and the missing NAT gateway this mode exists to catch
+> goes uncaught. Overcast says so rather than pretending: two warnings at
+> startup, and the `routed-egress-not-enforced` advisory in
+> `/_overcast/health`. Running Overcast **in a container**, or against a
+> **native Linux Docker daemon**, is what makes the mode enforceable.
+>
+> Two host limits cause it, and the advisory names whichever applies:
+>
+> - The control plane cannot be isolated where containers reach the Lambda
+>   Runtime API at the host's own address — `--internal` would strand every
+>   invocation at INIT. The same limit [`none` has](#egress-modes).
+> - VPC placement is not enforced where Overcast's DNS resolver cannot start
+>   (no `/etc/resolv.conf` on those hosts), so a VPC-placed container also
+>   joins the routable shared data plane — see
+>   [Two things this does not restrict](#two-things-this-does-not-restrict).
 
 | The subnet's `0.0.0.0/0` route | What its containers get |
 | --- | --- |
@@ -539,22 +560,6 @@ anything in a **default VPC**, whose subnets are public on AWS.
 > would hand every container a route out whatever its route table said — which
 > is exactly what the measurements behind
 > [#1571](https://github.com/overcast-sh/overcast/issues/1571) found.
-
-> [!WARNING]
-> **On Docker Desktop, and on a native Windows or macOS host, `routed` cannot
-> withhold.** Two host limits do it, and both are warned about at startup and
-> reported in `/_overcast/health` as `routed-egress-not-enforced`:
->
-> - The control plane cannot be isolated where containers reach the Runtime API
->   at your host's own address — the same limit `none` has, above.
-> - VPC placement is not enforced where Overcast's DNS resolver cannot start,
->   so a VPC-placed container also joins the routable shared plane — see
->   [Two things this does not restrict](#two-things-this-does-not-restrict).
->
-> Either way every container has a route out, so a subnet with no default route
-> still reaches the internet and the missing NAT gateway goes uncaught. Run
-> Overcast in a container, or against a native Linux Docker daemon, for the
-> whole of `routed`.
 
 ### The address-pool ceiling
 

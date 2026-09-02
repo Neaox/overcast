@@ -433,6 +433,9 @@ func (h *Handler) allocateEgressCIDR(ctx context.Context) (string, error) {
 // refuses, and the record is already written. Nothing about a failed move
 // heals on its own, and the startup reconcile retries it.
 func (h *Handler) reconcileVPCEgress(ctx context.Context, vpcID string) {
+	h.log.WithRecorder(ctx).Debug("vpc egress: revisiting placements",
+		zap.String("vpc", vpcID), zap.Bool("routed", dataplane.Routed(h.cfg)),
+		zap.Bool("docker_ready", h.dockerReady.Load()))
 	if !dataplane.Routed(h.cfg) || !h.dockerReady.Load() {
 		return
 	}
@@ -458,6 +461,7 @@ func (h *Handler) reconcileVPCEgressLocked(ctx context.Context, vpc *VPC) {
 		log.Error("vpc egress: list placements", zap.String("vpc", vpc.VpcID), zap.String("error", aerr.Message))
 		return
 	}
+	log.Debug("vpc egress: placements to revisit", zap.String("vpc", vpc.VpcID), zap.Int("count", len(placements)))
 	if len(placements) == 0 {
 		return
 	}
