@@ -1,0 +1,3 @@
+~ [docs] heading anchors in the console and the anchor checker now match GitHub's, so a section link resolves on github.com, the website and the console alike.
+  punctuation is dropped rather than folded into a hyphen and repeats are numbered from `-1`, the way github-slugger does it; `Data-plane endpoints — RDS…` is `#data-plane-endpoints--rds…`, which the four links to it and to `Data dir placement — …` had guessed with a single hyphen and so only resolved in the console
+  the console's docs viewer ids headings with inline code, which it used to id as `object-object`, and a `#` comment inside a fenced example no longer counts as a heading

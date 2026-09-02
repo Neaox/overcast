@@ -22,10 +22,10 @@ them?**
 | If you are here about                                          | Go to                                                                       |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | An API Gateway / Lambda URL / AppSync / S3 hostname            | [What works today](#what-works-today)                                       |
-| A subdomain that will not resolve, on Windows or offline       | [The `*.localhost.overcast.sh` wildcard DNS option](#the-localhost-overcast-sh-wildcard-dns-option) |
+| A subdomain that will not resolve, on Windows or offline       | [The `*.localhost.overcast.sh` wildcard DNS option](#the-localhostovercastsh-wildcard-dns-option) |
 | A URL that works from your shell but not from a container      | [Docker Compose and sibling containers](#docker-compose-and-sibling-containers) |
 | A port that differs depending on who asks                      | [Which host and port a URL carries](#which-host-and-port-a-url-carries-and-why) |
-| An RDS or ElastiCache endpoint that will not connect           | [Data-plane endpoints](#data-plane-endpoints-rds-and-anything-else-that-is-a-container) |
+| An RDS or ElastiCache endpoint that will not connect           | [Data-plane endpoints](#data-plane-endpoints--rds-and-anything-else-that-is-a-container) |
 | A Lambda that cannot reach a database                          | [Lambda, ECS and VPCs](#lambda-ecs-and-vpcs)                                 |
 
 Real AWS splits addressing two ways, and Overcast supports both:

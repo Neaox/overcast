@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { CodeTabsGroup, CodeTabsPanel } from "@/features/docs/code-tabs"
 import { MarkdownCodeBlock } from "@/features/docs/markdown-code"
 import remarkCodeTabs from "@/lib/remark-code-tabs"
+import remarkHeadingIds from "@/lib/remark-heading-ids"
 import { slug } from "@/lib/slug"
 import { cn } from "@/lib/utils"
 import type { DocsNavEntry } from "@/types/common"
@@ -100,7 +101,7 @@ function DocsPage() {
     }),
   )
 
-  // Deep links: heading ids exist (see the h2/h3 renderers below), but on
+  // Deep links: heading ids exist (remarkHeadingIds assigns them), but on
   // client-side navigation the content arrives after the route, so the
   // browser's native anchor scroll never fires - do it once the doc renders.
   useEffect(() => {
@@ -189,26 +190,20 @@ function DocsPage() {
           {data && (
             <div className="prose prose-sm max-w-none">
               <ReactMarkdown
-                // remarkCodeTabs must run before remarkRemoveComments, which
-                // strips the sentinel comments it keys on.
+                // Order matters twice over: remarkHeadingIds must run before
+                // remarkCodeTabs, which lifts the ids off the headings it
+                // folds into tabs, and remarkCodeTabs before
+                // remarkRemoveComments, which strips the sentinel comments it
+                // keys on.
                 remarkPlugins={[
                   remarkGfm,
                   remarkGithubAlerts,
+                  remarkHeadingIds,
                   remarkCodeTabs,
                   remarkRemoveComments,
                 ]}
                 components={{
                   ...codeTabsComponents,
-                  h2: ({ node: _node, children, ...props }) => (
-                    <h2 id={slug(String(children))} {...props}>
-                      {children}
-                    </h2>
-                  ),
-                  h3: ({ node: _node, children, ...props }) => (
-                    <h3 id={slug(String(children))} {...props}>
-                      {children}
-                    </h3>
-                  ),
                   a: ({ node: _node, href, children, ...props }) => {
                     const internal = href?.endsWith(".md") ? href : null
                     if (internal) {

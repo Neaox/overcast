@@ -510,22 +510,42 @@ func frontmatterLines(raw, body string) int {
 	return strings.Count(raw[:len(raw)-len(body)], "\n")
 }
 
-// ExtractHeadings lists a body's Markdown headings with the ids the docs
-// browser renders, disambiguating repeats the same way it does.
+// ExtractHeadings lists a body's Markdown headings with the ids GitHub, the
+// public site and the docs browser all render (see Slug), numbering repeats
+// the same way they do.
 func ExtractHeadings(body string) []Heading {
-	used := map[string]int{}
-	matches := headingRE.FindAllStringSubmatch(body, -1)
+	slugger := NewSlugger()
+	matches := headingRE.FindAllStringSubmatch(withoutFencedCode(body), -1)
 	out := make([]Heading, 0, len(matches))
 	for _, m := range matches {
 		text := CleanHeadingText(m[2])
-		id := Slug(text)
-		used[id]++
-		if used[id] > 1 {
-			id = fmt.Sprintf("%s-%d", id, used[id])
-		}
-		out = append(out, Heading{Depth: len(m[1]), Text: text, ID: id})
+		out = append(out, Heading{Depth: len(m[1]), Text: text, ID: slugger.Slug(text)})
 	}
 	return out
+}
+
+// withoutFencedCode blanks the lines inside ``` and ~~~ fences, so a shell
+// comment in an example ("# Start the daemon") is not read as a heading: no
+// renderer gives it an id, and counting it would shift the number a real
+// heading gets when it repeats the comment's words.
+func withoutFencedCode(body string) string {
+	lines := strings.Split(body, "\n")
+	fence := ""
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		if fence == "" {
+			if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+				fence = trimmed[:3]
+				lines[i] = ""
+			}
+			continue
+		}
+		lines[i] = ""
+		if strings.HasPrefix(trimmed, fence) {
+			fence = ""
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // CleanHeadingText strips the decoration a heading may carry around its words.
@@ -721,25 +741,65 @@ func UnquoteYAML(s string) string {
 	return strings.Trim(s, "'")
 }
 
-// Slug is the heading id the docs browser renders. It must stay in step with
-// web/src/lib/slug.ts, which computes the same id client-side for the anchor
-// the "On this page" list links to.
+// Slug is the heading id every reader of the docs agrees on: GitHub's. The
+// same files are read on github.com, and the public site renders them through
+// Astro, which assigns ids with github-slugger — so that library's `slug` is
+// the reference, this is its Go port, and web/src/lib/slug.ts (which the
+// console's "On this page" anchors and code-tab ids come from) calls the
+// library itself. web/src/routes/docs.slug.test.ts pins the two together.
+//
+// The rules, in github-slugger's terms: lower-case; drop every character its
+// regex strips (everything but Unicode's Alphabetic set, marks, decimal
+// digits, connector punctuation and the hyphen); turn each space into a
+// hyphen. Runs are NOT collapsed and nothing is trimmed, so
+// "Data-plane endpoints — RDS" is "data-plane-endpoints--rds": the em-dash
+// goes and both spaces around it survive as hyphens.
 func Slug(s string) string {
-	s = strings.ToLower(s)
 	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r == ' ':
 			b.WriteByte('-')
-			lastDash = true
+		case slugKeeps(r):
+			b.WriteRune(r)
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	return b.String()
+}
+
+// slugKeeps is the complement of github-slugger's regex.js: the characters a
+// slug keeps. Checked against the library over every code point; the only
+// differences are characters Unicode assigned after the tables it was built
+// from, which no heading here uses.
+func slugKeeps(r rune) bool {
+	return r == '-' || r == '_' ||
+		unicode.IsLetter(r) || unicode.IsMark(r) ||
+		unicode.Is(unicode.Nd, r) || unicode.Is(unicode.Nl, r) ||
+		unicode.Is(unicode.Pc, r) || unicode.Is(unicode.Other_Alphabetic, r)
+}
+
+// Slugger hands out heading ids for one document, numbering repeats the way
+// github-slugger's class does: the second "Setup" is "setup-1", the third
+// "setup-2", and a later heading whose own slug is already taken moves along
+// the same way.
+type Slugger struct{ seen map[string]int }
+
+// NewSlugger starts a fresh document.
+func NewSlugger() *Slugger { return &Slugger{seen: map[string]int{}} }
+
+// Slug returns the id for the next heading with this text.
+func (s *Slugger) Slug(text string) string {
+	base := Slug(text)
+	id := base
+	for {
+		if _, taken := s.seen[id]; !taken {
+			break
+		}
+		s.seen[base]++
+		id = fmt.Sprintf("%s-%d", base, s.seen[base])
+	}
+	s.seen[id] = 0
+	return id
 }
 
 // TitleFromSlug turns a filename stem into a display title.

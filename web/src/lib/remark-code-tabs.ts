@@ -32,9 +32,11 @@ import { slug } from "@/lib/slug"
  * The headings deliberately still exist in the raw Markdown, so
  * internal/docsindex keeps indexing them for search, the "On this page"
  * nav, and anchor checking; the tab group re-establishes each heading's
- * anchor id (slug of the label) so those deep links stay live.
+ * anchor id — the one remark-heading-ids assigned it, or the slug of the
+ * label when that plugin did not run — so those deep links stay live.
  *
- * Ordering: this plugin must run BEFORE remark-remove-comments, which would
+ * Ordering: this plugin must run AFTER remark-heading-ids, so the folded
+ * headings carry their ids, and BEFORE remark-remove-comments, which would
  * otherwise delete the sentinels. An unmatched BEGIN is left alone — the
  * comment is stripped downstream and the content renders as plain headings,
  * the GitHub degradation.
@@ -71,7 +73,15 @@ function textOf(node: MdNode): string {
 
 interface Tab {
   label: string
+  /** The heading's anchor id, which the panel keeps alive. */
+  id: string
   children: MdNode[]
+}
+
+/** The id remark-heading-ids gave a heading, if it ran. */
+function headingId(node: MdNode): string | undefined {
+  const id = (node.data?.hProperties as Record<string, unknown> | undefined)?.id
+  return typeof id === "string" ? id : undefined
 }
 
 function groupNode(tabs: Tab[]): MdNode {
@@ -82,7 +92,7 @@ function groupNode(tabs: Tab[]): MdNode {
       type: "codeTabsPanel",
       data: {
         hName: "code-tabs-panel",
-        hProperties: { dataLabel: tab.label, dataTabId: slug(tab.label) },
+        hProperties: { dataLabel: tab.label, dataTabId: tab.id },
       },
       children: tab.children,
     })),
@@ -95,7 +105,8 @@ function fold(region: MdNode[]): MdNode[] {
   const tabs: Tab[] = []
   for (const node of region) {
     if (node.type === "heading" && node.depth === 3) {
-      tabs.push({ label: textOf(node).trim(), children: [] })
+      const label = textOf(node).trim()
+      tabs.push({ label, id: headingId(node) ?? slug(label), children: [] })
       continue
     }
     if (node.type === "thematicBreak") continue

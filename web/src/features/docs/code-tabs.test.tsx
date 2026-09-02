@@ -3,6 +3,7 @@ import remarkRemoveComments from "remark-remove-comments"
 import { beforeEach, describe, expect, it } from "vitest"
 import { render, screen } from "@/test/render"
 import remarkCodeTabs from "@/lib/remark-code-tabs"
+import remarkHeadingIds from "@/lib/remark-heading-ids"
 import { languageKey } from "./code-tab-language"
 import { CodeTabsGroup, CodeTabsPanel } from "./code-tabs"
 
@@ -13,7 +14,10 @@ const components = {
 
 function Doc({ markdown }: { markdown: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkCodeTabs, remarkRemoveComments]} components={components}>
+    <ReactMarkdown
+      remarkPlugins={[remarkHeadingIds, remarkCodeTabs, remarkRemoveComments]}
+      components={components}
+    >
       {markdown}
     </ReactMarkdown>
   )
@@ -93,7 +97,9 @@ describe("CodeTabsGroup", () => {
 
     const { container } = render(<Doc markdown={TWO_GROUPS} />)
 
-    expect(container.querySelector("#node-js-aws-sdk-v3")).not.toBeNull()
+    // GitHub's id for "### Node.js (AWS SDK v3)": the dot goes, no hyphen
+    // replaces it.
+    expect(container.querySelector("#nodejs-aws-sdk-v3")).not.toBeNull()
     expect(screen.getByText('first = "python"')).toBeInTheDocument()
   })
 
@@ -111,8 +117,8 @@ describe("CodeTabsGroup", () => {
 
 describe("languageKey", () => {
   it("drops a trailing parenthetical so labels across docs share a key", () => {
-    expect(languageKey("Node.js (AWS SDK v3)")).toBe("node-js")
-    expect(languageKey("Node.js")).toBe("node-js")
+    expect(languageKey("Node.js (AWS SDK v3)")).toBe("nodejs")
+    expect(languageKey("Node.js")).toBe("nodejs")
     expect(languageKey(".NET (AWS SDK)")).toBe("net")
   })
 })
