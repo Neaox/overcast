@@ -201,10 +201,10 @@ export interface DockerServiceHealth {
 }
 
 /**
- * NetworkStatus is one plane's isolation as it actually stands, as reported by
+ * NetworkStatus is one network's state as it actually stands, as reported by
  * /_overcast/health under `docker.networks`.
  *
- * Generated from Go `docker.NetworkStatus` (internal/docker/probe.go).
+ * Generated from Go `docker.NetworkStatus` (internal/docker/netspec.go).
  */
 export interface DockerNetworkStatus {
   name: string
@@ -217,19 +217,51 @@ export interface DockerNetworkStatus {
    */
   internal: boolean
   /**
-   * Reason names what this run decided and why — "auto: Overcast is
-   * containerised", "OVERCAST_CONTROL_PLANE_INTERNAL=false". Empty for a
-   * plane whose isolation is a constant of the model rather than a decision.
+   * Reason names what this run decided and why — "OVERCAST_VPC_EGRESS=none",
+   * "OVERCAST_CONTROL_PLANE_INTERNAL=false". Empty for a network whose
+   * isolation is a constant of the model rather than a decision.
    */
   reason?: string
   /**
-   * Drift is set when the network's actual isolation is not what this run
-   * decided, and says why it could not be applied. Docker never retroactively
-   * applies `--internal`, so a plane created by an older version keeps the
-   * isolation it was born with; Overcast recreates it when nothing is
-   * attached, which leaves this empty. Empty is the normal case.
+   * SpecHash is the desired state's identity — what the network would carry
+   * in LabelSpecHash if it matched.
+   */
+  specHash?: string
+  /**
+   * Mismatch lists every field on which the live network disagrees with the
+   * spec, and is empty for a network in the state it should be in. A network
+   * that was repaired reports none: the repair is what makes it true.
+   */
+  mismatch?: DockerNetworkFieldDiff[]
+  /**
+   * Attached names the containers holding the network in its current state,
+   * set only when they are the reason a mismatch could not be repaired.
+   */
+  attached?: string[]
+  /**
+   * Owner is the instance label on the live network when it names somebody
+   * other than this instance. Set only in that case, because that is the one
+   * case where the answer changes what Overcast may do.
+   */
+  owner?: string
+  /**
+   * Drift is a one-line summary of an unrepaired mismatch, safe to print.
+   * Empty is the normal case.
    */
   drift?: string
+  /** Fix is the command that resolves the drift, when one exists. */
+  fix?: string
+}
+
+/**
+ * NetworkFieldDiff is one field on which a live network disagrees with the spec.
+ *
+ * Generated from Go `docker.NetworkFieldDiff` (internal/docker/netspec.go).
+ */
+export interface DockerNetworkFieldDiff {
+  field: string
+  want: string
+  got: string
 }
 
 /**

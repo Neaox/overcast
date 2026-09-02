@@ -55,6 +55,20 @@ func newProbeServer(bridgeGateway string) (*httptest.Server, *probeServer) {
 
 // seedExisting registers a network as already present, with the given
 // isolation and number of attached containers.
+// resolveLocked maps a name-or-id to the name this fake keys networks by, as
+// the real Engine API does. Caller holds ps.mu.
+func (ps *probeServer) resolveLocked(nameOrID string) string {
+	if _, ok := ps.existing[nameOrID]; ok {
+		return nameOrID
+	}
+	for name, info := range ps.existing {
+		if info.ID == nameOrID {
+			return name
+		}
+	}
+	return strings.TrimPrefix(nameOrID, "net-")
+}
+
 func (ps *probeServer) seedExisting(name string, internal bool, attached int) {
 	containers := map[string]NetworkEndpoint{}
 	for i := 0; i < attached; i++ {
@@ -65,6 +79,26 @@ func (ps *probeServer) seedExisting(name string, internal bool, attached int) {
 	defer ps.mu.Unlock()
 	ps.existing[name] = NetworkInspect{
 		ID: "old-" + name, Name: name, Internal: internal, Containers: containers,
+		// Driver and a spec-hash label so these tests isolate the isolation
+		// flag. Without them every seeded network differs in three fields at
+		// once and a test that meant to exercise drift on Internal proves
+		// nothing about it. The hash is deliberately stale: an unlabelled or
+		// wrong-labelled network *is* drifted, which is its own test in
+		// netspec_test.go.
+		Driver: DefaultNetworkDriver,
+		Labels: map[string]string{LabelSpecHash: "stale00000000"},
+	}
+}
+
+// seedMatchingSpec seeds the network a spec would have created, so a test can
+// assert that a network already in the right state is left completely alone.
+func (ps *probeServer) seedMatchingSpec(spec ResolvedNetworkSpec) {
+	opts := spec.CreateOptions()
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.existing[opts.Name] = NetworkInspect{
+		ID: "old-" + opts.Name, Name: opts.Name, Driver: opts.Driver,
+		Internal: opts.Internal, Labels: opts.Labels, Options: opts.Options,
 	}
 }
 
@@ -95,8 +129,12 @@ func (ps *probeServer) handle(w http.ResponseWriter, r *http.Request) {
 		}{ID: "net-" + req.Name})
 
 	case r.Method == http.MethodDelete:
-		name := r.URL.Path[len("/v1.45/networks/"):]
 		ps.mu.Lock()
+		// The Engine API accepts a name or an id at every /networks/{id}
+		// endpoint, and the code under test removes by id on purpose — see
+		// docker.recreateToSpec. A fake that understood only names would make a
+		// correct implementation look like it had removed nothing.
+		name := ps.resolveLocked(r.URL.Path[len("/v1.45/networks/"):])
 		ps.removed = append(ps.removed, name)
 		delete(ps.existing, name)
 		delete(ps.created, name)
@@ -115,8 +153,8 @@ func (ps *probeServer) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet:
 		// Post-create drift-check inspect, keyed by name/ID.
-		name := r.URL.Path[len("/v1.45/networks/"):]
 		ps.mu.Lock()
+		name := ps.resolveLocked(r.URL.Path[len("/v1.45/networks/"):])
 		old, isOld := ps.existing[name]
 		req, ok := ps.created[name]
 		ps.mu.Unlock()
@@ -185,9 +223,10 @@ func TestProbe_internalModeTakesPrecedenceOverTheStaticField(t *testing.T) {
 		t.Fatalf("ProbeResult.Networks = %+v, want one entry", result.Networks)
 	}
 	got := result.Networks[0]
-	want := NetworkStatus{Name: "overcast_control", Internal: true, Reason: "auto: Overcast is containerised"}
-	if got != want {
-		t.Errorf("ProbeResult.Networks[0] = %+v, want %+v", got, want)
+	if got.Name != "overcast_control" || !got.Internal ||
+		got.Reason != "auto: Overcast is containerised" || !got.OK() {
+		t.Errorf("ProbeResult.Networks[0] = %+v, want an ok overcast_control with internal=true "+
+			"and the containerised reason", got)
 	}
 }
 
@@ -339,10 +378,10 @@ func TestProbe_reconcilesDriftOnTheDataPlaneToo(t *testing.T) {
 func TestProbe_leavesAMatchingNetworkUntouched(t *testing.T) {
 	srv, ps := newProbeServer("")
 	defer srv.Close()
-	ps.seedExisting("overcast_control", true, 0)
+	spec := NetworkSpec{Name: "overcast_control", InternalMode: internalMode(true)}
+	ps.seedMatchingSpec(spec.Resolve(context.Background(), nil))
 
-	result, err := Probe("tcp://"+addrOf(srv),
-		[]NetworkSpec{{Name: "overcast_control", InternalMode: internalMode(true)}}, zap.NewNop())
+	result, err := Probe("tcp://"+addrOf(srv), []NetworkSpec{spec}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}

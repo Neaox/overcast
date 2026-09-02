@@ -31,6 +31,7 @@ const (
 	nsDefaultVPC            = "ec2:default-vpc"
 	nsVPCIPTranslations     = "ec2:vpc-ip-translations"
 	nsVPCIPTranslationsReal = "ec2:vpc-ip-translations-real"
+
 )
 
 // VPC represents an EC2 VPC resource.

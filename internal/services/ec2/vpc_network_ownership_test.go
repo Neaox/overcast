@@ -39,25 +39,43 @@ type ownershipDaemon struct {
 	mu      sync.Mutex
 	removed []string
 	created []map[string]string // labels, per create
+	// networks holds what has been created, so an inspect answers with it.
+	// docker.EnsureNetwork verifies a network before creating it and reads it
+	// back after, so a fake that 404s or returns nothing for every inspect is
+	// not modelling the daemon closely enough to exercise the create path.
+	networks map[string]bool
 }
 
 func newOwnershipDaemon(t *testing.T) *ownershipDaemon {
 	t.Helper()
-	d := &ownershipDaemon{}
+	d := &ownershipDaemon{networks: map[string]bool{}}
 	d.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/networks/create"):
 			var req struct {
+				Name   string            `json:"Name"`
 				Labels map[string]string `json:"Labels"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			d.created = append(d.created, req.Labels)
+			d.networks[req.Name] = true
 			_, _ = w.Write([]byte(`{"Id":"net-created"}`))
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
-			d.removed = append(d.removed, strings.TrimPrefix(r.URL.Path, "/v1.45/networks/"))
+			name := strings.TrimPrefix(r.URL.Path, "/v1.45/networks/")
+			d.removed = append(d.removed, name)
+			delete(d.networks, name)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
+			name := strings.TrimPrefix(r.URL.Path, "/v1.45/networks/")
+			if !d.networks[name] {
+				http.Error(w, `{"message":"no such network"}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(docker.NetworkInspect{
+				ID: "net-created", Name: name, Driver: "bridge", Scope: "local",
+			})
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -81,7 +99,14 @@ func hostHandler(t *testing.T, d *ownershipDaemon, strategy string) *Handler {
 	t.Cleanup(func() { runningInContainer = origInContainer })
 	runningInContainer = func() bool { return false }
 
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", EC2VPCNetworkStrategy: strategy}
+	cfg := &config.Config{
+		Region: "us-east-1", AccountID: "000000000000",
+		EC2VPCNetworkStrategy: strategy,
+		// VPC network names derive from OVERCAST_NETWORK, so a Config built
+		// directly has to carry the default the loader would have given it or
+		// the names come out as "-vpc-…".
+		Network: "overcast",
+	}
 	h := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.NewMock()).handler
 	h.docker = docker.NewClient(strings.Replace(d.server.URL, "http://", "tcp://", 1), zap.NewNop())
 	h.dockerReady.Store(true)

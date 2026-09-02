@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -610,3 +611,48 @@ func TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode(t *testing.T)
 // containsDebugBody (defined in debug_test.go) is reused above for substring
 // assertions against Advisory.Detail — no need for a second copy of the same
 // helper in this file.
+
+// ─── network-state-mismatch ─────────────────────────────────────────────────
+
+// The first advisory rule that is not about storage. It exists because of where
+// its cost lands: Docker's create-network call returns an existing network
+// unchanged, so a network created by an older version or a different egress
+// mode keeps every setting it was born with — and the failure that produces is
+// a function that cannot reach the internet, minutes later, inside application
+// code, with nothing connecting it back to a warning that scrolled past at boot.
+func TestCheckNetworkStateMismatch(t *testing.T) {
+	ok := docker.NetworkStatus{Name: "overcast", Internal: false}
+	bad := docker.NetworkStatus{
+		Name:     "overcast_control",
+		Internal: true,
+		Mismatch: []docker.NetworkFieldDiff{{Field: "internal", Want: "false", Got: "true"}},
+		Attached: []string{"overcast-lambda-orders"},
+		Fix:      "overcast network reset overcast_control",
+	}
+
+	// An empty set is "nothing to say", not "nothing is wrong" — Docker may
+	// simply not be wired. An advisory that cannot tell those apart is noise.
+	if a := checkNetworkStateMismatch(nil); a != nil {
+		t.Errorf("no networks reported produced %+v, want nil", a)
+	}
+	if a := checkNetworkStateMismatch([]docker.NetworkStatus{ok}); a != nil {
+		t.Errorf("a healthy network produced %+v, want nil", a)
+	}
+
+	a := checkNetworkStateMismatch([]docker.NetworkStatus{ok, bad})
+	if a == nil {
+		t.Fatal("a drifted network produced no advisory")
+	}
+	if a.Code != advisoryCodeNetworkStateMismatch || a.Severity != advisorySeverityWarning {
+		t.Errorf("advisory = %+v, want the network-state code at warning severity", a)
+	}
+	for _, want := range []string{"overcast_control", "internal: want false, got true",
+		"overcast-lambda-orders", "overcast network reset overcast_control", "--dry-run"} {
+		if !strings.Contains(a.Title+" "+a.Detail, want) {
+			t.Errorf("advisory does not mention %q:\n%s\n%s", want, a.Title, a.Detail)
+		}
+	}
+	if strings.Contains(a.Title, "overcast,") {
+		t.Errorf("Title names the healthy network too: %q", a.Title)
+	}
+}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 	"github.com/overcast-sh/overcast/internal/trace"
 )
@@ -62,13 +63,13 @@ type DebugStateProvider interface {
 //   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store))
+		r.Get("/metrics", debugMetrics(cfg, store, dockerStatus))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -471,7 +472,7 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, dockerStatus func() *docker.Status) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
@@ -489,6 +490,7 @@ func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
 			Health:           health,
 			HasHealth:        hasHealth,
 			ExistingDatabase: config.HasExistingDatabase(cfg.DataDir),
+			Networks:         dockerNetworkStatuses(dockerStatus),
 		})
 		if advisories == nil {
 			advisories = []Advisory{}
@@ -618,4 +620,19 @@ func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
 		// already reading them.
 		writeDebugJSON(w, http.StatusOK, buf.Stats())
 	}
+}
+
+// dockerNetworkStatuses reads the network section out of the Docker status
+// snapshot, tolerating every way it can be absent — no Docker services wired,
+// a probe that never completed, a build with no supervisor at all. An absent
+// section is "nothing to say", not "nothing is wrong": see advisoryInput.Networks.
+func dockerNetworkStatuses(dockerStatus func() *docker.Status) []docker.NetworkStatus {
+	if dockerStatus == nil {
+		return nil
+	}
+	s := dockerStatus()
+	if s == nil {
+		return nil
+	}
+	return s.Networks
 }

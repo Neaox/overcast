@@ -17,16 +17,16 @@ How the VPC emulation actually works, and where it stops. The working set is on
 
 ## The Docker backing
 
-Each non-default VPC is backed by a real Docker bridge network. The VPC's CIDR
-becomes the Docker subnet, and the network's isolation mode (`--internal`)
-reflects whether an internet gateway is attached.
+Each non-default VPC is backed by a real Docker bridge network, with the VPC's
+CIDR as the Docker subnet.
 
-That isolation only bites when Overcast's control plane is internal too, since
-every container sits on both. `OVERCAST_CONTROL_PLANE_INTERNAL` decides it, and
-by default it is decided from the host — so whether a gateway-less VPC actually
-withholds the internet can differ between two machines running the same
-Overcast. See
-[Networking § Control-plane isolation](../../networking.md#control-plane-isolation).
+**Whether containers in it reach the internet is decided by
+`OVERCAST_VPC_EGRESS`, not by the VPC's own topology.** Route tables, their
+`0.0.0.0/0` entries and NAT gateways are stored and returned as metadata and
+read nowhere, so a private subnet behind a NAT gateway is not distinguished
+from an isolated one. `open`, the default, gives every container egress;
+`none` gives none of them any. See
+[Networking § Egress modes](../../networking.md#egress-modes).
 
 | Label | Value |
 | --- | --- |
@@ -34,8 +34,11 @@ Overcast. See
 | `overcast.service` | `ec2` |
 | `overcast.resource-id` | The VPC ID |
 | `overcast.vpc-id` | The VPC ID |
+| `overcast.instance` | The Overcast instance that created it. An instance only ever removes networks carrying its own value, so two instances on one daemon leave each other's VPC networks alone |
+| `overcast.network.spec-hash` | The state the network was created in, checked on every start — see [Networking § Network state verification](../../networking.md#network-state-verification) |
 
-Networks are named `overcast-vpc-{vpcID}`. Docker network lifecycle events —
+Networks are named `{OVERCAST_NETWORK}-vpc-{vpcID}` (`overcast-vpc-{vpcID}` by
+default). Docker network lifecycle events —
 create, destroy, connect, disconnect — are forwarded through the event bus, so
 they appear on the console's activity feed.
 

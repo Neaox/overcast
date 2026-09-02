@@ -424,7 +424,8 @@ normally never have to think about either.
 | `overcast` (`OVERCAST_NETWORK`) | The **data plane**: where resources reach each other. A Lambda function resolving an RDS endpoint, an ECS task reaching a cache node |
 | `overcast_control` | Overcast's own channel to the containers it starts — the Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls your function and task code make back into the emulator. Derived from `OVERCAST_NETWORK`; not separately configurable |
 
-A resource created in a VPC joins that VPC's network (`overcast-vpc-*`)
+A resource created in a VPC joins that VPC's network (`overcast-vpc-<vpc-id>`,
+under your `OVERCAST_NETWORK` name)
 **instead of** the shared one, so only things in the same VPC can reach it by
 name — see [Lambda, ECS and VPCs](#lambda-ecs-and-vpcs) for what that costs and
 how to opt out.
@@ -432,47 +433,99 @@ how to opt out.
 **If you attach your own containers to Overcast's network** — a compose service
 that needs to reach a database Overcast started, say — join `overcast`.
 
+### Egress modes
+
+`OVERCAST_VPC_EGRESS` decides whether the containers Overcast starts can reach
+anything outside your machine.
+
+| Mode | What a VPC-attached container can reach | Use it when |
+| --- | --- | --- |
+| `open` (default) | Everything: other resources in its VPC, Overcast's own APIs, and the internet — including real AWS endpoints and third-party APIs | Normal development, and any stack whose functions call something outside the emulator. This is what LocalStack, Moto and SAM CLI do |
+| `none` | Its VPC, and Overcast's own APIs. Nothing outside the machine — outbound connections fail with `ENETUNREACH` | Deterministic CI, air-gapped hosts, and proving a stack has no hidden external dependency |
+| `routed` | Not implemented — refused at startup | — |
+
+It is one setting for the whole topology rather than a flag per network,
+because a container sits on two Docker networks at once and takes its default
+route from whichever of them is routable. Isolating one and not the other
+settles nothing.
+
+**Invocations keep working in `none`.** The Lambda Runtime API and
+`AWS_ENDPOINT_URL` calls back into the emulator are not egress — they reach a
+server on this machine — so functions still run, and only what leaves the
+machine is withheld.
+
+**On Docker Desktop, `none` cannot isolate the control plane.** Containers
+there reach Overcast at your host's own address, which `--internal` would cut
+off, stranding every invocation at INIT. Overcast leaves that one network
+routable, says so at startup, and reports it in `/_overcast/health` — so the
+stack is *not* hermetic. Run Overcast in a container, or against a native Linux
+Docker daemon, for the whole of `none`.
+
+**`routed` is the honest AWS answer and is not built yet.** It would grant
+egress exactly where the subnet's route table does — a `0.0.0.0/0` route to an
+internet or NAT gateway — and withhold it everywhere else. Overcast does not
+read route tables, so it fails at startup with that reason rather than
+approximating: `open` would grant egress the route tables withhold, `none`
+would withhold egress they grant, and either would quietly contradict your
+template.
+
 ### Control-plane isolation
 
-The control plane is created `--internal` when Overcast can carry its own
-traffic without leaving the bridge. That is what makes a VPC with no internet
-gateway actually withhold the internet: every container sits on the control
-plane as well as on its VPC network, so if *this* one has egress, the VPC's
-isolation is decoration.
+**Deprecated.** `OVERCAST_CONTROL_PLANE_INTERNAL=auto|true|false` pins the
+`overcast_control` network's isolation on top of the mode above. It still works
+and still wins where it is set, and setting it logs a deprecation notice.
 
-`OVERCAST_CONTROL_PLANE_INTERNAL` decides it:
+Prefer the mode: `OVERCAST_VPC_EGRESS=none` for what `true` meant, `open` for
+what `false` meant — applied to every network rather than to one. Egress is a
+property of the whole topology, and pinning a single network never settled it.
 
-| Value | What happens |
+### Network state verification
+
+Docker's create-network call returns an existing network **unchanged**. It
+applies no isolation, no subnet, no driver option. So a network created by an
+older Overcast, a different egress mode, or by hand keeps every setting it was
+born with, while `docker network ls` says the name is present and everything
+looks fine.
+
+Overcast therefore checks, on every start, that each network it reuses is in
+the exact state it would have created it in. Not just the isolation flag —
+every field:
+
+| Checked | Why it matters |
 | --- | --- |
-| `auto` (default) | Internal when Overcast is itself in a container, or is talking to a native Linux Docker daemon. Not internal otherwise — on Docker Desktop, containers reach Overcast at the host's own address, which `--internal` would cut off, stranding every invocation at INIT |
-| `true` | Always internal. Safe only on the hosts `auto` already detects |
-| `false` | Never internal. Compute in a gateway-less VPC reaches the internet, as it did before Overcast 0.0.1-alpha.37, and as it does on LocalStack |
+| `driver` | A network of the right name under the wrong driver behaves nothing like the one asked for |
+| `internal` | Decides whether containers on it reach anything outside the machine |
+| IPv6 | Changes which addresses containers get, and which Overcast's resolver can answer with |
+| IPAM subnet and gateway | Only when Overcast pinned them — a VPC network takes its range from the VPC's CIDR |
+| Driver options | `enable_icc`, `enable_ip_masquerade`. A network with masquerading off looks routable and behaves isolated |
+| `overcast.network.spec-hash` | The identity of the whole desired state. **A network with no such label is treated as mismatched** — it predates this check, and those are the networks that have actually been wrong |
 
-**`auto` is a property of the host, not of the version.** Two engineers on one
-pinned Overcast, one on Docker Desktop and one on native Linux, get different
-answers. Pin `true` or `false` when a team needs the same answer everywhere.
+What happens next depends on what is attached:
 
-Whichever applies is logged on every startup, and reported by
-`/_overcast/health` under `docker.networks`:
+- **Nothing attached** → the network is removed and recreated to match, logged
+  at info. Free by construction: there is no connection to sever.
+- **Containers attached** → the network is left exactly as it is, and Overcast
+  warns at startup naming every differing field and every attached container,
+  marks `/_overcast/health` **degraded**, and raises a console advisory.
+  Recreating under running containers would drop every one of them off the
+  network mid-run.
+- **Owned by another Overcast instance** → left alone, always. Every network
+  Overcast creates carries the identity of the instance that created it, and an
+  instance never removes a network it cannot prove it created.
 
-```
-control plane network isolation  network=overcast_control internal=true
-                                 reason="auto: Overcast is containerised"
-```
-
-**Docker cannot change this on a network that already exists.** A plane created
-by an older Overcast keeps the isolation it was born with — which is how one
-version behaves differently on two machines that have simply been running for
-different lengths of time. Overcast recreates a drifted network at startup when
-nothing is attached to it. When containers *are* attached it warns and leaves
-the network alone, and the fix is to take them off it:
+### `overcast network status` and `overcast network reset`
 
 ```sh
-docker compose down          # or stop whatever is attached
-docker network rm overcast_control
+overcast network status              # what differs, and on which fields
+overcast network reset --dry-run     # exactly what a reset would do
+overcast network reset               # do it
 ```
 
-The network is recreated on the next start.
+`reset` rebuilds each network that differs: it stops the containers **Overcast**
+started, disconnects containers it did not start and leaves them running,
+removes the network, and recreates it to spec. A network already in the right
+state is left alone unless you pass `--force`. Name one or more networks to
+narrow it.
 
 ## Lambda, ECS and VPCs
 
@@ -488,7 +541,7 @@ means on AWS.
 | A function **with** a `VpcConfig` reaching a resource outside that VPC | ✗ no route | ✗ refused |
 | A function **without** a `VpcConfig` reaching a resource inside one | ✗ no route | ✗ refused |
 | Two resources in the same VPC reaching each other | ✓ | ✓ |
-| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✗ when the control plane is internal, ✓ when it is not — see [Control-plane isolation](#control-plane-isolation) |
+| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✓ by default; ✗ with `OVERCAST_VPC_EGRESS=none` — see [Egress modes](#egress-modes) |
 | Security groups restricting any of the above | ✓ enforced | ✗ stored, never applied |
 | A function in a VPC calling the AWS APIs without a NAT or VPC endpoint | ✗ | ✓ **deliberately** — see below |
 
@@ -548,12 +601,11 @@ what a VPC lets *through* is not modelled:
 - **Subnets within a VPC.** One flat network per VPC — no public/private
   distinction, no per-subnet routing. Everything in a VPC reaches everything
   else in it.
-- **Subnet-level internet access.** A VPC with no internet gateway is created
-  `--internal` and, when the control plane is internal too, that now holds —
-  see [Control-plane isolation](#control-plane-isolation) for when it is and
-  how to pin it. What is still not modelled is anything *within* a VPC that has
-  a gateway: a private subnet in an otherwise-connected VPC reaches the
-  internet, because there are no subnets to route differently.
+- **Subnet-level internet access.** Egress is one setting for the whole stack,
+  not a property of a subnet or its route table — see
+  [Egress modes](#egress-modes). A private subnet behind a NAT gateway and a
+  fully isolated one get the same answer, because Overcast does not read route
+  tables. `routed` is the mode that would, and it is not built yet.
 - **Two VPCs with the same CIDR**, under the default `shared` strategy, are one
   Docker network and therefore not isolated from each other. `strict` and
   `remapped` give real separation — see

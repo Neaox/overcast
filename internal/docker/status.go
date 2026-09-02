@@ -77,6 +77,17 @@ func (t *Tracker) Snapshot() Status {
 	return s
 }
 
+// NetworkStatusSink is the one method a service needs to report the state of a
+// network it manages on its own schedule.
+//
+// It exists so that per-VPC networks — created on demand by EC2 long after
+// Probe has run — reach /_overcast/health through the same field as the two
+// planes. A verification that reports two of the three network classes is a
+// verification an operator learns not to trust.
+type NetworkStatusSink interface {
+	RecordNetworks(networks []NetworkStatus)
+}
+
 // RecordNetworks records the isolation each plane ended up with, as resolved
 // by Probe.
 //

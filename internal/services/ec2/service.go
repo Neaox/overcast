@@ -68,6 +68,13 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.dockerReady.Store(true)
 }
 
+// SetNetworkStatusSink wires the recorder that carries per-VPC network state
+// into /_overcast/health, so the networks EC2 creates on demand are reported
+// beside the two planes the Docker probe ensures at startup.
+func (s *Service) SetNetworkStatusSink(sink docker.NetworkStatusSink) {
+	s.handler.SetNetworkStatusSink(sink)
+}
+
 // ReconcileNetworks satisfies router.NetworkReconciler. Called once after
 // Docker becomes available to sync stored VPC state against actual Docker
 // networks (recreate missing networks, update stale Docker network IDs).

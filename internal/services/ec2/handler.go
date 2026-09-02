@@ -44,6 +44,10 @@ type Handler struct {
 	// networks for litter. See docker.LabelInstance.
 	instances *serviceutil.InstanceDomain
 
+	// networkStatus carries the verified state of each per-VPC network into
+	// /_overcast/health. Optional; nil reports nothing.
+	networkStatus docker.NetworkStatusSink
+
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
 	defaultVPCLocks sync.Map // region → *sync.Mutex

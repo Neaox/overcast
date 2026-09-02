@@ -2,11 +2,13 @@ package ec2
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"go.uber.org/zap"
 
 	"github.com/overcast-sh/overcast/internal/containerendpoint"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 )
 
@@ -191,24 +193,42 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 // createDockerVPCNetworkInternal is createDockerVPCNetwork with the --internal
 // flag supplied rather than derived. The internet-gateway toggle recreates the
 // network to flip it, and knows the value it wants.
+//
+// The network is created from a dataplane.VPCNetworkSpec and brought into that
+// exact state by docker.EnsureNetwork, rather than by a bare create call. The
+// difference matters on the second run and every run after it: Docker's create
+// returns an existing network unchanged, so a VPC network that already exists
+// with the wrong isolation, driver or subnet is silently adopted as correct.
+// EnsureNetwork compares it field by field, repairs it when nothing is attached,
+// and says so loudly when something is.
 func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
-	// Stamped with this instance's identity, which is what lets a later
-	// reconcile — ours after a restart, or a neighbour's on the same daemon —
-	// tell whose network this is. See networksInScope.
-	labels := h.instances.ManagedLabels(ctx, "ec2", vpc.VpcID)
-	labels["overcast.vpc-id"] = vpc.VpcID
+	// `internal` is the gateway-derived preference — true when the VPC has no
+	// internet gateway. It is passed to the spec as the fact it is, and the
+	// spec decides what to do with it: under `open` and `none` the egress mode
+	// answers for every network alike and this changes nothing, and `routed` is
+	// the mode that will read it (dataplane.VPCNetworkInternal). Deriving
+	// isolation from the gateway alone is what made a private-with-NAT subnet
+	// indistinguishable from an isolated one.
+	//
+	// The spec carries this instance's identity into docker.LabelInstance,
+	// which is what lets a later reconcile — ours after a restart, or a
+	// neighbour's on the same daemon — tell whose network this is. See
+	// networksInScope.
+	spec := dataplane.VPCNetworkSpec(h.cfg, vpc.VpcID, preferredDockerSubnet(vpc),
+		h.instanceDomain(ctx), !internal)
+	resolved := spec.Resolve(ctx, h.docker)
 
-	netID, err := h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
-		Name:     "overcast-vpc-" + vpc.VpcID,
-		Labels:   labels,
-		Subnet:   preferredDockerSubnet(vpc),
-		Internal: internal,
-	})
-	if err != nil {
+	h.recordNetworkStatus(docker.EnsureNetwork(ctx, h.docker, resolved, h.log.WithRecorder(ctx).Logger()))
+
+	info, err := h.docker.InspectNetwork(ctx, spec.Name)
+	if err != nil || info == nil {
+		if err == nil {
+			err = fmt.Errorf("create network %s: not found after create", spec.Name)
+		}
 		return "", err
 	}
-	h.joinVPCNetwork(ctx, netID)
-	return netID, nil
+	h.joinVPCNetwork(ctx, info.ID)
+	return info.ID, nil
 }
 
 // removeDockerVPCNetwork removes a Docker network by ID. Missing networks

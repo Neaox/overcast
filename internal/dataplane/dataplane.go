@@ -117,147 +117,260 @@ func Primary(cfg *config.Config) string {
 // control plane is created `--internal` — cut off from everything Docker did
 // not put on it — and why.
 //
-// It should be, in principle: a container in a VPC with no internet gateway is
-// on an `--internal` VPC network, and if the control plane it also sits on has
-// egress then the VPC's isolation is decoration. Making it internal is what
-// makes a private subnet actually private.
+// The egress mode decides it. `none` isolates every network Overcast creates,
+// this one included; `open`, the default, isolates none of them. That is a
+// change of authority rather than of mechanism: until #1564 this network's
+// isolation was inferred from the *host* — is the daemon native Linux, is
+// Overcast containerised — which made the same pinned version behave
+// differently on two machines, and which answered a question about egress with
+// a fact about the Runtime API. Those are now two separate questions with two
+// separate answers; see runtimeAPIReachableOnInternalPlane.
 //
-// OVERCAST_CONTROL_PLANE_INTERNAL settles it when it is `true` or `false`, and
-// that is the point of the variable: the isolation of this one network decides
-// whether a Lambda in a gateway-less VPC reaches the internet, and a team that
-// pinned an Overcast version is entitled to the same answer on every machine.
-// `auto`, the default, is autoControlPlaneInternal's host probe — right for
-// most machines, but a property of the *host*, so two engineers on one image
-// can legitimately differ (#1564).
+// OVERCAST_CONTROL_PLANE_INTERNAL still wins where it is pinned, so a
+// configuration written against #1566 keeps its answer, and setting it earns a
+// deprecation notice naming the mode that means the same thing.
 //
 // The decision runs once, from inside Probe, after the client is dialled and
 // confirmed available but before any network is created — see
-// docker.NetworkSpec.InternalMode — and Probe logs it, reason included, at
-// info on every startup.
+// docker.NetworkSpec.InternalMode — and Probe logs it, reason included, at info
+// on every startup.
 func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	return func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+		d := docker.InternalDecision{
+			Internal: egressMode(cfg) == config.VPCEgressNone,
+			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
+		}
+
+		// The deprecated pin, applied on top. It names one network, which is
+		// why it is deprecated: egress is a property of the topology and this
+		// only ever settled a third of it.
 		switch cfg.ControlPlaneInternal {
 		case config.ControlPlaneInternalTrue:
-			return withEgressWarning(docker.InternalDecision{
-				Internal: true,
-				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=true",
-			})
+			d.Internal, d.Reason = true, "OVERCAST_CONTROL_PLANE_INTERNAL=true"
 		case config.ControlPlaneInternalFalse:
+			d.Internal, d.Reason = false, "OVERCAST_CONTROL_PLANE_INTERNAL=false"
+		case config.ControlPlaneInternalAuto:
+		}
+		if cfg.ControlPlaneInternalSet {
+			d.Warnings = append(d.Warnings, deprecationNotice(cfg))
+		}
+
+		if !d.Internal {
+			return d
+		}
+
+		// The one thing that can still overrule an isolated control plane: a
+		// host where isolating it would strand every invocation at INIT. This
+		// is the only place the host probe is consulted, and it decides nothing
+		// about egress — see runtimeAPIReachableOnInternalPlane.
+		if !runtimeAPIReachableOnInternalPlane(ctx, dc) {
 			return docker.InternalDecision{
 				Internal: false,
-				Reason:   "OVERCAST_CONTROL_PLANE_INTERNAL=false",
+				Reason:   d.Reason + ", overridden: an internal control plane would sever the Runtime API on this host",
+				Warnings: append(d.Warnings, ControlPlaneMustStayRoutableWarning),
 			}
-		case config.ControlPlaneInternalAuto:
-			return withEgressWarning(autoControlPlaneInternal(ctx, dc))
-		default:
-			// Unreachable: config.Load rejects every other value, and a Config
-			// built directly leaves the field empty. Both land on auto.
-			return withEgressWarning(autoControlPlaneInternal(ctx, dc))
+		}
+
+		// Isolation asked for by the mode is the mode working as documented and
+		// needs no warning. Isolation arrived at by the deprecated pin while the
+		// mode says `open` is a contradiction the operator should see.
+		if egressMode(cfg) != config.VPCEgressNone {
+			d.Warnings = append(d.Warnings, ControlPlaneEgressWarning)
+		}
+		return d
+	}
+}
+
+// DataPlaneInternal returns the decision function for the default data plane —
+// the network every container that named no VPC joins.
+//
+// It exists at all because `none` has to mean none. Before egress modes this
+// plane was never `--internal`, so a machine could isolate its control plane
+// and every VPC network and still have every non-VPC function reach the
+// internet through this one: "hermetic" that leaked on the most common
+// placement there is.
+func DataPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+	return func(_ context.Context, _ *docker.Client) docker.InternalDecision {
+		return docker.InternalDecision{
+			Internal: egressMode(cfg) == config.VPCEgressNone,
+			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
 		}
 	}
 }
 
-// ControlPlaneEgressWarning is what isolating this plane actually costs, and
-// it is stated in full because the cost lands a long way from its cause: a
-// function that cannot reach an external API fails minutes later, inside
-// somebody's application code, as ENETUNREACH.
+// VPCNetworkInternal reports whether the Docker network backing one VPC is
+// created `--internal`.
 //
-// Isolating the plane is what makes a VPC with no internet gateway genuinely
-// withhold the internet, which is good fidelity. What Overcast does not yet do
-// is the half of AWS's model that *grants* egress. Route tables, their
-// `0.0.0.0/0` entries and NAT gateways are stored and returned as metadata and
-// consulted nowhere (docs/services/ec2/limitations.md); the only thing that
-// takes a VPC's own network out of `--internal` is an attached internet
-// gateway, and that toggle needs to remove and recreate the network, which
-// Docker refuses while containers are on it. A VPC network created before its
-// gateway was attached — the ordering every CDK and CloudFormation deploy
-// uses — can therefore stay `--internal` for the life of the run.
+// hasInternetGateway is what the VPC's own template says, and under the modes
+// that exist today it changes nothing — which is the honest position rather
+// than an oversight. `open` grants egress everywhere and `none` withholds it
+// everywhere; the mode that would consult the template is `routed`, and
+// `routed` needs route tables, which Overcast does not read
+// (config.VPCEgressRouted). Deriving isolation from the gateway alone, as
+// Overcast did before, delivers only the withholding half of AWS's model: a
+// private subnet behind a NAT gateway becomes indistinguishable from an
+// isolated one, and a stack that works on AWS fails here with no template
+// change that helps.
 //
-// When it does, this plane is the only egress path its containers have. That
-// is measurable, not theoretical: a container on an `--internal` VPC network
-// plus a routable control plane takes its default route from the control
-// plane and reaches the internet; make the control plane internal too and it
-// reaches nothing.
-const ControlPlaneEgressWarning = "control plane network: internal=true — a container in a VPC whose own " +
-	"network is also internal then has NO egress at all, including to real AWS endpoints, and fails with " +
-	"ENETUNREACH. Overcast does not emulate NAT gateway or internet gateway routing: route tables are " +
-	"metadata only, so a private-with-egress subnet is not distinguished from an isolated one " +
-	"(docs/services/ec2/limitations.md). Set OVERCAST_CONTROL_PLANE_INTERNAL=false to restore egress"
-
-// withEgressWarning attaches ControlPlaneEgressWarning to a decision that came
-// out internal, whichever value produced it. Under `auto` the isolation is
-// still inferred from the host, so this is the one line that tells an operator
-// their machine opted them in.
-func withEgressWarning(d docker.InternalDecision) docker.InternalDecision {
-	if d.Internal {
-		d.Warnings = append(d.Warnings, ControlPlaneEgressWarning)
-	}
-	return d
+// The parameter stays because `routed` will need it, and because a caller that
+// has the fact should go on passing it — this is the seam that mode reads it at.
+func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
+	_ = hasInternetGateway
+	return egressMode(cfg) == config.VPCEgressNone
 }
 
-// autoControlPlaneInternal is OVERCAST_CONTROL_PLANE_INTERNAL=auto: the host
-// probe, which is what alpha.37 shipped and what the default still is.
+// VPCNetworkSpec is the full desired state of the Docker network backing one
+// VPC, so a per-VPC network is verified against the same field-by-field
+// comparison the planes are (docker.EnsureNetwork) rather than being the one
+// network class nobody checks.
 //
-// Decided by the same three-row table containerendpoint.ResolveListen uses to
-// pick the Runtime API's bind address (docs/plans/container-network-topology.md
-// § 5), because it is the same fact asked from the other side — whether the
-// address a container uses to reach Overcast is on-link on an `--internal`
-// bridge, or reachable only through the route `--internal` would cut:
+// vpcID names the VPC, subnet is the CIDR the strategy picked (empty leaves
+// IPAM to Docker), hasInternetGateway is what the template says — see
+// VPCNetworkInternal for why that currently changes nothing — and owner is the
+// EC2 service's instance identity (serviceutil.InstanceDomain).
 //
-//   - Overcast containerised: always yes. Overcast is *on* the plane, so its
-//     own address there is on-link regardless of platform.
-//   - Overcast on a native Linux host: yes. Containers dial the control
-//     network's own gateway, and an `--internal` bridge still has one — only
-//     routing *beyond* the bridge is cut, and the gateway is on it.
+// owner is passed in rather than derived from cfg because it has to be the
+// same store-scoped identity every other Docker resource is stamped with
+// (docker.LabelInstance). A VPC network is the one Overcast resource whose name
+// comes from an emulated resource id rather than from configuration, so two
+// instances on one daemon can mint the same name from unrelated state — and it
+// is the label, not the name, that decides who may remove it. An instance whose
+// identity cannot be established stamps nothing and, by the same rule, removes
+// nothing.
+func VPCNetworkSpec(cfg *config.Config, vpcID, subnet, owner string, hasInternetGateway bool) docker.NetworkSpec {
+	labels := docker.ManagedLabels("ec2", vpcID)
+	labels["overcast.vpc-id"] = vpcID
+	if owner != "" {
+		labels[docker.LabelInstance] = owner
+	}
+	return docker.NetworkSpec{
+		Name:       cfg.VPCNetwork(vpcID),
+		Internal:   VPCNetworkInternal(cfg, hasInternetGateway),
+		Subnet:     subnet,
+		Labels:     labels,
+		Owner:      owner,
+		Version:    cfg.Version,
+		EgressMode: string(egressMode(cfg)),
+	}
+}
+
+// ControlPlaneEgressWarning is what isolating this plane costs when the egress
+// mode did not ask for it, stated in full because the cost lands a long way
+// from its cause: a function that cannot reach an external API fails minutes
+// later, inside somebody's application code, as ENETUNREACH.
+const ControlPlaneEgressWarning = "control plane network: internal=true while OVERCAST_VPC_EGRESS is not " +
+	"`none` — every container Overcast starts loses its route out through this plane, and a container in " +
+	"a VPC whose own network is also internal then has NO egress at all, including to real AWS endpoints. " +
+	"OVERCAST_CONTROL_PLANE_INTERNAL is deprecated: set OVERCAST_VPC_EGRESS=none to mean this deliberately, " +
+	"or unset it to restore egress"
+
+// ControlPlaneMustStayRoutableWarning is the shortfall on a host where an
+// isolated control plane cannot be delivered.
+//
+// It is a warning rather than a refusal to start because the alternatives are
+// worse in both directions: isolating anyway strands every invocation at INIT,
+// and refusing to start turns a partly-achievable hermetic mode into no mode at
+// all on the most common developer platform. What `none` still delivers here is
+// every data plane isolated; what it cannot deliver is this one network, and
+// containers keep a route out through it. Run Overcast containerised, or
+// against a native Linux daemon, to get the whole of it.
+const ControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=none asked for an isolated control " +
+	"plane, but on this host containers reach the Lambda Runtime API at the host's own routable address, " +
+	"which `--internal` would sever — every invocation would strand at INIT. The control plane was left " +
+	"routable, so containers still have a route out through it and this stack is NOT hermetic. Every data " +
+	"plane is isolated as asked. Run Overcast containerised, or against a native Linux Docker daemon, for " +
+	"the whole of `none`"
+
+// deprecationNotice names the mode that expresses what the deprecated variable
+// was set to mean, so the operator is told what to write instead rather than
+// only that they are wrong.
+func deprecationNotice(cfg *config.Config) string {
+	replacement := "OVERCAST_VPC_EGRESS=open (the default)"
+	if cfg.ControlPlaneInternal == config.ControlPlaneInternalTrue {
+		replacement = "OVERCAST_VPC_EGRESS=none"
+	}
+	return "OVERCAST_CONTROL_PLANE_INTERNAL is deprecated and will be removed: it pins one network's " +
+		"isolation, and egress is a property of the whole topology — a container takes its default route " +
+		"from whichever of its networks is routable, so isolating one of them settles nothing. Set " +
+		replacement + " instead. The setting is still honoured for now"
+}
+
+// egressMode is cfg.VPCEgress with the zero value read as the default, so a
+// Config built directly in a test reports the mode Load would have given it.
+func egressMode(cfg *config.Config) config.VPCEgressMode {
+	if cfg == nil || cfg.VPCEgress == "" {
+		return config.VPCEgressOpen
+	}
+	return cfg.VPCEgress
+}
+
+// runtimeAPIReachableOnInternalPlane reports whether containers could still
+// reach Overcast — the Lambda Runtime API above all — if the control plane were
+// `--internal`.
+//
+// This is the probe alpha.37 used to decide egress, and decoupling it is most of
+// what #1564 was really about. It is a fact about the *host*: which address a
+// container dials to reach a server on this machine, and whether that address
+// survives an isolated bridge. It is not a fact about the template, the VPC, or
+// what the operator wants, and it never should have decided any of them. Egress
+// is decided by OVERCAST_VPC_EGRESS; this decides only whether the isolation
+// that mode asks for can be applied to the one network the Runtime API rides.
+//
+// It is the same three-row table containerendpoint.ResolveListen uses to pick
+// the Runtime API's bind address, asked from the other side:
+//
+//   - Overcast containerised: yes. Overcast is *on* the plane, so its own
+//     address there is on-link regardless of platform.
+//   - Overcast on a native Linux host: yes. Containers dial the network's own
+//     gateway, and an `--internal` bridge still has one — only routing *beyond*
+//     the bridge is cut, and the gateway is on it.
 //   - Overcast on a Docker Desktop host: no. Containers dial the host's own
-//     routable address, which sits beyond the bridge — `--internal` would
-//     sever exactly that path, and every invocation would strand at INIT.
-//   - Anything undetermined (no Docker client yet, no default network to
-//     probe): no. Getting this wrong does not degrade gracefully — the Runtime
-//     API rides this plane — so an inconclusive probe keeps the safe answer
-//     rather than guessing.
+//     routable address, which sits beyond the bridge; `--internal` severs
+//     exactly that path.
+//   - Undetermined (no client, no default network to probe): no. Getting this
+//     wrong does not degrade gracefully — the Runtime API rides this plane — so
+//     an inconclusive probe keeps the answer that cannot strand anything.
 //
 // It cannot inspect the control plane itself, which may not exist yet on a
 // first run, so it asks the same question of Docker's own always-present
-// default network instead (containerendpoint.NativeLinuxDaemon).
-//
-// Every branch names itself in the reason. The last two rows are the same
-// answer for opposite causes — one probed and declined, one never got to
-// probe — and telling them apart is most of what makes a surprising `auto`
-// diagnosable.
-func autoControlPlaneInternal(ctx context.Context, dc *docker.Client) docker.InternalDecision {
-	if runningInContainer() {
-		return docker.InternalDecision{
-			Internal: true,
-			Reason:   "auto: Overcast is containerised",
-		}
-	}
-	if nativeLinuxDaemon(ctx, dc) {
-		return docker.InternalDecision{
-			Internal: true,
-			Reason:   "auto: native Linux Docker daemon",
-		}
-	}
-	return docker.InternalDecision{
-		Internal: false,
-		Reason:   "auto: Docker Desktop, or a daemon this host could not probe",
-	}
+// default network (containerendpoint.NativeLinuxDaemon).
+func runtimeAPIReachableOnInternalPlane(ctx context.Context, dc *docker.Client) bool {
+	return runningInContainer() || nativeLinuxDaemon(ctx, dc)
 }
 
 // PlaneSpecs is the set of networks the Docker supervisor ensures at startup:
-// the control plane, with its isolation decided by ControlPlaneInternal, and
-// the default data plane.
+// the default data plane and the control plane, each with its full desired
+// state rather than only its name.
 //
-// Per-VPC networks are absent on purpose — EC2 creates those on demand, one per
-// VPC, and marks them internal or not according to whether the VPC has an
-// internet gateway.
+// The specs are complete on purpose. Docker's create-network call returns an
+// existing network unchanged, so a plane created by an older version, a
+// different mode, or by hand keeps every setting it was born with while looking
+// present and correct — see docker.EnsureNetwork, which compares each of these
+// fields against the live network on every startup.
+//
+// Per-VPC networks are absent here on purpose: EC2 creates those on demand, one
+// per VPC, from VPCNetworkSpec.
 //
 // One definition, used by both the supervisor and Lambda's independent probe,
 // so the two cannot disagree about what exists or how it is isolated.
 func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 	return []docker.NetworkSpec{
-		{Name: cfg.Network},
-		{Name: Primary(cfg), InternalMode: ControlPlaneInternal(cfg)},
+		{
+			Name:         cfg.Network,
+			InternalMode: DataPlaneInternal(cfg),
+			Labels:       docker.ManagedLabels(docker.ServiceCore, cfg.Network),
+			Owner:        cfg.Network,
+			Version:      cfg.Version,
+			EgressMode:   string(egressMode(cfg)),
+		},
+		{
+			Name:         Primary(cfg),
+			InternalMode: ControlPlaneInternal(cfg),
+			Labels:       docker.ManagedLabels(docker.ServiceCore, Primary(cfg)),
+			Owner:        cfg.Network,
+			Version:      cfg.Version,
+			EgressMode:   string(egressMode(cfg)),
+		},
 	}
 }
 
