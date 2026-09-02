@@ -830,10 +830,18 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		// that error rather than run on every failed start: a start that failed
 		// for its own reasons has a perfectly good volume, and Docker names the
 		// path it could not exec.
+		//
+		// cleanup() runs first, deliberately: this container — created but
+		// never started — still holds a live reference to the volume, and
+		// Docker refuses to remove a volume any container references,
+		// `force` included (see forgetInitVolume's doc comment). Asking to
+		// forget the volume before the one thing referencing it is gone would
+		// make even a volume this instance owns undeletable, defeating the
+		// self-healing this exists for.
+		cleanup()
 		if initDeliv.volume != "" && strings.Contains(err.Error(), initproto.InitPath) {
 			cr.forgetInitVolume(ctx, initDeliv.volume)
 		}
-		cleanup()
 		return nil, fmt.Errorf("start container: %w", decorateHotReloadMountError(err, hotReloadPath))
 	}
 	// Init Duration is measured from here to the RIC's first GET /next. Only

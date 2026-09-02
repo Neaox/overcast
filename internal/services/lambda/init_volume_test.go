@@ -374,6 +374,53 @@ func TestInitVolume_forgetInitVolumeLeavesAVolumeItDoesNotOwn(t *testing.T) {
 	}
 }
 
+// Ownership alone is not proof a volume can actually be removed: Docker
+// refuses to remove one any live container still references — `force`
+// included — and forgetInitVolume runs before the container that just failed
+// to start has necessarily been torn down from the daemon's point of view
+// (acquireContainer's cleanup() runs first specifically to avoid this, but
+// forgetInitVolume cannot assume every caller got that ordering right, and
+// this exercises the daemon's refusal directly rather than through that
+// ordering). A volume this instance owns, but that the daemon still refuses
+// to remove, must be marked unusable exactly like one it was never allowed to
+// touch at all — the earlier version of this fix cleared the mark
+// optimistically before attempting the removal, so a refused removal left the
+// mark cleared and the next cold start reused the same broken volume anyway.
+func TestInitVolume_forgetInitVolumeMarksUnusableWhenRemovalIsRefused(t *testing.T) {
+	daemon := newRecordingDaemon(t)
+	cr := newDaemonContainerRuntime(t, daemon.Server)
+	domain := cr.instances.Resolve(context.Background())
+
+	const name = "overcast-lambda-init-deadbeef1234-amd64"
+	daemon.seedVolume(name, map[string]string{
+		docker.LabelManaged:           "true",
+		docker.LabelService:           "lambda",
+		docker.LabelLambdaInitVersion: "deadbeef1234",
+		docker.LabelLambdaInitArch:    "amd64",
+		docker.LabelInstance:          domain,
+	})
+	// A container that still references the volume — the state a just-failed
+	// start leaves the daemon in until something actually removes it.
+	daemon.mu.Lock()
+	if daemon.containerVolumes == nil {
+		daemon.containerVolumes = map[string][]string{}
+	}
+	daemon.containerVolumes["still-created-container"] = []string{name}
+	daemon.mu.Unlock()
+
+	cr.forgetInitVolume(context.Background(), name)
+
+	if slices.Contains(daemon.removedVolumes(), name) {
+		t.Error("forgetInitVolume removed a volume a live container still references")
+	}
+	if _, held := daemon.volumeLabels(name); !held {
+		t.Fatal("the volume is gone from the daemon even though its removal was refused")
+	}
+	if _, unusable := cr.initVolumeUnusable.Load(name); !unusable {
+		t.Error("a volume this instance owns, but could not actually remove, was not marked unusable")
+	}
+}
+
 // The state a process killed between creating the init volume and filling it
 // leaves behind — labelled, empty, and indistinguishable from a good seed by
 // inspecting it alone — is exactly what ensureInitVolume's reuse branch would

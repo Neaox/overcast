@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -108,6 +109,15 @@ type recordingDaemon struct {
 	volumes  map[string]map[string]string // name → labels
 	archives map[string][]byte            // container name → the last archive put into it
 	removed  []string                     // volumes removed, in order
+	// containerVolumes tracks which volume-type mounts are still referenced
+	// by a live (created-but-not-yet-removed) container, the way a real
+	// daemon does — DELETE /volumes/{name} refuses to remove a volume any
+	// container still references, `force` included, and this is what makes
+	// that refusal reproducible in a test rather than something only a real
+	// daemon exhibits. Keyed by container name (the fake's "Id" is the name
+	// it was created with); a container's entry is removed wholesale when it
+	// is removed.
+	containerVolumes map[string][]string
 }
 
 func newRecordingDaemon(t *testing.T) *recordingDaemon {
@@ -148,7 +158,23 @@ func newRecordingDaemon(t *testing.T) *recordingDaemon {
 			_ = json.NewEncoder(w).Encode(map[string]any{"Name": name, "Labels": labels})
 
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.45/volumes/"):
-			d.removeVolume(strings.TrimPrefix(r.URL.Path, "/v1.45/volumes/"))
+			name := strings.TrimPrefix(r.URL.Path, "/v1.45/volumes/")
+			if d.volumeReferenced(name) {
+				// Matches real Docker: a volume any live container references
+				// cannot be removed, and `force` (the query param every
+				// caller here sets) does not override that — it only
+				// bypasses driver-level "in use" errors, not an actual
+				// referencing container.
+				http.Error(w, "volume is in use and cannot be removed", http.StatusConflict)
+				return
+			}
+			d.removeVolume(name)
+			w.WriteHeader(http.StatusNoContent)
+
+		// RemoveContainer(Force): frees whatever volumes this container was
+		// the last (or only) thing referencing.
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.45/containers/"):
+			d.forgetContainerVolumes(strings.TrimPrefix(r.URL.Path, "/v1.45/containers/"))
 			w.WriteHeader(http.StatusNoContent)
 
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/archive"):
@@ -221,13 +247,50 @@ func (d *recordingDaemon) recordCreate(t *testing.T, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// Every container — seed or function — that mounts a volume references
+	// it for as long as it exists, matching real Docker; see
+	// containerVolumes and volumeReferenced.
+	name := r.URL.Query().Get("name")
+	if req.HostConfig != nil {
+		for _, m := range req.HostConfig.Mounts {
+			if m.Type != "volume" {
+				continue
+			}
+			if d.containerVolumes == nil {
+				d.containerVolumes = map[string][]string{}
+			}
+			d.containerVolumes[name] = append(d.containerVolumes[name], m.Source)
+		}
+	}
 	// The throwaway container that seeds the init volume is not a function
 	// container, and a test counting cold starts must not see it.
-	if strings.Contains(r.URL.Query().Get("name"), "-seed-") {
+	if strings.Contains(name, "-seed-") {
 		d.seeds = append(d.seeds, req)
 		return
 	}
 	d.creates = append(d.creates, req)
+}
+
+// volumeReferenced reports whether any container this daemon still holds
+// (i.e. has not been removed) mounts the named volume — the same question
+// real Docker answers before honouring DELETE /volumes/{name}.
+func (d *recordingDaemon) volumeReferenced(name string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, vols := range d.containerVolumes {
+		if slices.Contains(vols, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// forgetContainerVolumes drops a removed container's volume references, the
+// way RemoveContainer(Force) does on a real daemon.
+func (d *recordingDaemon) forgetContainerVolumes(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.containerVolumes, name)
 }
 
 func (d *recordingDaemon) recordVolumeCreate(t *testing.T, r *http.Request) {

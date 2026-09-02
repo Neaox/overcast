@@ -357,19 +357,21 @@ func (cr *ContainerRuntime) pruneStaleInitVolumes(ctx context.Context, keep, goa
 }
 
 // forgetInitVolume drops a volume from the seeded set, and either removes it
-// from the daemon (if this instance owns it) or marks it unreusable (if it
-// does not) — so the next cold start either re-seeds a fresh one or falls
-// back to the archive, but never mounts the same broken volume again. Called
-// only when a container failed to start because the init was not at the path
-// its entrypoint names, which is what an empty volume looks like from here —
-// the state a process killed between creating the volume and filling it
-// leaves behind, indistinguishable by inspecting it from a good seed (see the
-// reuse branch of ensureInitVolume).
+// from the daemon (if this instance owns it, and the daemon actually accepts
+// the removal) or marks it unreusable (if either of those isn't true) — so
+// the next cold start either re-seeds a fresh one or falls back to the
+// archive, but never mounts the same broken volume again. Called only when a
+// container failed to start because the init was not at the path its
+// entrypoint names, which is what an empty volume looks like from here — the
+// state a process killed between creating the volume and filling it leaves
+// behind, indistinguishable by inspecting it from a good seed (see the reuse
+// branch of ensureInitVolume).
 //
-// The daemon-side removal is best-effort by design: Docker refuses to remove
-// a volume any container still references, so warm environments holding this
-// one keep it and the removal simply does not happen — which is the right
-// answer, since a volume those containers started from is not the empty one.
+// Callers must remove the container that just failed to start *before*
+// calling this. Docker refuses to remove a volume any container references —
+// `force` does not override a live reference, only a driver-level one — and a
+// container that failed to start is still "created", still referencing this
+// volume, until it is torn down. See the call site in acquireContainer.
 //
 // It is ownership-gated (issue #1573): the volume named here may have been
 // reused from another instance's build-matching copy rather than seeded by
@@ -378,16 +380,19 @@ func (cr *ContainerRuntime) pruneStaleInitVolumes(ctx context.Context, keep, goa
 // expected it, which can equally be a transient daemon issue. Removing
 // another instance's volume on that evidence would be exactly the
 // cross-instance deletion this fix exists to stop, so this only ever
-// force-removes a volume this instance's own identity is stamped on.
+// attempts to remove a volume this instance's own identity is stamped on.
 //
-// A volume it may not delete is not simply left alone, though: without
-// initVolumeUnusable, the *next* cold start's ensureInitVolume would inspect
-// the same name, find it still labelled, and reuse the same broken volume
-// again — failing, calling back in here, and repeating forever, since
-// neither this instance nor the daemon's dangling-volume sweep can ever fix
-// or remove a volume it cannot prove it created. Marking it unusable is what
-// makes the archive fallback the actual next thing that happens, rather than
-// the same failure on a loop.
+// A volume this instance may not delete — because it isn't proven to own it,
+// or because the daemon refused the removal anyway (another live reference
+// this instance doesn't know about, a transient daemon error) — is not simply
+// left alone: without initVolumeUnusable, the *next* cold start's
+// ensureInitVolume would inspect the same name, find it still labelled, and
+// reuse the same broken volume again — failing, calling back in here, and
+// repeating forever. The unusable mark is set on every path that leaves the
+// volume standing, and cleared only once RemoveVolume has actually succeeded
+// — never optimistically ahead of that call, which is what let a removal
+// Docker rejected (409, still referenced) go unnoticed and the mark get
+// cleared anyway.
 func (cr *ContainerRuntime) forgetInitVolume(ctx context.Context, name string) {
 	if name == "" {
 		return
@@ -397,11 +402,13 @@ func (cr *ContainerRuntime) forgetInitVolume(ctx context.Context, name string) {
 		cr.initVolumeUnusable.Store(name, struct{}{})
 		return
 	}
-	cr.initVolumeUnusable.Delete(name)
 	if err := cr.docker.RemoveVolume(ctx, name, true); err != nil {
+		cr.initVolumeUnusable.Store(name, struct{}{})
 		cr.logger.Debug("lambda: could not remove the init volume after a container failed to start",
 			zap.String("volume", name), zap.Error(err))
+		return
 	}
+	cr.initVolumeUnusable.Delete(name)
 }
 
 // ownsInitVolume reports whether this instance created the named init
