@@ -279,15 +279,5 @@ func (g *defaultVPCGuard) OnDelete(ctx context.Context, vpc *VPC) {
 	g.inner.OnDelete(ctx, vpc)
 }
 
-// SetInternal refuses on the default VPC. Flipping the flag recreates the
-// network, and this one has every container Overcast started attached to it.
-func (g *defaultVPCGuard) SetInternal(ctx context.Context, vpcID string, internal bool) {
-	if vpc, aerr := g.h.store.getVPC(ctx, vpcID); aerr == nil && vpc != nil && vpc.IsDefault {
-		g.h.log.WithRecorder(ctx).Warn(
-			"ignoring an internet-gateway change on the default VPC — "+
-				"its network is the shared data plane and cannot be recreated under running containers",
-			zap.String("vpc", vpcID), zap.Bool("internal", internal))
-		return
-	}
-	g.inner.SetInternal(ctx, vpcID, internal)
-}
+// An internet-gateway change on the default VPC is declined the same way, in
+// Handler.changeVPCGateway: recorded as metadata, network left alone.

@@ -2,9 +2,11 @@ package router
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -33,6 +35,7 @@ const (
 	advisoryCodeReadPressureObserved      = "read-pressure-observed"
 	advisoryCodeMemoryMode                = "memory-mode"
 	advisoryCodeMemoryModeIgnoresExisting = "memory-mode-ignores-existing-database"
+	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
 )
 
 // performanceDocsPath is the docs-browser-relative path (see
@@ -67,6 +70,12 @@ const storageDocsPath = "storage.md"
 // docs browser's heading slug for "Builds without SQLite" — see
 // dataDirDocsPath for how that slug is derived.
 const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
+
+// vpcNetworkDocsPath deep-links the stale-isolation advisory to the section
+// of the EC2 limitations page that explains what a gateway does to a VPC's
+// Docker network and what a failed flip leaves behind. The fragment is the
+// docs browser's slug for that heading — see dataDirDocsPath.
+const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
@@ -145,6 +154,12 @@ type advisoryInput struct {
 	// directory away that this run will neither read nor update is the sharp
 	// exception, and the one case worth an extra, stronger advisory for.
 	ExistingDatabase bool
+
+	// VPCNetworkProblems is ec2.Service.NetworkProblems(): the VPCs whose
+	// Docker network the EC2 service could not bring to the isolation their
+	// internet-gateway state calls for — drives vpc-network-isolation-stale.
+	// Nil whenever EC2 is not wired (a service subset) or nothing is wrong.
+	VPCNetworkProblems []dataplane.VPCNetworkProblem
 }
 
 // computeAdvisories is the single generator function behind the
@@ -183,7 +198,54 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkMemoryModeIgnoresExisting(in.StateBackend, in.ExistingDatabase); a != nil {
 		advisories = append(advisories, *a)
 	}
+	if a := checkVPCNetworkIsolation(in.VPCNetworkProblems); a != nil {
+		advisories = append(advisories, *a)
+	}
 	return advisories
+}
+
+// vpcNetworkAdvisoryMaxListed bounds how many VPCs the advisory spells out.
+// Each entry carries a Docker error string, and the Metrics & Health card
+// has to stay a card when twenty VPCs are broken at once.
+const vpcNetworkAdvisoryMaxListed = 5
+
+// checkVPCNetworkIsolation is a warning: a VPC in this state works — its
+// containers run and reach the control plane — but either with the internet
+// reachability of the gateway state before the one DescribeInternetGateways
+// reports, or with containers left off the recreated network, which is
+// exactly the quiet divergence an emulator must not ship silently. The EC2
+// service records an entry when a flip it attempted (on
+// Attach/DetachInternetGateway, or at startup for a network adopted with the
+// wrong flag) left the network or its containers wrong, and clears it when a
+// later flip succeeds or the VPC is deleted. A flip that failed before
+// changing anything records nothing: that path fails the API call instead,
+// and the network still matches the record.
+func checkVPCNetworkIsolation(problems []dataplane.VPCNetworkProblem) *Advisory {
+	if len(problems) == 0 {
+		return nil
+	}
+	shown := min(len(problems), vpcNetworkAdvisoryMaxListed)
+	lines := make([]string, 0, shown)
+	for _, p := range problems[:shown] {
+		lines = append(lines, p.VpcID+": "+p.Detail)
+	}
+	listed := strings.Join(lines, "; ")
+	if rest := len(problems) - len(lines); rest > 0 {
+		listed += fmt.Sprintf("; and %d more", rest)
+	}
+	title := "A VPC's network does not match its internet gateway"
+	if len(problems) > 1 {
+		title = fmt.Sprintf("%d VPC networks do not match their internet gateways", len(problems))
+	}
+	return &Advisory{
+		Severity: advisorySeverityWarning,
+		Code:     advisoryCodeVPCNetworkIsolationStale,
+		Title:    title,
+		Detail: "Containers in these VPCs do not have the internet reachability DescribeInternetGateways " +
+			"implies. Overcast retries the repair at its next restart; until then, check the Docker " +
+			"daemon for the reason quoted, then detach and re-attach the gateway. " + listed,
+		DocsPath: vpcNetworkDocsPath,
+	}
 }
 
 // checkJournalModeNotWAL is critical: this project shipped with WAL mode

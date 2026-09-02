@@ -29,6 +29,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/awsapi"
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/events"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -117,6 +118,13 @@ func (s *Service) VPCNetworkStatus(ctx context.Context, vpcID string) string {
 		return vpcNetworkStatusOK
 	}
 	return vpc.NetworkStatus
+}
+
+// NetworkProblems reports the VPCs whose Docker network could not be brought
+// to the isolation their internet-gateway state calls for, ordered by VPC ID.
+// The router renders them as a health advisory.
+func (s *Service) NetworkProblems() []dataplane.VPCNetworkProblem {
+	return s.handler.networkProblems()
 }
 
 // AllocatePrivateIPForSubnet returns the API-visible private IP for the given
