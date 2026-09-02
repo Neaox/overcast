@@ -261,7 +261,7 @@ ctr, err := localstack.Run(ctx, "ghcr.io/overcast-sh/overcast-slim:latest")
 ### .NET
 
 ```csharp
-var overcast = new LocalStackBuilder("ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.36").Build();
+var overcast = new LocalStackBuilder("ghcr.io/overcast-sh/overcast-slim:0.0.1-alpha.25").Build();
 await overcast.StartAsync();
 
 var endpoint = overcast.GetConnectionString();
@@ -275,9 +275,9 @@ var endpoint = overcast.GetConnectionString();
   Overcast prints it verbatim, on stderr, once every listener is bound. It is
   preceded by an `overcast ready` line that says what it is, so a reader
   grepping the logs is not left guessing.
-- **`/_localstack/health`** — Go and .NET probe it instead. Overcast has
-  served it in LocalStack's response shape since before this, so those two
-  needed nothing.
+- **`/_localstack/health`** — Go and .NET probe this instead of the log.
+  Overcast already served it in LocalStack's response shape, so neither
+  module needed anything.
 - **`/usr/local/bin/docker-entrypoint.sh`** — the Java module replaces the
   entrypoint and execs LocalStack's path. The image answers to it, and ships
   `bash` for the module's generated start script.
