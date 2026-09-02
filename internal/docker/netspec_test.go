@@ -47,6 +47,13 @@ type specDaemon struct {
 	// inspects counts every inspect the code under test issued, so a test can
 	// assert the retry happened (or did not).
 	inspects int
+
+	// hideNextInspect makes the next n inspects answer 404 for a network this
+	// daemon actually holds — the one thing a fake has to be able to do to
+	// model a network that appears between a read and the create that follows
+	// it. The create still sees it and still reports the conflict, which is
+	// exactly the real daemon's behaviour.
+	hideNextInspect int
 }
 
 func newSpecDaemon(t *testing.T, seed ...*NetworkInspect) (*Client, *specDaemon) {
@@ -130,6 +137,10 @@ func (d *specDaemon) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		info, ok := d.networks[d.resolveLocked(strings.TrimPrefix(r.URL.Path, "/v1.45/networks/"))]
+		if d.hideNextInspect > 0 {
+			d.hideNextInspect--
+			ok = false
+		}
 		d.mu.Unlock()
 		if !ok {
 			http.Error(w, `{"message":"no such network"}`, http.StatusNotFound)

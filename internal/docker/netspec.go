@@ -466,20 +466,20 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	info, err := inspectForVerify(ctx, dc, spec.Name)
 	if err != nil || info == nil {
 		// Absent, or unreadable — and the two are not the same thing, which is
-		// the whole of #1582. A 404 means there is nothing here and the create
-		// settles it. Any other error means the network may well exist, and
-		// Docker's create call returns an existing network *unchanged*
-		// (CreateNetworkWithOptions resolves "already exists" by looking the
-		// network up and handing it back), so a create issued on the strength
-		// of an unreadable inspect can leave a drifted network in place and
-		// report it as freshly built to spec. That is #1564 exactly, on the
-		// error path of the code written to close it.
+		// the whole of #1582. A 404 is an answer and is not retried; any other
+		// error is usually a moment and is (inspectForVerify).
+		//
+		// What both share is that Docker's create call returns an existing
+		// network *unchanged* — CreateNetworkWithOptions resolves "already
+		// exists" by looking the network up and handing it back — so a create
+		// issued on the strength of *either* can leave somebody else's network
+		// in place and report it as freshly built to spec. That is #1564
+		// exactly, on the error path of the code written to close it.
 		//
 		// The create still happens either way: no network at all is a daemon
 		// that starts and then fails every container create with an error
 		// naming nothing about networks. What changes is that a blind create is
 		// never trusted — it is verified below, or reported as unverified.
-		unreadable := err != nil && !IsNotFound(err)
 		if _, createErr := dc.CreateNetworkWithOptions(ctx, spec.CreateOptions()); createErr != nil {
 			// Fatal, and deliberately not downgraded to a warning like a
 			// declined repair is. A wrong-but-usable network is something to
@@ -490,13 +490,19 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 			status.Drift = "could not create: " + createErr.Error()
 			return status, fmt.Errorf("create network %s: %w", spec.Name, createErr)
 		}
-		if !unreadable {
-			return status, nil
-		}
-		// The network was there to be read and could not be, so the create may
-		// have handed back somebody else's state. Read it again and fall into
-		// the ordinary comparison; a network that is now readable gets the same
-		// verification, repair and reporting as any other.
+		// Read it again and fall into the ordinary comparison. Every create,
+		// not only the one issued after an unreadable inspect: a 404 is a fact
+		// about the moment it was asked, not about the moment the create
+		// landed, and in between another process can have created the network.
+		// The create then resolves the name conflict by handing back *their*
+		// network, unchanged, and returning here without looking would report
+		// it as freshly built to this spec — the same lie as the unreadable
+		// path, reached by a different route.
+		//
+		// It costs one inspect per network per boot. Diff is round-trip stable
+		// over a network this code created — it has to be, or every second boot
+		// would report drift on a network nothing had touched — so on the
+		// ordinary path this reads back what was just written and finds nothing.
 		info, err = dc.InspectNetwork(ctx, spec.Name)
 		if err != nil || info == nil {
 			return unverifiedStatus(status, spec.Name, err, logger), nil
