@@ -44,6 +44,11 @@ type Handler struct {
 	// networks for litter. See docker.LabelInstance.
 	instances *serviceutil.InstanceDomain
 
+	// networkReporter carries this instance's identity and the verified state
+	// of each per-VPC network into /_overcast/health. Optional; nil reports
+	// nothing.
+	networkReporter docker.NetworkReporter
+
 	// netProblems records, per VPC ID, a dataplane.VPCNetworkProblem: a VPC
 	// whose Docker network could not be brought to the isolation its gateway
 	// state calls for. Read by Service.NetworkProblems for the health

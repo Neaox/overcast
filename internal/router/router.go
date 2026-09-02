@@ -892,6 +892,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 		dockerSup := docker.NewSupervisorWithTracker(bus, logger, dockerTracker)
 		cleanups = append(cleanups, dockerSup.Close)
+		// EC2's networks are created on demand, one per VPC, long after the
+		// probe that ensures the two planes — and only EC2 can resolve the
+		// instance identity that says whose they are. Both reach health
+		// through the same tracker.
+		ec2Svc.SetNetworkReporter(dockerTracker)
 
 		go func() {
 			// Collect configs in deterministic order.

@@ -570,7 +570,9 @@ func TestVPCNetworkInternal_theModeDecidesWhetherTheGatewayDecides(t *testing.T)
 func TestVPCNetworkSpec_stampsOwnershipOnlyWhenItIsKnown(t *testing.T) {
 	cfg := testConfig()
 
-	spec := VPCNetworkSpec(cfg, "vpc-1", "10.0.0.0/16", "instance-a", false)
+	spec := VPCNetworkSpec(cfg, VPCNetwork{
+		VPCID: "vpc-1", Subnet: "10.0.0.0/16", Owner: "instance-a", Internal: true,
+	})
 	if spec.Owner != "instance-a" || spec.Labels[docker.LabelInstance] != "instance-a" {
 		t.Errorf("spec = %+v, want owner instance-a in both the field and the label", spec)
 	}
@@ -578,7 +580,7 @@ func TestVPCNetworkSpec_stampsOwnershipOnlyWhenItIsKnown(t *testing.T) {
 		t.Errorf("Name = %q, want %q", spec.Name, cfg.VPCNetwork("vpc-1"))
 	}
 
-	anon := VPCNetworkSpec(cfg, "vpc-1", "10.0.0.0/16", "", false)
+	anon := VPCNetworkSpec(cfg, VPCNetwork{VPCID: "vpc-1", Subnet: "10.0.0.0/16", Internal: true})
 	if _, ok := anon.Labels[docker.LabelInstance]; ok {
 		t.Errorf("labels = %v, want no instance label when the identity is unknown", anon.Labels)
 	}

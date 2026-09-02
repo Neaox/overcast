@@ -44,6 +44,17 @@ type Status struct {
 	// reason.
 	Networks []NetworkStatus `json:"networks,omitempty"`
 
+	// Instance is this Overcast's sweep-domain identity — the value stamped
+	// into LabelInstance on the Docker resources it creates
+	// (serviceutil.InstanceDomain). Empty when it could not be established.
+	//
+	// Reported because ownership is otherwise unknowable from outside the
+	// process, and the tools that most need it are outside: `overcast network
+	// reset` has to decide whether a network carrying somebody's instance label
+	// is this daemon's before it rebuilds it. Without this it either guesses or
+	// rebuilds a neighbour's live network in silence.
+	Instance string `json:"instance,omitempty"`
+
 	LastEvent   string `json:"lastEvent,omitempty"`
 	LastEventAt string `json:"lastEventAt,omitempty"`
 }
@@ -75,6 +86,28 @@ func (t *Tracker) Snapshot() Status {
 		copy(s.Networks, t.status.Networks)
 	}
 	return s
+}
+
+// NetworkReporter is what a service needs to report the Docker facts it owns
+// but the Probe never sees: its sweep-domain identity, and the state of the
+// networks it creates on its own schedule.
+//
+// It exists so that per-VPC networks — created on demand by EC2 long after
+// Probe has run — reach /_overcast/health through the same field as the two
+// planes. A verification that reports two of the three network classes is one
+// an operator learns not to trust.
+type NetworkReporter interface {
+	RecordInstance(id string)
+	RecordNetworks(networks []NetworkStatus)
+}
+
+// RecordInstance records this Overcast's sweep-domain identity, once it is
+// resolvable. Called by the service that owns the identity rather than by
+// Probe, which runs before any store is read.
+func (t *Tracker) RecordInstance(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.status.Instance = id
 }
 
 // RecordNetworks records the isolation each plane ended up with, as resolved

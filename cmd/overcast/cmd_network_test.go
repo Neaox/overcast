@@ -8,13 +8,29 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 )
+
+// mustConfig loads the configuration these tests run against, so a spec built
+// here is the one the command under test builds.
+func mustConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	return cfg
+}
 
 // cliDaemon is a fake Docker daemon holding a fixed set of networks and
 // containers, recording every mutating call.
@@ -71,6 +87,18 @@ func (d *cliDaemon) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(n)
 
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
+		id := strings.TrimPrefix(r.URL.Path, "/v1.45/networks/")
+		d.mu.Lock()
+		for name, n := range d.networks {
+			if name == id || n["Id"] == id {
+				delete(d.networks, name)
+				break
+			}
+		}
+		d.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+
 	case r.Method == http.MethodPost && r.URL.Path == "/v1.45/networks/create":
 		_, _ = w.Write([]byte(`{"Id":"net-new"}`))
 
@@ -121,8 +149,10 @@ func TestNetworkStatus_reportsAnUnlabelledNetworkAsMismatched(t *testing.T) {
 	cmd := newNetworkCmd()
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{"status"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("network status: %v", err)
+	// Drift is a non-zero exit by design, so a CI caller has something to
+	// assert on besides the prose.
+	if err := cmd.Execute(); !errors.Is(err, errDriftFound) {
+		t.Fatalf("network status error = %v, want errDriftFound", err)
 	}
 
 	got := out.String()
@@ -227,5 +257,177 @@ func TestNetworkReset_refusesAnUnmanagedName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a network this configuration manages") {
 		t.Errorf("error = %q, want it to say the name is not managed", err)
+	}
+}
+
+// ─── the gateway fact, --force, and ownership ───────────────────────────────
+
+// vpcNetwork builds a per-VPC network exactly as the daemon would have created
+// it — same spec, same labels, same hash — so a test that expects "ok" is
+// asserting the CLI agrees with the daemon rather than with a hand-written
+// fixture.
+func vpcNetwork(t *testing.T, vpcID string, hasGateway bool, instance string) map[string]any {
+	t.Helper()
+	cfg := mustConfig(t)
+	spec := dataplane.VPCNetworkSpec(cfg, dataplane.VPCNetwork{
+		VPCID:              vpcID,
+		Owner:              instance,
+		Internal:           dataplane.VPCNetworkInternal(cfg, hasGateway),
+		HasInternetGateway: hasGateway,
+	}).Resolve(context.Background(), nil)
+	opts := spec.CreateOptions()
+	return map[string]any{
+		"Id": "net-" + vpcID, "Name": opts.Name, "Driver": opts.Driver,
+		"Internal": opts.Internal, "Scope": "local", "Labels": opts.Labels,
+	}
+}
+
+// planeNetwork is the same for the control plane.
+func planeNetwork(t *testing.T) map[string]any {
+	t.Helper()
+	opts := dataplane.PlaneSpecs(mustConfig(t))[1].
+		Resolve(context.Background(), nil).CreateOptions()
+	return map[string]any{
+		"Id": "net-ctl", "Name": opts.Name, "Driver": opts.Driver,
+		"Internal": opts.Internal, "Scope": "local", "Labels": opts.Labels,
+	}
+}
+
+// B1: under `open` a VPC with an internet gateway has a routable network, and
+// the CLI has to know that. It cannot ask a store, so it reads the fact the
+// daemon recorded — and a CLI that assumed "no gateway" would report a mismatch
+// on every gateway-attached VPC, rebuild it into a state contradicting the
+// template, and be flipped straight back by the next reconcile.
+func TestNetworkStatus_readsTheRecordedGatewayFact(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	// A gateway-attached VPC: routable, exactly as the daemon made it.
+	d.addNetwork(vpcNetwork(t, "vpc-gw", true, ""))
+	// And a gateway-less one: internal, also exactly as the daemon made it.
+	d.addNetwork(vpcNetwork(t, "vpc-iso", false, ""))
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	_ = cmd.Execute()
+
+	got := out.String()
+	for _, want := range []string{
+		"octest-vpc-vpc-gw: ok",
+		"octest-vpc-vpc-iso: ok",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output does not contain %q — the CLI disagreed with the daemon about a "+
+				"network the daemon created correctly:\n%s", want, got)
+		}
+	}
+	// The ruling's condition: say where an isolated VPC network's egress comes
+	// from, at the place the flag is read.
+	if !strings.Contains(got, "egress via octest_control") {
+		t.Errorf("an --internal VPC network's line does not say where its egress comes from:\n%s", got)
+	}
+}
+
+// A network created before the gateway fact was recorded is not guessed at:
+// isolation and the spec hash are dropped from the comparison and the drop is
+// printed, so a clean report never silently means "I did not look".
+func TestNetworkStatus_declinesToJudgeAnUnrecordedGatewayFact(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	n := vpcNetwork(t, "vpc-old", false, "")
+	delete(n["Labels"].(map[string]string), "overcast.network.gateway")
+	d.addNetwork(n)
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	_ = cmd.Execute()
+
+	got := out.String()
+	if strings.Contains(got, "internal: want") {
+		t.Errorf("the CLI judged an isolation it cannot know:\n%s", got)
+	}
+	if !strings.Contains(got, "not compared") {
+		t.Errorf("the CLI dropped the comparison without saying so:\n%s", got)
+	}
+}
+
+// B2: --force is printed in the plan, so it has to actually rebuild. Before
+// this it was accepted, planned, and then dropped by the re-diff under the lock.
+func TestNetworkReset_forceRebuildsAMatchingNetwork(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	// A plane in exactly the state this configuration asks for.
+	plane := planeNetwork(t)
+	d.addNetwork(plane)
+	name := plane["Name"].(string)
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"reset", name, "--force", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("network reset --force: %v", err)
+	}
+
+	if !d.saw("DELETE") || !d.saw("POST /v1.45/networks/create") {
+		t.Fatalf("--force did not rebuild the network; calls: %v\noutput:\n%s", d.calls, out.String())
+	}
+	if !strings.Contains(out.String(), "rebuilt "+name) {
+		t.Errorf("output does not report the rebuild:\n%s", out.String())
+	}
+}
+
+// Without --force the same network is left alone, which is the behaviour
+// --force exists to override.
+func TestNetworkReset_withoutForceLeavesAMatchingNetworkAlone(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	plane := planeNetwork(t)
+	d.addNetwork(plane)
+	name := plane["Name"].(string)
+
+	cmd := newNetworkCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetArgs([]string{"reset", name, "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("network reset: %v", err)
+	}
+	if d.saw("DELETE") {
+		t.Fatalf("a matching network was rebuilt without --force; calls: %v", d.calls)
+	}
+}
+
+// S9: a network belonging to another Overcast instance is skipped by a bare
+// invocation and refused when named. Before this the guard compared the live
+// network's owner against a spec built from that same label, so it could never
+// fire, and a bare reset would rebuild a neighbour's live VPC network in
+// silence.
+func TestNetworkReset_refusesAnotherInstancesNetwork(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	d.addNetwork(vpcNetwork(t, "vpc-theirs", false, "another-instance"))
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"reset", "--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("network reset --dry-run: %v", err)
+	}
+	if d.saw("DELETE") {
+		t.Fatal("a bare reset touched another instance's network")
+	}
+
+	// Naming it explicitly is refused, with the owner named.
+	cmd = newNetworkCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"reset", "octest-vpc-vpc-theirs", "--dry-run"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "another Overcast instance") {
+		t.Fatalf("error = %v, want a refusal naming the other instance", err)
 	}
 }

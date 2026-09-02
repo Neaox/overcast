@@ -35,6 +35,7 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 		log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))
 		return
 	}
+	h.publishInstanceIdentity(ctx)
 	h.vpcStrategy.Reconcile(ctx, vpcs, h.networksInScope(ctx, networks))
 
 	// An adopted network keeps the --internal flag it was created with, which
@@ -235,14 +236,20 @@ func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, 
 // against. One definition for both, so a network cannot be created in a state
 // the verification would then call wrong.
 //
-// `internal` is what the caller decided, which for every caller here has
-// already been through dataplane.VPCNetworkInternal — the egress mode, with the
-// gateway fact passed through for the mode that will read it.
+// `internal` is what the caller decided; every caller here got it from
+// dataplane.VPCNetworkInternal, which is the only thing that turns the gateway
+// fact into an isolation. The fact itself is recorded on the network
+// (docker.LabelGatewayAttached) so `overcast network status` — which has no
+// state store to ask — can compute this same desired state instead of guessing
+// at it.
 func (h *Handler) vpcNetworkSpec(ctx context.Context, vpc *VPC, internal bool) docker.ResolvedNetworkSpec {
-	spec := dataplane.VPCNetworkSpec(h.cfg, vpc.VpcID, preferredDockerSubnet(vpc),
-		h.instanceDomain(ctx), !internal)
-	spec.Internal = internal
-	return spec.Resolve(ctx, h.docker)
+	return dataplane.VPCNetworkSpec(h.cfg, dataplane.VPCNetwork{
+		VPCID:              vpc.VpcID,
+		Subnet:             preferredDockerSubnet(vpc),
+		Owner:              h.instanceDomain(ctx),
+		Internal:           internal,
+		HasInternetGateway: h.vpcHasInternetGateway(ctx, vpc.VpcID),
+	}).Resolve(ctx, h.docker)
 }
 
 // removeDockerVPCNetwork removes a Docker network by ID. Missing networks

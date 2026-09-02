@@ -12,8 +12,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -34,6 +37,16 @@ import (
 var networkStdinIsTerminal = func() bool {
 	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
 }
+
+// errDriftFound is what `overcast network status` exits non-zero with when a
+// network is not in its configured state.
+//
+// Prose on stdout is for a person; an exit status is for the pipeline that
+// runs this in CI to catch a machine drifting between releases. The message is
+// deliberately the summary and not a repeat of the per-network detail, which
+// has already been printed above it.
+var errDriftFound = errors.New("one or more Docker networks are not in the state this configuration " +
+	"asks for; see above, and `overcast network reset --dry-run`")
 
 func newNetworkCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -61,7 +74,12 @@ func newNetworkStatusCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return nc.report(cmd, targets)
+				if !nc.report(cmd, targets) {
+					// A documented non-zero exit, so `overcast network status`
+					// is usable as a CI gate rather than only as prose.
+					return errDriftFound
+				}
+				return nil
 			})
 		},
 	}
@@ -112,7 +130,7 @@ func newNetworkResetCmd() *cobra.Command {
 						return nil
 					}
 				}
-				return nc.apply(cmd, work)
+				return nc.apply(cmd, work, force)
 			})
 		},
 	}
@@ -158,26 +176,42 @@ type networkTarget struct {
 	managed  []docker.ContainerSummary // Overcast's own, to stop
 	foreign  []string                  // not Overcast's, to disconnect
 	otherOwn string                    // instance label naming somebody else
+
+	// skipped marks a network a bare invocation will not act on because it
+	// belongs to somebody else. Reported, never worked on.
+	skipped bool
+
+	// isolationKnown is false for a VPC network whose recorded gateway fact
+	// could not be read, where `internal` and the spec hash are not this
+	// command's to judge — see networkSpecTarget.
+	isolationKnown bool
 }
 
 // targets resolves the networks to act on and inspects each.
 //
 // With no names it takes every network this configuration names: the two
-// planes, and every per-VPC network under this configuration's prefix. Named
-// networks are taken literally, and one that is not Overcast's to manage is an
-// error rather than a silent skip — being told "no such managed network" beats
-// a command that reports success having done nothing.
+// planes, and every per-VPC network under this configuration's prefix — minus
+// any that belong to another Overcast instance, which a bare invocation never
+// touches. Named networks are taken literally, and one that is not Overcast's
+// to manage is an error rather than a silent skip: being told "no such managed
+// network" beats a command that reports success having done nothing.
+//
+// explicit says the caller named the networks, which is what allows a
+// foreign-owned one to be acted on at all — and only after it has been refused
+// once with the owner named.
 func (nc *networkContext) targets(ctx context.Context, names []string) ([]networkTarget, error) {
 	specs, err := nc.specs(ctx)
 	if err != nil {
 		return nil, err
 	}
+	mine := nc.instanceIdentity(ctx)
+
 	if len(names) > 0 {
-		byName := make(map[string]docker.ResolvedNetworkSpec, len(specs))
+		byName := make(map[string]networkSpecTarget, len(specs))
 		for _, s := range specs {
-			byName[s.Name] = s
+			byName[s.spec.Name] = s
 		}
-		filtered := make([]docker.ResolvedNetworkSpec, 0, len(names))
+		filtered := make([]networkSpecTarget, 0, len(names))
 		for _, name := range names {
 			s, ok := byName[name]
 			if !ok {
@@ -185,24 +219,36 @@ func (nc *networkContext) targets(ctx context.Context, names []string) ([]networ
 					"are %s, and %s* for each VPC; run `overcast network status` to list them",
 					name, nc.cfg.Network+" and "+nc.cfg.ControlNetwork(), nc.cfg.VPCNetworkPrefix())
 			}
+			if foreign, owner := s.foreignTo(mine); foreign {
+				return nil, fmt.Errorf("%q belongs to another Overcast instance (%s). Rebuilding it to "+
+					"this configuration would break the instance that owns it: stop that instance first, "+
+					"or give this one its own OVERCAST_NETWORK", name, owner)
+			}
 			filtered = append(filtered, s)
 		}
 		specs = filtered
 	}
 
 	targets := make([]networkTarget, 0, len(specs))
-	for _, spec := range specs {
-		t := networkTarget{spec: spec}
-		info, err := nc.dc.InspectNetwork(ctx, spec.Name)
+	for _, s := range specs {
+		if foreign, owner := s.foreignTo(mine); foreign {
+			// A bare invocation skips it entirely rather than listing it as
+			// work: naming it is how somebody says they meant it, and even then
+			// it is refused above.
+			targets = append(targets, networkTarget{spec: s.spec, otherOwn: owner, skipped: true})
+			continue
+		}
+		t := networkTarget{spec: s.spec, isolationKnown: s.isolationKnown}
+		info, err := nc.dc.InspectNetwork(ctx, s.spec.Name)
 		if err != nil || info == nil {
 			t.absent = true
 			targets = append(targets, t)
 			continue
 		}
 		t.info = info
-		t.diffs = spec.Diff(info)
-		if owner := info.Instance(); owner != "" && spec.Owner != "" && owner != spec.Owner {
-			t.otherOwn = owner
+		t.diffs = s.spec.Diff(info)
+		if !s.isolationKnown {
+			t.diffs = unknowableFields(t.diffs)
 		}
 		t.managed, t.foreign = nc.classifyAttached(ctx, info)
 		targets = append(targets, t)
@@ -210,19 +256,47 @@ func (nc *networkContext) targets(ctx context.Context, names []string) ([]networ
 	return targets, nil
 }
 
+// foreignTo reports whether this network belongs to an Overcast instance other
+// than the one running the command, and names it.
+//
+// A network with no instance label is not foreign — it predates the label, and
+// the planes carry none by design (they are scoped by name instead). A network
+// whose owner cannot be compared, because this command could not establish its
+// own identity, *is* treated as foreign: absence of proof is not proof of
+// ownership, and the cost of being wrong here is rebuilding a network another
+// instance is serving.
+func (s networkSpecTarget) foreignTo(mine string) (foreign bool, owner string) {
+	if s.owner == "" {
+		return false, ""
+	}
+	if mine == "" || s.owner != mine {
+		return true, s.owner
+	}
+	return false, ""
+}
+
 // specs is the desired state of every network this configuration names.
 //
 // The planes come straight from dataplane.PlaneSpecs, so this command and the
-// daemon cannot disagree about them. Per-VPC networks are discovered from the
-// daemon rather than from EC2 state — the CLI has no store to read, and a
-// network that exists is the thing being repaired anyway. Their subnet and
-// owner are carried over from the live network: Overcast picked that subnet
-// from the VPC's CIDR, and the owner label is another instance's claim, which
-// this command reads but never rewrites.
-func (nc *networkContext) specs(ctx context.Context) ([]docker.ResolvedNetworkSpec, error) {
-	var specs []docker.ResolvedNetworkSpec
+// daemon cannot disagree about them.
+//
+// Per-VPC networks are discovered from the daemon rather than from EC2 state —
+// the CLI has no store to read, and a network that exists is the thing being
+// repaired anyway. Everything the spec needs is read off the live network: the
+// VPC id and subnet, the owning instance, and **the internet-gateway fact the
+// daemon recorded when it last created it** (docker.LabelGatewayAttached).
+//
+// That last one is the whole reason the label exists. Under `open` a VPC's
+// isolation follows its gateway, and a CLI that assumed a gateway-less VPC
+// would want `internal=true` for every network on the machine — reporting a
+// mismatch on every gateway-attached VPC and then "repairing" it into a state
+// that contradicts the template, which the daemon's next reconcile would flip
+// straight back. Reading the fact is the only honest option available here;
+// inventing it is worse than declining to compare.
+func (nc *networkContext) specs(ctx context.Context) ([]networkSpecTarget, error) {
+	var specs []networkSpecTarget
 	for _, spec := range dataplane.PlaneSpecs(nc.cfg) {
-		specs = append(specs, spec.Resolve(ctx, nc.dc))
+		specs = append(specs, networkSpecTarget{spec: spec.Resolve(ctx, nc.dc), isolationKnown: true})
 	}
 
 	networks, err := nc.dc.ListNetworks(ctx, "ec2")
@@ -236,11 +310,61 @@ func (nc *networkContext) specs(ctx context.Context) ([]docker.ResolvedNetworkSp
 		if !strings.HasPrefix(n.Name, prefix) {
 			continue
 		}
-		vpcID := strings.TrimPrefix(n.Name, prefix)
-		spec := dataplane.VPCNetworkSpec(nc.cfg, vpcID, n.Subnet(), n.Instance(), false)
-		specs = append(specs, spec.Resolve(ctx, nc.dc))
+		gateway, known := gatewayAttached(n.Labels)
+		specs = append(specs, networkSpecTarget{
+			spec: dataplane.VPCNetworkSpec(nc.cfg, dataplane.VPCNetwork{
+				VPCID:              strings.TrimPrefix(n.Name, prefix),
+				Subnet:             n.Subnet(),
+				Owner:              n.Instance(),
+				Internal:           dataplane.VPCNetworkInternal(nc.cfg, gateway),
+				HasInternetGateway: gateway,
+			}).Resolve(ctx, nc.dc),
+			isolationKnown: known,
+			owner:          n.Instance(),
+		})
 	}
 	return specs, nil
+}
+
+// networkSpecTarget is a desired state plus what this command is entitled to
+// conclude from it.
+type networkSpecTarget struct {
+	spec docker.ResolvedNetworkSpec
+
+	// isolationKnown reports whether the internet-gateway fact behind the
+	// isolation could be established. False for a VPC network created before
+	// Overcast recorded it, where the isolation and the spec hash that covers it
+	// are not this command's to judge.
+	isolationKnown bool
+
+	// owner is the instance label on the live network, when it has one.
+	owner string
+}
+
+// gatewayAttached reads the recorded internet-gateway fact off a network's
+// labels. The second result is false when the network predates the label, which
+// is "not knowable from here" and never "no gateway".
+func gatewayAttached(labels map[string]string) (attached, known bool) {
+	v, ok := labels[docker.LabelGatewayAttached]
+	if !ok {
+		return false, false
+	}
+	return v == "true", true
+}
+
+// unknowableFields are the comparisons that depend on the internet-gateway
+// fact. When that fact could not be read, these are dropped from the diff
+// rather than guessed at — and the drop is printed, so a clean report never
+// silently means "I did not look".
+func unknowableFields(diffs []docker.NetworkFieldDiff) []docker.NetworkFieldDiff {
+	kept := make([]docker.NetworkFieldDiff, 0, len(diffs))
+	for _, d := range diffs {
+		if d.Field == "internal" || d.Field == docker.LabelSpecHash {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	return kept
 }
 
 // classifyAttached splits the containers on a network into the ones Overcast
@@ -290,7 +414,7 @@ func (nc *networkContext) classifyAttached(ctx context.Context, info *docker.Net
 func selectWork(targets []networkTarget, force bool) []networkTarget {
 	work := make([]networkTarget, 0, len(targets))
 	for _, t := range targets {
-		if t.absent {
+		if t.absent || t.skipped {
 			continue
 		}
 		if len(t.diffs) == 0 && !force {
@@ -302,23 +426,55 @@ func selectWork(targets []networkTarget, force bool) []networkTarget {
 }
 
 // report prints the verification for every target — the `status` subcommand.
-func (nc *networkContext) report(cmd *cobra.Command, targets []networkTarget) error {
+//
+// Returns true when everything is in its configured state, which is what the
+// command's exit status is built from: a CI caller needs something to assert on
+// besides parsing this text.
+func (nc *networkContext) report(cmd *cobra.Command, targets []networkTarget) bool {
 	out := cmd.OutOrStdout()
+	ok := true
 	for _, t := range targets {
 		switch {
+		case t.skipped:
+			fmt.Fprintf(out, "%s: skipped — belongs to another Overcast instance (%s)\n",
+				t.spec.Name, t.otherOwn)
 		case t.absent:
 			fmt.Fprintf(out, "%s: absent — the daemon creates it on its next start\n", t.spec.Name)
 		case len(t.diffs) == 0:
-			fmt.Fprintf(out, "%s: ok (internal=%t, spec %s)\n", t.spec.Name, t.info.Internal, t.spec.SpecHash())
+			fmt.Fprintf(out, "%s: ok (internal=%t, spec %s)%s\n",
+				t.spec.Name, t.info.Internal, t.spec.SpecHash(), nc.egressNote(t))
 		default:
-			fmt.Fprintf(out, "%s: NOT in the configured state\n", t.spec.Name)
+			ok = false
+			fmt.Fprintf(out, "%s: NOT in the configured state%s\n", t.spec.Name, nc.egressNote(t))
 			for _, d := range t.diffs {
 				fmt.Fprintf(out, "    %s\n", d)
 			}
 			nc.printAttachments(out, t)
 		}
+		if !t.skipped && !t.absent && !t.isolationKnown {
+			fmt.Fprintf(out, "    (isolation and spec hash not compared: this network predates the "+
+				"recorded gateway state, so only the daemon can say what it should be)\n")
+		}
 	}
-	return nil
+	return ok
+}
+
+// egressNote says where an isolated network's containers actually get their
+// egress, which is the one thing `internal=true` does not tell you.
+//
+// Under `open` a VPC with no internet gateway keeps an `--internal` bridge —
+// honest about the template — while its containers reach the internet through
+// the routable control plane they are also on. That combination is exactly the
+// confusion #1564 was about, and `docker network inspect` will not explain it,
+// so the place it gets read is the place it gets said.
+func (nc *networkContext) egressNote(t networkTarget) string {
+	if t.info == nil || !t.info.Internal || !strings.HasPrefix(t.spec.Name, nc.cfg.VPCNetworkPrefix()) {
+		return ""
+	}
+	if egressModeName(nc.cfg) == config.VPCEgressNone {
+		return " — no egress (OVERCAST_VPC_EGRESS=none)"
+	}
+	return " — egress via " + nc.cfg.ControlNetwork()
 }
 
 // printPlan prints what a reset would do, which is also what --dry-run prints:
@@ -360,13 +516,13 @@ func (nc *networkContext) printAttachments(out interface{ Write([]byte) (int, er
 // it does not, then remove and recreate. Docker refuses to remove a network
 // with any endpoint on it, so a rebuild that skipped either step would fail
 // with a 403 naming nothing useful.
-func (nc *networkContext) apply(cmd *cobra.Command, work []networkTarget) error {
+func (nc *networkContext) apply(cmd *cobra.Command, work []networkTarget, force bool) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	var failures []string
 
 	for _, t := range work {
-		if err := nc.rebuild(ctx, out, t); err != nil {
+		if err := nc.rebuild(ctx, out, t, force); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}
@@ -426,7 +582,7 @@ func egressModeName(cfg *config.Config) config.VPCEgressMode {
 // service or test harness. Those come off the network — they have to, or the
 // removal is refused — and they keep running, and the plan said so before any
 // of this happened.
-func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkTarget) error {
+func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkTarget, force bool) error {
 	// The same lock the daemon's own repair paths take, so a rebuild started
 	// here cannot interleave with one an Overcast in this process is doing. A
 	// separate Overcast process is kept off this network by the ownership
@@ -440,7 +596,11 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 	if err != nil || info == nil {
 		return fmt.Errorf("%s: vanished before it could be rebuilt", t.spec.Name)
 	}
-	if len(t.spec.Diff(info)) == 0 {
+	// Re-diffing under the lock is what stops two resets, or a reset racing the
+	// running daemon, from rebuilding the same network twice. --force is the
+	// operator saying they want the rebuild regardless, so it skips the check
+	// rather than being printed in the plan and then silently dropped here.
+	if !force && len(t.spec.Diff(info)) == 0 {
 		fmt.Fprintf(out, "%s: already in the configured state; left alone\n", t.spec.Name)
 		return nil
 	}
@@ -480,4 +640,40 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 	}
 	fmt.Fprintf(out, "rebuilt %s (internal=%t, spec %s)\n", t.spec.Name, t.spec.Internal, t.spec.SpecHash())
 	return nil
+}
+
+// instanceIdentity is the sweep-domain identity of the daemon this command is
+// pointed at — the value stamped into `overcast.instance` on the networks it
+// created.
+//
+// It comes from the running daemon's `/_overcast/health`, because it lives in
+// the state store and this process has none. When the daemon is not running it
+// is unknowable, and the caller must treat every labelled network as one it
+// cannot prove is its own — see networkSpecTarget.foreignTo. That is the
+// conservative direction: the cost of guessing wrong is rebuilding a network
+// another instance is serving.
+func (nc *networkContext) instanceIdentity(ctx context.Context) string {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/_overcast/health", nc.cfg.Port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ""
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var health struct {
+		Docker struct {
+			Instance string `json:"instance"`
+		} `json:"docker"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return ""
+	}
+	return health.Docker.Instance
 }

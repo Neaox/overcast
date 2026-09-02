@@ -54,6 +54,21 @@ const (
 	// isolation surprises someone can be traced to the mode that chose it
 	// without reading a log from a previous boot.
 	LabelEgressMode = "overcast.network.egress"
+
+	// LabelGatewayAttached records whether the VPC had an internet gateway when
+	// the network was last created, as "true" or "false". Only VPC networks
+	// carry it.
+	//
+	// It is the input to the isolation decision, written down beside the
+	// outcome, and it exists for readers that have no state store to ask —
+	// `overcast network status` and `overcast network reset` above all. Without
+	// it the CLI cannot compute the same desired state the daemon does for a
+	// gateway-attached VPC, and a CLI that guesses would report a mismatch that
+	// is not there and then "repair" the network into one that is.
+	//
+	// Absent on a network created before this label existed, which the CLI reads
+	// as "this fact is not knowable from here" rather than as "false".
+	LabelGatewayAttached = "overcast.network.gateway"
 )
 
 // Bridge driver options Overcast sets explicitly rather than inheriting.

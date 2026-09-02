@@ -183,6 +183,18 @@ export interface DockerHealth {
    * reason.
    */
   networks?: DockerNetworkStatus[]
+  /**
+   * Instance is this Overcast's sweep-domain identity — the value stamped
+   * into LabelInstance on the Docker resources it creates
+   * (serviceutil.InstanceDomain). Empty when it could not be established.
+   *
+   * Reported because ownership is otherwise unknowable from outside the
+   * process, and the tools that most need it are outside: `overcast network
+   * reset` has to decide whether a network carrying somebody's instance label
+   * is this daemon's before it rebuilds it. Without this it either guesses or
+   * rebuilds a neighbour's live network in silence.
+   */
+  instance?: string
   lastEvent?: string
   lastEventAt?: string
 }

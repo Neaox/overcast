@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/overcast-sh/overcast/internal/config"
@@ -229,36 +230,59 @@ func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
 	return !hasInternetGateway
 }
 
+// VPCNetwork describes one VPC's Docker network to VPCNetworkSpec.
+//
+// A struct rather than six positional parameters because two of them are bools
+// that mean opposite-sounding things — Internal and HasInternetGateway — and a
+// call site that transposes them compiles and is wrong in the direction nobody
+// checks.
+type VPCNetwork struct {
+	// VPCID names the VPC, and through cfg.VPCNetwork the Docker network.
+	VPCID string
+
+	// Subnet is the CIDR the strategy picked. Empty leaves IPAM to Docker.
+	Subnet string
+
+	// Owner is the EC2 service's instance identity (serviceutil.InstanceDomain),
+	// stamped into docker.LabelInstance.
+	//
+	// Passed in rather than derived from cfg because it has to be the same
+	// store-scoped identity every other Docker resource is stamped with. A VPC
+	// network is the one Overcast resource whose name comes from an emulated
+	// resource id rather than from configuration, so two instances on one daemon
+	// can mint the same name — and it is the label, not the name, that decides
+	// who may remove it. An instance whose identity cannot be established stamps
+	// nothing and, by the same rule, removes nothing.
+	Owner string
+
+	// Internal is the isolation to create the network with. The caller decides
+	// it, because the caller is what has the gateway fact — see
+	// VPCNetworkInternal, which is the function that turns the fact into this.
+	Internal bool
+
+	// HasInternetGateway is that fact, recorded on the network as
+	// docker.LabelGatewayAttached so a reader with no state store can compute
+	// the same desired state this call did.
+	HasInternetGateway bool
+}
+
 // VPCNetworkSpec is the full desired state of the Docker network backing one
 // VPC, so a per-VPC network is verified against the same field-by-field
 // comparison the planes are (docker.EnsureNetwork) rather than being the one
 // network class nobody checks.
-//
-// vpcID names the VPC, subnet is the CIDR the strategy picked (empty leaves
-// IPAM to Docker), hasInternetGateway is what the template says — see
-// VPCNetworkInternal for why that currently changes nothing — and owner is the
-// EC2 service's instance identity (serviceutil.InstanceDomain).
-//
-// owner is passed in rather than derived from cfg because it has to be the
-// same store-scoped identity every other Docker resource is stamped with
-// (docker.LabelInstance). A VPC network is the one Overcast resource whose name
-// comes from an emulated resource id rather than from configuration, so two
-// instances on one daemon can mint the same name from unrelated state — and it
-// is the label, not the name, that decides who may remove it. An instance whose
-// identity cannot be established stamps nothing and, by the same rule, removes
-// nothing.
-func VPCNetworkSpec(cfg *config.Config, vpcID, subnet, owner string, hasInternetGateway bool) docker.NetworkSpec {
-	labels := docker.ManagedLabels("ec2", vpcID)
-	labels["overcast.vpc-id"] = vpcID
-	if owner != "" {
-		labels[docker.LabelInstance] = owner
+func VPCNetworkSpec(cfg *config.Config, n VPCNetwork) docker.NetworkSpec {
+	labels := docker.ManagedLabels("ec2", n.VPCID)
+	labels["overcast.vpc-id"] = n.VPCID
+	labels[docker.LabelGatewayAttached] = strconv.FormatBool(n.HasInternetGateway)
+	if n.Owner != "" {
+		labels[docker.LabelInstance] = n.Owner
 	}
 	return docker.NetworkSpec{
-		Name:       cfg.VPCNetwork(vpcID),
-		Internal:   VPCNetworkInternal(cfg, hasInternetGateway),
-		Subnet:     subnet,
+		Name:       cfg.VPCNetwork(n.VPCID),
+		Internal:   n.Internal,
+		Subnet:     n.Subnet,
 		Labels:     labels,
-		Owner:      owner,
+		Owner:      n.Owner,
 		Version:    cfg.Version,
 		EgressMode: string(egressMode(cfg)),
 	}

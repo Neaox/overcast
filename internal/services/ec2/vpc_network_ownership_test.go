@@ -144,8 +144,10 @@ func ec2Network(id, vpcID, subnet, instance string) docker.NetworkSummary {
 // about. The spec hash is computed the way production computes it, so the
 // network reads as verified rather than drifted.
 func (d *ownershipDaemon) seedFromSummary(h *Handler, n docker.NetworkSummary, internal bool) {
-	spec := dataplane.VPCNetworkSpec(h.cfg, n.Labels["overcast.vpc-id"], n.Subnet(),
-		n.Instance(), !internal).Resolve(context.Background(), nil)
+	spec := dataplane.VPCNetworkSpec(h.cfg, dataplane.VPCNetwork{
+		VPCID: n.Labels["overcast.vpc-id"], Subnet: n.Subnet(), Owner: n.Instance(),
+		Internal: internal,
+	}).Resolve(context.Background(), nil)
 	labels := make(map[string]string, len(n.Labels)+1)
 	for k, v := range n.Labels {
 		labels[k] = v
