@@ -187,6 +187,38 @@ func TestMailStore_DeleteAndClear(t *testing.T) {
 	}
 }
 
+// TestMailStore_DeleteWhere covers the filtered clear DELETE /_aws/ses uses:
+// the emails go, the SMS beside them stays, and the survivors keep their
+// order.
+func TestMailStore_DeleteWhere(t *testing.T) {
+	store := smtp.NewMailStore(0)
+	store.Add(&smtp.CapturedMessage{ID: "mail-1", Kind: smtp.KindEmail})
+	store.Add(&smtp.CapturedMessage{ID: "sms-1", Kind: smtp.KindSMS})
+	store.Add(&smtp.CapturedMessage{ID: "mail-2", Kind: smtp.KindEmail})
+	store.Add(&smtp.CapturedMessage{ID: "sms-2", Kind: smtp.KindSMS})
+
+	removed := store.DeleteWhere(func(m *smtp.CapturedMessage) bool { return m.Kind != smtp.KindEmail })
+
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+	list := store.List()
+	if len(list) != 2 || list[0].ID != "sms-2" || list[1].ID != "sms-1" {
+		t.Errorf("survivors = %v, want sms-2 then sms-1 (newest first)", ids(list))
+	}
+	if store.DeleteWhere(func(*smtp.CapturedMessage) bool { return true }) != 0 {
+		t.Error("a keep-everything predicate removed something")
+	}
+}
+
+func ids(msgs []*smtp.CapturedMessage) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		out[i] = m.ID
+	}
+	return out
+}
+
 func TestMailStore_ListNewestFirst(t *testing.T) {
 	store := smtp.NewMailStore(0)
 	store.Add(&smtp.CapturedMessage{ID: "first", From: "x@x.com"})

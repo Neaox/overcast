@@ -46,6 +46,18 @@ var nonManifestRoutes = map[string]string{
 	"/_localstack/init/{stage}": "The per-stage form of the above, on the same handler as /_overcast/init/{stage}.",
 	"/_localstack/state/reset":  "LocalStack's state-reset endpoint, on the same handler as /_overcast/reset. A test suite that resets between cases hard-codes this URL, and a 404 leaves the next case running against the previous one's resources.",
 
+	// LocalStack's /_aws/ inspection namespace — the other half of the
+	// namespace above, and the half a test suite hits rather than a
+	// healthcheck: `curl localhost:4566/_aws/ses` is written into one
+	// assertion per test that sends an email. Each served path translates a
+	// store the /_overcast/ API already exposes into LocalStack's wire shape;
+	// see internal/router/aws_compat.go. Same underscore guarantee as
+	// /_localstack/health above.
+	"/_aws/ses":          "LocalStack's captured-email endpoint (GET and DELETE), over the same inbox store as /_overcast/ses/inbox/messages, rendered in LocalStack's {\"messages\": [...]} shape.",
+	"/_aws/sqs/messages": "LocalStack's queue peek, over the same read as GET /{accountID}/{queueName}, rendered as LocalStack's ReceiveMessageResponse in XML or JSON per Accept.",
+	"/_aws/sqs/messages/{region}/{accountID}/{queueName}": "The path form of the above, which LocalStack documents beside the ?QueueUrl= form.",
+	"/_aws/*": "The remainder of LocalStack's inspection namespace, answered with a 404 naming the Overcast endpoint instead of S3's NoSuchBucket — one route for the whole prefix, as for /_localstack/* above.",
+
 	"/restapis/{restApiId}/{stageName}/_user_request_/*": "LocalStack URL compatibility for API Gateway execute-api. The underscore mid-path is deliberate and must not be tidied into the namespace: the point is byte-identical compatibility with a URL LocalStack documents, and host-addressed callers already have the namespaced route. See docs/plans/non-canonical-url-namespace.md section 3.",
 	"/restapis/{restApiId}/{stageName}/_user_request_":   "The stage root of the route above — LocalStack's URL with an empty path. Same reason, registered separately because chi's wildcard does not match the empty remainder.",
 

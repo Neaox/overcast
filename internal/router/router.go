@@ -1141,6 +1141,19 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	r.HandleFunc(middleware.LocalStackPrefix+"*", newLocalStackNotFoundHandler(compatHinter))
 
+	// LocalStack's /_aws/ inspection namespace: the half a test suite hits,
+	// to read back what SES "sent" and what is sitting in a queue. Each served
+	// path is a translation of an Overcast store the /_overcast/ API already
+	// exposes — the inbox behind /_overcast/ses/inbox, the SQS peek behind
+	// GET /{account}/{queue} — into LocalStack's wire shape; see aws_compat.go
+	// for the shapes, and for what is left to the 404.
+	r.Get(awsCompatSESPath, newAWSCompatSESListHandler(mailStore, compatHinter))
+	r.Delete(awsCompatSESPath, newAWSCompatSESDeleteHandler(mailStore, compatHinter))
+	sqsPeek := newAWSCompatSQSPeekHandler(cfg, sqsSvc, compatHinter)
+	r.Get(awsCompatSQSMessagesPath, sqsPeek)
+	r.Get(awsCompatSQSMessagesPathForm, sqsPeek)
+	r.HandleFunc(middleware.AWSCompatPrefix+"*", newAWSCompatNotFoundHandler(compatHinter))
+
 	// GET /_overcast/topology — full cross-region resource graph for the system map.
 	r.Get("/_overcast/topology", newTopologyHandler(cfg, store))
 

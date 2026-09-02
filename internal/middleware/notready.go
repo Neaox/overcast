@@ -60,6 +60,16 @@ const (
 // answers rather than points elsewhere.
 const LocalStackHealthPath = LocalStackPrefix + "health"
 
+// AWSCompatPrefix is the third compatibility root, and the other half of
+// LocalStack's namespace. /_localstack/ is what a healthcheck or an
+// init-script poll hits; /_aws/ is what a *test suite* hits, to read back the
+// side effects the AWS API itself gives no way to observe — the emails SES
+// "sent", the messages sitting in a queue. `curl localhost:4566/_aws/ses` is
+// written into one assertion per test that sends an email, which is why it is
+// served rather than documented. Same underscore guarantee as the two roots
+// above; see router/aws_compat.go for what is served under it.
+const AWSCompatPrefix = "/_aws/"
+
 // NotReady rejects a request with a 503 while the storage backend is still
 // completing a one-time startup migration (see internal/state/migrate.go),
 // instead of letting the request observe whatever the store would otherwise
@@ -118,5 +128,6 @@ func NotReady(store state.Store) func(http.Handler) http.Handler {
 func isInternalPath(path string) bool {
 	return strings.HasPrefix(path, InternalPrefix) ||
 		path == LegacyHealthPath ||
-		strings.HasPrefix(path, LocalStackPrefix)
+		strings.HasPrefix(path, LocalStackPrefix) ||
+		strings.HasPrefix(path, AWSCompatPrefix)
 }

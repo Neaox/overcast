@@ -48,7 +48,10 @@ everything sent through it, plus deliveries that never touch SMTP at all:
 The same messages are available over HTTP at
 `GET /_overcast/ses/inbox/messages`. The buffer holds the most recent 500
 messages (`OVERCAST_SMTP_INBOX_MAX`); set `OVERCAST_SMTP_HOST` to relay to a
-real server instead of capturing.
+real server instead of capturing. A test suite written against LocalStack's
+`GET /_aws/ses` works unchanged: the emails are served there too, in
+LocalStack's shape — see
+[Debug endpoints § Compatibility aliases](../debug-endpoints.md#compatibility-aliases).
 
 ## What works
 

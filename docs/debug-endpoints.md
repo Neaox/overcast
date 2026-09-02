@@ -44,7 +44,7 @@ look up.
 
 ## Compatibility aliases
 
-`/_overcast/*` is what to point new tooling at. Five older URLs are served as
+`/_overcast/*` is what to point new tooling at. Seven older URLs are served as
 well, because they are already written into healthchecks, wait strategies and
 test suites that predate them:
 
@@ -55,6 +55,8 @@ test suites that predate them:
 | `/_localstack/init`             | LocalStack's init-hook status     | Identical to `/_overcast/init` — the shapes already matched      |
 | `/_localstack/init/{stage}`     | One stage of the above            | Identical to `/_overcast/init/{stage}`                          |
 | `POST /_localstack/state/reset` | LocalStack's state reset          | `{"status":"reset"}`; LocalStack returns an empty body          |
+| `GET`/`DELETE /_aws/ses`        | LocalStack's captured emails      | LocalStack's `{"messages": [...]}` shape, over the same inbox as `/_overcast/ses/inbox/messages` |
+| `/_aws/sqs/messages`            | LocalStack's queue peek           | An SQS `ReceiveMessageResponse`, XML by default and JSON under `Accept: application/json` |
 
 The health pair returns 200 whenever `/_overcast/health` does. This matters
 more than it looks: a container healthcheck that 404s marks Overcast unhealthy,
@@ -66,9 +68,23 @@ to LocalStack's contract: the same `BOOT`/`START`/`READY`/`SHUTDOWN` stage
 names, the same `UNKNOWN`/`RUNNING`/`SUCCESSFUL`/`ERROR` script states. Both
 paths run the same handler, so they cannot drift apart.
 
-Anything else under `/_localstack/` answers 404 with the Overcast endpoint that
-replaces it, rather than falling through to S3's `NoSuchBucket` — see
-[Migrating from LocalStack](./migration-from-localstack.md#endpoint-mapping)
+The `/_aws/` pair is what a test suite carried over from LocalStack asserts
+against, one assertion per test that sends an email or a message. `/_aws/ses`
+lists emails only — the inbox also holds SMS, webhook and push captures — with
+`?id=` and `?email=` (source address) filters; `DELETE` clears the emails, or
+one by `?id=`, and answers 204. `Region` and `RawData` are not in the body:
+the capture does not hold a region, and cannot tell a raw send from a composed
+one. `/_aws/sqs/messages` takes `?QueueUrl=`, `?QueueName=` with an optional
+`?QueueRegion=`, or the path form `/{region}/{account}/{queue}`; like
+LocalStack it hides in-flight and delayed messages unless `ShowInvisible=true`
+or `ShowDelayed=true`, and it never consumes anything. Receipt handles are the
+messages' real ones rather than LocalStack's placeholder, so one read from the
+peek can be passed to `DeleteMessage`. An empty queue is `"Message": []` in
+the JSON form, not null.
+
+Anything else under `/_localstack/` or `/_aws/` answers 404 with the Overcast
+endpoint that replaces it, rather than falling through to S3's `NoSuchBucket`
+— see [Migrating from LocalStack](./migration-from-localstack.md#endpoint-mapping)
 for the full table.
 
 ## Trace retention
