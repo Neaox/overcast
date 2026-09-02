@@ -44,6 +44,23 @@ type Status struct {
 	// reason.
 	Networks []NetworkStatus `json:"networks,omitempty"`
 
+	// Decisions is what this run *resolved* each managed network's isolation
+	// to, and why. Networks is what the daemon has; this is what the
+	// configuration asked for and what it got.
+	//
+	// They are separate because they have different lifetimes, and conflating
+	// them is a bug this file has already had once. An entry leaves Networks
+	// when the network does — ForgetNetwork, on a Docker `destroy` — so a rule
+	// that reads a *configuration* fact out of Networks stops firing the moment
+	// somebody runs `overcast network reset`, while the fact itself is
+	// unchanged. A decision outlives the network it was applied to.
+	//
+	// Not in the health payload: while the network exists, `networks` carries
+	// the same isolation and reason, and a second array saying it again would
+	// be one more thing to keep consistent. This exists for the advisory rules,
+	// which have to keep working in the window where `networks` does not.
+	Decisions []NetworkDecision `json:"-"`
+
 	// Instance is this Overcast's sweep-domain identity — the value stamped
 	// into LabelInstance on the Docker resources it creates
 	// (serviceutil.InstanceDomain). Empty when it could not be established.
@@ -57,6 +74,26 @@ type Status struct {
 
 	LastEvent   string `json:"lastEvent,omitempty"`
 	LastEventAt string `json:"lastEventAt,omitempty"`
+}
+
+// NetworkDecision is one network's resolved isolation and the reason for it, as
+// decided at probe time. See Status.Decisions.
+type NetworkDecision struct {
+	// Network is the Docker network name the decision was applied to.
+	Network string
+
+	// Internal is what the isolation was resolved to.
+	Internal bool
+
+	// Reason names what decided it, in the vocabulary docker.InternalDecision
+	// uses: "OVERCAST_VPC_EGRESS=none",
+	// "OVERCAST_CONTROL_PLANE_INTERNAL=false", or one of those followed by
+	// ", overridden: …" where the host would not allow what the mode asked for.
+	//
+	// Empty for a network whose isolation is a constant of the model rather
+	// than a decision, which is why callers must not read an empty reason as
+	// "no override".
+	Reason string
 }
 
 // Tracker holds the canonical Docker connectivity state. The Supervisor writes
@@ -84,6 +121,10 @@ func (t *Tracker) Snapshot() Status {
 	if len(t.status.Networks) > 0 {
 		s.Networks = make([]NetworkStatus, len(t.status.Networks))
 		copy(s.Networks, t.status.Networks)
+	}
+	if len(t.status.Decisions) > 0 {
+		s.Decisions = make([]NetworkDecision, len(t.status.Decisions))
+		copy(s.Decisions, t.status.Decisions)
 	}
 	return s
 }
@@ -133,7 +174,21 @@ func (t *Tracker) RecordNetworks(networks []NetworkStatus) {
 		if !replaced {
 			t.status.Networks = append(t.status.Networks, n)
 		}
+		t.recordDecisionLocked(n)
 	}
+}
+
+// recordDecisionLocked keeps the resolved isolation beside the observed state.
+// Caller holds t.mu.
+func (t *Tracker) recordDecisionLocked(n NetworkStatus) {
+	d := NetworkDecision{Network: n.Name, Internal: n.Internal, Reason: n.Reason}
+	for i, existing := range t.status.Decisions {
+		if existing.Network == d.Network {
+			t.status.Decisions[i] = d
+			return
+		}
+	}
+	t.status.Decisions = append(t.status.Decisions, d)
 }
 
 // ForgetNetwork drops one network from the report.
@@ -151,6 +206,10 @@ func (t *Tracker) RecordNetworks(networks []NetworkStatus) {
 // already means by absence — see the Networks field, and advisoryInput.Networks:
 // "no networks reported" is indistinguishable from "no Docker", so it fires
 // nothing. The next probe re-establishes the truth.
+//
+// The decision is deliberately kept. What went away is the network, not the
+// configuration that asked for it — and the advisory rules that read a
+// configuration fact must not be switched off by a `docker network rm`.
 func (t *Tracker) ForgetNetwork(name string) {
 	if name == "" {
 		return

@@ -87,9 +87,14 @@ const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 // docs browser's slug for that heading — see dataDirDocsPath.
 const vpcNetworkDocsPath = "services/ec2/limitations.md#internet-gateways-and-isolation"
 
-// egressModeDocsPath deep-links the vpc-egress-not-withheld advisory to the
-// section of the networking page that explains what each egress mode can and
-// cannot deliver, and on which hosts.
+// egressModeDocsPath deep-links the egress advisories to the section of the
+// networking page that explains what each mode can and cannot deliver, and on
+// which hosts.
+//
+// One constant for every egress rule. `none` and `routed` fail on the same host
+// for the same reason and the page explains both in one section, so a second
+// constant with the same value would only be somewhere for the two to drift
+// apart — see controlPlaneRoutable, which exists for the same reason.
 const egressModeDocsPath = "networking.md#egress-modes"
 
 // lambdaInitVolumeDocsPath deep-links the lambda-init-volume-foreign advisory
@@ -212,11 +217,49 @@ type advisoryInput struct {
 	// can fail to keep the promise, so `open` fires nothing.
 	VPCEgress config.VPCEgressMode
 
-	// ControlNetwork is cfg.ControlNetwork(), so the rule below can find that
-	// network's live isolation in Networks. A routable control plane is how a
-	// withholding mode fails to withhold: every container Overcast starts is
-	// on it, and takes its default route from it.
-	ControlNetwork string
+	// ControlPlane is what this run resolved the control plane's isolation to,
+	// and why — docker.Status.Decisions, narrowed to cfg.ControlNetwork().
+	//
+	// The *decision*, not the network record, and that distinction is the whole
+	// reason this field exists. A routable control plane is how a withholding
+	// mode fails to withhold: every container Overcast starts is on it and
+	// takes its default route from it. Reading that out of Networks made the
+	// rule depend on a record that ForgetNetwork deletes on a Docker `destroy`,
+	// so `overcast network reset overcast_control` switched the advisory off
+	// while the shortfall it reports was entirely unchanged.
+	//
+	// The zero value means no decision was recorded — Docker was never probed,
+	// or this build has no supervisor — which fires nothing.
+	ControlPlane docker.NetworkDecision
+}
+
+// controlPlaneRoutable reports whether the control plane was left routable, so
+// that every container Overcast starts takes a route out through it.
+//
+// Shared by the egress rules rather than each scanning for itself: `none` and
+// `routed` both promise to withhold egress, both fail to keep the promise on a
+// host that will not take an internal control plane, and a second copy of this
+// scan is a second place for the two to disagree about what "routable" means.
+func controlPlaneRoutable(in advisoryInput) bool {
+	return in.ControlPlane.Network != "" && !in.ControlPlane.Internal
+}
+
+// controlPlaneOverriddenByHost reports whether the control plane was left
+// routable because *this host* could not take an isolated one, as opposed to
+// because the operator pinned it that way.
+//
+// The two are different facts and only one of them is about the host, which
+// matters because the advisory explains itself: telling an operator who set
+// OVERCAST_CONTROL_PLANE_INTERNAL=false that "containers on this host reach the
+// Runtime API at the host's own address" states a probe result that was never
+// obtained — dataplane.ControlPlaneInternal returns on the pin before it
+// consults the host at all. Asserting an unchecked fact is the thing this
+// release is about not doing.
+//
+// The marker is dataplane's, written into the reason at the one place that can
+// know: the decision itself.
+func controlPlaneOverriddenByHost(in advisoryInput) bool {
+	return strings.Contains(in.ControlPlane.Reason, ", overridden: ")
 }
 
 // computeAdvisories is the single generator function behind the
@@ -298,29 +341,31 @@ func computeAdvisories(in advisoryInput) []Advisory {
 // `none` does not, because `none` isolates the shared data plane too. If both
 // rules land, they are worth folding into one.
 func checkEgressNotWithheld(in advisoryInput) *Advisory {
-	if in.VPCEgress != config.VPCEgressNone || in.ControlNetwork == "" {
+	if in.VPCEgress != config.VPCEgressNone || !controlPlaneRoutable(in) {
 		return nil
 	}
-	routable := false
-	for _, n := range in.Networks {
-		if n.Name == in.ControlNetwork && !n.Internal {
-			routable = true
-			break
-		}
-	}
-	if !routable {
-		return nil
+	name := in.ControlPlane.Network
+	why := "The control plane " + name + " was left routable, so every container Overcast starts " +
+		"takes a route out from it. "
+	fix := "Run Overcast in a container, or against a native Linux Docker daemon, for the whole of `none`."
+	if controlPlaneOverriddenByHost(in) {
+		why += "Containers on this host reach the Lambda Runtime API at the host's own address, which " +
+			"an internal network would sever, stranding every invocation at INIT, so Overcast left it " +
+			"routable rather than isolating it. "
+	} else {
+		// The operator pinned it. Naming the deprecated variable is the whole
+		// of the fix here, and the host has nothing to do with it — the pin is
+		// applied before the host is ever asked.
+		why += "That was asked for, not imposed: " + in.ControlPlane.Reason + ". "
+		fix = "Unset OVERCAST_CONTROL_PLANE_INTERNAL — it is deprecated, and it contradicts the egress " +
+			"mode you have set."
 	}
 	return &Advisory{
 		Severity: advisorySeverityWarning,
 		Code:     advisoryCodeEgressNotWithheld,
 		Title:    "OVERCAST_VPC_EGRESS=none cannot withhold egress on this host",
-		Detail: "The control plane " + in.ControlNetwork + " was left routable, so every container " +
-			"Overcast starts takes a route out from it: containers on this host reach the Lambda " +
-			"Runtime API at the host's own address, which an internal network would sever, stranding " +
-			"every invocation at INIT. Every data plane is isolated as asked, but this stack is NOT " +
-			"hermetic — a function can still reach the internet and real AWS endpoints. Run Overcast " +
-			"in a container, or against a native Linux Docker daemon, for the whole of `none`.",
+		Detail: why + "Every data plane is isolated as asked, but this stack is NOT hermetic — a " +
+			"function can still reach the internet and real AWS endpoints. " + fix,
 		DocsPath: egressModeDocsPath,
 	}
 }

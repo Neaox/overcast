@@ -216,6 +216,18 @@ type networkTarget struct {
 	isolationKnown bool
 }
 
+// cannotJudge reports a network that is here, is ours to act on, and whose
+// desired isolation this command cannot establish — a per-VPC network from
+// before Overcast recorded the internet-gateway fact.
+//
+// One predicate, three readers: what to leave out of the plan, what to explain
+// in an empty plan, and what to footnote in `status`. They were three copies of
+// the same condition, which is how the two "cannot judge" sentences drifted
+// apart in the first place.
+func (t networkTarget) cannotJudge() bool {
+	return !t.skipped && !t.absent && !t.isolationKnown
+}
+
 // targets resolves the networks to act on and inspects each.
 //
 // With no names it takes every network this configuration names: the two
@@ -477,7 +489,7 @@ func selectWork(targets []networkTarget, force bool) []networkTarget {
 func reportNothingToDo(out io.Writer, targets []networkTarget) {
 	var unjudgeable []networkTarget
 	for _, t := range targets {
-		if !t.skipped && !t.absent && !t.isolationKnown {
+		if t.cannotJudge() {
 			unjudgeable = append(unjudgeable, t)
 		}
 	}
@@ -529,7 +541,7 @@ func (nc *networkContext) report(cmd *cobra.Command, targets []networkTarget) bo
 			}
 			nc.printAttachments(out, t)
 		}
-		if !t.skipped && !t.absent && !t.isolationKnown {
+		if t.cannotJudge() {
 			fmt.Fprintf(out, "    (isolation and spec hash not compared: this network predates the "+
 				"recorded gateway state, so only the daemon can say what it should be)\n")
 		}

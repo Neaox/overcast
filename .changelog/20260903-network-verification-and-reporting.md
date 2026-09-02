@@ -9,5 +9,6 @@
   `/_overcast/health` no longer names that command for those networks either; the repair is a restart, and it now says so
 + [networking] a console advisory when `OVERCAST_VPC_EGRESS=none` cannot withhold egress on this host.
   on Docker Desktop with Overcast on the host, containers reach the Lambda Runtime API at the host's own address and an internal control plane would sever it, so that one network stays routable and every container keeps a route out. `none` is set to *prove* a stack has no external dependency, and until now the shortfall was one WARN at boot
+  it distinguishes a shortfall from a choice: where the deprecated `OVERCAST_CONTROL_PLANE_INTERNAL=false` is what left the plane routable, the host was never consulted, and the advisory says the isolation was given up rather than refused
 * [lambda] the Runtime API reachability probe can now actually fetch its image.
   the 60s image pull was nested inside the 45s budget for the whole candidate walk, so on a cold machine with a slow link it was truncated, every candidate came back unmeasured, and the address was chosen unverified. The pull happens once, before the walk, against its own clock

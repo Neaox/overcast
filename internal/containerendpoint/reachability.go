@@ -149,7 +149,8 @@ const (
 	// budget until #1586, which is why the 60 s could not be reached.
 	//
 	// The pull therefore happens once, before the walk, against the caller's own
-	// context — see prepareProbe in listen.go.
+	// context — see resolveDeps.prepare in listen.go, which runs
+	// ensureProbeImage once before the walk's clock starts.
 	probeImagePullTimeout = 60 * time.Second
 
 	// probeAcceptGrace is how long the accept side is given after the probe
@@ -157,7 +158,28 @@ const (
 	// every ordinary case; this only covers the daemon reporting it before the
 	// connection has been handed to us.
 	probeAcceptGrace = 250 * time.Millisecond
+
+	// probeSerialBudget is what a caller has to allow for: the image pull and
+	// the candidate walk run in series, the first against the caller's own
+	// context and the second under its own clock derived from it.
+	//
+	// Named so the relationship is written down somewhere rather than living in
+	// two callers' heads. lambda.runtimeAPIListen allows two minutes, and the
+	// assertion below fails the build if these two ever grow past it — which is
+	// how #1586 came back once already, as a 60s pull nested inside a 45s walk.
+	probeSerialBudget = probeImagePullTimeout + probeTotalBudget
+
+	// runtimeAPIListenBound mirrors the outer context lambda.runtimeAPIListen
+	// gives ResolveListen. Duplicated deliberately: the packages do not import
+	// each other, and a compile-time check against a copy still catches the
+	// change that matters, which is one of these three constants moving.
+	runtimeAPIListenBound = 2 * time.Minute
 )
+
+// A pull and a walk that together outlast the caller's context reintroduce
+// #1586: the pull is truncated, every candidate returns unmeasured, and the
+// address is chosen with nothing established. Fail the build instead.
+const _ = uint(runtimeAPIListenBound - probeSerialBudget)
 
 // runnerClient is the slice of *docker.Client the reachability probe needs.
 // Separate from listenClient so a test can supply a container runner without
@@ -346,7 +368,7 @@ func dockerDialer(dc runnerClient, network string, logger *zap.Logger) dialFromC
 		}
 		// The image is already here: resolveListen pulls it once, before the
 		// walk's clock starts, so nothing in this function competes with the
-		// pull for the candidate's time. See prepareProbe and
+		// pull for the candidate's time. See resolveDeps.prepare and
 		// probeImagePullTimeout.
 		ctx, cancel := context.WithTimeout(ctx, probeContainerTimeout)
 		defer cancel()

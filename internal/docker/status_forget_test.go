@@ -115,3 +115,71 @@ func TestWatcher_keepsTheRecordOnAContainerEvent(t *testing.T) {
 		t.Fatalf("networks = %+v, want the record kept", got)
 	}
 }
+
+// The record goes; the decision stays. A rule about what this configuration
+// asked for must not be switched off by somebody rebuilding a network — which
+// is exactly what `overcast network reset` does, and what the forget above
+// exists to notice.
+func TestForgetNetwork_keepsTheResolvedDecision(t *testing.T) {
+	tr := NewTracker()
+	tr.RecordNetworks([]NetworkStatus{{
+		Name:     "overcast_control",
+		Internal: false,
+		Reason:   "OVERCAST_VPC_EGRESS=none, overridden: an internal control plane would sever the Runtime API on this host",
+	}})
+
+	tr.ForgetNetwork("overcast_control")
+
+	snap := tr.Snapshot()
+	if len(snap.Networks) != 0 {
+		t.Fatalf("networks = %+v, want the forgotten network gone", snap.Networks)
+	}
+	if len(snap.Decisions) != 1 {
+		t.Fatalf("decisions = %+v, want the decision kept", snap.Decisions)
+	}
+	got := snap.Decisions[0]
+	if got.Network != "overcast_control" || got.Internal {
+		t.Errorf("decision = %+v, want the control plane recorded as routable", got)
+	}
+	if got.Reason == "" {
+		t.Error("decision lost its reason; the advisory needs it to tell a shortfall from an override")
+	}
+}
+
+// A destroy arriving after the probe recorded the network — the ordering the
+// startup race can produce — costs the observed entry and nothing else. The
+// decision the advisories read is unaffected either way round, which is what
+// keeps that race off the critical path.
+func TestForgetNetwork_aLateDestroyDoesNotUndoTheProbeDecision(t *testing.T) {
+	tr := NewTracker()
+	w := &Watcher{tracker: tr}
+
+	// Probe records; the watcher's destroy for the same rebuild lands after it.
+	tr.RecordNetworks([]NetworkStatus{{Name: "overcast", Internal: true, Reason: "OVERCAST_VPC_EGRESS=none"}})
+	w.recordTrackerEvent(event("network", "destroy", "overcast"))
+
+	snap := tr.Snapshot()
+	if len(snap.Networks) != 0 {
+		t.Fatalf("networks = %+v, want the entry dropped by the late destroy", snap.Networks)
+	}
+	if len(snap.Decisions) != 1 || !snap.Decisions[0].Internal {
+		t.Fatalf("decisions = %+v, want the probe's decision intact", snap.Decisions)
+	}
+}
+
+// Re-recording after a forget puts the network back and updates the decision in
+// place rather than appending a second one.
+func TestRecordNetworks_updatesTheDecisionInPlace(t *testing.T) {
+	tr := NewTracker()
+	tr.RecordNetworks([]NetworkStatus{{Name: "overcast_control", Internal: true, Reason: "first"}})
+	tr.ForgetNetwork("overcast_control")
+	tr.RecordNetworks([]NetworkStatus{{Name: "overcast_control", Internal: false, Reason: "second"}})
+
+	snap := tr.Snapshot()
+	if len(snap.Decisions) != 1 {
+		t.Fatalf("decisions = %+v, want one entry per network", snap.Decisions)
+	}
+	if snap.Decisions[0].Reason != "second" || snap.Decisions[0].Internal {
+		t.Errorf("decision = %+v, want the later probe's answer", snap.Decisions[0])
+	}
+}

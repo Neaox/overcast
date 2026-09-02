@@ -1568,7 +1568,15 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 // It is an outer bound, not a budget anyone expects to spend — the walk itself
 // is capped well below this (containerendpoint's probeTotalBudget), because the
 // runtime registry does not settle until this returns and an Invoke arriving
-// meanwhile parks rather than getting the stub's honest answer. The ordinary
+// meanwhile parks rather than getting the stub's honest answer.
+//
+// **It has to stay above probeImagePullTimeout + probeTotalBudget**, which run
+// in series under it: the image is fetched once against this context before the
+// walk's own clock starts (#1586). At 60s + 45s that leaves 15s of slack, and
+// cutting into it reintroduces #1586 in a new shape — a pull truncated by an
+// outer bound instead of an inner one, every candidate unmeasured, and the
+// address chosen with nothing established. containerendpoint pins the
+// relationship from its side; this is the number it is pinned against. The ordinary
 // path is one candidate and a second or two, and the result is remembered per
 // daemon and plane (containerendpoint.HintPath), so only the first startup
 // against a given daemon pays even that.
