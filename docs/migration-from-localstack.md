@@ -107,13 +107,55 @@ you deliberately want a non-default network.
 
 | LocalStack                       | Overcast                  | Availability                   |
 | -------------------------------- | ------------------------- | ------------------------------ |
-| `/_localstack/health`            | `/_overcast/health`       | Always                         |
+| `/_localstack/health`            | **served as-is**, or `/_overcast/health` | Always          |
 | `/_localstack/health` (detailed) | `/_overcast/debug/health` | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/init`              | `/_overcast/init`         | Always                         |
 | `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always                         |
 | `/_localstack/state/reset`       | `/_overcast/reset`        | Always                         |
 | `/_localstack/info`              | `/_overcast/debug/config` | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/state`             | `/_overcast/debug/state`  | Requires `OVERCAST_DEBUG=true` |
+
+Every other path under `/_localstack/` answers 404 with the Overcast endpoint
+that replaces it, so a missed one says so instead of returning an S3 error.
+
+---
+
+## Health checks
+
+`/_localstack/health` is the one endpoint in the table you do not have to
+change. Overcast serves it, in LocalStack's response shape — a `services` map
+plus `edition` and `version` — so a compose healthcheck, a `localstack wait`,
+or a Testcontainers HTTP wait strategy carried over unedited keeps working:
+
+```yaml
+services:
+  overcast:
+    image: ghcr.io/overcast-sh/overcast:latest
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+```
+
+```typescript
+// Testcontainers, any language: the LocalStack path works unchanged.
+new GenericContainer("ghcr.io/overcast-sh/overcast-slim:latest")
+  .withExposedPorts(4566)
+  .withWaitStrategy(Wait.forHttp("/_localstack/health", 4566));
+```
+
+Prefer `/_overcast/health` for anything you are writing fresh — it reports
+per-service emulation tiers, the resolved storage backend and Docker
+connectivity, none of which LocalStack's shape has a field for.
+
+**Do fix a healthcheck that points at neither.** A 404 there is
+indistinguishable from a dead container: the orchestrator restarts Overcast,
+and on the default in-memory state backend a restart is a wipe — so a deploy
+running at the time loses the resources it had already created, and the client
+polling them is told they no longer exist. Set `OVERCAST_STATE=persistent` with
+a mounted volume if you need state to survive a restart at all.
 
 ---
 

@@ -774,6 +774,11 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // at TRACE: polling intervals of a few seconds would otherwise drown genuine
 // request activity even at DEBUG.
 func isOperationalPollPath(path string) bool {
+	// The compatibility aliases are the same probe wearing an older URL,
+	// polled on the same few-second interval and just as uninteresting.
+	if path == LegacyHealthPath || path == LocalStackHealthPath {
+		return true
+	}
 	return path == "/_overcast/health" || strings.HasPrefix(path, "/_overcast/debug/") || path == "/_overcast/debug"
 }
 

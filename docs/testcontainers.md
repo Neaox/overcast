@@ -214,3 +214,9 @@ wait for a log line Overcast does not emit. Use the
 [generic-container pattern](#other-languages-the-generic-container-pattern)
 instead. The [migration guide](./migration-from-localstack.md) covers the
 rest of a LocalStack switch-over.
+
+A hand-written wait strategy pointed at `/_localstack/health` **does** work:
+Overcast serves that path in LocalStack's response shape, so only the modules'
+image-tag parsing and log-line wait stand in the way, not the endpoint. Prefer
+`/_overcast/health` in anything new — it carries per-service emulation tiers
+and the resolved storage backend, which LocalStack's shape has no field for.

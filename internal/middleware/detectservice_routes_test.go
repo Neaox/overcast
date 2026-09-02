@@ -104,6 +104,26 @@ var registeredRouteClassification = map[string]string{
 	// owner from the second segment.
 	"/_overcast": "appsync|cloudfront|cognito|ecs|eks|events|internal|lambda|metrics|rds|secretsmanager|ses",
 
+	// The two compatibility roots, underscore-prefixed but deliberately not
+	// under "/_overcast". Their whole job is to answer at a URL somebody else's
+	// tooling already hard-codes: /_health is where Overcast's own health
+	// endpoint lived before phase 2, and /_localstack is LocalStack's
+	// operational namespace — what a compose healthcheck or a Testcontainers
+	// wait strategy carried over from LocalStack polls.
+	//
+	// A URL already written into a healthcheck cannot be migrated by renaming
+	// ours, and a 404 on one is read by an orchestrator as a dead container: it
+	// restarts it, and with the default in-memory backend a restart is a wipe.
+	// So these two are served, and recorded as permanent exceptions in
+	// router.nonManifestRoutes with the same reasoning — an addition here is
+	// still a namespace violation unless it earns an entry there too.
+	//
+	// Both classify as "internal": internalService names no owner for them,
+	// which is right, because they belong to the emulator rather than to a
+	// service.
+	"/_health":     "internal",
+	"/_localstack": "internal",
+
 	// Undated literals the prefix switch claims. /applications is shared by
 	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which
 	// owned it outright before #854 and is what the web UI calls.

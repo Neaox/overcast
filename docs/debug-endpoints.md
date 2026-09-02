@@ -42,6 +42,24 @@ look up.
 | `/_overcast/debug/traces/search`     | GET    | Free-text search over retained traces                 |
 | `/_overcast/debug/ec2/vpcs`          | GET    | EC2 VPC-to-Docker-network wiring, for debugging VPC-backed networking. Service-specific debug routes live under `/_overcast/debug/<service>/…`; this is the only one today |
 
+## Health-check aliases
+
+`/_overcast/health` is the endpoint to point new tooling at. Two older URLs are
+served as well, because they are already written into healthchecks that predate
+this one:
+
+| Alias                 | Serves                            | Body                                                                    |
+| --------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| `/_health`            | Overcast's own path before v0.0.1-alpha.35 | Identical to `/_overcast/health`                              |
+| `/_localstack/health` | LocalStack's health endpoint      | LocalStack's shape — a `services` map plus `edition` and `version` |
+
+Both return 200 whenever `/_overcast/health` does. This matters more than it
+looks: a container healthcheck that 404s marks Overcast unhealthy, and an
+orchestrator restarts it — which, on the default in-memory state backend, wipes
+every resource a deploy in flight had created. Anything else under
+`/_localstack/` answers 404 with the Overcast endpoint that replaces it, rather
+than falling through to S3's `NoSuchBucket`.
+
 ## Trace retention
 
 Traces are retained under three rules, so that the request explaining a failure is

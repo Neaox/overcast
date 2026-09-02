@@ -35,6 +35,31 @@ const notReadyRetryAfterSeconds = 2
 // router.TestNoRouteIsRegisteredOutsideTheNamespace.
 const InternalPrefix = "/_overcast/"
 
+// LegacyHealthPath and LocalStackPrefix are the two compatibility roots that
+// deliberately sit outside InternalPrefix, because answering at a URL someone
+// else's tooling already hard-codes is the entire point of them.
+//
+// LegacyHealthPath is where Overcast's own health endpoint lived until
+// docs/plans/non-canonical-url-namespace.md phase 2 moved it; LocalStackPrefix
+// is the namespace LocalStack serves its operational endpoints under, and so
+// what a compose healthcheck or a Testcontainers wait strategy carried over
+// from LocalStack polls. A 404 on either is indistinguishable from a dead
+// container to an orchestrator, which restarts it — and with the default
+// in-memory state backend, a restart mid-deploy takes every stack the deploy
+// had created with it.
+//
+// Both are covered by the same S3 naming rule InternalPrefix relies on: a
+// bucket name cannot begin with an underscore, so neither can shadow a request
+// AWS models. See router.nonManifestRoutes for the routing-side record.
+const (
+	LegacyHealthPath = "/_health"
+	LocalStackPrefix = "/_localstack/"
+)
+
+// LocalStackHealthPath is the one path inside LocalStackPrefix Overcast
+// answers rather than points elsewhere.
+const LocalStackHealthPath = LocalStackPrefix + "health"
+
 // NotReady rejects a request with a 503 while the storage backend is still
 // completing a one-time startup migration (see internal/state/migrate.go),
 // instead of letting the request observe whatever the store would otherwise
@@ -85,7 +110,13 @@ func NotReady(store state.Store) func(http.Handler) http.Handler {
 // It was the broad "/_" test through phases 2-5, because narrowing it to
 // InternalPrefix while routes were still outside the namespace would have
 // started gating them mid-migration. Phase 6 moved the last of them, so the
-// two are now the same set and the constant says which one is meant.
+// namespace and the set are the same thing again — plus the two compatibility
+// roots, which are health probes wearing an older URL and have to be exempt
+// for the same reason /_overcast/health is: an orchestrator that reads 503 as
+// "unhealthy" restarts the container, and restarting it during a migration is
+// the one thing that turns a slow start into a lost one.
 func isInternalPath(path string) bool {
-	return strings.HasPrefix(path, InternalPrefix)
+	return strings.HasPrefix(path, InternalPrefix) ||
+		path == LegacyHealthPath ||
+		strings.HasPrefix(path, LocalStackPrefix)
 }
