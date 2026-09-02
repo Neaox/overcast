@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/overcast-sh/overcast/internal/config"
 	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
@@ -218,8 +219,9 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 	// deadlocks the reconcile.
 	defer docker.LockNetwork(h.cfg.VPCNetwork(vpc.VpcID))()
 
-	return h.createDockerVPCNetworkInternal(ctx, vpc,
-		dataplane.VPCNetworkInternal(h.cfg, h.vpcHasInternetGateway(ctx, vpc.VpcID)))
+	hasGateway := h.vpcHasInternetGateway(ctx, vpc.VpcID)
+	return h.createDockerVPCNetworkGateway(ctx, vpc,
+		dataplane.VPCNetworkInternal(h.cfg, hasGateway), hasGateway)
 }
 
 // createDockerVPCNetworkInternal is createDockerVPCNetwork with the --internal
@@ -232,7 +234,30 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 // hash of the state it was created in (docker.LabelSpecHash, so the next start
 // can tell whether it still holds). See vpcNetworkSpec.
 func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
-	spec := h.vpcNetworkSpec(ctx, vpc, internal)
+	// The gateway fact this isolation came from, recovered for the label. Under
+	// every implemented mode `internal` is a function of it, so callers that
+	// have only the isolation are not made to carry a second parameter.
+	return h.createDockerVPCNetworkGateway(ctx, vpc, internal, h.gatewayFor(ctx, vpc, internal))
+}
+
+// gatewayFor recovers the internet-gateway fact behind an isolation a caller
+// already decided.
+//
+// Under `open` the isolation *is* the fact, inverted. Under `none` it carries no
+// information — every network is internal whatever the template says — so the
+// store is asked, which is correct there because `none` never flips anything and
+// so is never called mid-attachment.
+func (h *Handler) gatewayFor(ctx context.Context, vpc *VPC, internal bool) bool {
+	if h.cfg != nil && h.cfg.VPCEgress == config.VPCEgressNone {
+		return h.vpcHasInternetGateway(ctx, vpc.VpcID)
+	}
+	return !internal
+}
+
+// createDockerVPCNetworkGateway is createDockerVPCNetworkInternal with the
+// gateway fact supplied as well as the isolation it produced.
+func (h *Handler) createDockerVPCNetworkGateway(ctx context.Context, vpc *VPC, internal, hasGateway bool) (string, error) {
+	spec := h.vpcNetworkSpec(ctx, vpc, internal, hasGateway)
 	netID, err := h.docker.CreateNetworkWithOptions(ctx, spec.CreateOptions())
 	if err != nil {
 		return "", err
@@ -266,19 +291,23 @@ func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, 
 // against. One definition for both, so a network cannot be created in a state
 // the verification would then call wrong.
 //
-// `internal` is what the caller decided; every caller here got it from
-// dataplane.VPCNetworkInternal, which is the only thing that turns the gateway
-// fact into an isolation. The fact itself is recorded on the network
-// (docker.LabelGatewayAttached) so `overcast network status` — which has no
-// state store to ask — can compute this same desired state instead of guessing
-// at it.
-func (h *Handler) vpcNetworkSpec(ctx context.Context, vpc *VPC, internal bool) docker.ResolvedNetworkSpec {
+// `internal` is what the caller decided and `hasGateway` is the fact it decided
+// from; every caller here ran the second through dataplane.VPCNetworkInternal to
+// get the first. Both are passed rather than re-read, because the gateway flip
+// runs *before* it records the attachment — a fresh store read there returns the
+// state being replaced, and would stamp a label that contradicts the isolation
+// beside it.
+//
+// The fact is recorded on the network (docker.LabelGatewayAttached) so
+// `overcast network status` — which has no state store to ask — can compute this
+// same desired state instead of guessing at it.
+func (h *Handler) vpcNetworkSpec(ctx context.Context, vpc *VPC, internal, hasGateway bool) docker.ResolvedNetworkSpec {
 	return dataplane.VPCNetworkSpec(h.cfg, dataplane.VPCNetwork{
 		VPCID:              vpc.VpcID,
 		Subnet:             preferredDockerSubnet(vpc),
 		Owner:              h.instanceDomain(ctx),
 		Internal:           internal,
-		HasInternetGateway: h.vpcHasInternetGateway(ctx, vpc.VpcID),
+		HasInternetGateway: hasGateway,
 	}).Resolve(ctx, h.docker)
 }
 
@@ -575,6 +604,14 @@ func (h *Handler) applyVPCNetworkInternal(ctx context.Context, vpc *VPC, interna
 				zap.String("vpc", vpc.VpcID), zap.Bool("internal", internal),
 				zap.String("old_network", oldID), zap.String("network", netID))
 		}
+		// The flip's own recreate path does not go through the create that
+		// reports; without this, health keeps the isolation from before it.
+		h.recordNetworkStatus(docker.NetworkStatus{
+			Name:     h.vpcNetworkLockKey(vpc),
+			Internal: internal,
+			Reason:   dataplane.VPCNetworkEgressReason(h.cfg, internal),
+			SpecHash: h.vpcNetworkSpec(ctx, vpc, internal, h.gatewayFor(ctx, vpc, internal)).SpecHash(),
+		})
 		return netID, nil
 	case errors.As(err, &rejoin):
 		detail := fmt.Sprintf("the Docker network was recreated %s, but %v", isolationWord(internal), rejoin.err)
@@ -643,7 +680,7 @@ func (h *Handler) flipDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, in
 	// verified rather than assumed, and the recreate below is the repair: it
 	// moves the containers across and rejoins them, which is why this can
 	// afford to be strict.
-	spec := h.vpcNetworkSpec(ctx, vpc, internal)
+	spec := h.vpcNetworkSpec(ctx, vpc, internal, h.gatewayFor(ctx, vpc, internal))
 	diffs := spec.Diff(info)
 	if len(diffs) == 0 {
 		// Reported even when nothing changed: a health endpoint that lists only
@@ -714,7 +751,7 @@ func (h *Handler) recreateDockerVPCNetwork(ctx context.Context, vpc *VPC, info *
 	// spec hash asserting a setting it was never given. That is the exact bug
 	// class this whole change exists to close, and hand-copying four fields
 	// reintroduces it the moment a fifth is pinned.
-	opts := h.vpcNetworkSpec(ctx, vpc, internal).CreateOptions()
+	opts := h.vpcNetworkSpec(ctx, vpc, internal, h.gatewayFor(ctx, vpc, internal)).CreateOptions()
 
 	// Two things are taken from the live network rather than the spec. Its
 	// name, and its identity labels: under the shared strategy the network is

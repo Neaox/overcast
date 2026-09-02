@@ -39,6 +39,11 @@ type cliDaemon struct {
 	networks   map[string]map[string]any
 	containers []map[string]any
 	calls      []string
+
+	// instance is what /_overcast/health reports as docker.instance — the
+	// daemon's sweep-domain identity. Empty models a daemon that is not
+	// running, where the command cannot establish its own identity at all.
+	instance string
 }
 
 func newCLIDaemon(t *testing.T) *cliDaemon {
@@ -47,7 +52,36 @@ func newCLIDaemon(t *testing.T) *cliDaemon {
 	srv := httptest.NewServer(http.HandlerFunc(d.handle))
 	t.Cleanup(srv.Close)
 	t.Setenv("LAMBDA_DOCKER_SOCKET", "tcp://"+srv.Listener.Addr().String())
+
+	// The Overcast API the command reads its own identity from. A separate
+	// server on its own port, as in a real setup.
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_overcast/health" {
+			http.NotFound(w, r)
+			return
+		}
+		d.mu.Lock()
+		id := d.instance
+		d.mu.Unlock()
+		if id == "" {
+			// A daemon that has not resolved an identity reports none, which is
+			// the same thing the command sees when nothing is listening.
+			_, _ = w.Write([]byte(`{"docker":{}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"docker":{"instance":"` + id + `"}}`))
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("OVERCAST_PORT", api.Listener.Addr().String()[strings.LastIndex(api.Listener.Addr().String(), ":")+1:])
 	return d
+}
+
+// setInstance makes the fake daemon report an identity, as a running Overcast
+// that has resolved one does.
+func (d *cliDaemon) setInstance(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.instance = id
 }
 
 func (d *cliDaemon) handle(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +442,7 @@ func TestNetworkReset_withoutForceLeavesAMatchingNetworkAlone(t *testing.T) {
 func TestNetworkReset_refusesAnotherInstancesNetwork(t *testing.T) {
 	cleanNetworkEnv(t)
 	d := newCLIDaemon(t)
+	d.setInstance("this-instance")
 	d.addNetwork(vpcNetwork(t, "vpc-theirs", false, "another-instance"))
 
 	var out bytes.Buffer
@@ -429,5 +464,51 @@ func TestNetworkReset_refusesAnotherInstancesNetwork(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "another Overcast instance") {
 		t.Fatalf("error = %v, want a refusal naming the other instance", err)
+	}
+}
+
+// When the daemon is not running the command cannot establish its own identity,
+// and must say that rather than assert the network is somebody else's. The two
+// are different facts and only one of them is about the network.
+func TestNetworkReset_saysWhenItCannotEstablishOwnership(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	d.addNetwork(vpcNetwork(t, "vpc-mine", false, "some-instance"))
+
+	cmd := newNetworkCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"reset", "octest-vpc-vpc-mine", "--dry-run"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "could not reach a daemon") {
+		t.Fatalf("error = %v, want it to say the identity could not be established", err)
+	}
+	if strings.Contains(err.Error(), "belongs to another") {
+		t.Errorf("the message asserts ownership it could not establish: %v", err)
+	}
+}
+
+// The gateway fact recorded on a network is the one behind its isolation, even
+// when the flip that set it ran before the attachment was recorded. A label
+// that contradicts the isolation beside it is worse than no label: the CLI
+// computes its desired state from it, so it would report a mismatch that is not
+// there — which is B1 arriving by another route.
+func TestNetworkStatus_gatewayLabelAgreesWithIsolation(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	d.setInstance("this-instance")
+	// A gateway-attached VPC: routable, and labelled as having a gateway.
+	d.addNetwork(vpcNetwork(t, "vpc-gw", true, "this-instance"))
+
+	var out bytes.Buffer
+	cmd := newNetworkCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("network status: %v", err)
+	}
+	if !strings.Contains(out.String(), "octest-vpc-vpc-gw: ok") {
+		t.Errorf("a correctly-created gateway-attached network was reported as drifted:\n%s", out.String())
 	}
 }

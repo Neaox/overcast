@@ -206,6 +206,11 @@ type networkTarget struct {
 	// belongs to somebody else. Reported, never worked on.
 	skipped bool
 
+	// unknownOwner distinguishes "this is somebody else's" from "this command
+	// could not establish its own identity, so it cannot tell". Both are
+	// skipped; only one of them is a statement about the network.
+	unknownOwner bool
+
 	// isolationKnown is false for a VPC network whose recorded gateway fact
 	// could not be read, where `internal` and the spec hash are not this
 	// command's to judge — see networkSpecTarget.
@@ -245,6 +250,12 @@ func (nc *networkContext) targets(ctx context.Context, names []string) ([]networ
 					name, nc.cfg.Network+" and "+nc.cfg.ControlNetwork(), nc.cfg.VPCNetworkPrefix())
 			}
 			if foreign, owner := s.foreignTo(mine); foreign {
+				if mine == "" {
+					return nil, fmt.Errorf("%q carries an owner (%s) and this command could not reach a "+
+						"daemon on port %d to learn its own, so it cannot tell whether the network is "+
+						"this instance's. Start the daemon, or point OVERCAST_PORT at it, and try again",
+						name, owner, nc.cfg.Port)
+				}
 				return nil, fmt.Errorf("%q belongs to another Overcast instance (%s). Rebuilding it to "+
 					"this configuration would break the instance that owns it: stop that instance first, "+
 					"or give this one its own OVERCAST_NETWORK", name, owner)
@@ -260,7 +271,9 @@ func (nc *networkContext) targets(ctx context.Context, names []string) ([]networ
 			// A bare invocation skips it entirely rather than listing it as
 			// work: naming it is how somebody says they meant it, and even then
 			// it is refused above.
-			targets = append(targets, networkTarget{spec: s.spec, otherOwn: owner, skipped: true})
+			targets = append(targets, networkTarget{
+				spec: s.spec, otherOwn: owner, skipped: true, unknownOwner: mine == "",
+			})
 			continue
 		}
 		t := networkTarget{spec: s.spec, isolationKnown: s.isolationKnown}
