@@ -42,7 +42,7 @@ docker network ls --filter label=overcast.vpc-id="$VPC"
 | Lambda in a VPC | A function with a `VpcConfig` is attached to that VPC's network, alongside the control plane — so it can reach an RDS instance or an ECS task in the same VPC |
 | CDK lookups | `Vpc.fromLookup`, subnet `tagSet`, NAT gateway routes in `DescribeRouteTables`, and `MapPublicIpOnLaunch` are all present, so subnet-group classification works |
 | Instances | `RunInstances` records state with async `pending` → `running`, emitting `EC2 Instance State-change Notification` to the default EventBridge bus |
-| Reconciliation | On startup, stored VPCs are reconciled against actual Docker networks: missing ones recreated, drifted IDs updated, orphans removed |
+| Reconciliation | On startup, stored VPCs are reconciled against actual Docker networks: missing ones recreated, drifted IDs updated, and networks this instance created for VPCs that no longer exist removed. A network another instance on the same daemon created (its `overcast.instance` label differs) is left alone, as is one with no label from before the label existed |
 | Dependencies | `DeleteVpc`, `DeleteSubnet` and `DeleteSecurityGroup` fail with `DependencyViolation` while something still references them, as on AWS |
 
 > [!NOTE]

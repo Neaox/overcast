@@ -29,12 +29,86 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 		log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))
 		return
 	}
-	h.vpcStrategy.Reconcile(ctx, vpcs, networks)
+	h.vpcStrategy.Reconcile(ctx, vpcs, h.networksInScope(ctx, networks))
 
 	// Reconcile adopts networks that already existed, so joining only on create
 	// would leave Overcast off every network that survived a restart.
 	for _, vpc := range vpcs {
 		h.joinVPCNetwork(ctx, vpc.DockerNetworkID)
+	}
+}
+
+// nsInstance holds this instance's sweep-domain identity, stamped into
+// docker.LabelInstance on every VPC network it creates. See
+// serviceutil.InstanceDomain.
+const nsInstance = "ec2:instance"
+
+// instanceDomain is this instance's identity, or "" when the store cannot
+// establish one — in which case nothing is ours to remove.
+func (h *Handler) instanceDomain(ctx context.Context) string {
+	if h.instances == nil {
+		return ""
+	}
+	return h.instances.Resolve(ctx)
+}
+
+// networksInScope narrows a daemon-wide snapshot of EC2 networks to the ones
+// this instance may act on.
+//
+// The snapshot is every network on the daemon carrying overcast.service=ec2,
+// whoever created it. Two Overcasts sharing a daemon — a developer's live
+// instance and a test server, or two agents' instances — each see the other's
+// VPC networks in it, and unfiltered the strategies' orphan pass removed them:
+// a network is "orphaned" by having no VPC record in *this* store, and the
+// other instance's records are not here. That is how a test run took a live
+// instance's overcast-vpc-* network with it.
+//
+// The rule is the container GC's (docker.LabelInstance). A network labelled
+// with another instance's identity is invisible: neither adopted nor removed.
+// One labelled with ours is fully in scope. One with no label predates the
+// label — it stays adoptable, so a VPC that survived an upgrade still finds its
+// network, but removeOrphanedNetworks leaves it, because absence is not
+// permission.
+func (h *Handler) networksInScope(ctx context.Context, networks []docker.NetworkSummary) []docker.NetworkSummary {
+	domain := h.instanceDomain(ctx)
+	log := h.log.WithRecorder(ctx)
+	in := make([]docker.NetworkSummary, 0, len(networks))
+	for _, n := range networks {
+		if owner := n.Instance(); owner != "" && owner != domain {
+			log.Debug("reconcile networks: leaving a network another instance owns",
+				zap.String("network", n.ID), zap.String("name", n.Name), zap.String("owner", owner))
+			continue
+		}
+		in = append(in, n)
+	}
+	return in
+}
+
+// removeOrphanedNetworks removes what a strategy's adoption pass left
+// unclaimed in byID — and only what this instance created. networksInScope has
+// already dropped other instances' networks, so what remains is ours or
+// unlabelled; the unlabelled are retained and said so, since their owner
+// cannot be established and an unremovable orphan is a far cheaper mistake
+// than deleting a network another instance is serving. prefix names the
+// strategy in the log, as each strategy's own messages do.
+func (h *Handler) removeOrphanedNetworks(ctx context.Context, byID map[string]*docker.NetworkSummary, prefix string) {
+	log := h.log.WithRecorder(ctx)
+	domain := h.instanceDomain(ctx)
+	for id, n := range byID {
+		if domain == "" || n.Instance() != domain {
+			log.Info("reconcile networks: "+prefix+"retaining an unclaimed network whose owner cannot be established",
+				zap.String("vpc", n.ResourceID()),
+				zap.String("network", id))
+			continue
+		}
+		log.Info("reconcile networks: "+prefix+"removing orphaned network",
+			zap.String("vpc", n.ResourceID()),
+			zap.String("network", id))
+		if err := h.removeDockerVPCNetwork(ctx, id); err != nil {
+			log.Warn("reconcile networks: "+prefix+"remove orphaned network",
+				zap.String("network", id),
+				zap.Error(err))
+		}
 	}
 }
 
@@ -118,7 +192,10 @@ func (h *Handler) createDockerVPCNetwork(ctx context.Context, vpc *VPC) (string,
 // flag supplied rather than derived. The internet-gateway toggle recreates the
 // network to flip it, and knows the value it wants.
 func (h *Handler) createDockerVPCNetworkInternal(ctx context.Context, vpc *VPC, internal bool) (string, error) {
-	labels := docker.ManagedLabels("ec2", vpc.VpcID)
+	// Stamped with this instance's identity, which is what lets a later
+	// reconcile — ours after a restart, or a neighbour's on the same daemon —
+	// tell whose network this is. See networksInScope.
+	labels := h.instances.ManagedLabels(ctx, "ec2", vpc.VpcID)
 	labels["overcast.vpc-id"] = vpc.VpcID
 
 	netID, err := h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{

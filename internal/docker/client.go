@@ -470,6 +470,10 @@ func (n *NetworkSummary) Service() string { return n.Labels[LabelService] }
 // ResourceID returns the overcast.resource-id label value (empty string if not set).
 func (n *NetworkSummary) ResourceID() string { return n.Labels[LabelResourceID] }
 
+// Instance returns the overcast.instance label value, or "" when the network
+// does not carry one. See LabelInstance.
+func (n *NetworkSummary) Instance() string { return n.Labels[LabelInstance] }
+
 // ContainerSummary is the lightweight container representation returned by
 // GET /containers/json (list endpoint), as opposed to the full ContainerInspect
 // returned by GET /containers/{id}/json.

@@ -313,17 +313,8 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 			zap.String("network", netID))
 	}
 
-	// Remove any Docker network not claimed by any VPC.
-	for id, n := range byID {
-		log.Info("reconcile networks: strict: removing orphaned network",
-			zap.String("vpc", n.ResourceID()),
-			zap.String("network", id))
-		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			log.Warn("reconcile networks: strict: remove orphaned network",
-				zap.String("network", id),
-				zap.Error(err))
-		}
-	}
+	// Remove any Docker network of ours not claimed by any VPC.
+	s.h.removeOrphanedNetworks(ctx, byID, "strict: ")
 }
 
 func (s *strictVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
@@ -536,16 +527,7 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 		assigned = append(assigned, vpc)
 	}
 
-	for id, n := range byID {
-		log.Info("reconcile networks: remapped: removing orphaned network",
-			zap.String("vpc", n.ResourceID()),
-			zap.String("network", id))
-		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			log.Warn("reconcile networks: remapped: remove orphaned network",
-				zap.String("network", id),
-				zap.Error(err))
-		}
-	}
+	s.h.removeOrphanedNetworks(ctx, byID, "remapped: ")
 }
 
 func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
@@ -820,17 +802,8 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 			zap.String("network", netID))
 	}
 
-	// Whatever is left in byID was not adopted by any VPC — remove it.
-	for id, n := range byID {
-		log.Info("reconcile networks: removing orphaned network",
-			zap.String("vpc", n.ResourceID()),
-			zap.String("network", id))
-		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			log.Warn("reconcile networks: remove orphaned network",
-				zap.String("network", id),
-				zap.Error(err))
-		}
-	}
+	// Whatever is left in byID was not adopted by any VPC — remove it, if ours.
+	s.h.removeOrphanedNetworks(ctx, byID, "")
 }
 
 func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
