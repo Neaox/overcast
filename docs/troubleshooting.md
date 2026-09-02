@@ -80,7 +80,7 @@ without a VPC — and works on LocalStack — fails here, usually as
 
 | | |
 | --- | --- |
-| `OVERCAST_VPC_EGRESS=none` | That is the mode working: no container Overcast starts reaches anything outside this machine. See [Egress modes](./networking.md#egress-modes) |
+| `OVERCAST_VPC_EGRESS=none` | That is the mode working: no container Overcast starts reaches anything outside this machine. On a host where an internal control plane would sever the Lambda Runtime API — Docker Desktop, with Overcast running outside a container — that one network is left routable, a startup warning says so, and containers keep a route out. See [Egress modes](./networking.md#egress-modes) |
 | A network drifted | A network Overcast reuses kept a setting from an older version or a different mode, because Docker never applies `--internal` to an existing network. Overcast repairs one with nothing attached and warns about one with containers on it |
 
 A container with a `VpcConfig` joins exactly two networks — its VPC's network
@@ -109,7 +109,7 @@ with `internal=true` under `OVERCAST_VPC_EGRESS=none` is the mode.
 | --- | --- |
 | Restore egress | Unset `OVERCAST_VPC_EGRESS`, or set it to `open`, and restart. `open` is the default |
 | The network kept an old setting | `overcast network reset --dry-run` to see what it would do, then `overcast network reset`. It stops Overcast's own containers, disconnects yours, and rebuilds the network to spec |
-| You want a hermetic stack | Then `ENETUNREACH` is the correct answer. Keep `none` |
+| You want a hermetic stack | Then `ENETUNREACH` is the correct answer. Keep `none` — and check the startup log, because on Docker Desktop `none` leaves the control plane routable and the stack is not hermetic |
 | The function does not need the VPC locally | Drop the `VpcConfig` for the local stage — but note that under `none` even a non-VPC function has no egress, which is the point of the mode |
 
 **Reaching real AWS from a local function** — a hybrid stack whose code calls a

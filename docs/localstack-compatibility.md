@@ -100,7 +100,7 @@ nothing.
 | `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
 | `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
 | `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK` | No equivalent | Both name the network containers join; Overcast puts everything it starts on `OVERCAST_NETWORK` and the control plane derived from it. Recognised and inert — see [why they are not aliased](./migration-from-localstack.md#why-lambda_docker_network-is-inert-rather-than-aliased) |
-| Egress from compute in a VPC | Works | Both give a VPC-attached Lambda full egress by default. Overcast can also withhold it, which LocalStack cannot: `OVERCAST_VPC_EGRESS=none` makes every network it creates `--internal` — see below |
+| Egress from compute in a VPC | Works | Both give a VPC-attached Lambda full egress by default. Overcast can also withhold it, which LocalStack cannot: `OVERCAST_VPC_EGRESS=none` makes every network it creates `--internal`, except that on Docker Desktop the control plane has to stay routable — see below |
 
 **Egress matches LocalStack by default, and did not always.** LocalStack has no
 concept of network isolation: `VpcConfig` is metadata, subnets and gateways are
@@ -116,7 +116,11 @@ migration needs nothing here.
 
 What Overcast adds is the other direction — `OVERCAST_VPC_EGRESS=none` makes
 every network it creates `--internal`, so nothing the emulator starts reaches
-anything outside the machine. LocalStack cannot express that at all: its
+anything outside the machine. On Docker Desktop, with Overcast running outside
+a container, the control plane is the exception: isolating it would sever the
+Lambda Runtime API, so it stays routable, containers keep a route out, and a
+startup warning says the stack is not hermetic. Run Overcast in a container, or
+against a native Linux Docker daemon, for the whole of it. LocalStack cannot express that at all: its
 container-client API takes only a network name. Use it for deterministic CI, or
 to prove a stack has no hidden external dependency. See
 [Egress modes](./networking.md#egress-modes).

@@ -153,7 +153,10 @@ now the default.
 
 Overcast can also do what LocalStack cannot: `OVERCAST_VPC_EGRESS=none` gives
 nothing it starts a route out of the machine, for deterministic CI or to prove
-a stack has no hidden external dependency. See
+a stack has no hidden external dependency. Run Overcast in a container, or
+against a native Linux Docker daemon, to get the whole of it — on Docker
+Desktop the control plane has to stay routable, so containers keep a route out
+and Overcast says so at startup. See
 [Egress modes](./networking.md#egress-modes).
 
 ---
