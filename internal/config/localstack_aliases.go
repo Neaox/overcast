@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -237,6 +238,148 @@ var persistenceStateAlias = stringAlias{
 	},
 }
 
+// lsLogLevelAlias: LocalStack's LS_LOG names a log level directly, and its
+// own docs say it overrides DEBUG. Overcast's OVERCAST_LOG_LEVEL is the same
+// idea with almost the same vocabulary, so the transform is a rename of the
+// two spellings that differ:
+//
+//	trace-internal -> trace   (LocalStack's second, noisier trace tier; there
+//	                           is only one here, and mapping it down to debug
+//	                           would silently discard the verbosity asked for)
+//	warning        -> warn    (LocalStack accepts both spellings; Overcast
+//	                           takes only the short one)
+//
+// An unrecognised value is rejected rather than passed through: OVERCAST_LOG_LEVEL
+// itself falls back to info on a value it cannot parse, and inheriting that
+// leniency here would turn a typo in a migrated compose file into a silent
+// verbosity change with no way to notice.
+//
+// LS_LOG is resolved after DEBUG, matching LocalStack's own precedence, so
+// the two disagreeing (DEBUG=1 with LS_LOG=error) fails naming both rather
+// than picking one.
+var lsLogLevelAlias = stringAlias{
+	localstackVar: "LS_LOG",
+	overcastVar:   "OVERCAST_LOG_LEVEL",
+	transform: func(raw string) (string, bool, error) {
+		switch level := strings.ToLower(strings.TrimSpace(raw)); level {
+		case "trace", "trace-internal":
+			return "trace", true, nil
+		case "debug", "info", "error":
+			return level, true, nil
+		case "warn", "warning":
+			return "warn", true, nil
+		default:
+			return "", false, fmt.Errorf(
+				"expected one of trace, trace-internal, debug, info, warn, warning, error, got %q", raw)
+		}
+	},
+}
+
+// enforceIAMAlias: LocalStack's ENFORCE_IAM turns on request-time IAM policy
+// evaluation, which is exactly what OVERCAST_ENFORCE_IAM does. Both default
+// to off. The transform canonicalises to "true"/"false" so the conflict check
+// compares meanings rather than spellings -- ENFORCE_IAM=1 alongside
+// OVERCAST_ENFORCE_IAM=true is agreement, not a disagreement.
+//
+// LocalStack's companion IAM_SOFT_MODE (evaluate and log, never deny) has no
+// Overcast equivalent and is deliberately not mapped -- see
+// ignoredLocalStackVars.
+var enforceIAMAlias = stringAlias{
+	localstackVar: "ENFORCE_IAM",
+	overcastVar:   "OVERCAST_ENFORCE_IAM",
+	transform:     canonicalBoolTransform,
+}
+
+// lambdaRemoveContainersAlias: LocalStack's LAMBDA_REMOVE_CONTAINERS (default
+// 1) and Overcast's LAMBDA_KEEP_CONTAINERS (default false) are the same switch
+// with opposite polarity, and both defaults already agree -- containers are
+// removed. The transform inverts, so LAMBDA_REMOVE_CONTAINERS=0, the only
+// value anyone sets it to, keeps stopped containers around for inspection
+// exactly as it does under LocalStack.
+//
+// Inverting is safe here in a way it is not for LAMBDA_DOCKER_NETWORK (see
+// the "Not aliased" section of docs/migration-from-localstack.md): the two
+// variables mean the same thing about the same containers, and the polarity
+// is the whole of the difference.
+var lambdaRemoveContainersAlias = stringAlias{
+	localstackVar: "LAMBDA_REMOVE_CONTAINERS",
+	overcastVar:   "LAMBDA_KEEP_CONTAINERS",
+	transform: func(raw string) (string, bool, error) {
+		remove, err := parseLocalstackBool(raw)
+		if err != nil {
+			return "", false, err
+		}
+		return strconv.FormatBool(!remove), true, nil
+	},
+}
+
+// dnsAddressAlias: LocalStack's DNS_ADDRESS is a bind address (default
+// 0.0.0.0) with one special value -- DNS_ADDRESS=0 turns the DNS server off
+// entirely, and is the reason anyone sets it, usually because something else
+// on the host already holds port 53. That maps exactly onto OVERCAST_DNS=false.
+//
+// Every other value is a bind address, and Overcast has no equivalent knob:
+// its resolver binds where the gateway binds. Rather than half-map it, those
+// values are not-applicable (ok=false) and leave OVERCAST_DNS alone -- the
+// same shape as DEBUG=0 and PERSISTENCE=0. Failing to bind the DNS port is
+// not fatal here either way, so an unmapped bind address costs a log line,
+// not a startup.
+var dnsAddressAlias = stringAlias{
+	localstackVar: "DNS_ADDRESS",
+	overcastVar:   "OVERCAST_DNS",
+	transform: func(raw string) (string, bool, error) {
+		if strings.TrimSpace(raw) != "0" {
+			return "", false, nil
+		}
+		return "false", true, nil
+	},
+}
+
+// canonicalBoolTransform normalises a LocalStack boolean-shaped value to
+// "true"/"false", so a conflict check between an alias and its Overcast
+// variable compares meanings rather than spellings.
+func canonicalBoolTransform(raw string) (string, bool, error) {
+	on, err := parseLocalstackBool(raw)
+	if err != nil {
+		return "", false, err
+	}
+	return strconv.FormatBool(on), true, nil
+}
+
+// canonicalBool renders an Overcast boolean variable's raw value in the same
+// "true"/"false" spelling canonicalBoolTransform produces, so the conflict
+// check in resolveStringAlias compares meanings and not spellings:
+// LAMBDA_KEEP_CONTAINERS=1 alongside LAMBDA_REMOVE_CONTAINERS=0 is agreement.
+//
+// Unset, empty and unparseable all render as "" — "no value to reconcile
+// against" — which matches what envBool does with them (fall back to the
+// default) and leaves the alias free to supply one.
+func canonicalBool(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return "true"
+	case "false", "0", "no":
+		return "false"
+	default:
+		return ""
+	}
+}
+
+// parseBoolOr parses a boolean-shaped value already read from the environment
+// (possibly through an alias), returning fallback when it is empty or
+// unparseable. Mirrors envBool's vocabulary and leniency for a value the
+// caller holds rather than one read fresh by key.
+func parseBoolOr(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
 // resolveGatewayListenAlias determines whether LocalStack's GATEWAY_LISTEN
 // contributes to the effective OVERCAST_LISTEN/OVERCAST_PORT values.
 // LocalStack documents its format as "<ip>:<port>[,<ip>:<port>...]" --
@@ -366,10 +509,50 @@ func adoptLocalStackVolumeWith(dataDirEnvRaw, imageBakedDataDir string, mounted 
 // rejected, just inert. Presence is logged once at startup (see
 // logLocalStackAliases in cmd/overcast/cmd_serve.go) so an operator sees
 // their setting was seen rather than wonder why nothing changed.
-var ignoredLocalStackVars = []string{"SERVICES", "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN"}
+//
+// Being on this list is a stronger statement than being absent from the alias
+// table: it says the variable was considered and found to have nothing to map
+// onto, which is exactly the thing a migrator cannot discover for themselves.
+// Every entry needs a reason in IgnoredLocalStackReason —
+// TestIgnoredLocalStackVars_allHaveReasons enforces it.
+var ignoredLocalStackVars = []string{
+	"SERVICES",
+	"EAGER_SERVICE_LOADING",
+	"LOCALSTACK_API_KEY",
+	"LOCALSTACK_AUTH_TOKEN",
+	"ACTIVATE_PRO",
+	"MAIN_CONTAINER_NAME",
+	"DISABLE_EVENTS",
+	"SKIP_SSL_CERT_DOWNLOAD",
+	"DISABLE_CORS_CHECKS",
+	"DISABLE_CORS_HEADERS",
+	"EXTRA_CORS_ALLOWED_ORIGINS",
+	"EXTRA_CORS_ALLOWED_HEADERS",
+	"SQS_ENDPOINT_STRATEGY",
+	"S3_SKIP_SIGNATURE_VALIDATION",
+	"IAM_SOFT_MODE",
+	"LAMBDA_KEEPALIVE_MS",
+	"LAMBDA_DOCKER_NETWORK",
+	"LAMBDA_DOCKER_FLAGS",
+	"LAMBDA_RUNTIME_EXECUTOR",
+	"SNAPSHOT_SAVE_STRATEGY",
+	"SNAPSHOT_LOAD_STRATEGY",
+	"SNAPSHOT_FLUSH_INTERVAL",
+	"ALLOW_NONSTANDARD_REGIONS",
+	"ENABLE_CONFIG_UPDATES",
+}
 
-// detectIgnoredLocalStackVars returns which of ignoredLocalStackVars are set
-// (non-empty) in the current environment, in the table's declared order.
+// ignoredLocalStackPrefixes are families of LocalStack variables recognised by
+// prefix rather than by name, because the name carries a service in it and the
+// set is open-ended. PROVIDER_OVERRIDE_<SERVICE> selects between LocalStack's
+// several implementations of one service; Overcast ships one implementation
+// per service, so there is nothing to select between.
+var ignoredLocalStackPrefixes = []string{"PROVIDER_OVERRIDE_"}
+
+// detectIgnoredLocalStackVars returns which LocalStack-recognised-but-inert
+// variables are set (non-empty) in the current environment: the named ones in
+// the table's declared order, then any prefix-matched ones, sorted so the
+// result is deterministic whatever order the environment enumerates in.
 func detectIgnoredLocalStackVars() []string {
 	var found []string
 	for _, name := range ignoredLocalStackVars {
@@ -377,17 +560,65 @@ func detectIgnoredLocalStackVars() []string {
 			found = append(found, name)
 		}
 	}
-	return found
+
+	var prefixed []string
+	for _, entry := range os.Environ() {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || value == "" {
+			continue
+		}
+		for _, prefix := range ignoredLocalStackPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				prefixed = append(prefixed, name)
+				break
+			}
+		}
+	}
+	sort.Strings(prefixed)
+	return append(found, prefixed...)
 }
 
 // IgnoredLocalStackReason returns a short explanation of why name (one of
 // Config.IgnoredLocalStackVars) has no effect, for the startup log line.
 func IgnoredLocalStackReason(name string) string {
+	if strings.HasPrefix(name, "PROVIDER_OVERRIDE_") {
+		return "Overcast ships one implementation per service -- there is nothing to select between"
+	}
 	switch name {
 	case "SERVICES":
 		return "Overcast runs every service, always -- there is nothing to select"
-	case "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN":
-		return "Overcast has no LocalStack Pro/auth-gated feature set to unlock"
+	case "EAGER_SERVICE_LOADING":
+		return "there is no lazy loading to make eager: every service is loaded at startup"
+	case "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN", "ACTIVATE_PRO":
+		return "Overcast has no auth-gated feature set to unlock -- every service is in the one build"
+	case "MAIN_CONTAINER_NAME":
+		return "nothing addresses Overcast by container name; containers reach it by the hostnames it advertises"
+	case "DISABLE_EVENTS":
+		return "there is nothing to disable: Overcast collects and sends no telemetry"
+	case "SKIP_SSL_CERT_DOWNLOAD":
+		return "no certificate is ever downloaded -- OVERCAST_TLS=auto mints one from a local CA"
+	case "DISABLE_CORS_CHECKS", "DISABLE_CORS_HEADERS", "EXTRA_CORS_ALLOWED_ORIGINS", "EXTRA_CORS_ALLOWED_HEADERS":
+		return "CORS is already unconditionally permissive; there is nothing to relax"
+	case "SQS_ENDPOINT_STRATEGY":
+		return "queue URLs are minted on the origin the caller reached, which is LocalStack's \"dynamic\" strategy -- see docs/services/sqs.md"
+	case "S3_SKIP_SIGNATURE_VALIDATION":
+		return "signature validation is a server-wide setting here (OVERCAST_SIGV4_VALIDATE), not an S3-only one"
+	case "IAM_SOFT_MODE":
+		return "IAM policies are stored and never enforced unless OVERCAST_ENFORCE_IAM is set, which is soft mode's outcome"
+	case "LAMBDA_KEEPALIVE_MS":
+		return "idle-container lifetime is a fixed 15 minutes here, not a setting"
+	case "LAMBDA_DOCKER_NETWORK":
+		return "adjacent concept, opposite default -- set OVERCAST_NETWORK, which every container Overcast starts joins"
+	case "LAMBDA_DOCKER_FLAGS":
+		return "Overcast does not pass through arbitrary docker run flags -- see the configuration reference for the settings it does expose"
+	case "LAMBDA_RUNTIME_EXECUTOR":
+		return "Docker is the only executor; without it invocations degrade to a built-in Node.js runtime"
+	case "SNAPSHOT_SAVE_STRATEGY", "SNAPSHOT_LOAD_STRATEGY", "SNAPSHOT_FLUSH_INTERVAL":
+		return "persistence here is incremental, not snapshot-based -- see OVERCAST_STATE"
+	case "ALLOW_NONSTANDARD_REGIONS":
+		return "every region name is already accepted; there is nothing to allow"
+	case "ENABLE_CONFIG_UPDATES":
+		return "configuration is fixed for the process lifetime; there is no endpoint that mutates it"
 	default:
 		return "recognised but has no effect"
 	}

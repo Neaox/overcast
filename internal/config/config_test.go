@@ -2467,6 +2467,19 @@ func clearEnv(t *testing.T) {
 		// LocalStack-compatibility aliases (#1190, second PR).
 		"EDGE_PORT", "GATEWAY_LISTEN", "DEFAULT_REGION", "DATA_DIR", "DEBUG", "PERSISTENCE",
 		"LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT", "SERVICES", "LOCALSTACK_API_KEY", "LOCALSTACK_AUTH_TOKEN",
+		// LocalStack-compatibility aliases and the recognised-but-inert table
+		// (drop-in audit). Every one of these has to be isolated: several are
+		// plausible things to have exported in a shell that also runs
+		// LocalStack, and each would silently change a default asserted below.
+		"LS_LOG", "ENFORCE_IAM", "LAMBDA_REMOVE_CONTAINERS", "DNS_ADDRESS", "OVERCAST_DNS",
+		"LAMBDA_KEEP_CONTAINERS", "EAGER_SERVICE_LOADING", "ACTIVATE_PRO", "MAIN_CONTAINER_NAME",
+		"DISABLE_EVENTS", "SKIP_SSL_CERT_DOWNLOAD", "DISABLE_CORS_CHECKS", "DISABLE_CORS_HEADERS",
+		"EXTRA_CORS_ALLOWED_ORIGINS", "EXTRA_CORS_ALLOWED_HEADERS", "SQS_ENDPOINT_STRATEGY",
+		"S3_SKIP_SIGNATURE_VALIDATION", "IAM_SOFT_MODE", "LAMBDA_KEEPALIVE_MS",
+		"LAMBDA_DOCKER_NETWORK", "LAMBDA_DOCKER_FLAGS", "LAMBDA_RUNTIME_EXECUTOR",
+		"SNAPSHOT_SAVE_STRATEGY", "SNAPSHOT_LOAD_STRATEGY", "SNAPSHOT_FLUSH_INTERVAL",
+		"ALLOW_NONSTANDARD_REGIONS", "ENABLE_CONFIG_UPDATES",
+		"PROVIDER_OVERRIDE_APIGATEWAY", "PROVIDER_OVERRIDE_CLOUDWATCH",
 		// The mode defaults these assert are only defaults if the developer
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE", "OVERCAST_SERVICE_METRICS",
