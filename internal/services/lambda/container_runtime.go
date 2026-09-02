@@ -1606,6 +1606,14 @@ func (ci *containerInstance) reachabilityFields() []zap.Field {
 // that ran and chose an address, and a pinned address, are both answers this
 // run already stands behind — deleting a file neither of them reads would only
 // hide which of the two happened.
+//
+// That guard is also what bounds the cost when the deaths are not the network
+// at all. A genuinely broken function — one that segfaults during INIT before
+// it ever polls — looks identical from here, so it drops the hint; but the next
+// startup then probes for itself and records a non-hinted mode, and that run
+// ignores every death. So the worst case is one extra probe every *other*
+// startup, not one per cold start, and it converges the moment the function is
+// fixed.
 func (ci *containerInstance) forgetReachabilityHint() {
 	if ci.reachHintPath == "" || !strings.HasPrefix(ci.reach.Mode, "hinted") {
 		return

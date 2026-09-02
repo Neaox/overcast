@@ -988,7 +988,7 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	limits := resolveRuntimeLimits(context.Background(), cfg, dc, log)
 
 	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts, s.instances)
-	containerRuntime.SetRuntimeAPIReachability(listen, containerendpoint.HintPath(cfg.DataDir))
+	containerRuntime.SetRuntimeAPIReachability(listen, containerendpoint.HintPath(cfg.DataDir, dataplane.Primary(cfg)))
 
 	// When a container's RIC issues its first GET /next, throttle that
 	// container's INIT-burst CPU down to the steady-state proportional
@@ -1563,19 +1563,23 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 // The timeout bounds a Docker daemon that accepts the connection and then does
 // not answer — this runs on the container-runtime init goroutine, and a hang
 // here leaves Lambda on the stub runtime with no error to show for it. It is
-// generous because the answer is now measured rather than guessed: each
-// candidate costs a throwaway container, and the budget has to cover a first
-// run that also pulls busybox. The result is remembered per daemon
-// (containerendpoint.HintPath), so only the first startup against a given
-// daemon pays it.
+// larger than the 10s it replaced because the answer is now measured rather
+// than guessed: the first run against a daemon may also have to pull busybox.
+// It is an outer bound, not a budget anyone expects to spend — the walk itself
+// is capped well below this (containerendpoint's probeTotalBudget), because the
+// runtime registry does not settle until this returns and an Invoke arriving
+// meanwhile parks rather than getting the stub's honest answer. The ordinary
+// path is one candidate and a second or two, and the result is remembered per
+// daemon and plane (containerendpoint.HintPath), so only the first startup
+// against a given daemon pays even that.
 func runtimeAPIListen(cfg *config.Config, dc *docker.Client, logger *zap.Logger) containerendpoint.Listen {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	return containerendpoint.ResolveListen(ctx, dc, containerendpoint.ListenOptions{
 		Network:    dataplane.Primary(cfg),
 		PinnedHost: cfg.LambdaRuntimeAPIHost,
-		HintPath:   containerendpoint.HintPath(cfg.DataDir),
+		HintPath:   containerendpoint.HintPath(cfg.DataDir, dataplane.Primary(cfg)),
 		Logger:     logger,
 	})
 }

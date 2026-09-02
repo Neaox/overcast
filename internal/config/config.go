@@ -1681,8 +1681,10 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           two instances on one host)
 //	LAMBDA_RUNTIME_API_HOST            auto    (the address containers dial for the Runtime API.
 //	                                           auto: established by having a container connect to
-//	                                           each candidate. Set an address — host.docker.internal,
-//	                                           or an IP — to pin it and skip the probe)
+//	                                           each candidate. Set a bare address — host.docker.internal,
+//	                                           or an IP — to pin it and skip the probe. A scheme, port
+//	                                           or path is rejected at startup: the port is
+//	                                           LAMBDA_RUNTIME_API_PORT and the two are joined)
 //	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
 //	                                           4 when Docker /info is unavailable
 //	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
@@ -2234,9 +2236,20 @@ func Load() (*Config, error) {
 	}
 	// "auto" is the default and means "probe it"; anything else is an address
 	// taken as given. Normalised to "" here so every reader tests one thing.
+	//
+	// Validated at Load like the port above it, and for the same reason: the
+	// value is joined to a port and handed to every Lambda container, so a bad
+	// one is not caught until a function fails to initialise. "host:port" is
+	// the easy mistake — the docs and the startup log both render the result as
+	// `host.docker.internal:9001` — and net.JoinHostPort would turn it into
+	// `host.docker.internal:9001:9001`, advertised to every container, baked
+	// into AWS_ENDPOINT_URL, and reported by /_overcast/health as healthy.
 	cfg.LambdaRuntimeAPIHost = strings.TrimSpace(envOr("LAMBDA_RUNTIME_API_HOST", "auto"))
 	if strings.EqualFold(cfg.LambdaRuntimeAPIHost, "auto") {
 		cfg.LambdaRuntimeAPIHost = ""
+	}
+	if err := validateRuntimeAPIHost(cfg.LambdaRuntimeAPIHost); err != nil {
+		return nil, err
 	}
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see
@@ -2523,4 +2536,58 @@ func validateStateBackend(b StateBackend, envKey string) error {
 		}
 		return fmt.Errorf("config: %s must be 'memory', 'persistent', 'hybrid' or 'wal', got %q", envKey, b)
 	}
+}
+
+// validateRuntimeAPIHost checks LAMBDA_RUNTIME_API_HOST names a bare address:
+// an IP literal, or a hostname. No scheme, no port, no path, no whitespace.
+//
+// The rejected forms are all things somebody would plausibly type — the log
+// line and the docs show the address with its port attached, a URL is the other
+// obvious guess — and every one of them is silently wrong rather than loudly
+// wrong once it reaches net.JoinHostPort. An empty value is "auto" and is fine.
+func validateRuntimeAPIHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	const fix = `set LAMBDA_RUNTIME_API_HOST to a bare address — an IP such as "192.168.1.20", or a name such as "host.docker.internal" — with no scheme, port or path, or to "auto" to have Overcast establish it`
+	switch {
+	case strings.ContainsAny(host, " \t\r\n"):
+		return fmt.Errorf("config: LAMBDA_RUNTIME_API_HOST %q contains whitespace; %s", host, fix)
+	case strings.Contains(host, "://"), strings.Contains(host, "/"):
+		return fmt.Errorf("config: LAMBDA_RUNTIME_API_HOST %q looks like a URL, not a host; %s", host, fix)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		// An IPv6 literal is a legitimate address and carries colons of its
+		// own, so the port check below must not see it.
+		return nil
+	}
+	if strings.Contains(host, ":") {
+		return fmt.Errorf("config: LAMBDA_RUNTIME_API_HOST %q includes a port; the port is LAMBDA_RUNTIME_API_PORT, and this is joined to it — %s", host, fix)
+	}
+	if !isHostname(host) {
+		return fmt.Errorf("config: LAMBDA_RUNTIME_API_HOST %q is not a valid hostname or IP address; %s", host, fix)
+	}
+	return nil
+}
+
+// isHostname reports whether s is a plausible DNS name: dot-separated labels of
+// letters, digits and hyphens, none empty, none starting or ending with a
+// hyphen. Deliberately not a full RFC 1123 parser — this is here to catch typos
+// before they reach a container, not to police a resolver.
+func isHostname(s string) bool {
+	if len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(strings.TrimSuffix(s, "."), ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }

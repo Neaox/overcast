@@ -77,6 +77,17 @@ type Attempt struct {
 	// (nothing listening vs. packets dropped on the way in), so the text is
 	// kept verbatim rather than flattened to a boolean.
 	Error string `json:"error,omitempty"`
+
+	// Unavailable means the probe could not be *run* — no image, a daemon
+	// that refused the create, no client at all — as opposed to running and
+	// finding the address unreachable.
+	//
+	// The two must not be conflated, and keeping them apart is why this is a
+	// field rather than a prefix on Error. An address nothing could reach is
+	// a critical fault on this host; an address nobody could ask about is a
+	// missing measurement, and reporting it as the first fires the loudest
+	// advisory Overcast has at an air-gapped machine whose Lambda works.
+	Unavailable bool `json:"unavailable,omitempty"`
 }
 
 // String renders one attempt for a log field or an advisory line.
@@ -87,6 +98,9 @@ func (a Attempt) String() string {
 	reason := a.Error
 	if reason == "" {
 		reason = "no connection arrived"
+	}
+	if a.Unavailable {
+		return a.Mode + " " + a.Host + ": not measured — " + reason
 	}
 	return a.Mode + " " + a.Host + ": " + reason
 }
@@ -110,6 +124,28 @@ const (
 	// create, start, wait, logs — so a daemon that accepts the create and then
 	// stops answering cannot hold Lambda's startup open.
 	probeContainerTimeout = 20 * time.Second
+
+	// probeTotalBudget caps the whole candidate walk, not each step of it.
+	//
+	// The per-candidate timeout bounds one bad daemon call; nothing bounded the
+	// sum, so a daemon that accepts every create and then hangs cost five times
+	// that before Lambda could serve anything — and an Invoke arriving during
+	// the probe parks for all of it, because the runtime registry does not
+	// settle until the wiring finishes. The ordinary path spends one candidate
+	// and a second or two, so this only ever bites the pathological one.
+	//
+	// Running out is not a verdict. Candidates left untried mean the walk is
+	// incomplete, and resolveListen will not call an address unreachable on an
+	// incomplete walk — it falls back to the ordering, exactly as it does when
+	// there is no daemon to probe with.
+	probeTotalBudget = 45 * time.Second
+
+	// probeImagePullTimeout bounds fetching busybox, and is spent *outside* the
+	// per-candidate budget below. Nesting it inside would make it unreachable:
+	// a cold pull on a slow link would be cut off at probeContainerTimeout, then
+	// retried and re-truncated once per candidate, so the image would never
+	// arrive however long this said.
+	probeImagePullTimeout = 60 * time.Second
 
 	// probeAcceptGrace is how long the accept side is given after the probe
 	// container has exited. The container's own exit is the later event in
@@ -164,6 +200,7 @@ func probeCandidate(ctx context.Context, c Candidate, dial dialFromContainer) At
 
 	output, unavailable, dialErr := dial(ctx, net.JoinHostPort(c.ContainerHost, strconv.Itoa(pl.port)))
 	if unavailable {
+		a.Unavailable = true
 		a.Error = "probe could not run: " + dialErr.Error()
 		return a
 	}
@@ -172,14 +209,21 @@ func probeCandidate(ctx context.Context, c Candidate, dial dialFromContainer) At
 		return a
 	}
 	switch {
-	case dialErr != nil && output != "":
+	case output != "":
+		// The container's own words, whenever it said anything. Deliberately
+		// not gated on dialErr: the exit code is plumbed through a shell and a
+		// daemon, and a diagnosis that depends on that plumbing is one that
+		// silently degrades to nothing when it changes. probeOutput already
+		// drops the marker and the served body, so a clean success still
+		// yields "" and still lands in the default arm below.
 		a.Error = output
 	case dialErr != nil:
 		a.Error = dialErr.Error()
 	default:
-		// The container reported success and nothing reached us. Rare, and
-		// worth its own wording rather than being folded into a timeout:
-		// something between the two answered on the address's behalf.
+		// Nothing to quote and no error: the container's client reported
+		// success and nothing reached us. Rare, and worth its own wording
+		// rather than being folded into a timeout — something between the two
+		// answered on the address's behalf.
 		a.Error = "the probe container connected to something, but not to this process"
 	}
 	return a
@@ -295,19 +339,29 @@ func dockerDialer(dc runnerClient, network string, logger *zap.Logger) dialFromC
 		if dc == nil {
 			return "", true, errors.New("no Docker client")
 		}
-		ctx, cancel := context.WithTimeout(ctx, probeContainerTimeout)
-		defer cancel()
-
+		// The image first, on its own budget and against the caller's context
+		// — see probeImagePullTimeout. Only then the per-candidate clock, so a
+		// slow pull cannot eat the time the candidate itself needs.
 		if err := ensureProbeImage(ctx, dc); err != nil {
 			return "", true, err
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, probeContainerTimeout)
+		defer cancel()
 
 		name := fmt.Sprintf("overcast-reachability-%d", time.Now().UnixNano())
 		req := &docker.CreateContainerRequest{
 			ContainerConfig: &docker.ContainerConfig{
 				Image: docker.UtilityImage,
+				// `rc=$?` before the echo, and an explicit `exit $rc`: `sh -c`
+				// exits with the status of its *last* command, so echoing the
+				// marker first would make every probe container exit 0 whatever
+				// wget did — and the whole diagnosis rests on telling a refusal
+				// from a timeout. Without `-q` wget writes a progress line to
+				// stderr that would drown the one line worth quoting.
 				Cmd: []string{"sh", "-c", fmt.Sprintf(
-					"wget -q -T %d -O - http://%s/ 2>&1; echo %s$?", probeDialSeconds, addr, probeExitMarker)},
+					"wget -q -T %d -O - http://%s/ 2>&1; rc=$?; echo %s$rc; exit $rc",
+					probeDialSeconds, addr, probeExitMarker)},
 				Labels: docker.ManagedLabels(docker.ServiceCore, "runtime-api-reachability"),
 			},
 			HostConfig: &docker.HostConfig{
@@ -399,10 +453,13 @@ func probeOutput(raw string) string {
 // container) — so a machine that has run either has it cached, and one that has
 // not pays a ~2 MB pull once.
 func ensureProbeImage(ctx context.Context, dc runnerClient) error {
-	if present, err := dc.ImageExists(ctx, docker.UtilityImage); err == nil && present {
+	lookCtx, lookCancel := context.WithTimeout(ctx, 10*time.Second)
+	present, err := dc.ImageExists(lookCtx, docker.UtilityImage)
+	lookCancel()
+	if err == nil && present {
 		return nil
 	}
-	pullCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	pullCtx, cancel := context.WithTimeout(ctx, probeImagePullTimeout)
 	defer cancel()
 	if err := dc.PullImage(pullCtx, docker.UtilityImage); err != nil {
 		return fmt.Errorf("pull %s for the reachability probe: %w", docker.UtilityImage, err)
@@ -420,6 +477,8 @@ func ensureProbeImage(ctx context.Context, dc runnerClient) error {
 // endpoint — is a different question with a different answer. A hint whose
 // daemon does not match the one in front of us is ignored rather than trusted.
 type hint struct {
+	// Version is hintFileVersion — see there for why a cache carries a schema.
+	Version int `json:"version"`
 	// Daemon is docker.SystemInfo.ID.
 	Daemon string `json:"daemon"`
 	// Network is the plane the probe ran on: a hint from a different control
@@ -433,21 +492,53 @@ type hint struct {
 	ProbedAt time.Time `json:"probedAt"`
 }
 
-// hintFileName is the file under the state directory. One file, not one per
-// network — the record inside names the network it is about, and a stale entry
-// for a plane no longer in use is worth less than a second file to keep track
-// of.
-const hintFileName = "runtime-api-host.json"
+// hintFileVersion is the schema of the record below. A reader that finds
+// anything else ignores the file and re-probes, which is the same cost as a
+// miss — so a future field change never has to be inferred from what happens
+// to survive json.Unmarshal.
+const hintFileVersion = 1
 
-// HintPath returns where the remembered answer lives for a given state
-// directory, or "" when there is nowhere to keep it (memory mode, or no data
-// directory configured). Exported so the caller passes a path rather than this
-// package growing a dependency on config.
-func HintPath(dataDir string) string {
+// hintFileName builds the file name for one control plane.
+//
+// One file *per plane*, not one for the data directory. Two Overcast instances
+// sharing the default data dir with different OVERCAST_NETWORK values is a
+// documented configuration (docs/configuration.md § Running two instances on
+// one host), and a single file makes them fight: each rejects the other's
+// record on the network check, re-probes, and overwrites it, for ever. The
+// record still names the plane it is about, so a file read for the wrong one is
+// caught either way — the name is what stops the two from thrashing.
+func hintFileName(network string) string {
+	if network == "" {
+		return "runtime-api-host.json"
+	}
+	return "runtime-api-host-" + hintFileSafe(network) + ".json"
+}
+
+// hintFileSafe reduces a network name to something safe in a file name. Docker
+// network names are already conservative, but OVERCAST_NETWORK is free text and
+// a path separator in it must not escape the data directory.
+func hintFileSafe(network string) string {
+	var b strings.Builder
+	for _, r := range network {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+// HintPath returns where the remembered answer for one control plane lives
+// under a given state directory, or "" when there is nowhere to keep it (no
+// data directory configured). Exported so the caller passes a path rather than
+// this package growing a dependency on config.
+func HintPath(dataDir, network string) string {
 	if dataDir == "" {
 		return ""
 	}
-	return filepath.Join(dataDir, hintFileName)
+	return filepath.Join(dataDir, hintFileName(network))
 }
 
 // readHint returns the remembered candidate when the file names this daemon
@@ -466,20 +557,44 @@ func readHint(path, daemon, network string) *Candidate {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return nil
 	}
+	if h.Version != hintFileVersion {
+		return nil
+	}
 	if h.Daemon != daemon || h.Network != network || h.ContainerHost == "" || len(h.BindHosts) == 0 {
 		return nil
 	}
 	return &Candidate{Mode: h.Mode, ContainerHost: h.ContainerHost, BindHosts: h.BindHosts}
 }
 
-// writeHint records a verified candidate. Best effort: a state directory that
-// cannot be written is somebody else's problem to report, and failing startup
-// over a cache would be the wrong trade.
-func writeHint(path, daemon, network string, c Candidate, now time.Time) {
+// writeHint records a verified candidate.
+//
+// The directory is created rather than assumed. cfg.DataDir is always set, but
+// only the hybrid and WAL state backends actually create it — under
+// OVERCAST_STATE=memory, which config resolves to automatically whenever SQLite
+// is unavailable, nothing does. Without the MkdirAll every write there fails
+// silently and every startup re-probes, which is precisely the promise the docs
+// and the changelog make ("only the first startup pays for it").
+//
+// Written to a temp file and renamed, so a reader never sees half a record: a
+// torn file is only a miss, but it is a miss with no explanation, and rename is
+// one line.
+//
+// Still best effort. A data directory that cannot be written is somebody else's
+// problem to report, and failing startup over a cache would be the wrong trade —
+// but it is logged at debug rather than swallowed, so "why does it probe every
+// time" is answerable without a debugger.
+func writeHint(path, daemon, network string, c Candidate, now time.Time, logger *zap.Logger) {
 	if path == "" || daemon == "" {
 		return
 	}
+	note := func(err error) {
+		if logger != nil {
+			logger.Debug("could not remember the Runtime API probe result — the next startup will probe again",
+				zap.String("path", path), zap.Error(err))
+		}
+	}
 	data, err := json.Marshal(hint{
+		Version:       hintFileVersion,
 		Daemon:        daemon,
 		Network:       network,
 		Mode:          c.Mode,
@@ -488,9 +603,40 @@ func writeHint(path, daemon, network string, c Candidate, now time.Time) {
 		ProbedAt:      now.UTC(),
 	})
 	if err != nil {
+		note(err)
 		return
 	}
-	_ = os.WriteFile(path, data, 0o600)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		note(err)
+		return
+	}
+	tmp, err := os.CreateTemp(dir, ".runtime-api-host-*.tmp")
+	if err != nil {
+		note(err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		note(err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		note(err)
+		return
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		_ = os.Remove(tmpName)
+		note(err)
+		return
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		note(err)
+	}
 }
 
 // ForgetHint drops the remembered answer, so the next startup probes again.

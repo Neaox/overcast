@@ -410,7 +410,7 @@ func TestContainerInstance_initExitHintExplainsA139ToTheCaller(t *testing.T) {
 
 func TestContainerInstance_forgetsARememberedAddressThisContainerDisproved(t *testing.T) {
 	dir := t.TempDir()
-	path := containerendpoint.HintPath(dir)
+	path := containerendpoint.HintPath(dir, "overcast_control")
 
 	newInstance := func(t *testing.T, mode string) (*containerInstance, *containerListener) {
 		t.Helper()
@@ -457,5 +457,53 @@ func writeTestHint(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(`{"daemon":"d","network":"n","mode":"host","containerHost":"10.0.0.9","bindHosts":["10.0.0.9"]}`), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestContainerInstance_keepsTheRememberedAddressWhenAContainerDidReachIt(t *testing.T) {
+	// Given: an address taken from the remembered probe result, and a container
+	// that died during INIT *after* something reached its endpoint — a broken
+	// handler, not a broken route.
+	dir := t.TempDir()
+	path := containerendpoint.HintPath(dir, "overcast_control")
+	writeTestHint(t, path)
+
+	srv, _ := newObservedRuntimeAPIServer(t, zap.WarnLevel)
+	listener, err := srv.AddContainerListener()
+	if err != nil {
+		t.Fatalf("AddContainerListener() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	// Something connects, which is the whole distinction: the route works.
+	conn, err := net.DialTimeout("tcp", listener.Addr(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial %s: %v", listener.Addr(), err)
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for listener.Accepted() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if listener.Accepted() == 0 {
+		t.Fatal("the test connection was never accepted")
+	}
+
+	ci := &containerInstance{
+		functionName:  "diag",
+		rapiListener:  listener,
+		logger:        srv.logger,
+		reachHintPath: path,
+		reach:         containerendpoint.Listen{Mode: "hinted:host", ContainerHost: "10.0.0.9", Verified: true},
+	}
+
+	// When: the exit is diagnosed.
+	ci.logInitExit("139")
+
+	// Then: the remembered address survives. Throwing away a measurement that
+	// this container just demonstrated is correct would make every crashing
+	// handler cost a probe.
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the remembered address was discarded although a container reached it: %v", err)
 	}
 }
