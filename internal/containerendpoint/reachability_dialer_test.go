@@ -224,19 +224,35 @@ func TestDockerDialer_withoutADaemonIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestDockerDialer_pullsTheImageWhenItIsMissing(t *testing.T) {
+func TestEnsureProbeImage_pullsTheImageWhenItIsMissing(t *testing.T) {
 	// Given: a daemon without busybox.
 	f := &fakeRunner{imagePresent: false, logs: framed(1, "ok\nprobe-exit=0\n")}
 
-	// When: a candidate is dialled.
-	if _, unavailable, err := dockerDialer(f, "overcast_control", zap.NewNop())(
-		context.Background(), "10.0.0.1:1"); unavailable || err != nil {
-		t.Fatalf("dial() = unavailable=%v err=%v, want success after a pull", unavailable, err)
+	// When: the probe is prepared.
+	if err := ensureProbeImage(context.Background(), f); err != nil {
+		t.Fatalf("ensureProbeImage() = %v, want a successful pull", err)
 	}
 
 	// Then: it was fetched, once.
 	if f.pulled != 1 {
 		t.Errorf("pulled %d times, want 1", f.pulled)
+	}
+}
+
+func TestDockerDialer_doesNotPull(t *testing.T) {
+	// The pull moved out of the dialler in #1586: nested inside the walk's 45s
+	// budget its own 60s could never be reached, and it was re-attempted once
+	// per candidate. resolveListen now prepares the image once, against the
+	// caller's own context, before the walk starts.
+	f := &fakeRunner{imagePresent: false, logs: framed(1, "ok\nprobe-exit=0\n")}
+
+	if _, unavailable, err := dockerDialer(f, "overcast_control", zap.NewNop())(
+		context.Background(), "10.0.0.1:1"); unavailable || err != nil {
+		t.Fatalf("dial() = unavailable=%v err=%v, want success", unavailable, err)
+	}
+
+	if f.pulled != 0 {
+		t.Errorf("the dialler pulled %d times; the pull belongs to ensureProbeImage, before the walk", f.pulled)
 	}
 }
 

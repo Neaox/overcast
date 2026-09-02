@@ -531,6 +531,8 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 			VPCNetworkProblems:       networkProblems,
 			LambdaInitVolumeProblems: initVolumeProblems,
 			RuntimeAPI:               runtimeAPI,
+			VPCEgress:                cfg.VPCEgress,
+			ControlPlane:             controlPlaneDecision(dockerStatus, cfg.ControlNetwork()),
 		})
 		if advisories == nil {
 			advisories = []Advisory{}
@@ -660,6 +662,28 @@ func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
 		// already reading them.
 		writeDebugJSON(w, http.StatusOK, buf.Stats())
 	}
+}
+
+// controlPlaneDecision reads what this run resolved the control plane's
+// isolation to out of the Docker status snapshot.
+//
+// The decision rather than the network record: see advisoryInput.ControlPlane.
+// An absent decision is the zero value, which every rule reads as "nothing was
+// established", not as "nothing is wrong".
+func controlPlaneDecision(dockerStatus func() *docker.Status, name string) docker.NetworkDecision {
+	if dockerStatus == nil || name == "" {
+		return docker.NetworkDecision{}
+	}
+	s := dockerStatus()
+	if s == nil {
+		return docker.NetworkDecision{}
+	}
+	for _, d := range s.Decisions {
+		if d.Network == name {
+			return d
+		}
+	}
+	return docker.NetworkDecision{}
 }
 
 // dockerNetworkStatuses reads the network section out of the Docker status

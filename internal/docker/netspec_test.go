@@ -37,6 +37,16 @@ type specDaemon struct {
 	// refuseCreate models a daemon that will not create the network at all —
 	// address-pool exhaustion being the common cause.
 	refuseCreate bool
+
+	// failInspects makes the next n inspects fail with a 500 rather than a 404
+	// — a daemon busy behind a burst of container creates, a socket that
+	// dropped as Docker Desktop restarted. The distinction is the whole of
+	// #1582: a 404 is a fact about the network, and everything else is not.
+	failInspects int
+
+	// inspects counts every inspect the code under test issued, so a test can
+	// assert the retry happened (or did not).
+	inspects int
 }
 
 func newSpecDaemon(t *testing.T, seed ...*NetworkInspect) (*Client, *specDaemon) {
@@ -112,6 +122,13 @@ func (d *specDaemon) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
 		d.mu.Lock()
+		d.inspects++
+		if d.failInspects > 0 {
+			d.failInspects--
+			d.mu.Unlock()
+			http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
+			return
+		}
 		info, ok := d.networks[d.resolveLocked(strings.TrimPrefix(r.URL.Path, "/v1.45/networks/"))]
 		d.mu.Unlock()
 		if !ok {
@@ -139,6 +156,12 @@ func (d *specDaemon) resolveLocked(nameOrID string) string {
 		}
 	}
 	return nameOrID
+}
+
+func (d *specDaemon) inspectCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.inspects
 }
 
 func (d *specDaemon) network(name string) *NetworkInspect {

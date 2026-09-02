@@ -556,10 +556,16 @@ func TestNetworkReset_forceNeverRebuildsWhatItCannotJudge(t *testing.T) {
 				t.Fatalf("--force rebuilt a network whose isolation is unknown; calls: %v\ncalls would "+
 					"have written internal=true over a routable network", d.calls)
 			}
-			if !strings.Contains(out.String(), "predates the recorded gateway state") &&
-				!strings.Contains(out.String(), "not compared") &&
-				!strings.Contains(out.String(), "Nothing to do") {
+			// Not "Nothing to do", which this accepted until #1584 and which is
+			// the opposite of what happened: nothing was *compared*. An operator
+			// sent here by the drift warning would read the old wording as the
+			// fix having worked.
+			if !strings.Contains(out.String(), "predates the recorded gateway state") {
 				t.Errorf("the command did not say why it declined:\n%s", out.String())
+			}
+			if strings.Contains(out.String(), "Every network is already in the state this configuration asks for") {
+				t.Errorf("the command claimed the network matches; it never compared it:\n%s",
+					out.String())
 			}
 		})
 	}
