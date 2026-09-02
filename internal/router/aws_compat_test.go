@@ -622,3 +622,27 @@ func TestAWSCompatServedPathsAreNotClaimedByTheWildcard(t *testing.T) {
 		}
 	}
 }
+
+// TestRegionFromQueueHost pins which hostnames name a region and which do
+// not. The negative cases matter more: reading a region out of a segment
+// that is not one scopes the peek to a region nothing else can name, and
+// reports the queue as missing when it is simply looked for in the wrong
+// place.
+func TestRegionFromQueueHost(t *testing.T) {
+	cases := map[string]string{
+		"sqs.us-east-1.localhost.localstack.cloud": "us-east-1",
+		"sqs.ap-southeast-2.amazonaws.com":         "ap-southeast-2",
+		"SQS.US-GOV-WEST-1.AMAZONAWS.COM":          "us-gov-west-1",
+		"eu-west-1.queue.amazonaws.com":            "eu-west-1",
+		"sqs.localhost.localstack.cloud":           "",
+		"localhost":                                "",
+		"127.0.0.1":                                "",
+		"localhost.localstack.cloud":               "",
+		"queue.amazonaws.com":                      "",
+	}
+	for host, want := range cases {
+		if got := regionFromQueueHost(host); got != want {
+			t.Errorf("regionFromQueueHost(%q) = %q, want %q", host, got, want)
+		}
+	}
+}

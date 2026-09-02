@@ -390,12 +390,29 @@ func queueTargetFromURL(raw, explicitRegion string) (awsCompatQueueTarget, *prot
 func regionFromQueueHost(hostname string) string {
 	parts := strings.Split(strings.ToLower(hostname), ".")
 	switch {
-	case len(parts) >= 3 && parts[0] == "sqs":
+	case len(parts) >= 3 && parts[0] == "sqs" && looksLikeRegion(parts[1]):
 		return parts[1]
-	case len(parts) >= 3 && parts[1] == "queue":
+	case len(parts) >= 3 && parts[1] == "queue" && looksLikeRegion(parts[0]):
 		return parts[0]
 	}
 	return ""
+}
+
+// looksLikeRegion reports whether s has an AWS region's shape — "us-east-1",
+// "ap-southeast-2", "us-gov-west-1" — so that "sqs.localhost.localstack.cloud"
+// is read as a host with no region rather than as the region "localhost".
+func looksLikeRegion(s string) bool {
+	parts := strings.Split(s, "-")
+	if len(parts) < 3 {
+		return false
+	}
+	for _, p := range parts[:len(parts)-1] {
+		if p == "" || strings.Trim(p, "abcdefghijklmnopqrstuvwxyz") != "" {
+			return false
+		}
+	}
+	last := parts[len(parts)-1]
+	return last != "" && strings.Trim(last, "0123456789") == ""
 }
 
 // wantsJSON reports whether the caller asked for LocalStack's JSON rendering
