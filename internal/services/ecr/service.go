@@ -2624,33 +2624,43 @@ func (s *Service) Stop(ctx context.Context) {
 }
 
 // removeRegistryContainer stops and removes the named registry container,
-// polling until the daemon agrees it is gone — removal is asynchronous, and
-// "stopped" is not "removed" while AutoRemove is still working.
+// then waits for the daemon to confirm it is actually gone — "stopped" is
+// not "removed" while AutoRemove is still working.
+//
+// It used to poll GetContainerByName until the name came back not-found, on
+// a fixed 10s budget. That looked right — until CI showed a shutdown that
+// returned clean while the daemon still listed the container as
+// state=removing. The container has HostConfig.AutoRemove set (see
+// ensureRegistry), so stopping it also queues Docker's own exit-triggered
+// auto-remove goroutine — independent of, and racing, the explicit
+// RemoveContainerForce call below. Whichever side the daemon accepts, name
+// and container-store removal land together at the end of the daemon's own
+// cleanup, which under load (layer unmount, contended graphdriver) can run
+// longer than any fixed poll budget was willing to guess. Polling by name
+// can only ever answer "how long did I wait", never "is it actually gone
+// yet" — WaitContainerRemoved asks the daemon that question directly and
+// blocks on its answer instead.
 func (s *Service) removeRegistryContainer(containerID, name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	for {
-		if containerID != "" {
-			_ = s.docker.StopContainer(ctx, containerID, 3)
-			_ = s.docker.RemoveContainerForce(containerID)
-		}
-
-		if name == "" {
-			return
-		}
-		info, err := s.docker.GetContainerByName(ctx, name)
-		if err == nil && (info == nil || !info.HasOvercastLabels(serviceName, ecrRegistryResource)) {
-			return
-		}
-		if err == nil && info != nil {
+	if containerID == "" && name != "" {
+		if info, err := s.docker.GetContainerByName(ctx, name); err == nil && info != nil && info.HasOvercastLabels(serviceName, ecrRegistryResource) {
 			containerID = info.ID
 		}
+	}
+	if containerID == "" {
+		return
+	}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(100 * time.Millisecond):
-		}
+	_ = s.docker.StopContainer(ctx, containerID, 3)
+	// This either performs the removal itself, or loses the race against
+	// Docker's own AutoRemove and comes back a 409 "already in progress" —
+	// either way something is now removing this container; the wait below is
+	// what actually confirms it finished.
+	_ = s.docker.RemoveContainerForce(containerID)
+	if err := s.docker.WaitContainerRemoved(ctx, containerID); err != nil && !docker.IsNotFound(err) {
+		s.log.Warn("ecr registry container removal did not complete before shutdown gave up",
+			zap.String("container", containerID), zap.Error(err))
 	}
 }

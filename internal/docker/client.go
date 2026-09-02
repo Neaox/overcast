@@ -1088,6 +1088,40 @@ func (d *Client) WaitContainer(ctx context.Context, id string) (int, error) {
 	return result.StatusCode, nil
 }
 
+// WaitContainerRemoved blocks until the daemon confirms a container has been
+// fully removed, rather than a caller having to poll and guess how long that
+// might still take. A stop/remove call only asks the daemon to remove a
+// container — for one with HostConfig.AutoRemove set, it can also be racing
+// Docker's own exit-triggered auto-remove (moby's daemon.autoRemove, run on
+// the daemon's internal event goroutine, independent of any client request).
+// Whichever side the daemon accepted, the container can keep listing in an
+// all=true listing with state "removing" — still unmounting layers, still
+// holding its name — long after a remove call has already returned. The
+// /wait?condition=removed endpoint is the daemon's own signal for the actual
+// completion of that work.
+//
+// Returns nil if the container is already gone by the time this is called —
+// the condition is trivially satisfied, and the daemon answers 404 rather
+// than blocking on an id it no longer has any record of.
+func (d *Client) WaitContainerRemoved(ctx context.Context, id string) error {
+	path := "/v1.45/containers/" + id + "/wait?condition=removed"
+	var result struct {
+		Error *struct {
+			Message string `json:"Message"`
+		} `json:"Error"`
+	}
+	if err := d.doJSON(ctx, http.MethodPost, path, nil, &result); err != nil {
+		if IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("wait container removed %s: %w", id, err)
+	}
+	if result.Error != nil && result.Error.Message != "" {
+		return fmt.Errorf("wait container removed %s: %s", id, result.Error.Message)
+	}
+	return nil
+}
+
 // ContainerStats is a single point-in-time resource sample for a container.
 // CPU counters are cumulative; a rate needs two samples
 // (see the docker CLI formula: Δcpu_total / Δsystem_cpu × online_cpus × 100).
