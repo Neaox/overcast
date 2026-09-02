@@ -152,6 +152,11 @@ func TestEnsureNetwork_reportsANetworkItNeverManagedToRead(t *testing.T) {
 // A network that is genuinely absent is still created and still reported clean.
 // The 404 is a fact, and treating it like a failed read would make every first
 // run report a problem it does not have.
+//
+// It also pins that Diff is round-trip stable over a network this code just
+// created: the read-back below runs on every create now, so if the spec did not
+// compare equal to what it produces, every boot would report drift on a network
+// nothing had touched.
 func TestEnsureNetwork_aMissingNetworkIsStillJustCreated(t *testing.T) {
 	spec := testSpec()
 	dc, d := newSpecDaemon(t)
@@ -166,7 +171,48 @@ func TestEnsureNetwork_aMissingNetworkIsStillJustCreated(t *testing.T) {
 	if got := d.createCount(spec.Name); got != 1 {
 		t.Errorf("created %d times, want 1", got)
 	}
-	if got := d.inspectCount(); got != 1 {
-		t.Errorf("inspected %d times, want 1 — a 404 is the answer and must not be retried", got)
+	// Two: the 404, and the read-back that verifies the create. Three would
+	// mean the 404 had been retried, which is the thing this pins — it is an
+	// answer, not a moment, and retrying it only delays the create.
+	if got := d.inspectCount(); got != 2 {
+		t.Errorf("inspected %d times, want 2 — a 404 is the answer and must not be retried", got)
+	}
+}
+
+// The other half of the same hole (#1595 review, finding 4). A 404 is a fact
+// about the moment it was asked, not about the moment the create landed —
+// another process can create the network in between, and Docker resolves the
+// name conflict by handing back *their* network unchanged. Returning on the
+// strength of a create that succeeded reports it as freshly built to this spec.
+//
+// The container is what makes the assertion sharp: it means no repair is
+// possible, so a clean status could only come from not having looked.
+func TestEnsureNetwork_verifiesACreateThatRacedAnotherProcess(t *testing.T) {
+	spec := testSpec()
+	// Their network: same name, wrong isolation, no spec label.
+	theirs := drifted(spec)
+	theirs.Containers = map[string]NetworkEndpoint{"c1": {Name: "their-container"}}
+	dc, d := newSpecDaemon(t, theirs)
+	// It is not there when we look, and is by the time we create.
+	d.hideNextInspect = 1
+
+	status, err := EnsureNetwork(context.Background(), dc, spec, zap.NewNop())
+	if err != nil {
+		t.Fatalf("EnsureNetwork() = %v, want a reported problem rather than a refusal to start", err)
+	}
+	if status.OK() {
+		t.Fatalf("status = %+v, want NOT OK — the create handed back a drifted network nobody compared", status)
+	}
+	if len(status.Mismatch) == 0 {
+		t.Errorf("status.Mismatch is empty; the create was returned on rather than verified")
+	}
+	if status.Internal != theirs.Internal {
+		t.Errorf("status.Internal = %v, want the live %v", status.Internal, theirs.Internal)
+	}
+	if len(status.Attached) == 0 {
+		t.Errorf("status.Attached is empty; their container is why this could not be repaired")
+	}
+	if got := d.removeCount(spec.Name); got != 0 {
+		t.Errorf("removed %d times; a network with a container on it is never rebuilt underneath it", got)
 	}
 }
