@@ -522,6 +522,12 @@ type Service struct {
 	// listener to serve, and the health endpoint's docker section says so.
 	runtimeAPIListen    listenstatus.Status
 	runtimeAPIListenSet bool
+	// runtimeAPIReach is how the Runtime API address was established — which
+	// candidate won, whether a container proved it, and what every candidate
+	// did. Kept beside the bind status because the two answer different
+	// questions ("did it bind" vs "can anything reach it") and the second is
+	// the one an INIT death needs quoted back at it.
+	runtimeAPIReach containerendpoint.Listen
 }
 
 // WaitReady blocks until the first Docker probe has reported (successfully or
@@ -567,6 +573,24 @@ func (s *Service) InitVolumeProblems() []docker.VolumeOwnershipProblem {
 		return nil
 	}
 	return cr.InitVolumeProblems()
+}
+
+// RuntimeAPIReachability reports how the Runtime API address was established,
+// for the console advisory and for the INIT-death diagnostic. The zero value
+// means the Docker probe has not reported yet.
+func (s *Service) RuntimeAPIReachability() containerendpoint.Listen {
+	if s == nil {
+		return containerendpoint.Listen{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runtimeAPIReach
+}
+
+func (s *Service) setRuntimeAPIReach(l containerendpoint.Listen) {
+	s.mu.Lock()
+	s.runtimeAPIReach = l
+	s.mu.Unlock()
 }
 
 // InitLogWriter wires the CloudWatch Logs writer so Lambda invocations can
@@ -926,7 +950,10 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	actualPort := lns[0].Addr().(*net.TCPAddr).Port
 
 	containerAddr := net.JoinHostPort(listen.ContainerHost, strconv.Itoa(actualPort))
-	log.Info("lambda: Runtime API address", zap.String("addr", containerAddr))
+	log.Info("lambda: Runtime API address",
+		zap.String("addr", containerAddr),
+		zap.String("mode", listen.Mode),
+		zap.Bool("container_verified", listen.Verified))
 
 	runtimeAPI, apiErr := NewRuntimeAPIServerFromListeners(lns, containerAddr, lambdaInitTimeout(cfg), log, clk)
 	if apiErr != nil {
@@ -935,7 +962,24 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Failed, Error: apiErr.Error(), Fix: runtimeAPIListenFix})
 		return
 	}
-	s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Listening, Addr: containerAddr, FellBack: fellBack})
+	// A bound listener nothing can reach is not "listening", whatever the bind
+	// said. Reporting it as such is what let #1572 present as a working
+	// configuration while every invocation died at INIT with exit 139 — the
+	// one number in the whole failure, and it points at the runtime rather than
+	// at the network. The state, the detail naming every candidate tried, and
+	// the fix all land on /_overcast/health and in the console advisories.
+	if listen.Unreachable {
+		detail := containerendpoint.RuntimeAPIUnreachableDetail(listen.Attempts)
+		s.setRuntimeAPIListen(listenstatus.Status{
+			State: listenstatus.Unreachable,
+			Addr:  containerAddr,
+			Error: detail,
+			Fix:   containerendpoint.RuntimeAPIUnreachableFix,
+		})
+	} else {
+		s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Listening, Addr: containerAddr, FellBack: fellBack})
+	}
+	s.setRuntimeAPIReach(listen)
 
 	// Resolve instance limits now that the Docker client exists: env-pinned
 	// values are used as-is, unset ones are derived from the daemon's /info
@@ -944,6 +988,7 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	limits := resolveRuntimeLimits(context.Background(), cfg, dc, log)
 
 	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts, s.instances)
+	containerRuntime.SetRuntimeAPIReachability(listen, containerendpoint.HintPath(cfg.DataDir))
 
 	// When a container's RIC issues its first GET /next, throttle that
 	// container's INIT-burst CPU down to the steady-state proportional
@@ -1517,10 +1562,20 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 //
 // The timeout bounds a Docker daemon that accepts the connection and then does
 // not answer — this runs on the container-runtime init goroutine, and a hang
-// here leaves Lambda on the stub runtime with no error to show for it.
+// here leaves Lambda on the stub runtime with no error to show for it. It is
+// generous because the answer is now measured rather than guessed: each
+// candidate costs a throwaway container, and the budget has to cover a first
+// run that also pulls busybox. The result is remembered per daemon
+// (containerendpoint.HintPath), so only the first startup against a given
+// daemon pays it.
 func runtimeAPIListen(cfg *config.Config, dc *docker.Client, logger *zap.Logger) containerendpoint.Listen {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	return containerendpoint.ResolveListen(ctx, dc, dataplane.Primary(cfg), logger)
+	return containerendpoint.ResolveListen(ctx, dc, containerendpoint.ListenOptions{
+		Network:    dataplane.Primary(cfg),
+		PinnedHost: cfg.LambdaRuntimeAPIHost,
+		HintPath:   containerendpoint.HintPath(cfg.DataDir),
+		Logger:     logger,
+	})
 }

@@ -24,6 +24,16 @@ const (
 	// Failed means the bind failed and the feature behind it is unavailable.
 	// Error says why and Fix says what to change.
 	Failed State = "failed"
+	// Unreachable means the listener is bound — Addr is real — but nothing
+	// that has to reach it can. It is a separate state from Failed because the
+	// two need different fixes and would otherwise be reported as the same
+	// thing: a bind failure is a port collision on this host, while this is a
+	// path into this process that does not exist. The Lambda Runtime API is
+	// the case it was added for: a container that cannot open a connection to
+	// the advertised address strands every invocation at INIT, and the bind
+	// itself succeeded, so "listening" was the honest-looking answer that said
+	// nothing was wrong (#1572).
+	Unreachable State = "unreachable"
 )
 
 // Well-known listener names, the keys under which /_overcast/health reports
@@ -88,10 +98,11 @@ func (t *Tracker) Snapshot() map[string]Status {
 	return maps.Clone(t.m)
 }
 
-// Degraded reports whether any listener failed to bind.
+// Degraded reports whether any listener is not serving what it is for —
+// either it never bound, or nothing that has to reach it can.
 func Degraded(statuses map[string]Status) bool {
 	for _, s := range statuses {
-		if s.State == Failed {
+		if s.State == Failed || s.State == Unreachable {
 			return true
 		}
 	}

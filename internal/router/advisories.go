@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -39,6 +40,7 @@ const (
 	advisoryCodeNetworkStateMismatch      = "network-state-mismatch"
 	advisoryCodeVPCNetworkIsolationStale  = "vpc-network-isolation-stale"
 	advisoryCodeLambdaInitVolumeForeign   = "lambda-init-volume-foreign"
+	advisoryCodeRuntimeAPIUnreachable     = "lambda-runtime-api-unreachable"
 )
 
 // networkingDocsPath deep-links the network-state advisory at the section that
@@ -191,6 +193,13 @@ type advisoryInput struct {
 	// lambda-init-volume-foreign. Nil whenever Lambda is not wired, Docker
 	// has not been probed yet, or nothing was found.
 	LambdaInitVolumeProblems []docker.VolumeOwnershipProblem
+	// RuntimeAPI is how the Lambda Runtime API address was established: which
+	// candidate won, whether a container was seen to reach it, and what every
+	// candidate did. Drives lambda-runtime-api-unreachable. The zero value
+	// means Lambda never probed — no Docker, a service subset without Lambda,
+	// or startup still in flight — which is an absence rather than a problem
+	// and fires nothing.
+	RuntimeAPI containerendpoint.Listen
 }
 
 // computeAdvisories is the single generator function behind the
@@ -236,6 +245,9 @@ func computeAdvisories(in advisoryInput) []Advisory {
 		advisories = append(advisories, *a)
 	}
 	if a := checkLambdaInitVolumeOwnership(in.LambdaInitVolumeProblems); a != nil {
+		advisories = append(advisories, *a)
+	}
+	if a := checkRuntimeAPIUnreachable(in.RuntimeAPI); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
@@ -651,5 +663,38 @@ func checkMemoryModeIgnoresExisting(backend config.StateBackend, hasExistingData
 			"restart, while that database is left exactly as it was. If you expected this run to use " +
 			"it, set OVERCAST_STATE=auto (or hybrid/wal) and confirm this build has SQLite support.",
 		DocsPath: storageDocsPath,
+	}
+}
+
+// lambdaTroubleshootingDocsPath deep-links the Runtime API advisory at the
+// section that spells out the whole diagnosis. The fragment is the docs
+// browser's heading slug — see dataDirDocsPath for how those are derived.
+const lambdaTroubleshootingDocsPath = "services/lambda/troubleshooting.md#containers-cannot-reach-the-runtime-api"
+
+// checkRuntimeAPIUnreachable is the one critical-severity rule in this file,
+// and it earns it: while it holds, **no Lambda can run at all**. Every
+// invocation strands at INIT and the runtime exits 139.
+//
+// It fires only on a measured verdict. Overcast now establishes the Runtime API
+// address by having a container connect to each candidate in turn
+// (containerendpoint), so this reports a fact rather than a suspicion — which
+// is the whole point of #1572, where the address was chosen on bindability, the
+// log claimed it was "container-reachable", and the only signal a user ever got
+// was a SIGSEGV pointing at the wrong subsystem.
+//
+// A probe that could not run at all (no Docker, no busybox, a daemon refusing
+// creates) leaves Unreachable false and fires nothing: an unmeasured address is
+// not an unreachable one, and a critical card for "we did not check" is the
+// kind of noise that gets a whole panel ignored.
+func checkRuntimeAPIUnreachable(l containerendpoint.Listen) *Advisory {
+	if !l.Unreachable {
+		return nil
+	}
+	return &Advisory{
+		Severity: advisorySeverityCritical,
+		Code:     advisoryCodeRuntimeAPIUnreachable,
+		Title:    "No Lambda can run: containers cannot reach the Runtime API",
+		Detail:   containerendpoint.RuntimeAPIUnreachableDetail(l.Attempts),
+		DocsPath: lambdaTroubleshootingDocsPath,
 	}
 }

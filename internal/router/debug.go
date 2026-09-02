@@ -16,6 +16,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/containerendpoint"
 	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -44,6 +45,14 @@ type debugLambdaProvider interface {
 	// advisories.go): init volumes matching this build's content hash that
 	// this instance reused but does not own, per docker.LabelInstance.
 	InitVolumeProblems() []docker.VolumeOwnershipProblem
+
+	// RuntimeAPIReachability feeds the lambda-runtime-api-unreachable
+	// advisory: which address containers were told to dial for the Runtime
+	// API, whether one was ever seen to reach it, and what every candidate
+	// did. Read live rather than captured, because it is not settled until
+	// the Lambda service's own Docker probe answers — some seconds after the
+	// router is built.
+	RuntimeAPIReachability() containerendpoint.Listen
 }
 
 // DebugStateProvider is implemented by services with data outside the
@@ -497,8 +506,10 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 			networkProblems = vpcs.NetworkProblems()
 		}
 		var initVolumeProblems []docker.VolumeOwnershipProblem
+		var runtimeAPI containerendpoint.Listen
 		if lambdaSvc != nil {
 			initVolumeProblems = lambdaSvc.InitVolumeProblems()
+			runtimeAPI = lambdaSvc.RuntimeAPIReachability()
 		}
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
@@ -519,6 +530,7 @@ func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, 
 			Networks:                 dockerNetworkStatuses(dockerStatus),
 			VPCNetworkProblems:       networkProblems,
 			LambdaInitVolumeProblems: initVolumeProblems,
+			RuntimeAPI:               runtimeAPI,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

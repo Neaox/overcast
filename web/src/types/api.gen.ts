@@ -301,7 +301,7 @@ export interface ListenerStatus {
  *
  * Generated from Go `listenstatus.State` (internal/listenstatus/listenstatus.go).
  */
-export type ListenerState = "listening" | "failed"
+export type ListenerState = "listening" | "failed" | "unreachable"
 
 /**
  * debugMetricsResponse is the JSON body for GET /_overcast/debug/metrics
