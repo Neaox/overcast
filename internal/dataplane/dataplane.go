@@ -144,14 +144,15 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// The deprecated pin, applied on top. It names one network, which is
 		// why it is deprecated: egress is a property of the topology and this
 		// only ever settled a third of it.
-		switch cfg.ControlPlaneInternal {
+		pin, pinSet := cfg.LegacyControlPlaneInternal()
+		switch pin {
 		case config.ControlPlaneInternalTrue:
 			d.Internal, d.Reason = true, "OVERCAST_CONTROL_PLANE_INTERNAL=true"
 		case config.ControlPlaneInternalFalse:
 			d.Internal, d.Reason = false, "OVERCAST_CONTROL_PLANE_INTERNAL=false"
 		case config.ControlPlaneInternalAuto:
 		}
-		if cfg.ControlPlaneInternalSet {
+		if pinSet {
 			d.Warnings = append(d.Warnings, deprecationNotice(cfg))
 		}
 
@@ -181,7 +182,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 	}
 }
 
-// DataPlaneInternal returns the decision function for the default data plane —
+// Internal returns the decision function for the default data plane —
 // the network every container that named no VPC joins.
 //
 // It exists at all because `none` has to mean none. Before egress modes this
@@ -189,7 +190,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 // and every VPC network and still have every non-VPC function reach the
 // internet through this one: "hermetic" that leaked on the most common
 // placement there is.
-func DataPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
+func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	return func(_ context.Context, _ *docker.Client) docker.InternalDecision {
 		return docker.InternalDecision{
 			Internal: egressMode(cfg) == config.VPCEgressNone,
@@ -201,22 +202,31 @@ func DataPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *docker.
 // VPCNetworkInternal reports whether the Docker network backing one VPC is
 // created `--internal`.
 //
-// hasInternetGateway is what the VPC's own template says, and under the modes
-// that exist today it changes nothing — which is the honest position rather
-// than an oversight. `open` grants egress everywhere and `none` withholds it
-// everywhere; the mode that would consult the template is `routed`, and
-// `routed` needs route tables, which Overcast does not read
-// (config.VPCEgressRouted). Deriving isolation from the gateway alone, as
-// Overcast did before, delivers only the withholding half of AWS's model: a
-// private subnet behind a NAT gateway becomes indistinguishable from an
-// isolated one, and a stack that works on AWS fails here with no template
-// change that helps.
+// Under `none` it always is: the mode's promise is that nothing Overcast starts
+// reaches outside the machine, and a routable VPC bridge would be a hole in it.
 //
-// The parameter stays because `routed` will need it, and because a caller that
-// has the fact should go on passing it — this is the seam that mode reads it at.
+// Under `open` the VPC's own internet gateway decides, exactly as it did before
+// egress modes — and that costs `open` nothing, which is the part worth being
+// clear about. A container in a VPC sits on the control plane as well as on its
+// VPC network, and Docker gives it a default route from whichever of them is
+// routable. Under `open` the control plane is routable, so a container in a
+// gateway-less VPC has full egress whether its own bridge is `--internal` or
+// not. That is measured, not assumed: an end-to-end matrix over every VPC shape
+// found a Lambda in an isolated subnet, on a correctly `Internal=true` network,
+// reaching checkip.amazonaws.com and getting a 403 from real
+// sts.us-east-1 — packets left the machine.
+//
+// So the flag stays honest about the template rather than being flattened, the
+// gateway machinery that keeps it true stays exercised (#1570), and `routed`
+// inherits a bit that already means something. What changed is that the flag no
+// longer *decides* egress on its own, which is what made a private-with-NAT
+// subnet indistinguishable from an isolated one: the mode decides, and today
+// both implemented modes answer for every network alike.
 func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
-	_ = hasInternetGateway
-	return egressMode(cfg) == config.VPCEgressNone
+	if egressMode(cfg) == config.VPCEgressNone {
+		return true
+	}
+	return !hasInternetGateway
 }
 
 // VPCNetworkSpec is the full desired state of the Docker network backing one
@@ -286,7 +296,7 @@ const ControlPlaneMustStayRoutableWarning = "OVERCAST_VPC_EGRESS=none asked for 
 // only that they are wrong.
 func deprecationNotice(cfg *config.Config) string {
 	replacement := "OVERCAST_VPC_EGRESS=open (the default)"
-	if cfg.ControlPlaneInternal == config.ControlPlaneInternalTrue {
+	if pin, _ := cfg.LegacyControlPlaneInternal(); pin == config.ControlPlaneInternalTrue {
 		replacement = "OVERCAST_VPC_EGRESS=none"
 	}
 	return "OVERCAST_CONTROL_PLANE_INTERNAL is deprecated and will be removed: it pins one network's " +
@@ -357,7 +367,7 @@ func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 	return []docker.NetworkSpec{
 		{
 			Name:         cfg.Network,
-			InternalMode: DataPlaneInternal(cfg),
+			InternalMode: Internal(cfg),
 			Labels:       docker.ManagedLabels(docker.ServiceCore, cfg.Network),
 			Owner:        cfg.Network,
 			Version:      cfg.Version,

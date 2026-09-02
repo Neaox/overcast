@@ -168,13 +168,15 @@ const (
 // (Config.ControlNetwork) is created `--internal` — cut off from everything
 // Docker did not put on it.
 //
-// Deprecated: set OVERCAST_VPC_EGRESS instead. It exists because the answer
-// used to be inferred from the runtime environment alone, which made the same
-// pinned Overcast version behave differently on two machines with nothing
-// saying why (#1564). VPCEgressMode supersedes it by asking the question the
-// operator actually has — may containers reach the outside — of the whole
-// topology rather than of one network. This one stays, and still wins where it
-// is pinned, so nothing set against #1566 breaks; it just names one network.
+// Superseded by VPCEgressMode. It exists because the answer used to be inferred
+// from the runtime environment alone, which made the same pinned Overcast
+// version behave differently on two machines with nothing saying why (#1564).
+// VPCEgressMode asks the question the operator actually has — may containers
+// reach the outside — of the whole topology rather than of one network.
+//
+// The type stays undeprecated because the setting is still honoured and this is
+// what it is spelled in; it is Config.ControlPlaneInternal, the field, that is
+// deprecated. Read it through Config.LegacyControlPlaneInternal.
 type ControlPlaneInternalMode string
 
 const (
@@ -1348,6 +1350,23 @@ func (c *Config) VPCNetworkPrefix() string {
 // and `overcast network reset` remove nothing labelled with anybody else's.
 func (c *Config) InstanceID() string {
 	return c.Network
+}
+
+// LegacyControlPlaneInternal reports the deprecated
+// OVERCAST_CONTROL_PLANE_INTERNAL pin: the mode it was set to, and whether it
+// was set at all.
+//
+// It is the one place the deprecated field is read. Every caller goes through
+// here so the deprecation stays visible where it matters — on the public field,
+// for anyone reaching for it — without every compatibility read having to
+// silence the linter itself.
+//
+// `set` is separate from the value because "auto" is both the default and a
+// legitimate explicit value, and the deprecation notice must fire only for the
+// operator who actually set it.
+func (c *Config) LegacyControlPlaneInternal() (mode ControlPlaneInternalMode, set bool) {
+	//nolint:staticcheck // SA1019: the deprecated pin is still honoured where set (#1566); this is its one reader.
+	return c.ControlPlaneInternal, c.ControlPlaneInternalSet
 }
 
 // ExternalHostname returns the hostname that should appear in client-facing

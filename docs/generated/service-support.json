@@ -2998,7 +2998,7 @@
           "operation": "AttachInternetGateway",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Toggles VPC Docker network from `--internal` to external (bridge)"
+          "notes": "Takes the VPC Docker network out of `--internal`, moving any containers already on it to the recreated network with their addresses and DNS aliases; fails with InternalError, attaching nothing, if Docker refuses. A network shared by several VPCs is external while any of them has a gateway"
         },
         {
           "operation": "AttachVpnGateway",
@@ -3302,7 +3302,7 @@
           "operation": "DetachInternetGateway",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Toggles VPC Docker network back to `--internal`"
+          "notes": "Puts the VPC Docker network back into `--internal`, moving attached containers the same way as AttachInternetGateway; fails with InternalError, detaching nothing, if Docker refuses. Stays external while another VPC sharing the network has a gateway"
         },
         {
           "operation": "DetachVpnGateway",

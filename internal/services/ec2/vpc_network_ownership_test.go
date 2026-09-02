@@ -28,6 +28,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/clock"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
 	"github.com/overcast-sh/overcast/internal/state"
@@ -44,11 +45,14 @@ type ownershipDaemon struct {
 	// back after, so a fake that 404s or returns nothing for every inspect is
 	// not modelling the daemon closely enough to exercise the create path.
 	networks map[string]bool
+	// inspects answers network inspect by ID for networks a test seeded rather
+	// than created, so the reconcile sees what the snapshot claims exists.
+	inspects map[string]docker.NetworkInspect
 }
 
 func newOwnershipDaemon(t *testing.T) *ownershipDaemon {
 	t.Helper()
-	d := &ownershipDaemon{networks: map[string]bool{}}
+	d := &ownershipDaemon{networks: map[string]bool{}, inspects: map[string]docker.NetworkInspect{}}
 	d.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -69,6 +73,10 @@ func newOwnershipDaemon(t *testing.T) *ownershipDaemon {
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.45/networks/"):
 			name := strings.TrimPrefix(r.URL.Path, "/v1.45/networks/")
+			if seeded, ok := d.inspects[name]; ok {
+				_ = json.NewEncoder(w).Encode(seeded)
+				return
+			}
 			if !d.networks[name] {
 				http.Error(w, `{"message":"no such network"}`, http.StatusNotFound)
 				return
@@ -125,6 +133,32 @@ func ec2Network(id, vpcID, subnet, instance string) docker.NetworkSummary {
 	}
 }
 
+// seedFromSummary makes the fake daemon actually hold a network the snapshot
+// names, in the exact state this configuration would have created it in.
+//
+// Without it the reconcile's isolation pass inspects a network the fake does
+// not have, treats the record as naming a network that has vanished, and heals
+// it by creating a new one — correct behaviour, and not what these tests are
+// about. The spec hash is computed the way production computes it, so the
+// network reads as verified rather than drifted.
+func (d *ownershipDaemon) seedFromSummary(h *Handler, n docker.NetworkSummary, internal bool) {
+	spec := dataplane.VPCNetworkSpec(h.cfg, n.Labels["overcast.vpc-id"], n.Subnet(),
+		n.Instance(), !internal).Resolve(context.Background(), nil)
+	labels := make(map[string]string, len(n.Labels)+1)
+	for k, v := range n.Labels {
+		labels[k] = v
+	}
+	labels[docker.LabelSpecHash] = spec.SpecHash()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.inspects[n.ID] = docker.NetworkInspect{
+		ID: n.ID, Name: n.Name, Driver: docker.DefaultNetworkDriver, Internal: internal,
+		Labels: labels, Scope: "local",
+		IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMConfig{{Subnet: n.Subnet()}}},
+	}
+	d.networks[n.Name] = true
+}
+
 func TestReconcileNetworks_removesOnlyThisInstancesOrphans(t *testing.T) {
 	for _, strategy := range []string{"shared", "strict", "remapped"} {
 		t.Run(strategy, func(t *testing.T) {
@@ -149,6 +183,10 @@ func TestReconcileNetworks_removesOnlyThisInstancesOrphans(t *testing.T) {
 				ec2Network("net-mine-orphan", "vpc-mine-gone", "10.2.0.0/16", mine),
 				ec2Network("net-theirs", "vpc-7d738f2a", "10.3.0.0/16", "another-instance"),
 				ec2Network("net-legacy", "vpc-legacy", "10.4.0.0/16", ""),
+			}
+
+			for _, n := range snapshot {
+				daemon.seedFromSummary(h, n, true) // no gateway attached
 			}
 
 			// When: the startup reconcile runs.

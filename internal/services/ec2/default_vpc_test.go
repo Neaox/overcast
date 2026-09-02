@@ -125,27 +125,6 @@ func TestDefaultVPCGuard_deleteKeepsTheNetwork(t *testing.T) {
 	}
 }
 
-// Flipping --internal recreates the network. On the default VPC that would
-// recreate the plane every running container is attached to.
-func TestDefaultVPCGuard_refusesTheInternalToggle(t *testing.T) {
-	h := defaultVPCHandler(t)
-	ctx := context.Background()
-	vpc, _ := h.ensureDefaultVPC(ctx)
-
-	inner := &recordingStrategy{}
-	guard := &defaultVPCGuard{inner: inner, h: h}
-
-	guard.SetInternal(ctx, vpc.VpcID, true)
-	if inner.setInternalCalls != 0 {
-		t.Error("SetInternal reached the strategy for the default VPC")
-	}
-
-	guard.SetInternal(ctx, "vpc-other", true)
-	if inner.setInternalCalls != 1 {
-		t.Errorf("SetInternal calls for an ordinary VPC = %d, want 1", inner.setInternalCalls)
-	}
-}
-
 // Reconcile would otherwise adopt a labelled EC2 network for the default VPC or
 // create a fresh overcast-vpc-* bridge, and the record would stop naming the
 // plane its containers are actually on.
@@ -276,9 +255,8 @@ func TestEnsureDefaultVPC_doesNotReseedAfterDelete(t *testing.T) {
 // recordingStrategy is a vpcNetworkStrategy that only remembers what it was
 // asked to do, so the guard's delegation is observable without Docker.
 type recordingStrategy struct {
-	onDeleteCalls    int
-	setInternalCalls int
-	reconciled       []*VPC
+	onDeleteCalls int
+	reconciled    []*VPC
 }
 
 func (s *recordingStrategy) Name() string { return "recording" }
@@ -294,5 +272,3 @@ func (s *recordingStrategy) Reconcile(_ context.Context, vpcs []*VPC, _ []docker
 }
 
 func (s *recordingStrategy) OnDelete(context.Context, *VPC) { s.onDeleteCalls++ }
-
-func (s *recordingStrategy) SetInternal(context.Context, string, bool) { s.setInternalCalls++ }

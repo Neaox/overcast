@@ -16,6 +16,7 @@ import (
 
 	"github.com/overcast-sh/overcast/internal/boottime"
 	"github.com/overcast-sh/overcast/internal/config"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/state"
 	"github.com/overcast-sh/overcast/internal/trace"
@@ -26,6 +27,10 @@ import (
 // internal/services/ec2.
 type debugEC2Provider interface {
 	DebugVPCsHandler() http.HandlerFunc
+	// NetworkProblems feeds the vpc-network-isolation-stale advisory (see
+	// advisories.go): VPCs whose Docker network could not be brought to the
+	// isolation their internet-gateway state calls for.
+	NetworkProblems() []dataplane.VPCNetworkProblem
 }
 
 // DebugStateProvider is implemented by services with data outside the
@@ -63,13 +68,13 @@ type DebugStateProvider interface {
 //   - Capturing traces and profiles
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2Svc debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer, dockerStatus func() *docker.Status) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
 		r.Get("/state", debugState(store, providers))
 		r.Get("/state/{namespace}", debugStateNamespace(store, providers))
-		r.Get("/metrics", debugMetrics(cfg, store, dockerStatus))
+		r.Get("/metrics", debugMetrics(cfg, store, ec2Svc, dockerStatus))
 
 		// ---- Request tracing --------------------------------------------------
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
@@ -78,8 +83,8 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/traces/search", debugTraceSearch(traceBuf))
 
 		// ---- Service-specific debug endpoints ---------------------------------
-		if ec2 != nil {
-			r.Get("/ec2/vpcs", ec2.DebugVPCsHandler())
+		if ec2Svc != nil {
+			r.Get("/ec2/vpcs", ec2Svc.DebugVPCsHandler())
 		}
 
 		// pprof endpoints — goroutine, heap, CPU, etc.
@@ -472,8 +477,12 @@ type debugMetricsResponse struct {
 	Advisories []Advisory           `json:"advisories"`
 }
 
-func debugMetrics(cfg *config.Config, store state.Store, dockerStatus func() *docker.Status) http.HandlerFunc {
+func debugMetrics(cfg *config.Config, store state.Store, vpcs debugEC2Provider, dockerStatus func() *docker.Status) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var networkProblems []dataplane.VPCNetworkProblem
+		if vpcs != nil {
+			networkProblems = vpcs.NetworkProblems()
+		}
 		opts := state.DebugMetricsOptions{
 			IncludeNamespaceRowCounts: r.URL.Query().Get("includeRowCounts") == "true",
 		}
@@ -483,14 +492,15 @@ func debugMetrics(cfg *config.Config, store state.Store, dockerStatus func() *do
 		}
 		health, hasHealth := state.PersistentHealthSnapshot(store)
 		advisories := computeAdvisories(advisoryInput{
-			StateBackend:     cfg.State,
-			StateSource:      cfg.StateSource,
-			SQLiteAvailable:  config.SQLiteSupported(),
-			Stores:           snapshots,
-			Health:           health,
-			HasHealth:        hasHealth,
-			ExistingDatabase: config.HasExistingDatabase(cfg.DataDir),
-			Networks:         dockerNetworkStatuses(dockerStatus),
+			StateBackend:       cfg.State,
+			StateSource:        cfg.StateSource,
+			SQLiteAvailable:    config.SQLiteSupported(),
+			Stores:             snapshots,
+			Health:             health,
+			HasHealth:          hasHealth,
+			ExistingDatabase:   config.HasExistingDatabase(cfg.DataDir),
+			Networks:           dockerNetworkStatuses(dockerStatus),
+			VPCNetworkProblems: networkProblems,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}
@@ -623,8 +633,8 @@ func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
 }
 
 // dockerNetworkStatuses reads the network section out of the Docker status
-// snapshot, tolerating every way it can be absent — no Docker services wired,
-// a probe that never completed, a build with no supervisor at all. An absent
+// snapshot, tolerating every way it can be absent — no Docker services wired, a
+// probe that never completed, a build with no supervisor at all. An absent
 // section is "nothing to say", not "nothing is wrong": see advisoryInput.Networks.
 func dockerNetworkStatuses(dockerStatus func() *docker.Status) []docker.NetworkStatus {
 	if dockerStatus == nil {

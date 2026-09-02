@@ -707,3 +707,79 @@ func TestExec_daemonErrorIsReturned(t *testing.T) {
 		t.Errorf("Exec error = %v, want it to carry the daemon's message", err)
 	}
 }
+
+func TestWaitContainerRemoved_blocksUntilDaemonConfirmsRemoval(t *testing.T) {
+	// Given: a daemon that holds the wait request open — simulating a
+	// container still unmounting layers in state "removing" — until a signal
+	// says the removal actually finished.
+	release := make(chan struct{})
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		<-release
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"StatusCode":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.WaitContainerRemoved(context.Background(), "cafe123")
+	}()
+
+	// Then: the call has not returned while the daemon is still working.
+	select {
+	case err := <-done:
+		t.Fatalf("WaitContainerRemoved returned (err=%v) before the daemon signalled removal", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitContainerRemoved: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitContainerRemoved did not return after the daemon signalled removal")
+	}
+	if !strings.Contains(gotPath, "/wait") || !strings.Contains(gotPath, "condition=removed") {
+		t.Errorf("WaitContainerRemoved requested %q, want the wait endpoint with condition=removed", gotPath)
+	}
+}
+
+func TestWaitContainerRemoved_alreadyGoneIsSuccess(t *testing.T) {
+	// Given: a daemon that has no record of the container any more — it
+	// finished removing before this call was even made.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"No such container: gone123"}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+
+	// Then: the already-satisfied condition is not an error.
+	if err := c.WaitContainerRemoved(context.Background(), "gone123"); err != nil {
+		t.Fatalf("WaitContainerRemoved: %v, want nil for an already-removed container", err)
+	}
+}
+
+func TestWaitContainerRemoved_daemonErrorIsReturned(t *testing.T) {
+	// Given: a daemon that reports a real failure, not a 404.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"driver failed to remove root filesystem"}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+
+	err := c.WaitContainerRemoved(context.Background(), "cafe123")
+	if err == nil {
+		t.Fatal("WaitContainerRemoved: expected an error for a daemon failure")
+	}
+	if !strings.Contains(err.Error(), "driver failed to remove root filesystem") {
+		t.Errorf("WaitContainerRemoved error = %v, want it to carry the daemon's message", err)
+	}
+}

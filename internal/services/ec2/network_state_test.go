@@ -41,23 +41,28 @@ func TestCreateDockerVPCNetwork_stampsTheSpecItWasCreatedTo(t *testing.T) {
 	}
 }
 
-// A VPC network's isolation follows OVERCAST_VPC_EGRESS and not the VPC's
-// internet gateway. Reading the gateway alone delivered only the withholding
-// half of AWS's model, in which a private-with-NAT subnet and an isolated one
-// are the same network — so a stack that works on AWS failed here with no
-// template change that helped.
-func TestCreateDockerVPCNetwork_isolationFollowsTheEgressMode(t *testing.T) {
+// `none` has to mean none: a VPC network is `--internal` whatever the template
+// says, because a routable VPC bridge would be a hole in the mode's promise.
+//
+// `open` leaves the gateway deciding, which costs it nothing — the container is
+// also on the routable control plane and takes its default route from there, so
+// it has egress either way (measured end-to-end: a Lambda in an isolated subnet
+// on an `Internal=true` network reached checkip.amazonaws.com and got a 403
+// from real sts.us-east-1). Flattening the flag would only make it lie about
+// the template and leave `routed` nothing to inherit.
+func TestCreateDockerVPCNetwork_isolationUnderEachEgressMode(t *testing.T) {
 	for _, tc := range []struct {
 		mode config.VPCEgressMode
 		want bool
-	}{{config.VPCEgressOpen, false}, {config.VPCEgressNone, true}} {
+	}{
+		{config.VPCEgressOpen, true}, // no gateway attached, so still internal
+		{config.VPCEgressNone, true},
+	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
 			daemon := newNetworkDaemon(t)
 			h := containerisedHandler(t, daemon)
 			h.cfg.VPCEgress = tc.mode
 
-			// No internet gateway is attached, which before egress modes was
-			// the whole of the decision and made this network `--internal`.
 			if _, err := h.createDockerVPCNetwork(context.Background(),
 				&VPC{VpcID: "vpc-1", CidrBlock: "10.9.0.0/16"}); err != nil {
 				t.Fatalf("createDockerVPCNetwork: %v", err)
@@ -70,6 +75,47 @@ func TestCreateDockerVPCNetwork_isolationFollowsTheEgressMode(t *testing.T) {
 			got, _ := req["Internal"].(bool)
 			if got != tc.want {
 				t.Errorf("Internal = %v under %s, want %v", got, tc.mode, tc.want)
+			}
+		})
+	}
+}
+
+// The one difference the mode makes to a VPC network today: a VPC *with* an
+// internet gateway is routable under `open` and still isolated under `none`.
+func TestVPCNetworkInternal_noneIgnoresTheGateway(t *testing.T) {
+	daemon := newNetworkDaemon(t)
+	h := containerisedHandler(t, daemon)
+	ctx := context.Background()
+
+	vpc := &VPC{VpcID: "vpc-gw", CidrBlock: "10.9.0.0/16"}
+	igw := &InternetGateway{
+		InternetGatewayID: "igw-1",
+		Attachments:       []IGWAttachment{{VpcID: "vpc-gw", State: "attached"}},
+	}
+	if aerr := h.store.putInternetGateway(ctx, igw); aerr != nil {
+		t.Fatal(aerr.Message)
+	}
+
+	for _, tc := range []struct {
+		mode config.VPCEgressMode
+		want bool
+	}{{config.VPCEgressOpen, false}, {config.VPCEgressNone, true}} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			d := newNetworkDaemon(t)
+			hh := containerisedHandler(t, d)
+			hh.cfg.VPCEgress = tc.mode
+			if aerr := hh.store.putInternetGateway(ctx, igw); aerr != nil {
+				t.Fatal(aerr.Message)
+			}
+			if _, err := hh.createDockerVPCNetwork(ctx, vpc); err != nil {
+				t.Fatalf("createDockerVPCNetwork: %v", err)
+			}
+			req := d.createRequest(hh.cfg.VPCNetwork("vpc-gw"))
+			if req == nil {
+				t.Fatalf("no create request; calls: %v", d.calls)
+			}
+			if got, _ := req["Internal"].(bool); got != tc.want {
+				t.Errorf("Internal = %v under %s with a gateway attached, want %v", got, tc.mode, tc.want)
 			}
 		})
 	}

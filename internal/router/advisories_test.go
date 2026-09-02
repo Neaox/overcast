@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/overcast-sh/overcast/internal/config"
-	"github.com/overcast-sh/overcast/internal/docker"
+	"github.com/overcast-sh/overcast/internal/dataplane"
 	"github.com/overcast-sh/overcast/internal/state"
 )
 
@@ -612,47 +612,76 @@ func TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode(t *testing.T)
 // assertions against Advisory.Detail — no need for a second copy of the same
 // helper in this file.
 
-// ─── network-state-mismatch ─────────────────────────────────────────────────
+// ---- vpc-network-isolation-stale ------------------------------------------
 
-// The first advisory rule that is not about storage. It exists because of where
-// its cost lands: Docker's create-network call returns an existing network
-// unchanged, so a network created by an older version or a different egress
-// mode keeps every setting it was born with — and the failure that produces is
-// a function that cannot reach the internet, minutes later, inside application
-// code, with nothing connecting it back to a warning that scrolled past at boot.
-func TestCheckNetworkStateMismatch(t *testing.T) {
-	ok := docker.NetworkStatus{Name: "overcast", Internal: false}
-	bad := docker.NetworkStatus{
-		Name:     "overcast_control",
-		Internal: true,
-		Mismatch: []docker.NetworkFieldDiff{{Field: "internal", Want: "false", Got: "true"}},
-		Attached: []string{"overcast-lambda-orders"},
-		Fix:      "overcast network reset overcast_control",
+func TestCheckVPCNetworkIsolation_firesPerRecordedProblem(t *testing.T) {
+	// Given: EC2 recorded two VPCs whose network it could not recreate with
+	// the isolation their gateway state calls for.
+	problems := []dataplane.VPCNetworkProblem{
+		{VpcID: "vpc-a", NetworkID: "net-a", Detail: "the Docker network should be external (an internet gateway is attached) but could not be recreated: boom"},
+		{VpcID: "vpc-b", NetworkID: "net-b", Detail: "the Docker network should be --internal (no internet gateway is attached) but could not be recreated: bang"},
 	}
 
-	// An empty set is "nothing to say", not "nothing is wrong" — Docker may
-	// simply not be wired. An advisory that cannot tell those apart is noise.
-	if a := checkNetworkStateMismatch(nil); a != nil {
-		t.Errorf("no networks reported produced %+v, want nil", a)
-	}
-	if a := checkNetworkStateMismatch([]docker.NetworkStatus{ok}); a != nil {
-		t.Errorf("a healthy network produced %+v, want nil", a)
-	}
+	// When: the rule evaluates them.
+	a := checkVPCNetworkIsolation(problems)
 
-	a := checkNetworkStateMismatch([]docker.NetworkStatus{ok, bad})
+	// Then: one warning names every VPC, with its own detail, and points at
+	// the EC2 limitations page.
 	if a == nil {
-		t.Fatal("a drifted network produced no advisory")
+		t.Fatal("expected an advisory, got nil")
 	}
-	if a.Code != advisoryCodeNetworkStateMismatch || a.Severity != advisorySeverityWarning {
-		t.Errorf("advisory = %+v, want the network-state code at warning severity", a)
+	if a.Severity != advisorySeverityWarning {
+		t.Errorf("severity = %q, want %q", a.Severity, advisorySeverityWarning)
 	}
-	for _, want := range []string{"overcast_control", "internal: want false, got true",
-		"overcast-lambda-orders", "overcast network reset overcast_control", "--dry-run"} {
-		if !strings.Contains(a.Title+" "+a.Detail, want) {
-			t.Errorf("advisory does not mention %q:\n%s\n%s", want, a.Title, a.Detail)
+	if a.Code != advisoryCodeVPCNetworkIsolationStale {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeVPCNetworkIsolationStale)
+	}
+	if !strings.HasPrefix(a.Title, "2 VPC networks") {
+		t.Errorf("title = %q, want it to count both VPCs", a.Title)
+	}
+	for _, want := range []string{"vpc-a: ", "boom", "vpc-b: ", "bang"} {
+		if !strings.Contains(a.Detail, want) {
+			t.Errorf("detail %q does not mention %q", a.Detail, want)
 		}
 	}
-	if strings.Contains(a.Title, "overcast,") {
-		t.Errorf("Title names the healthy network too: %q", a.Title)
+	if a.DocsPath != vpcNetworkDocsPath {
+		t.Errorf("docs path = %q, want %q", a.DocsPath, vpcNetworkDocsPath)
+	}
+}
+
+func TestCheckVPCNetworkIsolation_absentWhenNothingRecorded(t *testing.T) {
+	// Given/When/Then: no problems (EC2 not wired, or every flip succeeded)
+	// means no advisory — the common case must stay silent.
+	if a := checkVPCNetworkIsolation(nil); a != nil {
+		t.Fatalf("expected no advisory, got %+v", a)
+	}
+	if a := checkVPCNetworkIsolation([]dataplane.VPCNetworkProblem{}); a != nil {
+		t.Fatalf("expected no advisory for an empty list, got %+v", a)
+	}
+}
+
+func TestCheckVPCNetworkIsolation_capsTheListedVPCs(t *testing.T) {
+	// Given: more broken VPCs than the card can carry.
+	problems := make([]dataplane.VPCNetworkProblem, 0, vpcNetworkAdvisoryMaxListed+3)
+	for i := range cap(problems) {
+		problems = append(problems, dataplane.VPCNetworkProblem{VpcID: fmt.Sprintf("vpc-%02d", i), Detail: "docker said no"})
+	}
+
+	// When: the rule evaluates them.
+	a := checkVPCNetworkIsolation(problems)
+
+	// Then: the first few are spelled out, the rest are counted, and the
+	// title still carries the true total.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if !strings.Contains(a.Detail, "vpc-04: ") || strings.Contains(a.Detail, "vpc-05: ") {
+		t.Errorf("detail should list exactly %d VPCs: %s", vpcNetworkAdvisoryMaxListed, a.Detail)
+	}
+	if !strings.HasSuffix(a.Detail, "; and 3 more") {
+		t.Errorf("detail should count the rest: %s", a.Detail)
+	}
+	if !strings.HasPrefix(a.Title, "8 VPC networks") {
+		t.Errorf("title = %q, want the full count", a.Title)
 	}
 }

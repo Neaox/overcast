@@ -40,6 +40,15 @@ func (f fakeVPCResolver) DockerNetworkForVpc(context.Context, string) string { r
 // listening, so a connection a VPC forbids fails by name. That is the normal
 // containerised setup and the one most of these cases care about; the host
 // deployment where it does not hold has its own case below.
+// setLegacyPin writes the deprecated OVERCAST_CONTROL_PLANE_INTERNAL pin.
+// The tests still have to exercise it — it is still honoured — and routing
+// every write through one helper keeps the deprecation suppression in one line
+// rather than one per test.
+func setLegacyPin(cfg *config.Config, mode config.ControlPlaneInternalMode, set bool) {
+	//nolint:staticcheck // SA1019: the deprecated pin is still honoured where set (#1566), so it is still tested.
+	cfg.ControlPlaneInternal, cfg.ControlPlaneInternalSet = mode, set
+}
+
 func testConfig() *config.Config {
 	return &config.Config{Network: "overcast", Hostname: "localhost", DNSListening: true}
 }
@@ -400,8 +409,7 @@ func TestControlPlaneInternal_deprecatedPinStillWins(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig()
 			cfg.VPCEgress = tc.mode
-			cfg.ControlPlaneInternal = tc.pin
-			cfg.ControlPlaneInternalSet = true
+			setLegacyPin(cfg, tc.pin, true)
 
 			got := ControlPlaneInternal(cfg)(context.Background(), nil)
 			if got.Internal != tc.want {
@@ -432,8 +440,7 @@ func TestControlPlaneInternal_noDeprecationNoticeWhenUnset(t *testing.T) {
 	runningInContainer = func() bool { return true }
 
 	cfg := testConfig()
-	cfg.ControlPlaneInternal = config.ControlPlaneInternalAuto
-	cfg.ControlPlaneInternalSet = false
+	setLegacyPin(cfg, config.ControlPlaneInternalAuto, false)
 
 	for _, w := range ControlPlaneInternal(cfg)(context.Background(), nil).Warnings {
 		if strings.Contains(w, "deprecated") {
@@ -471,7 +478,7 @@ func TestControlPlaneInternal_warnsOnlyWhenIsolationContradictsTheMode(t *testin
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig()
 			cfg.VPCEgress = tc.mode
-			cfg.ControlPlaneInternal = tc.pin
+			setLegacyPin(cfg, tc.pin, false)
 			got := ControlPlaneInternal(cfg)(context.Background(), nil)
 
 			hasWarning := slices.Contains(got.Warnings, ControlPlaneEgressWarning)
@@ -514,30 +521,42 @@ func TestDataPlaneInternal_followsTheEgressMode(t *testing.T) {
 	cfg := testConfig()
 
 	cfg.VPCEgress = config.VPCEgressOpen
-	if got := DataPlaneInternal(cfg)(context.Background(), nil); got.Internal {
+	if got := Internal(cfg)(context.Background(), nil); got.Internal {
 		t.Errorf("open = %+v, want the data plane routable", got)
 	}
 	cfg.VPCEgress = config.VPCEgressNone
-	if got := DataPlaneInternal(cfg)(context.Background(), nil); !got.Internal {
+	if got := Internal(cfg)(context.Background(), nil); !got.Internal {
 		t.Errorf("none = %+v, want the data plane isolated", got)
 	}
 }
 
-// A VPC network's isolation follows the mode and not the internet gateway.
-// Deriving it from the gateway delivered only the withholding half of AWS's
-// model: an isolated subnet and a private-with-NAT subnet were the same
-// network, so a stack that works on AWS failed here with no template change
-// that helped.
-func TestVPCNetworkInternal_followsTheModeNotTheGateway(t *testing.T) {
+// `none` has to mean none: a VPC network is `--internal` whatever the template
+// says, or the mode's promise has a hole in it.
+//
+// `open` leaves the gateway deciding, and that costs it nothing — the container
+// is also on the routable control plane and takes its default route from there,
+// so it has egress either way (measured end-to-end: a Lambda in an isolated
+// subnet on an `Internal=true` network reached checkip.amazonaws.com and got a
+// 403 from real sts.us-east-1). Flattening the flag would only make it lie
+// about the template and leave `routed` nothing to inherit.
+//
+// What changed is that the flag no longer *decides* egress on its own, which is
+// what made a private-with-NAT subnet indistinguishable from an isolated one.
+func TestVPCNetworkInternal_theModeDecidesWhetherTheGatewayDecides(t *testing.T) {
 	cfg := testConfig()
+
+	cfg.VPCEgress = config.VPCEgressOpen
+	if !VPCNetworkInternal(cfg, false) {
+		t.Error("open with no gateway = routable, want the gateway still honoured (internal)")
+	}
+	if VPCNetworkInternal(cfg, true) {
+		t.Error("open with a gateway attached = internal, want routable")
+	}
+
+	cfg.VPCEgress = config.VPCEgressNone
 	for _, hasIGW := range []bool{true, false} {
-		cfg.VPCEgress = config.VPCEgressOpen
-		if VPCNetworkInternal(cfg, hasIGW) {
-			t.Errorf("open with hasIGW=%v = internal, want routable", hasIGW)
-		}
-		cfg.VPCEgress = config.VPCEgressNone
 		if !VPCNetworkInternal(cfg, hasIGW) {
-			t.Errorf("none with hasIGW=%v = routable, want internal", hasIGW)
+			t.Errorf("none with hasIGW=%v = routable, want internal whatever the template says", hasIGW)
 		}
 	}
 }

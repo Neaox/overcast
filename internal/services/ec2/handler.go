@@ -44,9 +44,17 @@ type Handler struct {
 	// networks for litter. See docker.LabelInstance.
 	instances *serviceutil.InstanceDomain
 
-	// networkStatus carries the verified state of each per-VPC network into
-	// /_overcast/health. Optional; nil reports nothing.
-	networkStatus docker.NetworkStatusSink
+	// netFlipLocks serialises the recreate of a VPC's Docker network per
+	// Docker network ID, so two gateway calls on VPCs sharing a network, or a
+	// call racing the startup reconcile, cannot both remove and recreate the
+	// same subnet. See lockVPCNetwork.
+	netFlipLocks sync.Map // dockerNetworkID -> *sync.Mutex
+
+	// netProblems records, per VPC ID, a dataplane.VPCNetworkProblem: a VPC
+	// whose Docker network could not be brought to the isolation its gateway
+	// state calls for. Read by Service.NetworkProblems for the health
+	// advisories; cleared when a later flip succeeds or the VPC is deleted.
+	netProblems sync.Map // vpcID -> dataplane.VPCNetworkProblem
 
 	// defaultVPCLocks serialises default-VPC seeding per region, so two
 	// concurrent describes cannot both find none and both seed one.
@@ -418,9 +426,7 @@ func (h *Handler) putVPCWithMainRouteTable(ctx context.Context, vpc *VPC) *proto
 	}
 	if aerr := h.store.putRouteTable(ctx, newMainRouteTable(vpc.VpcID, vpc.CidrBlock)); aerr != nil {
 		_ = h.store.deleteVPC(ctx, vpc.VpcID)
-		if h.vpcStrategy != nil {
-			h.vpcStrategy.OnDelete(ctx, vpc)
-		}
+		h.forgetVPCNetwork(ctx, vpc)
 		return aerr
 	}
 	return nil
@@ -623,9 +629,7 @@ func (h *Handler) DeleteVpc(w http.ResponseWriter, r *http.Request) {
 
 	// Strategy decides whether to actually tear down the Docker network
 	// (shared strategies keep it alive while other VPCs still use it).
-	if vpc != nil {
-		h.vpcStrategy.OnDelete(r.Context(), vpc)
-	}
+	h.forgetVPCNetwork(r.Context(), vpc)
 
 	h.publish(r.Context(), events.EC2VpcDeleted, events.ResourcePayload{Name: vpcID})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteVpcResponse{

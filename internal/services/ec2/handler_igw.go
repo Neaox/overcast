@@ -221,18 +221,18 @@ func (h *Handler) AttachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	igw.Attachments = append(igw.Attachments, IGWAttachment{
-		VpcID: vpcID,
-		State: "attached",
-	})
-
-	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
+	// The network is taken out of --internal before the attachment is
+	// recorded, under one lock: a flip that cannot be completed fails the call
+	// and leaves nothing behind, so the same call can be retried — rather than
+	// recording a gateway the network does not reflect, which is what a 200
+	// over a swallowed failure used to do (#1569). See changeVPCGateway.
+	if aerr := h.changeVPCGateway(r.Context(), vpcID, true, func() *protocol.AWSError {
+		igw.Attachments = append(igw.Attachments, IGWAttachment{VpcID: vpcID, State: "attached"})
+		return h.store.putInternetGateway(r.Context(), igw)
+	}); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	// Toggle Docker network to external (non-internal) mode.
-	h.vpcStrategy.SetInternal(r.Context(), vpcID, false)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAttachInternetGatewayResponse{
 		Xmlns:     ec2XMLNS,
@@ -263,16 +263,14 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	found := false
+	found := -1
 	for i, att := range igw.Attachments {
 		if att.VpcID == vpcID {
-			igw.Attachments = append(igw.Attachments[:i], igw.Attachments[i+1:]...)
-			found = true
+			found = i
 			break
 		}
 	}
-
-	if !found {
+	if found < 0 {
 		protocol.WriteEC2QueryXMLError(w, r, &protocol.AWSError{
 			Code:       "Gateway.NotAttached",
 			Message:    fmt.Sprintf("The internetGateway '%s' is not attached to vpc '%s'", igwID, vpcID),
@@ -281,13 +279,16 @@ func (h *Handler) DetachInternetGateway(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if aerr := h.store.putInternetGateway(r.Context(), igw); aerr != nil {
+	// Back to --internal first, for the same reason AttachInternetGateway
+	// flips before it records: a failed flip fails the call with the
+	// attachment still in place.
+	if aerr := h.changeVPCGateway(r.Context(), vpcID, false, func() *protocol.AWSError {
+		igw.Attachments = append(igw.Attachments[:found], igw.Attachments[found+1:]...)
+		return h.store.putInternetGateway(r.Context(), igw)
+	}); aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
-
-	// Toggle Docker network back to internal mode.
-	h.vpcStrategy.SetInternal(r.Context(), vpcID, true)
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDetachInternetGatewayResponse{
 		Xmlns:     ec2XMLNS,
