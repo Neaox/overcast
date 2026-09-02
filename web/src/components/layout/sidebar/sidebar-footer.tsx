@@ -57,6 +57,15 @@ export function SidebarFooter({
         collapsed ? "w-full items-center gap-0.5" : "gap-px",
       )}
     >
+      {/* The tool links are a list like every other group in the sidebar; the collapse
+          toggle below is a control, not one of them, so it stays outside. */}
+      <ul
+        className={cn(
+          "m-0 flex list-none flex-col p-0",
+          collapsed ? "w-full items-center gap-0.5" : "gap-px",
+        )}
+        aria-label="Tools"
+      >
       {items.map((item) => (
         <SidebarNavItem
           key={item.key}
@@ -74,6 +83,7 @@ export function SidebarFooter({
           }
         />
       ))}
+      </ul>
       {collapsed ? <SidebarTooltip label={toggleLabel}>{toggle}</SidebarTooltip> : toggle}
     </div>
   )

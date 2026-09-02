@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react"
+import { createContext, useContext, useId, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 // ─── Context ──────────────────────────────────────────────────────────────
@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils"
 interface TabsContext {
   selectedKey: string
   onSelectionChange: (key: string) => void
+  /** Per-instance id namespace, so two tab sets on one page cannot collide. */
+  tabId: (key: string) => string
+  panelId: (key: string) => string
 }
 
 const TabsCtx = createContext<TabsContext | null>(null)
@@ -26,8 +29,16 @@ interface TabsProps {
 }
 
 export function Tabs({ selectedKey, onSelectionChange, children, className }: TabsProps) {
+  // A tab and its panel have to point at each other — `aria-controls` on the tab,
+  // `aria-labelledby` on the panel — or the pair is two unrelated things that happen to
+  // sit next to each other: nothing tells a screen reader which panel a tab opened, and
+  // the "move to the controlled panel" command has nowhere to go. The ids are namespaced
+  // per instance because several pages render more than one tab set.
+  const scope = useId()
+  const tabId = (key: string) => `${scope}-tab-${key}`
+  const panelId = (key: string) => `${scope}-panel-${key}`
   return (
-    <TabsCtx.Provider value={{ selectedKey, onSelectionChange }}>
+    <TabsCtx.Provider value={{ selectedKey, onSelectionChange, tabId, panelId }}>
       <div className={className}>{children}</div>
     </TabsCtx.Provider>
   )
@@ -109,12 +120,16 @@ interface TabProps {
 }
 
 export function Tab({ id, children, isDisabled, className }: TabProps) {
-  const { selectedKey, onSelectionChange } = useTabsContext()
+  const { selectedKey, onSelectionChange, tabId, panelId } = useTabsContext()
   const isSelected = selectedKey === id
   return (
     <button
+      id={tabId(id)}
       role="tab"
       aria-selected={isSelected}
+      // Only the selected panel is mounted, so an unselected tab has nothing to point
+      // at — claiming otherwise would be a dangling reference.
+      aria-controls={isSelected ? panelId(id) : undefined}
       aria-disabled={isDisabled || undefined}
       tabIndex={isSelected ? 0 : -1}
       disabled={isDisabled}
@@ -135,10 +150,19 @@ interface TabPanelProps {
 }
 
 export function TabPanel({ id, children, className }: TabPanelProps) {
-  const { selectedKey } = useTabsContext()
+  const { selectedKey, tabId, panelId } = useTabsContext()
   if (selectedKey !== id) return null
   return (
-    <div role="tabpanel" className={className}>
+    // `tabIndex={0}`: the panel is named by its tab and is the next stop after it, so it
+    // takes focus itself. Without it, a panel whose content has no focusable element is
+    // skipped entirely and its tab appears to lead nowhere.
+    <div
+      id={panelId(id)}
+      role="tabpanel"
+      aria-labelledby={tabId(id)}
+      tabIndex={0}
+      className={cn("focus-visible:outline-2", className)}
+    >
       {children}
     </div>
   )

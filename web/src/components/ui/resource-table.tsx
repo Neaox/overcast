@@ -480,8 +480,16 @@ export function ResourceTable<T extends RowData>({
   const hideableColumns = table.getAllLeafColumns().filter((column) => column.getCanHide())
   const showColumnToggle = columnToggle ?? hideableColumns.length > 1
 
-  const renderRow = (row: (typeof rows)[number]) => (
-    <TableRow key={row.id} onClick={onRowClick ? () => onRowClick(row.original) : undefined}>
+  // `ariaRowIndex` is only meaningful while virtualizing: the DOM then holds a window
+  // onto the rows, so without `aria-rowcount` on the table and a 1-based `aria-rowindex`
+  // on each row a screen reader reports "row 3 of 20" inside a five-thousand-row table
+  // and has no way to tell that scrolling brings more. Row 1 is the header.
+  const renderRow = (row: (typeof rows)[number], ariaRowIndex?: number) => (
+    <TableRow
+      key={row.id}
+      aria-rowindex={ariaRowIndex}
+      onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+    >
       {row.getVisibleCells().map((cell) => {
         const column = columnsById.get(cell.column.id)
         const Cell = column?.prose ? TableCellProse : TableCell
@@ -601,15 +609,19 @@ export function ResourceTable<T extends RowData>({
             className="overflow-auto"
             style={{ maxHeight: virtualConfig.maxHeight ?? 560 }}
           >
-            <Table>
-              <TableHeader className="sticky top-0 z-10">{headerRow}</TableHeader>
+            <Table aria-rowcount={rows.length + 1}>
+              <TableHeader className="sticky top-0 z-10">
+                {React.cloneElement(headerRow, { "aria-rowindex": 1 })}
+              </TableHeader>
               <TableBody>
                 {paddingTop > 0 && (
                   <tr aria-hidden>
                     <td style={{ height: paddingTop }} />
                   </tr>
                 )}
-                {virtualRows.map((virtualRow) => renderRow(rows[virtualRow.index]))}
+                {virtualRows.map((virtualRow) =>
+                  renderRow(rows[virtualRow.index], virtualRow.index + 2),
+                )}
                 {paddingBottom > 0 && (
                   <tr aria-hidden>
                     <td style={{ height: paddingBottom }} />
@@ -621,7 +633,10 @@ export function ResourceTable<T extends RowData>({
         ) : (
           <Table>
             <TableHeader>{headerRow}</TableHeader>
-            <TableBody>{rows.map(renderRow)}</TableBody>
+            {/* `rows.map(renderRow)` would hand Array.map's index to `ariaRowIndex`,
+                which is 0-based while `aria-rowindex` starts at 1. Unvirtualized the DOM
+                holds every row, so it needs no index at all. */}
+            <TableBody>{rows.map((row) => renderRow(row))}</TableBody>
           </Table>
         )}
 

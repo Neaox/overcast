@@ -19,8 +19,8 @@ export function SidebarSubNav({ items, pathname, id }: SidebarSubNavProps) {
 
   function renderItem(child: SubNavItem) {
     return (
+      <li key={child.to}>
       <Link
-        key={child.to}
         to={child.to}
         className={cn(
           "flex items-center rounded-control px-2.5 py-1 font-mono text-xs transition-colors",
@@ -32,23 +32,29 @@ export function SidebarSubNav({ items, pathname, id }: SidebarSubNavProps) {
       >
         {child.label}
       </Link>
+      </li>
     )
   }
 
   return (
-    <div id={id} className="mt-px ml-4 flex flex-col gap-px border-l border-border pl-2">
+    <ul
+      id={id}
+      className="m-0 mt-px ml-4 flex list-none flex-col gap-px border-l border-border p-0 pl-2"
+    >
       {items.map((child, index) =>
         isGroup(child) ? (
-          <div key={child.group} className="flex flex-col gap-px">
+          <li key={child.group}>
             <p className={cn(sectionLabel, "px-2.5 pb-0.5 text-fg-subtle", index > 0 && "mt-2")}>
               {child.group}
             </p>
-            {child.items.map(renderItem)}
-          </div>
+            <ul className="m-0 flex list-none flex-col gap-px p-0" aria-label={child.group}>
+              {child.items.map(renderItem)}
+            </ul>
+          </li>
         ) : (
           renderItem(child)
         ),
       )}
-    </div>
+    </ul>
   )
 }

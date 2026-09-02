@@ -14,6 +14,7 @@ import {
   Filter,
   X,
   GitBranch,
+  AlertTriangle,
 } from "lucide-react"
 import {
   dynamoTableQueryOptions,
@@ -197,7 +198,11 @@ export function TableDetail({ tableName }: Props) {
     scanIndexForward?: boolean
   } | null>(null)
 
-  const { data: table, isLoading: tableLoading } = useQuery(dynamoTableQueryOptions(tableName))
+  const {
+    data: table,
+    isLoading: tableLoading,
+    error: tableError,
+  } = useQuery(dynamoTableQueryOptions(tableName))
   const metricsQuery = useQuery(
     dynamoMetricsQueryOptions(tableName, monitorRange, monitorRefreshMs),
   )
@@ -412,7 +417,26 @@ export function TableDetail({ tableName }: Props) {
     )
   }
 
-  if (!table) return null
+  // `return null` used to be the whole of it: a failed DescribeTable rendered a blank
+  // page — no heading, no message, nothing to say what went wrong or that anything had.
+  // The error branch follows QueryListState's convention (the icon, the title, the
+  // message), and the header stays so the page keeps its <h1> and its identity.
+  if (!table) {
+    return (
+      <div className="flex w-full flex-col gap-4">
+        <PageHeader title={tableName} description="DynamoDB table" />
+        <EmptyState
+          icon={<AlertTriangle className="h-10 w-10" />}
+          title="Unable to load this table"
+          description={
+            tableError instanceof Error
+              ? tableError.message
+              : `No table named ${tableName} was found in this region.`
+          }
+        />
+      </div>
+    )
+  }
 
   /** Stable string key for an item based on its primary key attributes. */
   const getItemKey = (item: DynamoItem) => JSON.stringify(extractKey(item, table))

@@ -2,6 +2,7 @@ import { useState } from "react"
 import {
   closestCenter,
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -10,6 +11,7 @@ import {
 import {
   arrayMove,
   SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
@@ -38,7 +40,15 @@ export function SidebarFavourites({
 }: SidebarFavouritesProps) {
   const { favourites, reorderFavourites } = useFavourites()
   const [draggingId, setDraggingId] = useState<string | null>(null)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  // A KeyboardSensor alongside the pointer one: with only the latter, pinned services
+  // could be reordered by mouse and by nothing else. dnd-kit's own coordinate getter
+  // drives it — Space picks a row up, the arrows move it, Space drops it, Escape cancels
+  // — and `restrictToVerticalAxis` below keeps the keyboard path on the same axis as the
+  // pointer one.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
   const markDragged = useDragClickGuard()
 
   function handleDragStart(id: string) {
@@ -66,6 +76,10 @@ export function SidebarFavourites({
 
   return (
     <DndContext
+      // dnd-kit renders its screen-reader announcements as a `role="status"` element
+      // beside the items. Inline, that lands as a direct child of the sidebar's <ul>,
+      // where only <li> is allowed — so it goes to the body instead.
+      accessibility={{ container: document.body }}
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={[restrictToVerticalAxis]}
@@ -104,14 +118,15 @@ interface SortableFavouriteProps {
 }
 
 function SortableFavourite({ item, dragging, ...rest }: SortableFavouriteProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.to })
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition } =
+    useSortable({ id: item.to })
 
   return (
     <SidebarNavItem
       item={item}
       {...rest}
       sortable={{
-        ref: setNodeRef,
+        setRowRef: setNodeRef,
         style: {
           transform: CSS.Transform.toString(transform),
           transition,
@@ -119,6 +134,8 @@ function SortableFavourite({ item, dragging, ...rest }: SortableFavouriteProps) 
         },
         attributes,
         listeners,
+        setActivatorRef: setActivatorNodeRef,
+        label: item.label,
       }}
     />
   )
