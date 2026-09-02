@@ -801,8 +801,8 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
         </div>
       ) : !hasVpc ? (
         <p className="text-xs text-fg-muted">
-          Not connected to a VPC. Edit to configure VPC networking. In Overcast a function reaches
-          VPC resources either way — on AWS it could not.
+          Not connected to a VPC. Edit to configure VPC networking. A function outside a VPC cannot
+          reach resources inside one, as on AWS — the call is refused by name.
         </p>
       ) : (
         <>
@@ -822,9 +822,15 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
 }
 
 /**
- * VpcNotEnforcedNotice explains the one way Lambda VPC configuration diverges
- * from AWS here, which is the direction that makes a local test pass when the
- * deployed function will fail.
+ * VpcNotEnforcedNotice explains where Lambda VPC configuration diverges from
+ * AWS here.
+ *
+ * Placement itself is enforced: `dataplane.DataNetworks` puts a VPC-attached
+ * container on that VPC's network and nothing else, and Overcast's resolver
+ * refuses a name it may not reach, naming both sides. What is not enforced is
+ * everything finer than "in this VPC or not" — security groups, NACLs, and the
+ * public/private subnet distinction — which is the direction that makes a local
+ * test pass when the deployed function will fail.
  *
  * Shown only when a VPC is actually configured. That is when someone is relying
  * on VPC semantics and stands to be misled; on the majority of functions, which
@@ -841,12 +847,14 @@ function VpcNotEnforcedNotice() {
     <div className="mb-3 flex gap-3 rounded-lg border border-warning/40 bg-warning-muted p-4 text-sm text-warning">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        <p className="font-semibold">Placement is real — isolation is not</p>
+        <p className="font-semibold">Placement is enforced — filtering is not</p>
         <p className="mt-1 text-fg-muted">
-          The container joins this VPC&apos;s Docker network and can reach what is in it. Overcast
-          does not restrict what else it reaches: resources outside the VPC, and the internet, stay
-          reachable where AWS would have no route. Security groups are stored and returned but never
-          applied.
+          The container joins this VPC&apos;s Docker network and reaches what is in it; a call to a
+          resource outside the VPC is refused by name. Security groups, NACLs and the
+          public/private subnet distinction are stored and returned but never applied. Whether the
+          function reaches the internet is decided by OVERCAST_VPC_EGRESS, not by the VPC&apos;s
+          internet gateway. On a native Windows or macOS host the restriction is withheld — the DNS
+          resolver cannot run there, so the container joins the shared network too.
         </p>
         <Link
           to="/docs"

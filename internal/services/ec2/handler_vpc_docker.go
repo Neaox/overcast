@@ -636,9 +636,10 @@ func (h *Handler) changeVPCGateway(ctx context.Context, vpcID string, attach boo
 				zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID))
 		}
 	}
-	// The gateway is a fact about the template; whether it decides isolation is
-	// a question for the egress mode. Under `open` and `none` it does not —
-	// those answer for every network alike — and under `routed` it will. See
+	// The gateway is a fact about the template. Under `open` it still decides
+	// this network's `--internal` flag — what it no longer decides on its own is
+	// *egress*, because the container is also on the routable control plane.
+	// Under `none` the flag is true whatever the gateway says. See
 	// dataplane.VPCNetworkInternal and docs/networking.md § Egress modes.
 	internal := dataplane.VPCNetworkInternal(h.cfg, hasGateway)
 

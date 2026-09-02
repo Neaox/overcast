@@ -430,6 +430,18 @@ under your `OVERCAST_NETWORK` name)
 name — see [Lambda, ECS and VPCs](#lambda-ecs-and-vpcs) for what that costs and
 how to opt out.
 
+Two exceptions, both of which put a resource on the shared plane as well:
+
+- **The default VPC has no network of its own.** It *is* the shared plane, so
+  everything in it is where everything with no VPC already is. Attaching an
+  internet gateway to it changes nothing and says so in the log.
+- **On a native Windows or macOS host the restriction is not applied at all.**
+  It is only safe where a forbidden connection fails by name, which needs
+  Overcast's DNS resolver, which needs an `/etc/resolv.conf` those hosts do not
+  have. So a VPC-attached container there joins its VPC network *and* the shared
+  plane, and `docker inspect` shows it on three networks. Run Overcast in a
+  container to get the restriction.
+
 **If you attach your own containers to Overcast's network** — a compose service
 that needs to reach a database Overcast started, say — join `overcast`.
 
@@ -438,11 +450,22 @@ that needs to reach a database Overcast started, say — join `overcast`.
 `OVERCAST_VPC_EGRESS` decides whether the containers Overcast starts can reach
 anything outside your machine.
 
-| Mode | What a VPC-attached container can reach | Use it when |
+| Mode | What a container can reach | Use it when |
 | --- | --- | --- |
-| `open` (default) | Everything: other resources in its VPC, Overcast's own APIs, and the internet — including real AWS endpoints and third-party APIs | Normal development, and any stack whose functions call something outside the emulator. This is what LocalStack, Moto and SAM CLI do |
-| `none` | Its VPC, and Overcast's own APIs. Nothing outside the machine — outbound connections fail with `ENETUNREACH` | Deterministic CI, air-gapped hosts, and proving a stack has no hidden external dependency |
+| `open` (default) | Everything: other resources it is allowed to see, Overcast's own APIs, and the internet — including real AWS endpoints and third-party APIs | Normal development, and any stack whose functions call something outside the emulator. This is what LocalStack, Moto and SAM CLI do |
+| `none` | Its own plane, and Overcast's own APIs. Nothing outside the machine — outbound connections fail with `ENETUNREACH` | Deterministic CI, air-gapped hosts, and proving a stack has no hidden external dependency |
 | `routed` | Not implemented — refused at startup | — |
+
+**`none` applies to every container, not only the ones in a VPC.** It makes the
+shared data plane `--internal` too, so a Lambda function with no `VpcConfig`
+loses its route out along with everything else. Before egress modes that plane
+was never isolated, which made "hermetic" leak on the most common placement
+there is. If you have no VPCs at all, this setting still changes your stack.
+
+Anything other than `open`, `routed` or `none` fails startup rather than falling
+back to the default: this decides whether your code reaches real AWS, and a typo
+that quietly restored the default answer is the surprise the setting exists to
+end.
 
 It is one setting for the whole topology rather than a flag per network,
 because a container sits on two Docker networks at once and takes its default
@@ -476,9 +499,11 @@ machine is withheld.
 **On Docker Desktop, `none` cannot isolate the control plane.** Containers
 there reach Overcast at your host's own address, which `--internal` would cut
 off, stranding every invocation at INIT. Overcast leaves that one network
-routable, says so at startup, and reports it in `/_overcast/health` — so the
-stack is *not* hermetic. Run Overcast in a container, or against a native Linux
-Docker daemon, for the whole of `none`.
+routable, says so at startup, reports it in `/_overcast/health`, and raises the
+`vpc-egress-not-withheld` advisory on the console — so the stack is *not*
+hermetic, and you are not left to notice on your own. Every data plane *is*
+isolated. Run Overcast in a container, or against a native Linux Docker daemon,
+for the whole of `none`.
 
 **`routed` is the honest AWS answer and is not built yet.** It would grant
 egress exactly where the subnet's route table does — a `0.0.0.0/0` route to an
@@ -519,6 +544,15 @@ every field:
 | Driver options | `enable_icc`, `enable_ip_masquerade`. A network with masquerading off looks routable and behaves isolated |
 | `overcast.network.spec-hash` | The identity of the whole desired state. **A network with no such label is treated as mismatched** — it predates this check, and those are the networks that have actually been wrong |
 
+Alongside it, three labels record how the network came to be as it is. None of
+them is compared; they are there so `docker network inspect` answers on its own:
+
+| Label | On | Says |
+| --- | --- | --- |
+| `overcast.network.version` | every network | the Overcast version that created it, so a mismatch can be traced to a release |
+| `overcast.network.egress` | every network | the `OVERCAST_VPC_EGRESS` mode in force when it was created |
+| `overcast.network.gateway` | VPC networks | whether the VPC had an internet gateway. This is what lets `overcast network status` work out what the network *should* be without a state store to ask — and a network created before the label exists is one it declines to judge |
+
 What happens next depends on the network. **The two planes** (`overcast` and
 `overcast_control`) and **per-VPC networks** are repaired differently, because
 only one of them can move its containers across:
@@ -536,10 +570,24 @@ moment somebody chose. A VPC network carries only that VPC's resources and
 Overcast knows how to put them back, which is what makes the automatic rebuild
 safe there.
 
-> **On the first start after upgrading**, every VPC network on the machine
-> mismatches — none carries a spec-hash label yet — so each is rebuilt once,
-> dropping open connections across its VPC bridge. Stop your stack before
-> upgrading if that matters, or expect one reconnect.
+> **On the first start after upgrading**, no network on the machine carries a
+> spec-hash label yet, so every one of them mismatches.
+>
+> - **Every VPC network** is rebuilt once, dropping open connections across its
+>   VPC bridge. Containers come back at the address and names they had.
+> - **The two planes** are rebuilt too if nothing is attached. If your stack is
+>   running, they are not: you get a startup warning, `/_overcast/health` goes
+>   `degraded`, and a console advisory naming `overcast network reset`.
+>
+> Stopping your stack before upgrading avoids both. Otherwise, expect one
+> reconnect and one advisory to clear.
+
+> **`overcast network reset` cannot repair a VPC network from before the
+> upgrade.** Those carry no `overcast.network.gateway` label, so the command has
+> no way to tell an isolated bridge from a gateway-attached one and declines
+> rather than rebuilding on a guess — it says so, and changes nothing. Restart
+> Overcast instead: its startup reconcile has the state store to ask, and
+> repairs them. This applies to `--force` too.
 
 An instance never removes a network it cannot prove it created: every network
 Overcast creates carries the identity of the instance that created it, and a

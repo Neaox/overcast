@@ -66,7 +66,7 @@ describe("ConfigurationTab", () => {
   describe("the VPC-not-enforced notice", () => {
     it("appears when the function is in a VPC", async () => {
       renderTab(TabWithVpc)
-      expect(await screen.findByText("Placement is real — isolation is not")).toBeInTheDocument()
+      expect(await screen.findByText("Placement is enforced — filtering is not")).toBeInTheDocument()
       expect(
         screen.getByText(/Security groups are stored and returned but never applied/),
       ).toBeInTheDocument()
@@ -84,7 +84,7 @@ describe("ConfigurationTab", () => {
       // VPC config learns before they do — and awaiting it proves the tab
       // rendered, which is what makes the absence below meaningful.
       expect(await screen.findByText(/on AWS it could not/)).toBeInTheDocument()
-      expect(screen.queryByText("Placement is real — isolation is not")).not.toBeInTheDocument()
+      expect(screen.queryByText("Placement is enforced — filtering is not")).not.toBeInTheDocument()
     })
   })
 
