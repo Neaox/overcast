@@ -100,7 +100,7 @@ nothing.
 | `VOLUME /var/lib/localstack` | No equivalent | Overcast declares no volume, so a volume-less run stays ephemeral by default |
 | `LOCALSTACK_AUTH_TOKEN` | Works | Recognised and inert: nothing here is auth-gated |
 | `LAMBDA_DOCKER_NETWORK`, `MAIN_DOCKER_NETWORK` | No equivalent | Both name the network containers join; Overcast puts everything it starts on `OVERCAST_NETWORK` and the control plane derived from it. Recognised and inert — see [why they are not aliased](./migration-from-localstack.md#why-lambda_docker_network-is-inert-rather-than-aliased) |
-| Egress from compute in a VPC | Works | Both give a VPC-attached Lambda full egress by default. Overcast can also withhold it, which LocalStack cannot: `OVERCAST_VPC_EGRESS=none` makes every network it creates `--internal`, and `routed` decides per subnet from its route table — see below |
+| Egress from compute in a VPC | Works | Both give a VPC-attached Lambda full egress by default. Overcast can also withhold it, which LocalStack cannot: `OVERCAST_VPC_EGRESS=none` makes every network it creates `--internal`, and `routed` decides per subnet from its route table. Both need Overcast running in a container to withhold fully — on Docker Desktop the control plane has to stay routable — see below |
 
 **Egress matches LocalStack by default, and did not always.** LocalStack has no
 concept of network isolation: `VpcConfig` is metadata, subnets and gateways are
@@ -126,6 +126,14 @@ container-client API takes only a network name:
   outbound connections fail with `ENETUNREACH`. LocalStack, Moto and SAM CLI
   all give a VPC-attached function full egress whatever the template says, so a
   missing NAT gateway surfaces in a deploy rather than locally.
+
+**Both need Overcast running in a container.** On Docker Desktop, with Overcast
+running outside one, the control plane is the exception: isolating it would
+sever the Lambda Runtime API, so it stays routable and containers keep a route
+out. Under `none` that means the stack is not hermetic; under `routed` it means
+egress is granted where the route tables withhold it. A startup warning says so
+either way, and `/_overcast/health` reports it. Run Overcast in a container, or
+against a native Linux Docker daemon, for the whole of either mode.
 
 See [Egress modes](./networking.md#egress-modes) and
 [`routed`](./networking.md#routed-egress-from-your-route-tables).
