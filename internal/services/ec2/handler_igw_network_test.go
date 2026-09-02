@@ -280,13 +280,24 @@ func (f *fakeVPCDocker) setInternal(id string, internal bool) {
 	f.networks[id].internal = internal
 }
 
-// callCount returns how many calls so far match the prefix.
-func (f *fakeVPCDocker) callCount(prefix string) int {
+// callCount returns how many calls so far are exactly call — "GET
+// /v1.45/networks" is the list, and not the inspects under it.
+func (f *fakeVPCDocker) callCount(call string) int {
+	return f.countCalls(func(c string) bool { return c == call })
+}
+
+// callsUnder returns how many calls so far start with prefix — every
+// removal, whatever the ID.
+func (f *fakeVPCDocker) callsUnder(prefix string) int {
+	return f.countCalls(func(c string) bool { return strings.HasPrefix(c, prefix) })
+}
+
+func (f *fakeVPCDocker) countCalls(match func(string) bool) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	count := 0
 	for _, c := range f.calls {
-		if strings.HasPrefix(c, prefix) {
+		if match(c) {
 			count++
 		}
 	}

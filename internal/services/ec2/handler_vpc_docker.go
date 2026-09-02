@@ -99,8 +99,32 @@ func (h *Handler) reconcileNetworks(ctx context.Context, snapshot []docker.Netwo
 		h.joinRegionNetworks(rctx)
 	}
 	// Only now is a network known to be unclaimed: by no VPC in any region.
-	h.removeOrphanedNetworks(ctx, olderThanScan(index.unclaimed(), snapshot), h.orphanLogPrefix())
+	h.removeOrphanedNetworks(ctx, h.unrecorded(ctx, olderThanScan(index.unclaimed(), snapshot)), h.orphanLogPrefix())
 	h.reconciledAll.Store(true)
+}
+
+// unrecorded narrows sweep to what no record names now, on a second store
+// read. olderThanScan covers the CreateVpc whose network is newer than the
+// scan; this covers the other direction — a network the snapshot already held
+// whose record landed after the scan — since nothing serialises CreateVpc
+// against this pass. When the store cannot be read again nothing is swept: an
+// unremovable orphan is the cheaper mistake.
+func (h *Handler) unrecorded(ctx context.Context, sweep map[string]*docker.NetworkSummary) map[string]*docker.NetworkSummary {
+	if len(sweep) == 0 {
+		return sweep
+	}
+	byRegion, aerr := h.store.vpcsByRegion(ctx)
+	if aerr != nil {
+		h.log.WithRecorder(ctx).Error("reconcile networks: list VPCs before the sweep; sweeping nothing",
+			zap.String("error", aerr.Message))
+		return nil
+	}
+	for _, vpcs := range byRegion {
+		for _, vpc := range vpcs {
+			delete(sweep, vpc.DockerNetworkID)
+		}
+	}
+	return sweep
 }
 
 // olderThanScan narrows unclaimed to the networks snapshot already held:
@@ -190,7 +214,9 @@ const regionReconcileRetry = 30 * time.Second
 // caller here is an ECS RunTask or a Lambda invoke holding a process-wide
 // lock. A drifted network keeps its flag until the next full pass — the next
 // start, or Docker reappearing — which is where the repair, and the advisory
-// when it fails, already lives.
+// when it fails, already lives. What it adopts it does report, drift
+// included (reportVPCNetworks): health lists a network from the placement
+// that adopted it, not from the next full pass.
 func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	if h.reconciledAll.Load() || !h.dockerReady.Load() || h.docker == nil {
 		return
@@ -234,6 +260,7 @@ func (h *Handler) ensureRegionReconciled(ctx context.Context) {
 	index := h.indexNetworks(ctx, networks, byRegion)
 	h.adoptRegionNetworks(ctx, region, vpcs, index)
 	h.joinRegionNetworks(ctx)
+	h.reportVPCNetworks(ctx)
 	h.reconciledRegions.Store(region, regionReconcile{done: true})
 }
 
@@ -245,7 +272,10 @@ func (h *Handler) regionReconcileDue(region string) bool {
 	if !ok {
 		return true
 	}
-	r := v.(regionReconcile)
+	r, ok := v.(regionReconcile)
+	if !ok {
+		return true
+	}
 	return !r.done && !h.clk.Now().Before(r.retryAt)
 }
 
@@ -1128,6 +1158,60 @@ func (h *Handler) reconcileVPCNetworkIsolation(ctx context.Context) {
 		}
 		checked[netID] = struct{}{}
 		unlock()
+	}
+}
+
+// reportVPCNetworks publishes to health the state of every network the
+// region's records name, as it stands, repairing none. The full pass reports
+// as a side effect of checking each network under its lock
+// (reconcileVPCNetworkIsolation, through the flip); the lazy pass adopts and
+// does not repair, so it reports here — or a network adopted on first use of
+// a region would be absent from health until the next full pass, which for
+// the backstop's usual case (the store unreadable at start, Docker fine) is
+// the next restart. A mismatch it will not fix is reported as drift, naming
+// what fixes it. No lock is taken: this only reads, and a flip in progress
+// reports as the transient it is.
+func (h *Handler) reportVPCNetworks(ctx context.Context) {
+	if h.networkReporter == nil {
+		return
+	}
+	log := h.log.WithRecorder(ctx)
+
+	vpcs, attached, aerr := h.gatewayView(ctx)
+	if aerr != nil {
+		log.Error("reconcile networks: read VPCs and gateways to report networks", zap.String("error", aerr.Message))
+		return
+	}
+	reported := make(map[string]struct{}, len(vpcs))
+	for _, vpc := range vpcs {
+		if vpc.IsDefault || vpc.DockerNetworkID == "" || vpc.DockerNetworkID == h.cfg.Network {
+			continue
+		}
+		if _, done := reported[vpc.DockerNetworkID]; done {
+			continue
+		}
+		reported[vpc.DockerNetworkID] = struct{}{}
+		info, err := h.docker.InspectNetwork(ctx, vpc.DockerNetworkID)
+		if err != nil {
+			log.Warn("reconcile networks: inspect network to report it",
+				zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID), zap.Error(err))
+			continue
+		}
+		hasGateway := networkHasGateway(vpcs, attached, vpc.DockerNetworkID, "")
+		spec := h.vpcNetworkSpec(ctx, vpc, dataplane.VPCNetworkInternal(h.cfg, hasGateway), hasGateway)
+		status := docker.NetworkStatus{
+			Name:     info.Name,
+			Internal: info.Internal,
+			Reason:   dataplane.VPCNetworkEgressReason(h.cfg, info.Internal),
+			SpecHash: spec.SpecHash(),
+		}
+		if diffs := spec.Diff(info); len(diffs) > 0 {
+			status.Mismatch = diffs
+			status.Drift = fmt.Sprintf("adopted as found on first use of its region; not in the configured state (%s) — the next startup reconcile repairs it",
+				strings.Join(docker.DiffStrings(diffs), "; "))
+			status.Fix = "overcast network reset " + info.Name
+		}
+		h.recordNetworkStatus(status)
 	}
 }
 

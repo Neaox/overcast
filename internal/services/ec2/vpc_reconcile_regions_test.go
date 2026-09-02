@@ -75,12 +75,18 @@ func storedVPCIn(t *testing.T, h *Handler, region, vpcID string) *VPC {
 }
 
 func healthReports(tracker *docker.Tracker, name string) bool {
+	_, ok := healthStatus(tracker, name)
+	return ok
+}
+
+// healthStatus is what /_overcast/health says about the named network.
+func healthStatus(tracker *docker.Tracker, name string) (docker.NetworkStatus, bool) {
 	for _, n := range tracker.Snapshot().Networks {
 		if n.Name == name {
-			return true
+			return n, true
 		}
 	}
-	return false
+	return docker.NetworkStatus{}, false
 }
 
 func TestReconcileNetworks_recreatesAMissingNetworkInANonDefaultRegion(t *testing.T) {
@@ -269,6 +275,8 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 	// default region.
 	f := newFakeVPCDocker(t)
 	h := vpcDockerHandler(t, f, "shared")
+	tracker := docker.NewTracker()
+	h.SetNetworkReporter(tracker)
 	svc := &Service{handler: h, log: h.log}
 	usVPC := createVPCIn(t, h, "us-east-1", "10.1.0.0/16")
 	usNet := storedVPCIn(t, h, "us-east-1", usVPC).DockerNetworkID
@@ -295,6 +303,11 @@ func TestDockerNetworkForVpc_reconcilesARegionTheStartupPassDidNotCover(t *testi
 	// And: the other region's network was not mistaken for an orphan.
 	if !f.has(usNet) {
 		t.Error("the lazy pass removed the default region's live network")
+	}
+	// And: health lists the network from this placement on, not from the
+	// next full pass.
+	if status, ok := healthStatus(tracker, n.name); !ok || status.Drift != "" {
+		t.Errorf("health reports %+v for %q, want it listed with no drift", status, n.name)
 	}
 }
 
@@ -386,6 +399,8 @@ func TestDockerNetworkForVpc_lazyPassLeavesIsolationDriftToTheFullPass(t *testin
 	// while the handler could not act on it.
 	f := newFakeVPCDocker(t)
 	h := vpcDockerHandler(t, f, "shared")
+	tracker := docker.NewTracker()
+	h.SetNetworkReporter(tracker)
 	svc := &Service{handler: h, log: h.log}
 	vpcID := createVPCIn(t, h, otherRegion, "10.0.0.0/16")
 	before := f.network(h.cfg.VPCNetwork(vpcID))
@@ -410,16 +425,25 @@ func TestDockerNetworkForVpc_lazyPassLeavesIsolationDriftToTheFullPass(t *testin
 	if n := f.network(h.cfg.VPCNetwork(vpcID)); n == nil || n.id != before.id || n.internal == want {
 		t.Errorf("the lazy pass recreated the drifted network: %+v", n)
 	}
-	if removed := f.callCount("DELETE /v1.45/networks/"); removed != 0 {
+	if removed := f.callsUnder("DELETE /v1.45/networks/"); removed != 0 {
 		t.Errorf("the lazy pass removed %d network(s); it should repair nothing", removed)
+	}
+	// And: health says so — the network as it stands, with the drift the
+	// lazy pass left and what repairs it.
+	status, ok := healthStatus(tracker, before.name)
+	if !ok || status.Internal != !want || len(status.Mismatch) == 0 || status.Drift == "" || status.Fix == "" {
+		t.Errorf("health reports %+v for %q, want it listed as internal=%t with a mismatch, a drift line and a fix", status, before.name, !want)
 	}
 
 	// When: the full pass runs.
 	h.reconcileNetworks(context.Background(), f.summaries())
 
-	// Then: it repaired the drift.
+	// Then: it repaired the drift, and health says that too.
 	if n := f.network(h.cfg.VPCNetwork(vpcID)); n == nil || n.internal != want {
 		t.Errorf("after the full pass the network is %+v, want internal=%t", n, want)
+	}
+	if status, ok := healthStatus(tracker, before.name); !ok || status.Internal != want || status.Drift != "" {
+		t.Errorf("after the full pass health reports %+v for %q, want internal=%t and no drift", status, before.name, want)
 	}
 }
 
