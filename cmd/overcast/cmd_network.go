@@ -251,10 +251,10 @@ func (nc *networkContext) targets(ctx context.Context, names []string) ([]networ
 			}
 			if foreign, owner := s.foreignTo(mine); foreign {
 				if mine == "" {
-					return nil, fmt.Errorf("%q carries an owner (%s) and this command could not reach a "+
-						"daemon on port %d to learn its own, so it cannot tell whether the network is "+
-						"this instance's. Start the daemon, or point OVERCAST_PORT at it, and try again",
-						name, owner, nc.cfg.Port)
+					return nil, fmt.Errorf("%q carries an owner (%s), and this command could not "+
+						"establish this daemon's own identity from %s, so it cannot tell whether the "+
+						"network is this instance's. Start the daemon, or point OVERCAST_ENDPOINT at "+
+						"it, and try again", name, owner, nc.endpoint())
 				}
 				return nil, fmt.Errorf("%q belongs to another Overcast instance (%s). Rebuilding it to "+
 					"this configuration would break the instance that owns it: stop that instance first, "+
@@ -446,7 +446,15 @@ func (nc *networkContext) classifyAttached(ctx context.Context, info *docker.Net
 func selectWork(targets []networkTarget, force bool) []networkTarget {
 	work := make([]networkTarget, 0, len(targets))
 	for _, t := range targets {
-		if t.absent || t.skipped {
+		// A target whose isolation could not be established is never rebuilt,
+		// and --force does not override it. Its spec's Internal came from a
+		// gateway fact that could not be read, so `false` there is "unknown"
+		// standing in for "no gateway" — and rebuilding from it would take a
+		// routable, gateway-attached network and bring it back internal, with a
+		// spec hash asserting a state nothing ever chose. --force means "rebuild
+		// even though it matches", not "rebuild even though I do not know what
+		// it should be".
+		if t.absent || t.skipped || !t.isolationKnown {
 			continue
 		}
 		if len(t.diffs) == 0 && !force {
@@ -628,6 +636,16 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 	if err != nil || info == nil {
 		return fmt.Errorf("%s: vanished before it could be rebuilt", t.spec.Name)
 	}
+	// Mirrors selectWork's guard, for the path that named this network
+	// explicitly. Rebuilding a target whose isolation could not be established
+	// would write a state nothing chose — see selectWork.
+	if !t.isolationKnown {
+		fmt.Fprintf(out, "%s: left alone — this network predates the recorded gateway state, so only "+
+			"the daemon can say what its isolation should be. Start the daemon and let its reconcile "+
+			"rebuild it, or attach or detach its internet gateway to have the state recorded\n",
+			t.spec.Name)
+		return nil
+	}
 	// Re-diffing under the lock is what stops two resets, or a reset racing the
 	// running daemon, from rebuilding the same network twice. --force is the
 	// operator saying they want the rebuild regardless, so it skips the check
@@ -674,6 +692,25 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 	return nil
 }
 
+// endpoint is the Overcast API this command talks to, resolved the way every
+// other client subcommand resolves it: OVERCAST_ENDPOINT, then OVERCAST_PORT on
+// localhost, then the configured port. Named in the failure messages, because
+// "could not establish this daemon's identity" is unactionable without saying
+// which daemon was asked.
+func (nc *networkContext) endpoint() string {
+	if v := os.Getenv("OVERCAST_ENDPOINT"); v != "" {
+		return strings.TrimSuffix(v, "/")
+	}
+	if v := os.Getenv("OVERCAST_PORT"); v != "" {
+		return "http://localhost:" + v
+	}
+	scheme := "http"
+	if nc.cfg.TLSEnabled() {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://localhost:%d", scheme, nc.cfg.Port)
+}
+
 // instanceIdentity is the sweep-domain identity of the daemon this command is
 // pointed at — the value stamped into `overcast.instance` on the networks it
 // created.
@@ -685,8 +722,7 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 // conservative direction: the cost of guessing wrong is rebuilding a network
 // another instance is serving.
 func (nc *networkContext) instanceIdentity(ctx context.Context) string {
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/_overcast/health", nc.cfg.Port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nc.endpoint()+"/_overcast/health", nil)
 	if err != nil {
 		return ""
 	}

@@ -76,7 +76,7 @@ func TestFlipDockerVPCNetworkInternal_realDaemonMovesContainers(t *testing.T) {
 		dockertest.RemoveOwned(cleanupCtx, dc,
 			[]string{name, cfg.ControlNetwork(), cfg.Network}, t.Logf)
 	})
-	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc, true)
+	netID, err := h.createDockerVPCNetworkInternal(ctx, vpc, true, false)
 	if err != nil {
 		t.Fatalf("create internal VPC network: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestFlipDockerVPCNetworkInternal_realDaemonMovesContainers(t *testing.T) {
 	}
 
 	// When: the network is flipped to external.
-	newID, err := h.flipDockerVPCNetworkInternal(ctx, vpc, false)
+	newID, err := h.flipDockerVPCNetworkInternal(ctx, vpc, false, true)
 
 	// Then: a new, external network backs the VPC; the old one is gone; and
 	// the container is on the new one at the same address, still answering

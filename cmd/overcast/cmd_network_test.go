@@ -481,7 +481,7 @@ func TestNetworkReset_saysWhenItCannotEstablishOwnership(t *testing.T) {
 	cmd.SetArgs([]string{"reset", "octest-vpc-vpc-mine", "--dry-run"})
 
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "could not reach a daemon") {
+	if err == nil || !strings.Contains(err.Error(), "could not establish this daemon's own identity") {
 		t.Fatalf("error = %v, want it to say the identity could not be established", err)
 	}
 	if strings.Contains(err.Error(), "belongs to another") {
@@ -510,5 +510,57 @@ func TestNetworkStatus_gatewayLabelAgreesWithIsolation(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "octest-vpc-vpc-gw: ok") {
 		t.Errorf("a correctly-created gateway-attached network was reported as drifted:\n%s", out.String())
+	}
+}
+
+// --force overrides "it already matches". It does not override "I do not know
+// what this should be".
+//
+// A VPC network created before the gateway fact was recorded has no
+// `overcast.network.gateway` label, so the CLI's spec carries Internal=true —
+// not because anything decided that, but because "unknown" reads as "no
+// gateway" through VPCNetworkInternal. Rebuilding from it would take a
+// routable, gateway-attached network and bring it back `--internal`, stamped
+// with a spec hash for a state nothing ever chose. The existing --force test
+// uses a plane, where the gateway fact is never in question.
+func TestNetworkReset_forceNeverRebuildsWhatItCannotJudge(t *testing.T) {
+	cleanNetworkEnv(t)
+	d := newCLIDaemon(t)
+	d.setInstance("this-instance")
+
+	// As the daemon really made it: gateway attached, so routable — but from
+	// before the fact was written down.
+	n := vpcNetwork(t, "vpc-old", true, "this-instance")
+	delete(n["Labels"].(map[string]string), "overcast.network.gateway")
+	d.addNetwork(n)
+	name := n["Name"].(string)
+
+	// A bare --force, and the same network named explicitly: neither may touch it.
+	for _, args := range [][]string{
+		{"reset", "--force", "--yes"},
+		{"reset", name, "--force", "--yes"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			d.mu.Lock()
+			d.calls = nil
+			d.mu.Unlock()
+
+			var out bytes.Buffer
+			cmd := newNetworkCmd()
+			cmd.SetOut(&out)
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("network reset: %v", err)
+			}
+			if d.saw("DELETE") || d.saw("POST /v1.45/networks/create") {
+				t.Fatalf("--force rebuilt a network whose isolation is unknown; calls: %v\ncalls would "+
+					"have written internal=true over a routable network", d.calls)
+			}
+			if !strings.Contains(out.String(), "predates the recorded gateway state") &&
+				!strings.Contains(out.String(), "not compared") &&
+				!strings.Contains(out.String(), "Nothing to do") {
+				t.Errorf("the command did not say why it declined:\n%s", out.String())
+			}
+		})
 	}
 }
