@@ -140,11 +140,17 @@ const (
 	// there is no daemon to probe with.
 	probeTotalBudget = 45 * time.Second
 
-	// probeImagePullTimeout bounds fetching busybox, and is spent *outside* the
-	// per-candidate budget below. Nesting it inside would make it unreachable:
-	// a cold pull on a slow link would be cut off at probeContainerTimeout, then
-	// retried and re-truncated once per candidate, so the image would never
-	// arrive however long this said.
+	// probeImagePullTimeout bounds fetching busybox, and is spent outside every
+	// other clock here — outside probeContainerTimeout, and outside
+	// probeTotalBudget. Nesting it inside either makes it unreachable: a cold
+	// pull on a slow link cut off at 20 s would be retried and re-truncated once
+	// per candidate, and one cut off at 45 s exhausts the whole walk, so the
+	// image never arrives however long this says. It was nested inside the total
+	// budget until #1586, which is why the 60 s could not be reached.
+	//
+	// The pull therefore happens once, before the walk, against the caller's own
+	// context — see resolveDeps.prepare in listen.go, which runs
+	// ensureProbeImage once before the walk's clock starts.
 	probeImagePullTimeout = 60 * time.Second
 
 	// probeAcceptGrace is how long the accept side is given after the probe
@@ -152,7 +158,28 @@ const (
 	// every ordinary case; this only covers the daemon reporting it before the
 	// connection has been handed to us.
 	probeAcceptGrace = 250 * time.Millisecond
+
+	// probeSerialBudget is what a caller has to allow for: the image pull and
+	// the candidate walk run in series, the first against the caller's own
+	// context and the second under its own clock derived from it.
+	//
+	// Named so the relationship is written down somewhere rather than living in
+	// two callers' heads. lambda.runtimeAPIListen allows two minutes, and the
+	// assertion below fails the build if these two ever grow past it — which is
+	// how #1586 came back once already, as a 60s pull nested inside a 45s walk.
+	probeSerialBudget = probeImagePullTimeout + probeTotalBudget
+
+	// runtimeAPIListenBound mirrors the outer context lambda.runtimeAPIListen
+	// gives ResolveListen. Duplicated deliberately: the packages do not import
+	// each other, and a compile-time check against a copy still catches the
+	// change that matters, which is one of these three constants moving.
+	runtimeAPIListenBound = 2 * time.Minute
 )
+
+// A pull and a walk that together outlast the caller's context reintroduce
+// #1586: the pull is truncated, every candidate returns unmeasured, and the
+// address is chosen with nothing established. Fail the build instead.
+const _ = uint(runtimeAPIListenBound - probeSerialBudget)
 
 // runnerClient is the slice of *docker.Client the reachability probe needs.
 // Separate from listenClient so a test can supply a container runner without
@@ -339,13 +366,10 @@ func dockerDialer(dc runnerClient, network string, logger *zap.Logger) dialFromC
 		if dc == nil {
 			return "", true, errors.New("no Docker client")
 		}
-		// The image first, on its own budget and against the caller's context
-		// — see probeImagePullTimeout. Only then the per-candidate clock, so a
-		// slow pull cannot eat the time the candidate itself needs.
-		if err := ensureProbeImage(ctx, dc); err != nil {
-			return "", true, err
-		}
-
+		// The image is already here: resolveListen pulls it once, before the
+		// walk's clock starts, so nothing in this function competes with the
+		// pull for the candidate's time. See resolveDeps.prepare and
+		// probeImagePullTimeout.
 		ctx, cancel := context.WithTimeout(ctx, probeContainerTimeout)
 		defer cancel()
 

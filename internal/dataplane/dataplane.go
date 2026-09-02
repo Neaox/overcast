@@ -188,8 +188,8 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// this network. Egress under `routed` comes from the per-VPC egress
 		// network instead (Placement.EgressNetwork).
 		d := docker.InternalDecision{
-			Internal: egressMode(cfg) == config.VPCEgressNone || egressMode(cfg) == config.VPCEgressRouted,
-			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
+			Internal: EgressMode(cfg) == config.VPCEgressNone || EgressMode(cfg) == config.VPCEgressRouted,
+			Reason:   "OVERCAST_VPC_EGRESS=" + string(EgressMode(cfg)),
 		}
 
 		// The deprecated pin, applied on top. It names one network, which is
@@ -217,7 +217,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// about egress — see runtimeAPIReachableOnInternalPlane.
 		if !runtimeAPIReachableOnInternalPlane(ctx, dc) {
 			shortfall := ControlPlaneMustStayRoutableWarning
-			if egressMode(cfg) == config.VPCEgressRouted {
+			if EgressMode(cfg) == config.VPCEgressRouted {
 				shortfall = RoutedControlPlaneMustStayRoutableWarning
 			}
 			return docker.InternalDecision{
@@ -230,7 +230,7 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 		// Isolation asked for by the mode is the mode working as documented and
 		// needs no warning. Isolation arrived at by the deprecated pin while the
 		// mode says `open` is a contradiction the operator should see.
-		if egressMode(cfg) == config.VPCEgressOpen {
+		if EgressMode(cfg) == config.VPCEgressOpen {
 			d.Warnings = appendOnce(&egressWarningSaid, d.Warnings, ControlPlaneEgressWarning)
 		}
 		return d
@@ -248,8 +248,8 @@ func ControlPlaneInternal(cfg *config.Config) func(ctx context.Context, dc *dock
 func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) docker.InternalDecision {
 	return func(_ context.Context, _ *docker.Client) docker.InternalDecision {
 		d := docker.InternalDecision{
-			Internal: egressMode(cfg) == config.VPCEgressNone,
-			Reason:   "OVERCAST_VPC_EGRESS=" + string(egressMode(cfg)),
+			Internal: EgressMode(cfg) == config.VPCEgressNone,
+			Reason:   "OVERCAST_VPC_EGRESS=" + string(EgressMode(cfg)),
 		}
 		// `routed` leaves this plane routable — the resources that named no
 		// VPC, and those in a default VPC, have egress on AWS too. That is
@@ -259,7 +259,7 @@ func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) d
 		// because this is the network that carries it; cfg.DNSListening is
 		// settled before Docker is probed (router.New starts the resolver
 		// first), so the answer is the one that will hold.
-		if egressMode(cfg) == config.VPCEgressRouted && !enforceable(cfg) {
+		if EgressMode(cfg) == config.VPCEgressRouted && !enforceable(cfg) {
 			d.Warnings = appendOnce(&routedPlacementSaid, d.Warnings, RoutedPlacementNotEnforcedWarning)
 		}
 		return d
@@ -286,7 +286,9 @@ func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) d
 // So the flag stays honest about the template rather than being flattened, the
 // gateway machinery that keeps it true stays exercised (#1570), and the flag no
 // longer *decides* egress on its own, which is what made a private-with-NAT
-// subnet indistinguishable from an isolated one: the mode decides.
+// subnet indistinguishable from an isolated one: the mode decides that. The
+// flag itself still differs per network under `open`, which is the point of
+// keeping it.
 //
 // Under `routed` the VPC's plane is always `--internal`, gateway or not. It is
 // the network every container in the VPC shares, and a route out is not a
@@ -296,7 +298,7 @@ func Internal(cfg *config.Config) func(ctx context.Context, dc *docker.Client) d
 // still recorded on the plane, for the readers that compute this same
 // decision from labels alone.
 func VPCNetworkInternal(cfg *config.Config, hasInternetGateway bool) bool {
-	switch egressMode(cfg) {
+	switch EgressMode(cfg) {
 	case config.VPCEgressNone, config.VPCEgressRouted:
 		return true
 	case config.VPCEgressOpen:
@@ -364,7 +366,7 @@ func VPCNetworkSpec(cfg *config.Config, n VPCNetwork) docker.NetworkSpec {
 		Labels:     labels,
 		Owner:      n.Owner,
 		Version:    cfg.Version,
-		EgressMode: string(egressMode(cfg)),
+		EgressMode: string(EgressMode(cfg)),
 	}
 }
 
@@ -408,7 +410,7 @@ func VPCEgressNetworkSpec(cfg *config.Config, n VPCEgressNetwork) docker.Network
 		Labels:     labels,
 		Owner:      n.Owner,
 		Version:    cfg.Version,
-		EgressMode: string(egressMode(cfg)),
+		EgressMode: string(EgressMode(cfg)),
 	}
 }
 
@@ -423,7 +425,7 @@ func VPCEgressNetworkSpec(cfg *config.Config, n VPCEgressNetwork) docker.Network
 // network inspect` will ever explain that, so Overcast says it where it is
 // read: here, in the startup log, and on `overcast network status`.
 func VPCNetworkEgressReason(cfg *config.Config, internal bool) string {
-	mode := egressMode(cfg)
+	mode := EgressMode(cfg)
 	switch {
 	case mode == config.VPCEgressNone:
 		return "OVERCAST_VPC_EGRESS=none: no egress from this network or any other"
@@ -543,8 +545,6 @@ func EgressMode(cfg *config.Config) config.VPCEgressMode {
 	return cfg.VPCEgress
 }
 
-func egressMode(cfg *config.Config) config.VPCEgressMode { return EgressMode(cfg) }
-
 // Routed reports whether egress is decided per subnet from its route table.
 func Routed(cfg *config.Config) bool { return EgressMode(cfg) == config.VPCEgressRouted }
 
@@ -612,14 +612,14 @@ func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
 			InternalMode: Internal(cfg),
 			Labels:       docker.ManagedLabels(docker.ServiceCore, cfg.Network),
 			Version:      cfg.Version,
-			EgressMode:   string(egressMode(cfg)),
+			EgressMode:   string(EgressMode(cfg)),
 		},
 		{
 			Name:         Primary(cfg),
 			InternalMode: ControlPlaneInternal(cfg),
 			Labels:       docker.ManagedLabels(docker.ServiceCore, Primary(cfg)),
 			Version:      cfg.Version,
-			EgressMode:   string(egressMode(cfg)),
+			EgressMode:   string(EgressMode(cfg)),
 		},
 	}
 }
@@ -710,8 +710,9 @@ func enforceable(cfg *config.Config) bool {
 // default route from it whatever its subnet's route table says — `routed`
 // then grants egress everywhere and withholds it nowhere. The mode cannot
 // deliver its half of the bargain on such a host, and says so:
-// RoutedPlacementNotEnforcedWarning, and the routed-egress-not-enforced
-// health advisory.
+// RoutedPlacementNotEnforcedWarning, and the vpc-egress-not-withheld health
+// advisory, which router.checkEgressNotWithheld raises for both withholding
+// modes.
 func PlacementEnforced(cfg *config.Config) bool { return enforceable(cfg) }
 
 // RoutedPlacementNotEnforcedWarning is what `routed` says on a host where a

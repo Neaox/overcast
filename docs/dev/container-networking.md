@@ -17,9 +17,15 @@ started, and they answer different questions:
 
 ## 0. Two planes, and one package that owns them
 
-Every container Overcast starts sits on exactly two networks, and
-`internal/dataplane` decides both. Nothing else should be reaching for a
-network name.
+Every container Overcast starts sits on a control plane and a data plane, and
+`internal/dataplane` decides both. Nothing else should be reaching for a network
+name.
+
+"Two" is the model, not always the count. Where the DNS resolver cannot run —
+a native Windows or macOS host, which has no `/etc/resolv.conf` to read
+upstreams from — VPC placement is not enforced, and a VPC-attached container
+joins its VPC network *and* the default plane as well as the control plane. See
+§13 and `dataplane.enforceable`.
 
 | Plane | Name | Members | Carries |
 | --- | --- | --- | --- |
@@ -87,22 +93,33 @@ containers dial, and the local addresses that has to be listening on.
 The Lambda Runtime API is the case that needs it. Nothing off this machine is a
 legitimate caller — it is an unauthenticated control channel for every Lambda
 container — but loopback alone strands every invocation, because the RIC dials
-back over the control plane. So it binds loopback plus exactly one more address:
+back over the control plane. So it binds loopback plus exactly one more address.
 
-| Overcast is | Containers dial | Also bound |
+**Which address is measured, not inferred.** Since #1579 Overcast binds each
+candidate in turn and has a throwaway busybox container connect back, keeping
+the first one a container actually reaches: its own address on the control
+plane, then the network's gateway, then `host.docker.internal`, then the host's
+own address, then the wildcard. The verdict is remembered per daemon and control
+plane in `<data dir>/runtime-api-host-<network>.json`, so only the first startup
+pays for it. `LAMBDA_RUNTIME_API_HOST` pins it and skips the walk. The candidate
+list, the failure modes and the `lambda-runtime-api-unreachable` advisory are in
+[docs/services/lambda/troubleshooting.md](../services/lambda/troubleshooting.md);
+the code is `containerendpoint.ResolveListen` and `reachability.go`.
+
+The table below is what that replaced — and it still earns its place, because it
+answers a *different* question that is asked nowhere else:
+
+| Overcast is | Can reach a server on this host at | |
 | --- | --- | --- |
-| in a container | our address on the control plane | loopback |
-| on a native Linux host | that network's **gateway** — host-local, and on-link from every container attached, so it survives a function joining a VPC network that takes over the default route | loopback |
-| on a Docker Desktop host | the host's routable address (Desktop's networks have a gateway too, but it belongs to the daemon's VM) | loopback |
+| in a container | our address on the control plane | on-link |
+| on a native Linux host | that network's **gateway** — host-local, and on-link from every container attached, so it survives a function joining a VPC network that takes over the default route | on-link |
+| on a Docker Desktop host | the host's routable address (Desktop's networks have a gateway too, but it belongs to the daemon's VM) | beyond the bridge |
 
 Which of the last two applies is decided by **binding the gateway**, not by
 `runtime.GOOS`: "native daemon or Desktop VM" is the same question asked less
-directly, and `uname -s` says `Linux` under WSL2 either way. When nothing
-resolves, it binds the wildcard and logs that it did — a Runtime API nobody can
-reach fails worse than one bound too widely, and every invocation would hang at
-INIT.
+directly, and `uname -s` says `Linux` under WSL2 either way.
 
-This same table decides one thing and one thing only: whether an `--internal`
+This table decides one thing and one thing only: whether an `--internal`
 control plane would still carry the Runtime API. `dataplane.runtimeAPIReachableOnInternalPlane`
 answers **yes** for the first two rows — Overcast's own address, and a native
 daemon's gateway, both stay on-link on an `--internal` bridge, since only
@@ -123,12 +140,17 @@ rather than silently applied.
 
 ### 1c. Egress is one decision for the whole topology
 
-`OVERCAST_VPC_EGRESS` (`config.VPCEgressMode`) sets every network's isolation
-at once: `open` leaves all of them routable, `none` makes all of them
+`OVERCAST_VPC_EGRESS` (`config.VPCEgressMode`) decides egress for the whole
+topology at once: `open` leaves both planes routable, `none` makes every network
 `--internal`, `routed` makes every VPC plane and the control plane `--internal`
-and carries the route out on a second network per VPC. One setting rather than
-a flag per network, because a container sits on two networks and takes its
-default route from whichever is routable — so isolating one settles nothing.
+and carries the route out on a second network per VPC. One setting rather than a
+flag per network, because a container sits on two networks and takes its default
+route from whichever is routable — so isolating one settles nothing.
+
+Under `open` a VPC network is still `--internal` when its VPC has no internet
+gateway. That flag stays honest about the template; it no longer decides
+*egress*, because the container is also on the routable control plane and takes
+its default route from there.
 
 Under `routed` the *decision* moves to the subnet but the *carrier* stays one
 network per class: `dataplane.VPCEgressNetworkSpec` describes a routable,
@@ -167,18 +189,22 @@ every cell, including the isolated VPC whose own network was correctly
         │                         │                         │
         └─────────────────────────┴─────────────────────────┘
                                   │
-                    EGRESS=open → every one routable
-                    EGRESS=none → every one --internal
-                    EGRESS=routed → every plane --internal, plus
-                                    overcast-vpc-<id>-egress per VPC,
-                                    joined per subnet route table (#1571)
+    EGRESS=open  → both planes routable; a VPC network is --internal
+                   without an IGW, and its containers still egress via
+                   the control plane
+    EGRESS=none  → every one --internal
+    EGRESS=routed → every plane --internal, plus one
+                    overcast-vpc-<id>-egress per VPC, joined per
+                    subnet route table (#1571)
 ```
 
-The internet-gateway bit no longer decides a VPC network's isolation.
-`dataplane.VPCNetworkInternal` still takes it, and `routed` still records it on
-the plane — but reading it *alone* delivered only the withholding half of AWS's
-model, in which a private-with-NAT subnet and an isolated one are the same
-network.
+The internet-gateway bit no longer decides a VPC network's **egress**. It still
+decides its `--internal` flag under `open` (`dataplane.VPCNetworkInternal`
+returns `!hasInternetGateway`), and `routed` still records it on the plane for
+the readers that compute the same decision from labels alone — but reading it
+*alone* delivered only the withholding half of AWS's model, in which a
+private-with-NAT subnet and an isolated one are the same network. Under `none`
+and `routed` the flag is `true` whatever the template says.
 
 ### 1d. Every network is verified against a full spec on every start
 
@@ -193,12 +219,15 @@ network (`dataplane.PlaneSpecs`, `dataplane.VPCNetworkSpec`).
 | --- | --- |
 | Absent | Created to spec |
 | Matches | Left alone |
-| Differs, nothing attached | Removed and recreated, logged at info |
-| Differs, containers attached | Left alone; WARN naming every differing field and every attached container, `/_overcast/health` degraded, console advisory, `overcast network reset` as the fix |
-| Owned by another instance | Left alone, always |
+| Differs, nothing attached | Removed and recreated, logged at **WARN** — it destroyed a network, and on the first start after an upgrade it destroys one nobody labelled |
+| Differs, containers attached — **a plane** | Left alone; WARN naming every differing field and every attached container, `/_overcast/health` degraded, console advisory, `overcast network reset` as the fix |
+| Differs, containers attached — **a VPC network** | Recreated *under* them: each container is disconnected, the network is rebuilt, and each is reconnected with the address and aliases it had. Only connections across that VPC bridge drop; the control-plane attachment is untouched, so an in-flight invocation keeps its Runtime API (`ec2.flipDockerVPCNetworkInternal`) |
+| Could not be read | The read is retried once. Still unreadable, the create runs anyway — a daemon with no network at all fails every container create with an error naming nothing about networks — and is then **verified rather than trusted**, because Docker resolves a name conflict by returning the existing network unchanged. What that verification cannot establish is reported as **unverified**: a `Drift` naming the reason, `/_overcast/health` degraded. "I did not look" is not "I looked and it was right" (#1582) |
+| Owned by another instance, or by another tool | Left alone, always |
 
-Two labels carry the rules. `overcast.network.spec-hash` is the SHA-256 of the
-behavioural fields; **a network without one is treated as mismatched**, because
+Two labels carry the rules. `overcast.network.spec-hash` is the first 12 hex
+characters of the SHA-256 over the behavioural fields; **a network without one
+is treated as mismatched**, because
 every network created before this code has none and those are the ones that have
 actually been wrong. `overcast.instance` names the instance that created the
 network, and nothing removes a network carrying somebody else's — the sweep in

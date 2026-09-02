@@ -837,22 +837,13 @@ func (h *Handler) sweepEgressNetworks(ctx context.Context, byID map[string]*dock
 	if len(byID) == 0 {
 		return
 	}
-	log := h.log.WithRecorder(ctx)
-	domain := h.instanceDomain(ctx)
-	for id, n := range byID {
-		if domain == "" || n.Instance() != domain {
-			log.Info("reconcile networks: retaining an unclaimed VPC egress network whose owner cannot be established",
-				zap.String("vpc", n.ResourceID()), zap.String("network", id), zap.String("name", n.Name))
-			continue
-		}
-		log.Info("reconcile networks: removing an unclaimed VPC egress network",
-			zap.String("vpc", n.ResourceID()), zap.String("network", id), zap.String("name", n.Name),
-			zap.String("mode", string(dataplane.EgressMode(h.cfg))))
-		func() {
-			defer docker.LockNetwork(n.Name)()
-			h.removeEgressNetwork(ctx, id)
-		}()
-	}
+	// The ownership rule and its logging are shared with the plane sweep
+	// (sweepUnclaimed); only the removal differs, because an egress network
+	// has to be emptied of every container first.
+	h.sweepUnclaimed(ctx, byID, "egress: ", func(n *docker.NetworkSummary) {
+		defer docker.LockNetwork(n.Name)()
+		h.removeEgressNetwork(ctx, n.ID)
+	})
 }
 
 // removeEgressNetwork takes every container off an egress network and removes

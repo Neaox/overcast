@@ -414,7 +414,12 @@ type NetworkStatus struct {
 }
 
 // OK reports whether the network is in the exact state the spec asked for.
-func (s NetworkStatus) OK() bool { return len(s.Mismatch) == 0 }
+//
+// Drift counts, not only the field list. A network Overcast could not read
+// carries a Drift and no Mismatch — nothing was compared, so there is nothing
+// to list — and calling that OK would report "I did not look" as "I looked and
+// it was right", which is the confusion this whole type exists to end.
+func (s NetworkStatus) OK() bool { return len(s.Mismatch) == 0 && s.Drift == "" }
 
 // EnsureNetwork creates the network if it is absent and verifies it against the
 // spec if it is not, repairing it where repair is free and refusing to proceed
@@ -458,11 +463,23 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 	// the wait is how two rebuilds interleave into one broken network.
 	defer LockNetwork(spec.Name)()
 
-	info, err := dc.InspectNetwork(ctx, spec.Name)
+	info, err := inspectForVerify(ctx, dc, spec.Name)
 	if err != nil || info == nil {
-		// Absent, or unreadable. Either way the create is the right next move:
-		// it is idempotent, and if the inspect failed for some other reason the
-		// create will report it.
+		// Absent, or unreadable — and the two are not the same thing, which is
+		// the whole of #1582. A 404 means there is nothing here and the create
+		// settles it. Any other error means the network may well exist, and
+		// Docker's create call returns an existing network *unchanged*
+		// (CreateNetworkWithOptions resolves "already exists" by looking the
+		// network up and handing it back), so a create issued on the strength
+		// of an unreadable inspect can leave a drifted network in place and
+		// report it as freshly built to spec. That is #1564 exactly, on the
+		// error path of the code written to close it.
+		//
+		// The create still happens either way: no network at all is a daemon
+		// that starts and then fails every container create with an error
+		// naming nothing about networks. What changes is that a blind create is
+		// never trusted — it is verified below, or reported as unverified.
+		unreadable := err != nil && !IsNotFound(err)
 		if _, createErr := dc.CreateNetworkWithOptions(ctx, spec.CreateOptions()); createErr != nil {
 			// Fatal, and deliberately not downgraded to a warning like a
 			// declined repair is. A wrong-but-usable network is something to
@@ -473,7 +490,17 @@ func EnsureNetwork(ctx context.Context, dc *Client, spec ResolvedNetworkSpec, lo
 			status.Drift = "could not create: " + createErr.Error()
 			return status, fmt.Errorf("create network %s: %w", spec.Name, createErr)
 		}
-		return status, nil
+		if !unreadable {
+			return status, nil
+		}
+		// The network was there to be read and could not be, so the create may
+		// have handed back somebody else's state. Read it again and fall into
+		// the ordinary comparison; a network that is now readable gets the same
+		// verification, repair and reporting as any other.
+		info, err = dc.InspectNetwork(ctx, spec.Name)
+		if err != nil || info == nil {
+			return unverifiedStatus(status, spec.Name, err, logger), nil
+		}
 	}
 
 	diffs := spec.Diff(info)
@@ -640,4 +667,52 @@ func foreignTool(labels map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// inspectForVerify reads a network, retrying once when the read fails for any
+// reason other than "no such network".
+//
+// The retry is there because the two failures the caller has to tell apart are
+// a 404, which is a fact, and everything else, which is usually a moment: a
+// daemon busy behind a burst of container creates, a socket that dropped as
+// Docker Desktop restarted, a request that outran the startup context. One
+// immediate retry settles most of those, and settling them is worth a round
+// trip — the alternative branch reports a network as unverified, which degrades
+// health, and a health endpoint that cries wolf on a hiccup is one nobody reads.
+//
+// A 404 is never retried: it is the answer, and asking again only slows down
+// the create that follows it.
+func inspectForVerify(ctx context.Context, dc *Client, name string) (*NetworkInspect, error) {
+	info, err := dc.InspectNetwork(ctx, name)
+	if err == nil || IsNotFound(err) {
+		return info, err
+	}
+	return dc.InspectNetwork(ctx, name)
+}
+
+// unverifiedStatus is what a network reports when Overcast could not read it
+// well enough to say whether it matches.
+//
+// It is deliberately not a clean status. "I did not look" and "I looked and it
+// was right" are different facts, and reporting the second for the first is the
+// failure #1564 was filed about — an operator reading `internal: false` in
+// /_overcast/health while their function gets ENETUNREACH. So this sets Drift,
+// which NetworkStatus.OK reads as not-OK, so health degrades and the
+// network-state-mismatch advisory fires with the reason quoted.
+//
+// There is no field list, because no comparison happened. The Fix is the
+// command that will do one on demand.
+func unverifiedStatus(status NetworkStatus, name string, err error, logger *zap.Logger) NetworkStatus {
+	reason := "the Docker daemon did not answer"
+	if err != nil {
+		reason = err.Error()
+	}
+	status.Drift = "could not be verified against this configuration: " + reason
+	status.Fix = "overcast network status"
+	logger.Warn("could not read a Docker network to check it against this configuration — it is in use "+
+		"but its settings were never compared, so what a container can reach may not be what this "+
+		"configuration says. Run `overcast network status` to compare it once the daemon is answering",
+		zap.String("network", name),
+		zap.Error(err))
+	return status
 }

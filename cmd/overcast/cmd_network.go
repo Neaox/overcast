@@ -112,8 +112,7 @@ func newNetworkResetCmd() *cobra.Command {
 				}
 				work := selectWork(targets, force)
 				if len(work) == 0 {
-					fmt.Fprintln(cmd.OutOrStdout(),
-						"Every network is already in the state this configuration asks for. Nothing to do.")
+					reportNothingToDo(cmd.OutOrStdout(), targets)
 					return nil
 				}
 				nc.printPlan(cmd, work)
@@ -215,6 +214,18 @@ type networkTarget struct {
 	// could not be read, where `internal` and the spec hash are not this
 	// command's to judge — see networkSpecTarget.
 	isolationKnown bool
+}
+
+// cannotJudge reports a network that is here, is ours to act on, and whose
+// desired isolation this command cannot establish — a per-VPC network from
+// before Overcast recorded the internet-gateway fact.
+//
+// One predicate, three readers: what to leave out of the plan, what to explain
+// in an empty plan, and what to footnote in `status`. They were three copies of
+// the same condition, which is how the two "cannot judge" sentences drifted
+// apart in the first place.
+func (t networkTarget) cannotJudge() bool {
+	return !t.skipped && !t.absent && !t.isolationKnown
 }
 
 // targets resolves the networks to act on and inspects each.
@@ -480,6 +491,45 @@ func selectWork(targets []networkTarget, force bool) []networkTarget {
 	return work
 }
 
+// reportNothingToDo explains an empty plan.
+//
+// "Every network is already in the state this configuration asks for" is only
+// true when that is why there is nothing to do. selectWork also drops targets
+// this command is not entitled to judge — a per-VPC network from before
+// Overcast recorded the internet-gateway fact — and reporting those as already
+// correct is the opposite of what happened: nothing was compared, and nothing
+// will be until the daemon rebuilds them. An operator sent here by the drift
+// warning, or by the health advisory, would read that as the fix having worked
+// (#1584).
+func reportNothingToDo(out io.Writer, targets []networkTarget) {
+	var unjudgeable []networkTarget
+	for _, t := range targets {
+		if t.cannotJudge() {
+			unjudgeable = append(unjudgeable, t)
+		}
+	}
+	if len(unjudgeable) == 0 {
+		fmt.Fprintln(out, "Every network is already in the state this configuration asks for. Nothing to do.")
+		return
+	}
+	fmt.Fprintf(out, "Nothing to rebuild: every other network is already in the state this configuration "+
+		"asks for, and %d could not be judged from here.\n", len(unjudgeable))
+	for _, t := range unjudgeable {
+		printCannotJudge(out, t.spec.Name)
+	}
+}
+
+// printCannotJudge is the one wording for a network whose isolation this
+// command cannot establish, shared by the empty-plan path and by the rebuild of
+// a network named explicitly. One sentence in one place: a preview that
+// describes a different refusal from the one that runs is the failure this
+// shape exists to avoid.
+func printCannotJudge(out io.Writer, name string) {
+	fmt.Fprintf(out, "%s: left alone — this network predates the recorded gateway state, so only the "+
+		"daemon can say what its isolation should be. Restart Overcast and let its startup reconcile "+
+		"rebuild it, or attach or detach the VPC internet gateway to have the state recorded\n", name)
+}
+
 // report prints the verification for every target — the `status` subcommand.
 //
 // Returns true when everything is in its configured state, which is what the
@@ -506,7 +556,7 @@ func (nc *networkContext) report(cmd *cobra.Command, targets []networkTarget) bo
 			}
 			nc.printAttachments(out, t)
 		}
-		if !t.skipped && !t.absent && !t.isolationKnown {
+		if t.cannotJudge() {
 			fmt.Fprintf(out, "    (isolation and spec hash not compared: this network predates the "+
 				"recorded gateway state, so only the daemon can say what it should be)\n")
 		}
@@ -666,10 +716,7 @@ func (nc *networkContext) rebuild(ctx context.Context, out io.Writer, t networkT
 	// explicitly. Rebuilding a target whose isolation could not be established
 	// would write a state nothing chose — see selectWork.
 	if !t.isolationKnown {
-		fmt.Fprintf(out, "%s: left alone — this network predates the recorded gateway state, so only "+
-			"the daemon can say what its isolation should be. Start the daemon and let its reconcile "+
-			"rebuild it, or attach or detach its internet gateway to have the state recorded\n",
-			t.spec.Name)
+		printCannotJudge(out, t.spec.Name)
 		return nil
 	}
 	// Re-diffing under the lock is what stops two resets, or a reset racing the

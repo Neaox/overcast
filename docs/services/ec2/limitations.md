@@ -58,8 +58,17 @@ sits.
 
 ## Internet gateways and isolation
 
-A VPC's network is created `--internal` and stays that way until an internet
-gateway is attached. Docker fixes that flag when a network is created, so
+Under `OVERCAST_VPC_EGRESS=open` — the default — a VPC's network is created
+`--internal` and stays that way until an internet gateway is attached. Under
+`none` every network Overcast creates is `--internal` whatever the template
+says, and attaching a gateway changes nothing.
+
+The flag is honest about your template; it is not what decides whether those
+containers reach the internet. Under `open` they do either way, because they are
+also on the routable control plane. See
+[Egress modes](../../networking.md#egress-modes).
+
+Docker fixes that flag when a network is created, so
 `AttachInternetGateway` and `DetachInternetGateway` recreate the network to
 change it — and they do so under whatever is already on it. Every container on
 the network (a Lambda function, an ECS task, an RDS instance, and one you
