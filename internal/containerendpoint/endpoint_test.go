@@ -314,3 +314,34 @@ func BenchmarkRewriteURLs_payloadMiss(b *testing.B) {
 		m.RewriteURLs(payload)
 	}
 }
+
+func TestDNSServers_nameEndpointYieldsNoResolver(t *testing.T) {
+	// Given: Overcast's DNS server is listening, and the endpoint is a name
+	// rather than an IP — what the Runtime API's docker-internal and wildcard
+	// modes produce, and what #1572's fix made reachable on more hosts by
+	// promoting host.docker.internal above the host's own address.
+	cfg := &config.Config{DNSListening: true, Port: 4566}
+
+	// When/Then: no resolver is handed to containers. The bind set is not a
+	// safe fallback — the very reason a name wins the probe is that containers
+	// cannot open a connection to this host's own address, so --dns pointed at
+	// one would turn a narrow wildcard gap into total resolution failure.
+	m := New(cfg, "http://host.docker.internal:4566")
+	if got := m.DNSServers(); got != nil {
+		t.Errorf("DNSServers() = %v for a name endpoint, want nil", got)
+	}
+
+	// And: an IP endpoint — gateway or container mode, and the native Linux
+	// path where the resolver actually runs — still gets one.
+	m = New(cfg, "http://172.19.0.1:4566")
+	if got := m.DNSServers(); len(got) != 1 || got[0] != "172.19.0.1" {
+		t.Errorf("DNSServers() = %v for an IP endpoint, want [172.19.0.1]", got)
+	}
+
+	// And: with the resolver not listening, neither shape offers one — pointing
+	// a container at a resolver that is not there breaks all of its resolution.
+	off := &config.Config{DNSListening: false, Port: 4566}
+	if got := New(off, "http://172.19.0.1:4566").DNSServers(); got != nil {
+		t.Errorf("DNSServers() = %v with the resolver off, want nil", got)
+	}
+}
