@@ -1,6 +1,6 @@
 ---
 title: "Migrating from LocalStack"
-description: "The LocalStack environment variables Overcast reads directly, the endpoint and init-hook mapping, the behavioural differences worth knowing, and where current coverage is listed."
+description: "Swap the image line and keep the rest: the LocalStack variables Overcast reads directly, the endpoint and init-hook mapping, which paid-plan services carry over, and the behavioural differences worth knowing."
 section: "Getting Started"
 tags:
   - docs
@@ -12,9 +12,9 @@ tags:
 
 # Migrating from LocalStack
 
-Overcast is a drop-in replacement for LocalStack Community Edition: same port,
-same init-hook layout, and LocalStack's own environment variables honoured
-directly rather than requiring a rename. Usually the image is the only line that
+Overcast is a drop-in replacement for LocalStack: same port, same init-hook
+layout, LocalStack's own environment variables honoured directly rather than
+renamed, and no auth token or plan. Usually the image is the only line that
 changes:
 
 ```yaml
@@ -40,6 +40,28 @@ services:
 item-by-item audit behind that — every port, URL, hostname, container
 convention and client tool, with its status — see the
 [compatibility matrix](./localstack-compatibility.md).
+
+---
+
+## LocalStack's editions
+
+LocalStack restructured its editions on 23 March 2026: one image for every
+plan, an auth token required to start it, and a free "Hobby" plan for
+non-commercial use that leaves most services, and local state persistence, to
+the paid Base and Ultimate plans. Overcast has no plans. Every service it
+emulates is in the one build — ECS, RDS, Cognito, CloudFront and the others
+named in the [matrix](./localstack-compatibility.md#not-in-scope) included — so
+a setup that leaned on a paid-plan service migrates the same way as one using
+S3 and SQS, and persistence needs nothing beyond a mounted volume (see
+[Storage and persistence](./storage.md)). What has no equivalent here was never
+a plan question: snapshot save/load, `SQS_ENDPOINT_STRATEGY` and the `/_aws/*`
+inspection endpoints are each listed in the matrix with the alternative.
+
+A carried-over `LOCALSTACK_AUTH_TOKEN` is recognised and inert: startup logs it
+once by name, nothing is gated behind it, and it can stay or go. The matrix
+measures Overcast against LocalStack's interface as it stands after that change
+— ports, URLs, variables and conventions — not against any edition's service
+list.
 
 ---
 

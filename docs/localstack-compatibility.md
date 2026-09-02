@@ -12,7 +12,9 @@ tags:
 
 # LocalStack compatibility matrix
 
-Everything a LocalStack setup touches, item by item, with what it does here.
+Everything a LocalStack setup touches, item by item, with what it does here —
+measured against LocalStack's interface as it stands after its March 2026
+edition change, not against any edition's service list ([why](#not-in-scope)).
 Start at [Migrating from LocalStack](./migration-from-localstack.md) if you want
 the short version; this page is the audit behind it.
 
@@ -133,15 +135,17 @@ a wipe. Set `OVERCAST_STATE` explicitly to decide rather than infer — see
 
 ## Not in scope
 
-LocalStack restructured its editions in March 2026: the published image now
-requires an auth token, and the free tier is "Hobby" rather than "Community".
-Thirty-five services sit on that free tier and seventy-four behind a paid one —
-including ECS, ECR, RDS, ElastiCache, CloudFront, ELB, Cognito, EKS, AppSync,
-Athena, Glue and MSK, several of which Overcast emulates in its one build. So
-"drop-in for Community" is no longer a comparison against a fixed target.
+LocalStack restructured its editions on 23 March 2026: the published image
+requires an auth token to start, the free plan is "Hobby" and limited to
+non-commercial use, and most services — ECS, ECR, RDS, ElastiCache, CloudFront,
+ELB, Cognito, EKS, AppSync, Athena, Glue and MSK among them — sit on the paid
+Base or Ultimate plans, as does local state persistence. Overcast emulates every
+one of those services in its single build, so "the same services as the free
+edition" would understate it and "the same services as LocalStack" would
+overstate it. Neither is a target this page measures against.
 
-What that means here: this page measures Overcast against LocalStack's
-*interface* — the ports, URLs, variables and conventions your setup is written
-against — not against any edition's service list. For what Overcast actually
-emulates, use the [service index](./README.md#services), which is generated from
-the code and cannot drift.
+This page measures Overcast against LocalStack's *interface* — the ports, URLs,
+variables and conventions your setup is written against. For what Overcast
+actually emulates, use the [service index](./README.md#services); a carried-over
+`LOCALSTACK_AUTH_TOKEN` is recognised, logged once at startup as inert, and
+gates nothing.

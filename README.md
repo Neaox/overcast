@@ -24,7 +24,7 @@ the CDK, and the Go, JavaScript, Python, Java, .NET, and Rust SDKs — via the
 
 1. **Works with the official AWS CLI** — `aws s3 mb s3://my-bucket --endpoint-url http://localhost:4566` just works.
 2. **Works with all official AWS SDK clients** — Go, JavaScript/TypeScript, Python, Java, .NET without code changes.
-3. **Drop-in replacement for LocalStack** — same port (4566), same env vars mapped, same path conventions. Switching requires changing one line.
+3. **Drop-in replacement for LocalStack** — same port (4566), LocalStack's own env vars honoured, same path conventions, no auth token. Switching is one image line, and nothing Overcast emulates sits behind a plan; the [compatibility matrix](./docs/localstack-compatibility.md) is the item-by-item audit.
 4. **Zero configuration** — `docker run -p 4566:4566 ghcr.io/overcast-sh/overcast:latest` is the full getting-started guide.
 5. **Fast** — sub-50ms startup (~22ms p50, hybrid backend), <15 MiB idle memory, tiny Docker image. CI pipelines should not wait for the emulator.
 6. **Honest about gaps** — unimplemented endpoints return `501 Not Implemented` with a clear message and a link to the support matrix. Silent failures are worse than loud ones.
@@ -408,6 +408,7 @@ Full documentation lives in [`docs/`](./docs/README.md):
 | [Debug endpoints](./docs/debug-endpoints.md) | Health, metrics, state dump, request traces, pprof |
 | [Troubleshooting](./docs/troubleshooting.md) | A symptom, and where its answer lives |
 | [Migrating from LocalStack](./docs/migration-from-localstack.md) | Drop-in replacement guide |
+| [LocalStack compatibility matrix](./docs/localstack-compatibility.md) | Every port, URL, variable and convention, with its status |
 
 ---
 
