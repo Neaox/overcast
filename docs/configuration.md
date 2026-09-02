@@ -81,7 +81,7 @@ top to bottom.
 | `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts joins when it belongs to no VPC. Overcast derives `<name>_control` from it for the Lambda Runtime API — see [Networking](./networking.md) |
 | `DOCKER_HOST`                    | —                      | Docker's own variable, read when `LAMBDA_DOCKER_SOCKET` is unset — the one Colima, Rancher Desktop, Podman and rootless Docker tell you to set. `unix://`, `tcp://`, `npipe://` and `http://` are dialable; `ssh://` and `https://` are not, and warn |
 | `LAMBDA_DOCKER_SOCKET`           | _(`DOCKER_HOST`, else `/var/run/docker.sock` on Linux/macOS, `npipe:////./pipe/docker_engine` on Windows)_ | Docker endpoint — Unix path, Windows named pipe, or `tcp://host:port` for DinD. Every per-service socket override below must address the **same** daemon |
-| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port the Lambda Runtime API is exposed on. Its addresses are not configurable and do not follow `OVERCAST_LISTEN` |
+| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port of the shared Lambda Runtime API listener; `0` = ephemeral. A taken default falls back to an ephemeral port — see [Running two instances on one host](#running-two-instances-on-one-host) |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_               | Max concurrent Docker-backed Lambda container starts. Unset: derived from the Docker host as `clamp(NCPU/2, 2, 8)` (each start bursts ~2 CPUs during INIT); `4` when Docker `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES`           | _(auto)_               | Max Lambda containers across all functions. Unset: derived from the Docker host as `clamp(MemTotal×0.65 / 256 MiB, 4, 32)`; `25` when `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | _(auto)_            | Max concurrent containers for one function. Unset: `clamp(maxInstances/2, 2, maxInstances)`; `10` when `/info` is unavailable |
@@ -119,7 +119,7 @@ top to bottom.
 | `OVERCAST_ECR_REGISTRY_PORT`     | `4510`                 | Host port the shared ECR registry container asks for; `0`, or a port already taken, falls back to an ephemeral port |
 | `OVERCAST_ECR_REGISTRY_PERSIST`  | `true`                 | Back the fixed-port registry with a named Docker volume, so pushed images survive a restart |
 | `OVERCAST_SMTP_MOCK`             | `true`                 | Enable built-in SMTP capture server (auto-disabled when `OVERCAST_SMTP_HOST` is set) |
-| `OVERCAST_SMTP_PORT`             | `1025`                 | Port for the mock SMTP server                                                        |
+| `OVERCAST_SMTP_PORT`             | `1025`                 | Port for the mock SMTP server; `0` = ephemeral. A taken default falls back to an ephemeral port — see [Running two instances on one host](#running-two-instances-on-one-host) |
 | `OVERCAST_SMTP_HOST`             | —                      | External SMTP relay hostname (disables the mock server)                              |
 | `OVERCAST_SMTP_FROM`             | `overcast@localhost`   | Envelope From address for outbound SNS email notifications                           |
 | `OVERCAST_SMTP_USERNAME`         | —                      | SMTP AUTH PLAIN username for external relay                                          |
@@ -154,6 +154,52 @@ rather than being silently ignored.
 counts as an explicit bind-address setting. Every entry must share one port: a
 value naming two has no single `OVERCAST_PORT` to become, so startup fails
 rather than dropping a bind.
+
+## Running two instances on one host
+
+Move the AWS API port and, if state is persistent, the data directory. The
+listeners Overcast binds for itself get out of the way on their own; the ports
+it publishes for database-style containers do not, so move those bases too if
+both instances will run them:
+
+```bash
+OVERCAST_PORT=4576 OVERCAST_DATA_DIR=~/.overcast/second RDS_PORT_BASE=34060 overcast serve
+```
+
+| Listener           | Default | When the default is taken                                        |
+| ------------------ | ------- | ---------------------------------------------------------------- |
+| AWS API            | `4566`  | Startup fails — set `OVERCAST_PORT`                              |
+| Web console        | `4567`  | Falls back to an ephemeral port, logged at startup               |
+| Lambda Runtime API | `9001`  | Falls back to an ephemeral port, logged at startup               |
+| SMTP capture       | `1025`  | Falls back to an ephemeral port, logged at startup               |
+| ECR registry       | `4510`  | Falls back to an ephemeral port                                  |
+| Container DNS      | `53`    | The second instance runs without its resolver — see below        |
+
+The fallbacks are safe because nothing is told the default port: each Lambda
+execution environment is handed its own per-container Runtime API address, and
+the mailer that feeds the Inbox learns the address the SMTP server actually
+bound. The console prints its port, and Lambda and the Inbox keep working.
+
+`RDS_PORT_BASE`, `ELASTICACHE_PORT_BASE`, `MSK_PORT_BASE` and
+`EFS_NFS_PORT_BASE` are different: each instance hands out ports above its base
+from its own records, without asking the host, so two instances with the same
+base both offer their first database the same port and the second one fails to
+start the container. Give the second instance bases of its own.
+
+A port you set yourself is pinned, and a pinned port that is taken is not
+replaced. For the web console that stops startup. The Lambda Runtime API and
+SMTP capture start degraded instead: a warning at startup names the variable
+to change, Lambda invocations fail until it is fixed — as do SES, SNS and
+Cognito mail — and `GET /_overcast/health` reports `status: degraded` with the
+failed listener, its bind error and the fix under `listeners`. A listener that
+fell back appears there too, with `fellBack: true` and its actual address.
+
+Port `53` cannot be shared, so the second instance runs without the built-in
+resolver: the containers it starts still reach it by the exact split-horizon
+hostnames, but not by their subdomains (virtual-hosted S3, API Gateway and
+Lambda function URLs). Both instances also share the `overcast` Docker network
+by default; set a different `OVERCAST_NETWORK` on the second if their
+containers must not see each other.
 
 ## LocalStack aliases
 

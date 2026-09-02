@@ -84,6 +84,14 @@ An unqualified `DeleteFunction` is the other one to know about: it leaves
 published versions, aliases and the version counter behind, so recreating a
 function under the same name inherits them.
 
+A second Overcast on the same host finds the Runtime API's default port `9001`
+taken and steps off it to an ephemeral port on its own — every execution
+environment is handed its own per-container address, so nothing notices. Pin
+`LAMBDA_RUNTIME_API_PORT` and a taken port instead disables the container
+runtime: the startup warning names the variable, and `/_overcast/health`
+reports the failed listener. See
+[Running two instances on one host](../configuration.md#running-two-instances-on-one-host).
+
 ## Reaching Overcast from function code
 
 Lambda containers are siblings of Overcast, not children of it, so `localhost`

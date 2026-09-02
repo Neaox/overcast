@@ -453,6 +453,32 @@ func listenAllOn(hosts []string, port int, logger *zap.Logger) ([]net.Listener, 
 	return lns, nil
 }
 
+// runtimeAPIListenFix is what to change when the shared Runtime API listener
+// cannot bind; it travels with the startup warning and /_overcast/health.
+const runtimeAPIListenFix = "set LAMBDA_RUNTIME_API_PORT to a free port, or 0 for an ephemeral one"
+
+// listenRuntimeAPI binds the shared Runtime API listener set on hosts.
+//
+// The default port falls back to an ephemeral one when it is busy — a second
+// Overcast on the same host is the usual reason — because nothing depends on
+// the number: no container is ever told the shared port, each execution
+// environment dials its own per-container listener (AddContainerListener), and
+// the shared one only settles which local addresses those join. A port set to
+// anything else is pinned and fails, so a deliberate choice is never silently
+// replaced. fellBack reports whether the fallback was taken.
+func listenRuntimeAPI(hosts []string, port, defaultPort int, logger *zap.Logger) (lns []net.Listener, fellBack bool, err error) {
+	lns, err = listenAllOn(hosts, port, logger)
+	if err == nil || port != defaultPort || port == 0 {
+		return lns, false, err
+	}
+	logger.Warn("runtime api: default port busy; selecting an ephemeral port",
+		zap.Int("requested_port", port),
+		zap.Error(err),
+		zap.String("hint", "set LAMBDA_RUNTIME_API_PORT to pin a different port"))
+	lns, err = listenAllOn(hosts, 0, logger)
+	return lns, err == nil, err
+}
+
 // serve runs one listener under the shared handler. A per-environment listener
 // is closed on its own when the execution environment goes away, which is not
 // an error — only Shutdown reports ErrServerClosed, so net.ErrClosed has to be

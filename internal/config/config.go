@@ -116,6 +116,17 @@ const (
 // ppc64le, s390x) and runs unprivileged.
 const DefaultEFSNFSImage = "registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5e28bde099bd7a3daace28772d412c9157ad47fa752a9ad0baafc118d"
 
+// Default ports of the two auxiliary listeners that bind beside the AWS API.
+// Both fall back to an ephemeral port when the default is busy and are pinned
+// at any other value — the rule the web console's port already follows — so
+// that a second Overcast on one host loses neither Lambda nor Inbox capture.
+const (
+	// DefaultLambdaRuntimeAPIPort is the default LAMBDA_RUNTIME_API_PORT.
+	DefaultLambdaRuntimeAPIPort = 9001
+	// DefaultSMTPPort is the default OVERCAST_SMTP_PORT.
+	DefaultSMTPPort = 1025
+)
+
 // Config holds all runtime configuration for the emulator.
 // Zero value is not valid — always construct via Load().
 type Config struct {
@@ -496,9 +507,14 @@ type Config struct {
 	// operator to work out why their daemon was never reached.
 	DockerHostUnsupported string
 
-	// LambdaRuntimeAPIPort is the port on which Overcast exposes the Lambda
-	// Runtime API to containers. Each container connects back on this port.
-	// Defaults to 9001.
+	// LambdaRuntimeAPIPort is the port of the shared Lambda Runtime API
+	// listener. Corresponds to env var LAMBDA_RUNTIME_API_PORT; defaults to
+	// DefaultLambdaRuntimeAPIPort, and 0 binds an ephemeral port. No container
+	// is ever told this port — each execution environment dials its own
+	// per-container listener — so the default falls back to an ephemeral port
+	// when it is busy (a second Overcast on the same host), while any other
+	// value is pinned: a failed bind then disables the container runtime and
+	// is reported by /_overcast/health.
 	LambdaRuntimeAPIPort int
 
 	// LambdaDockerMaxConcurrentStarts bounds concurrent Docker-backed Lambda
@@ -801,7 +817,12 @@ type Config struct {
 	SMTPMock bool
 
 	// SMTPPort is the TCP port the mock SMTP server listens on, and also the
-	// default port the mailer dials when SMTPHost is unset.
+	// default port the mailer dials when SMTPHost is unset. Corresponds to env
+	// var OVERCAST_SMTP_PORT; defaults to DefaultSMTPPort, and 0 binds an
+	// ephemeral port — Inbox capture follows it, because the mailer learns the
+	// bound address rather than assuming the port. The default falls back to
+	// an ephemeral port when it is busy; any other value is pinned, and a
+	// failed bind is reported by /_overcast/health.
 	SMTPPort int
 
 	// SMTPHost is the hostname of an external SMTP relay. When set, SMTPMock
@@ -1454,7 +1475,10 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           npipe:////./pipe/docker_engine on Windows). Every
 //	                                           per-service socket override below must address the
 //	                                           same daemon.
-//	LAMBDA_RUNTIME_API_PORT            9001    (port containers call back on for the Runtime API)
+//	LAMBDA_RUNTIME_API_PORT            9001    (shared Runtime API listener; 0 = ephemeral. The default
+//	                                           falls back to an ephemeral port when busy; any other
+//	                                           value is pinned — see docs/configuration.md § Running
+//	                                           two instances on one host)
 //	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
 //	                                           4 when Docker /info is unavailable
 //	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
@@ -1506,7 +1530,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	EFS_NFS_PORT_BASE                  22049
 //	EFS_NFS_IMAGE                      registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5… (digest-pinned)
 //	OVERCAST_SMTP_MOCK                 true  (false when SMTP_HOST is set)
-//	OVERCAST_SMTP_PORT                 1025
+//	OVERCAST_SMTP_PORT                 1025  (0 = ephemeral. The default falls back to an ephemeral
+//	                                           port when busy; any other value is pinned)
 //	OVERCAST_SMTP_HOST                 ""    (set to use an external relay)
 //	OVERCAST_SMTP_FROM                 overcast@localhost
 //	OVERCAST_SMTP_USERNAME             ""
@@ -1937,7 +1962,13 @@ func Load() (*Config, error) {
 		cfg.DockerSocketSource = dockerEndpointSource
 		cfg.DockerHostUnsupported = dockerHostUnsupported
 	}
-	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
+	// 0 is a real value here (an ephemeral port), so only the range is
+	// checked: a port that cannot exist would otherwise surface as a bind
+	// failure after the Docker probe, with the container runtime disabled.
+	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", DefaultLambdaRuntimeAPIPort)
+	if cfg.LambdaRuntimeAPIPort < 0 || cfg.LambdaRuntimeAPIPort > 65535 {
+		return nil, fmt.Errorf("config: LAMBDA_RUNTIME_API_PORT %d is not a valid port number (0-65535; 0 = ephemeral)", cfg.LambdaRuntimeAPIPort)
+	}
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see
 	// internal/services/lambda/host_limits.go). A negative or zero env value is
@@ -2101,10 +2132,10 @@ func Load() (*Config, error) {
 	cfg.SMTPPassword = os.Getenv("OVERCAST_SMTP_PASSWORD")
 	cfg.SMTPTLS = envBool("OVERCAST_SMTP_TLS", false)
 
-	smtpPortStr := envOr("OVERCAST_SMTP_PORT", "1025")
+	smtpPortStr := envOr("OVERCAST_SMTP_PORT", strconv.Itoa(DefaultSMTPPort))
 	smtpPort, err := strconv.Atoi(smtpPortStr)
-	if err != nil || smtpPort < 1 || smtpPort > 65535 {
-		return nil, fmt.Errorf("config: OVERCAST_SMTP_PORT %q is not a valid port number", smtpPortStr)
+	if err != nil || smtpPort < 0 || smtpPort > 65535 {
+		return nil, fmt.Errorf("config: OVERCAST_SMTP_PORT %q is not a valid port number (0-65535; 0 = ephemeral)", smtpPortStr)
 	}
 	cfg.SMTPPort = smtpPort
 

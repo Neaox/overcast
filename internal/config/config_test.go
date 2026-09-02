@@ -2490,6 +2490,7 @@ func clearEnv(t *testing.T) {
 		// and without this the platform-default assertion below would fail on
 		// their machine and nowhere else.
 		"DOCKER_HOST", "LAMBDA_DOCKER_SOCKET",
+		"LAMBDA_RUNTIME_API_PORT", "OVERCAST_SMTP_PORT",
 	}
 	for _, v := range awsEmuVars {
 		original := os.Getenv(v)
@@ -2511,4 +2512,117 @@ func containsAll(s string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+// TestLoad_lambdaRuntimeAPIPort covers LAMBDA_RUNTIME_API_PORT: the default,
+// 0 as a real value (an ephemeral port — no container is ever told the shared
+// port), and a port that cannot exist failing at startup instead of surfacing
+// later as a bind failure that silently disables the container runtime.
+func TestLoad_lambdaRuntimeAPIPort(t *testing.T) {
+	t.Run("defaults to 9001", func(t *testing.T) {
+		// Given: the variable is unset
+		clearEnv(t)
+
+		// When: we load config
+		cfg, err := config.Load()
+
+		// Then: the documented default applies
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaRuntimeAPIPort != config.DefaultLambdaRuntimeAPIPort {
+			t.Fatalf("LambdaRuntimeAPIPort = %d, want %d", cfg.LambdaRuntimeAPIPort, config.DefaultLambdaRuntimeAPIPort)
+		}
+	})
+
+	t.Run("0 means an ephemeral port", func(t *testing.T) {
+		// Given: LAMBDA_RUNTIME_API_PORT=0
+		clearEnv(t)
+		t.Setenv("LAMBDA_RUNTIME_API_PORT", "0")
+
+		// When: we load config
+		cfg, err := config.Load()
+
+		// Then: 0 is kept, not replaced by the default
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LambdaRuntimeAPIPort != 0 {
+			t.Fatalf("LambdaRuntimeAPIPort = %d, want 0", cfg.LambdaRuntimeAPIPort)
+		}
+	})
+
+	t.Run("a port that cannot exist fails at startup naming the variable", func(t *testing.T) {
+		// Given: a value outside the port range
+		clearEnv(t)
+		t.Setenv("LAMBDA_RUNTIME_API_PORT", "65536")
+
+		// When: we load config
+		_, err := config.Load()
+
+		// Then: startup fails, and the error says which variable to fix
+		if err == nil {
+			t.Fatal("Load: expected an error for port 65536")
+		}
+		if !strings.Contains(err.Error(), "LAMBDA_RUNTIME_API_PORT") {
+			t.Fatalf("error %q does not name LAMBDA_RUNTIME_API_PORT", err)
+		}
+	})
+}
+
+// TestLoad_smtpPort covers OVERCAST_SMTP_PORT: the default, 0 as a real value
+// (an ephemeral port, which Inbox capture follows because the mailer learns
+// the bound address), and values that cannot be a port.
+func TestLoad_smtpPort(t *testing.T) {
+	t.Run("defaults to 1025", func(t *testing.T) {
+		// Given: the variable is unset
+		clearEnv(t)
+
+		// When: we load config
+		cfg, err := config.Load()
+
+		// Then: the documented default applies
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SMTPPort != config.DefaultSMTPPort {
+			t.Fatalf("SMTPPort = %d, want %d", cfg.SMTPPort, config.DefaultSMTPPort)
+		}
+	})
+
+	t.Run("0 means an ephemeral port", func(t *testing.T) {
+		// Given: OVERCAST_SMTP_PORT=0
+		clearEnv(t)
+		t.Setenv("OVERCAST_SMTP_PORT", "0")
+
+		// When: we load config
+		cfg, err := config.Load()
+
+		// Then: 0 is accepted rather than rejected as out of range
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SMTPPort != 0 {
+			t.Fatalf("SMTPPort = %d, want 0", cfg.SMTPPort)
+		}
+	})
+
+	for _, bad := range []string{"70000", "-1", "abc"} {
+		t.Run("rejects "+bad+" naming the variable", func(t *testing.T) {
+			// Given: a value that is not a port
+			clearEnv(t)
+			t.Setenv("OVERCAST_SMTP_PORT", bad)
+
+			// When: we load config
+			_, err := config.Load()
+
+			// Then: startup fails, and the error says which variable to fix
+			if err == nil {
+				t.Fatalf("Load: expected an error for OVERCAST_SMTP_PORT=%s", bad)
+			}
+			if !strings.Contains(err.Error(), "OVERCAST_SMTP_PORT") {
+				t.Fatalf("error %q does not name OVERCAST_SMTP_PORT", err)
+			}
+		})
+	}
 }

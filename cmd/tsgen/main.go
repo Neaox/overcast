@@ -110,6 +110,8 @@ var manifest = []target{
 	{"internal/router", "EmulationTier", "EmulationTier"},
 	{"internal/docker", "Status", "DockerHealth"},
 	{"internal/docker", "ServiceHealth", "DockerServiceHealth"},
+	{"internal/listenstatus", "Status", "ListenerStatus"},
+	{"internal/listenstatus", "State", "ListenerState"},
 
 	// GET /_overcast/debug/metrics — storage diagnostics + advisories.
 	{"internal/router", "debugMetricsResponse", "DebugMetricsResponse"},

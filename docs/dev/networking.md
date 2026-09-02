@@ -64,8 +64,8 @@ The fourth catches people out, and it is why ECR gets [its own section](#10-ecr-
 |---|---|---|---|
 | AWS API | 4566 | `OVERCAST_PORT` | **Yes** — every address in the list |
 | Web console / BFF | 4567 | `OVERCAST_UI_PORT`, `--ui-port`; `0` disables | **Partly** — first address only |
-| Lambda Runtime API | 9001 | `LAMBDA_RUNTIME_API_PORT` | **No** — resolved independently |
-| SMTP capture | 1025 | `OVERCAST_SMTP_PORT` | **No** — hardcoded loopback |
+| Lambda Runtime API | 9001 | `LAMBDA_RUNTIME_API_PORT`; `0` = ephemeral; a taken default falls back to ephemeral | **No** — resolved independently |
+| SMTP capture | 1025 | `OVERCAST_SMTP_PORT`; `0` = ephemeral; a taken default falls back to ephemeral | **No** — hardcoded loopback |
 | Container DNS (UDP + TCP) | 53 | `OVERCAST_DNS_PORT`, `OVERCAST_DNS` | **No** — binds the wildcard |
 | Bridge proxy (opt-in) | 80 | `--http-port`, `--bridge` | **No** — binds the wildcard |
 

@@ -27,6 +27,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/events"
 	"github.com/overcast-sh/overcast/internal/hostbridge/trust"
 	"github.com/overcast-sh/overcast/internal/inithooks"
+	"github.com/overcast-sh/overcast/internal/listenstatus"
 	"github.com/overcast-sh/overcast/internal/metrics"
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
@@ -664,38 +665,46 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Expose the inbox capture API under /_overcast/ses/inbox/.
 	r.Route("/_overcast/ses/inbox", inboxHandlers(mailStore))
 
+	// listeners is what /_overcast/health reports for the auxiliary listeners
+	// bound beside the AWS API. The Lambda Runtime API reports through the
+	// Lambda service instead, because it binds only once Docker has answered.
+	listeners := listenstatus.NewTracker()
+
 	var mailerHost string
 	var mailerPort int
 	if cfg.SMTPMock {
-		// Bind and serve in the background so startup is not blocked.
-		smtpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.SMTPPort)
-		smtpSrv := smtp.NewServer(smtpAddr, mailStore)
-		smtpSrv.OnMessage = publishInbox
-
-		// lazyMailer will block the first Send until the SMTP server is ready.
-		lm := smtp.NewLazyMailer()
-		cleanups = append(cleanups, func() { smtpSrv.Close() })
-
-		go func() {
-			boundAddr, err := smtpSrv.Listen()
-			if err != nil {
-				logger.Error("smtp mock server: failed to bind", zap.Error(err))
-				return
-			}
+		// Bound here rather than in the background: a loopback bind is instant,
+		// and settling it now means the mailer, the cleanup and the health
+		// endpoint all see the outcome instead of racing it.
+		smtpSrv, boundAddr, fellBack, err := listenSMTPMock(mailStore, cfg.SMTPPort, config.DefaultSMTPPort, logger)
+		var mockMailer smtp.Mailer
+		if err != nil {
+			logger.Error("smtp mock server failed to bind — Inbox capture unavailable: SES, SNS email and Cognito mail cannot be sent until it is fixed",
+				zap.Int("port", cfg.SMTPPort),
+				zap.Error(err),
+				zap.String("fix", smtpListenFix))
+			listeners.Set(listenstatus.SMTP, listenstatus.Status{State: listenstatus.Failed, Error: err.Error(), Fix: smtpListenFix})
+			// A send fails with the reason rather than waiting for a server
+			// that is never coming.
+			mockMailer = smtp.Unavailable(fmt.Errorf("smtp: mock server is not listening: %w (%s)", err, smtpListenFix))
+		} else {
+			smtpSrv.OnMessage = publishInbox
+			cleanups = append(cleanups, func() { smtpSrv.Close() })
 			go smtpSrv.Serve(smtpCtx)
 
 			host, portStr, _ := net.SplitHostPort(boundAddr)
 			port, _ := strconv.Atoi(portStr)
-			lm.SetReady(smtp.NewMailer(smtp.Config{
+			mockMailer = smtp.NewMailer(smtp.Config{
 				Host: host,
 				Port: port,
-			}))
+			})
+			listeners.Set(listenstatus.SMTP, listenstatus.Status{State: listenstatus.Listening, Addr: boundAddr, FellBack: fellBack})
 			logger.Info("smtp mock server started", zap.String("addr", boundAddr))
-		}()
+		}
 
-		snsSvc.InitEmailDelivery(lm)
-		sesSvc.InitEmailDelivery(lm)
-		cognitoSvc.InitEmailDelivery(lm)
+		snsSvc.InitEmailDelivery(mockMailer)
+		sesSvc.InitEmailDelivery(mockMailer)
+		cognitoSvc.InitEmailDelivery(mockMailer)
 	} else {
 		mailerHost = cfg.SMTPHost
 		mailerPort = cfg.SMTPPort
@@ -1109,7 +1118,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
-	healthHandler := newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn)
+	healthHandler := newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn, listenerStatusFn(listeners, lambdaSvc))
 	r.Get("/_overcast/health", healthHandler)
 
 	// The two health URLs Overcast answers that are not its own: /_health (its

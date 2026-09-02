@@ -38,6 +38,7 @@ import (
 	"github.com/overcast-sh/overcast/internal/docker"
 	"github.com/overcast-sh/overcast/internal/events"
 	"github.com/overcast-sh/overcast/internal/eventtarget"
+	"github.com/overcast-sh/overcast/internal/listenstatus"
 	"github.com/overcast-sh/overcast/internal/middleware"
 	"github.com/overcast-sh/overcast/internal/protocol"
 	"github.com/overcast-sh/overcast/internal/serviceutil"
@@ -501,12 +502,36 @@ type Service struct {
 	// called, same race as bus/imageResolver above — can tell whether to wire
 	// a freshly-created InstancePool's concurrencyObserver.
 	metricsRec metricsRecorder
+	// runtimeAPIListen is how the shared Runtime API listener's bind went, for
+	// /_overcast/health. runtimeAPIListenSet stays false until a bind has been
+	// attempted, which needs Docker: without a daemon there is nothing for the
+	// listener to serve, and the health endpoint's docker section says so.
+	runtimeAPIListen    listenstatus.Status
+	runtimeAPIListenSet bool
 }
 
 // WaitReady blocks until the first Docker probe has reported (successfully or
 // not). Production callers should never need this; it exists so integration
 // tests can ensure the ContainerRuntime is wired before invoking functions.
 func (s *Service) WaitReady() { s.initWg.Wait() }
+
+// RuntimeAPIListenStatus reports how the shared Runtime API listener's bind
+// went, for /_overcast/health. ok is false until a bind has been attempted.
+func (s *Service) RuntimeAPIListenStatus() (status listenstatus.Status, ok bool) {
+	if s == nil {
+		return listenstatus.Status{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runtimeAPIListen, s.runtimeAPIListenSet
+}
+
+func (s *Service) setRuntimeAPIListen(status listenstatus.Status) {
+	s.mu.Lock()
+	s.runtimeAPIListen = status
+	s.runtimeAPIListenSet = true
+	s.mu.Unlock()
+}
 
 // InitLogWriter wires the CloudWatch Logs writer so Lambda invocations can
 // write START/log/END/REPORT lines without importing the logs package.
@@ -851,11 +876,15 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	// caller.
 	listen := runtimeAPIListen(cfg, dc, log)
 
-	// Bind first so we know the actual port (important when port is 0).
-	lns, lnErr := listenAllOn(listen.BindHosts, cfg.LambdaRuntimeAPIPort, log)
+	// Bind first so we know the actual port (important when port is 0, and
+	// when the default port was busy and an ephemeral one was taken instead).
+	lns, fellBack, lnErr := listenRuntimeAPI(listen.BindHosts, cfg.LambdaRuntimeAPIPort, config.DefaultLambdaRuntimeAPIPort, log)
 	if lnErr != nil {
-		s.log.Warn("failed to listen for Runtime API server — container runtime disabled",
-			zap.Error(lnErr))
+		s.log.Warn("Runtime API listener failed to bind — container runtime disabled: functions cannot execute until it is fixed",
+			zap.Int("port", cfg.LambdaRuntimeAPIPort),
+			zap.Error(lnErr),
+			zap.String("fix", runtimeAPIListenFix))
+		s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Failed, Error: lnErr.Error(), Fix: runtimeAPIListenFix})
 		return
 	}
 	actualPort := lns[0].Addr().(*net.TCPAddr).Port
@@ -867,8 +896,10 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	if apiErr != nil {
 		s.log.Warn("failed to start Runtime API server — container runtime disabled",
 			zap.Error(apiErr))
+		s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Failed, Error: apiErr.Error(), Fix: runtimeAPIListenFix})
 		return
 	}
+	s.setRuntimeAPIListen(listenstatus.Status{State: listenstatus.Listening, Addr: containerAddr, FellBack: fellBack})
 
 	// Resolve instance limits now that the Docker client exists: env-pinned
 	// values are used as-is, unset ones are derived from the daemon's /info
